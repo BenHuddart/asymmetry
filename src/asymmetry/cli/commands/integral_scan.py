@@ -123,11 +123,11 @@ def run(args: argparse.Namespace) -> None:
         plots.require_matplotlib()
 
     folder = Path(args.folder)
-    targets = resolve_runs(folder, args.runs)
     name = checked_name(args.name, flag="--name")
-    workdir = workdir_for(folder, args.workdir)
+    workdir, selection = workdir_for(folder, args.workdir, args.instrument)
+    targets = resolve_runs(selection, args.runs)
 
-    settings = reduction_settings(args, folder)
+    settings = reduction_settings(args, selection)
     datasets = []
     for run_number, _prefix, path in targets:
         try:

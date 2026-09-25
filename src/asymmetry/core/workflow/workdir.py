@@ -18,13 +18,15 @@ re-reducing the file, and an agent has state between invocations without a
 long-lived process. The JSON written here is the single source of truth for
 those later commands.
 
-**One work directory holds one data folder.** Everything under it is keyed on
-the run number alone, so two folders whose run numbers overlap would overwrite
-each other's spectra, recipes and series in a single directory. The manifest
-records the folder the session was opened for, and :meth:`WorkDir.bind` — which
-every command goes through before it reads or writes anything — refuses a
-directory that belongs to a different one. A directory with no manifest yet is
-unclaimed; the first ``survey`` or ``reduce`` writes the binding.
+**One work directory holds one folder's runs of one instrument.** Everything
+under it is keyed on the run number alone, so two folders whose run numbers
+overlap — or two instruments sharing run numbers in one folder — would
+overwrite each other's spectra, recipes and series in a single directory. The
+manifest records the :class:`RunSelection` the session was opened for, and
+:meth:`WorkDir.bind` — which every command goes through before it reads or
+writes anything — refuses a directory that holds a different one. A directory
+with no manifest yet is unclaimed; the first ``survey`` or ``reduce`` writes the
+binding.
 
 A reduced entry is keyed on a **digest** of everything that determines its
 numbers: the source file's identity (size, mtime and the SHA-256 of the whole
@@ -41,6 +43,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +53,7 @@ import numpy as np
 
 from asymmetry import __version__
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
 from asymmetry.core.workflow.jsonio import write_json as _write_json
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.reduction import ReductionSettings
@@ -57,8 +61,9 @@ from asymmetry.core.workflow.reduction import ReductionSettings
 #: Schema version stamped into every file the work directory writes. 2: a
 #: reduced sidecar's run record carries ``sample_temperature_logged``, and every
 #: stored series its ``trend`` and ``trend_fits``. 3: reduction settings carry
-#: the pair, background range and t0/t_good offsets.
-SCHEMA = 3
+#: the pair, background range and t0/t_good offsets. 4: the manifest records the
+#: instrument whose runs the session holds.
+SCHEMA = 4
 
 #: Default work-directory name, resolved against the current directory. Not
 #: hidden: an analyst who has to find a plot, delete a stale session or put a
@@ -74,19 +79,70 @@ _FILE_HASH_CHUNK = 1024 * 1024
 _NAME_FORBIDDEN = ("/", "\\", "\0")
 
 
-class WorkDirMismatchError(Exception):
-    """A work directory was asked to serve a data folder that is not the one it holds.
+def instrument_name(prefix: str) -> str:
+    """The instrument a run file's prefix names; ``emu`` and ``EMU`` are one across eras."""
+    return prefix.upper()
 
-    Carries the three paths involved so a caller can phrase the message in its
-    own vocabulary; :meth:`str` is already a complete sentence naming them.
+
+def describe_instruments(entries: list[tuple[str, int, Path]]) -> str:
+    """``"EMU (58 files), MUSR (9 files)"`` for :func:`scan_run_files` *entries*."""
+    counts = Counter(instrument_name(prefix) for prefix, _run_number, _path in entries)
+    return ", ".join(
+        f"{name} ({count} file{'s' if count != 1 else ''})"
+        for name, count in sorted(counts.items())
+    )
+
+
+@dataclass(frozen=True)
+class RunSelection:
+    """The run files a session reads: one folder, and one instrument's files in it.
+
+    ``instrument`` is an :func:`instrument_name`, or ``None`` for every file in
+    the folder. A folder holding two instruments whose run numbers collide
+    needs one named, because everything stored is keyed on the run number.
     """
 
-    def __init__(self, *, root: Path, bound_folder: Path, folder: Path) -> None:
+    folder: Path
+    instrument: str | None
+
+    def matches(self, prefix: str) -> bool:
+        """Whether a file with this *prefix* is one of the selected runs."""
+        return self.instrument is None or instrument_name(prefix) == self.instrument
+
+    def scan(self) -> ScanRunFilesResult:
+        """:func:`scan_run_files` on the folder, keeping the selected files only.
+
+        :class:`ValueError` when the folder is not a directory, and when the
+        instrument names none of the files it holds — listing the instruments
+        it does hold, since the name is the user's to correct.
+        """
+        found = scan_run_files(self.folder)
+        entries = [entry for entry in found.entries if self.matches(entry[0])]
+        if found.entries and not entries:
+            raise ValueError(
+                f"{self.folder} holds no {self.instrument} run files; it holds "
+                f"{describe_instruments(found.entries)}."
+            )
+        return ScanRunFilesResult(entries=entries, truncated=found.truncated)
+
+    def __str__(self) -> str:
+        return str(self.folder) if self.instrument is None else f"{self.folder} ({self.instrument})"
+
+
+class WorkDirMismatchError(Exception):
+    """A work directory was asked to serve runs that are not the ones it holds.
+
+    Carries the directory and both selections so a caller can phrase the
+    message in its own vocabulary; :meth:`str` is already a complete sentence
+    naming them.
+    """
+
+    def __init__(self, *, root: Path, bound: RunSelection, requested: RunSelection) -> None:
         self.root = root
-        self.bound_folder = bound_folder
-        self.folder = folder
+        self.bound = bound
+        self.requested = requested
         super().__init__(
-            f"{root} belongs to {bound_folder}; for {folder} pass --workdir {WORKDIR_NAME}-<name>"
+            f"{root} belongs to {bound}; for {requested} pass --workdir {WORKDIR_NAME}-<name>"
         )
 
 
@@ -292,26 +348,39 @@ class WorkDir:
     # -- binding ------------------------------------------------------------
 
     @property
-    def bound_folder(self) -> Path | None:
-        """The data folder this session holds, or ``None`` while it is unclaimed."""
+    def selection(self) -> RunSelection | None:
+        """The runs this session holds, or ``None`` while it is unclaimed."""
         if not self.manifest_path.exists():
             return None
-        return Path(str(self.read_manifest()["folder"])).resolve()
+        manifest = self.read_manifest()
+        # Schema 3 predates instruments: such a session held every run in its folder.
+        instrument = manifest["instrument"] if manifest["schema"] >= 4 else None
+        return RunSelection(Path(str(manifest["folder"])).resolve(), instrument)
 
-    def bind(self, folder: str | Path) -> WorkDir:
-        """This directory, checked to be *folder*'s session; raise if it is another's.
+    def bind(self, folder: str | Path, instrument: str | None) -> RunSelection:
+        """The runs this session serves for *folder* and *instrument*; raise if it holds others.
 
         The single gate every command passes before it touches the directory,
-        so no command can mix two data folders into one cache (see the module
-        docstring). Both paths are resolved, so the same folder named
-        relatively and absolutely is the same folder. Raises
-        :class:`WorkDirMismatchError` when the manifest names a different one.
+        so no command can mix two data folders, or two instruments' runs, into
+        one cache (see the module docstring). Both paths are resolved, so the
+        same folder named relatively and absolutely is the same folder. The
+        answer is the narrower selection of the two: a session holding every
+        run in its folder takes on the instrument a command names, and a
+        command naming none reads the instrument the session holds. Raises
+        :class:`WorkDirMismatchError` when the manifest names a different
+        folder or a different instrument.
         """
-        folder = Path(folder).resolve()
-        bound = self.bound_folder
-        if bound is not None and bound != folder:
-            raise WorkDirMismatchError(root=self.root, bound_folder=bound, folder=folder)
-        return self
+        requested = RunSelection(Path(folder).resolve(), instrument)
+        bound = self.selection
+        if bound is None:
+            return requested
+        if bound.folder != requested.folder or (
+            bound.instrument is not None
+            and instrument is not None
+            and bound.instrument != instrument
+        ):
+            raise WorkDirMismatchError(root=self.root, bound=bound, requested=requested)
+        return RunSelection(bound.folder, bound.instrument if instrument is None else instrument)
 
     # -- survey -------------------------------------------------------------
 
@@ -331,18 +400,18 @@ class WorkDir:
 
     def write_manifest(
         self,
+        selection: RunSelection,
         *,
-        folder: str | Path,
         settings: ReductionSettings | None = None,
         runs: list[int] | None = None,
     ) -> Path:
-        """Record the session's provenance: version, folder, settings, run list.
+        """Record the session's provenance: version, runs selected, settings, run list.
 
-        This is also where the directory is **bound** to its data folder, as
-        an absolute, resolved path: ``survey`` writes it with neither settings
-        nor runs to claim a fresh directory, ``reduce`` writes all three, and
-        a later ``survey`` leaves what ``reduce`` recorded in place rather than
-        erasing the reduction's provenance.
+        This is also where the directory is **bound** to its folder — as an
+        absolute, resolved path — and instrument: ``survey`` writes it with
+        neither settings nor runs to claim a fresh directory, ``reduce`` writes
+        all three, and a later ``survey`` leaves what ``reduce`` recorded in
+        place rather than erasing the reduction's provenance.
         """
         self.ensure()
         stored = self.read_manifest() if self.manifest_path.exists() else {}
@@ -351,7 +420,8 @@ class WorkDir:
             {
                 "schema": SCHEMA,
                 "asymmetry_version": __version__,
-                "folder": str(Path(folder).resolve()),
+                "folder": str(selection.folder.resolve()),
+                "instrument": selection.instrument,
                 "settings": stored.get("settings") if settings is None else settings.to_dict(),
                 "runs": stored.get("runs", []) if runs is None else [int(run) for run in runs],
                 "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -593,9 +663,12 @@ __all__ = [
     "SCHEMA",
     "WORKDIR_NAME",
     "ReducedEntry",
+    "RunSelection",
     "WorkDir",
     "WorkDirMismatchError",
+    "describe_instruments",
     "file_fingerprint",
+    "instrument_name",
     "reduction_digest",
     "safe_name",
 ]

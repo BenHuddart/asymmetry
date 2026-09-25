@@ -56,7 +56,7 @@ def run(args: argparse.Namespace) -> None:
     if args.plot:
         plots.require_matplotlib()
     folder = Path(args.folder)
-    workdir = workdir_for(folder, args.workdir)
+    workdir, _selection = workdir_for(folder, args.workdir, args.instrument)
     recipe = recipe_with_overrides(
         load_recipe(workdir, args.recipe),
         fix=args.fix,

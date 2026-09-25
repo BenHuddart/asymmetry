@@ -63,7 +63,9 @@ options:
 ## `asymmetry survey`
 
 ```
-usage: asymmetry survey [-h] [--pair FWD/BWD] [--json] [--workdir WORKDIR] folder
+usage: asymmetry survey [-h] [--pair FWD/BWD] [--json] [--workdir WORKDIR]
+                        [--instrument NAME]
+                        folder
 
 positional arguments:
   folder             Directory holding the run files
@@ -76,6 +78,9 @@ options:
   --json             Emit the machine-readable payload
   --workdir WORKDIR  Work directory to write survey.json into (default: ./asymmetry-
                      work)
+  --instrument NAME  Use only this instrument's runs — the file prefix, in any case
+                     (EMU selects EMU… and emu…); needed where two instruments in the
+                     folder share run numbers
 ```
 
 ## `asymmetry alpha`
@@ -84,7 +89,7 @@ options:
 usage: asymmetry alpha [-h] --run RUN [--deadtime {off,from_file}] [--pair FWD/BWD]
                        [--background none|tail_fit|range[:FIRST:LAST]]
                        [--t0-offset BINS] [--t-good-offset BINS]
-                       [--period RED|GREEN|N|green-red] [--json]
+                       [--period RED|GREEN|N|green-red] [--instrument NAME] [--json]
                        folder
 
 positional arguments:
@@ -112,6 +117,9 @@ options:
                         Select one period from a multi-period file (red is period 1,
                         green period 2), or green-red for the difference of a two-
                         period run
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
   --json                Emit the machine-readable payload
 ```
 
@@ -124,7 +132,7 @@ usage: asymmetry reduce [-h] --runs RUNS [--alpha ALPHA] [--alpha-from ALPHA_FRO
                         [--t0-offset BINS] [--t-good-offset BINS]
                         [--period RED|GREEN|N|green-red] [--rebin REBIN] [--tmin TMIN]
                         [--tmax TMAX] [--plot-tmax PLOT_TMAX] [--plot] [--json]
-                        [--workdir WORKDIR]
+                        [--workdir WORKDIR] [--instrument NAME]
                         folder
 
 positional arguments:
@@ -167,6 +175,9 @@ options:
   --plot                Write plots/reduced-<run>.png for each run
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry integral-scan`
@@ -182,7 +193,7 @@ usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                                [--initial NAME=VALUE] [--fix NAME=VALUE] [--xmin XMIN]
                                [--xmax XMAX] [--baseline MODEL]
                                [--baseline-regions LO:HI,...] [--plot] [--json]
-                               [--workdir WORKDIR]
+                               [--workdir WORKDIR] [--instrument NAME]
                                folder
 
 positional arguments:
@@ -225,6 +236,9 @@ options:
   --plot                Write plots/<name>.png
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry wizard`
@@ -232,7 +246,7 @@ options:
 ```
 usage: asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope PRESET]
                         [--include C,D] [--exclude C,D] [--tmin TMIN] [--tmax TMAX]
-                        [--plot] [--json] [--workdir WORKDIR]
+                        [--plot] [--json] [--workdir WORKDIR] [--instrument NAME]
                         folder
 
 positional arguments:
@@ -256,6 +270,9 @@ options:
   --plot                Write plots/wizard-<run>.png of data + recommendation
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry recipe`
@@ -263,7 +280,7 @@ options:
 ```
 usage: asymmetry recipe [-h] --expression EXPRESSION --name NAME [--run RUN]
                         [--initial NAME=VALUE] [--fix NAME=VALUE] [--tmin TMIN]
-                        [--tmax TMAX] [--json] [--workdir WORKDIR]
+                        [--tmax TMAX] [--json] [--workdir WORKDIR] [--instrument NAME]
                         folder
 
 positional arguments:
@@ -282,6 +299,9 @@ options:
   --tmax TMAX           Fit window end / µs
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry fit`
@@ -289,6 +309,7 @@ options:
 ```
 usage: asymmetry fit [-h] --run RUN --recipe RECIPE [--fix NAME=VALUE] [--free NAME]
                      [--tmin TMIN] [--tmax TMAX] [--plot] [--json] [--workdir WORKDIR]
+                     [--instrument NAME]
                      folder
 
 positional arguments:
@@ -305,6 +326,9 @@ options:
   --plot             Write plots/fit-<run>.png
   --json             Emit the machine-readable payload
   --workdir WORKDIR  Work directory to read (default: ./asymmetry-work)
+  --instrument NAME  Use only this instrument's runs — the file prefix, in any case
+                     (EMU selects EMU… and emu…); needed where two instruments in the
+                     folder share run numbers
 ```
 
 ## `asymmetry fit-global`
@@ -314,7 +338,7 @@ usage: asymmetry fit-global [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
                             [--free NAME] --shared P,Q [--field-param NAME]
                             [--strategy {joint,profiled,least_squares}]
                             [--order QUANTITY] [--x RUN=VALUE,...] [--name NAME]
-                            [--plot] [--json] [--workdir WORKDIR]
+                            [--plot] [--json] [--workdir WORKDIR] [--instrument NAME]
                             folder
 
 positional arguments:
@@ -341,6 +365,9 @@ options:
   --plot                Write one fitted plot per run
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry fit-series`
@@ -349,7 +376,7 @@ options:
 usage: asymmetry fit-series [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
                             --order QUANTITY [--x RUN=VALUE,...] [--tmin TMIN]
                             [--tmax TMAX] [--global P,Q] [--start RUN] [--name NAME]
-                            [--plot] [--json] [--workdir WORKDIR]
+                            [--plot] [--json] [--workdir WORKDIR] [--instrument NAME]
                             folder
 
 positional arguments:
@@ -381,6 +408,9 @@ options:
                      plots/<name>-trend-<param>.png per free parameter
   --json             Emit the machine-readable payload
   --workdir WORKDIR  Work directory to read and write (default: ./asymmetry-work)
+  --instrument NAME  Use only this instrument's runs — the file prefix, in any case
+                     (EMU selects EMU… and emu…); needed where two instruments in the
+                     folder share run numbers
 ```
 
 ## `asymmetry trend`
@@ -389,7 +419,7 @@ options:
 usage: asymmetry trend [-h] --series SERIES [--csv CSV] [--plot] [--model EXPR]
                        [--param PARAM] [--xmin XMIN] [--xmax XMAX]
                        [--initial NAME=VALUE] [--fix NAME=VALUE] [--exclude RUNS]
-                       [--json] [--workdir WORKDIR]
+                       [--json] [--workdir WORKDIR] [--instrument NAME]
                        folder
 
 positional arguments:
@@ -413,6 +443,9 @@ options:
                         enters)
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry fourier`
@@ -423,7 +456,7 @@ usage: asymmetry fourier [-h] --run RUN [--name NAME]
                          [--padding PADDING] [--tmin TMIN] [--tmax TMAX]
                          [--phase PHASE] [--filter-tau FILTER_TAU] [--fmin FMIN]
                          [--fmax FMAX] [--peaks PEAKS] [--plot] [--json]
-                         [--workdir WORKDIR]
+                         [--workdir WORKDIR] [--instrument NAME]
                          folder
 
 positional arguments:
@@ -446,6 +479,9 @@ options:
   --plot                Write plots/<name>.png
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry audit`

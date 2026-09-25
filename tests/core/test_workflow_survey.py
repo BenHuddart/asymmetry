@@ -484,6 +484,51 @@ def test_two_instruments_in_one_folder_never_share_a_scan() -> None:
     assert all(len(scan.runs) == 2 for scan in scans)
 
 
+def test_a_return_sweep_stays_whole_while_another_instruments_runs_interleave() -> None:
+    """Two instruments sharing run numbers interleave in run order; neither splits the other."""
+    rows = [
+        _row(run_number=run, temperature=temperature, field=field, instrument=instrument)
+        for run, field in enumerate((100.0, 200.0, 100.0, 300.0), start=1)
+        for instrument, temperature in (("EMU", 10.0), ("MUSR", 20.0))
+    ]
+    field_scans = [scan for scan in _scan_groups(rows)[0] if scan.axis == "field"]
+    assert sorted((scan.instrument, len(scan.runs)) for scan in field_scans) == [
+        ("EMU", 4),
+        ("MUSR", 4),
+    ]
+
+
+def test_two_instruments_sharing_a_run_number_each_get_their_own_alpha(tmp_path: Path) -> None:
+    pytest.importorskip("h5py")
+    from asymmetry.core.io.nexus_writer import write_nexus_v1
+    from asymmetry.core.simulate import simulate_run
+    from tests.core.conftest import _calibration_signal, _template_for
+
+    for prefix, alpha in (("EMU", 1.25), ("MUSR", 0.8)):
+        title = f"Calibrant {prefix}"
+        run = simulate_run(
+            _template_for(temperature=5.0, field=CALIBRATION_FIELD_G, title=title),
+            _calibration_signal,
+            total_events=2.0e6,
+            seed=1,
+            alpha=alpha,
+            run_number=42,
+            title=title,
+        )
+        write_nexus_v1(run, tmp_path / f"{prefix}00000042.nxs")
+
+    result = survey_folder(tmp_path)
+
+    assert sorted(row.file for row in result.runs) == ["EMU00000042.nxs", "MUSR00000042.nxs"]
+    alphas = {c.prefix: c.alpha for c in result.calibration_candidates}
+    assert alphas["EMU"] == pytest.approx(1.25, rel=0.05)
+    assert alphas["MUSR"] == pytest.approx(0.8, rel=0.05)
+    assert sum(c.best for c in result.calibration_candidates) == 1
+    assert [row.file for row in survey_folder(tmp_path, instrument="MUSR").runs] == [
+        "MUSR00000042.nxs"
+    ]
+
+
 def test_survey_reports_no_field_scan_when_no_two_runs_share_a_temperature(survey) -> None:
     assert [scan for scan in survey.scans if scan.axis == "field"] == []
 
@@ -534,9 +579,10 @@ def test_survey_of_a_genuinely_empty_folder_is_still_an_empty_survey(tmp_path: P
     assert empty.runs == []
 
 
-def _candidate(run_number: int, alpha: float) -> CalibrationCandidate:
+def _candidate(run_number: int, alpha: float, prefix: str = "SIM") -> CalibrationCandidate:
     return CalibrationCandidate(
         run_number=run_number,
+        prefix=prefix,
         field_gauss=100.0,
         reason="",
         source="measured",
@@ -559,6 +605,17 @@ def test_an_alpha_step_is_reported_between_consecutive_candidates_in_run_order()
         {"before_run": 280, "after_run": 281, "alpha_before": 1.068, "alpha_after": 1.401}
     ]
     assert alpha_steps(candidates[1:3]) == []
+
+
+def test_alpha_steps_take_run_order_one_instrument_at_a_time() -> None:
+    """Interleaving two instruments' shared run numbers would invent a step at every run."""
+    candidates = [
+        _candidate(1, 1.0, "EMU"),
+        _candidate(1, 1.4, "MUSR"),
+        _candidate(2, 1.01, "emu"),
+        _candidate(2, 1.41, "MUSR"),
+    ]
+    assert [(step.before_run, step.after_run) for step in alpha_steps(candidates)] == [(2, 1)]
 
 
 def test_a_logged_temperature_far_from_its_setpoint_is_a_departure() -> None:

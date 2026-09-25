@@ -13,6 +13,7 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._reduction import add_pair_argument, parse_pair
+from asymmetry.cli._runs import run_clashes
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -40,15 +41,15 @@ def run(args: argparse.Namespace) -> None:
     # Resolved before the folder is read: surveying measures precession on
     # every run, and a work directory that belongs to another folder should
     # say so at once rather than after that.
-    workdir = workdir_for(folder, args.workdir)
+    workdir, selection = workdir_for(folder, args.workdir, args.instrument)
 
     try:
-        survey = survey_folder(folder, pair=parse_pair(args.pair))
+        survey = survey_folder(folder, pair=parse_pair(args.pair), instrument=selection.instrument)
     except ValueError as exc:
         raise UserError(str(exc)) from None
     # The first command run against a fresh directory is normally this one, so
     # this is where the session is usually claimed for its data folder.
-    workdir.write_manifest(folder=folder)
+    workdir.write_manifest(selection)
     survey_path = workdir.write_survey(survey.to_dict())
 
     if args.json:
@@ -58,31 +59,39 @@ def run(args: argparse.Namespace) -> None:
     print(_render(survey, survey_path))
 
 
-def _departure_blocks(survey) -> list[tuple[list[int], float, float]]:
-    """Departing runs in consecutive blocks of similar offset: ``(runs, min, max)``.
+def _departure_blocks(survey) -> list[tuple[str, list[int], float, float]]:
+    """Departing runs in consecutive blocks of similar offset: ``(instrument, runs, min, max)``.
 
-    Consecutive in the survey's run order, with an offset within 0.5 K or 20 %
-    of the block's last one — so a cryostat that sat 6 K warm for fifteen runs
-    reads as its own block, not as the far end of one range.
+    Consecutive in run order within one instrument, with an offset within 0.5 K
+    or 20 % of the block's last one — so a cryostat that sat 6 K warm for
+    fifteen runs reads as its own block, not as the far end of one range.
     """
-    departing = set(survey.temperature_departures)
-    blocks: list[list[tuple[int, float]]] = []
-    previous_departed = False
-    for row in survey.runs:
-        if row.run_number not in departing:
-            previous_departed = False
+    from asymmetry.core.workflow.survey import departs
+    from asymmetry.core.workflow.workdir import instrument_name
+
+    blocks: list[tuple[str, list[tuple[int, float]]]] = []
+    previous: str | None = None
+    for row in sorted(survey.runs, key=lambda row: (instrument_name(row.prefix), row.run_number)):
+        if not departs(row.temperature, row.sample_temperature_logged):
+            previous = None
             continue
+        instrument = instrument_name(row.prefix)
         offset = row.sample_temperature_logged - row.temperature
-        if previous_departed and abs(offset - blocks[-1][-1][1]) <= max(
-            0.5, 0.2 * abs(blocks[-1][-1][1])
+        if previous == instrument and abs(offset - blocks[-1][1][-1][1]) <= max(
+            0.5, 0.2 * abs(blocks[-1][1][-1][1])
         ):
-            blocks[-1].append((row.run_number, offset))
+            blocks[-1][1].append((row.run_number, offset))
         else:
-            blocks.append([(row.run_number, offset)])
-        previous_departed = True
+            blocks.append((instrument, [(row.run_number, offset)]))
+        previous = instrument
     return [
-        ([run for run, _ in block], min(o for _, o in block), max(o for _, o in block))
-        for block in blocks
+        (
+            instrument,
+            [run for run, _ in block],
+            min(o for _, o in block),
+            max(o for _, o in block),
+        )
+        for instrument, block in blocks
     ]
 
 
@@ -97,8 +106,18 @@ def _run_list(runs: list[int]) -> str:
     return ", ".join(f"{span[0]}-{span[-1]}" if len(span) > 1 else str(span[0]) for span in spans)
 
 
+def _run_label(prefix: str, run_number: int, clashes: dict[int, list[Path]]) -> str:
+    """A run as the survey names it: with its instrument where the number is shared."""
+    from asymmetry.core.workflow.workdir import instrument_name
+
+    return f"{instrument_name(prefix)} {run_number}" if run_number in clashes else str(run_number)
+
+
 def _render(survey, survey_path: Path) -> str:
     """The human-readable survey: the run table, then candidates and scans."""
+    from asymmetry.core.workflow.workdir import instrument_name
+
+    clashes = run_clashes([(row.prefix, row.run_number, Path(row.file)) for row in survey.runs])
     headers = [
         "run",
         "T/K",
@@ -117,7 +136,7 @@ def _render(survey, survey_path: Path) -> str:
     ]
     rows = [
         [
-            str(row.run_number),
+            _run_label(row.prefix, row.run_number, clashes),
             format_number(row.temperature, 2),
             format_number(row.sample_temperature_logged, 2),
             format_number(row.field, 2),
@@ -156,6 +175,17 @@ def _render(survey, survey_path: Path) -> str:
             "geom*: geometry measured from that precession rather than read from the file."
         )
         lines.append("")
+    if clashes:
+        shared = sorted(
+            {instrument_name(row.prefix) for row in survey.runs if row.run_number in clashes}
+        )
+        lines.append(
+            f"RUN NUMBERS COLLIDE: {' and '.join(shared)} share {len(clashes)} run number(s) "
+            f"in this folder (e.g. {min(clashes)}), shown with their instrument. Every "
+            "other command keys its work directory on the run number, so on this folder each "
+            f"needs --instrument NAME (the file prefix, in any case: {', '.join(shared)})."
+        )
+        lines.append("")
     if survey.temperature_departures:
         lines.append(
             "TEMPERATURE: the logged sample temperature (T log) and the setpoint (T/K) "
@@ -166,9 +196,10 @@ def _render(survey, survey_path: Path) -> str:
             "a sample could not have had (a liquid logged above its boiling point) points to "
             "the sensor. The scans below are grouped by setpoint:"
         )
-        for runs, lo, hi in _departure_blocks(survey):
+        for instrument, runs, lo, hi in _departure_blocks(survey):
             span = f"{lo:+.2f} K" if abs(hi - lo) < 0.005 else f"{lo:+.2f} to {hi:+.2f} K"
-            lines.append(f"  {_run_list(runs)}: {span}")
+            shown = f"{instrument} {_run_list(runs)}" if clashes else _run_list(runs)
+            lines.append(f"  {shown}: {span}")
         lines.append("")
     if survey.truncated:
         lines.append(
@@ -182,7 +213,8 @@ def _render(survey, survey_path: Path) -> str:
             marker = " (best)" if candidate.best else ""
             # The SNR of a measured candidate is already in its reason.
             lines.append(
-                f"  run {candidate.run_number}{marker} [{candidate.source}] "
+                f"  run {_run_label(candidate.prefix, candidate.run_number, clashes)}{marker} "
+                f"[{candidate.source}] "
                 f"alpha {candidate.alpha:.4f}: {candidate.reason}"
             )
         for step in survey.alpha_steps:

@@ -96,7 +96,7 @@ def run(args: argparse.Namespace) -> None:
 
         plots.require_matplotlib()
 
-    workdir = workdir_for(Path(args.folder), args.workdir)
+    workdir, _selection = workdir_for(Path(args.folder), args.workdir, args.instrument)
     name = checked_name(args.series, flag="--series")
     stored = workdir.series_names()
     if name not in stored:

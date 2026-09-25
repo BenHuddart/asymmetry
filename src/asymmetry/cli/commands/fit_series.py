@@ -87,7 +87,7 @@ def run(args: argparse.Namespace) -> None:
         plots.require_matplotlib()
 
     folder = Path(args.folder)
-    workdir = workdir_for(folder, args.workdir)
+    workdir, _selection = workdir_for(folder, args.workdir, args.instrument)
 
     recipe = recipe_with_overrides(load_recipe(workdir, args.recipe), fix=args.fix)
     if args.tmin is not None or args.tmax is not None:

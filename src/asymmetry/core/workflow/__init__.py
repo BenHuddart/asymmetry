@@ -73,9 +73,11 @@ from asymmetry.core.workflow.workdir import (
     SCHEMA,
     WORKDIR_NAME,
     ReducedEntry,
+    RunSelection,
     WorkDir,
     WorkDirMismatchError,
     file_fingerprint,
+    instrument_name,
     reduction_digest,
 )
 
@@ -105,6 +107,7 @@ __all__ = [
     "ReducedEntry",
     "ReductionSettings",
     "RunRow",
+    "RunSelection",
     "ScanAxis",
     "ScanGroup",
     "ScreenCandidate",
@@ -121,6 +124,7 @@ __all__ = [
     "calibration_verdict",
     "estimate_alpha_for_run",
     "file_fingerprint",
+    "instrument_name",
     "fit_one",
     "field_scan_payload",
     "fit_integral_scan",

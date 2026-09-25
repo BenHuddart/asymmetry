@@ -55,7 +55,7 @@ def run(args: argparse.Namespace) -> None:
     if args.plot:
         plots.require_matplotlib()
     folder = Path(args.folder)
-    workdir = workdir_for(folder, args.workdir)
+    workdir, _selection = workdir_for(folder, args.workdir, args.instrument)
     dataset = reduced_datasets(workdir, [args.run])[args.run]
     name = checked_name(args.name if args.name is not None else f"run-{args.run}", flag="--name")
     try:

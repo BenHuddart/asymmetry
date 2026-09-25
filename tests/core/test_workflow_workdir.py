@@ -22,6 +22,7 @@ from asymmetry.core.workflow.workdir import (
     SCHEMA,
     WORKDIR_NAME,
     ReducedEntry,
+    RunSelection,
     WorkDir,
     WorkDirMismatchError,
     file_fingerprint,
@@ -84,11 +85,11 @@ def test_a_work_directory_binds_to_the_folder_its_manifest_names(reduced, tmp_pa
     folder = tmp_path / "runs"
     folder.mkdir()
 
-    assert workdir.bound_folder is None
-    workdir.write_manifest(folder=folder, settings=settings, runs=[101])
+    assert workdir.selection is None
+    workdir.write_manifest(RunSelection(folder, None), settings=settings, runs=[101])
 
-    assert workdir.bound_folder == folder.resolve()
-    assert workdir.bind(folder) is workdir
+    assert workdir.selection == RunSelection(folder.resolve(), None)
+    assert workdir.bind(folder, None) == RunSelection(folder.resolve(), None)
 
 
 def test_a_bound_work_directory_accepts_its_folder_named_any_way(
@@ -98,12 +99,12 @@ def test_a_bound_work_directory_accepts_its_folder_named_any_way(
     workdir, _dataset, _entry, _path, _grouping, settings = reduced
     folder = tmp_path / "runs"
     folder.mkdir()
-    workdir.write_manifest(folder=str(folder), settings=settings, runs=[])
+    workdir.write_manifest(RunSelection(folder, None), settings=settings, runs=[])
 
     monkeypatch.chdir(tmp_path)
-    workdir.bind("runs")
-    workdir.bind(folder)
-    workdir.bind(tmp_path / "runs" / ".." / "runs")
+    workdir.bind("runs", None)
+    workdir.bind(folder, None)
+    workdir.bind(tmp_path / "runs" / ".." / "runs", None)
 
 
 def test_a_second_data_folder_cannot_share_a_bound_work_directory(reduced, tmp_path: Path) -> None:
@@ -113,14 +114,79 @@ def test_a_second_data_folder_cannot_share_a_bound_work_directory(reduced, tmp_p
     second = tmp_path / "second"
     first.mkdir()
     second.mkdir()
-    workdir.write_manifest(folder=first, settings=settings, runs=[101])
+    workdir.write_manifest(RunSelection(first, None), settings=settings, runs=[101])
 
     with pytest.raises(WorkDirMismatchError) as exc:
-        workdir.bind(second)
+        workdir.bind(second, None)
 
     assert str(first.resolve()) in str(exc.value)
     assert str(second.resolve()) in str(exc.value)
     assert f"--workdir {WORKDIR_NAME}-<name>" in str(exc.value)
+
+
+def test_the_manifest_records_the_instrument_and_refuses_a_second_one(
+    reduced, tmp_path: Path
+) -> None:
+    """Two instruments in one folder can share run numbers, so they cannot share a session."""
+    workdir, _dataset, _entry, _path, _grouping, settings = reduced
+    workdir.write_manifest(RunSelection(tmp_path, "EMU"), settings=settings, runs=[101])
+
+    assert workdir.read_manifest()["instrument"] == "EMU"
+    assert workdir.bind(tmp_path, "EMU") == RunSelection(tmp_path.resolve(), "EMU")
+    with pytest.raises(WorkDirMismatchError) as exc:
+        workdir.bind(tmp_path, "MUSR")
+
+    assert "(EMU)" in str(exc.value)
+    assert "(MUSR)" in str(exc.value)
+
+
+def test_binding_takes_the_narrower_of_the_stored_and_the_named_instrument(
+    reduced, tmp_path: Path
+) -> None:
+    """A command naming no instrument reads the session's; a whole-folder session takes one on."""
+    workdir, _dataset, _entry, _path, _grouping, _settings = reduced
+    assert workdir.bind(tmp_path, None) == RunSelection(tmp_path.resolve(), None)
+
+    workdir.write_manifest(RunSelection(tmp_path, None))
+    assert workdir.bind(tmp_path, "EMU") == RunSelection(tmp_path.resolve(), "EMU")
+
+    workdir.write_manifest(RunSelection(tmp_path, "EMU"))
+    assert workdir.bind(tmp_path, None) == RunSelection(tmp_path.resolve(), "EMU")
+
+
+def test_a_schema_3_manifest_holds_every_run_in_its_folder(reduced, tmp_path: Path) -> None:
+    """Schema 3 predates instruments; its session was the whole folder."""
+    workdir, _dataset, _entry, _path, _grouping, _settings = reduced
+    workdir.write_manifest(RunSelection(tmp_path, None))
+    manifest = workdir.read_manifest()
+    del manifest["instrument"]
+    manifest["schema"] = 3
+    workdir.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert workdir.selection == RunSelection(tmp_path.resolve(), None)
+    assert workdir.bind(tmp_path, "EMU") == RunSelection(tmp_path.resolve(), "EMU")
+
+
+def test_a_selection_matches_its_instrument_in_any_case(tmp_path: Path) -> None:
+    emu = RunSelection(tmp_path, "EMU")
+    assert emu.matches("EMU")
+    assert emu.matches("emu")
+    assert not emu.matches("MUSR")
+    assert RunSelection(tmp_path, None).matches("MUSR")
+
+
+def test_a_selection_naming_no_file_in_the_folder_lists_what_is_there(tmp_path: Path) -> None:
+    for name in ("EMU00000001.nxs", "emu00000002.nxs", "MUSR00000001.nxs"):
+        (tmp_path / name).touch()
+
+    assert [path.name for _p, _r, path in RunSelection(tmp_path, "EMU").scan().entries] == [
+        "EMU00000001.nxs",
+        "emu00000002.nxs",
+    ]
+    with pytest.raises(
+        ValueError, match=r"no HIFI run files; it holds EMU \(2 files\), MUSR \(1 file\)"
+    ):
+        RunSelection(tmp_path, "HIFI").scan()
 
 
 def test_reduced_round_trips_through_the_work_directory(reduced) -> None:
@@ -250,11 +316,12 @@ def test_no_work_directory_path_can_be_built_from_an_unsafe_name(reduced, name: 
 
 def test_manifest_records_version_folder_settings_and_runs(reduced, tmp_path: Path) -> None:
     workdir, _dataset, _entry, _path, _grouping, settings = reduced
-    workdir.write_manifest(folder=tmp_path, settings=settings, runs=[101, 102])
+    workdir.write_manifest(RunSelection(tmp_path, None), settings=settings, runs=[101, 102])
 
     manifest = workdir.read_manifest()
     assert manifest["schema"] == SCHEMA
     assert manifest["asymmetry_version"] == __version__
+    assert manifest["instrument"] is None
     # Absolute and resolved: the folder is what binds the directory, and it is
     # compared against paths typed in later commands from other directories.
     assert manifest["folder"] == str(tmp_path.resolve())
@@ -268,9 +335,9 @@ def test_a_manifest_written_without_settings_keeps_what_the_reduction_recorded(
 ) -> None:
     """``survey`` claims a directory; it must not erase ``reduce``'s provenance."""
     workdir, _dataset, _entry, _path, _grouping, settings = reduced
-    workdir.write_manifest(folder=tmp_path, settings=settings, runs=[101, 102])
+    workdir.write_manifest(RunSelection(tmp_path, None), settings=settings, runs=[101, 102])
 
-    workdir.write_manifest(folder=tmp_path)
+    workdir.write_manifest(RunSelection(tmp_path, None))
 
     manifest = workdir.read_manifest()
     assert manifest["settings"] == settings.to_dict()

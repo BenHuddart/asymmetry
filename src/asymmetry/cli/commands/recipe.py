@@ -62,7 +62,7 @@ def run(args: argparse.Namespace) -> None:
     """Build the recipe, store it, and print every parameter it carries."""
     from asymmetry.core.workflow.recipe import FitRecipe
 
-    workdir = workdir_for(Path(args.folder), args.workdir)
+    workdir, _selection = workdir_for(Path(args.folder), args.workdir, args.instrument)
     name = checked_name(args.name, flag="--name")
     dataset = None if args.run is None else reduced_datasets(workdir, [args.run])[args.run]
     try:

@@ -83,15 +83,17 @@ def run(args: argparse.Namespace) -> None:
     folder = Path(args.folder)
     if args.plot:
         plots.require_matplotlib()
-    settings = reduction_settings(args, folder, rebin=args.rebin, t_min=args.tmin, t_max=args.tmax)
+    workdir, selection = workdir_for(folder, args.workdir, args.instrument)
+    settings = reduction_settings(
+        args, selection, rebin=args.rebin, t_min=args.tmin, t_max=args.tmax
+    )
 
-    targets = resolve_runs(folder, args.runs)
-    workdir = workdir_for(folder, args.workdir)
+    targets = resolve_runs(selection, args.runs)
     # Written before the first spectrum, not after the last: the manifest is
     # what binds the directory to this data folder, so a reduction interrupted
     # part-way still leaves a directory that says whose runs are in it.
     workdir.write_manifest(
-        folder=folder,
+        selection,
         settings=settings,
         runs=[run_number for run_number, _prefix, _path in targets],
     )

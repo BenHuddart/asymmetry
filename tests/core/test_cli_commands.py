@@ -14,6 +14,7 @@ from asymmetry.cli._output import SCHEMA, UserError
 from asymmetry.cli._runs import parse_run_spec, resolve_run, resolve_runs, run_files
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.workflow.workdir import SCHEMA as WORKDIR_SCHEMA
+from asymmetry.core.workflow.workdir import RunSelection
 from tests.core.conftest import (
     ALL_RUNS,
     CALIBRATION_ALPHA,
@@ -60,17 +61,19 @@ def test_parse_run_spec_rejects_bad_input(spec: str) -> None:
 
 
 def test_resolve_runs_skips_gaps_but_needs_one_match(workflow_folder: Path) -> None:
-    resolved = resolve_runs(workflow_folder, f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]},900")
+    every_run = RunSelection(workflow_folder, None)
+    resolved = resolve_runs(every_run, f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]},900")
     assert [run for run, _prefix, _path in resolved] == [SCAN_RUNS[0], SCAN_RUNS[1]]
     assert {prefix for _run, prefix, _path in resolved} == {"SIM"}
     with pytest.raises(UserError):
-        resolve_runs(workflow_folder, "900-910")
+        resolve_runs(every_run, "900-910")
 
 
 def test_resolve_run_reports_a_missing_run(workflow_folder: Path) -> None:
-    assert resolve_run(workflow_folder, CALIBRATION_RUN).exists()
+    every_run = RunSelection(workflow_folder, None)
+    assert resolve_run(every_run, CALIBRATION_RUN).exists()
     with pytest.raises(UserError):
-        resolve_run(workflow_folder, 900)
+        resolve_run(every_run, 900)
 
 
 def _write_run_file(folder: Path, prefix: str, run_number: int) -> Path:
@@ -94,32 +97,144 @@ def _write_run_file(folder: Path, prefix: str, run_number: int) -> Path:
     return path
 
 
-def test_one_run_number_under_two_prefixes_is_refused(tmp_path: Path) -> None:
-    """The work directory is keyed on the run number, so a clash has no answer."""
+@pytest.fixture
+def two_instruments(tmp_path: Path) -> Path:
+    """A folder where ``EMU``/``emu`` (one instrument across eras) and ``MUSR`` share run 42."""
     pytest.importorskip("h5py")
-    _write_run_file(tmp_path, "SIM", 42)
-    _write_run_file(tmp_path, "MUT", 42)
+    folder = tmp_path / "two"
+    folder.mkdir()
+    _write_run_file(folder, "EMU", 41)
+    _write_run_file(folder, "emu", 42)
+    _write_run_file(folder, "MUSR", 42)
+    _write_run_file(folder, "MUSR", 43)
+    return folder
 
+
+def test_a_run_number_under_two_instruments_is_refused_naming_both(two_instruments: Path) -> None:
+    """The work directory is keyed on the run number, so a clash needs an instrument."""
     with pytest.raises(UserError) as exc:
-        run_files(tmp_path)
+        run_files(RunSelection(two_instruments, None))
 
     message = str(exc.value)
-    assert "42" in message
-    assert "MUT00000042.nxs" in message
-    assert "SIM00000042.nxs" in message
-    assert "split the folder" in message
+    assert "EMU and MUSR" in message
+    assert "MUSR00000042.nxs and emu00000042.nxs" in message
+    assert "--instrument EMU or --instrument MUSR" in message
 
 
-def test_a_duplicate_run_number_reaches_the_command_line(tmp_path: Path, capsys) -> None:
-    pytest.importorskip("h5py")
-    _write_run_file(tmp_path, "SIM", 42)
-    _write_run_file(tmp_path, "MUT", 42)
+def test_an_instrument_selects_its_files_in_any_case(two_instruments: Path) -> None:
+    emu = run_files(RunSelection(two_instruments, "EMU"))
+    assert {run: path.name for run, (_prefix, path) in emu.items()} == {
+        41: "EMU00000041.nxs",
+        42: "emu00000042.nxs",
+    }
+    assert resolve_run(RunSelection(two_instruments, "MUSR"), 42).name == "MUSR00000042.nxs"
+    with pytest.raises(UserError, match="holds no HIFI run files"):
+        run_files(RunSelection(two_instruments, "HIFI"))
 
+
+def test_one_run_number_twice_within_an_instrument_cannot_be_split_by_instrument(
+    tmp_path: Path,
+) -> None:
+    # Two extensions, not two cases: macOS folders are case-insensitive by default.
+    for name in ("EMU00000042.bin", "EMU00000042.nxs"):
+        (tmp_path / name).touch()
+
+    with pytest.raises(UserError) as exc:
+        run_files(RunSelection(tmp_path, "EMU"))
+
+    assert "EMU00000042.bin and EMU00000042.nxs" in str(exc.value)
+    assert "move one of them out" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["reduce", "--runs", "42"],
+        ["integral-scan", "--runs", "41-43"],
+        ["alpha", "--run", "42"],
+        ["reduce", "--runs", "41", "--alpha-from", "42"],
+    ],
+)
+def test_every_command_reading_run_files_refuses_a_clash_without_an_instrument(
+    two_instruments: Path, tmp_path: Path, command: list[str], capsys
+) -> None:
+    extra = [] if command[0] == "alpha" else ["--workdir", str(tmp_path / "wd")]
     with pytest.raises(SystemExit) as exc:
-        cli.main(["reduce", str(tmp_path), "--runs", "42"])
+        cli.main([command[0], str(two_instruments), *command[1:], *extra])
 
     assert exc.value.code == 1
-    assert "split the folder" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "--instrument EMU or --instrument MUSR" in error
+
+
+def test_reduce_and_fit_one_instrument_and_record_it(
+    two_instruments: Path, tmp_path: Path, capsys
+) -> None:
+    workdir = tmp_path / "wd"
+    cli.main(
+        ["reduce", str(two_instruments), "--runs", "41-43", "--instrument", "emu"]
+        + ["--json", "--workdir", str(workdir)]
+    )
+
+    entries = _json_output(capsys)["entries"]
+    assert [(e["run_number"], Path(e["source_file"]).name) for e in entries] == [
+        (41, "EMU00000041.nxs"),
+        (42, "emu00000042.nxs"),
+    ]
+    manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["instrument"] == "EMU"
+
+    # Commands that only read the work directory take the instrument it holds.
+    cli.main(
+        ["recipe", str(two_instruments), "--expression", "Exponential + Constant"]
+        + ["--run", "42", "--name", "relax", "--workdir", str(workdir)]
+    )
+    cli.main(
+        ["fit", str(two_instruments), "--run", "42", "--recipe", "relax", "--json"]
+        + ["--workdir", str(workdir)]
+    )
+    capsys.readouterr()
+
+
+def test_a_second_instrument_cannot_share_the_work_directory(
+    two_instruments: Path, tmp_path: Path, capsys
+) -> None:
+    workdir = tmp_path / "wd"
+    cli.main(
+        ["reduce", str(two_instruments), "--runs", "42", "--instrument", "EMU"]
+        + ["--workdir", str(workdir)]
+    )
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            ["reduce", str(two_instruments), "--runs", "42", "--instrument", "MUSR"]
+            + ["--workdir", str(workdir)]
+        )
+
+    assert exc.value.code == 1
+    error = capsys.readouterr().err
+    assert "(EMU)" in error
+    assert "(MUSR)" in error
+    assert "--workdir" in error
+
+
+def test_survey_lists_both_instruments_and_measures_alpha_per_file(
+    two_instruments: Path, tmp_path: Path, capsys
+) -> None:
+    cli.main(["survey", str(two_instruments), "--workdir", str(tmp_path / "wd")])
+    out = capsys.readouterr().out
+
+    assert "EMU 42" in out
+    assert "MUSR 42" in out
+    assert "RUN NUMBERS COLLIDE: EMU and MUSR" in out
+
+    cli.main(
+        ["survey", str(two_instruments), "--instrument", "MUSR", "--json"]
+        + ["--workdir", str(tmp_path / "wd-musr")]
+    )
+    rows = _json_output(capsys)["survey"]["runs"]
+    assert [row["file"] for row in rows] == ["MUSR00000042.nxs", "MUSR00000043.nxs"]
 
 
 # -- survey -----------------------------------------------------------------
@@ -259,6 +374,23 @@ def test_every_command_offers_the_same_default_work_directory() -> None:
         "trend",
         "fourier",
     }
+
+
+def test_every_command_with_a_work_directory_or_run_files_takes_an_instrument() -> None:
+    parser = cli.build_parser()
+    subparsers = next(
+        action
+        for action in parser._actions  # noqa: SLF001 — argparse exposes no public walk
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    dests = {
+        name: {action.dest for action in subparser._actions}  # noqa: SLF001
+        for name, subparser in subparsers.choices.items()
+    }
+    with_instrument = {name for name, found in dests.items() if "instrument" in found}
+    # `audit` reads work directories' output logs; it binds none to a folder.
+    with_workdir = {name for name, found in dests.items() if "workdir" in found} - {"audit"}
+    assert with_instrument == with_workdir | {"alpha"}
 
 
 def test_a_work_directory_holds_one_data_folder(
@@ -882,13 +1014,15 @@ def test_wizard_takes_the_geometry_the_survey_resolved(
     from asymmetry.core.workflow.workdir import WorkDir
 
     workdir = WorkDir(tmp_path / "wd")
-    assert _survey_geometry(workdir, CALIBRATION_RUN) is None
+    every_run = RunSelection(workflow_folder, None)
+    assert _survey_geometry(workdir, every_run, CALIBRATION_RUN) is None
 
     cli.main(["survey", str(workflow_folder), "--workdir", str(workdir.root)])
     capsys.readouterr()
-    assert _survey_geometry(workdir, CALIBRATION_RUN) == "TF"
-    assert _survey_geometry(workdir, SCAN_RUNS[0]) == "ZF"
-    assert _survey_geometry(workdir, 900) is None
+    assert _survey_geometry(workdir, every_run, CALIBRATION_RUN) == "TF"
+    assert _survey_geometry(workdir, every_run, SCAN_RUNS[0]) == "ZF"
+    assert _survey_geometry(workdir, every_run, 900) is None
+    assert _survey_geometry(workdir, RunSelection(workflow_folder, "EMU"), SCAN_RUNS[0]) is None
 
 
 def test_wizard_rejects_an_unknown_scope_preset(
@@ -1623,7 +1757,7 @@ def test_verbose_leaves_pythons_own_warning_handling_in_place(
 def test_an_internal_error_exits_two_with_a_traceback(
     workflow_folder: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
-    def _boom(_folder, *, pair):
+    def _boom(_folder, *, pair, instrument):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr("asymmetry.core.workflow.survey.survey_folder", _boom)
