@@ -8,6 +8,7 @@ values out of the command module while remaining GUI-free.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -21,22 +22,48 @@ from asymmetry.core.fitting.field_scan import (
 )
 from asymmetry.core.fitting.parameter_models import suggest_model_seeds
 from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.io.periods import build_rf_difference_scan
 from asymmetry.core.transform.integral import FieldScan, build_field_scan
+from asymmetry.core.workflow.reduction import (
+    GREEN_MINUS_RED,
+    ReductionSettings,
+    red_green_curves,
+    resolve_reduction_grouping,
+)
 
 
 def build_integral_scan(
     datasets: Iterable[MuonDataset],
+    settings: ReductionSettings,
     *,
-    alpha: float = 1.0,
     t_min: float | None = None,
     t_max: float | None = None,
     method: str = "integral",
     order_key: str = "field",
 ) -> FieldScan:
-    """Build one integral scan from loaded, period-selected datasets."""
+    """Build one integral scan from loaded datasets, reduced under *settings*.
+
+    Each run's counts are grouped and corrected under the settings' pair,
+    deadtime, t0 and good window. With :data:`GREEN_MINUS_RED` the datasets are
+    combined two-period runs and each point is the mean of the run's green − red
+    difference over the window — the RF-resonance observable.
+    """
+    runs = [dataset.run for dataset in datasets]
+    if settings.period == GREEN_MINUS_RED:
+        if method != "integral":
+            raise ValueError(
+                "The green − red scan averages each run's difference curve; "
+                f"method {method!r} does not apply."
+            )
+        return build_rf_difference_scan(
+            runs,
+            t_min=t_min,
+            t_max=t_max,
+            order_key=order_key,
+            red_green=lambda run: red_green_curves(run, settings),
+        )
     return build_field_scan(
-        list(datasets),
-        alpha=alpha,
+        [replace(run, grouping=resolve_reduction_grouping(run, settings)) for run in runs],
         t_min=t_min,
         t_max=t_max,
         method=method,

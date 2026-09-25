@@ -29,9 +29,12 @@ The two methods agree only when the asymmetry is flat across the window.
 Consistency with the time-domain asymmetry: per-run reduction shares the
 grouping path with :class:`asymmetry.core.representation.time.TimeFBAsymmetry`
 (via :func:`asymmetry.core.transform.group_forward_backward` and
-:func:`~asymmetry.core.transform.effective_grouping`), so the two agree on
-detector grouping, the balance ``alpha``, and recipe ``grouping_ref`` overrides
-by construction.  The integral observable intentionally operates on **native
+:func:`~asymmetry.core.transform.effective_grouping`), and forms its counts
+through the reduction's own correction stage
+(:func:`~asymmetry.core.transform.reduce.corrected_grouped_counts`), so the two
+agree on detector grouping, t0 alignment, deadtime, the balance ``alpha``, and
+recipe ``grouping_ref`` overrides by construction. Background subtraction is
+the one correction the integral does not take.  The integral observable intentionally operates on **native
 bins**: it ignores the time-domain display ``bunching_factor`` (which is a
 plotting smoothing). The ``"integral"`` method is bunching-invariant anyway, and
 integrating native bins is the more faithful observable.
@@ -62,7 +65,12 @@ import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.transform.asymmetry import compute_asymmetry
-from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
+from asymmetry.core.transform.grouping import (
+    effective_group_indices,
+    effective_grouping,
+    group_forward_backward,
+)
+from asymmetry.core.transform.reduce import corrected_grouped_counts, correction_flags_from_grouping
 from asymmetry.core.transform.t0 import t0_stamp_residual_us
 from asymmetry.core.transform.units import ASYMMETRY_FRACTION, AsymmetryUnit
 from asymmetry.core.utils.constants import ORDER_KEYS
@@ -630,10 +638,26 @@ def _reduce_run_to_fb(
 
     grouping = effective_grouping(run, grouping_ref)
     fb = group_forward_backward(histograms, grouping)  # raises on missing/empty grouping
+    # Deadtime is taken exactly as the time-domain reduction takes it. Background
+    # is not: a subtracted level's error is shared by every bin of the window,
+    # which the integral's Poisson error does not propagate.
+    flags = correction_flags_from_grouping(grouping)
+    corrected = corrected_grouped_counts(
+        histograms=histograms,
+        grouping=grouping,
+        forward_idx=effective_group_indices(grouping, fb.forward_gid, n_histograms=len(histograms)),
+        backward_idx=effective_group_indices(
+            grouping, fb.backward_gid, n_histograms=len(histograms)
+        ),
+        use_deadtime=flags.use_deadtime,
+        deadtime_mode=flags.deadtime_mode,
+        use_background=False,
+        metadata=run.metadata,
+    )
 
-    n = min(fb.forward.size, fb.backward.size)
-    forward = fb.forward[:n]
-    backward = fb.backward[:n]
+    n = min(corrected.forward.size, corrected.backward.size)
+    forward = corrected.forward[:n]
+    backward = corrected.backward[:n]
     if n == 0:
         raise ValueError("Forward/backward grouping produced empty arrays.")
 
@@ -660,8 +684,8 @@ def _reduce_run_to_fb(
     bin_width = float(histograms[0].bin_width)
     # Bin centres from the run's exact t0 (D4); the residual is 0.0 whenever the
     # run carries no sub-bin t0, leaving the integer-bin axis untouched.
-    residual = t0_stamp_residual_us(histograms, grouping, fb.common_t0)
-    time = (np.arange(n, dtype=np.float64) - float(fb.common_t0)) * bin_width + residual
+    residual = t0_stamp_residual_us(histograms, grouping, corrected.common_t0)
+    time = (np.arange(n, dtype=np.float64) - float(corrected.common_t0)) * bin_width + residual
     return time, forward, backward, alpha_used, fb.beta, (first_good, last_good)
 
 

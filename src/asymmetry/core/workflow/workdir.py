@@ -56,8 +56,9 @@ from asymmetry.core.workflow.reduction import ReductionSettings
 
 #: Schema version stamped into every file the work directory writes. 2: a
 #: reduced sidecar's run record carries ``sample_temperature_logged``, and every
-#: stored series its ``trend`` and ``trend_fits``.
-SCHEMA = 2
+#: stored series its ``trend`` and ``trend_fits``. 3: reduction settings carry
+#: the pair, background range and t0/t_good offsets.
+SCHEMA = 3
 
 #: Default work-directory name, resolved against the current directory. Not
 #: hidden: an analyst who has to find a plot, delete a stale session or put a

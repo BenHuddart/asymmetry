@@ -12,6 +12,7 @@ import pytest
 from asymmetry import __version__, cli
 from asymmetry.cli._output import SCHEMA, UserError
 from asymmetry.cli._runs import parse_run_spec, resolve_run, resolve_runs, run_files
+from asymmetry.core.data.dataset import Run
 from asymmetry.core.workflow.workdir import SCHEMA as WORKDIR_SCHEMA
 from tests.core.conftest import (
     ALL_RUNS,
@@ -140,6 +141,22 @@ def test_survey_json_payload_and_written_file(
     stored = json.loads((workdir / "survey.json").read_text(encoding="utf-8"))
     assert stored["schema"] == WORKDIR_SCHEMA
     assert stored["best_calibration_run"] == CALIBRATION_RUN
+
+
+def test_survey_measures_precession_on_the_named_pair(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    cli.main(["survey", str(workflow_folder), "--pair", "2/1", "--workdir", str(tmp_path / "wd")])
+    out = capsys.readouterr().out
+    # Swapping the pair negates the signal; the calibration line is still there.
+    assert "precession measured on the 2/1 pair" in out
+    assert f"run {CALIBRATION_RUN} (best)" in out
+
+    with pytest.raises(SystemExit, match="1"):
+        cli.main(
+            ["survey", str(workflow_folder), "--pair", "Up/Down", "--workdir", str(tmp_path / "wd")]
+        )
+    assert "no group 'Up'" in capsys.readouterr().err
 
 
 def test_survey_human_output_names_the_calibration_run_and_the_scan(
@@ -491,6 +508,145 @@ def test_reduce_selects_and_records_a_multi_period_run(
         json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))["settings"]["period"]
         == "green"
     )
+
+
+def _two_identical_periods(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every loaded run a two-period run whose red and green are the same counts."""
+    from asymmetry.core.data.dataset import Histogram
+    from asymmetry.core.io import load as real_load
+
+    def _clone(histogram):
+        return Histogram(
+            counts=histogram.counts.copy(),
+            bin_width=histogram.bin_width,
+            t0_bin=histogram.t0_bin,
+            good_bin_start=histogram.good_bin_start,
+            good_bin_end=histogram.good_bin_end,
+        )
+
+    def _load_two_periods(path):
+        dataset = real_load(path)
+        dataset.run.grouping["period_histograms"] = [
+            [_clone(histogram) for histogram in dataset.run.histograms] for _period in range(2)
+        ]
+        reduced = (dataset.time.copy(), dataset.asymmetry.copy(), dataset.error.copy())
+        dataset.run.grouping["period_reduced"] = [reduced, reduced]
+        dataset.run.metadata["period_count"] = 2
+        return dataset
+
+    monkeypatch.setattr("asymmetry.core.io.load", _load_two_periods)
+
+
+def test_reduce_green_red_is_the_difference_of_the_two_periods(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_identical_periods(monkeypatch)
+    cli.main(
+        [
+            "reduce",
+            str(workflow_folder),
+            "--runs",
+            str(SCAN_RUNS[0]),
+            "--period",
+            "green-red",
+            "--json",
+            "--workdir",
+            str(tmp_path / "wd"),
+        ]
+    )
+    data = _json_output(capsys)
+    assert data["settings"]["period"] == "green_minus_red"
+    assert data["entries"][0]["a0_percent"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_integral_scan_green_red_needs_two_periods(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = [
+        "integral-scan",
+        str(workflow_folder),
+        "--runs",
+        f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+        "--period",
+        "green-red",
+        "--order",
+        "run",
+        "--json",
+        "--workdir",
+        str(tmp_path / "wd"),
+    ]
+    with pytest.raises(SystemExit, match="1"):
+        cli.main(args)
+    assert "two-period" in capsys.readouterr().err
+
+    _two_identical_periods(monkeypatch)
+    cli.main(args)
+    data = _json_output(capsys)
+    assert [point["value"] for point in data["scan"]["points"]] == pytest.approx([0.0, 0.0])
+    assert data["settings"]["period"] == "green_minus_red"
+
+
+def test_reduce_with_a_pair_and_offsets_records_them(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "reduce",
+            str(workflow_folder),
+            "--runs",
+            str(SCAN_RUNS[0]),
+            "--pair",
+            "2/1",
+            "--t0-offset",
+            "2",
+            "--t-good-offset",
+            "5",
+            "--workdir",
+            str(tmp_path / "wd"),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "pair 2/1, t0 offset 2, t_good offset 5" in out
+    entry = json.loads((tmp_path / "wd" / "reduced" / f"{SCAN_RUNS[0]}.json").read_text())
+    assert (entry["forward_group"], entry["backward_group"]) == (2, 1)
+    assert entry["settings"]["pair"] == ["2", "1"]
+
+
+@pytest.mark.parametrize(
+    ("extra", "message"),
+    [
+        (["--pair", "Up/Down"], "no group 'Up'"),
+        (["--pair", "Up"], "--pair takes FWD/BWD"),
+        (["--background", "range"], "no pre-t0 region"),
+        (["--background", "range:9"], "FIRST:LAST"),
+        (["--background", "fixed"], "Unknown background mode 'fixed'"),
+    ],
+)
+def test_reduce_rejects_reduction_options_the_run_cannot_take(
+    workflow_folder: Path, tmp_path: Path, capsys, extra: list[str], message: str
+) -> None:
+    with pytest.raises(SystemExit, match="1"):
+        cli.main(
+            [
+                "reduce",
+                str(workflow_folder),
+                "--runs",
+                str(SCAN_RUNS[0]),
+                *extra,
+                "--workdir",
+                str(tmp_path / "wd"),
+            ]
+        )
+    assert message in capsys.readouterr().err
+
+
+def test_alpha_is_estimated_on_the_named_pair(workflow_folder: Path, capsys) -> None:
+    cli.main(
+        ["alpha", str(workflow_folder), "--run", str(CALIBRATION_RUN), "--pair", "2/1", "--json"]
+    )
+    data = _json_output(capsys)
+    assert data["alpha"]["forward_group"] == 2
+    assert data["alpha"]["alpha"] == pytest.approx(1.0 / CALIBRATION_ALPHA, rel=0.01)
 
 
 def test_survey_reports_the_number_of_selectable_periods(
@@ -1337,12 +1493,22 @@ def test_verbose_flag_is_recognised_by_the_parser() -> None:
     assert parser.parse_args(["--verbose", "survey", "somefolder"]).verbose is True
 
 
+#: The grouping `info` reads off whatever the (faked) loader returns.
+_TWO_GROUP_RUN = Run(
+    run_number=1,
+    histograms=[],
+    grouping={"groups": {1: [1], 2: [2]}, "forward_group": 1, "backward_group": 2},
+)
+
+
 def test_a_repeated_warning_prints_once_without_verbose(
     monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     import warnings as warnings_module
 
     class _Dummy:
+        run = _TWO_GROUP_RUN
+
         def summary(self) -> str:
             return ""
 
@@ -1375,6 +1541,8 @@ def test_verbose_leaves_pythons_own_warning_handling_in_place(
     import warnings as warnings_module
 
     class _Dummy:
+        run = _TWO_GROUP_RUN
+
         def summary(self) -> str:
             return ""
 
@@ -1393,7 +1561,7 @@ def test_verbose_leaves_pythons_own_warning_handling_in_place(
 def test_an_internal_error_exits_two_with_a_traceback(
     workflow_folder: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
-    def _boom(_folder):
+    def _boom(_folder, *, pair):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr("asymmetry.core.workflow.survey.survey_folder", _boom)

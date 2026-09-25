@@ -28,10 +28,20 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 def run(args: argparse.Namespace) -> None:
     """Load the file and print its summary."""
     from asymmetry.core.io import load
+    from asymmetry.core.transform.grouping import group_names
 
     run_result = load(args.file)
+    # The names `--pair` takes, and the pair the file reduces on by default.
+    groups = group_names(run_result.run)
+    grouping = run_result.run.grouping
+    pair = (int(grouping["forward_group"]), int(grouping["backward_group"]))
     if not args.json:
         print(run_result.summary())
+        print(
+            "  Groups      : "
+            + ", ".join(f"{gid} {name}" for gid, name in groups.items())
+            + f"  (default pair {groups[pair[0]]}/{groups[pair[1]]})"
+        )
         return
 
     emit_json(
@@ -39,6 +49,8 @@ def run(args: argparse.Namespace) -> None:
             file=str(args.file),
             run_number=int(run_result.run_number),
             n_points=int(run_result.n_points),
+            groups={str(gid): name for gid, name in groups.items()},
+            default_pair=list(pair),
             metadata=_metadata(run_result.metadata),
             summary=run_result.summary(),
         )

@@ -20,10 +20,13 @@ from asymmetry.core.workflow.recipe import FitRecipe, RecipeParameter
 from asymmetry.core.workflow.reduction import (
     BACKGROUND_MODES,
     DEADTIME_MODES,
+    GREEN_MINUS_RED,
     AlphaEstimate,
     ReductionSettings,
     estimate_alpha_for_run,
+    red_green_curves,
     reduce_run,
+    reduction_source,
     resolve_reduction_grouping,
 )
 from asymmetry.core.workflow.screen import (
@@ -79,6 +82,7 @@ from asymmetry.core.workflow.workdir import (
 
 __all__ = [
     "BACKGROUND_MODES",
+    "GREEN_MINUS_RED",
     "DEADTIME_MODES",
     "GEOMETRY_SOURCES",
     "LARMOR_FREQUENCY_TOLERANCE",
@@ -127,7 +131,9 @@ __all__ = [
     "fit_trend",
     "has_file_deadtime",
     "precession_evidence",
+    "red_green_curves",
     "reduce_run",
+    "reduction_source",
     "reduction_digest",
     "resolve_geometry",
     "resolve_reduction_grouping",

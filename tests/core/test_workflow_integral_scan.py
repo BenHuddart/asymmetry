@@ -74,3 +74,65 @@ def test_fit_integral_scan_can_subtract_a_baseline_first() -> None:
     assert result["success"]
     assert result["baseline"]["model"] == "Constant"
     assert fitted.y_label.endswith("(baseline-subtracted)")
+
+
+def _datasets(folder, runs):
+    from asymmetry.core.io import load
+
+    return [load(str(folder / f"SIM{run:08d}.nxs")) for run in runs]
+
+
+def test_an_integral_scan_takes_the_settings_pair_and_deadtime(workflow_folder) -> None:
+    from asymmetry.core.workflow.integral_scan import build_integral_scan
+    from asymmetry.core.workflow.reduction import ReductionSettings
+    from tests.core.conftest import DEADTIME_RUN, SCAN_RUNS
+
+    datasets = _datasets(workflow_folder, SCAN_RUNS)
+    plain = build_integral_scan(datasets, ReductionSettings(), order_key="run")
+    swapped = build_integral_scan(datasets, ReductionSettings(pair=("2", "1")), order_key="run")
+    assert np.allclose(swapped.value, -plain.value)
+
+    corrected = build_integral_scan(
+        datasets, ReductionSettings(deadtime="from_file"), order_key="run"
+    )
+    changed = {run for run, a, b in zip(plain.run_numbers, plain.value, corrected.value) if a != b}
+    assert changed == {DEADTIME_RUN}
+
+
+def test_a_green_minus_red_scan_averages_each_runs_difference() -> None:
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.simulate import BUILTIN_TEMPLATES, PeriodSpec, simulate_two_period_run
+    from asymmetry.core.workflow.integral_scan import build_integral_scan
+    from asymmetry.core.workflow.reduction import GREEN_MINUS_RED, ReductionSettings
+
+    def relax(t, A=20.0):  # noqa: N803 (A is the conventional asymmetry symbol)
+        return A * np.exp(-0.3 * t)
+
+    datasets = []
+    for index, (field, red_amplitude) in enumerate([(700.0, 20.0), (800.0, 12.0)]):
+        template = BUILTIN_TEMPLATES["ideal_pulsed_fb"].build()
+        template.metadata["field"] = field
+        run = simulate_two_period_run(
+            template,
+            [
+                PeriodSpec(relax, {"A": red_amplitude}, label="red"),
+                PeriodSpec(relax, {"A": 20.0}, label="green"),
+            ],
+            total_events=4.0e7,
+            seed=20 + index,
+            run_number=40 + index,
+        )
+        datasets.append(
+            MuonDataset(
+                time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=run
+            )
+        )
+    settings = ReductionSettings(period=GREEN_MINUS_RED)
+    scan = build_integral_scan(datasets, settings, t_min=0.0, t_max=1.0)
+    assert list(scan.x) == [700.0, 800.0]
+    # Off resonance the RF changes nothing; on it the red amplitude drops by 8 %.
+    assert scan.value[0] == pytest.approx(0.0, abs=0.004)
+    assert scan.value[1] > 0.05
+
+    with pytest.raises(ValueError, match="does not apply"):
+        build_integral_scan(datasets, settings, method="differential")

@@ -63,13 +63,16 @@ options:
 ## `asymmetry survey`
 
 ```
-usage: asymmetry survey [-h] [--json] [--workdir WORKDIR] folder
+usage: asymmetry survey [-h] [--pair FWD/BWD] [--json] [--workdir WORKDIR] folder
 
 positional arguments:
   folder             Directory holding the run files
 
 options:
   -h, --help         show this help message and exit
+  --pair FWD/BWD     Forward and backward groups by name or id, e.g. 'Up/Down' or
+                     '3/4' (default: the file's own pair; `asymmetry info` lists the
+                     groups)
   --json             Emit the machine-readable payload
   --workdir WORKDIR  Work directory to write survey.json into (default: ./asymmetry-
                      work)
@@ -78,24 +81,50 @@ options:
 ## `asymmetry alpha`
 
 ```
-usage: asymmetry alpha [-h] --run RUN [--json] folder
+usage: asymmetry alpha [-h] --run RUN [--deadtime {off,from_file}] [--pair FWD/BWD]
+                       [--background none|tail_fit|range[:FIRST:LAST]]
+                       [--t0-offset BINS] [--t-good-offset BINS]
+                       [--period RED|GREEN|N|green-red] [--json]
+                       folder
 
 positional arguments:
-  folder      Directory holding the run files
+  folder                Directory holding the run files
 
 options:
-  -h, --help  show this help message and exit
-  --run RUN   Run number to estimate alpha on
-  --json      Emit the machine-readable payload
+  -h, --help            show this help message and exit
+  --run RUN             Run number to estimate alpha on
+  --deadtime {off,from_file}
+                        Deadtime correction (default: off, matching the GUI's fresh-
+                        run default)
+  --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
+                        '3/4' (default: the file's own pair; `asymmetry info` lists
+                        the groups)
+  --background none|tail_fit|range[:FIRST:LAST]
+                        Background subtraction: tail_fit fits a flat rate under the
+                        late-time decay (pulsed sources); range averages a pre-t0 bin
+                        range (continuous sources; default range 0.1·t0–0.6·t0).
+                        Default: none
+  --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
+                        default 0)
+  --t-good-offset BINS  First good bin this many bins after the effective t0 (default:
+                        the file's)
+  --period RED|GREEN|N|green-red
+                        Select one period from a multi-period file (red is period 1,
+                        green period 2), or green-red for the difference of a two-
+                        period run
+  --json                Emit the machine-readable payload
 ```
 
 ## `asymmetry reduce`
 
 ```
 usage: asymmetry reduce [-h] --runs RUNS [--alpha ALPHA] [--alpha-from ALPHA_FROM]
-                        [--deadtime {off,from_file}] [--rebin REBIN] [--tmin TMIN]
-                        [--tmax TMAX] [--plot-tmax PLOT_TMAX] [--period RED|GREEN|N]
-                        [--plot] [--json] [--workdir WORKDIR]
+                        [--deadtime {off,from_file}] [--pair FWD/BWD]
+                        [--background none|tail_fit|range[:FIRST:LAST]]
+                        [--t0-offset BINS] [--t-good-offset BINS]
+                        [--period RED|GREEN|N|green-red] [--rebin REBIN] [--tmin TMIN]
+                        [--tmax TMAX] [--plot-tmax PLOT_TMAX] [--plot] [--json]
+                        [--workdir WORKDIR]
                         folder
 
 positional arguments:
@@ -106,11 +135,27 @@ options:
   --runs RUNS           Run numbers, e.g. '17294-17296,17300'
   --alpha ALPHA         Fixed alpha to reduce with
   --alpha-from ALPHA_FROM
-                        Estimate alpha on this run (a weak-TF calibration run) and use
-                        it
+                        Estimate alpha on this run (a weak-TF calibration run), with
+                        the same pair, deadtime, background and t0, and use it
   --deadtime {off,from_file}
                         Deadtime correction (default: off, matching the GUI's fresh-
                         run default)
+  --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
+                        '3/4' (default: the file's own pair; `asymmetry info` lists
+                        the groups)
+  --background none|tail_fit|range[:FIRST:LAST]
+                        Background subtraction: tail_fit fits a flat rate under the
+                        late-time decay (pulsed sources); range averages a pre-t0 bin
+                        range (continuous sources; default range 0.1·t0–0.6·t0).
+                        Default: none
+  --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
+                        default 0)
+  --t-good-offset BINS  First good bin this many bins after the effective t0 (default:
+                        the file's)
+  --period RED|GREEN|N|green-red
+                        Select one period from a multi-period file (red is period 1,
+                        green period 2), or green-red for the difference of a two-
+                        period run
   --rebin REBIN         Merge this many bins (default: 1)
   --tmin TMIN           Discard points below this time/µs from the stored reduction
                         every later fit uses
@@ -119,8 +164,6 @@ options:
   --plot-tmax PLOT_TMAX
                         Draw the reduced PNG only up to this time/µs; the stored
                         reduction keeps it all
-  --period RED|GREEN|N  Select one period from a multi-period file. The common two-
-                        period labels are red (period 1) and green (period 2)
   --plot                Write plots/reduced-<run>.png for each run
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
@@ -130,7 +173,9 @@ options:
 
 ```
 usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
-                               [--alpha-from ALPHA_FROM] [--period RED|GREEN|N]
+                               [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
+                               [--pair FWD/BWD] [--t0-offset BINS]
+                               [--t-good-offset BINS] [--period RED|GREEN|N|green-red]
                                [--tmin TMIN] [--tmax TMAX]
                                [--method {integral,differential}]
                                [--order {field,temperature,run}] [--model MODEL]
@@ -146,10 +191,24 @@ options:
   -h, --help            show this help message and exit
   --runs RUNS           Run numbers in the scan
   --name NAME           Stored scan name
-  --alpha ALPHA         Fixed detector balance
+  --alpha ALPHA         Fixed alpha to reduce with
   --alpha-from ALPHA_FROM
-                        Estimate alpha on this run
-  --period RED|GREEN|N  Select one acquisition period
+                        Estimate alpha on this run (a weak-TF calibration run), with
+                        the same pair, deadtime, background and t0, and use it
+  --deadtime {off,from_file}
+                        Deadtime correction (default: off, matching the GUI's fresh-
+                        run default)
+  --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
+                        '3/4' (default: the file's own pair; `asymmetry info` lists
+                        the groups)
+  --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
+                        default 0)
+  --t-good-offset BINS  First good bin this many bins after the effective t0 (default:
+                        the file's)
+  --period RED|GREEN|N|green-red
+                        Select one period from a multi-period file (red is period 1,
+                        green period 2), or green-red for the difference of a two-
+                        period run
   --tmin TMIN           Integration-window start / µs
   --tmax TMAX           Integration-window end / µs
   --method {integral,differential}

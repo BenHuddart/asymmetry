@@ -12,6 +12,7 @@ from asymmetry.cli._output import (
     payload,
     render_table,
 )
+from asymmetry.cli._reduction import add_pair_argument, parse_pair
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -22,6 +23,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="List the runs in a folder with their metadata, scans and calibration runs",
     )
     parser.add_argument("folder", help="Directory holding the run files")
+    add_pair_argument(parser)
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
     add_workdir_argument(parser, purpose="write survey.json into")
     parser.set_defaults(func=run)
@@ -40,7 +42,10 @@ def run(args: argparse.Namespace) -> None:
     # say so at once rather than after that.
     workdir = workdir_for(folder, args.workdir)
 
-    survey = survey_folder(folder)
+    try:
+        survey = survey_folder(folder, pair=parse_pair(args.pair))
+    except ValueError as exc:
+        raise UserError(str(exc)) from None
     # The first command run against a fresh directory is normally this one, so
     # this is where the session is usually claimed for its data folder.
     workdir.write_manifest(folder=folder)
@@ -143,7 +148,9 @@ def _render(survey, survey_path: Path) -> str:
     ]
     if rows:
         lines.append(
-            "prec: precession measured against the Larmor frequency of the recorded field "
+            "prec: precession measured"
+            + (f" on the {'/'.join(survey.pair)} pair" if survey.pair else "")
+            + " against the Larmor frequency of the recorded field "
             "— larmor / other@<MHz> (a different line, at that frequency) / none / - "
             "(not measurable). "
             "geom*: geometry measured from that precession rather than read from the file."

@@ -2357,6 +2357,25 @@ def _estimate_lcr_peak(
     return {"f": amplitude, "B0": centre, "Bwid": width}
 
 
+def _estimate_rf_resonance(
+    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+) -> dict[str, float]:
+    """Seed the data-scaled half of ``RFResonanceMuP``: dip depths, widths and background.
+
+    The registered depths assume a paper-graded dip an integrated scan does not
+    have, so ``BG`` is the median value, ``ampl1 = ampl2`` the signed largest
+    excursion from it (peaks or dips alike), and each width a twentieth of the
+    field span. The couplings and ``ν_RF`` that place the dips stay physics
+    inputs.
+    """
+    bg = float(np.median(y))
+    deviations = y - bg
+    ampl = float(deviations[int(np.argmax(np.abs(deviations)))]) or 1.0
+    span = float(x.max() - x.min())
+    width = span / 20.0 if span > 0.0 else 25.0
+    return {"ampl1": ampl, "wid1": width, "ampl2": ampl, "wid2": width, "BG": bg}
+
+
 #: Registry mapping a *component* name to a closed-form seed estimator. Each
 #: estimator takes the finite, x-sorted ``(x, y, yerr)`` subset and returns a
 #: mapping of that component's *base* parameter names (e.g. ``"m"``, not the
@@ -2385,6 +2404,7 @@ _MODEL_SEED_ESTIMATORS: dict[
     "Lorentzian": _estimate_lorentzian,
     "GaussianLCR": _estimate_lcr_peak,
     "LorentzianLCR": _estimate_lcr_peak,
+    "RFResonanceMuP": _estimate_rf_resonance,
 }
 
 

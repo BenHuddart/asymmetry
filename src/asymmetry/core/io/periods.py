@@ -49,7 +49,12 @@ from asymmetry.core.transform.integral import (
 from asymmetry.core.utils.constants import ORDER_KEYS, PeriodMode
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
+
+    #: A reduced ``(time, asymmetry, error)`` curve.
+    _Curve = tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]
 
 __all__ = [
     "RED_INDEX",
@@ -57,6 +62,7 @@ __all__ = [
     "PERIOD_MAPPING_TARGETS",
     "PeriodMode",
     "build_rf_difference_scan",
+    "period_run",
     "combine_mapped_periods",
     "combine_period_asymmetry",
     "encode_period_run_number",
@@ -213,7 +219,15 @@ def select_period(
 
     if isinstance(reduced, list) and len(reduced) >= 2:
         index = resolve_period_index(period, len(reduced))
-        return _build_period_dataset(data, index)
+        time, asymmetry, error = reduced[index]
+        run = period_run(data.run, index)
+        return MuonDataset(
+            time=np.asarray(time, dtype=np.float64).copy(),
+            asymmetry=np.asarray(asymmetry, dtype=np.float64).copy(),
+            error=np.asarray(error, dtype=np.float64).copy(),
+            metadata=run.metadata,
+            run=run,
+        )
 
     # Single-period dataset: only period 1 is selectable.
     count = period_count(data)
@@ -226,13 +240,14 @@ def select_period(
     )
 
 
-def _build_period_dataset(combined: MuonDataset, index: int) -> MuonDataset:
-    """Construct a per-period dataset from a combined two-period run."""
-    assert combined.run is not None  # guaranteed by caller
-    grouping = combined.run.grouping
-    reduced = grouping["period_reduced"]
-    time, asymmetry, error = reduced[index]
-    count = len(reduced)
+def period_run(combined: Run, index: int) -> Run:
+    """The :class:`Run` of one period (0-based *index*) of a combined multi-period run.
+
+    Carries that period's own histograms, good frames and deadtimes, so a
+    reduction of it is a reduction of that period alone.
+    """
+    grouping = combined.grouping
+    count = len(grouping["period_reduced"])
 
     period_grouping = {
         key: value
@@ -259,7 +274,7 @@ def _build_period_dataset(combined: MuonDataset, index: int) -> MuonDataset:
     if isinstance(period_histograms, list) and index < len(period_histograms):
         histograms = _clone_histograms(period_histograms[index])
     else:
-        histograms = _clone_histograms(combined.run.histograms)
+        histograms = _clone_histograms(combined.histograms)
 
     metadata = dict(combined.metadata)
     source_run = metadata.get("source_run_number", metadata.get("run_number", 0))
@@ -275,19 +290,12 @@ def _build_period_dataset(combined: MuonDataset, index: int) -> MuonDataset:
     if count == 2:
         metadata["period_label"] = period_labels(combined)[index]
 
-    run = Run(
+    return Run(
         run_number=period_run_number,
         histograms=histograms,
         metadata=metadata,
         grouping=period_grouping,
-        source_file=combined.run.source_file,
-    )
-    return MuonDataset(
-        time=np.asarray(time, dtype=np.float64).copy(),
-        asymmetry=np.asarray(asymmetry, dtype=np.float64).copy(),
-        error=np.asarray(error, dtype=np.float64).copy(),
-        metadata=metadata,
-        run=run,
+        source_file=combined.source_file,
     )
 
 
@@ -633,15 +641,7 @@ def _resolve_run_for_rf(item: MuonDataset | Run) -> Run:
     raise TypeError(f"Expected a MuonDataset or Run, got {type(item).__name__}")
 
 
-def _red_green_reduced(
-    run: Run,
-) -> (
-    tuple[
-        tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]],
-        tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]],
-    ]
-    | None
-):
+def _red_green_reduced(run: Run) -> tuple[_Curve, _Curve] | None:
     """Return the red and green reduced ``(time, asym, err)`` curves, or ``None``.
 
     Reads the loader's ``period_reduced`` cache (percent-scale asymmetry,
@@ -669,6 +669,7 @@ def build_rf_difference_scan(
     t_max: float | None = None,
     mode: PeriodMode | str = PeriodMode.GREEN_MINUS_RED,
     order_key: str = "field",
+    red_green: Callable[[Run], tuple[_Curve, _Curve] | None] = _red_green_reduced,
 ) -> FieldScan:
     """Assemble an RF-µSR period-difference integral-asymmetry field scan.
 
@@ -694,6 +695,12 @@ def build_rf_difference_scan(
     order_key
         ``"field"`` (default), ``"temperature"`` or ``"run"`` — the x-axis the
         points are ordered by.
+    red_green
+        The red and green percent-scale ``(time, asymmetry, error)`` curves of a
+        run, or ``None`` for a run that is not two-period. The default reads the
+        loader's ``period_reduced`` cache (alpha 1, no corrections); a caller
+        with its own reduction settings passes a function that reduces each
+        :func:`period_run` under them.
 
     Returns
     -------
@@ -720,7 +727,7 @@ def build_rf_difference_scan(
             continue
         run_number = int(run.run_number)
 
-        rg = _red_green_reduced(run)
+        rg = red_green(run)
         if rg is None:
             excluded.append((run_number, "not a two-period (red/green) run"))
             continue
