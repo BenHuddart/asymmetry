@@ -49,6 +49,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterModelFitResult,
     fit_parameter_model,
+    suggest_model_seeds,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.transform import FieldScan
@@ -164,36 +165,18 @@ def rf_resonance_seeds(
 
     The two resonance fields ``B1, B2`` are derived inside the model from
     ``A_µ``/``A_p``/``ν_RF``, so those three seed the *position* and *splitting*
-    (defaults 515/124 MHz put the dips near the benzene 866/772 G). The peak
-    amplitudes, widths and background are seeded **from the data** because the
-    registered defaults assume a paper-graded dip depth that an integrated scan
-    does not have: ``BG`` is the median value, ``ampl1 = ampl2`` is the signed
-    largest excursion from it (so the sign follows whether the observable shows
-    peaks or dips), and the widths are a small fraction of the field span. This
-    makes the fit robust to the scan's units (fractional vs percent) and depth.
+    (defaults 515/124 MHz put the dips near the benzene 866/772 G). The depths,
+    widths and background are seeded from the data by the model's own estimator
+    in :func:`~asymmetry.core.fitting.parameter_models.suggest_model_seeds`, so
+    the GUI's RF fit and a scripted one start from the same place.
     """
-    value = np.asarray(scan.value, dtype=np.float64)
-    x = np.asarray(scan.x, dtype=np.float64)
-    finite = np.isfinite(value)
-    if np.any(finite):
-        bg = float(np.median(value[finite]))
-        deviations = value[finite] - bg
-        ampl = float(deviations[int(np.argmax(np.abs(deviations)))])
-    else:
-        bg, ampl = 0.0, 0.0
-    if ampl == 0.0:
-        ampl = 1.0
-    span = float(x.max() - x.min()) if x.size >= 2 else 0.0
-    width = span / 20.0 if span > 0.0 else 25.0
+    composite = as_composite_model(RF_RESONANCE_COMPONENT)
     return {
+        **composite.param_defaults,
+        **suggest_model_seeds(composite, scan.x, scan.value, scan.error),
         "A_mu": float(a_mu),
         "A_p": float(a_p),
         "nu_RF": float(nu_rf),
-        "ampl1": ampl,
-        "wid1": width,
-        "ampl2": ampl,
-        "wid2": width,
-        "BG": bg,
     }
 
 

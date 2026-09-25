@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The agent CLI reduces with any detector pair, a background, t0 and t_good
+  offsets, and the green − red period difference.** `reduce`, `alpha` and
+  `integral-scan` share one set of reduction options: `--pair FWD/BWD` names the
+  forward and backward groups by name or id (`--pair Up/Down` reaches the
+  transverse signal of a PSI GPS file, whose default pair is Back/Forw);
+  `--background tail_fit|range[:FIRST:LAST]` subtracts a background, and a
+  background that cannot be subtracted is an error rather than a silently
+  unsubtracted spectrum; `--t0-offset` and `--t-good-offset` are the grouping
+  window's Manual t0 and t_good offset modes in bins; and `--period green-red`
+  reduces each period of a two-period run on its own and takes the difference.
+  `--alpha-from` now estimates alpha under the same options, so it balances the
+  spectra it is applied to — with `--deadtime from_file` that changes the
+  estimate slightly from before, when the calibration run was always balanced
+  without deadtime. `integral-scan --period green-red --model RFResonanceMuP`
+  fits an RF-resonance scan (the WiMDA school's benzene DEVA data gives
+  A_μ ≈ 514.8 MHz and A_p ≈ 126.0 MHz), `integral-scan --deadtime from_file`
+  corrects an ISIS ALC or repolarisation scan, `survey --pair` measures
+  precession on the named groups, and `info` lists a file's groups and its
+  default pair. The work-directory schema moves to 3, so earlier reductions are
+  reduced again.
+- **Integral scans take deadtime and the grouping's t0 exactly as the
+  time-domain reduction does.** An integral-asymmetry (ALC) point is now formed
+  from counts corrected by the reduction's own correction stage, so a run whose
+  grouping applies deadtime gives a deadtime-corrected integral in the GUI's
+  integral scan as well as the CLI's. Background subtraction is still not
+  applied to integrals.
+- **`RFResonanceMuP` seeds its dip depths, widths and background from the data
+  wherever it is fitted**, through the same per-component estimator the other
+  field-scan models use, so the GUI's RF fit and a scripted one start alike.
+
 - **The grouping window's live preview gains a `Counts` view, and the `Asymmetry`
   view is redrawn to be legible.** An `Asymmetry | Counts` control at the left of
   the compare pager switches the shared preview pane between the reduced

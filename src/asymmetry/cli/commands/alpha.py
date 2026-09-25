@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from asymmetry.cli._output import emit_json, payload
+from asymmetry.cli._output import UserError, emit_json, payload
+from asymmetry.cli._reduction import add_reduction_arguments, reduction_settings
 from asymmetry.cli._runs import resolve_run
 
 
@@ -17,6 +18,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument("folder", help="Directory holding the run files")
     parser.add_argument("--run", type=int, required=True, help="Run number to estimate alpha on")
+    add_reduction_arguments(parser, alpha=False)
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
     parser.set_defaults(func=run)
 
@@ -25,20 +27,24 @@ def run(args: argparse.Namespace) -> None:
     """Estimate alpha on the named run and report it with a suitability verdict."""
     from asymmetry.core.io import load
     from asymmetry.core.workflow.reduction import (
-        ReductionSettings,
         estimate_alpha_for_run,
         reduce_run,
+        reduction_source,
     )
     from asymmetry.core.workflow.survey import calibration_verdict, precession_evidence
 
-    path = resolve_run(Path(args.folder), args.run)
-    result = load(str(path))
-    dataset = result[0] if isinstance(result, list) else result
-    estimate = estimate_alpha_for_run(dataset.run)
-    # The run is loaded anyway, so say plainly whether it precesses at the
-    # Larmor frequency of its recorded field — the thing that makes a run
-    # usable for alpha, and the thing the file's own TF stamp does not settle.
-    evidence = precession_evidence(reduce_run(dataset.run, ReductionSettings()), dataset.field)
+    folder = Path(args.folder)
+    settings = reduction_settings(args, folder)
+    path = resolve_run(folder, args.run)
+    try:
+        dataset = reduction_source(load(str(path)), settings.period)
+        estimate = estimate_alpha_for_run(dataset.run, settings)
+        # The run is loaded anyway, so say plainly whether it precesses at the
+        # Larmor frequency of its recorded field — the thing that makes a run
+        # usable for alpha, and the thing the file's own TF stamp does not settle.
+        evidence = precession_evidence(reduce_run(dataset.run, settings), dataset.field)
+    except (TypeError, ValueError) as exc:
+        raise UserError(f"Run {args.run}: {exc}") from None
 
     # The same two-source rule the survey's candidate list uses, so the two
     # commands can never disagree about whether a run will calibrate alpha.

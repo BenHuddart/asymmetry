@@ -40,16 +40,19 @@ skill tells an agent to say so and stop rather than force a fit:
      - ``reduce`` only produces asymmetry, not per-detector counts with an
        N₀ and relaxation term.
    * - Multi-group / orientation-resolved analysis
-     - The workflow reduces exactly one forward/backward detector pair, not
-       several groups fit together.
+     - The workflow reduces exactly one forward/backward detector pair — the
+       file's own, or one named with ``--pair`` — not several groups fit
+       together.
    * - Maximum-entropy spectra
      - ``fourier`` provides an FFT and peak table, not maximum entropy
        reconstruction.
    * - Negative-muon (μ⁻) elemental analysis
      - Gamma spectra and elemental lines are not asymmetry data.
-   * - Rotating-reference-frame or RF-resonance runs
+   * - Rotating-reference-frame runs
      - Data modulated at a reference frequency needs a different demodulation
-       step than forward–backward asymmetry.
+       step than forward–backward asymmetry. (An RF-resonance *field scan* is
+       in scope: ``integral-scan --period green-red`` builds it, though the
+       packaged skill does not yet steer an agent to it.)
    * - A series of simultaneous groups
      - ``fit-global`` fits one group jointly and ``trend`` reads that group's
        run-local parameters, but no command yet repeats the coupled fit over
@@ -160,6 +163,39 @@ Every subcommand below shares the same conventions:
   stderr — a bad run number, a missing recipe), ``2`` on an internal error
   (a full traceback, because that is a bug worth reporting).
 
+Reduction options
+~~~~~~~~~~~~~~~~~
+
+``reduce``, ``alpha`` and ``integral-scan`` reduce runs, and take the same
+options for the same choices. Each is part of the reduction's cache digest,
+and each is printed on the line under the command's table:
+
+- ``--pair FWD/BWD`` names the forward and backward groups by the file's
+  group names or ids — ``--pair Up/Down`` or ``--pair 3/4`` for the
+  transverse pair of a five-histogram PSI GPS file, whose default pair is
+  Back/Forw. ``info`` lists each file's groups and its default pair.
+- ``--deadtime from_file`` applies each file's own per-detector deadtimes
+  (default ``off``, the GUI's fresh-run default).
+- ``--background tail_fit`` fits a flat rate under the late-time decay and
+  subtracts it (pulsed sources); ``--background range`` subtracts the mean
+  over a pre-t0 bin range, ``0.1·t0``–``0.6·t0`` unless a range is given as
+  ``range:FIRST:LAST`` in bins (continuous sources only — a pulsed run has no
+  pre-t0 region and is refused). A background the reduction cannot subtract
+  is an error, never a silent unsubtracted spectrum. ``integral-scan`` takes
+  no ``--background``: a subtracted level's error is shared by every bin of
+  the integration window, which the integral's error does not propagate.
+- ``--t0-offset BINS`` shifts every detector's file t0 by a signed number of
+  bins, and ``--t-good-offset BINS`` puts the first good bin that many bins
+  after the effective t0 — the grouping window's Manual t0 and **t_good
+  Offset** modes (see :doc:`detector_grouping`).
+- ``--period red``, ``--period green`` or ``--period N`` selects one period of
+  a multi-period file; ``--period green-red`` reduces each period of a
+  two-period run on its own and takes green − red.
+- ``--alpha X`` fixes the balance and ``--alpha-from RUN`` estimates it on a
+  calibration run reduced with the *same* options, so alpha balances the
+  spectra it is applied to (``reduce`` and ``integral-scan``; ``alpha``
+  measures it instead).
+
 Commands
 --------
 
@@ -171,9 +207,13 @@ candidates — always the first command run against a new folder.
 
 .. code-block:: text
 
-   asymmetry survey [-h] [--json] [--workdir WORKDIR] folder
+   asymmetry survey [-h] [--pair FWD/BWD] [--json] [--workdir WORKDIR]
+                    folder
 
-Writes ``survey.json`` into the work directory. Groups runs into scans by
+Writes ``survey.json`` into the work directory. ``--pair`` measures each run's
+precession on the named groups instead of the file's own pair; on a PSI GPS
+folder whose transverse signal sits in Up/Down, ``survey --pair Up/Down`` is
+the survey that sees it. Groups runs into scans by
 (instrument, field) ordered by temperature and by (instrument, temperature)
 ordered by field, so the structure of a multi-scan folder is visible without
 reading every file. When the logged sample temperature departs from the
@@ -353,11 +393,18 @@ per-run estimate the GUI's **Estimate α** button computes.
 
 .. code-block:: text
 
-   asymmetry alpha [-h] --run RUN [--json] folder
+   asymmetry alpha [-h] --run RUN [--deadtime {off,from_file}]
+                   [--pair FWD/BWD]
+                   [--background none|tail_fit|range[:FIRST:LAST]]
+                   [--t0-offset BINS] [--t-good-offset BINS]
+                   [--period RED|GREEN|N|green-red] [--json]
+                   folder
 
 ``alpha`` takes no ``--workdir`` and writes nothing to disk; it loads the
 named file directly and prints the estimate, whether the run is a suitable
-calibration candidate, and a warning when it is not:
+calibration candidate, and a warning when it is not. The `Reduction options`_
+decide which counts it balances — ``--pair Up/Down`` measures the Up/Down
+balance, not the file's default pair's:
 
 .. code-block:: console
 
@@ -376,18 +423,20 @@ directory.
 
 .. code-block:: text
 
-   asymmetry reduce [-h] --runs RUNS [--alpha ALPHA] [--alpha-from ALPHA_FROM]
-                    [--period RED|GREEN|N] [--deadtime {off,from_file}]
-                    [--rebin REBIN] [--tmin TMIN] [--tmax TMAX]
-                    [--plot-tmax PLOT_TMAX] [--plot] [--json]
-                    [--workdir WORKDIR]
+   asymmetry reduce [-h] --runs RUNS [--alpha ALPHA]
+                    [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
+                    [--pair FWD/BWD]
+                    [--background none|tail_fit|range[:FIRST:LAST]]
+                    [--t0-offset BINS] [--t-good-offset BINS]
+                    [--period RED|GREEN|N|green-red] [--rebin REBIN]
+                    [--tmin TMIN] [--tmax TMAX] [--plot-tmax PLOT_TMAX]
+                    [--plot] [--json] [--workdir WORKDIR]
                     folder
 
-``--runs`` takes ranges and commas (``102-107``, ``102-105,107``).
-``--alpha-from RUN`` estimates alpha on that run and uses it; ``--alpha X``
-sets it directly; without either, alpha defaults to 1.0. ``--deadtime
-from_file`` applies each file's own per-detector deadtime values — the
-default is ``off``, matching the GUI's fresh-run default. Writes
+``--runs`` takes ranges and commas (``102-107``, ``102-105,107``). The
+alpha, deadtime, pair, background, t0 and period choices are the
+`Reduction options`_; without ``--alpha`` or ``--alpha-from``, alpha defaults
+to 1.0. Writes
 ``reduced/<run>.npz`` (time, asymmetry, error) and ``reduced/<run>.json``
 (metadata, settings and a cache digest) per run, plus ``manifest.json``, and
 ``plots/reduced-<run>.png`` per run with ``--plot``. Results are cached on a
@@ -400,8 +449,9 @@ ends with a note naming runs reduced that way. To zoom the reduced PNG on early
 precession without cutting the record, use ``--plot-tmax``.
 
 ``--period red``, ``--period green`` or ``--period N`` selects one period
-before alpha calibration and reduction. The choice is part of the cache
-digest. ISIS photo-μSR commonly records light-ON as red and light-OFF as
+before alpha calibration and reduction, and ``--period green-red`` stores the
+difference of the two periods, each reduced on its own. The choice is part of
+the cache digest. ISIS photo-μSR commonly records light-ON as red and light-OFF as
 green, but the experiment notes and spectra remain the authority. Since the
 cache is keyed by source run number, use separate work directories if two
 periods of the same run must coexist.
@@ -762,20 +812,44 @@ optionally fit a field-scan expression. This is the ALC/QLCR path:
 .. code-block:: text
 
    asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
-                           [--alpha-from ALPHA_FROM] [--period RED|GREEN|N]
-                           [--tmin TMIN] [--tmax TMAX]
+                           [--alpha-from ALPHA_FROM]
+                           [--deadtime {off,from_file}] [--pair FWD/BWD]
+                           [--t0-offset BINS] [--t-good-offset BINS]
+                           [--period RED|GREEN|N|green-red] [--tmin TMIN]
+                           [--tmax TMAX]
                            [--method {integral,differential}]
-                           [--order {field,temperature,run}] [--model MODEL]
-                           [--initial NAME=VALUE] [--fix NAME=VALUE]
-                           [--baseline MODEL] [--baseline-regions LO:HI,...]
-                           [--plot] [--json] [--workdir WORKDIR] folder
+                           [--order {field,temperature,run}]
+                           [--model MODEL] [--initial NAME=VALUE]
+                           [--fix NAME=VALUE] [--baseline MODEL]
+                           [--baseline-regions LO:HI,...] [--plot]
+                           [--json] [--workdir WORKDIR]
+                           folder
 
 For example, ``--model "LorentzianLCR + Cubic"`` fits an off-zero resonance
 and background together. Alternatively, ``--baseline Cubic
 --baseline-regions 2000:2600,4500:5000 --model LorentzianLCR`` determines the
 background only from non-resonant regions before fitting the corrected scan.
-The scan points, excluded runs, fit parameters and uncertainties are stored in
-``scans/<name>.json``.
+The scan points, excluded runs, reduction settings, fit parameters and
+uncertainties are stored in ``scans/<name>.json``. Each run's counts are
+grouped and corrected under the `Reduction options`_ — ``--deadtime
+from_file`` on an ISIS repolarisation or ALC scan, as in ``reduce``.
+
+``--period green-red`` builds the RF-resonance scan: each point is the mean
+of that run's green − red difference over ``--tmin``/``--tmax`` (``--method``
+stays ``integral``), and ``RFResonanceMuP`` fits the muon and proton
+couplings with the RF frequency held at its acquisition value. On the
+benzene DEVA data of the WiMDA school, recorded at 218 MHz:
+
+.. code-block:: text
+
+   asymmetry integral-scan data --runs 56426-56462 --period green-red \
+       --deadtime from_file --tmin 0.1 --tmax 4 \
+       --model RFResonanceMuP --fix nu_RF=218
+
+gives ``A_mu`` ≈ 514.8 MHz and ``A_p`` ≈ 126.0 MHz. The couplings start from
+the model's defaults (515 and 124 MHz, the benzene radical's); for another
+radical pass ``--initial A_mu=… --initial A_p=…`` near its own, since a start
+that puts the two dips several widths from the data does not converge.
 
 Report the resonance field, width, amplitude and uncertainties the command
 prints. Do not use shell arithmetic or a literature formula to turn them into
@@ -840,12 +914,17 @@ Install, check or remove the ``asymmetry-analysis`` agent skill — see
 Show metadata for a single data file, independent of any work directory —
 the same summary the GUI's file inspector shows, useful for checking one
 file directly without surveying a whole folder. ``--json`` adds the run
-number, the point count and the file's metadata beside that summary (without
+number, the point count, the groups and default pair, and the file's metadata
+beside that summary (without
 the loader's verbatim NeXus field tree, which would bury it).
 
 .. code-block:: text
 
    asymmetry info [-h] [--json] file
+
+It also lists the file's detector groups by id and name, and the pair it
+reduces on by default (``Groups      : 1 Forw, 2 Back, 3 Up, 4 Down, 5 Righ
+(default pair Back/Forw)``) — the names ``--pair`` takes.
 
 The work directory
 -------------------
