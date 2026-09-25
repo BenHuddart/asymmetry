@@ -1976,3 +1976,23 @@ def test_parameter_model_categories_cover_registry() -> None:
     assert all(
         (definition.category or "").strip() for definition in PARAMETER_MODEL_COMPONENTS.values()
     )
+
+
+def test_suggest_model_seeds_puts_each_lcr_component_on_its_own_resonance() -> None:
+    from asymmetry.core.fitting.parameter_models import _lcr_lorentzian
+
+    model = ParameterCompositeModel(["LorentzianLCR", "LorentzianLCR", "Linear"])
+    x = np.arange(19000.0, 30000.0, 50.0)
+    # A background rising across the scan by more than either resonance is deep:
+    # the far end of the scan must not be taken for a resonance.
+    y = (
+        0.25
+        + 4e-6 * (x - 19000.0)
+        + _lcr_lorentzian(x, f=-0.02, B0=20800.0, Bwid=60.0)
+        + _lcr_lorentzian(x, f=-0.012, B0=27500.0, Bwid=150.0)
+    )
+    seeds = suggest_model_seeds(model, x, y)
+    assert abs(seeds["B0_1"] - 20800.0) < 60.0
+    assert abs(seeds["B0_2"] - 27500.0) < 150.0
+    assert seeds["f_1"] < 0.0 and seeds["f_2"] < 0.0
+    assert 30.0 < seeds["Bwid_1"] < 120.0

@@ -52,6 +52,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Fixed fit value (repeatable)",
     )
     parser.add_argument(
+        "--xmin", type=float, default=None, help="Fit only points at or above this x"
+    )
+    parser.add_argument(
+        "--xmax", type=float, default=None, help="Fit only points at or below this x"
+    )
+    parser.add_argument(
         "--baseline",
         default=None,
         metavar="MODEL",
@@ -108,6 +114,8 @@ def run(args: argparse.Namespace) -> None:
         fit_only_options.append("--fix")
     if args.baseline is not None:
         fit_only_options.extend(["--baseline", "--baseline-regions"])
+    if args.xmin is not None or args.xmax is not None:
+        fit_only_options.append("--xmin/--xmax")
     if args.model is None and fit_only_options:
         names = ", ".join(dict.fromkeys(fit_only_options))
         raise UserError(f"{names} require --model MODEL.")
@@ -153,13 +161,11 @@ def run(args: argparse.Namespace) -> None:
                 fixed=parse_fix(args.fix),
                 baseline_model=args.baseline,
                 baseline_regions=_regions(args.baseline_regions),
+                x_min=args.xmin,
+                x_max=args.xmax,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise UserError(str(exc)) from None
-        if not fit_payload["success"]:
-            raise UserError(
-                f"Integral-scan fit failed: {fit_payload['message'] or 'unknown error'}"
-            )
         from asymmetry.core.fitting.field_scan import as_composite_model
 
         model = as_composite_model(args.model)
@@ -224,9 +230,13 @@ def _render(result: dict, settings) -> str:
     ]
     if result["fit"] is not None:
         fit = result["fit"]
+        # A failed fit is reported, not raised: the scan is worth keeping, and
+        # where the parameters ended up says which component ran away.
+        verdict = "" if fit["success"] else f" — FAILED ({fit['message'] or 'no message'})"
         lines.extend(
             [
-                f"fit: {fit['expression']}, chi2_red {format_number(fit['reduced_chi_squared'], 3)}",
+                f"fit: {fit['expression']}, chi2_red "
+                f"{format_number(fit['reduced_chi_squared'], 3)}{verdict}",
                 "parameters: "
                 + ", ".join(
                     f"{name}={format_number(value, 6)}" for name, value in fit["parameters"].items()

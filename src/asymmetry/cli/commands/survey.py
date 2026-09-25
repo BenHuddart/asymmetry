@@ -212,14 +212,20 @@ def _render(survey, survey_path: Path) -> str:
             instrument = f"{scan.instrument}, " if scan.instrument else ""
             # Runs are listed in axis order, which need not be run order, so
             # the endpoints are shown with an arrow rather than as a range.
+            notes = f', notes "{scan.notes}"' if scan.notes else ""
             lines.append(
-                f"  {scan.axis} scan, {instrument}{geometry}, {held}: "
+                f"  {scan.axis} scan, {instrument}{geometry}, {held}{notes}: "
                 f"{len(scan.runs)} runs, "
                 f"{scan.values[0]:g} to {scan.values[-1]:g} {unit} "
                 f"(run {scan.runs[0]} -> {scan.runs[-1]})"
             )
             if scan.geometry_note:
                 lines.append(f"      geometry: {scan.geometry_note}")
+        if survey.cross_sections:
+            lines.append(
+                f"  ({survey.cross_sections} temperature scan(s) through the field scans' points "
+                "not listed: each is a cross-section of the field scans above)"
+            )
     else:
         lines.append("Scans: none — no two runs share a geometry and a held quantity.")
 

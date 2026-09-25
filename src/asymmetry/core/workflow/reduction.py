@@ -12,7 +12,7 @@ grouping or the corrections here.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.io.periods import (
@@ -41,13 +41,6 @@ from asymmetry.core.transform.reduce import (
     reduce_grouped_asymmetry,
 )
 from asymmetry.core.utils.constants import PeriodMode
-
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    import numpy as np
-    from numpy.typing import NDArray
-
-    #: A reduced percent-scale ``(time, asymmetry, error)`` curve.
-    _Curve = tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]
 
 #: Deadtime treatments a scripted reduction offers. ``off`` is the GUI's
 #: fresh-run default; ``from_file`` uses each run's own per-detector values.
@@ -339,20 +332,6 @@ def _reduce_period(run: Run, settings: ReductionSettings) -> MuonDataset:
     )
 
 
-def red_green_curves(run: Run, settings: ReductionSettings) -> tuple[_Curve, _Curve] | None:
-    """The red and green percent-scale ``(time, asymmetry, error)`` curves of *run* under *settings*.
-
-    ``None`` for a run that is not two-period — the shape
-    :func:`~asymmetry.core.io.periods.build_rf_difference_scan` takes.
-    """
-    if period_count(run) != 2:
-        return None
-    red, green = (
-        _reduce_period(period_run(run, index), settings) for index in (RED_INDEX, GREEN_INDEX)
-    )
-    return (red.time, red.asymmetry, red.error), (green.time, green.asymmetry, green.error)
-
-
 def reduce_run(run: Run, settings: ReductionSettings) -> MuonDataset:
     """Reduce *run* to a :class:`MuonDataset` under *settings*.
 
@@ -365,15 +344,22 @@ def reduce_run(run: Run, settings: ReductionSettings) -> MuonDataset:
     in that order.
     """
     if settings.period == GREEN_MINUS_RED:
-        curves = red_green_curves(run, settings)
-        if curves is None:
+        if period_count(run) != 2:
             raise ValueError(
                 f"Run {run.run_number} is not a two-period (red/green) run; there is no "
                 "green − red difference."
             )
-        (red_t, red_a, red_e), (green_t, green_a, green_e) = curves
+        red, green = (
+            _reduce_period(period_run(run, index), settings) for index in (RED_INDEX, GREEN_INDEX)
+        )
         time, asymmetry, error = combine_period_asymmetry(
-            red_t, red_a, red_e, green_t, green_a, green_e, GREEN_MINUS_RED
+            red.time,
+            red.asymmetry,
+            red.error,
+            green.time,
+            green.asymmetry,
+            green.error,
+            GREEN_MINUS_RED,
         )
         dataset = MuonDataset(
             time=time, asymmetry=asymmetry, error=error, metadata=dict(run.metadata), run=run
@@ -416,7 +402,6 @@ __all__ = [
     "AlphaEstimate",
     "ReductionSettings",
     "estimate_alpha_for_run",
-    "red_green_curves",
     "reduce_run",
     "reduction_source",
     "resolve_reduction_grouping",

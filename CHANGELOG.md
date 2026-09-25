@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`integral-scan` fits several resonances at once, and inside a window.** Each
+  `LorentzianLCR`/`GaussianLCR` component of a field-scan model now starts on its
+  own resonance — found in turn against a straight baseline, and only where the
+  excursion falls to half height on both sides inside the scan, so a background
+  curving away at one end is never taken for one — and each is held inside the
+  scan with a width between a thousandth and a quarter of it. `Quadratic` gets
+  the data seed the other polynomial backgrounds had (it started at a slope of 1).
+  `--xmin`/`--xmax` fit one window of the scan axis; a window with no more points
+  than free parameters is refused; and a fit that does not converge is reported
+  with `FAILED` and the parameters it ended on, the scan kept. On the WiMDA
+  school's benzene ALC scans two resonances on a cubic background now fit
+  (solid: 19490 and 21467 G; liquid o-p: 28945 and 29539 G).
+- **`integral-scan --period green-red` differences each period's own integral.**
+  A point is the green period's integral asymmetry less the red one's, formed from
+  each period's counts under the reduction options, with the errors added in
+  quadrature — the differential ALC of an interleaved red/green scan, and an RF
+  scan no longer needs a time window to beat late-time noise.
+- **`survey` splits a folder's field scans the way an ALC campaign runs them.** A
+  field scan's members share the run note and period count (each scan is listed
+  with its note); a minority of runs precessing at their Larmor frequency — the
+  transverse calibrations beside a longitudinal scan — are left out of it; and a
+  field re-measured after the cryostat visited another temperature starts a
+  repeat of the scan. Interleaved offset passes, return sweeps and scans measured
+  alternately at two temperatures stay whole. A temperature scan that is only a
+  cross-section of a grid of longer field scans is counted, not listed.
+
 - **The agent CLI reduces with any detector pair, a background, t0 and t_good
   offsets, and the green − red period difference.** `reduce`, `alpha` and
   `integral-scan` share one set of reduction options: `--pair FWD/BWD` names the
@@ -393,6 +419,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precession column and the run's own fit before it is described as absent.
 
 ### Fixed
+
+- **HiFi red/green runs are deadtime-corrected with their own good frames.** The
+  loader took a two-period run's good frames from the first two of the DAE's four
+  (ramp up, field on, ramp down, field off), so red read 0 frames, fell back to
+  1, and `--deadtime from_file` pushed its asymmetry from 0.41 to 0.55. It now
+  reads `frames_period_daq`, one count per data period.
+- **HiFi runs swept with the Z coil on a persistent main field report the field
+  the muon sees.** Such a run records only the Z offset (`F=50` with the main at
+  20900 G); the loader now adds the logged main field, keeping both parts in the
+  metadata, so the benzene solution scans sit at ~20.9 kG, not at ±350 G.
 
 - **The fit wizard no longer reads a geometry token as fluorine.** A run titled `EuO TF60G`,
   `EuO ZF` or `sample LF100` "suggested fluorine" and promoted the F–μ–F family; an `F`

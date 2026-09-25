@@ -49,8 +49,6 @@ from asymmetry.core.transform.integral import (
 from asymmetry.core.utils.constants import ORDER_KEYS, PeriodMode
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Callable
-
     from numpy.typing import NDArray
 
     #: A reduced ``(time, asymmetry, error)`` curve.
@@ -669,7 +667,6 @@ def build_rf_difference_scan(
     t_max: float | None = None,
     mode: PeriodMode | str = PeriodMode.GREEN_MINUS_RED,
     order_key: str = "field",
-    red_green: Callable[[Run], tuple[_Curve, _Curve] | None] = _red_green_reduced,
 ) -> FieldScan:
     """Assemble an RF-µSR period-difference integral-asymmetry field scan.
 
@@ -695,12 +692,6 @@ def build_rf_difference_scan(
     order_key
         ``"field"`` (default), ``"temperature"`` or ``"run"`` — the x-axis the
         points are ordered by.
-    red_green
-        The red and green percent-scale ``(time, asymmetry, error)`` curves of a
-        run, or ``None`` for a run that is not two-period. The default reads the
-        loader's ``period_reduced`` cache (alpha 1, no corrections); a caller
-        with its own reduction settings passes a function that reduces each
-        :func:`period_run` under them.
 
     Returns
     -------
@@ -727,7 +718,7 @@ def build_rf_difference_scan(
             continue
         run_number = int(run.run_number)
 
-        rg = red_green(run)
+        rg = _red_green_reduced(run)
         if rg is None:
             excluded.append((run_number, "not a two-period (red/green) run"))
             continue
