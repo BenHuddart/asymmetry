@@ -14,7 +14,8 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._recipes import parse_fix
-from asymmetry.cli._runs import resolve_run, resolve_runs
+from asymmetry.cli._reduction import add_reduction_arguments, describe, reduction_settings
+from asymmetry.cli._runs import resolve_runs
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -26,13 +27,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("folder", help="Directory holding the run files")
     parser.add_argument("--runs", required=True, help="Run numbers in the scan")
     parser.add_argument("--name", default="integral-scan", help="Stored scan name")
-    parser.add_argument("--alpha", type=float, default=None, help="Fixed detector balance")
-    parser.add_argument(
-        "--alpha-from", type=int, default=None, dest="alpha_from", help="Estimate alpha on this run"
-    )
-    parser.add_argument(
-        "--period", default=None, metavar="RED|GREEN|N", help="Select one acquisition period"
-    )
+    add_reduction_arguments(parser, background=False)
     parser.add_argument("--tmin", type=float, default=None, help="Integration-window start / µs")
     parser.add_argument("--tmax", type=float, default=None, help="Integration-window end / µs")
     parser.add_argument("--method", choices=["integral", "differential"], default="integral")
@@ -92,17 +87,6 @@ def _regions(text: str | None) -> list[tuple[float, float]]:
     return regions
 
 
-def _selected(load_result, period: str | None, run_number: int):
-    from asymmetry.core.io.periods import select_period
-
-    try:
-        if period is not None:
-            return select_period(load_result, period)
-        return load_result[0] if isinstance(load_result, list) else load_result
-    except (TypeError, ValueError) as exc:
-        raise UserError(f"Run {run_number}: {exc}") from None
-
-
 def run(args: argparse.Namespace) -> None:
     from asymmetry.cli import plots
     from asymmetry.core.io import load
@@ -111,10 +95,8 @@ def run(args: argparse.Namespace) -> None:
         field_scan_payload,
         fit_integral_scan,
     )
-    from asymmetry.core.workflow.reduction import estimate_alpha_for_run
+    from asymmetry.core.workflow.reduction import reduction_source
 
-    if args.alpha is not None and args.alpha_from is not None:
-        raise UserError("Pass either --alpha or --alpha-from, not both.")
     if args.baseline is not None and args.baseline_regions is None:
         raise UserError("--baseline requires --baseline-regions LO:HI,...")
     if args.baseline is None and args.baseline_regions is not None:
@@ -137,23 +119,17 @@ def run(args: argparse.Namespace) -> None:
     name = checked_name(args.name, flag="--name")
     workdir = workdir_for(folder, args.workdir)
 
-    if args.alpha_from is not None:
-        path = resolve_run(folder, args.alpha_from)
-        calibration = _selected(load(str(path)), args.period, args.alpha_from)
-        alpha = estimate_alpha_for_run(calibration.run).alpha
-        alpha_source = f"estimated:{args.alpha_from}"
-    elif args.alpha is not None:
-        alpha, alpha_source = float(args.alpha), "user"
-    else:
-        alpha, alpha_source = 1.0, "assumed"
-
-    datasets = [
-        _selected(load(str(path)), args.period, run_number) for run_number, _prefix, path in targets
-    ]
+    settings = reduction_settings(args, folder)
+    datasets = []
+    for run_number, _prefix, path in targets:
+        try:
+            datasets.append(reduction_source(load(str(path)), settings.period))
+        except (TypeError, ValueError) as exc:
+            raise UserError(f"Run {run_number}: {exc}") from None
     try:
         scan = build_integral_scan(
             datasets,
-            alpha=alpha,
+            settings,
             t_min=args.tmin,
             t_max=args.tmax,
             method=args.method,
@@ -192,9 +168,7 @@ def run(args: argparse.Namespace) -> None:
         "name": name,
         "folder": str(folder),
         "runs": [run for run, _prefix, _path in targets],
-        "alpha": alpha,
-        "alpha_source": alpha_source,
-        "period": args.period,
+        "settings": settings.to_dict(),
         "t_min": args.tmin,
         "t_max": args.tmax,
         "scan": field_scan_payload(scan),
@@ -227,10 +201,10 @@ def run(args: argparse.Namespace) -> None:
     if args.json:
         emit_json(payload(**result_payload))
         return
-    print(_render(result_payload))
+    print(_render(result_payload, settings))
 
 
-def _render(result: dict) -> str:
+def _render(result: dict, settings) -> str:
     points = result["scan"]["points"]
     rows = [
         [
@@ -246,7 +220,7 @@ def _render(result: dict) -> str:
         "",
         render_table(["run", "x", "integral A", "error"], rows),
         "",
-        f"alpha {result['alpha']:.4f} ({result['alpha_source']}), period {result['period'] or 'default'}",
+        describe(settings),
     ]
     if result["fit"] is not None:
         fit = result["fit"]

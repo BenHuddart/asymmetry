@@ -8,10 +8,17 @@ import pytest
 
 from asymmetry import __version__, cli
 from asymmetry.cli._output import SCHEMA
+from asymmetry.core.data.dataset import Run
 from tests.core.conftest import CALIBRATION_RUN
 
 
 class _FakeRun:
+    run = Run(
+        run_number=1,
+        histograms=[],
+        grouping={"groups": {1: [1], 2: [2]}, "forward_group": 1, "backward_group": 2},
+    )
+
     def summary(self) -> str:
         return "fake run summary"
 
@@ -51,14 +58,17 @@ def test_info_json_payload_carries_the_run_identity_and_its_metadata(
     # tree — which would bury it.
     assert payload["metadata"]["temperature"] == pytest.approx(5.0)
     assert "nexus_fields" not in payload["metadata"]
+    assert payload["groups"] == {"1": "Group 1", "2": "Group 2"}
+    assert payload["default_pair"] == [1, 2]
 
 
-def test_info_without_json_still_prints_only_the_summary(workflow_folder, capsys) -> None:
+def test_info_without_json_prints_the_summary_and_the_groups(workflow_folder, capsys) -> None:
     path = workflow_folder / f"SIM{CALIBRATION_RUN:08d}.nxs"
     cli.main(["info", str(path)])
 
     out = capsys.readouterr().out
     assert out.startswith("MuonDataset")
+    assert "Groups      : 1 Group 1, 2 Group 2  (default pair Group 1/Group 2)" in out
     assert "schema" not in out
 
 

@@ -859,6 +859,39 @@ supplied concentration axis through `fit-global` and `trend --model Linear`. Rea
 header is deferred: the header's per-sensor means carry no labels, and which
 sensor is the sample differs between GPS and GPD.
 
+### Reduction options — 2026-09-25, on `feat/cli-reduction-options`
+
+Audit gap 4, taken up after the maintainer set the order of work: skill text,
+rubrics and Sonnet waves wait until the CLI unlocks the whole corpus, so this
+change is CLI and core only and the skill still declines RF resonance.
+`reduce`, `alpha` and `integral-scan` share `--pair`, `--deadtime`,
+`--background tail_fit|range[:FIRST:LAST]`, `--t0-offset`, `--t-good-offset`
+and `--period …|green-red` (`cli/_reduction.py`, one `ReductionSettings`);
+`survey --pair` measures precession on the named groups; `info` lists groups.
+Integral scans now form their counts through `corrected_grouped_counts`, so
+they take deadtime (GUI included) but still no background — the subtracted
+level's error is correlated across the window and is not propagated.
+
+Checked on the corpus (scratch outputs only):
+
+| Experiment | Before | Now |
+|---|---|---|
+| LiFeAs (GPS) | blocked | `--pair Up/Down --background range`: 5.41 MHz line at 400 G; σ 0.147 → 0.69 µs⁻¹ from 18 to 1.5 K, diamagnetic shift below ~16 K; `survey --pair Up/Down` finds `larmor` on the scan |
+| Benzene RF (DEVA) | blocked | `integral-scan --period green-red --deadtime from_file --tmin 0.1 --tmax 4 --model RFResonanceMuP --fix nu_RF=218`: A_μ 514.8, A_p 126.0 MHz, χ²ᵣ 1.08 |
+| Benzene repolarisation | "fully analysable" | `--deadtime from_file` works, but the curve is not one isotropic-hyperfine repolarisation (χ²ᵣ ≈ 460 with the six TF100 calibration runs excluded): needs the radical repolarisation model the audit listed as missing |
+| EuO (GPS) | background missing | `--background range` accepted |
+| Basics t0 | missing | a 10-bin `--t0-offset` moves a 100 G TF phase by 1.415 rad (2π·f·Δt = 1.411); the folder still needs splitting by prefix |
+
+Found along the way, not fixed here: `recipe --run` seeds `A_1` from A(0),
+which is negative on a pair whose TF phase is near 90° and sits below the
+amplitude's own lower bound, and never seeds `frequency` from the field
+(LiFeAs fits failed until `--initial` set both); the RF couplings start from
+benzene's defaults and do not converge from a start ~80 G off (seeding them
+from the scan needs ν_RF inside the estimator); under a t0 shift the From-file
+good window keeps its absolute last bin while a Manual window re-derives it in
+aligned coordinates (3 bins apart on the simulated runs); the survey does not
+itself notice that another pair carries the precession.
+
 ### Sonnet trend-fit pass — 2026-09-23, on `feat/trend-model-fit`
 
 Host: Claude Code. Model: `sonnet`. Runner: `tools/agent_eval/run_eval.py`,

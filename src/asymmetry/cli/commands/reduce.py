@@ -15,7 +15,8 @@ from asymmetry.cli._output import (
     payload,
     render_table,
 )
-from asymmetry.cli._runs import resolve_run, resolve_runs
+from asymmetry.cli._reduction import add_reduction_arguments, describe, reduction_settings
+from asymmetry.cli._runs import resolve_runs
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 #: Points averaged to report the initial asymmetry A(0).
@@ -34,20 +35,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         required=True,
         help="Run numbers, e.g. '17294-17296,17300'",
     )
-    parser.add_argument("--alpha", type=float, default=None, help="Fixed alpha to reduce with")
-    parser.add_argument(
-        "--alpha-from",
-        type=int,
-        default=None,
-        dest="alpha_from",
-        help="Estimate alpha on this run (a weak-TF calibration run) and use it",
-    )
-    parser.add_argument(
-        "--deadtime",
-        choices=["off", "from_file"],
-        default="off",
-        help="Deadtime correction (default: off, matching the GUI's fresh-run default)",
-    )
+    add_reduction_arguments(parser)
     parser.add_argument("--rebin", type=int, default=1, help="Merge this many bins (default: 1)")
     parser.add_argument(
         "--tmin",
@@ -72,15 +60,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Draw the reduced PNG only up to this time/µs; the stored reduction keeps it all",
     )
     parser.add_argument(
-        "--period",
-        default=None,
-        metavar="RED|GREEN|N",
-        help=(
-            "Select one period from a multi-period file. The common two-period "
-            "labels are red (period 1) and green (period 2)"
-        ),
-    )
-    parser.add_argument(
         "--plot", action="store_true", help="Write plots/reduced-<run>.png for each run"
     )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
@@ -92,54 +71,19 @@ def run(args: argparse.Namespace) -> None:
     """Reduce every named run, caching each result in the work directory."""
     from asymmetry.cli import plots
     from asymmetry.core.io import load
-    from asymmetry.core.io.periods import period_count, select_period
+    from asymmetry.core.io.periods import period_count
     from asymmetry.core.workflow.reduction import (
-        ReductionSettings,
-        estimate_alpha_for_run,
         reduce_run,
+        reduction_source,
         resolve_reduction_grouping,
     )
     from asymmetry.core.workflow.survey import build_run_row, precession_evidence
     from asymmetry.core.workflow.workdir import ReducedEntry, reduction_digest
 
     folder = Path(args.folder)
-    if args.alpha is not None and args.alpha_from is not None:
-        raise UserError("Pass either --alpha or --alpha-from, not both.")
     if args.plot:
         plots.require_matplotlib()
-
-    if args.alpha_from is not None:
-        alpha_path = resolve_run(folder, args.alpha_from)
-        alpha_result = load(str(alpha_path))
-        try:
-            alpha_dataset = (
-                select_period(alpha_result, args.period)
-                if args.period is not None
-                else (alpha_result[0] if isinstance(alpha_result, list) else alpha_result)
-            )
-        except (TypeError, ValueError) as exc:
-            raise UserError(f"Run {args.alpha_from}: {exc}") from None
-        alpha = estimate_alpha_for_run(alpha_dataset.run).alpha
-        alpha_source = f"estimated:{args.alpha_from}"
-    elif args.alpha is not None:
-        alpha, alpha_source = float(args.alpha), "user"
-    else:
-        alpha, alpha_source = 1.0, "assumed"
-
-    try:
-        settings = ReductionSettings(
-            alpha=alpha,
-            alpha_source=alpha_source,
-            deadtime=args.deadtime,
-            rebin=args.rebin,
-            t_min=args.tmin,
-            t_max=args.tmax,
-            period=args.period,
-        )
-    except ValueError as exc:
-        # ReductionSettings owns the vocabulary the CLI accepts; a value it
-        # rejects is the user's, so it exits 1 with a message, not 2.
-        raise UserError(str(exc)) from None
+    settings = reduction_settings(args, folder, rebin=args.rebin, t_min=args.tmin, t_max=args.tmax)
 
     targets = resolve_runs(folder, args.runs)
     workdir = workdir_for(folder, args.workdir)
@@ -155,17 +99,11 @@ def run(args: argparse.Namespace) -> None:
     entries: list[dict[str, Any]] = []
     plot_paths: list[Path] = []
     for run_number, prefix, path in targets:
-        result = load(str(path))
         try:
-            dataset_in = (
-                select_period(result, args.period)
-                if args.period is not None
-                else (result[0] if isinstance(result, list) else result)
-            )
+            dataset_in = reduction_source(load(str(path)), settings.period)
+            grouping = resolve_reduction_grouping(dataset_in.run, settings)
         except (TypeError, ValueError) as exc:
             raise UserError(f"Run {run_number}: {exc}") from None
-        source_run = dataset_in.run
-        grouping = resolve_reduction_grouping(source_run, settings)
         digest = reduction_digest(source_file=path, grouping=grouping, settings=settings)
 
         if workdir.is_current(run_number, digest):
@@ -173,7 +111,10 @@ def run(args: argparse.Namespace) -> None:
             entry = workdir.entry(run_number)
             recomputed = False
         else:
-            dataset = reduce_run(source_run, settings)
+            try:
+                dataset = reduce_run(dataset_in.run, settings)
+            except ValueError as exc:
+                raise UserError(str(exc)) from None
             row = build_run_row(
                 dataset_in,
                 path=path,
@@ -267,9 +208,7 @@ def _render(
     lines = [
         render_table(headers, rows),
         "",
-        f"alpha {settings.alpha:.4f} ({settings.alpha_source}), "
-        f"deadtime {settings.deadtime}, background {settings.background}, "
-        f"rebin {settings.rebin}, period {settings.period or 'default'}",
+        describe(settings),
         f"{len(entries)} run(s) reduced into {workdir_root}"
         + (f" ({reused} reused from cache)" if reused else ""),
     ]

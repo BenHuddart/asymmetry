@@ -583,12 +583,16 @@ class FolderSurvey:
     #: ``True`` when the directory held more entries than the scan cap, so
     #: ``runs`` may be missing files that exist (see ``scan_run_files``).
     truncated: bool
+    #: The forward/backward groups precession was measured on; ``None`` is
+    #: each file's own pair.
+    pair: tuple[str, str] | None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
         return {
             "folder": self.folder,
             "truncated": self.truncated,
+            "pair": None if self.pair is None else list(self.pair),
             "runs": [row.to_dict() for row in self.runs],
             "calibration_candidates": [c.to_dict() for c in self.calibration_candidates],
             "best_calibration_run": self.best_calibration_run,
@@ -859,14 +863,14 @@ def _calibration_candidates(
     return candidates, best_run
 
 
-def survey_folder(folder: str | Path) -> FolderSurvey:
+def survey_folder(folder: str | Path, *, pair: tuple[str, str] | None = None) -> FolderSurvey:
     """Load every run file in *folder* and report what the experiment contains.
 
     Every run is also reduced under the default
-    :class:`~asymmetry.core.workflow.reduction.ReductionSettings` so its
-    precession can be measured (see :func:`precession_evidence`); the file is
-    loaded once and that one :class:`~asymmetry.core.data.dataset.Run` is
-    reduced, never re-read.
+    :class:`~asymmetry.core.workflow.reduction.ReductionSettings` — on *pair*
+    when one is named — so its precession can be measured (see
+    :func:`precession_evidence`); the file is loaded once and that one
+    :class:`~asymmetry.core.data.dataset.Run` is reduced, never re-read.
 
     Raises :class:`ValueError` when *folder* is not a directory (from
     :func:`asymmetry.core.io.run_range.scan_run_files`).
@@ -876,7 +880,7 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
 
     folder = Path(folder)
     found = scan_run_files(folder)
-    settings = ReductionSettings()
+    settings = ReductionSettings(pair=pair)
 
     rows: list[RunRow] = []
     metadatas: list[dict[str, Any] | None] = []
@@ -899,7 +903,7 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
         )
         metadatas.append(dataset.run.metadata)
         if calibration_verdict(dataset.run.metadata, dataset.field, precession)[0] is not None:
-            alphas[run_number] = estimate_alpha_for_run(dataset.run).alpha
+            alphas[run_number] = estimate_alpha_for_run(dataset.run, settings).alpha
 
     candidates, best_run = _calibration_candidates(rows, metadatas, alphas)
 
@@ -912,6 +916,7 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
         temperature_departures=temperature_departures(rows),
         scans=_scan_groups(rows),
         truncated=found.truncated,
+        pair=pair,
     )
 
 
