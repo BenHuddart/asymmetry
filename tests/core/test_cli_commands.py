@@ -769,11 +769,18 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
 
     _two_identical_periods(monkeypatch)
     two_period_load = io.load
-    offsets = iter([-43.0, -45.0])
+    # A probe reading -1.25 per gauss about a 950-unit zero offset, at two fields:
+    # the step converts by that slope, which one run's ratio of means would miss.
+    logs = iter([(9000.0, 43.0), (10000.0, 45.0)])
 
     def _with_offset(path):
         dataset = two_period_load(path)
-        dataset.run.metadata["period_field_offset_gauss"] = next(offsets)
+        main, step = next(logs)
+        dataset.run.metadata["nexus_time_series"] = {
+            "Field_Main": {"values": [main]},
+            "Field_Hall_Z": {"values": [950.0 - 1.25 * main]},
+        }
+        dataset.run.metadata["period_hall_offset"] = step * 1.25
         return dataset
 
     monkeypatch.setattr("asymmetry.core.io.load", _with_offset)
@@ -802,7 +809,7 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     assert "period field offset (red - green): -44.00 G, mean of 2 run(s)" in out
     assert "--fix dB=44.00" in out
 
-    offsets = iter([-43.0, -45.0])
+    logs = iter([(9000.0, 43.0), (10000.0, 45.0)])
     cli.main([*base, "--json"])
     data = _json_output(capsys)
     assert data["period_field_offset"] == {"gauss": pytest.approx(-44.0), "runs": 2}

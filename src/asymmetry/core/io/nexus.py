@@ -210,25 +210,30 @@ def _add_main_field(metadata: dict[str, Any], time_series: dict[str, dict[str, A
     metadata["field_source"] = "main+sweep"
 
 
-def _add_period_field_offset(
+def _add_period_hall_offset(
     metadata: dict[str, Any],
     time_series: dict[str, dict[str, Any]],
     data_periods: list[int],
 ) -> None:
-    """Record ``period_field_offset_gauss``, the red period's field less the green's.
+    """Record ``period_hall_offset``, the red period's Hall reading less the green's.
 
     HiFi logs no red/green coil current, but its Hall probe (``Field_Hall_Z``)
     sees the coil: each Hall sample belongs to the DAE period in force at its
     time (``Beamlog_Period_Num``, sample-and-hold), and the red and green data
     periods (*data_periods*, their DAE period numbers) differ by the offset.
-    Medians, so a field ramp spilling into a period does not drag it; scaled to
-    gauss by the run's ``Field_Main``/``Field_Hall_Z`` ratio.
+    Medians, so a field ramp spilling into a period does not drag it. The step
+    stays in probe units: one run cannot convert a difference to gauss (see
+    :func:`asymmetry.core.workflow.integral_scan.period_field_offset_gauss`), so
+    it is recorded only beside the ``Field_Main`` log that conversion reads.
     """
     periods = time_series.get("Beamlog_Period_Num")
     hall = time_series.get("Field_Hall_Z")
-    main = active_series_mean(time_series.get("Field_Main"))
-    hall_mean = active_series_mean(hall)
-    if periods is None or main is None or hall_mean in (None, 0.0) or len(data_periods) != 2:
+    if (
+        periods is None
+        or hall is None
+        or active_series_mean(time_series.get("Field_Main")) is None
+        or len(data_periods) != 2
+    ):
         return
     change_times, period_numbers = _logged_samples(periods)
     order = np.argsort(change_times, kind="stable")
@@ -239,9 +244,7 @@ def _add_period_field_offset(
     red, green = (hall_values[active & (period_of_sample == number)] for number in data_periods)
     if not red.size or not green.size:
         return
-    metadata["period_field_offset_gauss"] = (main / hall_mean) * float(
-        np.median(red) - np.median(green)
-    )
+    metadata["period_hall_offset"] = float(np.median(red) - np.median(green))
 
 
 def _logged_samples(entry: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
@@ -483,7 +486,7 @@ class NexusLoader(BaseLoader):
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
-        _add_period_field_offset(
+        _add_period_hall_offset(
             metadata_base, time_series, self._data_periods(entry, len(counts_periods))
         )
         logged_temperature = self._record_logged_sample_temperature(metadata_base, time_series)
@@ -695,7 +698,7 @@ class NexusLoader(BaseLoader):
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
-        _add_period_field_offset(
+        _add_period_hall_offset(
             metadata_base, time_series, self._data_periods(entry, len(counts_periods))
         )
         logged_temperature = self._record_logged_sample_temperature(metadata_base, time_series)

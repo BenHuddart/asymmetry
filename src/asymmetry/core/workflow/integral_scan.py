@@ -22,6 +22,7 @@ from asymmetry.core.fitting.field_scan import (
 )
 from asymmetry.core.fitting.parameter_models import suggest_model_seeds
 from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.io.periods import (
     GREEN_INDEX,
     RED_INDEX,
@@ -105,6 +106,26 @@ def build_integral_scan(
         + [*red.excluded, *green.excluded],
         units=red.units,
     )
+
+
+def period_field_offset_gauss(runs: Iterable[Run]) -> tuple[float, int] | None:
+    """The scan's mean red − green field offset in gauss, and how many runs it averages.
+
+    Each run logs the step in Hall-probe units (``period_hall_offset``). The
+    probe reads the main field through a linear response with a zero offset of
+    order a kilogauss, so a *difference* converts by the slope
+    ``dField_Main/dField_Hall_Z`` — regressed over the runs' active means, not
+    one run's ratio of means, which carries the zero offset. ``None`` when fewer
+    than two runs log the step at distinct fields, where no slope is measured.
+    """
+    logged = [run.metadata for run in runs if "period_hall_offset" in run.metadata]
+    hall = np.array([active_series_mean(m["nexus_time_series"]["Field_Hall_Z"]) for m in logged])
+    main = np.array([active_series_mean(m["nexus_time_series"]["Field_Main"]) for m in logged])
+    if np.unique(hall).size < 2:
+        return None
+    slope = float(np.polyfit(hall, main, 1)[0])
+    step = float(np.mean([m["period_hall_offset"] for m in logged]))
+    return slope * step, len(logged)
 
 
 def _resolved(run: Run, settings: ReductionSettings) -> Run:
@@ -286,6 +307,7 @@ def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
 
 
 __all__ = [
+    "period_field_offset_gauss",
     "build_integral_scan",
     "field_scan_payload",
     "fit_integral_scan",

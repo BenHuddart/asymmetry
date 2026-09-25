@@ -100,6 +100,7 @@ def run(args: argparse.Namespace) -> None:
         build_integral_scan,
         field_scan_payload,
         fit_integral_scan,
+        period_field_offset_gauss,
     )
     from asymmetry.core.workflow.reduction import GREEN_MINUS_RED, reduction_source
 
@@ -149,13 +150,12 @@ def run(args: argparse.Namespace) -> None:
         reasons = "; ".join(f"{run}: {reason}" for run, reason in scan.excluded)
         raise UserError(f"No runs contributed to the integral scan. {reasons}")
 
-    # The red period's field less the green's, as each run's Hall probe logged it.
-    offsets = [
-        dataset.run.metadata["period_field_offset_gauss"]
-        for dataset in datasets
+    # The red period's field less the green's, from the Hall probe each run logged.
+    offset = (
+        period_field_offset_gauss([dataset.run for dataset in datasets])
         if settings.period == GREEN_MINUS_RED
-        and "period_field_offset_gauss" in dataset.run.metadata
-    ]
+        else None
+    )
 
     fit_scan = scan
     fit_payload = None
@@ -190,7 +190,7 @@ def run(args: argparse.Namespace) -> None:
         "fit_scan": field_scan_payload(fit_scan) if fit_payload is not None else None,
         "fit": fit_payload,
         "period_field_offset": (
-            {"gauss": sum(offsets) / len(offsets), "runs": len(offsets)} if offsets else None
+            None if offset is None else {"gauss": offset[0], "runs": offset[1]}
         ),
     }
     # The stored scan carries its own path and its plot's, so an agent reading

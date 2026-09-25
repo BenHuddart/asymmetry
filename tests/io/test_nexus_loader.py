@@ -543,10 +543,10 @@ def _write_log(group, name: str, times, values) -> None:
         (None, 1, 2),
     ],
 )
-def test_a_red_green_run_records_its_period_field_offset(
+def test_a_red_green_run_records_its_period_hall_offset(
     tmp_path, loader: NexusLoader, period_type, red_period: int, green_period: int
 ) -> None:
-    """The Hall probe, binned by the DAE period in force, gives the red field less the green."""
+    """The Hall probe, binned by the DAE period in force, gives the red reading less the green."""
     path = tmp_path / "run_rg.nxs"
     _write_v2_file(path, multiperiod=True)
     change_times = np.arange(8) * 25.0
@@ -570,17 +570,15 @@ def test_a_red_green_run_records_its_period_field_offset(
 
     dataset = loader.load(str(path))
 
-    hall_to_main = 9500.0 / float(np.mean(hall[times >= 0.0]))
-    assert dataset.metadata["period_field_offset_gauss"] == pytest.approx(45.0 * hall_to_main)
-    assert dataset.metadata["period_field_offset_gauss"] < 0.0
+    assert dataset.metadata["period_hall_offset"] == pytest.approx(45.0)
 
 
-def test_a_run_without_the_period_logs_records_no_period_field_offset(
+def test_a_run_without_the_period_logs_records_no_period_hall_offset(
     tmp_path, loader: NexusLoader
 ) -> None:
     path = tmp_path / "run_v2_multi.nxs"
     _write_v2_file(path, multiperiod=True)
-    assert "period_field_offset_gauss" not in loader.load(str(path)).metadata
+    assert "period_hall_offset" not in loader.load(str(path)).metadata
 
 
 def test_load_v2_multiperiod(tmp_path, loader: NexusLoader) -> None:
