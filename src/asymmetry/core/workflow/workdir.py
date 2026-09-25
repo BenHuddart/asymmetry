@@ -35,6 +35,11 @@ sidecar was written under. A cached entry whose digest no longer matches is
 stale and is recomputed, never trusted; one written under an older schema is
 refused until ``reduce`` rewrites it.
 
+A series derived from other series (``kind`` in :data:`DERIVED_SERIES_KINDS`)
+records a :func:`series_digest` of what it read from each member, and is
+refused as stale once a member no longer matches — refitted, its trend fit
+replaced, or removed — for the same reason: it is rebuilt, never trusted.
+
 Names a caller chooses — a recipe's, a series' — become path components under
 this directory, so every path built from one goes through :func:`safe_name`.
 """
@@ -64,8 +69,20 @@ from asymmetry.core.workflow.reduction import ReductionSettings
 #: stored series its ``trend`` and ``trend_fits``. 3: reduction settings carry
 #: the pair, background range and t0/t_good offsets. 4: the manifest records the
 #: instrument whose runs the session holds, and a reduced sidecar the runs it
-#: co-adds.
+#: co-adds; every stored series names its ``kind``, its trend rows carry a
+#: string ``key`` (a run number or a member series) instead of ``run``, its
+#: ``trend_fits`` are keyed ``param:expression``, and a derived series records
+#: its ``members`` with their digests.
 SCHEMA = 4
+
+#: Series built from other stored series rather than from runs: a batch of
+#: simultaneous fits (``global-batch``) and a stored law's parameter trended
+#: across series (``fit-trend``). Their trend rows are keyed by member series.
+DERIVED_SERIES_KINDS = frozenset({"global-batch", "fit-trend"})
+
+#: Keys of a stored series that are not its fit: the stamps, and the trend fits
+#: added to it afterwards.
+_NOT_THE_FIT = frozenset({"schema", "asymmetry_version", "trend_fits"})
 
 #: Default work-directory name, resolved against the current directory. Not
 #: hidden: an analyst who has to find a plot, delete a stale session or put a
@@ -228,6 +245,20 @@ def reduction_digest(
         "settings": settings.to_dict(),
     }
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def series_digest(series: dict[str, Any], fit_key: str | None) -> str:
+    """The digest of what a derived series reads from a stored member *series*.
+
+    The member's fit — everything but its stamps and trend fits, so fitting a
+    law to it does not change it — and, for a ``fit-trend``, the one trend fit
+    under *fit_key* (``None`` when that fit is gone).
+    """
+    payload = {key: value for key, value in series.items() if key not in _NOT_THE_FIT}
+    if fit_key is not None:
+        payload["trend_fit"] = series["trend_fits"].get(fit_key)
+    blob = json.dumps(_canonical(payload), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -608,8 +639,9 @@ class WorkDir:
     def read_series(self, name: str) -> dict[str, Any]:
         """The stored series payload.
 
-        :class:`KeyError` when there is none, or it was written under an older
-        schema (before it carried its trend and ``trend_fits``).
+        :class:`KeyError` when there is none, when it was written under an older
+        schema, and when it is a derived series one of whose members no longer
+        matches the digest it recorded (see the module docstring).
         """
         path = self.series_path(name)
         if not path.exists():
@@ -620,6 +652,21 @@ class WorkDir:
                 f"Series {name!r} was written by an older asymmetry (work-directory schema "
                 f"{data['schema']}, now {SCHEMA}); fit it again."
             )
+        if data["kind"] in DERIVED_SERIES_KINDS:
+            stored = set(self.series_names())
+            changed = [
+                member["series"]
+                for member in data["members"]
+                if member["series"] not in stored
+                or series_digest(self.read_series(member["series"]), member["fit"])
+                != member["digest"]
+            ]
+            if changed:
+                raise KeyError(
+                    f"Series {name!r} is stale: its member(s) {', '.join(changed)} were "
+                    f"refitted, had the trend fit it read replaced, or were removed since it "
+                    f"was built; build it again with the command that made it."
+                )
         return data
 
     def series_names(self) -> list[str]:
@@ -674,6 +721,7 @@ class WorkDir:
 
 
 __all__ = [
+    "DERIVED_SERIES_KINDS",
     "SCHEMA",
     "WORKDIR_NAME",
     "ReducedEntry",
@@ -685,4 +733,5 @@ __all__ = [
     "instrument_name",
     "reduction_digest",
     "safe_name",
+    "series_digest",
 ]

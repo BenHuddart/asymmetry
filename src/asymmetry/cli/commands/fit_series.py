@@ -126,7 +126,11 @@ def run(args: argparse.Namespace) -> None:
     )
     # Additive: so that a later `trend --plot` on this series (a separate
     # invocation, with no recipe in hand) can rebuild the model curve.
-    series_payload = outcome.to_dict() | {"recipe": recipe.to_dict(), "trend_fits": {}}
+    series_payload = outcome.to_dict() | {
+        "kind": "series",
+        "recipe": recipe.to_dict(),
+        "trend_fits": {},
+    }
     series_path = workdir.write_series(name, series_payload)
 
     plot_paths: list[Path] = []
@@ -177,13 +181,13 @@ def run(args: argparse.Namespace) -> None:
     lineless = lineless_end(outcome.trend)
     if lineless:
         folder_arg = shlex.quote(args.folder)
-        runs = ",".join(str(run) for run in lineless)
+        runs = ",".join(lineless)
         middle = lineless[len(lineless) // 2]
-        x_by_run = {row["run"]: row["x"] for row in outcome.trend.rows}
+        x_by_key = {row["key"]: row["x"] for row in outcome.trend.rows}
         supplied = (
             ""
             if args.x is None
-            else " --x " + ",".join(f"{run}={x_by_run[run]:g}" for run in lineless)
+            else " --x " + ",".join(f"{key}={x_by_key[key]:g}" for key in lineless)
         )
         print(
             f"NOTE: runs {runs} show no line in the survey and this model does not describe "

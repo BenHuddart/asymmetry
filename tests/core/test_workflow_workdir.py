@@ -29,6 +29,7 @@ from asymmetry.core.workflow.workdir import (
     file_fingerprint,
     reduction_digest,
     safe_name,
+    series_digest,
 )
 from tests.core.conftest import SCAN_RUNS
 
@@ -398,7 +399,7 @@ def test_a_series_payload_is_stamped_and_read_back(reduced) -> None:
     workdir, _dataset, _entry, _path, _grouping, _settings = reduced
     assert workdir.series_names() == []
 
-    workdir.write_series("scan", {"name": "scan", "results": []})
+    workdir.write_series("scan", {"name": "scan", "kind": "series", "results": []})
 
     stored = workdir.read_series("scan")
     assert stored["schema"] == SCHEMA
@@ -406,6 +407,62 @@ def test_a_series_payload_is_stamped_and_read_back(reduced) -> None:
     assert workdir.series_names() == ["scan"]
     with pytest.raises(KeyError, match="No series"):
         workdir.read_series("missing")
+
+
+def _derived(workdir: WorkDir, fit: str | None) -> None:
+    """Store member ``m`` and the series ``d`` built from it (reading trend fit *fit*)."""
+    workdir.write_series(
+        "m",
+        {"kind": "global", "shared": {"Lambda": 0.3}, "trend_fits": {"Lambda:Linear": {"m": 1.0}}},
+    )
+    workdir.write_series(
+        "d",
+        {
+            "kind": "fit-trend" if fit else "global-batch",
+            "members": [
+                {"series": "m", "fit": fit, "digest": series_digest(workdir.read_series("m"), fit)}
+            ],
+            "trend_fits": {},
+        },
+    )
+
+
+def test_a_derived_series_is_stale_once_a_member_is_refitted(tmp_path: Path) -> None:
+    workdir = WorkDir(tmp_path)
+    _derived(workdir, None)
+    assert workdir.read_series("d")["members"][0]["series"] == "m"
+
+    member = workdir.read_series("m")
+    # A law fitted to the member leaves the batch it belongs to standing ...
+    member["trend_fits"]["Lambda:Exponential"] = {"m": 2.0}
+    workdir.write_series("m", member)
+    workdir.read_series("d")
+    # ... a refit does not.
+    member["shared"]["Lambda"] = 0.4
+    workdir.write_series("m", member)
+    with pytest.raises(KeyError, match="Series 'd' is stale: its member\\(s\\) m were refitted"):
+        workdir.read_series("d")
+
+
+def test_a_fit_trend_is_stale_once_the_trend_fit_it_read_is_replaced_or_removed(
+    tmp_path: Path,
+) -> None:
+    workdir = WorkDir(tmp_path)
+    _derived(workdir, "Lambda:Linear")
+    member = workdir.read_series("m")
+    member["trend_fits"]["Lambda:Exponential"] = {"m": 2.0}
+    workdir.write_series("m", member)
+    workdir.read_series("d")
+
+    member["trend_fits"]["Lambda:Linear"] = {"m": 1.5}
+    workdir.write_series("m", member)
+    with pytest.raises(KeyError, match="is stale"):
+        workdir.read_series("d")
+
+    _derived(workdir, "Lambda:Linear")
+    workdir.series_path("m").unlink()
+    with pytest.raises(KeyError, match="is stale"):
+        workdir.read_series("d")
 
 
 def _restamp(path: Path, schema: int) -> None:
@@ -435,7 +492,7 @@ def test_the_digest_folds_in_the_schema(reduced, monkeypatch) -> None:
 
 def test_a_series_from_an_older_schema_is_refused(reduced) -> None:
     workdir, _dataset, _entry, _path, _grouping, _settings = reduced
-    workdir.write_series("scan", {"name": "scan", "results": []})
+    workdir.write_series("scan", {"name": "scan", "kind": "series", "results": []})
     _restamp(workdir.series_path("scan"), SCHEMA - 1)
 
     with pytest.raises(KeyError, match="Series 'scan' was written by an older asymmetry"):

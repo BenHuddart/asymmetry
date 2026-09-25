@@ -44,8 +44,6 @@ do it*, and stop without producing fit numbers.
 | Maximum-entropy spectra | `fourier` provides an FFT and peak table, not maximum entropy reconstruction. Do not describe its output as MaxEnt. |
 | Negative-muon (μ⁻) elemental analysis | Gamma spectra, elemental lines. Not asymmetry data. |
 | Rotating-reference-frame or RF-resonance runs | Titles or notes naming RF; data modulated at a reference frequency. |
-| A series of simultaneous groups | `fit-global` fits one group of runs jointly and `trend` reads that group's run-local parameters, but there is not yet one command that repeats the coupled fit for every temperature and trends the *shared* parameters. Fit and report each group separately; do not substitute independent fits. |
-| A trend of fitted trend parameters | `trend --model` fits one stored series. A law fitted *across* several such fits — an Arrhenius law through rate constants each fitted at one temperature — has no command. Report each fit's parameters; do not fit the second level by hand. |
 | A fragment of a published multi-field campaign | No self-contained scan in the survey's `scans` list, and fields the files do not record. Check `scans` first: two complete temperature scans at two recorded fields are analysable even with a large gap in run numbers between them. |
 
 A folder the tool can *load* is not automatically a folder the tool can
@@ -544,10 +542,19 @@ and its table and stored trend carry every run-local parameter along that
 axis — so `asymmetry trend <folder> --series <name>` reads it, and
 `trend --model` can fit it: a muonium relaxation rate fitted per sample with a
 shared amplitude, ordered by `--order concentration --x …`, gives the rate
-constant from `trend --model Linear`. Repeat `fit-global` for each temperature
-group. There is not yet a batch command that trends a sequence of global fits,
-so quote each stored group's shared values and uncertainties directly rather
-than presenting independent fits as a coupled analysis.
+constant from `trend --model Linear`.
+
+For one group per temperature, fit them all at once with
+`--groups "a,b,c;d,e,f;…"` in place of `--runs`: each group is stored as
+`<name>-1`, `<name>-2`, … and `<name>` itself tabulates every group's *shared*
+parameters against `--group-order` (default `temperature`, each group's mean
+setpoint; or any name with `--group-x 1=…,2=…`), which `trend --model` fits
+like any series. A law through a parameter fitted per group — an Arrhenius law
+through the rate constant each group's `trend --model Linear` gave — is
+`trend <folder> --series kmu --from-fits <name>-1,<name>-2,… --param m
+--model Arrhenius`: it stores `kmu` with one row per group, against each
+group's temperature (or `--order NAME --x <name>-1=…`). A derived series whose
+member was refitted is refused as stale; rebuild it with the same command.
 
 ### Step 5b — build and fit an integral-asymmetry field scan
 

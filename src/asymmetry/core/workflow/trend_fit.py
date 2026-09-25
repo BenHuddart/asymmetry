@@ -7,12 +7,16 @@ the same four extra deterministic starts, so a critical-temperature or Redfield
 fit converges here exactly when it converges there. Bounds are the model's
 static defaults (a rate's floor at zero), as for a fit recipe.
 
-Which points enter is explicit. Excluding a run is the analyst's call, never
+Which points enter is explicit. Excluding a point is the analyst's call, never
 automatic (as for a series, see :mod:`asymmetry.core.fitting.member_quality`):
-every row with a value enters unless its run is named in ``exclude`` or it
+every row with a value enters unless its key is named in ``exclude`` or it
 falls outside the x range. The outcome reports every row left out with the
 reason, and every flagged row that entered with its flags, so the analyst
 sees exactly what the fit rests on.
+
+A stored fit's parameters can themselves be trended across series
+(:func:`fit_trend_table`) — a rate constant fitted at each temperature, then an
+Arrhenius law through them.
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ import numpy as np
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, fit_parameter_model
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.seeding import seed_trend_parameters
-from asymmetry.core.workflow.series import TrendTable
+from asymmetry.core.workflow.series import ScanAxis, TrendTable, build_trend_table
 
 #: Extra deterministic starts beyond the seeded one — the trend dialog's value.
 _EXTRA_STARTS = 4
@@ -41,11 +45,11 @@ class TrendFitOutcome:
     order_key: str
     x_min: float | None
     x_max: float | None
-    #: Runs whose rows entered the fit, in trend order.
-    runs: list[int]
-    #: ``{"run", "reason"}`` for every row that did not.
+    #: Keys of the rows that entered the fit, in trend order.
+    keys: list[str]
+    #: ``{"key", "reason"}`` for every row that did not.
     excluded: list[dict[str, Any]]
-    #: ``{"run", "flags"}`` for every row that entered carrying quality flags.
+    #: ``{"key", "flags"}`` for every row that entered carrying quality flags.
     flagged: list[dict[str, Any]]
     success: bool
     message: str
@@ -70,8 +74,8 @@ class TrendFitOutcome:
             "order_key": self.order_key,
             "x_min": self.x_min,
             "x_max": self.x_max,
-            "runs": list(self.runs),
-            "n_points": len(self.runs),
+            "keys": list(self.keys),
+            "n_points": len(self.keys),
             "excluded": [dict(entry) for entry in self.excluded],
             "flagged": [dict(entry) for entry in self.flagged],
             "success": self.success,
@@ -97,19 +101,20 @@ def fit_trend(
     x_max: float | None = None,
     initial: Mapping[str, float] | None = None,
     fixed: Mapping[str, float] | None = None,
-    exclude: Iterable[int] = (),
+    exclude: Iterable[str] = (),
 ) -> TrendFitOutcome:
     """Fit *expression* to the *param* column of *trend* against its x.
 
     ``initial`` replaces seeded start values, ``fixed`` holds parameters at a
-    value, and ``exclude`` names runs to leave out. Raises :class:`ValueError`
-    for a column the trend does not carry, an unknown model or parameter name,
-    an excluded run the trend does not hold, or too few points left to fit.
+    value, and ``exclude`` names row keys to leave out. Raises
+    :class:`ValueError` for a column the trend does not carry, an unknown model
+    or parameter name, an excluded key the trend does not hold, or too few
+    points left to fit.
     """
     value_columns = [
         column
         for column in trend.columns
-        if column not in ("run", "x", "flags", "survey_line_mhz") and not column.endswith("_err")
+        if column not in ("key", "x", "flags", "survey_line_mhz") and not column.endswith("_err")
     ]
     if param not in value_columns:
         raise ValueError(
@@ -125,28 +130,30 @@ def fit_trend(
             f"(it has {', '.join(model.param_names)})."
         )
 
-    rows_by_run = {int(row["run"]): row for row in trend.rows}
-    exclude = {int(run) for run in exclude}
-    strangers = sorted(exclude - set(rows_by_run))
+    rows_by_key = {row["key"]: row for row in trend.rows}
+    exclude = set(exclude)
+    strangers = sorted(exclude - set(rows_by_key))
     if strangers:
-        raise ValueError(f"Run(s) {', '.join(str(run) for run in strangers)} are not in the trend.")
+        raise ValueError(
+            f"Not in the trend: {', '.join(strangers)} (it holds {', '.join(rows_by_key)})."
+        )
 
-    runs: list[int] = []
+    keys: list[str] = []
     excluded: list[dict[str, Any]] = []
     flagged: list[dict[str, Any]] = []
     for row in trend.rows:
-        run = int(row["run"])
+        key = row["key"]
         reason = _exclusion_reason(row, param, x_min, x_max, exclude)
         if reason is not None:
-            excluded.append({"run": run, "reason": reason})
+            excluded.append({"key": key, "reason": reason})
             continue
-        runs.append(run)
+        keys.append(key)
         if row["flags"]:
-            flagged.append({"run": run, "flags": list(row["flags"])})
+            flagged.append({"key": key, "flags": list(row["flags"])})
 
-    x = np.asarray([rows_by_run[run]["x"] for run in runs], dtype=float)
-    y = np.asarray([rows_by_run[run][param] for run in runs], dtype=float)
-    y_err = np.asarray([rows_by_run[run][f"{param}_err"] for run in runs], dtype=float)
+    x = np.asarray([rows_by_key[key]["x"] for key in keys], dtype=float)
+    y = np.asarray([rows_by_key[key][param] for key in keys], dtype=float)
+    y_err = np.asarray([rows_by_key[key][f"{param}_err"] for key in keys], dtype=float)
     seeds = seed_trend_parameters(model, x, y)
     parameters = ParameterSet()
     for name in model.param_names:
@@ -161,10 +168,10 @@ def fit_trend(
             )
         )
     n_free = len(parameters.free_parameters)
-    if len(runs) <= n_free:
+    if len(keys) <= n_free:
         raise ValueError(
-            f"{len(runs)} point(s) are left to fit {n_free} free parameter(s) of "
-            f"{expression!r}; widen the range or readmit runs."
+            f"{len(keys)} point(s) are left to fit {n_free} free parameter(s) of "
+            f"{expression!r}; widen the range or readmit points."
         )
 
     result = fit_parameter_model(x, y, y_err, model, parameters, extra_starts=_EXTRA_STARTS, seed=0)
@@ -174,7 +181,7 @@ def fit_trend(
         order_key=trend.order_key,
         x_min=x_min,
         x_max=x_max,
-        runs=runs,
+        keys=keys,
         excluded=excluded,
         flagged=flagged,
         success=bool(result.success),
@@ -189,6 +196,57 @@ def fit_trend(
         units={name: model.param_info[name].unit for name in model.param_names},
         turning_point=turning_point(x, y, y_err),
     )
+
+
+def trend_fit_key(param: str, expression: str) -> str:
+    """The key a series stores a trend fit under: one per law on each column."""
+    return f"{param}:{expression}"
+
+
+def error_scale(fit: Mapping[str, Any]) -> float:
+    """√χ²ᵣ for a converged stored fit whose points scatter beyond their errors, else 1.
+
+    The fit's own errors assume the points' errors are right; when χ²ᵣ > 1 the
+    scatter says they are too small, and the errors scaled by √χ²ᵣ are the
+    honest ones.
+    """
+    return max(1.0, fit["reduced_chi_squared"]) ** 0.5 if fit["success"] else 1.0
+
+
+def fit_trend_table(
+    fits: Mapping[str, Mapping[str, Any]], param: str, axis: ScanAxis[str]
+) -> TrendTable:
+    """*param* of each member series' stored trend fit, against *axis*.
+
+    *fits* maps each member series to the stored :class:`TrendFitOutcome` dict
+    it contributes; the rows follow *axis*. Each row carries the parameter's
+    error scaled by :func:`error_scale`, so a law fitted through them weighs
+    each point by the honest error, and is flagged ``failed`` for a fit that
+    did not converge and ``bound_pinned`` for a parameter at a bound. Raises
+    :class:`ValueError` naming a member whose law has no parameter *param*.
+    """
+    lacking = sorted(name for name, fit in fits.items() if param not in fit["parameters"])
+    if lacking:
+        raise ValueError(
+            f"The trend fit of {', '.join(lacking)} has no parameter {param!r} "
+            f"(it has {', '.join(fits[lacking[0]]['parameters'])})."
+        )
+    entries: dict[str, dict[str, Any]] = {}
+    for name in sorted(fits, key=lambda name: (axis.values[name], name)):
+        fit = fits[name]
+        entries[name] = {
+            "x": axis.values[name],
+            "parameters": {param: fit["parameters"][param]},
+            # A parameter the law held has no error, and its row no weight.
+            "uncertainties": (
+                {param: fit["uncertainties"][param] * error_scale(fit)}
+                if param in fit["uncertainties"]
+                else {}
+            ),
+            "quality_flags": (["failed"] if not fit["success"] else [])
+            + (["bound_pinned"] if param in fit["params_at_bound"] else []),
+        }
+    return build_trend_table(entries, [param], axis.name)
 
 
 def turning_point(x: np.ndarray, y: np.ndarray, y_err: np.ndarray) -> float | None:
@@ -212,10 +270,10 @@ def _exclusion_reason(
     param: str,
     x_min: float | None,
     x_max: float | None,
-    exclude: set[int],
+    exclude: set[str],
 ) -> str | None:
     """Why *row* stays out of the fit, or ``None`` when it enters."""
-    if int(row["run"]) in exclude:
+    if row["key"] in exclude:
         return "excluded"
     if row[param] is None or row[f"{param}_err"] is None:
         return f"no {param} uncertainty"
@@ -224,4 +282,11 @@ def _exclusion_reason(
     return None
 
 
-__all__ = ["TrendFitOutcome", "fit_trend", "turning_point"]
+__all__ = [
+    "TrendFitOutcome",
+    "error_scale",
+    "fit_trend",
+    "fit_trend_table",
+    "trend_fit_key",
+    "turning_point",
+]

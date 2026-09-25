@@ -1,4 +1,8 @@
-"""``asymmetry trend`` — the parameter trend of a stored series, optionally fitted."""
+"""``asymmetry trend`` — the parameter trend of a stored series, optionally fitted.
+
+With ``--from-fits`` it first builds that series: one stored law's parameter
+from each of several series, against their temperature or supplied values.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from asymmetry.cli._axis import MEMBER_ORDER_DEFAULT, add_axis_arguments, member_axis
 from asymmetry.cli._output import (
     UserError,
     checked_name,
@@ -14,9 +19,10 @@ from asymmetry.cli._output import (
     format_number,
     payload,
     render_table,
+    render_trend,
 )
 from asymmetry.cli._recipes import parse_fix
-from asymmetry.cli._runs import parse_run_spec
+from asymmetry.cli._runs import parse_run_spec, reduced_datasets
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -27,7 +33,36 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Print, export or fit the parameter trend of a stored series",
     )
     parser.add_argument("folder", help="Directory holding the run files")
-    parser.add_argument("--series", required=True, help="Name the series was stored under")
+    parser.add_argument(
+        "--series",
+        required=True,
+        help="Name the series was stored under (with --from-fits, the name to store it under)",
+    )
+    parser.add_argument(
+        "--from-fits",
+        default=None,
+        metavar="SERIES,...",
+        help=(
+            "Build --series from these stored series: each one's trend-fit parameter "
+            "--param (e.g. a rate constant fitted per temperature), against --order"
+        ),
+    )
+    parser.add_argument(
+        "--fit",
+        default=None,
+        metavar="PARAM[:EXPR]",
+        help=(
+            "With --from-fits, the members' trend fit to read, by the column it was "
+            "fitted to (or column:expression); needed only when a member holds several"
+        ),
+    )
+    add_axis_arguments(
+        parser,
+        default=MEMBER_ORDER_DEFAULT,
+        noun="series",
+        plural="--from-fits series",
+        example="scan-1=0,scan-2=0.25",
+    )
     parser.add_argument("--csv", default=None, help="Also write the table to this CSV file")
     parser.add_argument(
         "--plot",
@@ -43,7 +78,14 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         metavar="EXPR",
         help="Fit this parameter-vs-x expression to --param, e.g. 'OrderParameter', 'Redfield'",
     )
-    parser.add_argument("--param", default=None, help="The trend column --model is fitted to")
+    parser.add_argument(
+        "--param",
+        default=None,
+        help=(
+            "The trend column --model is fitted to; with --from-fits, the members' "
+            "trend-fit parameter the built series tabulates (and --model fits)"
+        ),
+    )
     parser.add_argument("--xmin", type=float, default=None, help="Fit range start, in x units")
     parser.add_argument("--xmax", type=float, default=None, help="Fit range end, in x units")
     parser.add_argument(
@@ -63,8 +105,11 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--exclude",
         default=None,
-        metavar="RUNS",
-        help="Leave these runs out of the fit (every other run with a value enters)",
+        metavar="KEYS",
+        help=(
+            "Leave these rows out of the fit — runs, or member series for a trend built "
+            "from other series (every other row with a value enters)"
+        ),
     )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
     add_workdir_argument(parser, purpose="read and write")
@@ -72,13 +117,20 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    """Read the stored series, report its trend table and fit it when asked."""
+    """Read (or build) the stored series, report its trend table and fit it when asked."""
     from asymmetry.core.workflow.series import TrendTable
+    from asymmetry.core.workflow.workdir import DERIVED_SERIES_KINDS
 
+    if args.from_fits is None and (
+        args.fit is not None or args.x is not None or args.order != MEMBER_ORDER_DEFAULT
+    ):
+        raise UserError("--fit, --order and --x build a trend --from-fits.")
+    if args.from_fits is not None and args.param is None:
+        raise UserError("--from-fits needs --param NAME, the trend-fit parameter to tabulate.")
     fit_options = [
         flag
         for flag, value in (
-            ("--param", args.param),
+            ("--param", args.param if args.from_fits is None else None),
             ("--xmin", args.xmin),
             ("--xmax", args.xmax),
             ("--initial", args.initial or None),
@@ -98,21 +150,23 @@ def run(args: argparse.Namespace) -> None:
 
     workdir, _selection = workdir_for(Path(args.folder), args.workdir, args.instrument)
     name = checked_name(args.series, flag="--series")
-    stored = workdir.series_names()
-    if name not in stored:
-        known = ", ".join(stored) if stored else "none yet — run 'asymmetry fit-series' first"
-        raise UserError(f"No series {name!r} in {workdir.series_dir} (it holds: {known}).")
-
-    try:
-        series = workdir.read_series(name)
-    except KeyError as exc:
-        raise UserError(exc.args[0]) from None
+    series = (
+        _stored_series(workdir, name)
+        if args.from_fits is None
+        else _series_from_fits(args, workdir, name)
+    )
     trend = TrendTable(**series["trend"])
 
     fit = None
     if args.model is not None:
-        from asymmetry.core.workflow.trend_fit import fit_trend
+        from asymmetry.core.workflow.trend_fit import fit_trend, trend_fit_key
 
+        if args.exclude is None:
+            exclude: list[str] = []
+        elif series["kind"] in DERIVED_SERIES_KINDS:
+            exclude = [key.strip() for key in args.exclude.split(",")]
+        else:
+            exclude = [str(run) for run in parse_run_spec(args.exclude)]
         try:
             fit = fit_trend(
                 trend,
@@ -122,11 +176,12 @@ def run(args: argparse.Namespace) -> None:
                 x_max=args.xmax,
                 initial=parse_fix(args.initial, flag="--initial"),
                 fixed=parse_fix(args.fix),
-                exclude=parse_run_spec(args.exclude) if args.exclude else (),
+                exclude=exclude,
             ).to_dict()
         except ValueError as exc:
             raise UserError(str(exc)) from None
-        series["trend_fits"][args.param] = fit
+        series["trend_fits"][trend_fit_key(args.param, args.model)] = fit
+    if args.from_fits is not None or fit is not None:
         workdir.write_series(name, series)
 
     csv_path = None
@@ -155,6 +210,88 @@ def run(args: argparse.Namespace) -> None:
     print(_render(series, trend, fit, csv_path, plot_paths))
 
 
+def _stored_series(workdir, name: str) -> dict[str, Any]:
+    """The series stored as *name*; a user error naming what is stored when it cannot be read."""
+    stored = workdir.series_names()
+    if name not in stored:
+        known = ", ".join(stored) if stored else "none yet — run 'asymmetry fit-series' first"
+        raise UserError(f"No series {name!r} in {workdir.series_dir} (it holds: {known}).")
+    try:
+        return workdir.read_series(name)
+    except KeyError as exc:
+        raise UserError(exc.args[0]) from None
+
+
+def _series_from_fits(args: argparse.Namespace, workdir, name: str) -> dict[str, Any]:
+    """The ``fit-trend`` series ``--from-fits`` names: one row per member series."""
+    from asymmetry.core.workflow.trend_fit import fit_trend_table
+    from asymmetry.core.workflow.workdir import DERIVED_SERIES_KINDS, series_digest
+
+    names = list(dict.fromkeys(item.strip() for item in args.from_fits.split(",") if item.strip()))
+    if name in names:
+        raise UserError(f"--series {name} is the trend being built; it cannot be a member too.")
+    members = {member: _stored_series(workdir, member) for member in names}
+    fit_keys = {member: _chosen_fit(member, members[member], args.fit) for member in names}
+    if args.x is None:
+        runless = [member for member in names if members[member]["kind"] in DERIVED_SERIES_KINDS]
+        if runless:
+            raise UserError(
+                f"{', '.join(runless)} hold no runs to read {args.order} from; give every "
+                f"member's value with --order NAME --x SERIES=VALUE,..."
+            )
+        groups = {
+            member: reduced_datasets(
+                workdir, [result["run"] for result in members[member]["results"]]
+            )
+            for member in names
+        }
+    else:
+        # Supplied values are keyed by member alone; no run is read.
+        groups = {member: {} for member in names}
+    axis = member_axis(args.order, args.x, groups, key=str, flag="--x", noun="series")
+    try:
+        trend = fit_trend_table(
+            {member: members[member]["trend_fits"][fit_keys[member]] for member in names},
+            args.param,
+            axis,
+        )
+    except ValueError as exc:
+        raise UserError(str(exc)) from None
+    return {
+        "name": name,
+        "kind": "fit-trend",
+        "expression": f"{args.param} of {', '.join(sorted(set(fit_keys.values())))}",
+        "order_key": axis.name,
+        "free_params": [args.param],
+        "members": [
+            {
+                "series": member,
+                "fit": fit_keys[member],
+                "digest": series_digest(members[member], fit_keys[member]),
+            }
+            for member in names
+        ],
+        "trend": trend.to_dict(),
+        "trend_fits": {},
+    }
+
+
+def _chosen_fit(member: str, series: dict[str, Any], choice: str | None) -> str:
+    """The key of *member*'s trend fit ``--fit`` names: its only one when *choice* is None."""
+    fits = series["trend_fits"]
+    matching = [key for key, fit in fits.items() if choice is None or choice in (key, fit["param"])]
+    if len(matching) == 1:
+        return matching[0]
+    held = ", ".join(fits) if fits else "none"
+    if not fits:
+        advice = f"fit a law to it first (trend --series {member} --model EXPR --param NAME)"
+    elif matching:
+        advice = "name one with --fit PARAM:EXPR"
+    else:
+        advice = f"none is --fit {choice}"
+    raise UserError(f"Series {member} holds trend fits: {held}; {advice}.")
+
+
 def _plots(workdir, name: str, series: dict[str, Any], trend, fit: dict | None) -> list[Path]:
     """One trend plot per free parameter, or the fitted one with its curve."""
     from asymmetry.cli import plots
@@ -171,7 +308,7 @@ def _plots(workdir, name: str, series: dict[str, Any], trend, fit: dict | None) 
             )
             for param_name in series["free_params"]
         ]
-    fitted_x = [row["x"] for row in trend.rows if row["run"] in fit["runs"]]
+    fitted_x = [row["x"] for row in trend.rows if row["key"] in fit["keys"]]
     return [
         plots.plot_trend(
             trend.rows,
@@ -196,11 +333,10 @@ def _render(
     plot_paths: list[Path],
 ) -> str:
     """The human-readable trend table, then the fit when there is one."""
-    rows = [[_cell(row[column]) for column in trend.columns] for row in trend.rows]
     lines = [
         f"{series['name']} — {series['expression']}, ordered by {trend.order_key}",
         "",
-        render_table(trend.columns, rows),
+        render_trend(trend),
     ]
     if fit is not None:
         lines.extend(["", *_render_fit(fit, series["free_params"])])
@@ -355,10 +491,11 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
             else f"FAILED — {fit['message']}"
         ),
     ]
-    # A χ²ᵣ above 1 says the points scatter more than their own errors allow;
-    # the fit's errors scaled by √χ²ᵣ are the honest ones then, so they lead
-    # and the verdict below is judged on them.
-    scale = max(1.0, fit["reduced_chi_squared"]) ** 0.5 if fit["success"] else 1.0
+    from asymmetry.core.workflow.trend_fit import error_scale
+
+    # The scaled errors are the honest ones (see error_scale): they lead, and
+    # the verdict below is judged on them.
+    scale = error_scale(fit)
 
     def error(name: str, factor: float) -> str:
         if name in fit["fixed"]:
@@ -480,22 +617,11 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
     if fit["excluded"]:
         lines.append(
             "left out: "
-            + "; ".join(f"{entry['run']} ({entry['reason']})" for entry in fit["excluded"])
+            + "; ".join(f"{entry['key']} ({entry['reason']})" for entry in fit["excluded"])
         )
     if fit["flagged"]:
         lines.append(
             "flagged but fitted: "
-            + "; ".join(f"{entry['run']} ({', '.join(entry['flags'])})" for entry in fit["flagged"])
+            + "; ".join(f"{entry['key']} ({', '.join(entry['flags'])})" for entry in fit["flagged"])
         )
     return lines
-
-
-def _cell(value: Any) -> str:
-    """Render one trend cell for the terminal table."""
-    if value is None:
-        return "-"
-    if isinstance(value, list):
-        return ", ".join(str(item) for item in value) or "-"
-    if isinstance(value, float):
-        return f"{value:.6g}"
-    return str(value)

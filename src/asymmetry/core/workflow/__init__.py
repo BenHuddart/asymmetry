@@ -16,7 +16,12 @@ from asymmetry.core.workflow.fourier import (
     correlation_spectrum,
     fourier_spectrum,
 )
-from asymmetry.core.workflow.global_fit import GlobalFitOutcome, fit_global
+from asymmetry.core.workflow.global_fit import (
+    BatchOutcome,
+    GlobalFitOutcome,
+    fit_global,
+    fit_global_batch,
+)
 from asymmetry.core.workflow.integral_scan import (
     build_integral_scan,
     field_scan_payload,
@@ -52,6 +57,7 @@ from asymmetry.core.workflow.series import (
     build_trend_table,
     fit_one,
     fit_series,
+    group_axis,
     scan_axis,
     supplied_axis,
 )
@@ -75,7 +81,7 @@ from asymmetry.core.workflow.survey import (
     run_geometry,
     survey_folder,
 )
-from asymmetry.core.workflow.trend_fit import TrendFitOutcome, fit_trend
+from asymmetry.core.workflow.trend_fit import TrendFitOutcome, fit_trend, fit_trend_table
 from asymmetry.core.workflow.workdir import (
     SCHEMA,
     WORKDIR_NAME,
@@ -108,6 +114,7 @@ __all__ = [
     "FitRecipe",
     "FourierOutcome",
     "FourierSettings",
+    "BatchOutcome",
     "GlobalFitOutcome",
     "FolderSurvey",
     "PrecessionEvidence",
@@ -142,6 +149,9 @@ __all__ = [
     "fourier_spectrum",
     "fit_series",
     "fit_trend",
+    "fit_trend_table",
+    "fit_global_batch",
+    "group_axis",
     "has_file_deadtime",
     "precession_evidence",
     "reduce_run",

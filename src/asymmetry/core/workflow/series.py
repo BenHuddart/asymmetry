@@ -74,10 +74,11 @@ the analyst's call, never this function's.
 
 from __future__ import annotations
 
+import statistics
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
@@ -235,7 +236,7 @@ def envelope_change(trend: TrendTable) -> str | None:
         else:
             blocks.append((row["envelope"], [row]))
     described = "; ".join(
-        f"{shape} on {', '.join(str(row['run']) for row in rows)} ({trend.order_key} {_span(rows)})"
+        f"{shape} on {', '.join(row['key'] for row in rows)} ({trend.order_key} {_span(rows)})"
         for shape, rows in blocks
     )
     return (
@@ -256,8 +257,8 @@ def envelope_change(trend: TrendTable) -> str | None:
 _UNDESCRIBED = frozenset({"failed", FREQUENCY_UNRESOLVED, AMPLITUDE_EXCEEDS_DATA})
 
 
-def lineless_end(trend: TrendTable) -> list[int]:
-    """The runs at one end of a precession scan that hold no line to fit.
+def lineless_end(trend: TrendTable) -> list[str]:
+    """The keys of the runs at one end of a precession scan that hold no line to fit.
 
     A block of at least two runs, at the start or the end of the scan, where the
     survey found no line and the fit is flagged as not describing the run: the
@@ -268,13 +269,13 @@ def lineless_end(trend: TrendTable) -> list[int]:
     if "survey_line_mhz" not in trend.columns:
         return []
 
-    def block(rows: list[dict[str, Any]]) -> list[int]:
-        runs: list[int] = []
+    def block(rows: list[dict[str, Any]]) -> list[str]:
+        keys: list[str] = []
         for row in rows:
             if row["survey_line_mhz"] is not None or not _UNDESCRIBED & set(row["flags"]):
                 break
-            runs.append(row["run"])
-        return runs
+            keys.append(row["key"])
+        return keys
 
     ends = [block(list(reversed(trend.rows)))[::-1], block(trend.rows)]
     longest = max(ends, key=len)
@@ -286,15 +287,19 @@ def _span(rows: Sequence[Mapping[str, Any]]) -> str:
     return f"{min(values):g}" if len(values) == 1 else f"{min(values):g}–{max(values):g}"
 
 
+#: What an axis orders: a run number, or the name of a member series.
+Member = TypeVar("Member", int, str)
+
+
 @dataclass(frozen=True)
-class ScanAxis:
-    """The coordinate a series is ordered and trended along: one value per run."""
+class ScanAxis(Generic[Member]):
+    """The coordinate a series is ordered and trended along: one value per member."""
 
     name: str
-    values: dict[int, float]
+    values: dict[Member, float]
 
 
-def scan_axis(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> ScanAxis:
+def scan_axis(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> ScanAxis[int]:
     """The axis *order_key* names, read from every run's recorded metadata.
 
     Raises :class:`ValueError` naming the runs that do not record *order_key* —
@@ -325,32 +330,59 @@ def scan_axis(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> Sca
     return ScanAxis(order_key, values)
 
 
-def supplied_axis(name: str, values: Mapping[int, float], runs: Iterable[int]) -> ScanAxis:
-    """An axis the analyst supplies, with exactly one value for each of *runs*.
+def group_axis(
+    groups: Mapping[Member, Mapping[int, MuonDataset]], order_key: str
+) -> ScanAxis[Member]:
+    """Each group's mean *order_key* over its runs, read as :func:`scan_axis` reads it.
+
+    A group of one run is that run's own value, so a run-by-run scan is the
+    special case of a group per run.
+    """
+    return ScanAxis(
+        order_key,
+        {
+            member: statistics.fmean(scan_axis(runs, order_key).values.values())
+            for member, runs in groups.items()
+        },
+    )
+
+
+def supplied_axis(
+    name: str, values: Mapping[Member, float], members: Iterable[Member], *, noun: str = "run"
+) -> ScanAxis[Member]:
+    """An axis the analyst supplies, with exactly one value for each of *members*.
 
     *name* labels the trend; it may not be one of :data:`ORDER_KEYS`, whose
-    values come from the files. Raises :class:`ValueError` naming the runs with
-    no value, and the values given for runs outside the series.
+    values come from the files. *noun* names a member in the messages. Raises
+    :class:`ValueError` naming the members with no value, and the values given
+    for members outside the series.
     """
     if name in ORDER_KEYS:
         raise ValueError(f"{name!r} is read from the files; order by it without supplying values.")
-    runs = {int(run) for run in runs}
-    given = {int(run) for run in values}
-    if runs - given:
+    members = set(members)
+    given = set(values)
+    if members - given:
         raise ValueError(
-            f"No {name} value for run(s) {', '.join(str(run) for run in sorted(runs - given))}."
+            f"No {name} value for {noun}(s) "
+            f"{', '.join(str(member) for member in sorted(members - given))}."
         )
-    if given - runs:
+    if given - members:
         raise ValueError(
-            f"{name} values given for run(s) "
-            f"{', '.join(str(run) for run in sorted(given - runs))}, which are not in the series."
+            f"{name} values given for {noun}(s) "
+            f"{', '.join(str(member) for member in sorted(given - members))}, which are not "
+            f"in the series."
         )
-    return ScanAxis(name, {int(run): float(value) for run, value in values.items()})
+    return ScanAxis(name, {member: float(value) for member, value in values.items()})
 
 
 @dataclass(frozen=True)
 class TrendTable:
-    """The per-run trend: one row per run, ordered along the scan."""
+    """The trend: one row per member, ordered along the scan.
+
+    Each row's ``key`` names its member — a run number, or the name of a stored
+    series for a trend across fits (a batch of simultaneous fits, or a law's
+    parameter fitted per series).
+    """
 
     order_key: str
     columns: list[str]
@@ -365,7 +397,7 @@ class TrendTable:
         }
 
     def to_csv(self) -> str:
-        """The table as CSV: one header line, then one line per run."""
+        """The table as CSV: one header line, then one line per member."""
         lines = [",".join(self.columns)]
         for row in self.rows:
             lines.append(",".join(_csv_cell(row[column]) for column in self.columns))
@@ -558,7 +590,7 @@ def fit_series(
     datasets_by_run: Mapping[int, MuonDataset],
     recipe: FitRecipe,
     *,
-    axis: ScanAxis,
+    axis: ScanAxis[int],
     global_params: Iterable[str] = (),
     start_run: int | None = None,
     name: str,
@@ -690,11 +722,11 @@ def fit_series(
         reseeded_runs=[run for run in runs if run in reseeded],
         results=results,
         trend=build_trend_table(
-            results,
+            {str(entry["run"]): entry for entry in results},
             free_params,
             axis.name,
             survey_lines=(
-                {run: survey_line(datasets_by_run[run]) for run in runs}
+                {str(run): survey_line(datasets_by_run[run]) for run in runs}
                 if any(name.startswith("frequency") for name in free_params)
                 else None
             ),
@@ -714,37 +746,38 @@ def survey_line(dataset: MuonDataset) -> float | None:
 
 
 def build_trend_table(
-    results: Sequence[Mapping[str, Any]],
+    entries: Mapping[str, Mapping[str, Any]],
     free_params: Sequence[str],
     order_key: str,
-    survey_lines: Mapping[int, float | None] | None = None,
+    survey_lines: Mapping[str, float | None] | None = None,
 ) -> TrendTable:
-    """The trend table for a series: run, scan coordinate, each free parameter, flags.
+    """The trend table: member key, scan coordinate, each free parameter, flags.
 
-    Every run that was fitted has a row, flagged or not — see the module
-    docstring. With *survey_lines*, a ``survey_line_mhz`` column sets each
-    run's surveyed line beside its fitted frequencies, so a fit that has
-    drifted off the measured line, or found one where the survey saw none,
-    shows in the table.
+    *entries* maps each row's key, in scan order, to a fit summary carrying
+    ``x``, ``parameters``, ``uncertainties`` and ``quality_flags``. Every member
+    that was fitted has a row, flagged or not — see the module docstring. With
+    *survey_lines*, a ``survey_line_mhz`` column sets each run's surveyed line
+    beside its fitted frequencies, so a fit that has drifted off the measured
+    line, or found one where the survey saw none, shows in the table.
     """
-    columns = ["run", "x"]
+    columns = ["key", "x"]
     for name in free_params:
         columns.extend([name, f"{name}_err"])
     if survey_lines is not None:
         columns.append("survey_line_mhz")
-    compared = all("envelope" in entry for entry in results)
+    compared = all("envelope" in entry for entry in entries.values())
     if compared:
         columns.extend(["envelope", "envelope_dchi2"])
     columns.append("flags")
 
     rows: list[dict[str, Any]] = []
-    for entry in results:
-        row: dict[str, Any] = {"run": entry["run"], "x": entry["x"]}
+    for key, entry in entries.items():
+        row: dict[str, Any] = {"key": key, "x": entry["x"]}
         for name in free_params:
             row[name] = entry["parameters"].get(name)
             row[f"{name}_err"] = entry["uncertainties"].get(name)
         if survey_lines is not None:
-            row["survey_line_mhz"] = survey_lines[entry["run"]]
+            row["survey_line_mhz"] = survey_lines[key]
         if compared:
             row["envelope"] = entry["envelope"]["preferred"]
             row["envelope_dchi2"] = entry["envelope"]["delta_chi2"]
@@ -771,6 +804,7 @@ __all__ = [
     "fit_one",
     "fit_series",
     "frequency_unresolved",
+    "group_axis",
     "lineless_end",
     "rival_envelope_model",
     "scan_axis",

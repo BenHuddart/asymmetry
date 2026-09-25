@@ -1479,7 +1479,7 @@ def test_trend_csv_has_one_header_line_and_one_row_per_run(
     assert "Lambda" in out
 
     lines = csv_path.read_text(encoding="utf-8").strip().split("\n")
-    assert lines[0].split(",")[:2] == ["run", "x"]
+    assert lines[0].split(",")[:2] == ["key", "x"]
     assert len(lines) == 1 + len(SCAN_RUNS)
 
 
@@ -1547,11 +1547,11 @@ def test_trend_model_fits_a_trend_column_and_stores_the_fit(
 
     # The scan was simulated with Lambda = 0.10 + 0.004 T.
     assert fit["success"]
-    assert fit["runs"] == list(SCAN_RUNS)
+    assert fit["keys"] == [str(run) for run in SCAN_RUNS]
     assert abs(fit["parameters"]["m"] - 0.004) <= 3.0 * fit["uncertainties"]["m"]
     assert abs(fit["parameters"]["b"] - 0.10) <= 3.0 * fit["uncertainties"]["b"]
     stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
-    assert stored["trend_fits"]["Lambda"] == fit
+    assert stored["trend_fits"]["Lambda:Linear"] == fit
     assert (fitting_workdir / "plots" / "scan-trend-Lambda.png").exists()
 
 
@@ -1685,7 +1685,7 @@ def test_fit_series_orders_along_values_the_analyst_supplies(
     )
     series = _json_output(capsys)["series"]
     assert series["order_key"] == "foils"
-    assert [row["run"] for row in series["trend"]["rows"]] == list(reversed(runs))
+    assert [row["key"] for row in series["trend"]["rows"]] == [str(run) for run in reversed(runs)]
 
 
 @pytest.mark.parametrize(
@@ -1720,6 +1720,360 @@ def test_fit_series_refuses_an_axis_it_cannot_build(
         )
     assert exc.value.code == 1
     assert message in capsys.readouterr().err
+
+
+def _cli(workflow_folder: Path, fitting_workdir: Path, command: str, *arguments: str) -> None:
+    cli.main([command, str(workflow_folder), *arguments, "--workdir", str(fitting_workdir)])
+
+
+def _refused(workflow_folder: Path, fitting_workdir: Path, capsys, *arguments: str) -> str:
+    """Run a command expected to exit 1; its stderr."""
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        _cli(workflow_folder, fitting_workdir, *arguments)
+    assert exc.value.code == 1
+    return capsys.readouterr().err
+
+
+#: Two groups of two scan runs, at mean setpoints 15 K and 35 K.
+_GROUPS = f"{SCAN_RUNS[0]},{SCAN_RUNS[1]};{SCAN_RUNS[2]},{SCAN_RUNS[3]}"
+
+
+def _fit_batch(workflow_folder: Path, fitting_workdir: Path, *extra: str) -> None:
+    """Store the batch ``batch`` of :data:`_GROUPS`, the relaxation rate shared per group."""
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-global",
+        "--groups",
+        _GROUPS,
+        "--recipe",
+        "relax",
+        "--shared",
+        "Lambda,A_bg",
+        "--strategy",
+        "least_squares",
+        "--name",
+        "batch",
+        *extra,
+    )
+
+
+def test_fit_global_groups_stores_each_group_and_their_shared_trend(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    from tests.core.conftest import scan_rate
+
+    _fit_batch(workflow_folder, fitting_workdir, "--json")
+    batch = _json_output(capsys)["global_batch"]
+
+    assert batch["kind"] == "global-batch"
+    assert [member["series"] for member in batch["members"]] == ["batch-1", "batch-2"]
+    assert [group["name"] for group in batch["groups"]] == ["batch-1", "batch-2"]
+    trend = batch["trend"]
+    assert trend["order_key"] == "temperature"
+    assert trend["columns"] == ["key", "x", "Lambda", "Lambda_err", "A_bg", "A_bg_err", "flags"]
+    assert [row["key"] for row in trend["rows"]] == ["batch-1", "batch-2"]
+    assert [row["x"] for row in trend["rows"]] == [15.0, 35.0]
+    # A rate shared by two runs of a linear law sits at the law's value at their mean.
+    for row in trend["rows"]:
+        assert row["Lambda"] == pytest.approx(scan_rate(row["x"]), abs=0.02)
+    for member in ("batch-1", "batch-2"):
+        stored = json.loads((fitting_workdir / "series" / f"{member}.json").read_text("utf-8"))
+        assert stored["kind"] == "global"
+
+    _cli(workflow_folder, fitting_workdir, "trend", "--series", "batch")
+    assert "batch-2" in capsys.readouterr().out
+
+
+def test_a_batch_orders_its_groups_along_values_the_analyst_supplies(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_batch(workflow_folder, fitting_workdir, "--group-order", "dose", "--group-x", "1=5,2=1")
+    capsys.readouterr()
+    stored = json.loads((fitting_workdir / "series" / "batch.json").read_text("utf-8"))
+    assert stored["order_key"] == "dose"
+    assert [(row["key"], row["x"]) for row in stored["trend"]["rows"]] == [
+        ("batch-2", 1.0),
+        ("batch-1", 5.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--group-order", "dose"], "'dose' is not recorded in the files"),
+        (
+            ["--group-order", "dose", "--group-x", "1=5,2=1,3=2"],
+            "dose values given for group(s) batch-3, which are not in the series",
+        ),
+        (["--group-order", "dose", "--group-x", "one=5"], "--group-x entry 'one=5' is not GROUP"),
+        (
+            ["--groups", f"{SCAN_RUNS[0]},{SCAN_RUNS[1]};{SCAN_RUNS[1]},{SCAN_RUNS[2]}"],
+            "in two groups",
+        ),
+        (["--groups", f"{SCAN_RUNS[0]},{SCAN_RUNS[1]};{SCAN_RUNS[2]}"], "too few in batch-2"),
+        (["--runs", f"{SCAN_RUNS[0]},{SCAN_RUNS[1]}", "--group-x", "1=5"], "order a batch"),
+    ],
+)
+def test_fit_global_refuses_a_batch_it_cannot_build(
+    workflow_folder: Path, fitting_workdir: Path, capsys, arguments: list[str], message: str
+) -> None:
+    if "--groups" not in arguments and "--runs" not in arguments:
+        arguments = ["--groups", _GROUPS, *arguments]
+    err = _refused(
+        workflow_folder,
+        fitting_workdir,
+        capsys,
+        "fit-global",
+        *arguments,
+        "--recipe",
+        "relax",
+        "--shared",
+        "A_bg",
+        "--name",
+        "batch",
+    )
+    assert message in err
+
+
+def test_a_batch_whose_group_is_refitted_is_stale(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_batch(workflow_folder, fitting_workdir)
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-global",
+        "--runs",
+        f"{SCAN_RUNS[0]},{SCAN_RUNS[1]}",
+        "--recipe",
+        "relax",
+        "--shared",
+        "A_bg",
+        "--strategy",
+        "least_squares",
+        "--name",
+        "batch-1",
+    )
+    err = _refused(workflow_folder, fitting_workdir, capsys, "trend", "--series", "batch")
+    assert "Series 'batch' is stale: its member(s) batch-1 were refitted" in err
+
+
+#: Three overlapping stretches of the temperature scan, at mean setpoints 20, 30 and 40 K.
+_STRETCHES = {"s1": SCAN_RUNS[0:3], "s2": SCAN_RUNS[1:4], "s3": SCAN_RUNS[2:5]}
+
+
+def _fit_stretches(workflow_folder: Path, fitting_workdir: Path) -> None:
+    """Store each stretch as a series, with Linear fitted to its relaxation rate."""
+    for name, runs in _STRETCHES.items():
+        _cli(
+            workflow_folder,
+            fitting_workdir,
+            "fit-series",
+            "--runs",
+            ",".join(map(str, runs)),
+            "--recipe",
+            "relax",
+            "--order",
+            "temperature",
+            "--name",
+            name,
+        )
+        _cli(
+            workflow_folder,
+            fitting_workdir,
+            "trend",
+            "--series",
+            name,
+            "--model",
+            "Linear",
+            "--param",
+            "Lambda",
+        )
+
+
+def test_trend_from_fits_tabulates_a_law_parameter_per_series_and_fits_it(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_stretches(workflow_folder, fitting_workdir)
+    capsys.readouterr()
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "trend",
+        "--series",
+        "slopes",
+        "--from-fits",
+        "s1,s2,s3",
+        "--param",
+        "m",
+        "--model",
+        "Linear",
+        "--json",
+    )
+    data = _json_output(capsys)
+
+    trend = data["trend"]
+    assert trend["order_key"] == "temperature"
+    assert [(row["key"], row["x"]) for row in trend["rows"]] == [
+        ("s1", 20.0),
+        ("s2", 30.0),
+        ("s3", 40.0),
+    ]
+    # Every stretch of the scan has the slope it was simulated with, 0.004 per K.
+    for row in trend["rows"]:
+        assert row["m"] == pytest.approx(0.004, abs=3.0 * row["m_err"])
+    fit = data["fit"]
+    assert fit["keys"] == ["s1", "s2", "s3"]
+    assert fit["parameters"]["b"] == pytest.approx(0.004, abs=3.0 * fit["uncertainties"]["b"])
+    stored = json.loads((fitting_workdir / "series" / "slopes.json").read_text("utf-8"))
+    assert stored["kind"] == "fit-trend"
+    assert [member["fit"] for member in stored["members"]] == ["Lambda:Linear"] * 3
+    assert stored["trend_fits"]["m:Linear"] == fit
+
+    # A member series refitted leaves the trend built from it stale.
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-series",
+        "--runs",
+        ",".join(map(str, _STRETCHES["s2"])),
+        "--recipe",
+        "relax",
+        "--order",
+        "temperature",
+        "--tmax",
+        "6",
+        "--name",
+        "s2",
+    )
+    err = _refused(workflow_folder, fitting_workdir, capsys, "trend", "--series", "slopes")
+    assert "its member(s) s2 were refitted" in err
+
+
+def test_trend_from_fits_takes_supplied_values_and_excludes_by_series(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_stretches(workflow_folder, fitting_workdir)
+    capsys.readouterr()
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "trend",
+        "--series",
+        "slopes",
+        "--from-fits",
+        "s1,s2,s3",
+        "--param",
+        "m",
+        "--fit",
+        "Lambda",
+        "--order",
+        "pressure",
+        "--x",
+        "s1=3,s2=2,s3=1",
+        "--json",
+    )
+    trend = _json_output(capsys)["trend"]
+    assert trend["order_key"] == "pressure"
+    assert [row["key"] for row in trend["rows"]] == ["s3", "s2", "s1"]
+
+    err = _refused(
+        workflow_folder,
+        fitting_workdir,
+        capsys,
+        "trend",
+        "--series",
+        "slopes",
+        "--model",
+        "Linear",
+        "--param",
+        "m",
+        "--exclude",
+        "s1,nope",
+    )
+    assert "Not in the trend: nope" in err
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--from-fits", "s1"], "--from-fits needs --param NAME"),
+        (["--fit", "Lambda"], "--fit, --order and --x build a trend --from-fits"),
+        (["--from-fits", "s1,slopes", "--param", "m"], "cannot be a member too"),
+        (["--from-fits", "s1", "--param", "m", "--fit", "A_1"], "none is --fit A_1"),
+        (["--from-fits", "s1", "--param", "Ea"], "has no parameter 'Ea'"),
+        (["--from-fits", "s1,nope", "--param", "m"], "No series 'nope'"),
+    ],
+)
+def test_trend_from_fits_refuses_a_malformed_request(
+    workflow_folder: Path, fitting_workdir: Path, capsys, arguments: list[str], message: str
+) -> None:
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-series",
+        "--runs",
+        ",".join(map(str, _STRETCHES["s1"])),
+        "--recipe",
+        "relax",
+        "--order",
+        "temperature",
+        "--name",
+        "s1",
+    )
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "trend",
+        "--series",
+        "s1",
+        "--model",
+        "Linear",
+        "--param",
+        "Lambda",
+    )
+    err = _refused(
+        workflow_folder, fitting_workdir, capsys, "trend", "--series", "slopes", *arguments
+    )
+    assert message in err
+
+
+def test_two_laws_on_one_trend_column_are_both_kept(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_scan(workflow_folder, fitting_workdir)
+    for law in ("Linear", "Quadratic"):
+        _cli(
+            workflow_folder,
+            fitting_workdir,
+            "trend",
+            "--series",
+            "scan",
+            "--model",
+            law,
+            "--param",
+            "Lambda",
+        )
+    stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
+    assert sorted(stored["trend_fits"]) == ["Lambda:Linear", "Lambda:Quadratic"]
+    capsys.readouterr()
+    err = _refused(
+        workflow_folder,
+        fitting_workdir,
+        capsys,
+        "trend",
+        "--series",
+        "laws",
+        "--from-fits",
+        "scan",
+        "--param",
+        "b",
+    )
+    assert (
+        "holds trend fits: Lambda:Linear, Lambda:Quadratic; name one with --fit PARAM:EXPR" in err
+    )
 
 
 def test_the_order_help_names_every_order_key() -> None:

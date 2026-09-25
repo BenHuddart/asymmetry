@@ -345,11 +345,14 @@ options:
 ## `asymmetry fit-global`
 
 ```
-usage: asymmetry fit-global [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
-                            [--free NAME] --shared P,Q [--field-param NAME]
+usage: asymmetry fit-global [-h] (--runs RUNS | --groups RUNS;RUNS;...) --recipe
+                            RECIPE [--fix NAME=VALUE] [--free NAME] --shared P,Q
+                            [--field-param NAME]
                             [--strategy {joint,profiled,least_squares}]
-                            [--order QUANTITY] [--x RUN=VALUE,...] [--name NAME]
-                            [--plot] [--json] [--workdir WORKDIR] [--instrument NAME]
+                            [--order QUANTITY] [--x RUN=VALUE,...]
+                            [--group-order QUANTITY] [--group-x GROUP=VALUE,...]
+                            [--name NAME] [--plot] [--json] [--workdir WORKDIR]
+                            [--instrument NAME]
                             folder
 
 positional arguments:
@@ -358,6 +361,11 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --runs RUNS           Runs in one simultaneous-fit group
+  --groups RUNS;RUNS;...
+                        Several simultaneous-fit groups, e.g.
+                        '101,102,103;104,105,106': each is fitted and stored as
+                        <name>-<i> (i from 1), and <name> stores the groups' shared
+                        parameters as a trend along --group-order
   --recipe RECIPE       Recipe file, or the name of one in the work directory's
                         recipes/
   --fix NAME=VALUE      Hold a parameter at a value (repeatable)
@@ -369,9 +377,18 @@ options:
   --order QUANTITY      Quantity the runs are ordered and trended along: temperature
                         (the setpoint), sample_temperature_logged, field or run, read
                         from the files; or any other name, whose value for every run
-                        you give with --x
+                        you give with --x (default: run)
   --x RUN=VALUE,...     Per-run values of a quantity the files do not record, e.g. '--
                         order concentration --x 101=0,102=0.25,103=0.5'
+  --group-order QUANTITY
+                        Quantity the groups of --groups are ordered and trended along:
+                        temperature (the setpoint), sample_temperature_logged, field
+                        or run, read from the files and averaged over the runs of each
+                        group; or any other name, whose value for every group you give
+                        with --group-x (default: temperature)
+  --group-x GROUP=VALUE,...
+                        Per-group values of a quantity the files do not record, e.g. '
+                        --group-order concentration --group-x 1=0,2=0.25,3=0.5'
   --name NAME           Stored fit name
   --plot                Write one fitted plot per run
   --json                Emit the machine-readable payload
@@ -427,10 +444,12 @@ options:
 ## `asymmetry trend`
 
 ```
-usage: asymmetry trend [-h] --series SERIES [--csv CSV] [--plot] [--model EXPR]
-                       [--param PARAM] [--xmin XMIN] [--xmax XMAX]
-                       [--initial NAME=VALUE] [--fix NAME=VALUE] [--exclude RUNS]
-                       [--json] [--workdir WORKDIR] [--instrument NAME]
+usage: asymmetry trend [-h] --series SERIES [--from-fits SERIES,...]
+                       [--fit PARAM[:EXPR]] [--order QUANTITY] [--x SERIES=VALUE,...]
+                       [--csv CSV] [--plot] [--model EXPR] [--param PARAM]
+                       [--xmin XMIN] [--xmax XMAX] [--initial NAME=VALUE]
+                       [--fix NAME=VALUE] [--exclude KEYS] [--json]
+                       [--workdir WORKDIR] [--instrument NAME]
                        folder
 
 positional arguments:
@@ -438,19 +457,37 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  --series SERIES       Name the series was stored under
+  --series SERIES       Name the series was stored under (with --from-fits, the name
+                        to store it under)
+  --from-fits SERIES,...
+                        Build --series from these stored series: each one's trend-fit
+                        parameter --param (e.g. a rate constant fitted per
+                        temperature), against --order
+  --fit PARAM[:EXPR]    With --from-fits, the members' trend fit to read, by the
+                        column it was fitted to (or column:expression); needed only
+                        when a member holds several
+  --order QUANTITY      Quantity the --from-fits series are ordered and trended along:
+                        temperature (the setpoint), sample_temperature_logged, field
+                        or run, read from the files and averaged over the runs of each
+                        series; or any other name, whose value for every series you
+                        give with --x (default: temperature)
+  --x SERIES=VALUE,...  Per-series values of a quantity the files do not record, e.g.
+                        '--order concentration --x scan-1=0,scan-2=0.25'
   --csv CSV             Also write the table to this CSV file
   --plot                Write plots/<series>-trend-<param>.png for every free
                         parameter (with --model, only for --param, with the fitted
                         curve)
   --model EXPR          Fit this parameter-vs-x expression to --param, e.g.
                         'OrderParameter', 'Redfield'
-  --param PARAM         The trend column --model is fitted to
+  --param PARAM         The trend column --model is fitted to; with --from-fits, the
+                        members' trend-fit parameter the built series tabulates (and
+                        --model fits)
   --xmin XMIN           Fit range start, in x units
   --xmax XMAX           Fit range end, in x units
   --initial NAME=VALUE  Model start value (repeatable)
   --fix NAME=VALUE      Hold a model parameter at this value (repeatable)
-  --exclude RUNS        Leave these runs out of the fit (every other run with a value
+  --exclude KEYS        Leave these rows out of the fit — runs, or member series for a
+                        trend built from other series (every other row with a value
                         enters)
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
