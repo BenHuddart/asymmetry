@@ -2472,10 +2472,9 @@ def _lcr_peaks(
     return peaks
 
 
-#: Component names seeded together by :func:`_mu_repol_seeds`, mirroring
-#: ``_LCR_COMPONENTS``: several ``MuRepolarisation`` terms start on successive
-#: half-rises rather than all on the same one.
-_REPOL_COMPONENTS = frozenset({"MuRepolarisation"})
+#: A component seeded in a group (:data:`_GROUP_SEEDERS`) and the values its
+#: caller already holds, by base name.
+_GroupMember = tuple[ParameterModelComponentDefinition, Mapping[str, float]]
 
 #: Half-widths beyond a transition centre (in natural-log field) trusted as
 #: pure low/high plateau when locating that transition's B0 — see
@@ -2522,16 +2521,16 @@ def _mu_repol_transition_centre(
 
 
 def _mu_repol_seeds(
-    x: NDArray[np.float64], y: NDArray[np.float64], count: int
+    x: NDArray[np.float64], y: NDArray[np.float64], members: Sequence[_GroupMember]
 ) -> list[dict[str, float]]:
-    """Seed *count* successive ``MuRepolarisation`` terms from their half-rises.
+    """Seed one ``MuRepolarisation`` term per member from successive half-rises.
 
     ``(1/2+r^2)/(1+r^2) = 3/4`` exactly at ``r = B/B0 = 1``, so the half-rise
     field *is* B0 (:func:`isotropic_mu_b0_gauss`'s defining field) and the
     rise (high plateau − low plateau) is exactly ``a_Mu/2``. Terms are found
     one at a time — :func:`_mu_repol_transition_centre` on the residual after
     the previous term's rough fit is subtracted out — the same strongest
-    -first, mask-and-repeat idiom ``_LCR_COMPONENTS`` uses via
+    -first, mask-and-repeat idiom :func:`_lcr_seeds` uses via
     :func:`_lcr_peaks`, so a second term starts on the second half-rise
     rather than the first.
 
@@ -2545,21 +2544,16 @@ def _mu_repol_seeds(
     the lowest-B0 term's ``a_Dia`` carries it; every other term seeds
     ``a_Dia = 0``.
 
-    Returns one dict per requested term, in the same successive order the
-    centres were found (strongest transition first); a term with no
-    resolvable transition gets an empty dict (defaults apply).
+    Returns one dict per transition found, strongest first — fewer than the
+    members when the scan resolves fewer (the rest keep their defaults).
     """
-    if count == 0:
-        return []
     positive = x > 0.0
-    if int(np.sum(positive)) < 3:
-        return [{} for _ in range(count)]
     xx = x[positive]
     yy = y[positive]
 
     b0_values: list[float] = []
     residual = yy.copy()
-    for _ in range(count):
+    for _ in members:
         found = _mu_repol_transition_centre(xx, residual)
         if found is None:
             break
@@ -2571,7 +2565,7 @@ def _mu_repol_seeds(
             xx, a_mu_guess, _isotropic_mu_a_hf_mhz(b0), a_dia_guess
         )
     if not b0_values:
-        return [{} for _ in range(count)]
+        return []
 
     design = np.column_stack(
         [(0.5 + (xx / b0) ** 2) / (1.0 + (xx / b0) ** 2) for b0 in b0_values] + [np.ones_like(xx)]
@@ -2581,19 +2575,14 @@ def _mu_repol_seeds(
     a_dia_total = float(coefficients[-1])
     lowest = int(np.argmin(b0_values))
 
-    results: list[dict[str, float]] = []
-    for i in range(count):
-        if i >= len(b0_values):
-            results.append({})
-            continue
-        results.append(
-            {
-                "a_Mu": float(a_mu_values[i]),
-                "A_hf": _isotropic_mu_a_hf_mhz(b0_values[i]),
-                "a_Dia": a_dia_total if i == lowest else 0.0,
-            }
-        )
-    return results
+    return [
+        {
+            "a_Mu": float(a_mu),
+            "A_hf": _isotropic_mu_a_hf_mhz(b0),
+            "a_Dia": a_dia_total if i == lowest else 0.0,
+        }
+        for i, (b0, a_mu) in enumerate(zip(b0_values, a_mu_values, strict=True))
+    ]
 
 
 #: The coupling solve must reach a root: a transition left further than this
@@ -2657,6 +2646,38 @@ def _estimate_rf_resonance(
 _LCR_COMPONENTS = frozenset({"GaussianLCR", "LorentzianLCR", "LorentzianLCRPair"})
 
 
+def _lcr_seeds(
+    x: NDArray[np.float64], y: NDArray[np.float64], members: Sequence[_GroupMember]
+) -> list[dict[str, float]]:
+    """One resonance per LCR member, strongest first, a pair's partner at its ``dB``."""
+    partners = [
+        float(known.get("dB", component.param_defaults["dB"]))
+        if "dB" in component.param_defaults
+        else np.inf
+        for component, known in members
+    ]
+    return [
+        {"f": height, "B0": centre, "Bwid": width}
+        for centre, height, width in _lcr_peaks(x, y, partners)
+    ]
+
+
+#: Components seeded as a group, so several start on successive features of the
+#: scan rather than all on the strongest. Each seeder takes the finite, x-sorted
+#: ``(x, y)`` and the group's members (component, caller-held values by base
+#: name) and returns base-name seeds for as many members as it placed, in order.
+_GROUP_SEEDERS: dict[
+    frozenset[str],
+    Callable[
+        [NDArray[np.float64], NDArray[np.float64], Sequence[_GroupMember]],
+        list[dict[str, float]],
+    ],
+] = {
+    _LCR_COMPONENTS: _lcr_seeds,
+    frozenset({"MuRepolarisation"}): _mu_repol_seeds,
+}
+
+
 #: Registry mapping a *component* name to a closed-form seed estimator. Each
 #: estimator takes the finite, x-sorted ``(x, y, yerr)`` subset and the values
 #: the caller already holds for that component (``known``, by *base* name), and
@@ -2667,8 +2688,8 @@ _LCR_COMPONENTS = frozenset({"GaussianLCR", "LorentzianLCR", "LorentzianLCRPair"
 #: defaults. ``CriticalDivergence``/``OrderParameter``/``FermiStep`` are handled
 #: by :func:`suggest_trend_seeds` (the trend-model seed table reads only that
 #: helper) and are intentionally absent here. ``MuRepolarisation`` is also
-#: absent: like the ``_LCR_COMPONENTS``, several terms are seeded *together*
-#: (see :func:`_mu_repol_seeds`), which a per-component estimator cannot do.
+#: absent: several terms are seeded *together* (:data:`_GROUP_SEEDERS`), which a
+#: per-component estimator cannot do.
 _MODEL_SEED_ESTIMATORS: dict[
     str,
     Callable[
@@ -2719,7 +2740,7 @@ def suggest_model_seeds(
     the same component/mapping idiom the trend seeder uses. The
     critical-temperature components (``CriticalDivergence``/``OrderParameter``)
     are delegated to :func:`suggest_trend_seeds` and merged in, so its behaviour
-    is preserved exactly. ``_LCR_COMPONENTS`` and ``_REPOL_COMPONENTS`` are each
+    is preserved exactly. The components of :data:`_GROUP_SEEDERS` are each
     seeded as a group instead, so several resonances/half-rises start on
     successive features rather than all on the same one.
 
@@ -2734,44 +2755,28 @@ def suggest_model_seeds(
         return dict(known)
 
     seeds: dict[str, float] = {}
-    lcr_components = [
-        (component, mapping)
-        for component, mapping in zip(model.components, model._param_mappings, strict=True)
-        if component.name in _LCR_COMPONENTS
-    ]
-    partners = [
-        float(known.get(mapping["dB"], component.param_defaults["dB"]))
-        if "dB" in mapping
-        else np.inf
-        for component, mapping in lcr_components
-    ]
-    for (_component, mapping), (centre, height, width) in zip(
-        lcr_components, _lcr_peaks(xf, yf, partners), strict=False
-    ):
-        seeds.update({mapping["f"]: height, mapping["B0"]: centre, mapping["Bwid"]: width})
-    repol_components = [
-        (component, mapping)
-        for component, mapping in zip(model.components, model._param_mappings, strict=True)
-        if component.name in _REPOL_COMPONENTS
-    ]
-    for (_component, mapping), base_seeds in zip(
-        repol_components, _mu_repol_seeds(xf, yf, len(repol_components)), strict=True
-    ):
-        for base_name, value in base_seeds.items():
-            unique = mapping.get(base_name)
-            if unique is not None and np.isfinite(value):
-                seeds[unique] = float(value)
-    for component, mapping in zip(model.components, model._param_mappings, strict=True):
-        estimator = _MODEL_SEED_ESTIMATORS.get(component.name)
-        if estimator is None:
-            continue
-        component_known = {
+    components = list(zip(model.components, model._param_mappings, strict=True))
+    component_known = [
+        {
             base_name: float(known[unique])
             for base_name, unique in mapping.items()
             if unique in known
         }
+        for _component, mapping in components
+    ]
+    for names, group_seeder in _GROUP_SEEDERS.items():
+        group = [
+            index for index, (component, _) in enumerate(components) if component.name in names
+        ]
+        members = [(components[index][0], component_known[index]) for index in group]
+        for index, base_seeds in zip(group, group_seeder(xf, yf, members), strict=False):
+            seeds.update({components[index][1][base]: value for base, value in base_seeds.items()})
+    for (component, mapping), known_here in zip(components, component_known, strict=True):
+        estimator = _MODEL_SEED_ESTIMATORS.get(component.name)
+        if estimator is None:
+            continue
         try:
-            base_seeds = estimator(xf, yf, ef, component_known)
+            base_seeds = estimator(xf, yf, ef, known_here)
         except (ValueError, FloatingPointError, ZeroDivisionError):
             continue
         for base_name, value in base_seeds.items():
