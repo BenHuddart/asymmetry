@@ -274,8 +274,8 @@ options:
   --expression EXPRESSION
                         Time-domain model, e.g. 'Oscillatory * Exponential + Constant'
   --name NAME           Name to store the recipe under
-  --run RUN             Seed amplitudes, background and applied field from this
-                        reduced run
+  --run RUN             Seed amplitudes, phase, background, applied field and Larmor
+                        frequency from this reduced run
   --initial NAME=VALUE  Starting value (repeatable)
   --fix NAME=VALUE      Hold a parameter at a value (repeatable)
   --tmin TMIN           Fit window start / µs

@@ -22,6 +22,7 @@ from asymmetry.core.io.periods import (
     period_count,
     period_run,
     select_period,
+    source_run_of,
 )
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
@@ -296,11 +297,6 @@ def _fixed_alpha_grouping(run: Run, settings: ReductionSettings) -> dict[str, An
     return resolve_effective_grouping(profile, run)
 
 
-def _source_run_number(run: Run) -> int:
-    """*run*'s source run number — its own, or the one a period-selected run was cut from."""
-    return int(run.metadata.get("source_run_number", run.run_number))
-
-
 def _reduce_period(run: Run, settings: ReductionSettings) -> MuonDataset:
     """One period's asymmetry through the reduction chokepoint, before rebinning or windowing."""
     grouping = _fixed_alpha_grouping(run, settings)
@@ -325,7 +321,7 @@ def _reduce_period(run: Run, settings: ReductionSettings) -> MuonDataset:
     )
     if settings.background != "none" and "values" not in result.background_state:
         raise ValueError(
-            f"Run {_source_run_number(run)}: the {settings.background} background could not be "
+            f"Run {source_run_of(run)}: the {settings.background} background could not be "
             f"subtracted ({result.background_state})."
         )
     return MuonDataset(
@@ -392,7 +388,7 @@ def estimate_alpha_for_run(run: Run, settings: ReductionSettings) -> AlphaEstima
     profile = _profile_for_run(counts, settings, alpha_policy=AlphaPolicy(mode="per_run_estimate"))
     grouping = resolve_effective_grouping(profile, counts)
     return AlphaEstimate(
-        run_number=_source_run_number(run),
+        run_number=source_run_of(run),
         alpha=float(grouping["alpha"]),
         method=str(grouping["alpha_method"]),
         forward_group=int(grouping["forward_group"]),

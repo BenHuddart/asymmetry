@@ -22,7 +22,13 @@ from asymmetry.core.fitting.field_scan import (
 )
 from asymmetry.core.fitting.parameter_models import suggest_model_seeds
 from asymmetry.core.fitting.parameters import ParameterSet
-from asymmetry.core.io.periods import GREEN_INDEX, RED_INDEX, period_count, period_run
+from asymmetry.core.io.periods import (
+    GREEN_INDEX,
+    RED_INDEX,
+    period_count,
+    period_run,
+    source_run_of,
+)
 from asymmetry.core.transform.integral import FieldScan, build_field_scan
 from asymmetry.core.workflow.reduction import (
     GREEN_MINUS_RED,
@@ -66,27 +72,27 @@ def build_integral_scan(
     green_periods = [period_run(run, GREEN_INDEX) for run in two_period]
     sources = _source_run_numbers(red_periods + green_periods)
     red, green = (
-        build_field_scan(
-            [_resolved(period, per_period) for period in periods],
-            t_min=t_min,
-            t_max=t_max,
-            method=method,
-            order_key=order_key,
+        _decoded(
+            build_field_scan(
+                [_resolved(period, per_period) for period in periods],
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                order_key=order_key,
+            ),
+            sources,
         )
         for periods in (red_periods, green_periods)
     )
     # Both periods of a run share its field, temperature and window, so the two
-    # scans list the same runs in the same order once decoded to their source
-    # run number (encode_period_run_number).
-    red_sources = [sources[encoded] for encoded in red.run_numbers]
-    green_sources = [sources[encoded] for encoded in green.run_numbers]
-    if red_sources != green_sources:
+    # scans list the same source runs in the same order.
+    if red.run_numbers != green.run_numbers:
         raise ValueError("The red and green scans of the same runs came out in different orders.")
     return FieldScan(
         x=red.x,
         value=green.value - red.value,
         error=np.hypot(red.error, green.error),
-        run_numbers=red_sources,
+        run_numbers=red.run_numbers,
         order_key=red.order_key,
         method=red.method,
         x_label=red.x_label,
@@ -96,7 +102,7 @@ def build_integral_scan(
             for run in runs
             if period_count(run) != 2
         ]
-        + [(sources[encoded], reason) for encoded, reason in (*red.excluded, *green.excluded)],
+        + [*red.excluded, *green.excluded],
         units=red.units,
     )
 
@@ -107,27 +113,21 @@ def _resolved(run: Run, settings: ReductionSettings) -> Run:
 
 
 def _source_run_numbers(runs: Iterable[Run]) -> dict[int, int]:
-    """Map each *run*'s own number (period-encoded or not) to its source run number.
-
-    A period-selected run carries ``metadata["source_run_number"]``
-    (:func:`asymmetry.core.io.periods.period_run`); any other run's own number
-    already *is* its source run number.
-    """
-    return {
-        int(run.run_number): int(run.metadata.get("source_run_number", run.run_number))
-        for run in runs
-    }
+    """Map each *run*'s own number (period-encoded or not) to its source run number."""
+    return {int(run.run_number): source_run_of(run) for run in runs}
 
 
 def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:
-    """*scan* with every point's and exclusion's run number mapped to its source run.
+    """*scan* with every run number — points, exclusions and a run-ordered x — at its source run.
 
-    Every number appearing in ``scan.run_numbers``/``scan.excluded`` was drawn
-    from the same runs *sources* was built from, so the lookup cannot miss.
+    Every number in the scan was drawn from the runs *sources* was built from,
+    so the lookup cannot miss.
     """
+    run_numbers = [sources[number] for number in scan.run_numbers]
     return replace(
         scan,
-        run_numbers=[sources[number] for number in scan.run_numbers],
+        x=np.asarray(run_numbers, dtype=float) if scan.order_key == "run" else scan.x,
+        run_numbers=run_numbers,
         excluded=[(sources[number], reason) for number, reason in scan.excluded],
     )
 

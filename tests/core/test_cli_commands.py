@@ -328,8 +328,8 @@ def test_survey_of_a_folder_with_only_subfolders_names_them_and_writes_nothing(
     data = tmp_path / "data"
     rg = data / "RG"
     rg.mkdir(parents=True)
-    (rg / "SIM00029809.nxs").touch()
-    (rg / "SIM00029810.nxs").touch()
+    (rg / "SIM00000700.nxs").touch()
+    (rg / "SIM00000701.nxs").touch()
 
     with pytest.raises(SystemExit) as exc:
         cli.main(["survey", str(data), "--workdir", str(tmp_path / "wd")])

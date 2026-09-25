@@ -514,15 +514,15 @@ def test_survey_of_a_folder_with_only_subfolders_of_runs_names_them(tmp_path: Pa
     """
     rg1 = tmp_path / "RG1"
     rg1.mkdir()
-    for run in range(29809, 29812):
+    for run in range(700, 703):
         (rg1 / f"SIM{run:08d}.nxs").touch()
     rg2 = tmp_path / "RG2"
     rg2.mkdir()
-    (rg2 / "SIM00029900.nxs").touch()
+    (rg2 / "SIM00000710.nxs").touch()
     # Two levels down: scan_run_files (and survey_folder) never recurse this far.
     nested = rg1 / "nested"
     nested.mkdir()
-    (nested / "SIM00029950.nxs").touch()
+    (nested / "SIM00000720.nxs").touch()
 
     with pytest.raises(ValueError, match=r"RG1 \(3 runs\), RG2 \(1 run\)"):
         survey_folder(tmp_path)

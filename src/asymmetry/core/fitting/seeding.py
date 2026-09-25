@@ -241,9 +241,8 @@ def _applied_field_values(model: CompositeModel, context: SeedContext) -> dict[s
         if split_parameter_name(param_name)[0] in _FIELD_SEED_BASE_NAMES
     }
     if context.dataset is not None:
-        larmor_mhz = field_gauss_to_frequency_mhz(abs(float(field_gauss)))
-        nyquist_mhz = dataset_nyquist_mhz(context.dataset.time)
-        if 0.0 < larmor_mhz < nyquist_mhz:
+        larmor_mhz = field_gauss_to_frequency_mhz(abs(field_gauss))
+        if larmor_mhz < dataset_nyquist_mhz(context.dataset.time):
             values.update(
                 {
                     param_name: larmor_mhz

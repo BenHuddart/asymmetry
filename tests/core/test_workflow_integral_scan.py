@@ -186,7 +186,7 @@ def test_a_single_period_scan_reports_the_source_run_number() -> None:
             ],
             total_events=4.0e7,
             seed=50 + index,
-            run_number=3366 + index,
+            run_number=500 + index,
         )
         loaded = MuonDataset(
             time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=run
@@ -195,8 +195,10 @@ def test_a_single_period_scan_reports_the_source_run_number() -> None:
 
     settings = ReductionSettings(period="red")
     scan = build_integral_scan(datasets, settings, t_min=0.0, t_max=1.0)
+    by_run = build_integral_scan(datasets, settings, t_min=0.0, t_max=1.0, order_key="run")
 
-    assert scan.run_numbers == [3366, 3367]
+    assert scan.run_numbers == [500, 501]
+    assert by_run.x.tolist() == [500.0, 501.0]
 
 
 @pytest.mark.parametrize("background", ["Quadratic", "Cubic"])

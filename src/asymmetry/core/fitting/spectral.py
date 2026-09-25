@@ -35,16 +35,8 @@ def field_gauss_to_frequency_mhz(value_gauss: float) -> float:
 
 
 def dataset_nyquist_mhz(time: NDArray[np.float64]) -> float:
-    """The Nyquist frequency (MHz) of a µs time axis, from its mean sample spacing.
-
-    ``0.0`` for a time axis too short to have a spacing, so a caller's
-    ``value < dataset_nyquist_mhz(...)`` gate excludes rather than raising.
-    """
-    t = np.asarray(time, dtype=float)
-    if t.size < 2:
-        return 0.0
-    dt = float(np.mean(np.diff(t)))
-    return 0.5 / dt if dt > 0.0 else 0.0
+    """The Nyquist frequency (MHz) of an evenly binned µs time axis."""
+    return 0.5 / float(np.median(np.diff(time)))
 
 
 def append_frequency_field_derived_parameters(

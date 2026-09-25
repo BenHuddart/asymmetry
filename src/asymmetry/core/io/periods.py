@@ -55,6 +55,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     _Curve = tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]
 
 __all__ = [
+    "source_run_of",
     "RED_INDEX",
     "GREEN_INDEX",
     "PERIOD_MAPPING_TARGETS",
@@ -92,6 +93,11 @@ def encode_period_run_number(run_number: int, period_number: int) -> int:
     keys never clash with single-period runs.
     """
     return int(run_number) * 1000 + int(period_number)
+
+
+def source_run_of(run: Run) -> int:
+    """*run*'s file run number — its own, or the one a period-selected run was cut from."""
+    return int(run.metadata.get("source_run_number", run.run_number))
 
 
 # Friendly labels accepted for the two-period red/green case (lower-cased).
@@ -576,9 +582,7 @@ def combine_mapped_periods(
 
     base_run = runs[red_periods[0] - 1]
     run_number = (
-        int(source_run_number)
-        if source_run_number is not None
-        else int(base_run.metadata.get("source_run_number", base_run.run_number))
+        int(source_run_number) if source_run_number is not None else source_run_of(base_run)
     )
     metadata = dict(period_datasets[red_periods[0] - 1].metadata)
     metadata["run_number"] = run_number

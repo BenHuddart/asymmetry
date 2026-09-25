@@ -35,7 +35,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         "--run",
         type=int,
         default=None,
-        help="Seed amplitudes, background and applied field from this reduced run",
+        help="Seed amplitudes, phase, background, applied field and Larmor frequency from this reduced run",
     )
     parser.add_argument(
         "--initial",
