@@ -376,6 +376,11 @@ def isotropic_mu_b0_gauss(A_hf_mhz: float) -> float:
     return max(abs(float(A_hf_mhz)), 1e-12) / _ISOTROPIC_MU_B0_DENOM_MHZ_PER_G
 
 
+def _isotropic_mu_a_hf_mhz(b0_gauss: float) -> float:
+    """Inverse of :func:`isotropic_mu_b0_gauss`: A_hf = B0 * (γₑ + γ_μ), in MHz."""
+    return abs(float(b0_gauss)) * _ISOTROPIC_MU_B0_DENOM_MHZ_PER_G
+
+
 def _mu_repolarisation(
     x: NDArray, a_Mu: float, A_hf: float, a_Dia: float = 0.0
 ) -> NDArray[np.float64]:
@@ -2467,6 +2472,130 @@ def _lcr_peaks(
     return peaks
 
 
+#: Component names seeded together by :func:`_mu_repol_seeds`, mirroring
+#: ``_LCR_COMPONENTS``: several ``MuRepolarisation`` terms start on successive
+#: half-rises rather than all on the same one.
+_REPOL_COMPONENTS = frozenset({"MuRepolarisation"})
+
+#: Half-widths beyond a transition centre (in natural-log field) trusted as
+#: pure low/high plateau when locating that transition's B0 — see
+#: :func:`_mu_repol_transition_centre`.
+_MU_REPOL_PLATEAU_MARGIN_LOG_FIELD = 2.0
+
+
+def _mu_repol_transition_centre(
+    x: NDArray[np.float64], y: NDArray[np.float64]
+) -> tuple[float, float, float] | None:
+    """Locate one ``MuRepolarisation`` half-rise: ``(B0, low plateau, high plateau)``.
+
+    ``P(B) = a_Mu*(1/2 + r^2)/(1 + r^2) + a_Dia`` with ``r = B/B0`` is a step
+    in log(B), so its transition is the peak of ``dy/d(log B)`` — a logistic
+    step's derivative is itself bell-shaped — found the same way
+    :func:`_lcr_peaks` finds a resonance. The plateaus, read more than
+    :data:`_MU_REPOL_PLATEAU_MARGIN_LOG_FIELD` HWHM either side of that peak,
+    are only a rough amplitude for :func:`_mu_repol_seeds` to subtract this
+    term and search the residual for the next one — with several transitions
+    close together a plateau can still carry another term's tail, which the
+    linear refit in :func:`_mu_repol_seeds` corrects once every centre is
+    known. Returns ``None`` when fewer than three points give a strictly
+    increasing log(x) (nothing to take a resolvable derivative of) or no peak
+    is found.
+    """
+    t = np.log(x)
+    dt = np.diff(t)
+    valid = dt > 0.0
+    if int(np.sum(valid)) < 3:
+        return None
+    dt_valid = dt[valid]
+    t_mid = 0.5 * (t[:-1][valid] + t[1:][valid])
+    slope = np.diff(y)[valid] / dt_valid
+    peaks = _lcr_peaks(t_mid, slope, (np.inf,))
+    if not peaks:
+        return None
+    centre, _height, width = peaks[0]
+    margin = _MU_REPOL_PLATEAU_MARGIN_LOG_FIELD * width
+    below = t <= centre - margin
+    above = t >= centre + margin
+    lo = float(np.median(y[below])) if np.any(below) else float(y[0])
+    hi = float(np.median(y[above])) if np.any(above) else float(y[-1])
+    return float(np.exp(centre)), lo, hi
+
+
+def _mu_repol_seeds(
+    x: NDArray[np.float64], y: NDArray[np.float64], count: int
+) -> list[dict[str, float]]:
+    """Seed *count* successive ``MuRepolarisation`` terms from their half-rises.
+
+    ``(1/2+r^2)/(1+r^2) = 3/4`` exactly at ``r = B/B0 = 1``, so the half-rise
+    field *is* B0 (:func:`isotropic_mu_b0_gauss`'s defining field) and the
+    rise (high plateau − low plateau) is exactly ``a_Mu/2``. Terms are found
+    one at a time — :func:`_mu_repol_transition_centre` on the residual after
+    the previous term's rough fit is subtracted out — the same strongest
+    -first, mask-and-repeat idiom ``_LCR_COMPONENTS`` uses via
+    :func:`_lcr_peaks`, so a second term starts on the second half-rise
+    rather than the first.
+
+    Once every term's B0 is located, the model is linear in the amplitudes
+    (``a_Mu`` per term, plus one shared additive offset — every term's
+    ``a_Dia`` sums into the same constant, so it is one degree of freedom,
+    not ``count`` of them), so a single least-squares solve on the *original*
+    curve recovers each ``a_Mu`` accurately even where the transitions
+    overlap too much for the per-term plateau read above to see cleanly. That
+    shared offset is unobservable as a per-term split, so by convention only
+    the lowest-B0 term's ``a_Dia`` carries it; every other term seeds
+    ``a_Dia = 0``.
+
+    Returns one dict per requested term, in the same successive order the
+    centres were found (strongest transition first); a term with no
+    resolvable transition gets an empty dict (defaults apply).
+    """
+    if count == 0:
+        return []
+    positive = x > 0.0
+    if int(np.sum(positive)) < 3:
+        return [{} for _ in range(count)]
+    xx = x[positive]
+    yy = y[positive]
+
+    b0_values: list[float] = []
+    residual = yy.copy()
+    for _ in range(count):
+        found = _mu_repol_transition_centre(xx, residual)
+        if found is None:
+            break
+        b0, lo, hi = found
+        a_mu_guess = 2.0 * (hi - lo)
+        a_dia_guess = lo - 0.5 * a_mu_guess
+        b0_values.append(b0)
+        residual = residual - _mu_repolarisation(
+            xx, a_mu_guess, _isotropic_mu_a_hf_mhz(b0), a_dia_guess
+        )
+    if not b0_values:
+        return [{} for _ in range(count)]
+
+    design = np.column_stack(
+        [(0.5 + (xx / b0) ** 2) / (1.0 + (xx / b0) ** 2) for b0 in b0_values] + [np.ones_like(xx)]
+    )
+    coefficients, *_ = np.linalg.lstsq(design, yy, rcond=None)
+    a_mu_values = coefficients[:-1]
+    a_dia_total = float(coefficients[-1])
+    lowest = int(np.argmin(b0_values))
+
+    results: list[dict[str, float]] = []
+    for i in range(count):
+        if i >= len(b0_values):
+            results.append({})
+            continue
+        results.append(
+            {
+                "a_Mu": float(a_mu_values[i]),
+                "A_hf": _isotropic_mu_a_hf_mhz(b0_values[i]),
+                "a_Dia": a_dia_total if i == lowest else 0.0,
+            }
+        )
+    return results
+
+
 #: The coupling solve must reach a root: a transition left further than this
 #: fraction of ``ν_RF`` from it means no couplings place both dips.
 _RF_SEED_DETUNING_TOLERANCE = 1e-6
@@ -2537,7 +2666,9 @@ _LCR_COMPONENTS = frozenset({"GaussianLCR", "LorentzianLCR", "LorentzianLCRPair"
 #: confident about — a partial dict is fine, an empty dict leaves everything to
 #: defaults. ``CriticalDivergence``/``OrderParameter``/``FermiStep`` are handled
 #: by :func:`suggest_trend_seeds` (the trend-model seed table reads only that
-#: helper) and are intentionally absent here.
+#: helper) and are intentionally absent here. ``MuRepolarisation`` is also
+#: absent: like the ``_LCR_COMPONENTS``, several terms are seeded *together*
+#: (see :func:`_mu_repol_seeds`), which a per-component estimator cannot do.
 _MODEL_SEED_ESTIMATORS: dict[
     str,
     Callable[
@@ -2588,7 +2719,9 @@ def suggest_model_seeds(
     the same component/mapping idiom the trend seeder uses. The
     critical-temperature components (``CriticalDivergence``/``OrderParameter``)
     are delegated to :func:`suggest_trend_seeds` and merged in, so its behaviour
-    is preserved exactly.
+    is preserved exactly. ``_LCR_COMPONENTS`` and ``_REPOL_COMPONENTS`` are each
+    seeded as a group instead, so several resonances/half-rises start on
+    successive features rather than all on the same one.
 
     Only parameters the estimators are confident about, and the known values,
     are returned; the caller merges these over
@@ -2616,6 +2749,18 @@ def suggest_model_seeds(
         lcr_components, _lcr_peaks(xf, yf, partners), strict=False
     ):
         seeds.update({mapping["f"]: height, mapping["B0"]: centre, mapping["Bwid"]: width})
+    repol_components = [
+        (component, mapping)
+        for component, mapping in zip(model.components, model._param_mappings, strict=True)
+        if component.name in _REPOL_COMPONENTS
+    ]
+    for (_component, mapping), base_seeds in zip(
+        repol_components, _mu_repol_seeds(xf, yf, len(repol_components)), strict=True
+    ):
+        for base_name, value in base_seeds.items():
+            unique = mapping.get(base_name)
+            if unique is not None and np.isfinite(value):
+                seeds[unique] = float(value)
     for component, mapping in zip(model.components, model._param_mappings, strict=True):
         estimator = _MODEL_SEED_ESTIMATORS.get(component.name)
         if estimator is None:

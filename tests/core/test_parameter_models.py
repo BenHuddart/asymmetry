@@ -2022,3 +2022,74 @@ def test_suggest_model_seeds_puts_each_lcr_component_on_its_own_resonance() -> N
     assert abs(seeds["B0_2"] - 27500.0) < 150.0
     assert seeds["f_1"] < 0.0 and seeds["f_2"] < 0.0
     assert 30.0 < seeds["Bwid_1"] < 120.0
+
+
+def test_suggest_model_seeds_mu_repolarisation_single_term() -> None:
+    from asymmetry.core.fitting.parameter_models import _mu_repolarisation
+
+    true = dict(a_Mu=20.0, A_hf=4463.0, a_Dia=5.0)
+    x = np.geomspace(1.0, 4000.0, 60)
+    y = _mu_repolarisation(x, **true)
+    model = ParameterCompositeModel(["MuRepolarisation"])
+    seeds = suggest_model_seeds(model, x, y, known={})
+
+    assert seeds["a_Mu"] == pytest.approx(true["a_Mu"], rel=0.2)
+    assert seeds["A_hf"] == pytest.approx(true["A_hf"], rel=0.2)
+    assert seeds["a_Dia"] == pytest.approx(true["a_Dia"], rel=0.2)
+
+    yerr = np.full_like(x, 0.05)
+    params = ParameterSet(
+        [
+            Parameter("a_Mu", value=seeds["a_Mu"]),
+            Parameter("A_hf", value=seeds["A_hf"], min=1.0, max=1.0e5),
+            Parameter("a_Dia", value=seeds["a_Dia"]),
+        ]
+    )
+    result = fit_parameter_model(x, y, yerr, model, params)
+    assert result.success
+    fitted = {p.name: p.value for p in result.parameters}
+    assert fitted["a_Mu"] == pytest.approx(true["a_Mu"], rel=1e-3)
+    assert fitted["A_hf"] == pytest.approx(true["A_hf"], rel=1e-3)
+    assert fitted["a_Dia"] == pytest.approx(true["a_Dia"], abs=1e-2)
+
+
+def test_suggest_model_seeds_mu_repolarisation_two_terms() -> None:
+    # Benzene-radical-shaped: A_hf ~= 943 and 5311 MHz (docs/plans/cli-open-items.md
+    # D5) -> B0 a factor of ~5.6 apart, close enough that the transitions'
+    # derivative bumps overlap and only the linear amplitude refit separates them.
+    from asymmetry.core.fitting.parameter_models import _mu_repolarisation
+
+    true1 = dict(a_Mu=15.0, A_hf=943.0, a_Dia=5.0)
+    true2 = dict(a_Mu=8.0, A_hf=5311.0, a_Dia=0.0)
+    x = np.geomspace(1.0, 4000.0, 60)
+    y = _mu_repolarisation(x, **true1) + _mu_repolarisation(x, **true2)
+    model = ParameterCompositeModel(["MuRepolarisation", "MuRepolarisation"], operators=["+"])
+    seeds = suggest_model_seeds(model, x, y, known={})
+
+    assert seeds["a_Mu_1"] == pytest.approx(true1["a_Mu"], rel=0.2)
+    assert seeds["A_hf_1"] == pytest.approx(true1["A_hf"], rel=0.2)
+    assert seeds["a_Dia_1"] == pytest.approx(true1["a_Dia"], rel=0.2)
+    assert seeds["a_Mu_2"] == pytest.approx(true2["a_Mu"], rel=0.2)
+    assert seeds["A_hf_2"] == pytest.approx(true2["A_hf"], rel=0.2)
+    # The lower-B0 term (component 1) carries the shared plateau offset; the
+    # higher-B0 term's a_Dia seeds at 0 by convention (see _mu_repol_seeds).
+    assert seeds["a_Dia_2"] == 0.0
+
+    yerr = np.full_like(x, 0.05)
+    params = ParameterSet(
+        [
+            Parameter("a_Mu_1", value=seeds["a_Mu_1"]),
+            Parameter("A_hf_1", value=seeds["A_hf_1"], min=1.0, max=1.0e5),
+            Parameter("a_Dia_1", value=seeds["a_Dia_1"]),
+            Parameter("a_Mu_2", value=seeds["a_Mu_2"]),
+            Parameter("A_hf_2", value=seeds["A_hf_2"], min=1.0, max=1.0e5),
+            Parameter("a_Dia_2", value=seeds["a_Dia_2"]),
+        ]
+    )
+    result = fit_parameter_model(x, y, yerr, model, params)
+    assert result.success
+    fitted = {p.name: p.value for p in result.parameters}
+    assert fitted["a_Mu_1"] == pytest.approx(true1["a_Mu"], rel=1e-3)
+    assert fitted["A_hf_1"] == pytest.approx(true1["A_hf"], rel=1e-3)
+    assert fitted["a_Mu_2"] == pytest.approx(true2["a_Mu"], rel=1e-3)
+    assert fitted["A_hf_2"] == pytest.approx(true2["A_hf"], rel=1e-3)
