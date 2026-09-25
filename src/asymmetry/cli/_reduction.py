@@ -26,18 +26,15 @@ if TYPE_CHECKING:
 GREEN_RED = "green-red"
 
 
-def add_reduction_arguments(
-    parser: argparse.ArgumentParser, *, alpha: bool = True, background: bool = True
-) -> None:
+def add_reduction_arguments(parser: argparse.ArgumentParser, *, alpha: bool = True) -> None:
     """Declare the reduction options on *parser*.
 
     ``alpha`` adds ``--alpha``/``--alpha-from`` (a command that measures alpha
-    has neither); ``background`` adds ``--background`` (the integral scan does
-    not subtract one).
+    has neither).
     """
     # An option a command does not declare still reads as its default, so the
     # settings are built from one namespace shape.
-    parser.set_defaults(alpha=None, alpha_from=None, background="none")
+    parser.set_defaults(alpha=None, alpha_from=None)
     if alpha:
         parser.add_argument("--alpha", type=float, default=None, help="Fixed alpha to reduce with")
         parser.add_argument(
@@ -57,17 +54,16 @@ def add_reduction_arguments(
         help="Deadtime correction (default: off, matching the GUI's fresh-run default)",
     )
     add_pair_argument(parser)
-    if background:
-        parser.add_argument(
-            "--background",
-            default="none",
-            metavar="none|tail_fit|range[:FIRST:LAST]",
-            help=(
-                "Background subtraction: tail_fit fits a flat rate under the late-time "
-                "decay (pulsed sources); range averages a pre-t0 bin range (continuous "
-                "sources; default range 0.1·t0–0.6·t0). Default: none"
-            ),
-        )
+    parser.add_argument(
+        "--background",
+        default="none",
+        metavar="none|tail_fit|range[:FIRST:LAST]",
+        help=(
+            "Background subtraction: tail_fit fits a flat rate under the late-time "
+            "decay (pulsed sources); range averages a pre-t0 bin range (continuous "
+            "sources; default range 0.1·t0–0.6·t0). Default: none"
+        ),
+    )
     parser.add_argument(
         "--t0-offset",
         type=int,

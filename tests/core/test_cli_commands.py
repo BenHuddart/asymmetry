@@ -951,6 +951,32 @@ def test_integral_scan_writes_points_for_the_named_runs(
     assert (workdir / "scans" / "integral.json").exists()
 
 
+def test_integral_scan_subtracts_the_requested_background(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    def scan(*extra: str) -> dict:
+        cli.main(
+            [
+                "integral-scan",
+                str(workflow_folder),
+                "--runs",
+                f"{SCAN_RUNS[0]}-{SCAN_RUNS[2]}",
+                *extra,
+                "--json",
+                "--workdir",
+                str(tmp_path / "wd"),
+            ]
+        )
+        return _json_output(capsys)
+
+    plain = scan()
+    subtracted = scan("--background", "tail_fit")
+    assert subtracted["settings"]["background"] == "tail_fit"
+    # The fitted level's correlated error only ever adds to the integral's.
+    for before, after in zip(plain["scan"]["points"], subtracted["scan"]["points"], strict=True):
+        assert after["error"] > before["error"]
+
+
 @pytest.mark.parametrize(
     "fit_only_args",
     [

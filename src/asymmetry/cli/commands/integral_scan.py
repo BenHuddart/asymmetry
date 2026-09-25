@@ -27,7 +27,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("folder", help="Directory holding the run files")
     parser.add_argument("--runs", required=True, help="Run numbers in the scan")
     parser.add_argument("--name", default="integral-scan", help="Stored scan name")
-    add_reduction_arguments(parser, background=False)
+    add_reduction_arguments(parser)
     parser.add_argument("--tmin", type=float, default=None, help="Integration-window start / µs")
     parser.add_argument("--tmax", type=float, default=None, help="Integration-window end / µs")
     parser.add_argument("--method", choices=["integral", "differential"], default="integral")

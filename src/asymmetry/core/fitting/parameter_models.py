@@ -13,6 +13,7 @@ from itertools import product
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.optimize import least_squares
 from scipy.special import expit
 
 from asymmetry.core.fitting.ballistic import lambda_total as ballistic_lambda_total
@@ -30,7 +31,7 @@ from asymmetry.core.fitting.latex_preview import (
     wrap_if_compound,
 )
 from asymmetry.core.fitting.member_quality import parameters_at_bound
-from asymmetry.core.fitting.muon_proton import rf_resonance_mup
+from asymmetry.core.fitting.muon_proton import rf_resonance_mup, rf_transition_freqs
 from asymmetry.core.fitting.muonium import (
     G_E_MHZ_PER_G,
     G_MU_MHZ_PER_G,
@@ -2140,13 +2141,19 @@ def _wls_line(
 
 
 def _estimate_constant(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     return {"c": _weighted_median(y, _point_weights(y, yerr))}
 
 
 def _estimate_linear(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     line = _wls_line(x, y, _point_weights(y, yerr))
     if line is None:
@@ -2156,7 +2163,10 @@ def _estimate_linear(
 
 
 def _estimate_polynomial(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Seed only the constant + linear terms of a polynomial baseline.
 
@@ -2172,7 +2182,10 @@ def _estimate_polynomial(
 
 
 def _estimate_power_law(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Seed ``a·|x|^n + c`` via a log-log line on the positive-x subset.
 
@@ -2203,7 +2216,10 @@ def _estimate_power_law(
 
 
 def _estimate_exp_decay(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Seed ``a·exp(−x/τ) + c`` from a semi-log line on the baseline-subtracted trace.
 
@@ -2252,7 +2268,10 @@ def _estimate_exp_decay(
 
 
 def _estimate_arrhenius(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Seed ``a·exp(−Ea/(k_B·T))`` from a ln y vs 1/T line.
 
@@ -2315,7 +2334,10 @@ def _peak_seed(
 
 
 def _estimate_lorentzian(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Seed ``a/(1 + (B/B0)^2) + c`` — a peak *centred at the origin*.
 
@@ -2398,23 +2420,59 @@ def _lcr_peaks(
     return peaks
 
 
+#: The coupling solve must reach a root: a transition left further than this
+#: fraction of ``ν_RF`` from it means no couplings place both dips.
+_RF_SEED_DETUNING_TOLERANCE = 1e-6
+
+
 def _estimate_rf_resonance(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
-    """Seed the data-scaled half of ``RFResonanceMuP``: dip depths, widths and background.
+    """Seed ``RFResonanceMuP``: depths, widths, background and, with ``ν_RF`` known, the couplings.
 
     The registered depths assume a paper-graded dip an integrated scan does not
     have, so ``BG`` is the median value, ``ampl1 = ampl2`` the signed largest
     excursion from it (peaks or dips alike), and each width a twentieth of the
-    field span. The couplings and ``ν_RF`` that place the dips stay physics
-    inputs.
+    field span.
+
+    Given ``nu_RF`` in *known*, the two strongest resonances of the scan are
+    the fields where the two RF transitions equal ``ν_RF``: ``f₁`` (E₇−E₅) at
+    the upper dip ``B₁`` and ``f₂`` (E₈−E₆) at the lower ``B₂`` (the order of
+    a positive ``A_p``). ``f₁(B₁; A_µ, A_p) = f₂(B₂; A_µ, A_p) = ν_RF`` is two
+    equations in the two couplings, solved from the component defaults with
+    the transitions evaluated at the fixed dip fields — never through
+    :func:`~asymmetry.core.fitting.muon_proton.rf_resonance_fields`, which is
+    ``nan`` wherever a trial coupling loses a crossing. The couplings are
+    returned only when the solution places both transitions on ``ν_RF``.
     """
     bg = float(np.median(y))
     deviations = y - bg
     ampl = float(deviations[int(np.argmax(np.abs(deviations)))]) or 1.0
     span = float(x.max() - x.min())
     width = span / 20.0 if span > 0.0 else 25.0
-    return {"ampl1": ampl, "wid1": width, "ampl2": ampl, "wid2": width, "BG": bg}
+    seeds = {"ampl1": ampl, "wid1": width, "ampl2": ampl, "wid2": width, "BG": bg}
+    if "nu_RF" not in known:
+        return seeds
+    peaks = _lcr_peaks(x, y, 2)
+    if len(peaks) < 2:
+        return seeds
+    nu_rf = float(known["nu_RF"])
+    dip_fields = np.array(sorted((centre for centre, _height, _width in peaks), reverse=True))
+
+    def detuning(couplings: NDArray[np.float64]) -> NDArray[np.float64]:
+        f1, f2 = rf_transition_freqs(dip_fields, couplings[0], couplings[1])
+        return np.array([f1[0] - nu_rf, f2[1] - nu_rf])
+
+    defaults = PARAMETER_MODEL_COMPONENTS["RFResonanceMuP"].param_defaults
+    solution = least_squares(
+        detuning, x0=(defaults["A_mu"], defaults["A_p"]), x_scale=(100.0, 30.0)
+    )
+    if solution.success and np.max(np.abs(solution.fun)) < _RF_SEED_DETUNING_TOLERANCE * nu_rf:
+        seeds.update(A_mu=float(solution.x[0]), A_p=float(solution.x[1]))
+    return seeds
 
 
 #: The resonance-peak components (shared ``f``, ``B0``, ``Bwid``), seeded together
@@ -2423,9 +2481,10 @@ _LCR_COMPONENTS = frozenset({"GaussianLCR", "LorentzianLCR"})
 
 
 #: Registry mapping a *component* name to a closed-form seed estimator. Each
-#: estimator takes the finite, x-sorted ``(x, y, yerr)`` subset and returns a
-#: mapping of that component's *base* parameter names (e.g. ``"m"``, not the
-#: uniquified ``"m_2"``) to suggested values. Components without an entry keep
+#: estimator takes the finite, x-sorted ``(x, y, yerr)`` subset and the values
+#: the caller already holds for that component (``known``, by *base* name), and
+#: returns a mapping of that component's *base* parameter names (e.g. ``"m"``,
+#: not the uniquified ``"m_2"``) to suggested values. Components without an entry keep
 #: their static defaults. Estimators return only the parameters they are
 #: confident about — a partial dict is fine, an empty dict leaves everything to
 #: defaults. ``CriticalDivergence``/``OrderParameter``/``FermiStep`` are handled
@@ -2434,7 +2493,13 @@ _LCR_COMPONENTS = frozenset({"GaussianLCR", "LorentzianLCR"})
 _MODEL_SEED_ESTIMATORS: dict[
     str,
     Callable[
-        [NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None], dict[str, float]
+        [
+            NDArray[np.float64],
+            NDArray[np.float64],
+            NDArray[np.float64] | None,
+            Mapping[str, float],
+        ],
+        dict[str, float],
     ],
 ] = {
     "Constant": _estimate_constant,
@@ -2458,8 +2523,15 @@ def suggest_model_seeds(
     x: NDArray,
     y: NDArray,
     yerr: NDArray | None = None,
+    *,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Data-aware seed overrides keyed by *unique* param name (``model.param_names``).
+
+    *known* holds the values the caller already has (starting values and fixed
+    values, by unique name). Each estimator reads its component's share as
+    inputs — ``RFResonanceMuP`` needs ``nu_RF`` to place its couplings — and
+    the known values are returned as given, over any estimate.
 
     A generic, per-component extension of :func:`suggest_trend_seeds`: for every
     component with a registered closed-form estimator (see
@@ -2470,14 +2542,15 @@ def suggest_model_seeds(
     are delegated to :func:`suggest_trend_seeds` and merged in, so its behaviour
     is preserved exactly.
 
-    Only parameters the estimators are confident about are returned; the caller
-    merges these over :attr:`ParameterCompositeModel.param_defaults` and leaves
-    everything else untouched. Returns an empty mapping when the data is unusable
-    (fewer than two finite points). Pure and Qt-free.
+    Only parameters the estimators are confident about, and the known values,
+    are returned; the caller merges these over
+    :attr:`ParameterCompositeModel.param_defaults` and leaves everything else
+    untouched. Returns just the known values when the data is unusable (fewer
+    than two finite points). Pure and Qt-free.
     """
     xf, yf, ef = _finite_xy(x, y, yerr)
     if xf.size < 2:
-        return {}
+        return dict(known)
 
     seeds: dict[str, float] = {}
     lcr_components = [
@@ -2493,8 +2566,13 @@ def suggest_model_seeds(
         estimator = _MODEL_SEED_ESTIMATORS.get(component.name)
         if estimator is None:
             continue
+        component_known = {
+            base_name: float(known[unique])
+            for base_name, unique in mapping.items()
+            if unique in known
+        }
         try:
-            base_seeds = estimator(xf, yf, ef)
+            base_seeds = estimator(xf, yf, ef, component_known)
         except (ValueError, FloatingPointError, ZeroDivisionError):
             continue
         for base_name, value in base_seeds.items():
@@ -2505,6 +2583,7 @@ def suggest_model_seeds(
 
     # Preserve the existing critical-temperature seeding exactly.
     seeds.update(suggest_trend_seeds(model, x, y))
+    seeds.update(known)
     return seeds
 
 
@@ -3638,11 +3717,17 @@ def fit_parameter_model(
 
     if extra_starts > 0:
         base_values = _parameter_values_by_name(parameters)
-        # A generic data-aware seed, merged over the user's current values.
-        data_seed = suggest_model_seeds(model, x_fit, y_fit, e_fit)
-        if data_seed:
-            merged = dict(base_values)
-            merged.update(data_seed)
+        # A generic data-aware seed, merged over the user's current values; the
+        # fixed values are the ones this fit holds.
+        data_seed = suggest_model_seeds(
+            model,
+            x_fit,
+            y_fit,
+            e_fit,
+            known={p.name: float(p.value) for p in parameters if p.fixed},
+        )
+        merged = {**base_values, **data_seed}
+        if merged != base_values:
             initial_candidates.append(("generic", merged))
         # Deterministic perturbed starts (RNG constructed only when requested,
         # so the extra_starts == 0 path never touches the RNG). The y-span is a

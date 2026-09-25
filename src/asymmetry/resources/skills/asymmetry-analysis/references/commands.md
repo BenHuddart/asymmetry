@@ -185,10 +185,11 @@ options:
 ```
 usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                                [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
-                               [--pair FWD/BWD] [--t0-offset BINS]
-                               [--t-good-offset BINS] [--period RED|GREEN|N|green-red]
-                               [--tmin TMIN] [--tmax TMAX]
-                               [--method {integral,differential}]
+                               [--pair FWD/BWD]
+                               [--background none|tail_fit|range[:FIRST:LAST]]
+                               [--t0-offset BINS] [--t-good-offset BINS]
+                               [--period RED|GREEN|N|green-red] [--tmin TMIN]
+                               [--tmax TMAX] [--method {integral,differential}]
                                [--order {field,temperature,run}] [--model MODEL]
                                [--initial NAME=VALUE] [--fix NAME=VALUE] [--xmin XMIN]
                                [--xmax XMAX] [--baseline MODEL]
@@ -213,6 +214,11 @@ options:
   --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
                         '3/4' (default: the file's own pair; `asymmetry info` lists
                         the groups)
+  --background none|tail_fit|range[:FIRST:LAST]
+                        Background subtraction: tail_fit fits a flat rate under the
+                        late-time decay (pulsed sources); range averages a pre-t0 bin
+                        range (continuous sources; default range 0.1·t0–0.6·t0).
+                        Default: none
   --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
                         default 0)
   --t-good-offset BINS  First good bin this many bins after the effective t0 (default:

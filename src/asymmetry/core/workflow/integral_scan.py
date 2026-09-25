@@ -163,9 +163,16 @@ def _parameters(
     fixed: Mapping[str, float] | None,
 ) -> tuple[Any, ParameterSet]:
     model = as_composite_model(expression)
-    starts = suggest_model_seeds(model, scan.x, scan.value, scan.error)
-    starts.update({str(name): float(value) for name, value in (initial or {}).items()})
-    parameters = parameter_set_for_model(model, starts)
+    fixed = {str(name): float(value) for name, value in (fixed or {}).items()}
+    unknown = set(fixed) - set(model.param_names)
+    if unknown:
+        raise ValueError(
+            f"Unknown fixed parameter(s) {sorted(unknown)}; model parameters are {model.param_names}."
+        )
+    known = {**{str(name): float(value) for name, value in (initial or {}).items()}, **fixed}
+    parameters = parameter_set_for_model(
+        model, suggest_model_seeds(model, scan.x, scan.value, scan.error, known=known)
+    )
     # Every resonance sits inside the scan with a width between a thousandth and
     # a quarter of it: two LCR components otherwise trade places, one running
     # off the axis with a negative width, and a resonance wider than a quarter
@@ -181,14 +188,7 @@ def _parameters(
             centre.min, centre.max = x_lo, x_hi
             width.min = max(span / 1000.0, np.finfo(float).eps)
             width.max = max(span / 4.0, width.min)
-    fixed = {str(name): float(value) for name, value in (fixed or {}).items()}
-    unknown = set(fixed) - set(model.param_names)
-    if unknown:
-        raise ValueError(
-            f"Unknown fixed parameter(s) {sorted(unknown)}; model parameters are {model.param_names}."
-        )
-    for name, value in fixed.items():
-        parameters[name].value = value
+    for name in fixed:
         parameters[name].fixed = True
     return model, parameters
 
@@ -256,7 +256,9 @@ def fit_integral_scan(
             f"The scan has {fitted_scan.n_points} point(s) to fit for {free} free "
             f"parameter(s) of {expression}; widen the window or hold parameters with --fix."
         )
-    result = fit_scan_model(fitted_scan, model, parameters=parameters)
+    # One extra start is the scan's own data seed (fixed values alone known),
+    # which rescues a hand-given start the fit cannot converge from.
+    result = fit_scan_model(fitted_scan, model, parameters=parameters, extra_starts=1)
     fit_payload = {
         "success": bool(result.success),
         "message": str(result.message),
