@@ -506,6 +506,34 @@ def test_survey_rejects_a_path_that_is_not_a_directory(tmp_path: Path) -> None:
         survey_folder(missing)
 
 
+def test_survey_of_a_folder_with_only_subfolders_of_runs_names_them(tmp_path: Path) -> None:
+    """No run files directly in *folder*: point at the sub-folder that holds them.
+
+    ``scan_run_files`` never opens a file, so bare touched names are enough
+    to exercise this without a real (h5py-backed) NeXus fixture.
+    """
+    rg1 = tmp_path / "RG1"
+    rg1.mkdir()
+    for run in range(29809, 29812):
+        (rg1 / f"SIM{run:08d}.nxs").touch()
+    rg2 = tmp_path / "RG2"
+    rg2.mkdir()
+    (rg2 / "SIM00029900.nxs").touch()
+    # Two levels down: scan_run_files (and survey_folder) never recurse this far.
+    nested = rg1 / "nested"
+    nested.mkdir()
+    (nested / "SIM00029950.nxs").touch()
+
+    with pytest.raises(ValueError, match=r"RG1 \(3 runs\), RG2 \(1 run\)"):
+        survey_folder(tmp_path)
+
+
+def test_survey_of_a_genuinely_empty_folder_is_still_an_empty_survey(tmp_path: Path) -> None:
+    """A folder with nothing in it at all is not the "point at a sub-folder" case."""
+    empty = survey_folder(tmp_path)
+    assert empty.runs == []
+
+
 def _candidate(run_number: int, alpha: float) -> CalibrationCandidate:
     return CalibrationCandidate(
         run_number=run_number,

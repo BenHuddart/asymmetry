@@ -50,37 +50,43 @@ def build_integral_scan(
     """
     runs = [dataset.run for dataset in datasets]
     if settings.period != GREEN_MINUS_RED:
-        return build_field_scan(
-            [_resolved(run, settings) for run in runs],
+        resolved = [_resolved(run, settings) for run in runs]
+        scan = build_field_scan(
+            resolved,
             t_min=t_min,
             t_max=t_max,
             method=method,
             order_key=order_key,
         )
+        return _decoded(scan, _source_run_numbers(resolved))
     two_period = [run for run in runs if period_count(run) == 2]
     # Each period is reduced as the single-period run it is.
     per_period = replace(settings, period=None)
+    red_periods = [period_run(run, RED_INDEX) for run in two_period]
+    green_periods = [period_run(run, GREEN_INDEX) for run in two_period]
+    sources = _source_run_numbers(red_periods + green_periods)
     red, green = (
         build_field_scan(
-            [_resolved(period_run(run, index), per_period) for run in two_period],
+            [_resolved(period, per_period) for period in periods],
             t_min=t_min,
             t_max=t_max,
             method=method,
             order_key=order_key,
         )
-        for index in (RED_INDEX, GREEN_INDEX)
+        for periods in (red_periods, green_periods)
     )
     # Both periods of a run share its field, temperature and window, so the two
-    # scans list the same runs in the same order; the period is the run number's
-    # last three digits (encode_period_run_number).
-    sources = [encoded // 1000 for encoded in red.run_numbers]
-    if sources != [encoded // 1000 for encoded in green.run_numbers]:
+    # scans list the same runs in the same order once decoded to their source
+    # run number (encode_period_run_number).
+    red_sources = [sources[encoded] for encoded in red.run_numbers]
+    green_sources = [sources[encoded] for encoded in green.run_numbers]
+    if red_sources != green_sources:
         raise ValueError("The red and green scans of the same runs came out in different orders.")
     return FieldScan(
         x=red.x,
         value=green.value - red.value,
         error=np.hypot(red.error, green.error),
-        run_numbers=sources,
+        run_numbers=red_sources,
         order_key=red.order_key,
         method=red.method,
         x_label=red.x_label,
@@ -90,7 +96,7 @@ def build_integral_scan(
             for run in runs
             if period_count(run) != 2
         ]
-        + [(encoded // 1000, reason) for encoded, reason in (*red.excluded, *green.excluded)],
+        + [(sources[encoded], reason) for encoded, reason in (*red.excluded, *green.excluded)],
         units=red.units,
     )
 
@@ -98,6 +104,32 @@ def build_integral_scan(
 def _resolved(run: Run, settings: ReductionSettings) -> Run:
     """*run* carrying the grouping *settings* resolve for it."""
     return replace(run, grouping=resolve_reduction_grouping(run, settings))
+
+
+def _source_run_numbers(runs: Iterable[Run]) -> dict[int, int]:
+    """Map each *run*'s own number (period-encoded or not) to its source run number.
+
+    A period-selected run carries ``metadata["source_run_number"]``
+    (:func:`asymmetry.core.io.periods.period_run`); any other run's own number
+    already *is* its source run number.
+    """
+    return {
+        int(run.run_number): int(run.metadata.get("source_run_number", run.run_number))
+        for run in runs
+    }
+
+
+def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:
+    """*scan* with every point's and exclusion's run number mapped to its source run.
+
+    Every number appearing in ``scan.run_numbers``/``scan.excluded`` was drawn
+    from the same runs *sources* was built from, so the lookup cannot miss.
+    """
+    return replace(
+        scan,
+        run_numbers=[sources[number] for number in scan.run_numbers],
+        excluded=[(sources[number], reason) for number, reason in scan.excluded],
+    )
 
 
 def field_scan_payload(scan: FieldScan) -> dict[str, Any]:

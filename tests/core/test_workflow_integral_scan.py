@@ -160,6 +160,45 @@ def test_a_green_minus_red_scan_differences_each_periods_integral() -> None:
     assert build_integral_scan(datasets, settings, method="differential").n_points == 2
 
 
+def test_a_single_period_scan_reports_the_source_run_number() -> None:
+    """``select_period`` encodes a period's run number as ``run*1000+period``;
+
+    the scan must report the run it was cut from, not that internal key.
+    """
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.io.periods import select_period
+    from asymmetry.core.simulate import BUILTIN_TEMPLATES, PeriodSpec, simulate_two_period_run
+    from asymmetry.core.workflow.integral_scan import build_integral_scan
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    def relax(t, A=20.0):  # noqa: N803 (A is the conventional asymmetry symbol)
+        return A * np.exp(-0.3 * t)
+
+    datasets = []
+    for index, field in enumerate([700.0, 800.0]):
+        template = BUILTIN_TEMPLATES["ideal_pulsed_fb"].build()
+        template.metadata["field"] = field
+        run = simulate_two_period_run(
+            template,
+            [
+                PeriodSpec(relax, {"A": 20.0}, label="red"),
+                PeriodSpec(relax, {"A": 15.0}, label="green"),
+            ],
+            total_events=4.0e7,
+            seed=50 + index,
+            run_number=3366 + index,
+        )
+        loaded = MuonDataset(
+            time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=run
+        )
+        datasets.append(select_period(loaded, "red"))
+
+    settings = ReductionSettings(period="red")
+    scan = build_integral_scan(datasets, settings, t_min=0.0, t_max=1.0)
+
+    assert scan.run_numbers == [3366, 3367]
+
+
 @pytest.mark.parametrize("background", ["Quadratic", "Cubic"])
 def test_two_resonances_on_a_kilogauss_background_fit_together(background: str) -> None:
     rng = np.random.default_rng(1)

@@ -9,9 +9,12 @@ values the earlier ones set:
    ``default_min`` (``-inf`` when it has none), and the model's
    ``fixed_by_default_params``;
 2. **record scale** (time domain, with a dataset) — amplitude-role parameters
-   from the record's early-mean-minus-tail estimate and background parameters
-   from its tail (see :func:`record_scale_estimate`);
-3. **applied field** — ``field`` / ``B_L`` from a non-zero applied field;
+   from the *magnitude* of the record's early-mean-minus-tail estimate (see
+   :func:`record_scale_estimate`), its sign instead seeding ``phase`` (0 or π,
+   :func:`phase_seed_from_sign`), and background parameters from the tail;
+3. **applied field** — ``field``/``B_L`` from a non-zero applied field, and
+   ``frequency`` from its Larmor value when a bound dataset's Nyquist
+   frequency can gate it;
 4. **frequency-domain peaks** — the displayed spectrum's dominant peak for one
    dataset, or the per-parameter mean across a batch's datasets;
 5. **individual-groups overrides** — background and ``phase`` held at zero,
@@ -44,10 +47,20 @@ from asymmetry.core.fitting.global_search.heuristics import (
 from asymmetry.core.fitting.models import LINEAR_PARAM_ROLE_NAMES
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, suggest_trend_seeds
 from asymmetry.core.fitting.parameters import get_param_info, split_parameter_name
-from asymmetry.core.fitting.spectral import seed_peak_parameters_from_dataset
+from asymmetry.core.fitting.spectral import (
+    dataset_nyquist_mhz,
+    field_gauss_to_frequency_mhz,
+    seed_peak_parameters_from_dataset,
+)
 
 #: Base names seeded from the run's applied field.
 _FIELD_SEED_BASE_NAMES: frozenset[str] = frozenset({"field", "B_L"})
+
+#: Base name of the Larmor frequency seeded from the applied field (MHz).
+_FREQUENCY_SEED_BASE_NAME = "frequency"
+
+#: Base name of the oscillation phase seeded from the record's early-vs-tail sign.
+_PHASE_SEED_BASE_NAME = "phase"
 
 #: Base names that carry the *record's* asymmetry amplitude. Deliberately the
 #: intersection of the linear (amplitude/background) roles with the amplitude
@@ -116,6 +129,18 @@ def record_scale_window_counts(n_points: int) -> tuple[int, int]:
     return min(n, max(5, n // 20)), min(n, max(5, n // 10))
 
 
+def phase_seed_from_sign(amplitude_delta: float) -> float:
+    """0 if *amplitude_delta* is non-negative, else π.
+
+    The one phase convention both the fit wizard's template seeding
+    (``fit_wizard.py``'s ``phase_guess``) and the record-scale seeding layer
+    use: a record whose early samples sit below its tail is 180° out of phase
+    with a positive-amplitude cosine, so the sign lives in ``phase`` rather
+    than in a negative amplitude the model's own convention does not carry.
+    """
+    return 0.0 if amplitude_delta >= 0.0 else math.pi
+
+
 def record_scale_estimate(
     time: NDArray[np.float64], asymmetry: NDArray[np.float64]
 ) -> tuple[float, float]:
@@ -176,30 +201,57 @@ def _static_default_seeds(model: CompositeModel, context: SeedContext) -> dict[s
 
 
 def _record_scale_values(model: CompositeModel, context: SeedContext) -> dict[str, float]:
-    """Layer 2: amplitude and background parameters from the record's own scale."""
+    """Layer 2: amplitude, phase and background parameters from the record's own scale.
+
+    Amplitude-role parameters always seed positive: the record's early-vs-tail
+    sign is instead carried by ``phase`` (0 or π, :func:`phase_seed_from_sign`)
+    — the fit wizard's own split — so a negative-amplitude start never fights
+    a model whose amplitude is physically non-negative.
+    """
     if context.domain != "time" or context.dataset is None:
         return {}
     amplitude, tail = record_scale_estimate(context.dataset.time, context.dataset.asymmetry)
+    phase = phase_seed_from_sign(amplitude)
     values: dict[str, float] = {}
     for param_name in model.param_names:
         base_name, _index = split_parameter_name(param_name)
         if is_background_parameter(base_name):
             values[param_name] = tail
         elif base_name in _AMPLITUDE_ROLE_BASE_NAMES:
-            values[param_name] = amplitude
+            values[param_name] = abs(amplitude)
+        elif base_name == _PHASE_SEED_BASE_NAME:
+            values[param_name] = phase
     return values
 
 
 def _applied_field_values(model: CompositeModel, context: SeedContext) -> dict[str, float]:
-    """Layer 3: ``field`` / ``B_L`` from the applied field, when there is one."""
+    """Layer 3: ``field``/``B_L`` from the applied field, and ``frequency`` from its Larmor value.
+
+    ``frequency`` (MHz) seeds ``gamma_mu/2pi * |field|`` only when a single
+    dataset is bound, so its own Nyquist frequency can gate the seed — a
+    Larmor value at or above it would alias, seeding a frequency the record
+    cannot show rather than the one it can.
+    """
     field_gauss = context.field_gauss
     if field_gauss is None or field_gauss == 0.0:
         return {}
-    return {
+    values = {
         param_name: float(field_gauss)
         for param_name in model.param_names
         if split_parameter_name(param_name)[0] in _FIELD_SEED_BASE_NAMES
     }
+    if context.dataset is not None:
+        larmor_mhz = field_gauss_to_frequency_mhz(abs(float(field_gauss)))
+        nyquist_mhz = dataset_nyquist_mhz(context.dataset.time)
+        if 0.0 < larmor_mhz < nyquist_mhz:
+            values.update(
+                {
+                    param_name: larmor_mhz
+                    for param_name in model.param_names
+                    if split_parameter_name(param_name)[0] == _FREQUENCY_SEED_BASE_NAME
+                }
+            )
+    return values
 
 
 def _frequency_peak_values(model: CompositeModel, context: SeedContext) -> dict[str, float]:
@@ -320,6 +372,7 @@ def _hold_at_zero(seeds: dict[str, Seed], param_names: Iterable[str]) -> None:
 __all__ = [
     "Seed",
     "SeedContext",
+    "phase_seed_from_sign",
     "record_scale_estimate",
     "record_scale_window_counts",
     "seed_parameters",

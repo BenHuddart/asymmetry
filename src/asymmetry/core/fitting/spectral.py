@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from numpy.typing import NDArray
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -31,6 +32,19 @@ def field_gauss_to_frequency_mhz(value_gauss: float) -> float:
     """Convert a magnetic field or width in Gauss to MHz."""
     scale = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
     return float(value_gauss) * scale
+
+
+def dataset_nyquist_mhz(time: NDArray[np.float64]) -> float:
+    """The Nyquist frequency (MHz) of a µs time axis, from its mean sample spacing.
+
+    ``0.0`` for a time axis too short to have a spacing, so a caller's
+    ``value < dataset_nyquist_mhz(...)`` gate excludes rather than raising.
+    """
+    t = np.asarray(time, dtype=float)
+    if t.size < 2:
+        return 0.0
+    dt = float(np.mean(np.diff(t)))
+    return 0.5 / dt if dt > 0.0 else 0.0
 
 
 def append_frequency_field_derived_parameters(

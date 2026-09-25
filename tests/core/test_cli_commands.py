@@ -322,6 +322,23 @@ def test_survey_on_a_missing_folder_is_a_user_error(tmp_path: Path, capsys) -> N
     assert "not a directory" in capsys.readouterr().err
 
 
+def test_survey_of_a_folder_with_only_subfolders_names_them_and_writes_nothing(
+    tmp_path: Path, capsys
+) -> None:
+    data = tmp_path / "data"
+    rg = data / "RG"
+    rg.mkdir(parents=True)
+    (rg / "SIM00029809.nxs").touch()
+    (rg / "SIM00029810.nxs").touch()
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["survey", str(data), "--workdir", str(tmp_path / "wd")])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "RG (2 runs)" in err
+    assert not (tmp_path / "wd").exists()
+
+
 # -- alpha ------------------------------------------------------------------
 
 
@@ -584,6 +601,51 @@ def test_integral_scan_green_red_needs_two_periods(
     data = _json_output(capsys)
     assert [point["value"] for point in data["scan"]["points"]] == pytest.approx([0.0, 0.0])
     assert data["settings"]["period"] == "green_minus_red"
+
+
+def test_integral_scan_single_period_reports_the_source_run_number(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A period run's own number is encoded (run*1000+period); the scan reports
+    the source run it was cut from, not that internal key.
+    """
+    _two_identical_periods(monkeypatch)
+    cli.main(
+        [
+            "integral-scan",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+            "--period",
+            "red",
+            "--order",
+            "run",
+            "--json",
+            "--workdir",
+            str(tmp_path / "wd"),
+        ]
+    )
+    data = _json_output(capsys)
+    assert [point["run"] for point in data["scan"]["points"]] == [SCAN_RUNS[0], SCAN_RUNS[1]]
+
+
+def test_alpha_period_red_reports_the_source_run_number(
+    workflow_folder: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_identical_periods(monkeypatch)
+    cli.main(
+        [
+            "alpha",
+            str(workflow_folder),
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--period",
+            "red",
+            "--json",
+        ]
+    )
+    data = _json_output(capsys)
+    assert data["alpha"]["run_number"] == SCAN_RUNS[0]
 
 
 def test_reduce_with_a_pair_and_offsets_records_them(

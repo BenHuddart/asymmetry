@@ -931,6 +931,24 @@ def _calibration_candidates(
     return candidates, best_run
 
 
+def _run_holding_subfolders(folder: Path) -> list[tuple[str, int]]:
+    """Immediate sub-folders of *folder* that hold run files, with their counts.
+
+    One level only, matching :func:`survey_folder`'s own non-recursive scan: a
+    sub-folder's own sub-folders are not inspected.
+    """
+    from asymmetry.core.io.run_range import scan_run_files
+
+    holders: list[tuple[str, int]] = []
+    for entry in sorted(folder.iterdir()):
+        if not entry.is_dir():
+            continue
+        count = len(scan_run_files(entry).entries)
+        if count:
+            holders.append((entry.name, count))
+    return holders
+
+
 def survey_folder(folder: str | Path, *, pair: tuple[str, str] | None = None) -> FolderSurvey:
     """Load every run file in *folder* and report what the experiment contains.
 
@@ -941,13 +959,26 @@ def survey_folder(folder: str | Path, *, pair: tuple[str, str] | None = None) ->
     :class:`~asymmetry.core.data.dataset.Run` is reduced, never re-read.
 
     Raises :class:`ValueError` when *folder* is not a directory (from
-    :func:`asymmetry.core.io.run_range.scan_run_files`).
+    :func:`asymmetry.core.io.run_range.scan_run_files`), or when it holds no
+    run files of its own but its immediate sub-folders do — naming them with
+    their run counts, so the caller can point at one instead of at a folder
+    that merely contains the experiment.
     """
     from asymmetry.core.io import load, scan_run_files
     from asymmetry.core.io.periods import period_count
 
     folder = Path(folder)
     found = scan_run_files(folder)
+    if not found.entries:
+        holders = _run_holding_subfolders(folder)
+        if holders:
+            listing = ", ".join(
+                f"{name} ({count} run{'s' if count != 1 else ''})" for name, count in holders
+            )
+            raise ValueError(
+                f"{folder} holds no run files directly; its sub-folders do: {listing}. "
+                "Survey one of them instead."
+            )
     settings = ReductionSettings(pair=pair)
 
     rows: list[RunRow] = []

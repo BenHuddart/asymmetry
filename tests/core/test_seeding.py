@@ -14,11 +14,12 @@ from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
 from asymmetry.core.fitting.seeding import (
     Seed,
     SeedContext,
+    phase_seed_from_sign,
     record_scale_estimate,
     seed_parameters,
     seed_trend_parameters,
 )
-from asymmetry.core.fitting.spectral import default_frequency_model
+from asymmetry.core.fitting.spectral import default_frequency_model, field_gauss_to_frequency_mhz
 
 # ── models and data ─────────────────────────────────────────────────────────
 
@@ -132,14 +133,40 @@ def test_record_scale_seeds_amplitude_and_background_from_the_record() -> None:
     assert seeds["A_bg"].run_bound is False
 
 
-def test_record_scale_leaves_rate_and_shape_parameters_alone() -> None:
+def test_record_scale_leaves_rate_and_frequency_parameters_alone() -> None:
+    """Layer 2 seeds amplitude, background and phase; frequency is layer 3's job."""
     model = _damped_oscillation_model()
 
     seeds = seed_parameters(model, SeedContext(dataset=_decaying_record()))
 
     assert seeds["Lambda"].value == model.param_defaults["Lambda"]
     assert seeds["frequency"].value == model.param_defaults["frequency"]
-    assert seeds["phase"].value == model.param_defaults["phase"]
+
+
+def test_record_scale_seeds_amplitude_positive_and_carries_the_sign_in_phase() -> None:
+    """A negative-going record seeds the same positive amplitude, phase π instead."""
+    model = _damped_oscillation_model()
+
+    positive = seed_parameters(
+        model, SeedContext(dataset=_decaying_record(amplitude=20.0, tail=3.0))
+    )
+    negative = seed_parameters(
+        model, SeedContext(dataset=_decaying_record(amplitude=-20.0, tail=3.0))
+    )
+
+    assert positive["A_1"].value > 0.0
+    assert positive["phase"].value == pytest.approx(0.0)
+    assert negative["A_1"].value == pytest.approx(positive["A_1"].value)
+    assert negative["phase"].value == pytest.approx(math.pi)
+    # Phase describes the physics (like the amplitude it carries the sign
+    # for), not the run: it is not run-bound.
+    assert negative["phase"].run_bound is False
+
+
+def test_phase_seed_from_sign() -> None:
+    assert phase_seed_from_sign(5.0) == 0.0
+    assert phase_seed_from_sign(0.0) == 0.0
+    assert phase_seed_from_sign(-5.0) == math.pi
 
 
 def test_record_scale_does_not_sweep_in_physics_named_like_an_amplitude() -> None:
@@ -205,6 +232,34 @@ def test_no_applied_field_keeps_the_component_default(field_gauss: float | None)
 
     assert seeds["field"].value == model.param_defaults["field"]
     assert seeds["field"].run_bound is False
+
+
+def test_applied_field_seeds_frequency_from_its_larmor_value_below_nyquist() -> None:
+    model = _damped_oscillation_model()
+    dataset = _decaying_record()  # 400 points over 10 µs -> Nyquist ~20 MHz
+
+    seeds = seed_parameters(model, SeedContext(dataset=dataset, field_gauss=150.0))
+
+    assert seeds["frequency"].value == pytest.approx(field_gauss_to_frequency_mhz(150.0))
+    assert seeds["frequency"].run_bound is True
+
+
+def test_applied_field_leaves_frequency_alone_above_the_records_nyquist() -> None:
+    model = _damped_oscillation_model()
+    dataset = _decaying_record()  # Nyquist ~20 MHz
+
+    seeds = seed_parameters(model, SeedContext(dataset=dataset, field_gauss=20_000.0))
+
+    assert seeds["frequency"].value == model.param_defaults["frequency"]
+
+
+def test_applied_field_does_not_seed_frequency_without_a_bound_dataset() -> None:
+    """No dataset means no Nyquist to gate the Larmor value against."""
+    model = _damped_oscillation_model()
+
+    seeds = seed_parameters(model, SeedContext(field_gauss=150.0))
+
+    assert seeds["frequency"].value == model.param_defaults["frequency"]
 
 
 def test_applied_field_seeds_the_value_of_a_fixed_by_default_parameter() -> None:
