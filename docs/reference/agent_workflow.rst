@@ -53,14 +53,6 @@ skill tells an agent to say so and stop rather than force a fit:
        step than forward–backward asymmetry. (An RF-resonance *field scan* is
        in scope: ``integral-scan --period green-red`` builds it, though the
        packaged skill does not yet steer an agent to it.)
-   * - A series of simultaneous groups
-     - ``fit-global`` fits one group jointly and ``trend`` reads that group's
-       run-local parameters, but no command yet repeats the coupled fit over
-       every temperature and trends the *shared* parameters.
-   * - A trend of fitted trend parameters
-     - ``trend --model`` fits one stored series; a law fitted across several
-       such fits (an Arrhenius law through rate constants each fitted at one
-       temperature) has no command.
    * - A fragment of a published multi-field campaign
      - No self-contained scan in the survey and fields the files do not
        record cannot be reconstructed from what is on disk. Two complete
@@ -159,9 +151,48 @@ Every subcommand below shares the same conventions:
   Without it, a repeated warning — the fit wizard's ``AsymmetryScaleWarning``
   from candidate seeding, in particular — is collapsed to one line on stderr
   per distinct warning rather than once per occurrence.
+- ``--instrument NAME`` (every command with a work directory, and ``alpha``)
+  restricts the folder to one instrument's files, matched case-insensitively
+  against the file prefix — ``EMU`` selects ``EMU…`` and ``emu…``, one
+  instrument across eras. Needed whenever a folder holds two instruments
+  whose run numbers collide; see `Two instruments in one folder`_.
 - **Exit codes**: ``0`` on success, ``1`` on a user error (one line on
   stderr — a bad run number, a missing recipe), ``2`` on an internal error
   (a full traceback, because that is a bug worth reporting).
+
+Two instruments in one folder
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Every command that resolves run numbers keys the work directory on the run
+number alone. Two instruments whose runs happen to sit in the same folder —
+an EMU and a MUSR campaign on the same sample, say — are two campaigns whose
+run numbers may collide, and a command that resolved them blindly would
+silently mix one instrument's spectra into the other's work directory. Where
+no run number collides, every command works across every instrument in the
+folder as before; ``--instrument`` is only needed once one does, and every
+affected command is refused with both instruments named until it is given:
+
+.. code-block:: console
+
+   $ asymmetry reduce runs --runs 101-108
+   asymmetry: Run numbers in runs collide between instruments EMU and MUSR:
+   run 101 is EMU00000101.nxs and MUSR00000101.nxs. The work directory is
+   keyed on the run number alone, so name the instrument: --instrument EMU or
+   --instrument MUSR (the file prefix, in any case). The folder holds EMU (58
+   files), MUSR (9 files).
+
+``survey`` never refuses this way — it lists every file regardless, measures
+each one's alpha and precession per file rather than per run number, and
+prints a ``RUN NUMBERS COLLIDE`` line naming the runs and instruments that
+need ``--instrument`` on every other command.
+
+A work directory is bound to *(folder, instrument)*, recorded in its
+manifest by the first command that writes one (``survey`` or ``reduce``): a
+later command against the same directory with a different instrument — or
+the whole folder, with no instrument — is refused the same way an unrelated
+folder is (see `One directory, one data folder`_), naming the bound
+instrument and the requested one. Use a separate ``--workdir`` per
+instrument, exactly as for a second data folder.
 
 Reduction options
 ~~~~~~~~~~~~~~~~~
@@ -182,8 +213,16 @@ and each is printed on the line under the command's table:
   ``range:FIRST:LAST`` in bins (continuous sources only — a pulsed run has no
   pre-t0 region and is refused). A background the reduction cannot subtract
   is an error, never a silent unsubtracted spectrum. ``integral-scan`` takes
-  no ``--background``: a subtracted level's error is shared by every bin of
-  the integration window, which the integral's error does not propagate.
+  the same ``--background``: the grouping's constant subtracted level is
+  removed from the forward and backward window sums before they are
+  combined into the integral asymmetry, and its correlated error (one level
+  estimated once, so it enters the window sum linearly in the bin count
+  rather than as its square root) is propagated into the point's error
+  alongside the Poisson term. A background that leaves no constant level — a
+  failed estimate, or a reference-run background, which needs a loader the
+  integral transform does not carry — excludes the run from the scan with
+  the reason, rather than integrating unsubtracted counts; the GUI's
+  Integral scan mode picks up the same grouping background.
 - ``--t0-offset BINS`` shifts every detector's file t0 by a signed number of
   bins, and ``--t-good-offset BINS`` puts the first good bin that many bins
   after the effective t0 — the grouping window's Manual t0 and **t_good
@@ -208,12 +247,21 @@ candidates — always the first command run against a new folder.
 .. code-block:: text
 
    asymmetry survey [-h] [--pair FWD/BWD] [--json] [--workdir WORKDIR]
+                    [--instrument NAME]
                     folder
 
 Writes ``survey.json`` into the work directory. ``--pair`` measures each run's
 precession on the named groups instead of the file's own pair; on a PSI GPS
 folder whose transverse signal sits in Up/Down, ``survey --pair Up/Down`` is
-the survey that sees it. Groups runs into scans by
+the survey that sees it. ``--instrument`` restricts the listing to one
+instrument (see `Two instruments in one folder`_); without it, every file in
+the folder is listed and, where two instruments share a run number, each row
+is labelled with its own instrument and alpha is measured per file rather
+than per run number. A folder with no run files of its own but immediate
+sub-folders that hold them — a top-level ``data/`` that merely contains the
+experiment — is refused, naming those sub-folders with their run counts, so
+the caller can point at one of them instead; ``survey`` does not recurse
+deeper than one level. Groups runs into scans by
 (instrument, field) ordered by temperature and by (instrument, temperature)
 ordered by field, so the structure of a multi-scan folder is visible without
 reading every file. When the logged sample temperature departs from the
@@ -300,6 +348,15 @@ dominant line is compared with the Larmor frequency of the recorded field,
        the record's Nyquist frequency. ``precession_note`` in the JSON says
        which.
 
+A run with no measurable precession (``prec`` ``none`` or ``-``) can still
+have its geometry named from the run's own logged field-coil readbacks — HiFi
+logs the main solenoid and a small Z coil separately, so an axial reading
+dominating the transverse by a wide margin is longitudinal even where the
+spectrum is silent or the file stamps it ``TF``. Where this decides, ``geom``
+carries a ``+`` (``TF+``, ``LF+``; ``geometry_source`` ``"coils"``) instead of
+the ``*`` a measured precession earns, and ranks below a measured line but
+above the file's own stamp; see :doc:`loading_data` for the readback rule.
+
 **Zero-field runs are searched for a spontaneous line** by the same reading —
 the resolved dominant line, else the damped-line scan's. There is no Larmor
 frequency to compare with, so a line is ``other@<MHz>``: precession in a static
@@ -346,9 +403,12 @@ commands never disagree about whether a run will calibrate alpha.
 
 Each run's ``survey.json`` row carries ``n_periods``, ``total_events``,
 ``geometry``, ``geometry_source``
-(``field``, ``measured``, ``refuted``, ``file`` or ``none``), ``precession``,
-``precession_frequency_mhz``, ``precession_snr``, ``precession_larmor_mhz`` and
-``precession_note``.
+(``field``, ``measured``, ``coils``, ``refuted``, ``file`` or ``none``),
+``precession``, ``precession_frequency_mhz``, ``precession_snr``,
+``precession_larmor_mhz`` and ``precession_note``, plus
+``sample_temperature_logged`` and ``sample_temperature_log_source`` where the
+file logs a sample temperature distinct from the setpoint (``T log/K`` in the
+table; see :doc:`loading_data`).
 
 ``total_events`` is the gross count summed over every raw detector histogram
 in the default (first) period. The human table shows the same value under
@@ -419,14 +479,18 @@ per-run estimate the GUI's **Estimate α** button computes.
                    [--pair FWD/BWD]
                    [--background none|tail_fit|range[:FIRST:LAST]]
                    [--t0-offset BINS] [--t-good-offset BINS]
-                   [--period RED|GREEN|N|green-red] [--json]
+                   [--period RED|GREEN|N|green-red] [--instrument NAME]
+                   [--json]
                    folder
 
 ``alpha`` takes no ``--workdir`` and writes nothing to disk; it loads the
 named file directly and prints the estimate, whether the run is a suitable
 calibration candidate, and a warning when it is not. The `Reduction options`_
 decide which counts it balances — ``--pair Up/Down`` measures the Up/Down
-balance, not the file's default pair's:
+balance, not the file's default pair's. ``--instrument`` picks the file when
+the folder holds two instruments sharing this run number (see `Two
+instruments in one folder`_); a period selection reports the encoded
+run's *source* run number, not ``run*1000 + period``.
 
 .. code-block:: console
 
@@ -445,7 +509,7 @@ directory.
 
 .. code-block:: text
 
-   asymmetry reduce [-h] --runs RUNS [--alpha ALPHA]
+   asymmetry reduce [-h] --runs RUNS [--coadd] [--alpha ALPHA]
                     [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
                     [--pair FWD/BWD]
                     [--background none|tail_fit|range[:FIRST:LAST]]
@@ -453,6 +517,7 @@ directory.
                     [--period RED|GREEN|N|green-red] [--rebin REBIN]
                     [--tmin TMIN] [--tmax TMAX] [--plot-tmax PLOT_TMAX]
                     [--plot] [--json] [--workdir WORKDIR]
+                    [--instrument NAME]
                     folder
 
 ``--runs`` takes ranges and commas (``102-107``, ``102-105,107``). The
@@ -464,6 +529,18 @@ to 1.0. Writes
 ``plots/reduced-<run>.png`` per run with ``--plot``. Results are cached on a
 digest of the source file, the grouping and the reduction settings, so
 re-running ``reduce`` on unchanged runs is cheap.
+
+``--coadd`` sums the counts of every run in ``--runs`` (the same combine the
+GUI's data browser offers on a multi-selection) and reduces the sum as one
+run under the reduction options, storing it under the *first* run's number —
+that run's own, separate reduction is replaced, so co-add a group into its
+own ``--workdir`` if the individual runs are also wanted. The stored entry
+records its members, and every later command that reads it — ``wizard``,
+``fit``, ``fit-series``, ``fourier`` — prints ``Run N is co-added from
+runs …`` on stderr so a co-add is never mistaken for an ordinary run's own
+statistics. A mismatch between the named runs (different detector layout,
+incompatible binning) is a user error naming the mismatch, not a silent
+partial sum.
 
 ``--tmin``/``--tmax`` cut the *stored* reduction, so every later ``wizard``,
 ``fit`` and ``fit-series`` sees only that window, and each of those commands
@@ -569,11 +646,18 @@ for it.
    asymmetry recipe [-h] --expression EXPRESSION --name NAME [--run RUN]
                     [--initial NAME=VALUE] [--fix NAME=VALUE] [--tmin TMIN]
                     [--tmax TMAX] [--json] [--workdir WORKDIR]
+                    [--instrument NAME]
                     folder
 
-``--run`` seeds the amplitudes, background and applied field from that reduced
-run (the same seeding every fit surface uses); ``--initial`` moves a start
-value, ``--fix`` holds one (and pins it, so a series never re-seeds it), and
+``--run`` seeds the amplitudes, phase, background, applied field and Larmor
+frequency from that reduced run (the same seeding every fit surface uses):
+an amplitude role is seeded positive, with its sign carried instead by
+``phase`` (0 or π, the fit wizard's own rule), and a ``frequency`` parameter
+is seeded from the applied field's Larmor value when it sits below the
+run's Nyquist frequency — both marked run-bound, so ``fit-series`` and
+``fit-global`` re-seed them per run from each run's own field rather than
+carrying the first run's value down the scan (see `The fit recipe`_).
+``--initial`` moves a start value, ``--fix`` holds one (and pins it, so a series never re-seeds it), and
 ``--tmin``/``--tmax`` set the fit window. The command writes
 ``recipes/<name>.json`` and prints every parameter — the names a repeated
 component is numbered with are otherwise easy to guess wrong:
@@ -626,11 +710,14 @@ fitted once across every run:
 
 .. code-block:: text
 
-   asymmetry fit-global [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
+   asymmetry fit-global [-h] (--runs RUNS | --groups RUNS;RUNS;...)
+                        --recipe RECIPE [--fix NAME=VALUE]
                         [--free NAME] --shared P,Q [--field-param NAME]
                         [--strategy {joint,profiled,least_squares}]
-                        [--order QUANTITY] [--x RUN=VALUE,...] [--name NAME]
-                        [--plot] [--json] [--workdir WORKDIR]
+                        [--order QUANTITY] [--x RUN=VALUE,...]
+                        [--group-order QUANTITY]
+                        [--group-x GROUP=VALUE,...] [--name NAME] [--plot]
+                        [--json] [--workdir WORKDIR] [--instrument NAME]
                         folder
 
 ``--shared P,Q`` is a true shared fit, unlike ``fit-series --global``.
@@ -642,10 +729,22 @@ along that axis with its run-local parameters, and the stored
 ``series/<name>.json`` carries them as a trend table, so ``trend`` reads and
 fits a simultaneous fit exactly as it does a series. The shared values and
 their uncertainties are stored beside it; ``--plot`` writes one fit plot per
-run. The command fits one group at a time—repeat it for each temperature when
-analysing a sequence of triplets. Over more than three runs ordered by field it
+run. Over more than three runs ordered by field it
 notes that a shared rate cannot show how relaxation changes with field, which
 is a ``fit-series`` and Redfield question.
+
+``--groups "a,b,c;d,e,f;…"`` fits several groups at once — the sequence of LF
+triplets a temperature series of them naturally is — instead of one
+invocation per group. Each group is fitted exactly as ``--runs`` fits one and
+stored as its own ``global`` series ``<name>-<i>`` (``<i>`` from 1); ``<name>``
+itself stores a ``global-batch`` series whose trend rows are the groups'
+shared parameters and uncertainties, so ``trend --series <name>`` reads and
+plots them exactly like an ordinary parameter trend. ``--group-order``
+chooses the axis the groups are ordered and trended along — ``temperature``
+(the default; each group's mean setpoint), ``sample_temperature_logged``,
+``field`` or ``run``, or any other name given per group with ``--group-x``
+(``--group-order concentration --group-x 1=0,2=0.25,3=0.5``); ``--order`` and
+``--x`` still control each group's own within-group axis.
 
 ``fit-series``
 ~~~~~~~~~~~~~~
@@ -723,10 +822,13 @@ fit.
 
 .. code-block:: text
 
-   asymmetry trend [-h] --series SERIES [--csv CSV] [--plot] [--model EXPR]
-                   [--param PARAM] [--xmin XMIN] [--xmax XMAX]
-                   [--initial NAME=VALUE] [--fix NAME=VALUE] [--exclude RUNS]
-                   [--json] [--workdir WORKDIR]
+   asymmetry trend [-h] --series SERIES [--from-fits SERIES,...]
+                   [--fit PARAM[:EXPR]] [--order QUANTITY]
+                   [--x SERIES=VALUE,...] [--csv CSV] [--plot]
+                   [--model EXPR] [--param PARAM] [--xmin XMIN]
+                   [--xmax XMAX] [--initial NAME=VALUE] [--fix NAME=VALUE]
+                   [--exclude KEYS] [--json] [--workdir WORKDIR]
+                   [--instrument NAME]
                    folder
 
 Reads ``series/<name>.json`` and prints the scan variable and every fitted
@@ -780,10 +882,15 @@ only a power of T\ :sub:`c` − T, so α trades off against ``y0``); for
 is itself a reason the law is not established); otherwise,
 when some physical parameters are determined and others are not, hold the
 undetermined ones at a textbook value and report the rest with it stated.
-Excluding a run is the analyst's call: every run with a
-value enters unless ``--exclude RUNS`` names it, and the output lists both the
-runs left out (with the reason) and the flagged runs that were fitted. The fit
-is stored in ``series/<name>.json`` under ``trend_fits``, and ``--plot``
+Excluding a row is the analyst's call: every row with a
+value enters unless ``--exclude KEYS`` names it (a run number for an ordinary
+series, a member series name for one built with ``--from-fits``), and the
+output lists both the rows left out (with the reason) and the flagged ones
+that were fitted. The fit
+is stored in ``series/<name>.json`` under ``trend_fits``, keyed by the fitted
+column and expression together (``param:expression``) so two different laws
+fitted to the same column coexist instead of one overwriting the other, and
+``--plot``
 draws the curve over the points it rests on. On the simulated scan, whose rate
 was generated as 0.10 + 0.004 T:
 
@@ -797,6 +904,37 @@ was generated as 0.10 + 0.004 T:
    m          0.004150  0.000646
    b          0.099391  0.022419
    flagged but fitted: 102 (large_rel_err); 103 (large_rel_err); ...
+
+A trend of fitted trend parameters
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+``--from-fits S1,S2,…`` builds a *new* series from other stored series'
+already-fitted trends, rather than from runs — the way to fit a law through a
+law: an Arrhenius rate through the rate constants of several ``Linear``
+fits, each made at its own temperature. Each named member series (an
+ordinary series, or a ``global``/``global-batch`` series from ``fit-global``)
+must already carry a ``trend_fits`` entry for ``--param NAME``; where a
+member holds more than one law fitted to that column, ``--fit
+PARAM[:EXPR]`` picks which (by the column the law was fitted to, or
+``column:expression`` when the column alone is ambiguous). The built series
+is stored under ``--series`` (its *new* name here) with ``kind``
+``fit-trend``, one row per member holding that law's parameter ``NAME`` and
+its error scaled by √χ²\ :sub:`r`; ``--order``/``--x`` choose the row axis
+exactly as `fit-global`_'s ``--group-order``/``--group-x`` do — each
+member's mean ``temperature`` (the default), ``sample_temperature_logged``,
+``field`` or ``run``, or any other name given per member with ``--x``.
+``--model`` then fits the built series like any other:
+
+.. code-block:: console
+
+   $ asymmetry trend runs --series k-vs-T --from-fits scan-280K,scan-300K,scan-320K \
+         --param m --order temperature
+   $ asymmetry trend runs --series k-vs-T --model Arrhenius
+
+Refitting a member series after its trend fit was built into a derived one
+leaves the derived series pointing at data that no longer matches what it
+read; ``trend`` refuses to read it, naming the stale member, until it is
+built again from the current fits.
 
 ``audit``
 ~~~~~~~~~
@@ -836,6 +974,7 @@ optionally fit a field-scan expression. This is the ALC/QLCR path:
    asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                            [--alpha-from ALPHA_FROM]
                            [--deadtime {off,from_file}] [--pair FWD/BWD]
+                           [--background none|tail_fit|range[:FIRST:LAST]]
                            [--t0-offset BINS] [--t-good-offset BINS]
                            [--period RED|GREEN|N|green-red] [--tmin TMIN]
                            [--tmax TMAX]
@@ -846,6 +985,7 @@ optionally fit a field-scan expression. This is the ALC/QLCR path:
                            [--baseline MODEL]
                            [--baseline-regions LO:HI,...] [--plot]
                            [--json] [--workdir WORKDIR]
+                           [--instrument NAME]
                            folder
 
 For example, ``--model "LorentzianLCR + Cubic"`` fits an off-zero resonance
@@ -864,27 +1004,58 @@ is not a polynomial across the whole scan. A window holding no more points than
 the model has free parameters is refused. A fit that does not converge is
 reported with ``FAILED`` and the parameters it ended on (the component that ran
 away is usually plain from them); the scan is written either way.
+Every field-scan component with a resonance or a half-rise to find in the
+data — the LCR line shapes, ``LorentzianLCRPair``, ``RFResonanceMuP`` and
+``MuRepolarisation`` — is seeded from the scan itself this way, so a fit
+usually converges without ``--initial``; ``--initial``/``--fix`` values are
+folded into that seeding, not applied afterwards, so a fixed value is never
+overridden by a seed near it.
 The scan points, excluded runs, reduction settings, fit parameters and
 uncertainties are stored in ``scans/<name>.json``. Each run's counts are
 grouped and corrected under the `Reduction options`_ — ``--deadtime
-from_file`` on an ISIS repolarisation or ALC scan, as in ``reduce``.
+from_file`` on an ISIS repolarisation or ALC scan, as in ``reduce``, and
+``--background`` the same way (see `Reduction options`_ for how its error
+propagates into the integral).
 
 ``--period green-red`` builds the RF-resonance or differential-ALC scan: each
 point is the green period's integral asymmetry less the red period's, each
 formed from that period's own counts under the `Reduction options`_, with their
 errors added in quadrature. ``RFResonanceMuP`` fits the muon and proton
-couplings of an RF scan with the RF frequency held at its acquisition value. On
-the benzene DEVA data of the WiMDA school, recorded at 218 MHz:
+couplings of an RF scan with the RF frequency held at its acquisition value;
+given ``nu_RF`` as a start or fixed value, the muon/proton couplings are
+seeded by solving the resonance condition at the scan's own two dip fields
+rather than starting from the model's textbook defaults, so a scan whose
+couplings sit far from those defaults still seeds close enough to converge:
 
 .. code-block:: text
 
-   asymmetry integral-scan data --runs 56426-56462 --period green-red \
+   asymmetry integral-scan data --runs 501-520 --period green-red \
        --deadtime from_file --model RFResonanceMuP --fix nu_RF=218
 
-gives ``A_mu`` ≈ 514.8 MHz and ``A_p`` ≈ 124.4 MHz. The couplings start from
-the model's defaults (515 and 124 MHz, the benzene radical's); for another
-radical pass ``--initial A_mu=… --initial A_p=…`` near its own, since a start
-that puts the two dips several widths from the data does not converge.
+fits from the scan's own two dips without needing ``--initial`` for
+``A_mu``/``A_p`` even where they sit well away from the model's textbook
+515/124 MHz defaults.
+
+The green and red periods of a HiFi run are not sampled at quite the same
+field — the RG coil is stepped between them, and the field the file records
+is one period's — so the differential (green − red) line shape is
+``LorentzianLCRPair`` (:math:`f`, :math:`B_0`, :math:`B_\mathrm{wid}`,
+:math:`\Delta B`, see :doc:`alc_mode`), and ``--period green-red`` also
+reports the scan's own measured field step, and a ready-made fix for it:
+
+.. code-block:: text
+
+   period field offset (red - green): -28.60 G, mean of 8 run(s)
+   Next: the red period sat 28.60 G below the green; with the pair offset
+   free the fit is degenerate, so refit with --fix dB_1=28.60 --fix dB_2=28.60.
+
+The offset is read from the run files' own logged Hall-probe reading per
+period, converted from probe units to gauss by the field/Hall-probe slope
+regressed over the scan's own runs (one run's ratio of means would carry the
+probe's own zero offset) — never assumed or looked up. With :math:`\Delta B`
+free the fit is degenerate at typical ALC field steps against typical line
+widths (a closer pair with a larger amplitude describes the same sparsely
+sampled lobes), so fix it at the printed value.
 
 Report the resonance field, width, amplitude and uncertainties the command
 prints. Do not use shell arithmetic or a literature formula to turn them into
@@ -898,12 +1069,32 @@ Transform one reduced run and report quantitative peaks:
 
 .. code-block:: text
 
-   asymmetry fourier [-h] --run RUN [--name NAME]
+   asymmetry fourier [-h] --run RUN [--name NAME] [--correlation]
+                     [--correlation-field GAUSS]
+                     [--correlation-order CORRELATION_ORDER]
                      [--window {none,hann,cosine,gaussian,lorentzian}]
                      [--padding PADDING] [--tmin TMIN] [--tmax TMAX]
                      [--phase PHASE] [--filter-tau FILTER_TAU]
-                     [--fmin FMIN] [--fmax FMAX] [--peaks PEAKS]
-                     [--plot] [--json] [--workdir WORKDIR] folder
+                     [--fmin FMIN] [--fmax FMAX] [--peaks PEAKS] [--plot]
+                     [--json] [--workdir WORKDIR] [--instrument NAME]
+                     folder
+
+``--correlation`` builds the :doc:`muoniated-radical correlation spectrum
+<radical_correlation>` instead of a plain FFT — the GUI's **Correlation
+(radical)** display mode, on the command line. It reloads the reduced
+entry's source run(s) (every member, for a co-add) and pairs the radical
+lines of the forward and backward groups at the transverse field the run
+recorded, so it needs the run files themselves, not just the stored reduced
+curve; a green − red entry has no single transverse field to pair at and is
+refused. ``--correlation-field GAUSS`` overrides the field the pairing uses
+when the header value is missing or slightly off, and
+``--correlation-order`` sets how strongly an unequal-amplitude (spurious)
+pair is penalised (default 2, as WiMDA). The stored spectrum's axis and peak
+table are on the **hyperfine-coupling** axis (MHz), not frequency — a peak
+names a coupling :math:`A_\mu` directly, the way ``RFResonanceMuP`` and
+``LorentzianLCRPair`` do for the corresponding field-swept methods.
+Combined with ``reduce --coadd``, a correlation spectrum can be built from
+several runs at one field summed for statistics before the FFT.
 
 The command stores numerical arrays in ``spectra/<name>.npz`` and settings,
 resolution and the peak table in ``spectra/<name>.json``. Zero padding makes
@@ -1014,10 +1205,12 @@ One directory, one data folder
 Everything under the work directory is keyed on the **run number** alone, so
 two data folders whose run numbers overlap would overwrite each other's
 spectra, recipes and series inside one directory. The manifest therefore
-records the folder the session was opened for, as an absolute resolved path,
-and every command checks it before reading or writing anything
+records the folder — and, since two instruments can share a folder (see `Two
+instruments in one folder`_), the instrument — the session was opened for,
+as an absolute resolved path plus a name, and every command checks both
+before reading or writing anything
 (:meth:`asymmetry.core.workflow.workdir.WorkDir.bind`). A directory that
-already belongs to another folder is refused:
+already belongs to another folder or instrument is refused:
 
 .. code-block:: console
 
@@ -1025,8 +1218,13 @@ already belongs to another folder is refused:
    asymmetry: /work/asymmetry-work belongs to /data/ptfe; for /data/nickel pass --workdir asymmetry-work-<name>
 
 ``survey`` and ``reduce`` write the manifest, so the first of them run against
-a fresh directory claims it; a directory with no manifest yet is unclaimed.
-The same folder named relatively, absolutely, or through a symlink is one
+a fresh directory claims it; a directory with no manifest yet is unclaimed. A
+manifest written by an older ``asymmetry`` (a lower schema version — the
+current one added the bound instrument) is read as the whole folder, with no
+instrument bound, and upgraded the next time ``survey`` or ``reduce`` writes
+it; every reduced run and series under the old schema is recomputed rather
+than trusted, the same as any other stale digest. The same folder named
+relatively, absolutely, or through a symlink is one
 folder — both paths are resolved before they are compared.
 
 The fit recipe
@@ -1188,10 +1386,12 @@ Limits and what is not there yet
 - No headless ``.asymp`` project export — the workflow produces reduced
   data, recipes, series and plots in the work directory, not a project file
   the desktop application can reopen.
-- No batch-over-groups global fit. ``fit-global`` couples one group of runs;
-  a temperature series of LF triplets currently requires one invocation per
-  temperature and manual collation of the stored shared results.
 - No maximum-entropy transform; ``fourier`` is an FFT.
+- No general N-nucleus radical repolarisation model. ``MuRepolarisation``
+  seeds and fits a sum of isotropic-muonium terms, one per resolvable
+  half-rise; a radical whose repolarisation curve does not decompose that
+  way (several coupled nuclei, an anisotropic or solid-state radical) needs
+  a model this workflow does not yet have.
 - No MCP server. The work directory is the mechanism that gives an agent
   state between separate command invocations in its place.
 - Warnings raised inside the fit wizard's worker processes are not collapsed
