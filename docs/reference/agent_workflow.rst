@@ -361,7 +361,29 @@ How scans are grouped
 
 A scan's key is the **instrument** and the held quantity — never the geometry.
 Two instruments in one folder are two campaigns and must never merge into one
-scan (an EMU and a MUSR scan of the same sample, say). Geometry, by contrast, is
+scan (an EMU and a MUSR scan of the same sample, say).
+
+A field scan is also cut by what an ALC or decoupling campaign varies at one
+temperature. Its members share the run note and the number of periods, so an
+ALC scan of one region, a scan of another and a red/green repeat of the second
+are three scans, each listed with its note (``notes "o-p scan"``); passes
+interleaved at offset fields under one note stay one scan, since each alone
+undersamples a narrow resonance. A run at a field its scan already holds, taken
+after the cryostat visited another temperature, starts a repeat of the scan —
+two decoupling scans at 420 K with a 400 K one between them are two scans —
+while a point re-measured in the same visit (a return sweep) stays in its scan,
+and so does a scan measured alternately at two temperatures, field by field.
+Runs that precess at their Larmor frequency, when they are a minority among
+runs that do not, are transverse-field calibrations taken beside a longitudinal
+scan and are left out of it; when they are the majority the scan is transverse,
+and its runs too slow to show a line stay in it. Temperature scans are not cut
+this way, since fields are switched within a temperature point all the time.
+
+A temperature scan every run of which also sits in a longer field scan is a
+cross-section through a grid of field scans — an ALC campaign repeated at
+several temperatures on the same fields makes one at every field — and is not
+listed; the survey says how many it left out (``cross_sections`` in
+``--json``). Geometry, by contrast, is
 measured per run, so a scan that resolves only in part is still one scan: a
 transverse-field scan taken through a magnetic transition resolves above it,
 where the sample is paramagnetic, and not below.
@@ -820,33 +842,46 @@ optionally fit a field-scan expression. This is the ALC/QLCR path:
                            [--method {integral,differential}]
                            [--order {field,temperature,run}]
                            [--model MODEL] [--initial NAME=VALUE]
-                           [--fix NAME=VALUE] [--baseline MODEL]
+                           [--fix NAME=VALUE] [--xmin XMIN] [--xmax XMAX]
+                           [--baseline MODEL]
                            [--baseline-regions LO:HI,...] [--plot]
                            [--json] [--workdir WORKDIR]
                            folder
 
 For example, ``--model "LorentzianLCR + Cubic"`` fits an off-zero resonance
-and background together. Alternatively, ``--baseline Cubic
---baseline-regions 2000:2600,4500:5000 --model LorentzianLCR`` determines the
-background only from non-resonant regions before fitting the corrected scan.
+and background together, and ``--model "LorentzianLCR + LorentzianLCR +
+Cubic"`` two resonances: each LCR component starts on its own resonance, found
+in turn as the largest excursion from a straight baseline that falls to half
+height on both sides inside the scan, so a background curving away at one end
+of the scan is not taken for one. Each resonance is held inside the scan, with
+a width between a thousandth and a quarter of it — a wider one is
+indistinguishable from the polynomial background. Alternatively, ``--baseline
+Cubic --baseline-regions 2000:2600,4500:5000 --model LorentzianLCR``
+determines the background only from non-resonant regions before fitting the
+corrected scan, and ``--xmin``/``--xmax`` fit only the points inside a window
+of the scan axis — the way to fit one resonance at a time where the background
+is not a polynomial across the whole scan. A window holding no more points than
+the model has free parameters is refused. A fit that does not converge is
+reported with ``FAILED`` and the parameters it ended on (the component that ran
+away is usually plain from them); the scan is written either way.
 The scan points, excluded runs, reduction settings, fit parameters and
 uncertainties are stored in ``scans/<name>.json``. Each run's counts are
 grouped and corrected under the `Reduction options`_ — ``--deadtime
 from_file`` on an ISIS repolarisation or ALC scan, as in ``reduce``.
 
-``--period green-red`` builds the RF-resonance scan: each point is the mean
-of that run's green − red difference over ``--tmin``/``--tmax`` (``--method``
-stays ``integral``), and ``RFResonanceMuP`` fits the muon and proton
-couplings with the RF frequency held at its acquisition value. On the
-benzene DEVA data of the WiMDA school, recorded at 218 MHz:
+``--period green-red`` builds the RF-resonance or differential-ALC scan: each
+point is the green period's integral asymmetry less the red period's, each
+formed from that period's own counts under the `Reduction options`_, with their
+errors added in quadrature. ``RFResonanceMuP`` fits the muon and proton
+couplings of an RF scan with the RF frequency held at its acquisition value. On
+the benzene DEVA data of the WiMDA school, recorded at 218 MHz:
 
 .. code-block:: text
 
    asymmetry integral-scan data --runs 56426-56462 --period green-red \
-       --deadtime from_file --tmin 0.1 --tmax 4 \
-       --model RFResonanceMuP --fix nu_RF=218
+       --deadtime from_file --model RFResonanceMuP --fix nu_RF=218
 
-gives ``A_mu`` ≈ 514.8 MHz and ``A_p`` ≈ 126.0 MHz. The couplings start from
+gives ``A_mu`` ≈ 514.8 MHz and ``A_p`` ≈ 124.4 MHz. The couplings start from
 the model's defaults (515 and 124 MHz, the benzene radical's); for another
 radical pass ``--initial A_mu=… --initial A_p=…`` near its own, since a start
 that puts the two dips several widths from the data does not converge.

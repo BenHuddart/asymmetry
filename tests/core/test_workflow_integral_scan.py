@@ -99,8 +99,9 @@ def test_an_integral_scan_takes_the_settings_pair_and_deadtime(workflow_folder) 
     assert changed == {DEADTIME_RUN}
 
 
-def test_a_green_minus_red_scan_averages_each_runs_difference() -> None:
+def test_a_green_minus_red_scan_differences_each_periods_integral() -> None:
     from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.io.periods import period_run
     from asymmetry.core.simulate import BUILTIN_TEMPLATES, PeriodSpec, simulate_two_period_run
     from asymmetry.core.workflow.integral_scan import build_integral_scan
     from asymmetry.core.workflow.reduction import GREEN_MINUS_RED, ReductionSettings
@@ -134,5 +135,61 @@ def test_a_green_minus_red_scan_averages_each_runs_difference() -> None:
     assert scan.value[0] == pytest.approx(0.0, abs=0.004)
     assert scan.value[1] > 0.05
 
-    with pytest.raises(ValueError, match="does not apply"):
-        build_integral_scan(datasets, settings, method="differential")
+    # Each point is green's integral less red's, with their errors in quadrature.
+    red_only, green_only = (
+        build_integral_scan(
+            [
+                MuonDataset(
+                    time=np.zeros(1),
+                    asymmetry=np.zeros(1),
+                    error=np.ones(1),
+                    metadata={},
+                    run=period_run(dataset.run, index),
+                )
+                for dataset in datasets
+            ],
+            ReductionSettings(),
+            t_min=0.0,
+            t_max=1.0,
+        )
+        for index in (0, 1)
+    )
+    assert np.allclose(scan.value, green_only.value - red_only.value)
+    assert np.allclose(scan.error, np.hypot(red_only.error, green_only.error))
+    assert scan.run_numbers == [40, 41]
+    assert build_integral_scan(datasets, settings, method="differential").n_points == 2
+
+
+@pytest.mark.parametrize("background", ["Quadratic", "Cubic"])
+def test_two_resonances_on_a_kilogauss_background_fit_together(background: str) -> None:
+    rng = np.random.default_rng(1)
+    x = np.arange(19000.0, 30000.0, 50.0)
+
+    def lorentzian(f, b0, width):
+        return f / (1.0 + ((x - b0) / width) ** 2)
+
+    error = np.full_like(x, 1.5e-3)
+    value = (
+        0.25
+        + 2e-6 * (x - 19000.0)
+        + 3e-11 * (x - 19000.0) ** 2
+        + lorentzian(-0.02, 20800.0, 60.0)
+        + lorentzian(-0.012, 27500.0, 150.0)
+        + rng.normal(0.0, error)
+    )
+    scan = FieldScan(
+        x=x,
+        value=value,
+        error=error,
+        run_numbers=list(range(x.size)),
+        order_key="field",
+        method="integral",
+        x_label="B (G)",
+    )
+    _, fit = fit_integral_scan(scan, f"LorentzianLCR + LorentzianLCR + {background}")
+    parameters = fit["parameters"]
+    assert fit["success"]
+    assert fit["reduced_chi_squared"] < 1.5
+    assert parameters["B0_1"] == pytest.approx(20800.0, abs=10.0)
+    assert parameters["B0_2"] == pytest.approx(27500.0, abs=30.0)
+    assert parameters["Bwid_1"] > 0.0 and parameters["Bwid_2"] > 0.0

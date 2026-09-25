@@ -175,6 +175,31 @@ def active_series_mean(entry: Any) -> float | None:
     return mean if np.isfinite(mean) else None
 
 
+def _add_main_field(metadata: dict[str, Any], time_series: dict[str, dict[str, Any]]) -> None:
+    """Make ``metadata["field"]`` the applied field of a run swept on a persistent main field.
+
+    HiFi sweeps the field with a small Z coil on top of a persistent main
+    solenoid, and such a run records only the Z offset (``F=50`` with the main
+    at 20900 G) — which is not the field the muon sees. Both coils are logged
+    (``Field_Main``, ``Field_Z``); when the recorded field is the Z coil's and
+    not the main's, the applied field is their sum. The offset and the main
+    field are kept beside it as ``field_sweep_gauss`` and ``field_main_gauss``.
+    """
+    recorded = metadata.get("field")
+    main = active_series_mean(time_series.get("Field_Main"))
+    sweep = active_series_mean(time_series.get("Field_Z"))
+    if recorded is None or main is None or sweep is None:
+        return
+    # The recorded field is the Z coil's, and the main is the larger field —
+    # a residual of a few tenths of a gauss on an unpowered main is not one.
+    if abs(recorded - sweep) >= abs(recorded - main) or abs(main) <= abs(recorded):
+        return
+    metadata["field_sweep_gauss"] = float(recorded)
+    metadata["field_main_gauss"] = float(main)
+    metadata["field"] = float(main) + float(recorded)
+    metadata["field_source"] = "main+sweep"
+
+
 @dataclass
 class _GroupingSelection:
     """Resolved detector-group selection used for asymmetry reduction."""
@@ -404,6 +429,7 @@ class NexusLoader(BaseLoader):
         time_series = self._extract_time_series(entry)
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
+        _add_main_field(metadata_base, time_series)
         logged_temperature = self._logged_sample_temperature(time_series)
         if logged_temperature is not None:
             metadata_base["sample_temperature_logged"] = logged_temperature
@@ -614,6 +640,7 @@ class NexusLoader(BaseLoader):
         time_series = self._extract_time_series(entry)
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
+        _add_main_field(metadata_base, time_series)
         logged_temperature = self._logged_sample_temperature(time_series)
         if logged_temperature is not None:
             metadata_base["sample_temperature_logged"] = logged_temperature
@@ -649,8 +676,12 @@ class NexusLoader(BaseLoader):
         Legacy ISIS muon NeXus v1 files (and the HDF4 originals read directly)
         do not carry a top-level ``good_frames``/``goodfrm``; the authoritative
         good-frame count lives under ``instrument/beam`` instead. Prefer the
-        per-period ``frames_period`` array so multi-period normalisation stays
-        correct, then fall back to the run totals (``frames_good`` / ``frames``).
+        per-period arrays so multi-period normalisation stays correct —
+        ``frames_period_daq`` first, one entry per period the file holds
+        histograms for, because ``frames_period`` counts the DAE's periods and a
+        HiFi red/green run cycles four of them (ramp up, field on, ramp down,
+        field off: ``[0, 15000, 0, 15001]``) into two data periods — then fall
+        back to the run totals (``frames_good`` / ``frames``).
 
         Without this, the deadtime path defaults ``good_frames`` to ``1.0`` and
         ``prepare_histograms_with_deadtime`` over-corrects HDF4 counts by ~5
@@ -659,7 +690,7 @@ class NexusLoader(BaseLoader):
         beam = self._read_optional(self._read_optional(entry, "instrument"), "beam")
         if beam is None:
             return np.asarray([], dtype=np.float64)
-        for key in ("frames_period", "frames_good", "frames"):
+        for key in ("frames_period_daq", "frames_period", "frames_good", "frames"):
             values = np.asarray(self._read_optional(beam, key, default=[]), dtype=np.float64)
             if values.size:
                 return values

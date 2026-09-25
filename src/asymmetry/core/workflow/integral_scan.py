@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.field_scan import (
     as_composite_model,
     fit_scan_baseline,
@@ -22,12 +22,11 @@ from asymmetry.core.fitting.field_scan import (
 )
 from asymmetry.core.fitting.parameter_models import suggest_model_seeds
 from asymmetry.core.fitting.parameters import ParameterSet
-from asymmetry.core.io.periods import build_rf_difference_scan
+from asymmetry.core.io.periods import GREEN_INDEX, RED_INDEX, period_count, period_run
 from asymmetry.core.transform.integral import FieldScan, build_field_scan
 from asymmetry.core.workflow.reduction import (
     GREEN_MINUS_RED,
     ReductionSettings,
-    red_green_curves,
     resolve_reduction_grouping,
 )
 
@@ -45,30 +44,60 @@ def build_integral_scan(
 
     Each run's counts are grouped and corrected under the settings' pair,
     deadtime, t0 and good window. With :data:`GREEN_MINUS_RED` the datasets are
-    combined two-period runs and each point is the mean of the run's green − red
-    difference over the window — the RF-resonance observable.
+    combined two-period runs and each point is the green period's integral
+    asymmetry less the red one's — the RF-resonance and differential-ALC
+    observable, with the two periods' errors added in quadrature.
     """
     runs = [dataset.run for dataset in datasets]
-    if settings.period == GREEN_MINUS_RED:
-        if method != "integral":
-            raise ValueError(
-                "The green − red scan averages each run's difference curve; "
-                f"method {method!r} does not apply."
-            )
-        return build_rf_difference_scan(
-            runs,
+    if settings.period != GREEN_MINUS_RED:
+        return build_field_scan(
+            [_resolved(run, settings) for run in runs],
             t_min=t_min,
             t_max=t_max,
+            method=method,
             order_key=order_key,
-            red_green=lambda run: red_green_curves(run, settings),
         )
-    return build_field_scan(
-        [replace(run, grouping=resolve_reduction_grouping(run, settings)) for run in runs],
-        t_min=t_min,
-        t_max=t_max,
-        method=method,
-        order_key=order_key,
+    two_period = [run for run in runs if period_count(run) == 2]
+    # Each period is reduced as the single-period run it is.
+    per_period = replace(settings, period=None)
+    red, green = (
+        build_field_scan(
+            [_resolved(period_run(run, index), per_period) for run in two_period],
+            t_min=t_min,
+            t_max=t_max,
+            method=method,
+            order_key=order_key,
+        )
+        for index in (RED_INDEX, GREEN_INDEX)
     )
+    # Both periods of a run share its field, temperature and window, so the two
+    # scans list the same runs in the same order; the period is the run number's
+    # last three digits (encode_period_run_number).
+    sources = [encoded // 1000 for encoded in red.run_numbers]
+    if sources != [encoded // 1000 for encoded in green.run_numbers]:
+        raise ValueError("The red and green scans of the same runs came out in different orders.")
+    return FieldScan(
+        x=red.x,
+        value=green.value - red.value,
+        error=np.hypot(red.error, green.error),
+        run_numbers=sources,
+        order_key=red.order_key,
+        method=red.method,
+        x_label=red.x_label,
+        y_label="Integral asymmetry (Green − Red)",
+        excluded=[
+            (int(run.run_number), "not a two-period (red/green) run")
+            for run in runs
+            if period_count(run) != 2
+        ]
+        + [(encoded // 1000, reason) for encoded, reason in (*red.excluded, *green.excluded)],
+        units=red.units,
+    )
+
+
+def _resolved(run: Run, settings: ReductionSettings) -> Run:
+    """*run* carrying the grouping *settings* resolve for it."""
+    return replace(run, grouping=resolve_reduction_grouping(run, settings))
 
 
 def field_scan_payload(scan: FieldScan) -> dict[str, Any]:
@@ -105,14 +134,21 @@ def _parameters(
     starts = suggest_model_seeds(model, scan.x, scan.value, scan.error)
     starts.update({str(name): float(value) for name, value in (initial or {}).items()})
     parameters = parameter_set_for_model(model, starts)
-    if {"B0", "Bwid"}.issubset(model.param_names) and scan.n_points:
-        x_lo = float(np.min(scan.x))
-        x_hi = float(np.max(scan.x))
-        span = x_hi - x_lo
-        parameters["B0"].min = x_lo
-        parameters["B0"].max = x_hi
-        parameters["Bwid"].min = max(span / 1000.0, np.finfo(float).eps)
-        parameters["Bwid"].max = max(span, parameters["Bwid"].min)
+    # Every resonance sits inside the scan with a width between a thousandth and
+    # a quarter of it: two LCR components otherwise trade places, one running
+    # off the axis with a negative width, and a resonance wider than a quarter
+    # of the scan is indistinguishable from the polynomial background it then
+    # impersonates.
+    x_lo = float(np.min(scan.x))
+    x_hi = float(np.max(scan.x))
+    span = x_hi - x_lo
+    for index, component in enumerate(model.components):
+        if {"B0", "Bwid"}.issubset(component.param_names):
+            centre = parameters[model.component_param_name(index, "B0")]
+            width = parameters[model.component_param_name(index, "Bwid")]
+            centre.min, centre.max = x_lo, x_hi
+            width.min = max(span / 1000.0, np.finfo(float).eps)
+            width.max = max(span / 4.0, width.min)
     fixed = {str(name): float(value) for name, value in (fixed or {}).items()}
     unknown = set(fixed) - set(model.param_names)
     if unknown:
@@ -133,8 +169,25 @@ def fit_integral_scan(
     fixed: Mapping[str, float] | None = None,
     baseline_model: str | None = None,
     baseline_regions: list[tuple[float, float]] | None = None,
+    x_min: float | None = None,
+    x_max: float | None = None,
 ) -> tuple[FieldScan, dict[str, Any]]:
-    """Optionally subtract a baseline, then fit *expression* to the scan."""
+    """Optionally subtract a baseline, then fit *expression* to the scan.
+
+    *x_min*/*x_max* crop the scan to that window first, so the seeds, the
+    resonance bounds and the fit all see only the resonances inside it.
+    """
+    if x_min is not None or x_max is not None:
+        inside = (scan.x >= (-np.inf if x_min is None else x_min)) & (
+            scan.x <= (np.inf if x_max is None else x_max)
+        )
+        scan = replace(
+            scan,
+            x=scan.x[inside],
+            value=scan.value[inside],
+            error=scan.error[inside],
+            run_numbers=[run for run, kept in zip(scan.run_numbers, inside, strict=True) if kept],
+        )
     fitted_scan = scan
     baseline_payload = None
     if baseline_model is not None:
@@ -165,6 +218,12 @@ def fit_integral_scan(
         initial=initial,
         fixed=fixed,
     )
+    free = sum(1 for parameter in parameters if not parameter.fixed)
+    if fitted_scan.n_points <= free:
+        raise ValueError(
+            f"The scan has {fitted_scan.n_points} point(s) to fit for {free} free "
+            f"parameter(s) of {expression}; widen the window or hold parameters with --fix."
+        )
     result = fit_scan_model(fitted_scan, model, parameters=parameters)
     fit_payload = {
         "success": bool(result.success),
@@ -177,6 +236,8 @@ def fit_integral_scan(
         "n_points": int(result.n_points),
         "params_at_bound": list(result.params_at_bound),
         "baseline": baseline_payload,
+        "x_min": x_min,
+        "x_max": x_max,
     }
     return fitted_scan, fit_payload
 

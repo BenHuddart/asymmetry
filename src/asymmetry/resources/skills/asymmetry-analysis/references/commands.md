@@ -179,9 +179,10 @@ usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                                [--tmin TMIN] [--tmax TMAX]
                                [--method {integral,differential}]
                                [--order {field,temperature,run}] [--model MODEL]
-                               [--initial NAME=VALUE] [--fix NAME=VALUE]
-                               [--baseline MODEL] [--baseline-regions LO:HI,...]
-                               [--plot] [--json] [--workdir WORKDIR]
+                               [--initial NAME=VALUE] [--fix NAME=VALUE] [--xmin XMIN]
+                               [--xmax XMAX] [--baseline MODEL]
+                               [--baseline-regions LO:HI,...] [--plot] [--json]
+                               [--workdir WORKDIR]
                                folder
 
 positional arguments:
@@ -216,6 +217,8 @@ options:
   --model MODEL         Optional field-scan expression, e.g. 'LorentzianLCR + Cubic'
   --initial NAME=VALUE  Fit start (repeatable)
   --fix NAME=VALUE      Fixed fit value (repeatable)
+  --xmin XMIN           Fit only points at or above this x
+  --xmax XMAX           Fit only points at or below this x
   --baseline MODEL      Fit and subtract this baseline model first
   --baseline-regions LO:HI,...
                         Non-resonant x ranges used by --baseline

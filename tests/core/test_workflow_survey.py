@@ -50,8 +50,10 @@ def _row(
     instrument: str = "SIM",
     geometry: str | None = "ZF",
     geometry_source: str = "field",
+    notes: str = "",
+    precession: PrecessionEvidence = _NOT_MEASURED,
 ) -> RunRow:
-    """A :class:`RunRow` for the grouping tests, which read only six of its fields."""
+    """A :class:`RunRow` for the grouping tests, which read only a few of its fields."""
     return RunRow(
         run_number=run_number,
         file=f"{instrument}{run_number:08d}.nxs",
@@ -66,9 +68,9 @@ def _row(
         field_direction="",
         geometry=geometry,
         geometry_source=geometry_source,
-        precession=_NOT_MEASURED,
+        precession=precession,
         detector_orientation="",
-        notes="",
+        notes=notes,
         n_histograms=2,
         n_points=100,
         total_events=1000,
@@ -341,14 +343,109 @@ def test_a_zero_field_run_beside_one_field_run_is_not_a_field_scan() -> None:
         _row(run_number=1, temperature=360.0, field=0.0),
         _row(run_number=2, temperature=360.0, field=100.0, geometry="TF"),
     ]
-    assert [scan for scan in _scan_groups(pair) if scan.axis == "field"] == []
+    assert [scan for scan in _scan_groups(pair)[0] if scan.axis == "field"] == []
 
     # Add a second non-zero field and it is a field scan, zero-field point and
     # all — that is what a decoupling curve looks like.
     decoupling = [*pair, _row(run_number=3, temperature=360.0, field=2000.0, geometry=None)]
-    scans = [scan for scan in _scan_groups(decoupling) if scan.axis == "field"]
+    scans = [scan for scan in _scan_groups(decoupling)[0] if scan.axis == "field"]
     assert len(scans) == 1
     assert scans[0].values == pytest.approx([0.0, 100.0, 2000.0])
+
+
+def test_field_scans_at_one_temperature_split_by_note_and_merge_interleaved_passes() -> None:
+    # An ALC campaign at 300 K: two interleaved passes of one scan (offset by
+    # 50 G), then a second scan of another region under another note.
+    first = [
+        _row(run_number=run, temperature=300.0, field=field, notes="CHMu(0) scan")
+        for run, field in zip(range(1, 9), [*range(19000, 19400, 100), *range(19050, 19450, 100)])
+    ]
+    second = [
+        _row(run_number=run, temperature=300.0, field=field, notes="o-p scan")
+        for run, field in zip(range(9, 13), range(28500, 28900, 100))
+    ]
+    scans = [scan for scan in _scan_groups(first + second)[0] if scan.axis == "field"]
+    assert [scan.runs[:2] for scan in scans] == [[1, 5], [9, 10]]
+    assert [len(scan.runs) for scan in scans] == [8, 4]
+    assert [scan.notes for scan in scans] == ["CHMu(0) scan", "o-p scan"]
+
+
+def test_a_transverse_calibration_run_stays_out_of_a_longitudinal_field_scan() -> None:
+    larmor = PrecessionEvidence(
+        state="larmor", frequency_mhz=0.27, snr=40.0, larmor_mhz=0.271, note=""
+    )
+    rows = [
+        _row(run_number=1, temperature=50.0, field=20.0, geometry="TF", precession=larmor),
+        *[
+            _row(run_number=run, temperature=50.0, field=field, geometry=None)
+            for run, field in zip(range(2, 6), (0.0, 100.0, 1000.0, 5000.0))
+        ],
+    ]
+    (scan,) = [scan for scan in _scan_groups(rows)[0] if scan.axis == "field"]
+    assert scan.runs == [2, 3, 4, 5]
+
+
+def test_a_temperature_returned_to_starts_a_new_field_scan() -> None:
+    def block(first_run: int, temperature: float) -> list[RunRow]:
+        return [
+            _row(run_number=first_run + index, temperature=temperature, field=field)
+            for index, field in enumerate((100.0, 1000.0, 5000.0))
+        ]
+
+    rows = [*block(1, 420.0), *block(4, 400.0), *block(7, 420.0)]
+    scans = [scan for scan in _scan_groups(rows)[0] if scan.axis == "field"]
+    assert [scan.runs for scan in scans] == [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    # A temperature scan is not cut: fields alternate within a temperature point.
+    (temperature_scan, *_) = [scan for scan in _scan_groups(rows)[0] if scan.axis == "temperature"]
+    assert temperature_scan.runs == [4, 1, 7]
+
+
+def test_a_field_scan_measured_alternately_at_two_temperatures_stays_whole() -> None:
+    # Each field taken at 20 K and then at 2 K: no field repeats within a
+    # temperature, so each temperature is one field scan however they interleave.
+    rows = [
+        _row(run_number=2 * index + offset, temperature=temperature, field=field)
+        for index, field in enumerate((200.0, 800.0, 1600.0, 3200.0))
+        for offset, temperature in ((1, 20.0), (2, 2.0))
+    ]
+    scans, _ = _scan_groups(rows)
+    field_scans = [scan for scan in scans if scan.axis == "field"]
+    assert sorted(len(scan.runs) for scan in field_scans) == [4, 4]
+
+
+def test_a_return_sweep_in_one_visit_stays_in_its_scan() -> None:
+    fields = (10.0, 100.0, 1000.0, 4000.0, 1000.0, 100.0)
+    rows = [
+        _row(run_number=run, temperature=300.0, field=field)
+        for run, field in enumerate(fields, start=1)
+    ]
+    (scan,) = [scan for scan in _scan_groups(rows)[0] if scan.axis == "field"]
+    assert len(scan.runs) == 6
+
+
+def test_a_transverse_scan_keeps_the_runs_too_slow_to_show_their_line() -> None:
+    larmor = PrecessionEvidence(
+        state="larmor", frequency_mhz=1.4, snr=40.0, larmor_mhz=1.36, note=""
+    )
+    rows = [
+        _row(run_number=run, temperature=350.0, field=field, precession=larmor)
+        for run, field in enumerate((20.0, 40.0, 60.0, 80.0), start=1)
+    ] + [
+        _row(run_number=run, temperature=350.0, field=field) for run, field in ((5, 5.0), (6, 10.0))
+    ]
+    (scan,) = [scan for scan in _scan_groups(rows)[0] if scan.axis == "field"]
+    assert len(scan.runs) == 6
+
+
+def test_temperature_cross_sections_of_a_field_scan_grid_are_counted_not_listed() -> None:
+    rows = [
+        _row(run_number=10 * index + step, temperature=temperature, field=1000.0 + 100.0 * step)
+        for index, temperature in enumerate((300.0, 325.0, 350.0))
+        for step in range(8)
+    ]
+    scans, cross_sections = _scan_groups(rows)
+    assert [scan.axis for scan in scans] == ["field"] * 3
+    assert cross_sections == 8
 
 
 def test_a_line_free_point_of_a_longitudinal_field_scan_is_named_in_a_tf_scan() -> None:
@@ -361,7 +458,7 @@ def test_a_line_free_point_of_a_longitudinal_field_scan_is_named_in_a_tf_scan() 
         _row(run_number=run, temperature=40.0, field=b, geometry=None, geometry_source="refuted")
         for run, b in ((10, 50.0), (11, 80.0), (12, 100.0))
     ]
-    scan = next(s for s in _scan_groups(tf + lf) if s.axis == "temperature")
+    scan = next(s for s in _scan_groups(tf + lf)[0] if s.axis == "temperature")
     assert scan.runs == [12, 1, 2, 3]
     assert "run 12 also belongs to a field scan with no transverse line" in scan.geometry_note
 
@@ -372,7 +469,7 @@ def test_a_line_free_point_of_a_longitudinal_field_scan_is_named_in_a_tf_scan() 
         for i, t in enumerate((2.0, 3.0, 4.0))
         for j, b in enumerate((20.0, 40.0))
     ]
-    assert all("also belong" not in s.geometry_note for s in _scan_groups(grid))
+    assert all("also belong" not in s.geometry_note for s in _scan_groups(grid)[0])
 
 
 def test_two_instruments_in_one_folder_never_share_a_scan() -> None:
@@ -382,7 +479,7 @@ def test_two_instruments_in_one_folder_never_share_a_scan() -> None:
         _row(run_number=3, temperature=10.0, instrument="MUSR"),
         _row(run_number=4, temperature=20.0, instrument="MUSR"),
     ]
-    scans = _scan_groups(rows)
+    scans = _scan_groups(rows)[0]
     assert sorted(scan.instrument for scan in scans) == ["EMU", "MUSR"]
     assert all(len(scan.runs) == 2 for scan in scans)
 
