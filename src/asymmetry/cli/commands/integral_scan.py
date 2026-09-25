@@ -101,7 +101,7 @@ def run(args: argparse.Namespace) -> None:
         field_scan_payload,
         fit_integral_scan,
     )
-    from asymmetry.core.workflow.reduction import reduction_source
+    from asymmetry.core.workflow.reduction import GREEN_MINUS_RED, reduction_source
 
     if args.baseline is not None and args.baseline_regions is None:
         raise UserError("--baseline requires --baseline-regions LO:HI,...")
@@ -149,16 +149,25 @@ def run(args: argparse.Namespace) -> None:
         reasons = "; ".join(f"{run}: {reason}" for run, reason in scan.excluded)
         raise UserError(f"No runs contributed to the integral scan. {reasons}")
 
+    # The red period's field less the green's, as each run's Hall probe logged it.
+    offsets = [
+        dataset.run.metadata["period_field_offset_gauss"]
+        for dataset in datasets
+        if settings.period == GREEN_MINUS_RED
+        and "period_field_offset_gauss" in dataset.run.metadata
+    ]
+
     fit_scan = scan
     fit_payload = None
     model = None
+    fixed = parse_fix(args.fix)
     if args.model is not None:
         try:
             fit_scan, fit_payload = fit_integral_scan(
                 scan,
                 args.model,
                 initial=parse_fix(args.initial, flag="--initial"),
-                fixed=parse_fix(args.fix),
+                fixed=fixed,
                 baseline_model=args.baseline,
                 baseline_regions=_regions(args.baseline_regions),
                 x_min=args.xmin,
@@ -180,6 +189,9 @@ def run(args: argparse.Namespace) -> None:
         "scan": field_scan_payload(scan),
         "fit_scan": field_scan_payload(fit_scan) if fit_payload is not None else None,
         "fit": fit_payload,
+        "period_field_offset": (
+            {"gauss": sum(offsets) / len(offsets), "runs": len(offsets)} if offsets else None
+        ),
     }
     # The stored scan carries its own path and its plot's, so an agent reading
     # scans/<name>.json back finds the same artefacts the CLI reports. Both are
@@ -207,10 +219,20 @@ def run(args: argparse.Namespace) -> None:
     if args.json:
         emit_json(payload(**result_payload))
         return
-    print(_render(result_payload, settings))
+    offset_names = (
+        []
+        if model is None
+        else [
+            model.component_param_name(index, "dB")
+            for index, component in enumerate(model.components)
+            if "dB" in component.param_names
+        ]
+    )
+    free_offsets = [name for name in offset_names if name not in fixed]
+    print(_render(result_payload, settings, free_offsets))
 
 
-def _render(result: dict, settings) -> str:
+def _render(result: dict, settings, free_offsets: list[str]) -> str:
     points = result["scan"]["points"]
     rows = [
         [
@@ -228,6 +250,12 @@ def _render(result: dict, settings) -> str:
         "",
         describe(settings),
     ]
+    offset = result["period_field_offset"]
+    if offset is not None:
+        lines.append(
+            f"period field offset (red - green): {format_number(offset['gauss'], 2)} G, "
+            f"mean of {offset['runs']} run(s)"
+        )
     if result["fit"] is not None:
         fit = result["fit"]
         # A failed fit is reported, not raised: the scan is worth keeping, and
@@ -242,6 +270,15 @@ def _render(result: dict, settings) -> str:
                     f"{name}={format_number(value, 6)}" for name, value in fit["parameters"].items()
                 ),
             ]
+        )
+    if offset is not None and free_offsets:
+        # A differential pair's dB is the green field less the red: the offset, negated.
+        fixes = " ".join(
+            f"--fix {name}={format_number(-offset['gauss'], 2)}" for name in free_offsets
+        )
+        lines.append(
+            f"Next: the red period sat {format_number(-offset['gauss'], 2)} G below the green; "
+            f"with the pair offset free the fit is degenerate, so refit with {fixes}."
         )
     lines.append(f"Scan written to {result['scan_path']}")
     if result["plot"] is not None:

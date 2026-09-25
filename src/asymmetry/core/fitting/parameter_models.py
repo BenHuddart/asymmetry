@@ -416,6 +416,17 @@ def _lcr_lorentzian(x: NDArray, f: float, B0: float, Bwid: float) -> NDArray[np.
     return float(f) / (1.0 + ((xx - float(B0)) / bwid_safe) ** 2)
 
 
+def _lcr_lorentzian_pair(
+    x: NDArray, f: float, B0: float, Bwid: float, dB: float
+) -> NDArray[np.float64]:
+    """Green − red signal of a Lorentzian LCR: the line at B0 less the same line at B0 + dB.
+
+    The red period's field sits dB below the recorded one, so the red period
+    meets the resonance when the recorded field is dB higher.
+    """
+    return _lcr_lorentzian(x, f, B0, Bwid) - _lcr_lorentzian(x, f, float(B0) + float(dB), Bwid)
+
+
 def _lambda_bg(x: NDArray, lambda_BG: float) -> NDArray[np.float64]:
     return np.full_like(np.asarray(x, dtype=float), float(lambda_BG), dtype=float)
 
@@ -779,6 +790,26 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         latex_equation=r"\lambda_{LCR}(B) = \frac{f}{1 + \left((B-B_0)/B_{wid}\right)^2}",
         scopes=("field",),
         fwhm_factor=2.0,  # half-max at |B - B0| = Bwid
+    ),
+    "LorentzianLCRPair": ParameterModelComponentDefinition(
+        name="LorentzianLCRPair",
+        description="f*[L(B; B0, Bwid) - L(B; B0+dB, Bwid)]",
+        function=_lcr_lorentzian_pair,
+        param_names=["f", "B0", "Bwid", "dB"],
+        param_defaults={"f": 0.1, "B0": 1000.0, "Bwid": 100.0, "dB": 50.0},
+        param_info={
+            "f": get_param_info("f"),
+            "B0": get_param_info("B0"),
+            "Bwid": get_param_info("Bwid"),
+            "dB": get_param_info("dB"),
+        },
+        formula_template="{f}*[L(x; {B0}; {Bwid}) - L(x; {B0}+{dB}; {Bwid})]",
+        latex_equation=(
+            r"\lambda_{LCR}(B) = \frac{f}{1 + \left((B-B_0)/B_{wid}\right)^2}"
+            r" - \frac{f}{1 + \left((B-B_0-\Delta B)/B_{wid}\right)^2}"
+        ),
+        scopes=("field",),
+        fwhm_factor=2.0,  # each line's half-max at |B - centre| = Bwid
     ),
     "DiffusionLF_1D": ParameterModelComponentDefinition(
         name="DiffusionLF_1D",
@@ -1355,6 +1386,7 @@ _PARAMETER_MODEL_CATEGORIES: dict[str, str] = {
             "MuRepolarisation",
             "GaussianLCR",
             "LorentzianLCR",
+            "LorentzianLCRPair",
             "RFResonanceMuP",
         ],
         "Field scan",
@@ -2387,9 +2419,9 @@ def _robust_baseline(x: NDArray[np.float64], y: NDArray[np.float64]) -> NDArray[
 
 
 def _lcr_peaks(
-    x: NDArray[np.float64], y: NDArray[np.float64], count: int
+    x: NDArray[np.float64], y: NDArray[np.float64], partners: Sequence[float]
 ) -> list[tuple[float, float, float]]:
-    """The *count* strongest resonances of a scan, strongest first: ``(centre, height, HWHM)``.
+    """One resonance per entry of *partners*, strongest first: ``(centre, height, HWHM)``.
 
     Heights are signed excursions from :func:`_robust_baseline`, so a sloping
     background is not mistaken for a resonance. A resonance is an excursion that
@@ -2397,6 +2429,12 @@ def _lcr_peaks(
     curves away at one end of the scan never does. Each resonance found masks
     ±3 half-widths before the next is sought, so several LCR components start on
     several resonances rather than all on the largest.
+
+    A partner offset ``d`` makes the resonance a differential pair: the line at
+    ``centre`` recurs with the opposite sign at ``centre + d``. The lobe found is
+    the copy when the larger opposite-signed excursion lies within a half-width
+    of ``d`` below it rather than above, and both lobes are masked. A single
+    line is the pair with ``d = inf``.
     """
     if x.size < 3:
         return []
@@ -2404,7 +2442,7 @@ def _lcr_peaks(
     free = np.ones(x.size, dtype=bool)
     peaks: list[tuple[float, float, float]] = []
     for index in np.argsort(-np.abs(excursion), kind="stable"):
-        if len(peaks) == count:
+        if len(peaks) == len(partners):
             break
         height = float(excursion[index])
         if not free[index] or height == 0.0:
@@ -2415,8 +2453,17 @@ def _lcr_peaks(
         if not left.size or not right.size:
             continue
         width = float(min(x[index] - x[left[-1]], x[index + 1 + right[0]] - x[index]))
-        peaks.append((float(x[index]), height, width))
-        free &= np.abs(x - x[index]) > 3.0 * width
+        offset = float(partners[len(peaks)])
+        centre = float(x[index])
+        opposite = -np.sign(height) * excursion
+        above, below = (
+            np.max(opposite, where=np.abs(x - centre - side * offset) <= width, initial=0.0)
+            for side in (1.0, -1.0)
+        )
+        if below > above:
+            centre, height = centre - offset, -height
+        peaks.append((centre, height, width))
+        free &= (np.abs(x - centre) > 3.0 * width) & (np.abs(x - centre - offset) > 3.0 * width)
     return peaks
 
 
@@ -2456,7 +2503,7 @@ def _estimate_rf_resonance(
     seeds = {"ampl1": ampl, "wid1": width, "ampl2": ampl, "wid2": width, "BG": bg}
     if "nu_RF" not in known:
         return seeds
-    peaks = _lcr_peaks(x, y, 2)
+    peaks = _lcr_peaks(x, y, (np.inf, np.inf))
     if len(peaks) < 2:
         return seeds
     nu_rf = float(known["nu_RF"])
@@ -2476,8 +2523,9 @@ def _estimate_rf_resonance(
 
 
 #: The resonance-peak components (shared ``f``, ``B0``, ``Bwid``), seeded together
-#: by :func:`_lcr_peaks` so that several of them start on several resonances.
-_LCR_COMPONENTS = frozenset({"GaussianLCR", "LorentzianLCR"})
+#: by :func:`_lcr_peaks` so that several of them start on several resonances; one
+#: with a ``dB`` is a differential pair whose copy sits ``dB`` above ``B0``.
+_LCR_COMPONENTS = frozenset({"GaussianLCR", "LorentzianLCR", "LorentzianLCRPair"})
 
 
 #: Registry mapping a *component* name to a closed-form seed estimator. Each
@@ -2554,12 +2602,18 @@ def suggest_model_seeds(
 
     seeds: dict[str, float] = {}
     lcr_components = [
-        mapping
+        (component, mapping)
         for component, mapping in zip(model.components, model._param_mappings, strict=True)
         if component.name in _LCR_COMPONENTS
     ]
-    for mapping, (centre, height, width) in zip(
-        lcr_components, _lcr_peaks(xf, yf, len(lcr_components)), strict=False
+    partners = [
+        float(known.get(mapping["dB"], component.param_defaults["dB"]))
+        if "dB" in mapping
+        else np.inf
+        for component, mapping in lcr_components
+    ]
+    for (_component, mapping), (centre, height, width) in zip(
+        lcr_components, _lcr_peaks(xf, yf, partners), strict=False
     ):
         seeds.update({mapping["f"]: height, mapping["B0"]: centre, mapping["Bwid"]: width})
     for component, mapping in zip(model.components, model._param_mappings, strict=True):

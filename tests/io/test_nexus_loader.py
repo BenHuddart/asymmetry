@@ -528,6 +528,61 @@ def test_temperature_unit_suspect_heuristic_matrix(loader: NexusLoader) -> None:
     assert suspect("EMU", None, None, "Kelvin")[0] is False
 
 
+def _write_log(group, name: str, times, values) -> None:
+    log = group.create_group(name)
+    log.create_dataset("time", data=np.asarray(times, dtype=np.float64))
+    log.create_dataset("value", data=np.asarray(values, dtype=np.float64))
+
+
+@pytest.mark.parametrize(
+    ("period_type", "red_period", "green_period"),
+    [
+        # HiFi's DAE cycle: ramp up, field on, ramp down, field off — data in 2 and 4.
+        ([2, 1, 2, 1], 2, 4),
+        # No period types: the DAE periods are the data periods.
+        (None, 1, 2),
+    ],
+)
+def test_a_red_green_run_records_its_period_field_offset(
+    tmp_path, loader: NexusLoader, period_type, red_period: int, green_period: int
+) -> None:
+    """The Hall probe, binned by the DAE period in force, gives the red field less the green."""
+    path = tmp_path / "run_rg.nxs"
+    _write_v2_file(path, multiperiod=True)
+    change_times = np.arange(8) * 25.0
+    cycle = [1, 2, 3, 4, 1, 2, 3, 4]
+    # The Hall probe reads negative; the red period's field is 45 Hall units lower.
+    reading = {red_period: -10000.0 + 45.0, green_period: -10000.0}
+    times = np.arange(-20.0, 200.0, 5.0)
+    period = np.asarray(cycle)[np.searchsorted(change_times, times, side="right") - 1]
+    hall = np.array([reading.get(int(p), -10020.0) for p in period])
+    hall[0] = -20000.0  # before the run: another setpoint
+    hall[np.flatnonzero(period == green_period)[0]] = -10300.0  # a ramp still settling
+    with h5py.File(path, "a") as f:
+        entry = f["raw_data_1"]
+        _write_log(entry, "Beamlog_Period_Num", change_times, cycle)
+        _write_log(entry, "Field_Hall_Z", times, hall)
+        _write_log(entry, "Field_Main", times, np.full(times.size, 9500.0))
+        if period_type is not None:
+            entry["instrument"].create_group("beam").create_dataset(
+                "period_type", data=np.asarray(period_type)
+            )
+
+    dataset = loader.load(str(path))
+
+    hall_to_main = 9500.0 / float(np.mean(hall[times >= 0.0]))
+    assert dataset.metadata["period_field_offset_gauss"] == pytest.approx(45.0 * hall_to_main)
+    assert dataset.metadata["period_field_offset_gauss"] < 0.0
+
+
+def test_a_run_without_the_period_logs_records_no_period_field_offset(
+    tmp_path, loader: NexusLoader
+) -> None:
+    path = tmp_path / "run_v2_multi.nxs"
+    _write_v2_file(path, multiperiod=True)
+    assert "period_field_offset_gauss" not in loader.load(str(path)).metadata
+
+
 def test_load_v2_multiperiod(tmp_path, loader: NexusLoader) -> None:
     path = tmp_path / "run_v2_multi.nxs"
     _write_v2_file(path, multiperiod=True)

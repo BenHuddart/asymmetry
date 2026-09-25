@@ -1986,6 +1986,24 @@ def test_parameter_model_categories_cover_registry() -> None:
     )
 
 
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_suggest_model_seeds_puts_a_differential_pair_on_its_line_not_its_copy(
+    sign: float,
+) -> None:
+    from asymmetry.core.fitting.parameter_models import _lcr_lorentzian_pair
+
+    model = ParameterCompositeModel(["LorentzianLCRPair", "LorentzianLCRPair", "Constant"])
+    # Three fields every 100 G: the copy, 44 G above each line, falls between samples.
+    x = np.sort(np.concatenate([np.arange(28500.0, 30000.0, 100.0) + d for d in (0, 20, 40)]))
+    y = _lcr_lorentzian_pair(x, sign * 0.015, 28938.5, 14.0, 44.4) + _lcr_lorentzian_pair(
+        x, sign * 0.015, 29536.3, 14.0, 44.4
+    )
+    seeds = suggest_model_seeds(model, x, y, known={"dB_1": 44.4, "dB_2": 44.4})
+    assert sorted([seeds["B0_1"], seeds["B0_2"]]) == pytest.approx([28938.5, 29536.3], abs=5.0)
+    assert np.sign(seeds["f_1"]) == np.sign(seeds["f_2"]) == sign
+    assert seeds["dB_1"] == seeds["dB_2"] == 44.4
+
+
 def test_suggest_model_seeds_puts_each_lcr_component_on_its_own_resonance() -> None:
     from asymmetry.core.fitting.parameter_models import _lcr_lorentzian
 

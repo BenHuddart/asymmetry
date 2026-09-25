@@ -210,6 +210,49 @@ def _add_main_field(metadata: dict[str, Any], time_series: dict[str, dict[str, A
     metadata["field_source"] = "main+sweep"
 
 
+def _add_period_field_offset(
+    metadata: dict[str, Any],
+    time_series: dict[str, dict[str, Any]],
+    data_periods: list[int],
+) -> None:
+    """Record ``period_field_offset_gauss``, the red period's field less the green's.
+
+    HiFi logs no red/green coil current, but its Hall probe (``Field_Hall_Z``)
+    sees the coil: each Hall sample belongs to the DAE period in force at its
+    time (``Beamlog_Period_Num``, sample-and-hold), and the red and green data
+    periods (*data_periods*, their DAE period numbers) differ by the offset.
+    Medians, so a field ramp spilling into a period does not drag it; scaled to
+    gauss by the run's ``Field_Main``/``Field_Hall_Z`` ratio.
+    """
+    periods = time_series.get("Beamlog_Period_Num")
+    hall = time_series.get("Field_Hall_Z")
+    main = active_series_mean(time_series.get("Field_Main"))
+    hall_mean = active_series_mean(hall)
+    if periods is None or main is None or hall_mean in (None, 0.0) or len(data_periods) != 2:
+        return
+    change_times, period_numbers = _logged_samples(periods)
+    order = np.argsort(change_times, kind="stable")
+    hall_times, hall_values = _logged_samples(hall)
+    in_force = np.searchsorted(change_times[order], hall_times, side="right") - 1
+    active = (hall_times >= 0.0) & (in_force >= 0) & np.isfinite(hall_values)
+    period_of_sample = period_numbers[order][np.maximum(in_force, 0)]
+    red, green = (hall_values[active & (period_of_sample == number)] for number in data_periods)
+    if not red.size or not green.size:
+        return
+    metadata["period_field_offset_gauss"] = (main / hall_mean) * float(
+        np.median(red) - np.median(green)
+    )
+
+
+def _logged_samples(entry: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    """A logged series' ``(time, value)`` pairs, cut to the shorter of the two lists."""
+    n = min(len(entry["time"]), len(entry["values"]))
+    return (
+        np.asarray(entry["time"][:n], dtype=float),
+        np.asarray(entry["values"][:n], dtype=float),
+    )
+
+
 @dataclass
 class _GroupingSelection:
     """Resolved detector-group selection used for asymmetry reduction."""
@@ -440,6 +483,9 @@ class NexusLoader(BaseLoader):
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
+        _add_period_field_offset(
+            metadata_base, time_series, self._data_periods(entry, len(counts_periods))
+        )
         logged_temperature = self._record_logged_sample_temperature(metadata_base, time_series)
 
         suspect, reason = self._temperature_unit_suspect(
@@ -649,6 +695,9 @@ class NexusLoader(BaseLoader):
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
+        _add_period_field_offset(
+            metadata_base, time_series, self._data_periods(entry, len(counts_periods))
+        )
         logged_temperature = self._record_logged_sample_temperature(metadata_base, time_series)
 
         suspect, reason = self._temperature_unit_suspect(
@@ -701,6 +750,20 @@ class NexusLoader(BaseLoader):
             if values.size:
                 return values
         return np.asarray([], dtype=np.float64)
+
+    def _data_periods(self, entry: Any, n_periods: int) -> list[int]:
+        """The DAE period numbers of the file's *n_periods* data periods, in order.
+
+        ``instrument/beam/period_type`` marks each DAE period as data-taking
+        (1) or dwell: a HiFi red/green run cycles ramp up, field on, ramp down,
+        field off (``[2, 1, 2, 1]``), so its data periods are DAE periods 2 and
+        4. Without that field the DAE periods are the data periods.
+        """
+        beam = self._read_optional(self._read_optional(entry, "instrument"), "beam")
+        types = np.asarray(self._read_optional(beam, "period_type", default=[]), dtype=float)
+        if types.size:
+            return [int(number) for number in np.flatnonzero(types == 1) + 1]
+        return list(range(1, n_periods + 1))
 
     def _build_period_datasets(
         self,

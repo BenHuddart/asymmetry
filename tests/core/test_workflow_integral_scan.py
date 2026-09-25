@@ -234,3 +234,40 @@ def test_two_resonances_on_a_kilogauss_background_fit_together(background: str) 
     assert parameters["B0_1"] == pytest.approx(20800.0, abs=10.0)
     assert parameters["B0_2"] == pytest.approx(27500.0, abs=30.0)
     assert parameters["Bwid_1"] > 0.0 and parameters["Bwid_2"] > 0.0
+
+
+def test_a_differential_pair_with_its_offset_held_recovers_each_resonance() -> None:
+    from asymmetry.core.fitting.parameter_models import _lcr_lorentzian_pair
+
+    rng = np.random.default_rng(3)
+    x = np.sort(np.concatenate([np.arange(28500.0, 30000.0, 100.0) + d for d in (0, 20, 40)]))
+    error = np.full_like(x, 5e-4)
+    value = (
+        _lcr_lorentzian_pair(x, -0.016, 28938.5, 14.0, 44.4)
+        + _lcr_lorentzian_pair(x, -0.017, 29536.3, 14.0, 44.4)
+        + rng.normal(0.0, error)
+    )
+    scan = FieldScan(
+        x=x,
+        value=value,
+        error=error,
+        run_numbers=list(range(x.size)),
+        order_key="field",
+        method="integral",
+        x_label="B (G)",
+    )
+
+    _, fit = fit_integral_scan(
+        scan,
+        "LorentzianLCRPair + LorentzianLCRPair + Constant",
+        fixed={"dB_1": 44.4, "dB_2": 44.4},
+    )
+
+    parameters = fit["parameters"]
+    assert fit["success"]
+    assert sorted([parameters["B0_1"], parameters["B0_2"]]) == pytest.approx(
+        [28938.5, 29536.3], abs=2.0
+    )
+    assert parameters["Bwid_1"] == pytest.approx(14.0, abs=2.0)
+    assert parameters["Bwid_2"] == pytest.approx(14.0, abs=2.0)
+    assert parameters["dB_1"] == parameters["dB_2"] == 44.4

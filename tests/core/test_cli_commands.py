@@ -762,6 +762,52 @@ def test_integral_scan_green_red_needs_two_periods(
     assert data["settings"]["period"] == "green_minus_red"
 
 
+def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_offset(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from asymmetry.core import io
+
+    _two_identical_periods(monkeypatch)
+    two_period_load = io.load
+    offsets = iter([-43.0, -45.0])
+
+    def _with_offset(path):
+        dataset = two_period_load(path)
+        dataset.run.metadata["period_field_offset_gauss"] = next(offsets)
+        return dataset
+
+    monkeypatch.setattr("asymmetry.core.io.load", _with_offset)
+    base = [
+        "integral-scan",
+        str(workflow_folder),
+        "--runs",
+        f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+        "--period",
+        "green-red",
+        "--order",
+        "run",
+        "--model",
+        "LorentzianLCRPair",
+        "--fix",
+        "f=0",
+        "--fix",
+        "Bwid=1",
+        "--fix",
+        "B0=102.5",
+        "--workdir",
+        str(tmp_path / "wd"),
+    ]
+    cli.main(base)
+    out = capsys.readouterr().out
+    assert "period field offset (red - green): -44.00 G, mean of 2 run(s)" in out
+    assert "--fix dB=44.00" in out
+
+    offsets = iter([-43.0, -45.0])
+    cli.main([*base, "--json"])
+    data = _json_output(capsys)
+    assert data["period_field_offset"] == {"gauss": pytest.approx(-44.0), "runs": 2}
+
+
 def test_integral_scan_single_period_reports_the_source_run_number(
     workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
 ) -> None:

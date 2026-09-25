@@ -177,7 +177,8 @@ def _parameters(
     # a quarter of it: two LCR components otherwise trade places, one running
     # off the axis with a negative width, and a resonance wider than a quarter
     # of the scan is indistinguishable from the polynomial background it then
-    # impersonates.
+    # impersonates. A differential pair's copy sits a positive dB above its line,
+    # inside the scan.
     x_lo = float(np.min(scan.x))
     x_hi = float(np.max(scan.x))
     span = x_hi - x_lo
@@ -188,6 +189,10 @@ def _parameters(
             centre.min, centre.max = x_lo, x_hi
             width.min = max(span / 1000.0, np.finfo(float).eps)
             width.max = max(span / 4.0, width.min)
+        if "dB" in component.param_names:
+            offset = parameters[model.component_param_name(index, "dB")]
+            offset.min = max(span / 1000.0, np.finfo(float).eps)
+            offset.max = max(span, offset.min)
     for name in fixed:
         parameters[name].fixed = True
     return model, parameters
