@@ -1951,3 +1951,39 @@ def test_a_fit_on_a_windowed_reduction_says_so_and_plot_tmax_keeps_the_record(
         f"NOTE: run(s) {run} were reduced to a time window (start-2.0 µs)"
         in capsys.readouterr().out
     )
+
+
+def test_integral_scan_fits_inside_the_window_and_reports_a_failed_fit(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from asymmetry.core.fitting.parameter_models import ParameterModelFitResult
+
+    base = [
+        "integral-scan",
+        str(workflow_folder),
+        "--runs",
+        f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}",
+        "--order",
+        "temperature",
+        "--workdir",
+        str(tmp_path / "wd"),
+    ]
+    cli.main([*base, "--model", "Linear", "--xmin", "15", "--xmax", "45", "--json"])
+    data = _json_output(capsys)
+    assert data["fit"]["n_points"] == 3
+    assert (data["fit"]["x_min"], data["fit"]["x_max"]) == (15.0, 45.0)
+    assert len(data["scan"]["points"]) == len(SCAN_RUNS)
+
+    # No more points than free parameters is refused, not fitted.
+    with pytest.raises(SystemExit, match="1"):
+        cli.main([*base, "--model", "LorentzianLCR + Cubic", "--xmax", "25"])
+    assert "2 point(s) to fit for 7 free parameter(s)" in capsys.readouterr().err
+
+    # A fit that fails says so, but the scan is kept.
+    monkeypatch.setattr(
+        "asymmetry.core.workflow.integral_scan.fit_scan_model",
+        lambda *args, **kwargs: ParameterModelFitResult(success=False, message="Fit failed"),
+    )
+    cli.main([*base, "--name", "failed", "--model", "Linear"])
+    assert "FAILED (Fit failed)" in capsys.readouterr().out
+    assert (tmp_path / "wd" / "scans" / "failed.json").exists()

@@ -552,6 +552,10 @@ class ScanGroup:
     field: float | None
     runs: list[int]
     values: list[float]
+    #: The run note a field scan's members share — part of a field scan's
+    #: identity, since one sample at one temperature is often scanned several
+    #: ways; empty for a temperature scan, whose identity it is not.
+    notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -564,6 +568,7 @@ class ScanGroup:
             "field": self.field,
             "runs": list(self.runs),
             "values": list(self.values),
+            "notes": self.notes,
         }
 
 
@@ -586,6 +591,9 @@ class FolderSurvey:
     #: The forward/backward groups precession was measured on; ``None`` is
     #: each file's own pair.
     pair: tuple[str, str] | None
+    #: Temperature scans left out of ``scans`` as cross-sections of a grid of
+    #: longer field scans.
+    cross_sections: int
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -593,6 +601,7 @@ class FolderSurvey:
             "folder": self.folder,
             "truncated": self.truncated,
             "pair": None if self.pair is None else list(self.pair),
+            "cross_sections": self.cross_sections,
             "runs": [row.to_dict() for row in self.runs],
             "calibration_candidates": [c.to_dict() for c in self.calibration_candidates],
             "best_calibration_run": self.best_calibration_run,
@@ -692,60 +701,119 @@ def _group_geometry(members: list[RunRow]) -> tuple[str | None, str]:
     return None, "; ".join(parts)
 
 
-def _scan_groups(rows: list[RunRow]) -> list[ScanGroup]:
+def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
     """Group *rows* into temperature scans and field scans.
 
     A temperature scan is every run sharing an (instrument, field) pair, ordered
-    by temperature; a field scan every run sharing an (instrument, temperature)
-    pair, ordered by field. A group qualifies only when it holds at least two
-    runs *at two different axis values*: a single run is not a scan, and
-    neither are three zero-field runs all at 350 K, which would otherwise be
-    reported as a "field scan" from 0 G to 0 G. A field scan needs two
-    different *non-zero* fields on top of that.
+    by temperature. A field scan is every run sharing an instrument,
+    temperature, run note and period count, ordered by field (see
+    :func:`_field_scan_members` for how one is cut into repeats and cleared of
+    calibration runs).
+
+    A group qualifies only when it holds at least two runs *at two different
+    axis values*: a single run is not a scan, and neither are three zero-field
+    runs all at 350 K, which would otherwise be reported as a "field scan" from
+    0 G to 0 G. A field scan needs two different *non-zero* fields on top of
+    that. A temperature scan every run of which sits in a longer field scan is
+    a cross-section of a grid of field scans, not a measurement of its own; it
+    is left out and counted, and the count returned beside the scans.
 
     The instrument is in the key because two instruments in one folder are two
     campaigns and must never merge; geometry is **not**, because it is measured
     per run and a scan that resolves only in part is still one scan (see
     :func:`_group_geometry`).
     """
+    groups: list[tuple[str, str, float, str, list[RunRow]]] = []
+    by_field: dict[tuple, list[RunRow]] = {}
+    by_temperature: dict[tuple, list[RunRow]] = {}
+    stretch: dict[int, int] = {}
+    count, current = 0, None
+    for row in rows:
+        if row.temperature is None or row.field is None:
+            continue
+        temperature = round(float(row.temperature), _SCAN_KEY_DECIMALS)
+        if temperature != current:
+            count, current = count + 1, temperature
+        stretch[row.run_number] = count
+        field = round(float(row.field), _SCAN_KEY_DECIMALS)
+        by_field.setdefault((row.instrument, field), []).append(row)
+        key = (row.instrument, temperature, row.notes, row.n_periods)
+        by_temperature.setdefault(key, []).append(row)
+    for (instrument, field), members in by_field.items():
+        groups.append(("temperature", instrument, field, "", members))
+    for (instrument, temperature, notes, _periods), members in by_temperature.items():
+        for scan in _field_scan_members(members, stretch):
+            groups.append(("field", instrument, temperature, notes, scan))
+
     scans: list[ScanGroup] = []
-    for axis, held in (("temperature", "field"), ("field", "temperature")):
-        buckets: dict[tuple[str, float], list[RunRow]] = {}
-        for row in rows:
-            axis_value = getattr(row, axis)
-            held_value = getattr(row, held)
-            if axis_value is None or held_value is None:
-                continue
-            key = (row.instrument, round(float(held_value), _SCAN_KEY_DECIMALS))
-            buckets.setdefault(key, []).append(row)
-        for (instrument, held_value), members in buckets.items():
-            ordered = sorted(members, key=lambda row: float(getattr(row, axis)))
-            axis_values = [float(getattr(row, axis)) for row in ordered]
-            if len(ordered) < 2 or len(set(axis_values)) < 2:
-                continue
-            if axis == "field" and len({value for value in axis_values if value != 0.0}) < 2:
-                # A zero-field run beside a *single* field run is a run and its
-                # reference, not a field scan — a field scan varies the field.
-                # Geometry used to keep those apart; with it out of the key, a
-                # magnet's fine ZF re-scan and its TF scan share temperatures
-                # run for run, and every such pair would be reported as a
-                # spurious "0 to 100 G field scan".
-                continue
-            geometry, geometry_note = _group_geometry(ordered)
-            scans.append(
-                ScanGroup(
-                    axis=axis,
-                    instrument=instrument,
-                    geometry=geometry,
-                    geometry_note=geometry_note,
-                    temperature=held_value if held == "temperature" else None,
-                    field=held_value if held == "field" else None,
-                    runs=[row.run_number for row in ordered],
-                    values=axis_values,
-                )
+    for axis, instrument, held_value, notes, members in groups:
+        ordered = sorted(members, key=lambda row: float(getattr(row, axis)))
+        axis_values = [float(getattr(row, axis)) for row in ordered]
+        if len(ordered) < 2 or len(set(axis_values)) < 2:
+            continue
+        if axis == "field" and len({value for value in axis_values if value != 0.0}) < 2:
+            # A zero-field run beside a *single* field run is a run and its
+            # reference, not a field scan — a field scan varies the field.
+            continue
+        geometry, geometry_note = _group_geometry(ordered)
+        scans.append(
+            ScanGroup(
+                axis=axis,
+                instrument=instrument,
+                geometry=geometry,
+                geometry_note=geometry_note,
+                temperature=held_value if axis == "field" else None,
+                field=held_value if axis == "temperature" else None,
+                runs=[row.run_number for row in ordered],
+                values=axis_values,
+                notes=notes,
             )
+        )
+    longest_field_scan: dict[int, int] = {}
+    for scan in scans:
+        if scan.axis == "field":
+            for run in scan.runs:
+                longest_field_scan[run] = max(longest_field_scan.get(run, 0), len(scan.runs))
+    cross_sections = [
+        scan
+        for scan in scans
+        if scan.axis == "temperature"
+        and all(longest_field_scan.get(run, 0) > len(scan.runs) for run in scan.runs)
+    ]
+    scans = [scan for scan in scans if scan not in cross_sections]
     scans.sort(key=lambda scan: (scan.axis, scan.runs[0]))
-    return [_note_shared_unresolved(scan, scans, rows) for scan in scans]
+    return [_note_shared_unresolved(scan, scans, rows) for scan in scans], len(cross_sections)
+
+
+def _field_scan_members(members: list[RunRow], stretch: dict[int, int]) -> list[list[RunRow]]:
+    """The field scans in *members*, runs sharing an instrument, temperature, note and period count.
+
+    Two cuts. A run at a field its scan already holds, taken after the cryostat
+    visited another temperature, starts a repeat of the scan — a field point
+    re-measured in the same visit (a return sweep) does not, and neither does a
+    new field after a detour (a scan measured alternately at two temperatures).
+    And a minority of runs precessing at their Larmor frequency among runs that
+    do not are transverse calibrations taken beside a longitudinal scan, and are
+    not part of it; where they are the majority the scan is transverse, and runs
+    too slow or too fast to show a line belong to it. *stretch* numbers each
+    run's stretch of consecutive runs at one temperature.
+    """
+    scans: list[list[RunRow]] = []
+    for row in members:
+        field = round(float(row.field), _SCAN_KEY_DECIMALS)
+        if scans:
+            fields = {round(float(member.field), _SCAN_KEY_DECIMALS) for member in scans[-1]}
+            if field not in fields or stretch[row.run_number] == stretch[scans[-1][-1].run_number]:
+                scans[-1].append(row)
+                continue
+        scans.append([row])
+    result: list[list[RunRow]] = []
+    for scan in scans:
+        larmor = [row for row in scan if row.precession.state == "larmor"]
+        if 2 * len(larmor) < len(scan):
+            scan = [row for row in scan if row.precession.state != "larmor"]
+        result.append(scan)
+    return result
 
 
 def _note_shared_unresolved(
@@ -907,6 +975,7 @@ def survey_folder(folder: str | Path, *, pair: tuple[str, str] | None = None) ->
 
     candidates, best_run = _calibration_candidates(rows, metadatas, alphas)
 
+    scans, cross_sections = _scan_groups(rows)
     return FolderSurvey(
         folder=str(folder),
         runs=rows,
@@ -914,9 +983,10 @@ def survey_folder(folder: str | Path, *, pair: tuple[str, str] | None = None) ->
         best_calibration_run=best_run,
         alpha_steps=alpha_steps(candidates),
         temperature_departures=temperature_departures(rows),
-        scans=_scan_groups(rows),
+        scans=scans,
         truncated=found.truncated,
         pair=pair,
+        cross_sections=cross_sections,
     )
 
 

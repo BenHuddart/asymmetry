@@ -2341,20 +2341,61 @@ def _estimate_lorentzian(
     return out
 
 
-def _estimate_lcr_peak(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
-) -> dict[str, float]:
-    """Seed an LCR peak ``f·shape(B; B0, Bwid)`` (Gaussian or Lorentzian).
+def _robust_baseline(x: NDArray[np.float64], y: NDArray[np.float64]) -> NDArray[np.float64]:
+    """A straight line through *y* that resonances do not pull: points beyond 3·MAD are refitted out.
 
-    ``B0`` is the centre of the largest excursion, ``f`` its signed height, and
-    ``Bwid`` the half-width at half-maximum. Both LCR shapes share the
-    (f, B0, Bwid) parameter set so one estimator seeds either.
+    A line, not a curve: a quadratic bends up under a resonance a fifth of the
+    scan wide and halves its seeded height. Fitted in x scaled onto [−1, 1], so
+    a kilogauss axis is as well conditioned as a gauss one.
     """
-    seed = _peak_seed(x, y)
-    if seed is None:
-        return {}
-    _baseline, centre, amplitude, width = seed
-    return {"f": amplitude, "B0": centre, "Bwid": width}
+    span = float(x.max() - x.min())
+    u = (x - 0.5 * (x.max() + x.min())) / (0.5 * span) if span > 0.0 else np.zeros_like(x)
+    keep = np.ones(x.size, dtype=bool)
+    for _ in range(5):
+        coefficients = np.polyfit(u[keep], y[keep], 1)
+        residual = y - np.polyval(coefficients, u)
+        spread = 1.4826 * float(np.median(np.abs(residual[keep])))
+        if spread == 0.0:
+            break
+        refit = np.abs(residual) <= 3.0 * spread
+        if refit.sum() <= 2 or np.array_equal(refit, keep):
+            break
+        keep = refit
+    return np.polyval(coefficients, u)
+
+
+def _lcr_peaks(
+    x: NDArray[np.float64], y: NDArray[np.float64], count: int
+) -> list[tuple[float, float, float]]:
+    """The *count* strongest resonances of a scan, strongest first: ``(centre, height, HWHM)``.
+
+    Heights are signed excursions from :func:`_robust_baseline`, so a sloping
+    background is not mistaken for a resonance. A resonance is an excursion that
+    falls to half its height on *both* sides inside the scan — a background that
+    curves away at one end of the scan never does. Each resonance found masks
+    ±3 half-widths before the next is sought, so several LCR components start on
+    several resonances rather than all on the largest.
+    """
+    if x.size < 3:
+        return []
+    excursion = y - _robust_baseline(x, y)
+    free = np.ones(x.size, dtype=bool)
+    peaks: list[tuple[float, float, float]] = []
+    for index in np.argsort(-np.abs(excursion), kind="stable"):
+        if len(peaks) == count:
+            break
+        height = float(excursion[index])
+        if not free[index] or height == 0.0:
+            continue
+        below_half = np.abs(excursion) <= 0.5 * abs(height)
+        left = np.flatnonzero(below_half[:index])
+        right = np.flatnonzero(below_half[index + 1 :])
+        if not left.size or not right.size:
+            continue
+        width = float(min(x[index] - x[left[-1]], x[index + 1 + right[0]] - x[index]))
+        peaks.append((float(x[index]), height, width))
+        free &= np.abs(x - x[index]) > 3.0 * width
+    return peaks
 
 
 def _estimate_rf_resonance(
@@ -2376,6 +2417,11 @@ def _estimate_rf_resonance(
     return {"ampl1": ampl, "wid1": width, "ampl2": ampl, "wid2": width, "BG": bg}
 
 
+#: The resonance-peak components (shared ``f``, ``B0``, ``Bwid``), seeded together
+#: by :func:`_lcr_peaks` so that several of them start on several resonances.
+_LCR_COMPONENTS = frozenset({"GaussianLCR", "LorentzianLCR"})
+
+
 #: Registry mapping a *component* name to a closed-form seed estimator. Each
 #: estimator takes the finite, x-sorted ``(x, y, yerr)`` subset and returns a
 #: mapping of that component's *base* parameter names (e.g. ``"m"``, not the
@@ -2394,6 +2440,7 @@ _MODEL_SEED_ESTIMATORS: dict[
     "Constant": _estimate_constant,
     "Linear": _estimate_linear,
     "Polynomial": _estimate_polynomial,
+    "Quadratic": _estimate_polynomial,
     "Quintic": _estimate_polynomial,
     "Cubic": _estimate_polynomial,
     "Quartic": _estimate_polynomial,
@@ -2402,8 +2449,6 @@ _MODEL_SEED_ESTIMATORS: dict[
     "ExponentialDecay": _estimate_exp_decay,
     "Arrhenius": _estimate_arrhenius,
     "Lorentzian": _estimate_lorentzian,
-    "GaussianLCR": _estimate_lcr_peak,
-    "LorentzianLCR": _estimate_lcr_peak,
     "RFResonanceMuP": _estimate_rf_resonance,
 }
 
@@ -2435,6 +2480,15 @@ def suggest_model_seeds(
         return {}
 
     seeds: dict[str, float] = {}
+    lcr_components = [
+        mapping
+        for component, mapping in zip(model.components, model._param_mappings, strict=True)
+        if component.name in _LCR_COMPONENTS
+    ]
+    for mapping, (centre, height, width) in zip(
+        lcr_components, _lcr_peaks(xf, yf, len(lcr_components)), strict=False
+    ):
+        seeds.update({mapping["f"]: height, mapping["B0"]: centre, mapping["Bwid"]: width})
     for component, mapping in zip(model.components, model._param_mappings, strict=True):
         estimator = _MODEL_SEED_ESTIMATORS.get(component.name)
         if estimator is None:

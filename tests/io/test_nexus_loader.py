@@ -663,6 +663,58 @@ def test_load_v1_good_frames_from_beam_keeps_deadtime_stable(tmp_path, loader: N
     assert blown_total > raw_total * 100.0
 
 
+def test_beam_good_frames_count_the_data_periods_not_the_dae_cycle(
+    tmp_path, loader: NexusLoader
+) -> None:
+    """A HiFi red/green run cycles four DAE periods into two data periods.
+
+    ``frames_period`` is per DAE period — ramp up, field on, ramp down, field
+    off — so its first two entries are ``[0, 15000]`` and a red period with no
+    frames would be deadtime-corrected against the 1.0 fallback. The data
+    periods' own counts are ``frames_period_daq``.
+    """
+    with h5py.File(tmp_path / "beam.nxs", "w") as f:
+        beam = f.create_group("run/instrument/beam")
+        beam.create_dataset("frames_period", data=np.array([0, 15000, 0, 15001]))
+        beam.create_dataset("frames_period_daq", data=np.array([15000, 15001]))
+        beam.create_dataset("frames_good", data=np.array([30001]))
+
+        assert list(loader._good_frames_from_beam(f["run"])) == [15000.0, 15001.0]
+
+
+def _series(mean: float) -> dict:
+    return {"time": [-10.0, 0.0, 10.0], "values": [0.0, mean, mean], "mean": mean}
+
+
+@pytest.mark.parametrize(
+    ("recorded", "main", "sweep", "applied"),
+    [
+        # A Z-coil sweep on a persistent 20900 G main: the file records the offset.
+        (50.0, 20900.0, 50.0, 20950.0),
+        (-10.0, 20800.0, -10.0, 20790.0),
+        # An ordinary main-field run: the file records the main field itself.
+        (19800.0, 19810.0, 0.0, 19800.0),
+        # Zero field with both coils off.
+        (0.0, 0.0, 0.0, 0.0),
+        # The Z coil alone, with a residual on the unpowered main.
+        (20.0, 0.44, 20.0, 20.0),
+    ],
+)
+def test_a_z_sweep_on_a_persistent_main_field_reads_the_applied_field(
+    recorded: float, main: float, sweep: float, applied: float
+) -> None:
+    from asymmetry.core.io.nexus import _add_main_field
+
+    metadata = {"field": recorded}
+    _add_main_field(metadata, {"Field_Main": _series(main), "Field_Z": _series(sweep)})
+    assert metadata["field"] == pytest.approx(applied)
+    swept = applied != recorded
+    assert ("field_sweep_gauss" in metadata) is swept
+    if swept:
+        assert metadata["field_sweep_gauss"] == recorded
+        assert metadata["field_main_gauss"] == main
+
+
 def test_load_v1_single_period(tmp_path, loader: NexusLoader) -> None:
     path = tmp_path / "run_v1.nxs"
     _write_v1_file(path)

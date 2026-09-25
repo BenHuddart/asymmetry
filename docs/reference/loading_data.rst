@@ -51,6 +51,15 @@ honours it: ``T`` / ``tesla`` is converted by a factor of 10\ :sup:`4` and
 unrecognised unit is passed through unchanged — the loader never guesses a
 conversion the file did not declare.
 
+HiFi can sweep the field with its small Z coil on top of the main solenoid held
+persistent, and such a run records only the Z offset (a title of ``F=50`` with
+the main at 20900 G). Both coils are logged, as ``Field_Main`` and ``Field_Z``;
+when the recorded field matches ``Field_Z`` rather than ``Field_Main``, the
+run's field is their sum (20950.6 G for that run), and the offset and the main
+field are kept beside it in the run's metadata as ``field_sweep_gauss`` and
+``field_main_gauss``, with ``field_source`` ``main+sweep``. A run whose recorded
+field is the main field itself is left as recorded.
+
 For NeXus good-data windows, Asymmetry treats integer bin metadata as
 canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
 ``first_good_time`` / ``last_good_time`` are present, they are used only as a
@@ -326,8 +335,11 @@ does not invent format rules:
   ``good_frames`` normalisation is read from the file's top-level
   ``good_frames`` / ``goodfrm`` when present; legacy ISIS HDF4 / NeXus-V1 files
   (e.g. HiFi runs) omit it, so Asymmetry falls back to ``instrument/beam``
-  (``frames_period`` per period, then the ``frames_good`` / ``frames`` run
-  total). Without that fallback the count defaults to 1 and the correction
+  (``frames_period_daq`` per data period, then ``frames_period``, then the
+  ``frames_good`` / ``frames`` run total). ``frames_period_daq`` comes first
+  because ``frames_period`` counts the DAE's periods, and a HiFi red/green run
+  cycles four of them — ramp up, field on, ramp down, field off, logged
+  ``[0, 15000, 0, 15001]`` — into its two data periods. Without that fallback the count defaults to 1 and the correction
   over-normalises by orders of magnitude.
 * The Grouping dialog also exposes WiMDA-style manual, calibrated, and
   estimated deadtime workflows alongside file-provided deadtimes. ``Estimate``

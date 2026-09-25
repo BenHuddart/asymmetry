@@ -892,6 +892,43 @@ good window keeps its absolute last bin while a Manual window re-derives it in
 aligned coordinates (3 bins apart on the simulated runs); the survey does not
 itself notice that another pair carries the precession.
 
+### ALC scans — 2026-09-25, on `feat/cli-alc-scans`
+
+CLI and core only, like the reduction-options PR. A study subagent mapped the
+passes of the benzene (liquid, solid, solution), corannulene and TCNQ ALC
+folders; every change below was then checked on those folders and the survey
+compared before/after on all 27 corpus folders.
+
+- **Multi-resonance fits.** LCR components are seeded one per resonance
+  (largest excursion from a robust straight baseline, bracketed by half-height
+  crossings on both sides, ±3 HWHM masked before the next) and bounded inside
+  the scan with a width up to a quarter of it; `Quadratic` gained its data
+  seed. `integral-scan --xmin/--xmax` fits a window, an underdetermined window
+  is refused, and a failed fit is printed with its parameters, scan kept.
+  Results: solid 19490/21467 G; liquid o-p 28945/29539 G; TCNQ 350 K 3099 G;
+  corannulene 420 K 7076 and 14824 G in windows. Whole-scan corannulene fits
+  still fail: its background is a rise plus a step at 19–21 kG, not a cubic.
+- **Loader.** HiFi red/green good frames now come from `frames_period_daq`
+  (red read 0 → deadtime blew its asymmetry from 0.41 to 0.55); Z-sweep runs on
+  a persistent main field read `Field_Main` + offset (benzene solution sat at
+  ±350 G; now ~20.9 kG).
+- **Green − red** is the difference of each period's count integral, so the RG
+  differential ALC is clean (dips at 28.94/29.54 kG) and the RF fit needs no
+  window (A_μ 514.8, A_p 124.4 MHz over the full good range).
+- **Survey.** Field scans keyed by note and period count; a Larmor-precessing
+  minority (calibrations) left out; a field re-measured after another
+  temperature starts a repeat; grid cross-sections counted, not listed.
+  Across the corpus this split the benzene and corannulene folders correctly,
+  kept LiFeAs's alternating 2 K/20 K field scans whole, and dropped only spurious
+  scans elsewhere (a photo-μSR power scan at −100 G read as a field scan).
+
+Not done here: a model for the red/green differential line shape (the
+worksheet's "Deriv Lorentzians"); HiFi files stamped `TF` on longitudinal ALC
+runs still report geometry TF where no precession is measurable; a
+single-period `integral-scan --period red` lists encoded period run numbers
+(`29809001`); background in integrals; coupling seeds for `RFResonanceMuP`;
+the radical repolarisation model; corannulene's step baseline.
+
 ### Sonnet trend-fit pass — 2026-09-23, on `feat/trend-model-fit`
 
 Host: Claude Code. Model: `sonnet`. Runner: `tools/agent_eval/run_eval.py`,
