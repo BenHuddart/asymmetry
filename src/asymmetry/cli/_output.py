@@ -83,6 +83,23 @@ def render_table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
+def render_trend(trend: Any) -> str:
+    """A :class:`~asymmetry.core.workflow.series.TrendTable` as a terminal table."""
+
+    def cell(value: Any) -> str:
+        if value is None:
+            return "-"
+        if isinstance(value, list):
+            return ", ".join(str(item) for item in value) or "-"
+        if isinstance(value, float):
+            return f"{value:.6g}"
+        return str(value)
+
+    return render_table(
+        list(trend.columns), [[cell(row[column]) for column in trend.columns] for row in trend.rows]
+    )
+
+
 __all__ = [
     "SCHEMA",
     "UserError",
@@ -91,4 +108,5 @@ __all__ = [
     "format_number",
     "payload",
     "render_table",
+    "render_trend",
 ]

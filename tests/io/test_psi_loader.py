@@ -13,7 +13,12 @@ pytestmark = [pytest.mark.io]
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.io import load
-from asymmetry.core.io.psi import _FE_HEADER, PsiLoader
+from asymmetry.core.io.psi import (
+    _FE_HEADER,
+    PSI_HEADER_SAMPLE_SENSOR,
+    PsiLoader,
+    header_sensor_rejection,
+)
 from asymmetry.core.transform import (
     apply_deadtime_correction,
     apply_grouping_aligned,
@@ -47,6 +52,8 @@ def _write_psi_bin(
     run_number: int = 4321,
     t0_values: list[int] | None = None,
     first_good_values: list[int] | None = None,
+    sensor_means: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
+    sensor_deviations: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
 ) -> None:
     if labels is None:
         labels = [b"Back", b"Forw"]
@@ -78,6 +85,8 @@ def _write_psi_bin(
     header[227:236] = b"01-JAN-26"
     header[236:244] = b"10:00:00"
     header[244:252] = b"11:00:00"
+    struct.pack_into("<4f", header, 716, *sensor_means)
+    struct.pack_into("<4f", header, 738, *sensor_deviations)
     header[860:922] = title[:62].ljust(62, b" ")
     for i, label in enumerate(labels):
         header[948 + i * 4 : 952 + i * 4] = label[:4].ljust(4, b" ")
@@ -460,8 +469,9 @@ def test_load_psi_bin_rejects_temperature_mon_file_from_another_beam_period(tmp_
 
     assert "psi_temperature_log_channels" not in ds.metadata
     assert "nexus_time_series" not in ds.metadata
-    rejected = ds.metadata["psi_temperature_log_rejected"]
-    assert [entry["source_file"] for entry in rejected] == [str(stale)]
+    rejected = ds.metadata["temperature_log_rejected"]
+    # The stale sidecar, then the header sensor that stood in for it and read 0 K.
+    assert [entry["source"] for entry in rejected] == [str(stale), PSI_HEADER_SAMPLE_SENSOR]
     assert "2025-01-01T10:40:23" in rejected[0]["reason"]
     assert "2026-01-01T10:00:00" in rejected[0]["reason"]
 
@@ -477,7 +487,7 @@ def test_load_psi_bin_keeps_temperature_mon_file_within_epoch_slack(tmp_path) ->
     ds = PsiLoader().load(str(path))
 
     assert "psi_temperature/Temp_Sample" in ds.metadata["nexus_time_series"]
-    assert "psi_temperature_log_rejected" not in ds.metadata
+    assert "temperature_log_rejected" not in ds.metadata
 
 
 def test_load_psi_bin_keeps_temperature_mon_file_when_run_has_no_usable_date(tmp_path) -> None:
@@ -495,6 +505,83 @@ def test_load_psi_bin_keeps_temperature_mon_file_when_run_has_no_usable_date(tmp
     ds = PsiLoader().load(str(path))
 
     assert "psi_temperature/Temp_Sample" in ds.metadata["nexus_time_series"]
+
+
+def test_psi_bin_header_sensors_round_trip_and_sensor_1_is_the_logged_temperature(
+    tmp_path,
+) -> None:
+    """All four header sensors are recorded; sensor 1 is the logged sample temperature."""
+    path = tmp_path / "deltat_tdc_gps_2001.bin"
+    means = (50.0, 52.75, 0.0, 300.5)
+    deviations = (0.015, 0.125, 0.0, 1.5)
+    _write_psi_bin(path, run_number=2001, sensor_means=means, sensor_deviations=deviations)
+
+    ds = PsiLoader().load(str(path))
+
+    assert ds.metadata["psi_sensor_temperatures"] == pytest.approx(means)
+    assert ds.metadata["psi_sensor_temperature_deviations"] == pytest.approx(deviations)
+    assert ds.temperature == pytest.approx(50.0)
+    assert ds.sample_temperature_logged == pytest.approx(52.75)
+    assert ds.metadata["sample_temperature_log_source"] == PSI_HEADER_SAMPLE_SENSOR
+    assert "temperature_log_rejected" not in ds.metadata
+
+
+@pytest.mark.parametrize(
+    ("mean", "deviation", "phrase"),
+    [
+        (60.0, 3.0, "scatter"),  # 5 % of the mean: not steady
+        (101.0, 0.1, "factor of 2"),  # above twice the 50 K setpoint
+        (24.0, 0.1, "factor of 2"),  # below half of it
+    ],
+)
+def test_psi_bin_header_sensor_1_failing_a_gate_gives_no_logged_temperature(
+    tmp_path, mean: float, deviation: float, phrase: str
+) -> None:
+    path = tmp_path / "deltat_tdc_gps_2002.bin"
+    _write_psi_bin(
+        path,
+        run_number=2002,
+        sensor_means=(50.0, mean, 0.0, 0.0),
+        sensor_deviations=(0.01, deviation, 0.0, 0.0),
+    )
+
+    ds = PsiLoader().load(str(path))
+
+    assert ds.sample_temperature_logged is None
+    assert "sample_temperature_log_source" not in ds.metadata
+    [rejection] = ds.metadata["temperature_log_rejected"]
+    assert rejection["source"] == PSI_HEADER_SAMPLE_SENSOR
+    assert phrase in rejection["reason"]
+
+
+def test_header_sensor_gates_sit_at_five_percent_and_a_factor_of_two() -> None:
+    assert header_sensor_rejection(5.0, 9.99, 0.49) == ""
+    assert header_sensor_rejection(5.0, 2.5, 0.12) == ""
+    assert "factor of 2" in header_sensor_rejection(5.0, 10.01, 0.1)
+    assert "scatter" in header_sensor_rejection(5.0, 5.0, 0.25)
+    # A setpoint the header failed to record leaves nothing to compare against.
+    assert "factor of 2" in header_sensor_rejection(0.0, 5.0, 0.01)
+
+
+def test_psi_bin_mon_sidecar_keeps_the_header_sensor_out(tmp_path) -> None:
+    """A run with its own ``.mon`` log never takes the unlabelled header sensor."""
+    path = tmp_path / "deltat_tdc_gps_2003.bin"
+    log_dir = tmp_path / "tlog"
+    log_dir.mkdir()
+    _write_psi_bin(
+        path,
+        run_number=2003,
+        sensor_means=(50.0, 51.0, 0.0, 0.0),
+        sensor_deviations=(0.01, 0.1, 0.0, 0.0),
+    )
+    _write_psi_mon(log_dir / "run_2003.mon")
+
+    ds = PsiLoader().load(str(path))
+
+    assert "psi_temperature/Temp_Sample" in ds.metadata["nexus_time_series"]
+    assert ds.metadata["psi_sensor_temperatures"][1] == pytest.approx(51.0)
+    assert ds.sample_temperature_logged is None
+    assert "temperature_log_rejected" not in ds.metadata
 
 
 @pytest.mark.parametrize(

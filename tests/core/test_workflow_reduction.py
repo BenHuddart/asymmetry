@@ -310,3 +310,35 @@ def test_the_difference_needs_two_periods(scan_run) -> None:
         reduction_source(single, GREEN_MINUS_RED)
     with pytest.raises(ValueError, match="not a two-period"):
         reduce_run(scan_run, ReductionSettings(period=GREEN_MINUS_RED))
+
+
+def test_estimate_alpha_reports_the_source_run_of_a_period_selection() -> None:
+    """A period's own run number is encoded (run*1000+period); the estimate
+    names the run it was cut from.
+    """
+    from asymmetry.core.io.periods import period_run
+
+    run = _two_period_run()
+    red = period_run(run, 0)
+    estimate = estimate_alpha_for_run(red, ReductionSettings())
+    assert estimate.run_number == run.run_number
+
+
+def test_the_background_error_names_the_source_run_of_a_period_selection() -> None:
+    from asymmetry.core.io.periods import period_run
+
+    template = BUILTIN_TEMPLATES["ideal_pulsed_fb"].build()
+    flat_run = simulate_two_period_run(
+        template,
+        [
+            PeriodSpec(lambda t: 0.0 * t, {}, label="red"),
+            PeriodSpec(lambda t: 0.0 * t, {}, label="green"),
+        ],
+        total_events=1.0e3,
+        seed=5,
+        run_number=44,
+    )
+    red = period_run(flat_run, 0)
+    settings = ReductionSettings(background="tail_fit", period="red")
+    with pytest.raises(ValueError, match=r"^Run 44: the tail_fit background"):
+        reduce_run(red, settings)

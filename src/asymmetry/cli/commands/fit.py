@@ -38,7 +38,7 @@ def run(args: argparse.Namespace) -> None:
         plots.require_matplotlib()
 
     folder = Path(args.folder)
-    workdir = workdir_for(folder, args.workdir)
+    workdir, _selection = workdir_for(folder, args.workdir, args.instrument)
     dataset = reduced_datasets(workdir, [args.run])[args.run]
 
     recipe = recipe_with_overrides(load_recipe(workdir, args.recipe), fix=args.fix, free=args.free)

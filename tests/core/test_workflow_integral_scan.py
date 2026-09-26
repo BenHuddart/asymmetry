@@ -160,6 +160,47 @@ def test_a_green_minus_red_scan_differences_each_periods_integral() -> None:
     assert build_integral_scan(datasets, settings, method="differential").n_points == 2
 
 
+def test_a_single_period_scan_reports_the_source_run_number() -> None:
+    """``select_period`` encodes a period's run number as ``run*1000+period``;
+
+    the scan must report the run it was cut from, not that internal key.
+    """
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.io.periods import select_period
+    from asymmetry.core.simulate import BUILTIN_TEMPLATES, PeriodSpec, simulate_two_period_run
+    from asymmetry.core.workflow.integral_scan import build_integral_scan
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    def relax(t, A=20.0):  # noqa: N803 (A is the conventional asymmetry symbol)
+        return A * np.exp(-0.3 * t)
+
+    datasets = []
+    for index, field in enumerate([700.0, 800.0]):
+        template = BUILTIN_TEMPLATES["ideal_pulsed_fb"].build()
+        template.metadata["field"] = field
+        run = simulate_two_period_run(
+            template,
+            [
+                PeriodSpec(relax, {"A": 20.0}, label="red"),
+                PeriodSpec(relax, {"A": 15.0}, label="green"),
+            ],
+            total_events=4.0e7,
+            seed=50 + index,
+            run_number=500 + index,
+        )
+        loaded = MuonDataset(
+            time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=run
+        )
+        datasets.append(select_period(loaded, "red"))
+
+    settings = ReductionSettings(period="red")
+    scan = build_integral_scan(datasets, settings, t_min=0.0, t_max=1.0)
+    by_run = build_integral_scan(datasets, settings, t_min=0.0, t_max=1.0, order_key="run")
+
+    assert scan.run_numbers == [500, 501]
+    assert by_run.x.tolist() == [500.0, 501.0]
+
+
 @pytest.mark.parametrize("background", ["Quadratic", "Cubic"])
 def test_two_resonances_on_a_kilogauss_background_fit_together(background: str) -> None:
     rng = np.random.default_rng(1)
@@ -193,3 +234,40 @@ def test_two_resonances_on_a_kilogauss_background_fit_together(background: str) 
     assert parameters["B0_1"] == pytest.approx(20800.0, abs=10.0)
     assert parameters["B0_2"] == pytest.approx(27500.0, abs=30.0)
     assert parameters["Bwid_1"] > 0.0 and parameters["Bwid_2"] > 0.0
+
+
+def test_a_differential_pair_with_its_offset_held_recovers_each_resonance() -> None:
+    from asymmetry.core.fitting.parameter_models import _lcr_lorentzian_pair
+
+    rng = np.random.default_rng(3)
+    x = np.sort(np.concatenate([np.arange(28500.0, 30000.0, 100.0) + d for d in (0, 20, 40)]))
+    error = np.full_like(x, 5e-4)
+    value = (
+        _lcr_lorentzian_pair(x, -0.016, 28938.5, 14.0, 44.4)
+        + _lcr_lorentzian_pair(x, -0.017, 29536.3, 14.0, 44.4)
+        + rng.normal(0.0, error)
+    )
+    scan = FieldScan(
+        x=x,
+        value=value,
+        error=error,
+        run_numbers=list(range(x.size)),
+        order_key="field",
+        method="integral",
+        x_label="B (G)",
+    )
+
+    _, fit = fit_integral_scan(
+        scan,
+        "LorentzianLCRPair + LorentzianLCRPair + Constant",
+        fixed={"dB_1": 44.4, "dB_2": 44.4},
+    )
+
+    parameters = fit["parameters"]
+    assert fit["success"]
+    assert sorted([parameters["B0_1"], parameters["B0_2"]]) == pytest.approx(
+        [28938.5, 29536.3], abs=2.0
+    )
+    assert parameters["Bwid_1"] == pytest.approx(14.0, abs=2.0)
+    assert parameters["Bwid_2"] == pytest.approx(14.0, abs=2.0)
+    assert parameters["dB_1"] == parameters["dB_2"] == 44.4

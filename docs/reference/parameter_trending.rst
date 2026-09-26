@@ -555,8 +555,9 @@ and vice versa. The registry (grouped by the context that offers them) is:
 * **Field axis** — degree-fixed baselines ``Cubic`` / ``Quartic`` / ``Quintic``
   / ``Sextic`` (each a fixed-order restriction of ``Polynomial``, for
   resonance backgrounds of increasing curvature); ``Redfield``; the resonance
-  lineshapes ``Lorentzian``, ``GaussianLCR``, ``LorentzianLCR``; the muonium
-  repolarisation curve ``MuRepolarisation`` and the exact-diagonalisation RF
+  lineshapes ``Lorentzian``, ``GaussianLCR``, ``LorentzianLCR``, and the
+  differential (red/green) pair ``LorentzianLCRPair`` (:doc:`alc_mode`); the
+  muonium repolarisation curve ``MuRepolarisation`` and the exact-diagonalisation RF
   resonance ``RFResonanceMuP``; the longitudinal-field diffusion and ballistic
   transport forms ``DiffusionLF_1D/2D/3D`` and ``BallisticLF_1D/2D/3D`` with the
   ``Lambda_bg`` background (:doc:`diffusion_ballistic_lf`); and the Brandt
@@ -1280,6 +1281,23 @@ for the precession to be resolved directly. The model assumes an isotropic
 (vacuum-like) hyperfine interaction observed in time average: anisotropic
 muonium, rapid chemical reaction, or spin exchange distort the curve, and
 any missing fraction appears as a reduced :math:`a_{\mathrm{Mu}}`.
+
+A radical repolarisation curve that keeps rising past where one isotropic
+term saturates is not evidence against this model, only against a *single*
+term: a muoniated radical whose coupled nuclei each decouple at their own
+field is fitted as a sum of ``MuRepolarisation`` terms, one per resolvable
+half-rise, each contributing its own :math:`a_{\mathrm{Mu}}` and
+:math:`A_{\mathrm{hf}}`; only the lowest-:math:`B_0` term's
+:math:`a_{\mathrm{Dia}}` should be left free; the shared low-field
+diamagnetic plateau the curve starts from cannot be resolved into a separate
+baseline per term, and the model sums every term's own. ``asymmetry
+integral-scan --model`` (:doc:`agent_workflow`) seeds each term from a
+successive half-rise in the data — the field at which the curve has covered
+half its rise *is* that term's :math:`B_0`, by the identity above — the way
+``LorentzianLCR`` terms are seeded from successive resonances. A genuinely
+anisotropic or multi-nucleus radical, where the transitions do not separate
+into independent half-rises this way, needs a model this workflow does not
+yet have.
 
 .. code-block:: python
 

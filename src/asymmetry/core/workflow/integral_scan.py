@@ -22,7 +22,14 @@ from asymmetry.core.fitting.field_scan import (
 )
 from asymmetry.core.fitting.parameter_models import suggest_model_seeds
 from asymmetry.core.fitting.parameters import ParameterSet
-from asymmetry.core.io.periods import GREEN_INDEX, RED_INDEX, period_count, period_run
+from asymmetry.core.io.nexus import active_series_mean
+from asymmetry.core.io.periods import (
+    GREEN_INDEX,
+    RED_INDEX,
+    period_count,
+    period_run,
+    source_run_of,
+)
 from asymmetry.core.transform.integral import FieldScan, build_field_scan
 from asymmetry.core.workflow.reduction import (
     GREEN_MINUS_RED,
@@ -50,37 +57,43 @@ def build_integral_scan(
     """
     runs = [dataset.run for dataset in datasets]
     if settings.period != GREEN_MINUS_RED:
-        return build_field_scan(
-            [_resolved(run, settings) for run in runs],
+        resolved = [_resolved(run, settings) for run in runs]
+        scan = build_field_scan(
+            resolved,
             t_min=t_min,
             t_max=t_max,
             method=method,
             order_key=order_key,
         )
+        return _decoded(scan, _source_run_numbers(resolved))
     two_period = [run for run in runs if period_count(run) == 2]
     # Each period is reduced as the single-period run it is.
     per_period = replace(settings, period=None)
+    red_periods = [period_run(run, RED_INDEX) for run in two_period]
+    green_periods = [period_run(run, GREEN_INDEX) for run in two_period]
+    sources = _source_run_numbers(red_periods + green_periods)
     red, green = (
-        build_field_scan(
-            [_resolved(period_run(run, index), per_period) for run in two_period],
-            t_min=t_min,
-            t_max=t_max,
-            method=method,
-            order_key=order_key,
+        _decoded(
+            build_field_scan(
+                [_resolved(period, per_period) for period in periods],
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                order_key=order_key,
+            ),
+            sources,
         )
-        for index in (RED_INDEX, GREEN_INDEX)
+        for periods in (red_periods, green_periods)
     )
     # Both periods of a run share its field, temperature and window, so the two
-    # scans list the same runs in the same order; the period is the run number's
-    # last three digits (encode_period_run_number).
-    sources = [encoded // 1000 for encoded in red.run_numbers]
-    if sources != [encoded // 1000 for encoded in green.run_numbers]:
+    # scans list the same source runs in the same order.
+    if red.run_numbers != green.run_numbers:
         raise ValueError("The red and green scans of the same runs came out in different orders.")
     return FieldScan(
         x=red.x,
         value=green.value - red.value,
         error=np.hypot(red.error, green.error),
-        run_numbers=sources,
+        run_numbers=red.run_numbers,
         order_key=red.order_key,
         method=red.method,
         x_label=red.x_label,
@@ -90,14 +103,54 @@ def build_integral_scan(
             for run in runs
             if period_count(run) != 2
         ]
-        + [(encoded // 1000, reason) for encoded, reason in (*red.excluded, *green.excluded)],
+        + [*red.excluded, *green.excluded],
         units=red.units,
     )
+
+
+def period_field_offset_gauss(runs: Iterable[Run]) -> tuple[float, int] | None:
+    """The scan's mean red − green field offset in gauss, and how many runs it averages.
+
+    Each run logs the step in Hall-probe units (``period_hall_offset``). The
+    probe reads the main field through a linear response with a zero offset of
+    order a kilogauss, so a *difference* converts by the slope
+    ``dField_Main/dField_Hall_Z`` — regressed over the runs' active means, not
+    one run's ratio of means, which carries the zero offset. ``None`` when fewer
+    than two runs log the step at distinct fields, where no slope is measured.
+    """
+    logged = [run.metadata for run in runs if "period_hall_offset" in run.metadata]
+    hall = np.array([active_series_mean(m["nexus_time_series"]["Field_Hall_Z"]) for m in logged])
+    main = np.array([active_series_mean(m["nexus_time_series"]["Field_Main"]) for m in logged])
+    if np.unique(hall).size < 2:
+        return None
+    slope = float(np.polyfit(hall, main, 1)[0])
+    step = float(np.mean([m["period_hall_offset"] for m in logged]))
+    return slope * step, len(logged)
 
 
 def _resolved(run: Run, settings: ReductionSettings) -> Run:
     """*run* carrying the grouping *settings* resolve for it."""
     return replace(run, grouping=resolve_reduction_grouping(run, settings))
+
+
+def _source_run_numbers(runs: Iterable[Run]) -> dict[int, int]:
+    """Map each *run*'s own number (period-encoded or not) to its source run number."""
+    return {int(run.run_number): source_run_of(run) for run in runs}
+
+
+def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:
+    """*scan* with every run number — points, exclusions and a run-ordered x — at its source run.
+
+    Every number in the scan was drawn from the runs *sources* was built from,
+    so the lookup cannot miss.
+    """
+    run_numbers = [sources[number] for number in scan.run_numbers]
+    return replace(
+        scan,
+        x=np.asarray(run_numbers, dtype=float) if scan.order_key == "run" else scan.x,
+        run_numbers=run_numbers,
+        excluded=[(sources[number], reason) for number, reason in scan.excluded],
+    )
 
 
 def field_scan_payload(scan: FieldScan) -> dict[str, Any]:
@@ -131,14 +184,22 @@ def _parameters(
     fixed: Mapping[str, float] | None,
 ) -> tuple[Any, ParameterSet]:
     model = as_composite_model(expression)
-    starts = suggest_model_seeds(model, scan.x, scan.value, scan.error)
-    starts.update({str(name): float(value) for name, value in (initial or {}).items()})
-    parameters = parameter_set_for_model(model, starts)
+    fixed = {str(name): float(value) for name, value in (fixed or {}).items()}
+    unknown = set(fixed) - set(model.param_names)
+    if unknown:
+        raise ValueError(
+            f"Unknown fixed parameter(s) {sorted(unknown)}; model parameters are {model.param_names}."
+        )
+    known = {**{str(name): float(value) for name, value in (initial or {}).items()}, **fixed}
+    parameters = parameter_set_for_model(
+        model, suggest_model_seeds(model, scan.x, scan.value, scan.error, known=known)
+    )
     # Every resonance sits inside the scan with a width between a thousandth and
     # a quarter of it: two LCR components otherwise trade places, one running
     # off the axis with a negative width, and a resonance wider than a quarter
     # of the scan is indistinguishable from the polynomial background it then
-    # impersonates.
+    # impersonates. A differential pair's copy sits a positive dB above its line,
+    # inside the scan.
     x_lo = float(np.min(scan.x))
     x_hi = float(np.max(scan.x))
     span = x_hi - x_lo
@@ -149,14 +210,11 @@ def _parameters(
             centre.min, centre.max = x_lo, x_hi
             width.min = max(span / 1000.0, np.finfo(float).eps)
             width.max = max(span / 4.0, width.min)
-    fixed = {str(name): float(value) for name, value in (fixed or {}).items()}
-    unknown = set(fixed) - set(model.param_names)
-    if unknown:
-        raise ValueError(
-            f"Unknown fixed parameter(s) {sorted(unknown)}; model parameters are {model.param_names}."
-        )
-    for name, value in fixed.items():
-        parameters[name].value = value
+        if "dB" in component.param_names:
+            offset = parameters[model.component_param_name(index, "dB")]
+            offset.min = max(span / 1000.0, np.finfo(float).eps)
+            offset.max = max(span, offset.min)
+    for name in fixed:
         parameters[name].fixed = True
     return model, parameters
 
@@ -224,7 +282,9 @@ def fit_integral_scan(
             f"The scan has {fitted_scan.n_points} point(s) to fit for {free} free "
             f"parameter(s) of {expression}; widen the window or hold parameters with --fix."
         )
-    result = fit_scan_model(fitted_scan, model, parameters=parameters)
+    # One extra start is the scan's own data seed (fixed values alone known),
+    # which rescues a hand-given start the fit cannot converge from.
+    result = fit_scan_model(fitted_scan, model, parameters=parameters, extra_starts=1)
     fit_payload = {
         "success": bool(result.success),
         "message": str(result.message),
@@ -247,6 +307,7 @@ def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
 
 
 __all__ = [
+    "period_field_offset_gauss",
     "build_integral_scan",
     "field_scan_payload",
     "fit_integral_scan",

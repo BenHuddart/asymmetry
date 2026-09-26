@@ -1,4 +1,4 @@
-"""True simultaneous fitting for a group of reduced runs."""
+"""True simultaneous fitting for a group of reduced runs, or for a batch of groups."""
 
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ def fit_global(
     recipe: FitRecipe,
     *,
     shared_params: Sequence[str],
-    axis: ScanAxis,
+    axis: ScanAxis[int],
     field_params: Sequence[str] = (),
     strategy: str = "joint",
 ) -> GlobalFitOutcome:
@@ -140,8 +140,86 @@ def fit_global(
         shared_uncertainties=shared_uncertainties,
         free_params=free_params,
         results=results,
-        trend=build_trend_table(results, free_params, axis.name),
+        trend=build_trend_table(
+            {str(result["run"]): result for result in results}, free_params, axis.name
+        ),
     )
 
 
-__all__ = ["GlobalFitOutcome", "fit_global"]
+@dataclass(frozen=True)
+class BatchOutcome:
+    """One simultaneous fit per group, and the groups' shared parameters as a trend."""
+
+    expression: str
+    #: The shared parameters that were fitted — what the batch trend tabulates.
+    free_params: list[str]
+    #: Each group's fit, keyed by its member name, in batch-axis order.
+    groups: dict[str, GlobalFitOutcome]
+    trend: TrendTable
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the batch's own trend; each group serializes as its own fit."""
+        return {
+            "expression": self.expression,
+            "order_key": self.trend.order_key,
+            "free_params": list(self.free_params),
+            "trend": self.trend.to_dict(),
+        }
+
+
+def fit_global_batch(
+    groups: Mapping[str, Mapping[int, MuonDataset]],
+    recipe: FitRecipe,
+    *,
+    shared_params: Sequence[str],
+    axis: ScanAxis[int],
+    batch_axis: ScanAxis[str],
+    field_params: Sequence[str] = (),
+    strategy: str = "joint",
+) -> BatchOutcome:
+    """:func:`fit_global` on every group, then its shared parameters against *batch_axis*.
+
+    *groups* maps each member name to its runs; *axis* orders the runs within a
+    group and *batch_axis* the groups. A row of the batch trend is one group:
+    its fitted shared parameters, their errors, and every flag its runs raised.
+    Raises :class:`ValueError` naming a group of fewer than two runs, as well
+    as whatever :func:`fit_global` refuses.
+    """
+    small = [name for name, runs in groups.items() if len(runs) < 2]
+    if small:
+        raise ValueError(
+            f"A simultaneous fit needs at least two runs per group; too few in {', '.join(small)}."
+        )
+    names = sorted(groups, key=lambda name: (batch_axis.values[name], name))
+    outcomes = {
+        name: fit_global(
+            groups[name],
+            recipe,
+            shared_params=shared_params,
+            axis=axis,
+            field_params=field_params,
+            strategy=strategy,
+        )
+        for name in names
+    }
+    free_params = [name for name in recipe.free_parameter_names() if name in shared_params]
+    entries = {
+        name: {
+            "x": batch_axis.values[name],
+            "parameters": outcome.shared,
+            "uncertainties": outcome.shared_uncertainties,
+            "quality_flags": sorted(
+                {flag for result in outcome.results for flag in result["quality_flags"]}
+            ),
+        }
+        for name, outcome in outcomes.items()
+    }
+    return BatchOutcome(
+        expression=recipe.expression,
+        free_params=free_params,
+        groups=outcomes,
+        trend=build_trend_table(entries, free_params, batch_axis.name),
+    )
+
+
+__all__ = ["BatchOutcome", "GlobalFitOutcome", "fit_global", "fit_global_batch"]

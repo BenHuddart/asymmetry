@@ -304,6 +304,41 @@ class SubtractedBackground:
     backward_error: float
 
 
+def windowed_count_variance(
+    counts: tuple[NDArray[np.float64], NDArray[np.float64]],
+    window: NDArray[np.bool_] | slice,
+    background: SubtractedBackground | None,
+) -> tuple[float, float]:
+    r"""Variances of the forward and backward window sums of ``counts``.
+
+    ``counts`` are the forward/backward counts as handed in, with
+    ``background`` (``None``: nothing) already subtracted; ``window`` selects
+    the ``n`` summed bins. With ``S = Σ`` the window sum, ``k`` the subtracted
+    level and ``σ_k`` its standard error, each group's variance is
+
+        ``var = (S + n·k) + (n·σ_k)²``.
+
+    The first term is Poisson: subtracting a constant shifts the mean without
+    changing the variance, so the window sum carries the **raw** total's
+    variance. The second is the baseline: one estimated level is removed from
+    all ``n`` bins, so its error is fully correlated across the window and
+    enters linearly in ``n``, not as ``√n``.
+    """
+    forward = np.asarray(counts[0], dtype=np.float64)[window]
+    backward = np.asarray(counts[1], dtype=np.float64)[window]
+    n_bins = float(forward.size)
+    if background is None:
+        return float(np.sum(forward)), float(np.sum(backward))
+    return (
+        float(np.sum(forward))
+        + n_bins * background.forward
+        + (n_bins * background.forward_error) ** 2,
+        float(np.sum(backward))
+        + n_bins * background.backward
+        + (n_bins * background.backward_error) ** 2,
+    )
+
+
 @dataclass(frozen=True)
 class AlphaEstimate:
     """Result of an alpha estimation.
@@ -732,26 +767,11 @@ def _ratio_alpha_error(
 ) -> float | None:
     r"""Closed-form σ on the windowed count ratio α = ΣF/ΣB.
 
-    Derivation. Write ``n`` for the number of bins in the window, ``S_F = ΣF``
-    and ``S_B = ΣB`` for the sums of the counts as handed in, and ``k_F``/``k_B``
-    for a constant background already subtracted from every bin of each group
-    (zero when none was). Two independent contributions:
-
-    1. *Poisson.* The raw per-bin counts are Poisson, and subtracting a constant
-       shifts the mean without changing the variance, so the window sum's
-       variance is the **raw** total ``S_F + n·k_F`` — larger than ``S_F``
-       itself whenever a background was removed. Numerator and denominator come
-       from different detectors and are independent, so the ratio's relative
-       variance is the sum of theirs:
-       ``(σ/α)²_Poisson = (S_F + n·k_F)/S_F² + (S_B + n·k_B)/S_B²``.
-
-    2. *Baseline.* One estimated level is subtracted from all ``n`` bins, so its
-       error is fully correlated across the window: the total removed from the
-       numerator is ``n·k_F`` with uncertainty ``n·σ_kF`` — linear in ``n``, not
-       ``√n``. The two groups' baselines are independent, so
-       ``(σ/α)²_baseline = (n·σ_kF/S_F)² + (n·σ_kB/S_B)²``.
-
-    The two are independent, hence ``σ_α = α·√((σ/α)²_Poisson + (σ/α)²_baseline)``.
+    Numerator and denominator come from different detectors and are
+    independent, so the ratio's relative variance is the sum of theirs,
+    ``(σ/α)² = var_F/S_F² + var_B/S_B²``, with ``var_F``/``var_B`` the window
+    sums' variances from :func:`windowed_count_variance` — which carry both the
+    subtracted level's Poisson variance and the baseline's correlated error.
 
     Resampling the *subtracted* counts — the obvious bootstrap — reproduces
     neither term: it uses ``S_F`` where the variance is ``S_F + n·k_F``, and it
@@ -762,23 +782,12 @@ def _ratio_alpha_error(
     Returns ``None`` when either window sum is non-positive (the ratio itself is
     then degenerate).
     """
-    n_bins = float(f.size)
     sum_f = float(np.sum(f))
     sum_b = float(np.sum(b))
     if sum_f <= 0.0 or sum_b <= 0.0:
         return None
-
-    level_f = background.forward if background is not None else 0.0
-    level_b = background.backward if background is not None else 0.0
-    error_f = background.forward_error if background is not None else 0.0
-    error_b = background.backward_error if background is not None else 0.0
-
-    relative_variance = (
-        (sum_f + n_bins * level_f) / sum_f**2
-        + (sum_b + n_bins * level_b) / sum_b**2
-        + (n_bins * error_f / sum_f) ** 2
-        + (n_bins * error_b / sum_b) ** 2
-    )
+    var_f, var_b = windowed_count_variance((f, b), slice(None), background)
+    relative_variance = var_f / sum_f**2 + var_b / sum_b**2
     if not np.isfinite(relative_variance) or relative_variance < 0.0:
         return None
     return float(alpha * np.sqrt(relative_variance))

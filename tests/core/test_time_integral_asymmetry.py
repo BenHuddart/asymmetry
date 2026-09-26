@@ -513,3 +513,74 @@ def test_differentiate_scan_rejects_derivative_input():
     deriv = differentiate_scan(_manual_scan())
     with pytest.raises(ValueError, match="not a derivative"):
         differentiate_scan(deriv)
+
+
+# --- background subtraction ---------------------------------------------------
+
+_T0 = 200
+_BIN_US = 0.01
+_N_BINS = 1200
+_TRUE_A = 0.2
+_FLAT_BG = 60.0
+# A short pre-t0 range, so the level's correlated error is a sizeable share of
+# the integral's: dropping it under-states the error well beyond the 10 % test.
+_BG_RANGE = [150, 159]
+
+
+def _continuous_run(seed: int, *, subtract: bool, background: float = _FLAT_BG) -> Run:
+    """A continuous-source LF run: flat background before and under a flat-asymmetry decay."""
+    t = (np.arange(_N_BINS) - _T0) * _BIN_US
+    decay = np.where(t >= 0.0, 200.0 * np.exp(-np.clip(t, 0.0, None) / 2.1969811), 0.0)
+    rng = np.random.default_rng(seed)
+    forward = rng.poisson(decay * (1.0 + _TRUE_A) + background).astype(float)
+    backward = rng.poisson(decay * (1.0 - _TRUE_A) + background).astype(float)
+    run = _run(forward, backward, t0=_T0, first_good=_T0 + 1, run_number=seed, field=float(seed))
+    if subtract:
+        run.grouping.update(
+            background_correction=True, background_mode="range", background_range=_BG_RANGE
+        )
+    return run
+
+
+def test_grouping_background_is_subtracted_by_the_field_scan():
+    # The GUI hands build_field_scan runs carrying the user's grouping, so a
+    # background switched on there reaches the integral through the core path.
+    diluted = build_field_scan([_continuous_run(0, subtract=False)], order_key="field")
+    subtracted = build_field_scan([_continuous_run(0, subtract=True)], order_key="field")
+    assert diluted.value[0] < 0.8 * _TRUE_A
+    assert subtracted.value[0] == pytest.approx(_TRUE_A, abs=3.0 * subtracted.error[0])
+    assert subtracted.error[0] > diluted.error[0]
+
+
+@pytest.mark.parametrize("method", ["integral", "differential"])
+def test_subtracted_integral_error_matches_monte_carlo_scatter(method):
+    runs = [_continuous_run(seed, subtract=True) for seed in range(200)]
+    scan = build_field_scan(runs, order_key="field", method=method, t_max=2.0)
+    assert scan.n_points == 200
+    assert float(np.mean(scan.value)) == pytest.approx(_TRUE_A, abs=0.01)
+    assert float(np.mean(scan.error)) == pytest.approx(float(np.std(scan.value, ddof=1)), rel=0.1)
+
+
+@pytest.mark.parametrize("method", ["integral", "differential"])
+def test_integral_without_background_is_unchanged(method):
+    run = _continuous_run(3, subtract=False)
+    good = slice(_T0 + 1, None)
+    forward = run.histograms[0].counts[good]
+    backward = run.histograms[1].counts[good]
+    if method == "integral":
+        asym, err = compute_asymmetry(np.array([forward.sum()]), np.array([backward.sum()]))
+        expected = (float(asym[0]), float(err[0]))
+    else:
+        asym, err = compute_asymmetry(forward, backward)
+        expected = (float(np.mean(asym)), float(np.sqrt(np.sum(err**2)) / err.size))
+    assert integrate_run(run, method=method) == expected
+
+
+def test_background_that_cannot_be_subtracted_excludes_the_run():
+    # A reference-run background needs a loader the transform does not have;
+    # integrating the unsubtracted counts instead would be silently wrong.
+    run = _continuous_run(0, subtract=True)
+    run.grouping["background_mode"] = "reference_run"
+    scan = build_field_scan([run], order_key="field")
+    assert scan.n_points == 0
+    assert "constant background" in scan.excluded[0][1]

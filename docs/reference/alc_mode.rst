@@ -281,6 +281,59 @@ The component parameter names follow the composite-model scheme documented in
 :doc:`composite_models`; call ``.param_names`` (as above) before building an
 ``initial`` override or a ``ParameterSet`` so the names always match.
 
+Differential (red/green) ALC: ``LorentzianLCRPair``
+-----------------------------------------------------
+
+An ALC scan is sometimes recorded as two interleaved periods — red and
+green — that sit at slightly different fields rather than as one period per
+run, and the resonance is fitted to the **difference** of the two
+(green − red), not to either period alone: a step in the raw scan that a
+single-period model would have to absorb into its background instead
+cancels between the periods, and a genuine resonance survives the
+subtraction as a derivative-like feature — the line at its true field, and
+a *copy* of it at the other period's field, with the opposite sign. The
+line shape for this observable is ``LorentzianLCRPair``:
+
+.. math::
+
+   y(B) = f \left[
+     \frac{1}{1 + \left((B - B_0)/B_\mathrm{wid}\right)^2}
+     - \frac{1}{1 + \left((B - B_0 - \Delta B)/B_\mathrm{wid}\right)^2}
+   \right],
+
+a Lorentzian at :math:`B_0` (the red period's field) less the same
+Lorentzian shifted by the field step :math:`\Delta B` (the green period's
+field, which the run files record). The two lobes are seeded together,
+exactly as two ``LorentzianLCR`` terms are: the stronger lobe found first
+locates :math:`B_0`, and its opposite-signed partner :math:`\Delta B` away
+is recognised as the same resonance's copy rather than a second one.
+
+:math:`\Delta B` is not a free parameter to fit for in practice. At the
+field steps a typical ALC scan uses, a pair *closer* together with a larger
+amplitude :math:`f` describes the same sparsely sampled lobes about as
+well, so the fit is degenerate with :math:`\Delta B` free. Hold it instead
+at the step the run files themselves record: the CLI's
+``integral-scan --period green-red`` (:doc:`agent_workflow`) reads each
+run's own red/green field-coil evidence, reports the scan's mean step, and
+prints the ``--fix dB=…`` (or ``dB_1``, ``dB_2``, … for several resonances)
+that fixes it before you fit — never assume or look up the step; different
+instruments and configurations step the field by different amounts.
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import fit_scan_model
+
+   result = fit_scan_model(
+       scan,  # a green - red differential scan
+       "LorentzianLCRPair",
+       initial={"dB": 45.0},
+   )
+
+References
+~~~~~~~~~~
+
+1. S. R. Kreitzman *et al.*, Phys. Rev. Lett. **56**, 181 (1986).
+
 Repolarisation: a complementary route through parameter trending
 ----------------------------------------------------------------
 

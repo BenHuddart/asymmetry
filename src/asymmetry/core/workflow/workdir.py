@@ -18,20 +18,27 @@ re-reducing the file, and an agent has state between invocations without a
 long-lived process. The JSON written here is the single source of truth for
 those later commands.
 
-**One work directory holds one data folder.** Everything under it is keyed on
-the run number alone, so two folders whose run numbers overlap would overwrite
-each other's spectra, recipes and series in a single directory. The manifest
-records the folder the session was opened for, and :meth:`WorkDir.bind` — which
-every command goes through before it reads or writes anything — refuses a
-directory that belongs to a different one. A directory with no manifest yet is
-unclaimed; the first ``survey`` or ``reduce`` writes the binding.
+**One work directory holds one folder's runs of one instrument.** Everything
+under it is keyed on the run number alone, so two folders whose run numbers
+overlap — or two instruments sharing run numbers in one folder — would
+overwrite each other's spectra, recipes and series in a single directory. The
+manifest records the :class:`RunSelection` the session was opened for, and
+:meth:`WorkDir.bind` — which every command goes through before it reads or
+writes anything — refuses a directory that holds a different one. A directory
+with no manifest yet is unclaimed; the first ``survey`` or ``reduce`` writes the
+binding.
 
 A reduced entry is keyed on a **digest** of everything that determines its
-numbers: the source file's identity (size, mtime and the SHA-256 of the whole
-file), the resolved grouping payload, the reduction settings and the schema the
+numbers: the identity of every source file (size, mtime and the SHA-256 of the
+whole file — one file, or each member of a co-add), the resolved grouping payload, the reduction settings and the schema the
 sidecar was written under. A cached entry whose digest no longer matches is
 stale and is recomputed, never trusted; one written under an older schema is
 refused until ``reduce`` rewrites it.
+
+A series derived from other series (``kind`` in :data:`DERIVED_SERIES_KINDS`)
+records a :func:`series_digest` of what it read from each member, and is
+refused as stale once a member no longer matches — refitted, its trend fit
+replaced, or removed — for the same reason: it is rebuilt, never trusted.
 
 Names a caller chooses — a recipe's, a series' — become path components under
 this directory, so every path built from one goes through :func:`safe_name`.
@@ -41,6 +48,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +59,7 @@ import numpy as np
 
 from asymmetry import __version__
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
 from asymmetry.core.workflow.jsonio import write_json as _write_json
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.reduction import ReductionSettings
@@ -57,8 +67,22 @@ from asymmetry.core.workflow.reduction import ReductionSettings
 #: Schema version stamped into every file the work directory writes. 2: a
 #: reduced sidecar's run record carries ``sample_temperature_logged``, and every
 #: stored series its ``trend`` and ``trend_fits``. 3: reduction settings carry
-#: the pair, background range and t0/t_good offsets.
-SCHEMA = 3
+#: the pair, background range and t0/t_good offsets. 4: the manifest records the
+#: instrument whose runs the session holds, and a reduced sidecar the runs it
+#: co-adds; every stored series names its ``kind``, its trend rows carry a
+#: string ``key`` (a run number or a member series) instead of ``run``, its
+#: ``trend_fits`` are keyed ``param:expression``, and a derived series records
+#: its ``members`` with their digests.
+SCHEMA = 4
+
+#: Series built from other stored series rather than from runs: a batch of
+#: simultaneous fits (``global-batch``) and a stored law's parameter trended
+#: across series (``fit-trend``). Their trend rows are keyed by member series.
+DERIVED_SERIES_KINDS = frozenset({"global-batch", "fit-trend"})
+
+#: Keys of a stored series that are not its fit: the stamps, and the trend fits
+#: added to it afterwards.
+_NOT_THE_FIT = frozenset({"schema", "asymmetry_version", "trend_fits"})
 
 #: Default work-directory name, resolved against the current directory. Not
 #: hidden: an analyst who has to find a plot, delete a stale session or put a
@@ -74,19 +98,70 @@ _FILE_HASH_CHUNK = 1024 * 1024
 _NAME_FORBIDDEN = ("/", "\\", "\0")
 
 
-class WorkDirMismatchError(Exception):
-    """A work directory was asked to serve a data folder that is not the one it holds.
+def instrument_name(prefix: str) -> str:
+    """The instrument a run file's prefix names; ``emu`` and ``EMU`` are one across eras."""
+    return prefix.upper()
 
-    Carries the three paths involved so a caller can phrase the message in its
-    own vocabulary; :meth:`str` is already a complete sentence naming them.
+
+def describe_instruments(entries: list[tuple[str, int, Path]]) -> str:
+    """``"EMU (58 files), MUSR (9 files)"`` for :func:`scan_run_files` *entries*."""
+    counts = Counter(instrument_name(prefix) for prefix, _run_number, _path in entries)
+    return ", ".join(
+        f"{name} ({count} file{'s' if count != 1 else ''})"
+        for name, count in sorted(counts.items())
+    )
+
+
+@dataclass(frozen=True)
+class RunSelection:
+    """The run files a session reads: one folder, and one instrument's files in it.
+
+    ``instrument`` is an :func:`instrument_name`, or ``None`` for every file in
+    the folder. A folder holding two instruments whose run numbers collide
+    needs one named, because everything stored is keyed on the run number.
     """
 
-    def __init__(self, *, root: Path, bound_folder: Path, folder: Path) -> None:
+    folder: Path
+    instrument: str | None
+
+    def matches(self, prefix: str) -> bool:
+        """Whether a file with this *prefix* is one of the selected runs."""
+        return self.instrument is None or instrument_name(prefix) == self.instrument
+
+    def scan(self) -> ScanRunFilesResult:
+        """:func:`scan_run_files` on the folder, keeping the selected files only.
+
+        :class:`ValueError` when the folder is not a directory, and when the
+        instrument names none of the files it holds — listing the instruments
+        it does hold, since the name is the user's to correct.
+        """
+        found = scan_run_files(self.folder)
+        entries = [entry for entry in found.entries if self.matches(entry[0])]
+        if found.entries and not entries:
+            raise ValueError(
+                f"{self.folder} holds no {self.instrument} run files; it holds "
+                f"{describe_instruments(found.entries)}."
+            )
+        return ScanRunFilesResult(entries=entries, truncated=found.truncated)
+
+    def __str__(self) -> str:
+        return str(self.folder) if self.instrument is None else f"{self.folder} ({self.instrument})"
+
+
+class WorkDirMismatchError(Exception):
+    """A work directory was asked to serve runs that are not the ones it holds.
+
+    Carries the directory and both selections so a caller can phrase the
+    message in its own vocabulary; :meth:`str` is already a complete sentence
+    naming them.
+    """
+
+    def __init__(self, *, root: Path, bound: RunSelection, requested: RunSelection) -> None:
         self.root = root
-        self.bound_folder = bound_folder
-        self.folder = folder
+        self.bound = bound
+        self.requested = requested
         super().__init__(
-            f"{root} belongs to {bound_folder}; for {folder} pass --workdir {WORKDIR_NAME}-<name>"
+            f"{root} belongs to {bound}; for {requested} pass --workdir {WORKDIR_NAME}-<name>"
         )
 
 
@@ -158,14 +233,14 @@ def file_fingerprint(path: str | Path) -> dict[str, Any]:
 
 def reduction_digest(
     *,
-    source_file: str | Path,
+    source_files: Sequence[str | Path],
     grouping: dict[str, Any],
     settings: ReductionSettings,
 ) -> str:
-    """The digest a reduced entry is keyed on."""
+    """The digest a reduced entry is keyed on: every source file it was reduced from."""
     payload = {
         "schema": SCHEMA,
-        "file": file_fingerprint(source_file),
+        "files": [file_fingerprint(path) for path in source_files],
         "grouping": _canonical(grouping),
         "settings": settings.to_dict(),
     }
@@ -173,9 +248,27 @@ def reduction_digest(
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def series_digest(series: dict[str, Any], fit_key: str | None) -> str:
+    """The digest of what a derived series reads from a stored member *series*.
+
+    The member's fit — everything but its stamps and trend fits, so fitting a
+    law to it does not change it — and, for a ``fit-trend``, the one trend fit
+    under *fit_key* (``None`` when that fit is gone).
+    """
+    payload = {key: value for key, value in series.items() if key not in _NOT_THE_FIT}
+    if fit_key is not None:
+        payload["trend_fit"] = series["trend_fits"].get(fit_key)
+    blob = json.dumps(_canonical(payload), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True)
 class ReducedEntry:
-    """The JSON sidecar of one reduced run."""
+    """The JSON sidecar of one reduced run.
+
+    ``members`` names the runs a co-add summed, the first of them
+    ``run_number`` itself; it is empty for a run reduced alone.
+    """
 
     run_number: int
     digest: str
@@ -187,6 +280,12 @@ class ReducedEntry:
     deadtime_mode: str
     forward_group: int
     backward_group: int
+    members: list[int]
+
+    @property
+    def source_runs(self) -> list[int]:
+        """The runs whose files this entry was reduced from."""
+        return self.members or [self.run_number]
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
@@ -203,6 +302,7 @@ class ReducedEntry:
             "deadtime_mode": self.deadtime_mode,
             "forward_group": self.forward_group,
             "backward_group": self.backward_group,
+            "members": list(self.members),
         }
 
     @classmethod
@@ -219,6 +319,7 @@ class ReducedEntry:
             deadtime_mode=str(data["deadtime_mode"]),
             forward_group=int(data["forward_group"]),
             backward_group=int(data["backward_group"]),
+            members=[int(run) for run in data["members"]],
         )
 
 
@@ -292,26 +393,39 @@ class WorkDir:
     # -- binding ------------------------------------------------------------
 
     @property
-    def bound_folder(self) -> Path | None:
-        """The data folder this session holds, or ``None`` while it is unclaimed."""
+    def selection(self) -> RunSelection | None:
+        """The runs this session holds, or ``None`` while it is unclaimed."""
         if not self.manifest_path.exists():
             return None
-        return Path(str(self.read_manifest()["folder"])).resolve()
+        manifest = self.read_manifest()
+        # Schema 3 predates instruments: such a session held every run in its folder.
+        instrument = manifest["instrument"] if manifest["schema"] >= 4 else None
+        return RunSelection(Path(str(manifest["folder"])).resolve(), instrument)
 
-    def bind(self, folder: str | Path) -> WorkDir:
-        """This directory, checked to be *folder*'s session; raise if it is another's.
+    def bind(self, folder: str | Path, instrument: str | None) -> RunSelection:
+        """The runs this session serves for *folder* and *instrument*; raise if it holds others.
 
         The single gate every command passes before it touches the directory,
-        so no command can mix two data folders into one cache (see the module
-        docstring). Both paths are resolved, so the same folder named
-        relatively and absolutely is the same folder. Raises
-        :class:`WorkDirMismatchError` when the manifest names a different one.
+        so no command can mix two data folders, or two instruments' runs, into
+        one cache (see the module docstring). Both paths are resolved, so the
+        same folder named relatively and absolutely is the same folder. The
+        answer is the narrower selection of the two: a session holding every
+        run in its folder takes on the instrument a command names, and a
+        command naming none reads the instrument the session holds. Raises
+        :class:`WorkDirMismatchError` when the manifest names a different
+        folder or a different instrument.
         """
-        folder = Path(folder).resolve()
-        bound = self.bound_folder
-        if bound is not None and bound != folder:
-            raise WorkDirMismatchError(root=self.root, bound_folder=bound, folder=folder)
-        return self
+        requested = RunSelection(Path(folder).resolve(), instrument)
+        bound = self.selection
+        if bound is None:
+            return requested
+        if bound.folder != requested.folder or (
+            bound.instrument is not None
+            and instrument is not None
+            and bound.instrument != instrument
+        ):
+            raise WorkDirMismatchError(root=self.root, bound=bound, requested=requested)
+        return RunSelection(bound.folder, bound.instrument if instrument is None else instrument)
 
     # -- survey -------------------------------------------------------------
 
@@ -331,18 +445,18 @@ class WorkDir:
 
     def write_manifest(
         self,
+        selection: RunSelection,
         *,
-        folder: str | Path,
         settings: ReductionSettings | None = None,
         runs: list[int] | None = None,
     ) -> Path:
-        """Record the session's provenance: version, folder, settings, run list.
+        """Record the session's provenance: version, runs selected, settings, run list.
 
-        This is also where the directory is **bound** to its data folder, as
-        an absolute, resolved path: ``survey`` writes it with neither settings
-        nor runs to claim a fresh directory, ``reduce`` writes all three, and
-        a later ``survey`` leaves what ``reduce`` recorded in place rather than
-        erasing the reduction's provenance.
+        This is also where the directory is **bound** to its folder — as an
+        absolute, resolved path — and instrument: ``survey`` writes it with
+        neither settings nor runs to claim a fresh directory, ``reduce`` writes
+        all three, and a later ``survey`` leaves what ``reduce`` recorded in
+        place rather than erasing the reduction's provenance.
         """
         self.ensure()
         stored = self.read_manifest() if self.manifest_path.exists() else {}
@@ -351,7 +465,8 @@ class WorkDir:
             {
                 "schema": SCHEMA,
                 "asymmetry_version": __version__,
-                "folder": str(Path(folder).resolve()),
+                "folder": str(selection.folder.resolve()),
+                "instrument": selection.instrument,
                 "settings": stored.get("settings") if settings is None else settings.to_dict(),
                 "runs": stored.get("runs", []) if runs is None else [int(run) for run in runs],
                 "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -524,8 +639,9 @@ class WorkDir:
     def read_series(self, name: str) -> dict[str, Any]:
         """The stored series payload.
 
-        :class:`KeyError` when there is none, or it was written under an older
-        schema (before it carried its trend and ``trend_fits``).
+        :class:`KeyError` when there is none, when it was written under an older
+        schema, and when it is a derived series one of whose members no longer
+        matches the digest it recorded (see the module docstring).
         """
         path = self.series_path(name)
         if not path.exists():
@@ -536,6 +652,21 @@ class WorkDir:
                 f"Series {name!r} was written by an older asymmetry (work-directory schema "
                 f"{data['schema']}, now {SCHEMA}); fit it again."
             )
+        if data["kind"] in DERIVED_SERIES_KINDS:
+            stored = set(self.series_names())
+            changed = [
+                member["series"]
+                for member in data["members"]
+                if member["series"] not in stored
+                or series_digest(self.read_series(member["series"]), member["fit"])
+                != member["digest"]
+            ]
+            if changed:
+                raise KeyError(
+                    f"Series {name!r} is stale: its member(s) {', '.join(changed)} were "
+                    f"refitted, had the trend fit it read replaced, or were removed since it "
+                    f"was built; build it again with the command that made it."
+                )
         return data
 
     def series_names(self) -> list[str]:
@@ -590,12 +721,17 @@ class WorkDir:
 
 
 __all__ = [
+    "DERIVED_SERIES_KINDS",
     "SCHEMA",
     "WORKDIR_NAME",
     "ReducedEntry",
+    "RunSelection",
     "WorkDir",
     "WorkDirMismatchError",
+    "describe_instruments",
     "file_fingerprint",
+    "instrument_name",
     "reduction_digest",
     "safe_name",
+    "series_digest",
 ]

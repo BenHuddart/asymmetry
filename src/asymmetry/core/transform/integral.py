@@ -33,8 +33,9 @@ grouping path with :class:`asymmetry.core.representation.time.TimeFBAsymmetry`
 through the reduction's own correction stage
 (:func:`~asymmetry.core.transform.reduce.corrected_grouped_counts`), so the two
 agree on detector grouping, t0 alignment, deadtime, the balance ``alpha``, and
-recipe ``grouping_ref`` overrides by construction. Background subtraction is
-the one correction the integral does not take.  The integral observable intentionally operates on **native
+recipe ``grouping_ref`` overrides by construction — the grouping's constant
+background level included, whose correlated error the integral propagates (see
+:func:`integrate_asymmetry`).  The integral observable intentionally operates on **native
 bins**: it ignores the time-domain display ``bunching_factor`` (which is a
 plotting smoothing). The ``"integral"`` method is bunching-invariant anyway, and
 integrating native bins is the more faithful observable.
@@ -64,13 +65,22 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
-from asymmetry.core.transform.asymmetry import compute_asymmetry
+from asymmetry.core.transform.asymmetry import (
+    SubtractedBackground,
+    compute_asymmetry,
+    compute_asymmetry_with_count_errors,
+    windowed_count_variance,
+)
 from asymmetry.core.transform.grouping import (
     effective_group_indices,
     effective_grouping,
     group_forward_backward,
 )
-from asymmetry.core.transform.reduce import corrected_grouped_counts, correction_flags_from_grouping
+from asymmetry.core.transform.reduce import (
+    CorrectedGroupedCounts,
+    corrected_grouped_counts,
+    correction_flags_from_grouping,
+)
 from asymmetry.core.transform.t0 import t0_stamp_residual_us
 from asymmetry.core.transform.units import ASYMMETRY_FRACTION, AsymmetryUnit
 from asymmetry.core.utils.constants import ORDER_KEYS
@@ -116,6 +126,7 @@ def integrate_asymmetry(
     t_min: float | None = None,
     t_max: float | None = None,
     method: str = "integral",
+    background: SubtractedBackground | None = None,
 ) -> tuple[float, float]:
     r"""Reduce grouped forward/backward counts to a single ``(value, error)``.
 
@@ -138,14 +149,36 @@ def integrate_asymmetry(
         ``"integral"`` (sum counts, then form asymmetry — WiMDA / Mantid
         Integral) or ``"differential"`` (per-bin asymmetry, then mean over the
         window — Mantid Differential, window-normalised).
+    background
+        The constant level already subtracted from ``forward``/``backward``
+        (``None``: none was), from
+        :meth:`~asymmetry.core.transform.reduce.CorrectedGroupedCounts.subtracted_background`.
 
     Returns
     -------
     (value, error)
         The integral asymmetry **as a fraction** (``A ∈ [-1, 1]``) and its error
-        on the same scale — *not* percent.  The error uses the same
-        Mantid-compatible model as :func:`compute_asymmetry`, so the integral and
-        time-domain observables share one error formula.
+        on the same scale — *not* percent.  Without a background the error uses
+        the same Mantid-compatible model as :func:`compute_asymmetry`, so the
+        integral and time-domain observables share one error formula.
+
+    Errors with a subtracted background
+    -----------------------------------
+    ``integral``: the window sums ``ΣF``, ``ΣB`` carry the variances of
+    :func:`~asymmetry.core.transform.asymmetry.windowed_count_variance` (raw
+    Poisson total plus the level's correlated ``(n·σ_k)²``), propagated through
+    :func:`compute_asymmetry_with_count_errors`.
+
+    ``differential``: the mean ``Ā = (1/N)·Σ A_i`` of ``A_i = (F_i − αB_i)/D_i``,
+    ``D_i = βF_i + αB_i``, where ``F_i = R_i − k_F`` for raw Poisson counts
+    ``R_i`` and one estimated level ``k_F`` (likewise ``B``). The ``R_i`` are
+    independent, so they contribute ``Σ e_i²/N²`` with ``e_i`` the per-bin error
+    of :func:`compute_asymmetry_with_count_errors` at count errors ``√R_i``.
+    ``k_F`` shifts every bin together, so its error enters through the summed
+    derivative ``∂Ā/∂k_F = −(1/N)·Σ ∂A_i/∂F_i`` with
+    ``∂A_i/∂F_i = α(1+β)B_i/D_i²`` and ``∂A_i/∂B_i = −α(1+β)F_i/D_i²``:
+
+        ``σ_Ā² = Σ e_i²/N² + (σ_kF·Σ ∂A_i/∂F_i / N)² + (σ_kB·Σ ∂A_i/∂B_i / N)²``.
     """
     _validate_method(method)
     _validate_alpha(alpha)
@@ -166,18 +199,39 @@ def integrate_asymmetry(
     if method == "integral":
         f_int = np.array([float(np.sum(f[mask]))], dtype=np.float64)
         b_int = np.array([float(np.sum(b[mask]))], dtype=np.float64)
-        asym, err = compute_asymmetry(f_int, b_int, alpha, beta)
+        if background is None:
+            asym, err = compute_asymmetry(f_int, b_int, alpha, beta)
+        else:
+            var_f, var_b = windowed_count_variance((f, b), mask, background)
+            asym, err = compute_asymmetry_with_count_errors(
+                f_int,
+                b_int,
+                np.array([np.sqrt(var_f)]),
+                np.array([np.sqrt(var_b)]),
+                alpha,
+                beta,
+            )
         return float(asym[0]), float(err[0])
 
     # "differential": per-bin asymmetry, then mean over the window. Exclude
-    # zero-denominator bins, where compute_asymmetry returns a sentinel
-    # (asym=0, err=1.0); including them would bias the mean toward zero and
-    # inflate the error.
-    asym, err = compute_asymmetry(f, b, alpha, beta)
-    valid = mask & ((beta * f + alpha * b) != 0.0)
+    # zero-denominator bins, where the asymmetry is a sentinel (asym=0,
+    # err=1.0); including them would bias the mean toward zero and inflate the
+    # error.
+    denominator = beta * f + alpha * b
+    valid = mask & (denominator != 0.0)
     if not np.any(valid):
         raise ValueError("Integration window selects no bins with non-zero counts.")
-    return _mean_over_window(asym, err, valid)
+    if background is None:
+        asym, err = compute_asymmetry(f, b, alpha, beta)
+        return _mean_over_window(asym, err, valid)
+    asym, err = compute_asymmetry_with_count_errors(
+        f, b, np.sqrt(f + background.forward), np.sqrt(b + background.backward), alpha, beta
+    )
+    value, independent_error = _mean_over_window(asym, err, valid)
+    scale = alpha * (1.0 + beta) / np.square(denominator[valid]) / np.count_nonzero(valid)
+    level_error_f = background.forward_error * float(np.sum(scale * b[valid]))
+    level_error_b = background.backward_error * float(np.sum(scale * f[valid]))
+    return value, float(np.sqrt(independent_error**2 + level_error_f**2 + level_error_b**2))
 
 
 def integrate_curve(
@@ -273,9 +327,7 @@ def integrate_run(
     """
     _validate_method(method)
     run = _resolve_run(data)
-    time, forward, backward, alpha_used, beta_used, good = _reduce_run_to_fb(
-        run, alpha, grouping_ref
-    )
+    time, counts, alpha_used, beta_used, good = _reduce_run_to_fb(run, alpha, grouping_ref)
 
     if t_min is None:
         t_min = float(time[good[0]])
@@ -284,14 +336,15 @@ def integrate_run(
     _validate_window(t_min, t_max)
 
     return integrate_asymmetry(
-        forward,
-        backward,
+        counts.forward,
+        counts.backward,
         alpha=alpha_used,
         beta=beta_used,
         time=time,
         t_min=t_min,
         t_max=t_max,
         method=method,
+        background=counts.subtracted_background(),
     )
 
 
@@ -614,23 +667,22 @@ def _reduce_run_to_fb(
     run: Run,
     alpha: float | None,
     grouping_ref: dict | None,
-) -> tuple[
-    NDArray[np.float64],
-    NDArray[np.float64],
-    NDArray[np.float64],
-    float,
-    float,
-    tuple[int, int],
-]:
-    """Form forward/backward groups + time axis + good-bin range from a run.
+) -> tuple[NDArray[np.float64], CorrectedGroupedCounts, float, float, tuple[int, int]]:
+    """Form the corrected forward/backward counts + time axis + good-bin range of a run.
 
-    Uses the same shared grouping path as
+    Uses the same shared grouping and correction path as
     :class:`asymmetry.core.representation.time.TimeFBAsymmetry`
-    (:func:`effective_grouping` + :func:`group_forward_backward`), so the
-    integral observable agrees with the time-domain asymmetry on grouping,
-    ``alpha`` and ``beta`` by construction. Returns
-    ``(time, forward, backward, alpha_used, beta_used, (good_start, good_end))``
-    where the good indices are 0-based into the returned full-length arrays.
+    (:func:`effective_grouping` + :func:`group_forward_backward` +
+    :func:`corrected_grouped_counts`), so the integral observable agrees with
+    the time-domain asymmetry on grouping, deadtime, background, ``alpha`` and
+    ``beta`` by construction. Returns
+    ``(time, counts, alpha_used, beta_used, (good_start, good_end))`` where the
+    good indices are 0-based into the counts' full-length arrays.
+
+    Raises when the grouping asks for a background that left no constant
+    subtracted level (a failed estimate, or a reference run, which needs a
+    loader this transform does not have), rather than integrating
+    unsubtracted counts.
     """
     histograms = list(run.histograms)
     if not histograms:
@@ -638,11 +690,8 @@ def _reduce_run_to_fb(
 
     grouping = effective_grouping(run, grouping_ref)
     fb = group_forward_backward(histograms, grouping)  # raises on missing/empty grouping
-    # Deadtime is taken exactly as the time-domain reduction takes it. Background
-    # is not: a subtracted level's error is shared by every bin of the window,
-    # which the integral's Poisson error does not propagate.
     flags = correction_flags_from_grouping(grouping)
-    corrected = corrected_grouped_counts(
+    counts = corrected_grouped_counts(
         histograms=histograms,
         grouping=grouping,
         forward_idx=effective_group_indices(grouping, fb.forward_gid, n_histograms=len(histograms)),
@@ -651,13 +700,16 @@ def _reduce_run_to_fb(
         ),
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
-        use_background=False,
+        use_background=flags.use_background,
         metadata=run.metadata,
     )
+    if flags.use_background and counts.subtracted_background() is None:
+        raise ValueError(
+            "The grouping's background left no constant subtracted level "
+            f"({counts.background_state}); the integral takes a constant background only."
+        )
 
-    n = min(corrected.forward.size, corrected.backward.size)
-    forward = corrected.forward[:n]
-    backward = corrected.backward[:n]
+    n = counts.forward.size
     if n == 0:
         raise ValueError("Forward/backward grouping produced empty arrays.")
 
@@ -684,9 +736,9 @@ def _reduce_run_to_fb(
     bin_width = float(histograms[0].bin_width)
     # Bin centres from the run's exact t0 (D4); the residual is 0.0 whenever the
     # run carries no sub-bin t0, leaving the integer-bin axis untouched.
-    residual = t0_stamp_residual_us(histograms, grouping, corrected.common_t0)
-    time = (np.arange(n, dtype=np.float64) - float(corrected.common_t0)) * bin_width + residual
-    return time, forward, backward, alpha_used, fb.beta, (first_good, last_good)
+    residual = t0_stamp_residual_us(histograms, grouping, counts.common_t0)
+    time = (np.arange(n, dtype=np.float64) - float(counts.common_t0)) * bin_width + residual
+    return time, counts, alpha_used, fb.beta, (first_good, last_good)
 
 
 def _order_value(run: Run, order_key: str) -> float | None:

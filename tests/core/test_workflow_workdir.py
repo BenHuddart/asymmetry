@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -22,11 +23,13 @@ from asymmetry.core.workflow.workdir import (
     SCHEMA,
     WORKDIR_NAME,
     ReducedEntry,
+    RunSelection,
     WorkDir,
     WorkDirMismatchError,
     file_fingerprint,
     reduction_digest,
     safe_name,
+    series_digest,
 )
 from tests.core.conftest import SCAN_RUNS
 
@@ -41,7 +44,7 @@ def reduced(workflow_folder: Path, tmp_path: Path):
     settings = ReductionSettings()
     grouping = resolve_reduction_grouping(dataset_in.run, settings)
     dataset = reduce_run(dataset_in.run, settings)
-    digest = reduction_digest(source_file=path, grouping=grouping, settings=settings)
+    digest = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
     entry = ReducedEntry(
         run_number=run_number,
         digest=digest,
@@ -59,6 +62,7 @@ def reduced(workflow_folder: Path, tmp_path: Path):
         deadtime_mode=str(grouping["deadtime_mode"]),
         forward_group=int(grouping["forward_group"]),
         backward_group=int(grouping["backward_group"]),
+        members=[],
     )
     return WorkDir(tmp_path / "wd"), dataset, entry, path, grouping, settings
 
@@ -84,11 +88,11 @@ def test_a_work_directory_binds_to_the_folder_its_manifest_names(reduced, tmp_pa
     folder = tmp_path / "runs"
     folder.mkdir()
 
-    assert workdir.bound_folder is None
-    workdir.write_manifest(folder=folder, settings=settings, runs=[101])
+    assert workdir.selection is None
+    workdir.write_manifest(RunSelection(folder, None), settings=settings, runs=[101])
 
-    assert workdir.bound_folder == folder.resolve()
-    assert workdir.bind(folder) is workdir
+    assert workdir.selection == RunSelection(folder.resolve(), None)
+    assert workdir.bind(folder, None) == RunSelection(folder.resolve(), None)
 
 
 def test_a_bound_work_directory_accepts_its_folder_named_any_way(
@@ -98,12 +102,12 @@ def test_a_bound_work_directory_accepts_its_folder_named_any_way(
     workdir, _dataset, _entry, _path, _grouping, settings = reduced
     folder = tmp_path / "runs"
     folder.mkdir()
-    workdir.write_manifest(folder=str(folder), settings=settings, runs=[])
+    workdir.write_manifest(RunSelection(folder, None), settings=settings, runs=[])
 
     monkeypatch.chdir(tmp_path)
-    workdir.bind("runs")
-    workdir.bind(folder)
-    workdir.bind(tmp_path / "runs" / ".." / "runs")
+    workdir.bind("runs", None)
+    workdir.bind(folder, None)
+    workdir.bind(tmp_path / "runs" / ".." / "runs", None)
 
 
 def test_a_second_data_folder_cannot_share_a_bound_work_directory(reduced, tmp_path: Path) -> None:
@@ -113,14 +117,79 @@ def test_a_second_data_folder_cannot_share_a_bound_work_directory(reduced, tmp_p
     second = tmp_path / "second"
     first.mkdir()
     second.mkdir()
-    workdir.write_manifest(folder=first, settings=settings, runs=[101])
+    workdir.write_manifest(RunSelection(first, None), settings=settings, runs=[101])
 
     with pytest.raises(WorkDirMismatchError) as exc:
-        workdir.bind(second)
+        workdir.bind(second, None)
 
     assert str(first.resolve()) in str(exc.value)
     assert str(second.resolve()) in str(exc.value)
     assert f"--workdir {WORKDIR_NAME}-<name>" in str(exc.value)
+
+
+def test_the_manifest_records_the_instrument_and_refuses_a_second_one(
+    reduced, tmp_path: Path
+) -> None:
+    """Two instruments in one folder can share run numbers, so they cannot share a session."""
+    workdir, _dataset, _entry, _path, _grouping, settings = reduced
+    workdir.write_manifest(RunSelection(tmp_path, "EMU"), settings=settings, runs=[101])
+
+    assert workdir.read_manifest()["instrument"] == "EMU"
+    assert workdir.bind(tmp_path, "EMU") == RunSelection(tmp_path.resolve(), "EMU")
+    with pytest.raises(WorkDirMismatchError) as exc:
+        workdir.bind(tmp_path, "MUSR")
+
+    assert "(EMU)" in str(exc.value)
+    assert "(MUSR)" in str(exc.value)
+
+
+def test_binding_takes_the_narrower_of_the_stored_and_the_named_instrument(
+    reduced, tmp_path: Path
+) -> None:
+    """A command naming no instrument reads the session's; a whole-folder session takes one on."""
+    workdir, _dataset, _entry, _path, _grouping, _settings = reduced
+    assert workdir.bind(tmp_path, None) == RunSelection(tmp_path.resolve(), None)
+
+    workdir.write_manifest(RunSelection(tmp_path, None))
+    assert workdir.bind(tmp_path, "EMU") == RunSelection(tmp_path.resolve(), "EMU")
+
+    workdir.write_manifest(RunSelection(tmp_path, "EMU"))
+    assert workdir.bind(tmp_path, None) == RunSelection(tmp_path.resolve(), "EMU")
+
+
+def test_a_schema_3_manifest_holds_every_run_in_its_folder(reduced, tmp_path: Path) -> None:
+    """Schema 3 predates instruments; its session was the whole folder."""
+    workdir, _dataset, _entry, _path, _grouping, _settings = reduced
+    workdir.write_manifest(RunSelection(tmp_path, None))
+    manifest = workdir.read_manifest()
+    del manifest["instrument"]
+    manifest["schema"] = 3
+    workdir.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert workdir.selection == RunSelection(tmp_path.resolve(), None)
+    assert workdir.bind(tmp_path, "EMU") == RunSelection(tmp_path.resolve(), "EMU")
+
+
+def test_a_selection_matches_its_instrument_in_any_case(tmp_path: Path) -> None:
+    emu = RunSelection(tmp_path, "EMU")
+    assert emu.matches("EMU")
+    assert emu.matches("emu")
+    assert not emu.matches("MUSR")
+    assert RunSelection(tmp_path, None).matches("MUSR")
+
+
+def test_a_selection_naming_no_file_in_the_folder_lists_what_is_there(tmp_path: Path) -> None:
+    for name in ("EMU00000001.nxs", "emu00000002.nxs", "MUSR00000001.nxs"):
+        (tmp_path / name).touch()
+
+    assert [path.name for _p, _r, path in RunSelection(tmp_path, "EMU").scan().entries] == [
+        "EMU00000001.nxs",
+        "emu00000002.nxs",
+    ]
+    with pytest.raises(
+        ValueError, match=r"no HIFI run files; it holds EMU \(2 files\), MUSR \(1 file\)"
+    ):
+        RunSelection(tmp_path, "HIFI").scan()
 
 
 def test_reduced_round_trips_through_the_work_directory(reduced) -> None:
@@ -160,26 +229,26 @@ def test_is_current_tracks_the_digest(reduced) -> None:
     assert workdir.is_current(entry.run_number, entry.digest)
 
     changed = ReductionSettings(alpha=1.3, alpha_source="user")
-    changed_digest = reduction_digest(source_file=path, grouping=grouping, settings=changed)
+    changed_digest = reduction_digest(source_files=[path], grouping=grouping, settings=changed)
     assert changed_digest != entry.digest
     assert not workdir.is_current(entry.run_number, changed_digest)
 
 
 def test_digest_changes_when_the_grouping_changes(reduced) -> None:
     _workdir, _dataset, _entry, path, grouping, settings = reduced
-    baseline = reduction_digest(source_file=path, grouping=grouping, settings=settings)
+    baseline = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
     altered = dict(grouping)
     altered["first_good_bin"] = int(altered["first_good_bin"]) + 1
-    assert reduction_digest(source_file=path, grouping=altered, settings=settings) != baseline
+    assert reduction_digest(source_files=[path], grouping=altered, settings=settings) != baseline
 
 
 def test_digest_changes_when_the_file_changes(reduced, tmp_path: Path) -> None:
     _workdir, _dataset, _entry, path, grouping, settings = reduced
-    baseline = reduction_digest(source_file=path, grouping=grouping, settings=settings)
+    baseline = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
 
     copy = tmp_path / "copy.nxs"
     copy.write_bytes(path.read_bytes() + b"\0")
-    assert reduction_digest(source_file=copy, grouping=grouping, settings=settings) != baseline
+    assert reduction_digest(source_files=[copy], grouping=grouping, settings=settings) != baseline
 
 
 def test_file_fingerprint_reports_size_mtime_and_hash(reduced) -> None:
@@ -250,11 +319,12 @@ def test_no_work_directory_path_can_be_built_from_an_unsafe_name(reduced, name: 
 
 def test_manifest_records_version_folder_settings_and_runs(reduced, tmp_path: Path) -> None:
     workdir, _dataset, _entry, _path, _grouping, settings = reduced
-    workdir.write_manifest(folder=tmp_path, settings=settings, runs=[101, 102])
+    workdir.write_manifest(RunSelection(tmp_path, None), settings=settings, runs=[101, 102])
 
     manifest = workdir.read_manifest()
     assert manifest["schema"] == SCHEMA
     assert manifest["asymmetry_version"] == __version__
+    assert manifest["instrument"] is None
     # Absolute and resolved: the folder is what binds the directory, and it is
     # compared against paths typed in later commands from other directories.
     assert manifest["folder"] == str(tmp_path.resolve())
@@ -268,9 +338,9 @@ def test_a_manifest_written_without_settings_keeps_what_the_reduction_recorded(
 ) -> None:
     """``survey`` claims a directory; it must not erase ``reduce``'s provenance."""
     workdir, _dataset, _entry, _path, _grouping, settings = reduced
-    workdir.write_manifest(folder=tmp_path, settings=settings, runs=[101, 102])
+    workdir.write_manifest(RunSelection(tmp_path, None), settings=settings, runs=[101, 102])
 
-    workdir.write_manifest(folder=tmp_path)
+    workdir.write_manifest(RunSelection(tmp_path, None))
 
     manifest = workdir.read_manifest()
     assert manifest["settings"] == settings.to_dict()
@@ -329,7 +399,7 @@ def test_a_series_payload_is_stamped_and_read_back(reduced) -> None:
     workdir, _dataset, _entry, _path, _grouping, _settings = reduced
     assert workdir.series_names() == []
 
-    workdir.write_series("scan", {"name": "scan", "results": []})
+    workdir.write_series("scan", {"name": "scan", "kind": "series", "results": []})
 
     stored = workdir.read_series("scan")
     assert stored["schema"] == SCHEMA
@@ -337,6 +407,62 @@ def test_a_series_payload_is_stamped_and_read_back(reduced) -> None:
     assert workdir.series_names() == ["scan"]
     with pytest.raises(KeyError, match="No series"):
         workdir.read_series("missing")
+
+
+def _derived(workdir: WorkDir, fit: str | None) -> None:
+    """Store member ``m`` and the series ``d`` built from it (reading trend fit *fit*)."""
+    workdir.write_series(
+        "m",
+        {"kind": "global", "shared": {"Lambda": 0.3}, "trend_fits": {"Lambda:Linear": {"m": 1.0}}},
+    )
+    workdir.write_series(
+        "d",
+        {
+            "kind": "fit-trend" if fit else "global-batch",
+            "members": [
+                {"series": "m", "fit": fit, "digest": series_digest(workdir.read_series("m"), fit)}
+            ],
+            "trend_fits": {},
+        },
+    )
+
+
+def test_a_derived_series_is_stale_once_a_member_is_refitted(tmp_path: Path) -> None:
+    workdir = WorkDir(tmp_path)
+    _derived(workdir, None)
+    assert workdir.read_series("d")["members"][0]["series"] == "m"
+
+    member = workdir.read_series("m")
+    # A law fitted to the member leaves the batch it belongs to standing ...
+    member["trend_fits"]["Lambda:Exponential"] = {"m": 2.0}
+    workdir.write_series("m", member)
+    workdir.read_series("d")
+    # ... a refit does not.
+    member["shared"]["Lambda"] = 0.4
+    workdir.write_series("m", member)
+    with pytest.raises(KeyError, match="Series 'd' is stale: its member\\(s\\) m were refitted"):
+        workdir.read_series("d")
+
+
+def test_a_fit_trend_is_stale_once_the_trend_fit_it_read_is_replaced_or_removed(
+    tmp_path: Path,
+) -> None:
+    workdir = WorkDir(tmp_path)
+    _derived(workdir, "Lambda:Linear")
+    member = workdir.read_series("m")
+    member["trend_fits"]["Lambda:Exponential"] = {"m": 2.0}
+    workdir.write_series("m", member)
+    workdir.read_series("d")
+
+    member["trend_fits"]["Lambda:Linear"] = {"m": 1.5}
+    workdir.write_series("m", member)
+    with pytest.raises(KeyError, match="is stale"):
+        workdir.read_series("d")
+
+    _derived(workdir, "Lambda:Linear")
+    workdir.series_path("m").unlink()
+    with pytest.raises(KeyError, match="is stale"):
+        workdir.read_series("d")
 
 
 def _restamp(path: Path, schema: int) -> None:
@@ -360,13 +486,13 @@ def test_the_digest_folds_in_the_schema(reduced, monkeypatch) -> None:
 
     _workdir, _dataset, entry, path, grouping, settings = reduced
     monkeypatch.setattr(workdir_module, "SCHEMA", SCHEMA - 1)
-    older = reduction_digest(source_file=path, grouping=grouping, settings=settings)
+    older = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
     assert older != entry.digest
 
 
 def test_a_series_from_an_older_schema_is_refused(reduced) -> None:
     workdir, _dataset, _entry, _path, _grouping, _settings = reduced
-    workdir.write_series("scan", {"name": "scan", "results": []})
+    workdir.write_series("scan", {"name": "scan", "kind": "series", "results": []})
     _restamp(workdir.series_path("scan"), SCHEMA - 1)
 
     with pytest.raises(KeyError, match="Series 'scan' was written by an older asymmetry"):
@@ -380,3 +506,26 @@ def test_a_reduced_run_records_the_logged_sample_temperature_beside_the_setpoint
     # The simulated files log no sample temperature; the field is present and empty.
     assert entry.run["sample_temperature_logged"] is None
     assert entry.run["temperature"] == 10.0
+
+
+def test_a_coadd_entry_records_its_members_and_reads_from_them(reduced) -> None:
+    workdir, dataset, entry, _path, _grouping, _settings = reduced
+    assert entry.source_runs == [entry.run_number]
+
+    coadd = dataclasses.replace(entry, members=[entry.run_number, entry.run_number + 1])
+    workdir.write_reduced(dataset, coadd)
+    stored = workdir.entry(entry.run_number)
+    assert stored.members == [entry.run_number, entry.run_number + 1]
+    assert stored.source_runs == stored.members
+
+
+def test_the_digest_covers_every_member_of_a_coadd(reduced, tmp_path: Path) -> None:
+    _workdir, _dataset, _entry, path, grouping, settings = reduced
+    member = tmp_path / "member.nxs"
+    member.write_bytes(path.read_bytes())
+    baseline = reduction_digest(source_files=[path, member], grouping=grouping, settings=settings)
+    assert baseline != reduction_digest(source_files=[path], grouping=grouping, settings=settings)
+
+    member.write_bytes(path.read_bytes() + b"\0")
+    changed = reduction_digest(source_files=[path, member], grouping=grouping, settings=settings)
+    assert changed != baseline

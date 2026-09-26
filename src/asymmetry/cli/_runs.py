@@ -3,11 +3,14 @@
 ``--runs 17294-17296,17300`` is CLI syntax, so it is parsed here rather than
 in the core façade; resolving a run number to a file is
 :func:`asymmetry.core.io.scan_run_files`'s job and this module only indexes
-its result.
+its result, narrowed to the one instrument a
+:class:`~asymmetry.core.workflow.workdir.RunSelection` names.
 """
 
 from __future__ import annotations
 
+import argparse
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,7 +18,7 @@ from asymmetry.cli._output import UserError
 
 if TYPE_CHECKING:
     from asymmetry.core.data.dataset import MuonDataset
-    from asymmetry.core.workflow.workdir import WorkDir
+    from asymmetry.core.workflow.workdir import RunSelection, WorkDir
 
 
 def parse_run_spec(spec: str) -> list[int]:
@@ -50,67 +53,102 @@ def _run_number(text: str, spec: str) -> int:
     return int(stripped)
 
 
-def run_files(folder: str | Path) -> dict[int, tuple[str, Path]]:
-    """Map every run number in *folder* to its ``(prefix, path)``.
+def _instrument(text: str) -> str:
+    """``--instrument`` as the instrument name the core compares prefixes against."""
+    from asymmetry.core.workflow.workdir import instrument_name
 
-    Raises :class:`UserError` when *folder* is not a directory, so a mistyped
-    path is a one-line message rather than a traceback, and when two files
-    carry the same run number under different prefixes — the work directory is
-    keyed on the run number alone, so there is no prefix to disambiguate with
-    and the folder has to be split.
-    """
-    from asymmetry.core.io import scan_run_files
-
-    folder = Path(folder)
-    if not folder.is_dir():
-        raise UserError(f"{folder} does not exist or is not a directory.")
-    found = scan_run_files(folder)
-    files: dict[int, tuple[str, Path]] = {}
-    for prefix, run_number, path in found.entries:
-        if run_number in files:
-            raise UserError(_duplicate_run_message(folder, run_number, files[run_number], path))
-        files[run_number] = (prefix, path)
-    return files
+    return instrument_name(text)
 
 
-def _duplicate_run_message(
-    folder: Path, run_number: int, first: tuple[str, Path], second: Path
-) -> str:
-    """The message for two files in *folder* sharing one run number."""
-    names = sorted([first[1].name, second.name])
-    return (
-        f"Run {run_number} is in {folder} twice: {names[0]} and {names[1]}. "
-        "Every command keys its work directory on the run number alone, so there is "
-        "no prefix to tell the two apart; split the folder so each prefix "
-        "(instrument) has a directory of its own."
+def add_instrument_argument(parser: argparse.ArgumentParser) -> None:
+    """Declare ``--instrument``, the file prefix a folder of two instruments needs."""
+    parser.add_argument(
+        "--instrument",
+        type=_instrument,
+        default=None,
+        metavar="NAME",
+        help=(
+            "Use only this instrument's runs — the file prefix, in any case (EMU selects "
+            "EMU… and emu…); needed where two instruments in the folder share run numbers"
+        ),
     )
 
 
-def resolve_runs(folder: str | Path, spec: str) -> list[tuple[int, str, Path]]:
-    """The ``(run_number, prefix, path)`` triples in *folder* that *spec* names.
+def run_clashes(entries: list[tuple[str, int, Path]]) -> dict[int, list[Path]]:
+    """The run numbers naming more than one file among *entries*, with those files."""
+    files: dict[int, list[Path]] = {}
+    for _prefix, run_number, path in entries:
+        files.setdefault(run_number, []).append(path)
+    return {run: paths for run, paths in files.items() if len(paths) > 1}
+
+
+def run_files(selection: RunSelection) -> dict[int, tuple[str, Path]]:
+    """Map every selected run number to its ``(prefix, path)``.
+
+    This is the one place the instrument filter is applied; every resolver
+    goes through it. Raises :class:`UserError` when the folder is not a
+    directory, when the instrument names no file in it, and when two files
+    carry one run number — the work directory is keyed on the run number
+    alone, so the message says whether ``--instrument`` separates them or the
+    folder has to be split.
+    """
+    from asymmetry.core.workflow.workdir import describe_instruments, instrument_name
+
+    if not selection.folder.is_dir():
+        raise UserError(f"{selection.folder} does not exist or is not a directory.")
+    try:
+        found = selection.scan()
+    except ValueError as exc:
+        raise UserError(str(exc)) from None
+    clashes = run_clashes(found.entries)
+    if clashes:
+        run_number = min(clashes)
+        names = " and ".join(sorted(path.name for path in clashes[run_number]))
+        more = f" (and {len(clashes) - 1} more run numbers)" if len(clashes) > 1 else ""
+        clashing = sorted(
+            {instrument_name(prefix) for prefix, run, _path in found.entries if run in clashes}
+        )
+        if len(clashing) > 1:
+            raise UserError(
+                f"Run numbers in {selection.folder} collide between instruments "
+                f"{' and '.join(clashing)}: run {run_number} is {names}{more}. The work "
+                "directory is keyed on the run number alone, so name the instrument: "
+                f"--instrument {' or --instrument '.join(clashing)} (the file prefix, in any "
+                f"case). The folder holds {describe_instruments(found.entries)}."
+            )
+        raise UserError(
+            f"Run {run_number} is in {selection} twice: {names}{more}. Both are instrument "
+            f"{clashing[0]}, so --instrument cannot tell them apart; move one of them out "
+            "of the folder."
+        )
+    return {run_number: (prefix, path) for prefix, run_number, path in found.entries}
+
+
+def resolve_runs(selection: RunSelection, spec: str) -> list[tuple[int, str, Path]]:
+    """The ``(run_number, prefix, path)`` triples among *selection* that *spec* names.
 
     Run numbers the spec names but the folder does not hold are skipped —
     a scan with gaps is normal. Raises :class:`UserError` only when *no*
     named run exists, naming the range the folder does hold.
     """
-    available = run_files(folder)
+    available = run_files(selection)
     wanted = parse_run_spec(spec)
     resolved = [(run, available[run][0], available[run][1]) for run in wanted if run in available]
     if not resolved:
         raise UserError(
-            f"No run files in {folder} match {spec!r} "
-            f"(the folder holds {_range_text(sorted(available))})."
+            f"No run files in {selection} match {spec!r} "
+            f"(the folder holds {range_text(sorted(available))})."
         )
     return resolved
 
 
-def resolve_run(folder: str | Path, run_number: int) -> Path:
-    """The file for one run in *folder*; :class:`UserError` when it is not there."""
-    available = run_files(folder)
+def resolve_run(selection: RunSelection, run_number: int) -> Path:
+    """The file for one selected run; :class:`UserError` when it is not there."""
+    available = run_files(selection)
     if run_number not in available:
         raise UserError(
-            f"Run {run_number} is not in {folder} (the folder holds "
-            f"{_range_text(sorted(available))})."
+            f"Run {run_number} is not in {selection} (the folder holds "
+            f"{range_text(sorted(available))})."
         )
     return available[run_number][1]
 
@@ -120,7 +158,8 @@ def reduced_datasets(workdir: WorkDir, runs: list[int]) -> dict[int, MuonDataset
 
     The screening and fitting commands read their data from the work directory
     rather than the raw files, so every one of them agrees on the reduction
-    that produced it. Raises :class:`UserError` naming the runs that have not
+    that produced it — and each of them names a co-add's members, here, on
+    stderr. Raises :class:`UserError` naming the runs that have not
     been reduced, because that is a step the user has to run first.
     """
     stored = set(workdir.reduced_runs())
@@ -131,9 +170,20 @@ def reduced_datasets(workdir: WorkDir, runs: list[int]) -> dict[int, MuonDataset
             f"{workdir.root}; run 'asymmetry reduce' on them first."
         )
     try:
-        return {run: workdir.reduced(run) for run in runs}
+        datasets = {run: workdir.reduced(run) for run in runs}
+        members = {run: workdir.entry(run).members for run in runs}
     except KeyError as exc:
         raise UserError(exc.args[0]) from None
+    # stderr, so a --json payload on stdout stays one JSON document.
+    for run in runs:
+        if members[run]:
+            print(f"asymmetry: note: {coadd_note(run, members[run])}", file=sys.stderr)
+    return datasets
+
+
+def coadd_note(run_number: int, members: list[int]) -> str:
+    """The line naming the runs a stored co-add summed."""
+    return f"Run {run_number} is co-added from {range_text(members)}."
 
 
 def window_note(workdir: WorkDir, runs: list[int]) -> str | None:
@@ -162,15 +212,28 @@ def window_note(workdir: WorkDir, runs: list[int]) -> str | None:
     )
 
 
-def _range_text(runs: list[int]) -> str:
+def range_text(runs: list[int]) -> str:
+    """``"runs 3678-3682"``, ``"runs 101, 103-105"`` or ``"run 7"`` for ascending *runs*."""
     if not runs:
         return "no runs"
     if len(runs) == 1:
         return f"run {runs[0]}"
-    return f"runs {runs[0]}-{runs[-1]}"
+    spans: list[list[int]] = []
+    for run in runs:
+        if spans and run == spans[-1][-1] + 1:
+            spans[-1].append(run)
+        else:
+            spans.append([run])
+    return "runs " + ", ".join(
+        str(span[0]) if len(span) == 1 else f"{span[0]}-{span[-1]}" for span in spans
+    )
 
 
 __all__ = [
+    "add_instrument_argument",
+    "coadd_note",
+    "range_text",
+    "run_clashes",
     "window_note",
     "parse_run_spec",
     "reduced_datasets",

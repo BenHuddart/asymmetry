@@ -35,7 +35,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         "--run",
         type=int,
         default=None,
-        help="Seed amplitudes, background and applied field from this reduced run",
+        help="Seed amplitudes, phase, background, applied field and Larmor frequency from this reduced run",
     )
     parser.add_argument(
         "--initial",
@@ -62,7 +62,7 @@ def run(args: argparse.Namespace) -> None:
     """Build the recipe, store it, and print every parameter it carries."""
     from asymmetry.core.workflow.recipe import FitRecipe
 
-    workdir = workdir_for(Path(args.folder), args.workdir)
+    workdir, _selection = workdir_for(Path(args.folder), args.workdir, args.instrument)
     name = checked_name(args.name, flag="--name")
     dataset = None if args.run is None else reduced_datasets(workdir, [args.run])[args.run]
     try:

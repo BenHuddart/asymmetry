@@ -294,6 +294,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   survey names a line-free run of a mostly transverse temperature scan that also belongs to a
   longitudinal field scan, and `audit` always lists numbers after difference phrases
   ("within about 2 G") and hedged ratios ("a factor of ~2").
+- **Two instruments sharing one data folder can be told apart with `--instrument NAME`.**
+  Every command with a work directory, and `alpha`, takes it, matched case-insensitively
+  against the file prefix (`EMU` selects `EMU…` and `emu…`, one instrument across eras); a
+  folder whose run numbers collide across instruments is refused, naming them, until it is
+  given. The work directory is bound to *(folder, instrument)* — the manifest records it
+  (work-directory schema 4; an older manifest reads as the whole folder, upgraded on the next
+  `survey`/`reduce`) — and `survey` still lists every file regardless, measuring alpha and
+  precession per file rather than per run number wherever a run number is shared.
+- **`reduce --coadd` sums the named runs before reducing them as one, and `fourier
+  --correlation` builds the muoniated-radical correlation spectrum.** `--coadd` combines the
+  named runs at the count level (`combine_runs`, the GUI data browser's own co-add) and
+  reduces the sum under the reduction options, storing it under the first run's number; every
+  later command that reads it — `recipe`, `wizard`, `fit`, `fit-series`, `fit-global`,
+  `fourier` — names its members
+  on stderr (`Run N is co-added from runs …`). `fourier --correlation` reloads a reduced
+  entry's source run(s) (a co-add's members, for a co-add) and pairs the radical lines of its
+  forward/backward groups onto the hyperfine-coupling axis (`--correlation-field`,
+  `--correlation-order` for the field and ratio-penalty order) — the CLI counterpart of the
+  GUI's Correlation (radical) display mode, so co-adding several runs at one field for
+  statistics and reading off a coupling no longer needs the GUI.
+- **Fits across a series of stored results: `fit-global --groups` and `trend --from-fits`.**
+  `fit-global --groups "a,b,c;d,e,f;…"` fits several simultaneous-fit groups in one
+  invocation — a temperature series of LF triplets, say — storing each as its own `global`
+  series `<name>-<i>` and the groups' shared parameters as a `global-batch` trend along
+  `--group-order`/`--group-x`. `trend --from-fits S1,S2,… --param NAME [--fit PARAM[:EXPR]]`
+  builds a `fit-trend` series from one stored trend fit's parameter per member series, so
+  `--model Arrhenius` fits a rate constant's temperature dependence through several
+  per-temperature `Linear` fits. Trend rows are now keyed by a string (a run number or a
+  member series name) and `trend_fits` by `param:expression`, so two laws fitted to the same
+  column no longer overwrite each other; a derived series is refused as stale once a member
+  it read is refitted, replaced, or removed.
+- **`integral-scan --background` subtracts the grouping's background before integrating,
+  with its correlated error propagated into the point's error.** The same `tail_fit`/
+  `range[:FIRST:LAST]` choices as `reduce`; a background that leaves no constant level (a
+  failed estimate, or a reference-run background) now excludes the run from the scan with the
+  reason, rather than integrating unsubtracted counts — a behaviour the GUI's Integral scan
+  mode shares. `RFResonanceMuP`, given `nu_RF` as a start or fixed value, now seeds its muon
+  and proton couplings by solving the resonance condition at the scan's own two dip fields
+  instead of starting from the model's textbook defaults (the WiMDA school's benzene DEVA
+  scan now fits from `--initial A_mu=470 --initial A_p=90`, which previously did not
+  converge); every field-scan seed now sees the caller's `--initial`/`--fix` values before it
+  runs rather than after.
+- **A differential (red/green) ALC resonance fits as `LorentzianLCRPair`** (`f`, `B0`,
+  `Bwid`, `dB`): the green period's Lorentzian less the same line `dB` below, for a red/green
+  scan whose resonance is fitted to the *difference* of the two periods rather than either
+  alone. It is seeded like the other LCR line shapes, and `integral-scan --period green-red`
+  now reads each run's own red/green field-coil evidence — the NeXus loader records the
+  red − green Hall-probe step as `period_hall_offset`, which the scan converts to gauss by its
+  own slope of main field against Hall probe, never assumed — and prints the scan's mean offset with a
+  ready-made `--fix dB=…`. With `dB` free the fit is degenerate at typical ALC field steps
+  against typical line widths, which the reference docs now say.
+- **`MuRepolarisation` seeds itself from the data's half-rise(s).** `a_Mu` and `A_hf` are
+  read from each rise's half-field (the exact identity `B0 = A_hf/(γₑ+γ_μ)`), `a_Dia` from
+  the low-field plateau; several terms are seeded together like the LCR components, each
+  transition located in turn from the residual after the last, so a muoniated radical whose
+  repolarisation curve keeps rising past one isotropic term's saturation now fits as a sum of
+  terms from seeds alone (two terms on the WiMDA school's benzene repolarisation scan reach
+  χ²ᵣ ≈ 26 with A_hf ≈ 943/5429 MHz, with no `--initial`). A general N-nucleus radical model
+  remains future work.
+- **`survey` of a folder that only contains the experiment says so.** A folder with no run
+  files of its own but immediate sub-folders that hold them is refused, naming those
+  sub-folders with their run counts, instead of reporting an empty survey.
 
 ### Changed
 
@@ -497,6 +559,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the boundary — looking like the fit was never asked to start at t=0. The crop now carries
   its requested boundary with it, and single and batch fit curves are drawn from that literal
   range.
+- **`integral-scan --period red|green` and `alpha --period red|green` report the run number
+  the file was reduced from, not the internal `run*1000 + period` encoding a period dataset
+  carries — a period-selected `green-red` scan and its run-ordered x axis do the same.**
+  Every exclusion, point and error message named the encoded number instead, which never
+  matched a run number in the folder.
+- **`recipe --run` seeds a fit's amplitudes positive and its frequency from the applied
+  field.** An amplitude-role parameter was seeded with whatever sign the record's early-time
+  value carried, rather than positive with the sign folded into `phase` (0 or π, the fit
+  wizard's own rule); a `frequency` parameter is now also seeded from the field's Larmor
+  value when it sits below the run's Nyquist frequency, marked run-bound so `fit-series` and
+  `fit-global` re-seed it per run rather than carrying the first run's frequency down a scan
+  of changing field.
+- **HiFi's own longitudinal decoupling runs, which the file stamps `TF`, are now reported as
+  longitudinal.** `survey` gains a `coils` geometry source, between a measured precession line
+  and the file's own stamp, that reads the run's own logged `Field_Main`/`Field_Z` (axial)
+  against `Field_X`/`Field_Y` (transverse) instead of trusting the file's field-state token,
+  which HiFi sets to `TF` even on runs with no transverse field at all; it is marked `+` in
+  the survey's `geom` column.
+- **A PSI run with no `.mon` temperature sidecar can still report a logged sample
+  temperature.** The PSI-BIN header carries four unlabelled sensor readings that were
+  recorded nowhere; sensor 1, which tracks the sample (not the setpoint, which sensor 0
+  tracks) on every GPS/GPD run checked, is now taken as `sample_temperature_logged` when it
+  is steady and within a factor of two of the setpoint — never beside a `.mon` sidecar, which
+  is the run's own labelled log and always wins.
+- **A NeXus run's logged sample temperature is no longer dragged off by a handful of
+  sensor-dropout samples mixed in with genuine readings.** ISIS logs a disconnected sensor's
+  dropout as exactly 0 K; the mean was taken over the whole run-active record and only
+  discarded wholesale if *every* sample was 0 K, so a few dropout samples among many real ones
+  understated the mean instead of triggering the guard. Dropout samples are now dropped
+  individually before the mean is taken, shifting several corpus folders' logged temperatures
+  by 0.1–2.3 K. (This does not reach every implausible reading: a controller-channel echo or a
+  railed sensor that reads one steady, physically plausible value for the whole run looks the
+  same as a genuine log and needs a rule this fix does not add.)
 
 ## [0.20.0] - 2026-09-15
 

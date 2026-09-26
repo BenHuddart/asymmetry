@@ -14,6 +14,7 @@ from asymmetry.cli._output import SCHEMA, UserError
 from asymmetry.cli._runs import parse_run_spec, resolve_run, resolve_runs, run_files
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.workflow.workdir import SCHEMA as WORKDIR_SCHEMA
+from asymmetry.core.workflow.workdir import RunSelection
 from tests.core.conftest import (
     ALL_RUNS,
     CALIBRATION_ALPHA,
@@ -60,17 +61,19 @@ def test_parse_run_spec_rejects_bad_input(spec: str) -> None:
 
 
 def test_resolve_runs_skips_gaps_but_needs_one_match(workflow_folder: Path) -> None:
-    resolved = resolve_runs(workflow_folder, f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]},900")
+    every_run = RunSelection(workflow_folder, None)
+    resolved = resolve_runs(every_run, f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]},900")
     assert [run for run, _prefix, _path in resolved] == [SCAN_RUNS[0], SCAN_RUNS[1]]
     assert {prefix for _run, prefix, _path in resolved} == {"SIM"}
     with pytest.raises(UserError):
-        resolve_runs(workflow_folder, "900-910")
+        resolve_runs(every_run, "900-910")
 
 
 def test_resolve_run_reports_a_missing_run(workflow_folder: Path) -> None:
-    assert resolve_run(workflow_folder, CALIBRATION_RUN).exists()
+    every_run = RunSelection(workflow_folder, None)
+    assert resolve_run(every_run, CALIBRATION_RUN).exists()
     with pytest.raises(UserError):
-        resolve_run(workflow_folder, 900)
+        resolve_run(every_run, 900)
 
 
 def _write_run_file(folder: Path, prefix: str, run_number: int) -> Path:
@@ -94,32 +97,144 @@ def _write_run_file(folder: Path, prefix: str, run_number: int) -> Path:
     return path
 
 
-def test_one_run_number_under_two_prefixes_is_refused(tmp_path: Path) -> None:
-    """The work directory is keyed on the run number, so a clash has no answer."""
+@pytest.fixture
+def two_instruments(tmp_path: Path) -> Path:
+    """A folder where ``EMU``/``emu`` (one instrument across eras) and ``MUSR`` share run 42."""
     pytest.importorskip("h5py")
-    _write_run_file(tmp_path, "SIM", 42)
-    _write_run_file(tmp_path, "MUT", 42)
+    folder = tmp_path / "two"
+    folder.mkdir()
+    _write_run_file(folder, "EMU", 41)
+    _write_run_file(folder, "emu", 42)
+    _write_run_file(folder, "MUSR", 42)
+    _write_run_file(folder, "MUSR", 43)
+    return folder
 
+
+def test_a_run_number_under_two_instruments_is_refused_naming_both(two_instruments: Path) -> None:
+    """The work directory is keyed on the run number, so a clash needs an instrument."""
     with pytest.raises(UserError) as exc:
-        run_files(tmp_path)
+        run_files(RunSelection(two_instruments, None))
 
     message = str(exc.value)
-    assert "42" in message
-    assert "MUT00000042.nxs" in message
-    assert "SIM00000042.nxs" in message
-    assert "split the folder" in message
+    assert "EMU and MUSR" in message
+    assert "MUSR00000042.nxs and emu00000042.nxs" in message
+    assert "--instrument EMU or --instrument MUSR" in message
 
 
-def test_a_duplicate_run_number_reaches_the_command_line(tmp_path: Path, capsys) -> None:
-    pytest.importorskip("h5py")
-    _write_run_file(tmp_path, "SIM", 42)
-    _write_run_file(tmp_path, "MUT", 42)
+def test_an_instrument_selects_its_files_in_any_case(two_instruments: Path) -> None:
+    emu = run_files(RunSelection(two_instruments, "EMU"))
+    assert {run: path.name for run, (_prefix, path) in emu.items()} == {
+        41: "EMU00000041.nxs",
+        42: "emu00000042.nxs",
+    }
+    assert resolve_run(RunSelection(two_instruments, "MUSR"), 42).name == "MUSR00000042.nxs"
+    with pytest.raises(UserError, match="holds no HIFI run files"):
+        run_files(RunSelection(two_instruments, "HIFI"))
 
+
+def test_one_run_number_twice_within_an_instrument_cannot_be_split_by_instrument(
+    tmp_path: Path,
+) -> None:
+    # Two extensions, not two cases: macOS folders are case-insensitive by default.
+    for name in ("EMU00000042.bin", "EMU00000042.nxs"):
+        (tmp_path / name).touch()
+
+    with pytest.raises(UserError) as exc:
+        run_files(RunSelection(tmp_path, "EMU"))
+
+    assert "EMU00000042.bin and EMU00000042.nxs" in str(exc.value)
+    assert "move one of them out" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["reduce", "--runs", "42"],
+        ["integral-scan", "--runs", "41-43"],
+        ["alpha", "--run", "42"],
+        ["reduce", "--runs", "41", "--alpha-from", "42"],
+    ],
+)
+def test_every_command_reading_run_files_refuses_a_clash_without_an_instrument(
+    two_instruments: Path, tmp_path: Path, command: list[str], capsys
+) -> None:
+    extra = [] if command[0] == "alpha" else ["--workdir", str(tmp_path / "wd")]
     with pytest.raises(SystemExit) as exc:
-        cli.main(["reduce", str(tmp_path), "--runs", "42"])
+        cli.main([command[0], str(two_instruments), *command[1:], *extra])
 
     assert exc.value.code == 1
-    assert "split the folder" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "--instrument EMU or --instrument MUSR" in error
+
+
+def test_reduce_and_fit_one_instrument_and_record_it(
+    two_instruments: Path, tmp_path: Path, capsys
+) -> None:
+    workdir = tmp_path / "wd"
+    cli.main(
+        ["reduce", str(two_instruments), "--runs", "41-43", "--instrument", "emu"]
+        + ["--json", "--workdir", str(workdir)]
+    )
+
+    entries = _json_output(capsys)["entries"]
+    assert [(e["run_number"], Path(e["source_file"]).name) for e in entries] == [
+        (41, "EMU00000041.nxs"),
+        (42, "emu00000042.nxs"),
+    ]
+    manifest = json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["instrument"] == "EMU"
+
+    # Commands that only read the work directory take the instrument it holds.
+    cli.main(
+        ["recipe", str(two_instruments), "--expression", "Exponential + Constant"]
+        + ["--run", "42", "--name", "relax", "--workdir", str(workdir)]
+    )
+    cli.main(
+        ["fit", str(two_instruments), "--run", "42", "--recipe", "relax", "--json"]
+        + ["--workdir", str(workdir)]
+    )
+    capsys.readouterr()
+
+
+def test_a_second_instrument_cannot_share_the_work_directory(
+    two_instruments: Path, tmp_path: Path, capsys
+) -> None:
+    workdir = tmp_path / "wd"
+    cli.main(
+        ["reduce", str(two_instruments), "--runs", "42", "--instrument", "EMU"]
+        + ["--workdir", str(workdir)]
+    )
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            ["reduce", str(two_instruments), "--runs", "42", "--instrument", "MUSR"]
+            + ["--workdir", str(workdir)]
+        )
+
+    assert exc.value.code == 1
+    error = capsys.readouterr().err
+    assert "(EMU)" in error
+    assert "(MUSR)" in error
+    assert "--workdir" in error
+
+
+def test_survey_lists_both_instruments_and_measures_alpha_per_file(
+    two_instruments: Path, tmp_path: Path, capsys
+) -> None:
+    cli.main(["survey", str(two_instruments), "--workdir", str(tmp_path / "wd")])
+    out = capsys.readouterr().out
+
+    assert "EMU 42" in out
+    assert "MUSR 42" in out
+    assert "RUN NUMBERS COLLIDE: EMU and MUSR" in out
+
+    cli.main(
+        ["survey", str(two_instruments), "--instrument", "MUSR", "--json"]
+        + ["--workdir", str(tmp_path / "wd-musr")]
+    )
+    rows = _json_output(capsys)["survey"]["runs"]
+    assert [row["file"] for row in rows] == ["MUSR00000042.nxs", "MUSR00000043.nxs"]
 
 
 # -- survey -----------------------------------------------------------------
@@ -189,6 +304,33 @@ def test_survey_table_shows_the_precession_column_and_the_measured_geometry(
     decoupling = next(line for line in lines if line.startswith(f"{DECOUPLING_RUN} "))
     assert "none" in decoupling
     assert "TF" not in decoupling
+
+
+def test_survey_marks_a_coil_geometry_and_explains_a_psi_header_temperature(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.io.psi import PSI_HEADER_SAMPLE_SENSOR
+    from asymmetry.core.workflow.survey import survey_folder
+
+    survey = survey_folder(workflow_folder)
+    assert "header sensor 1" not in _render(survey, tmp_path / "survey.json")
+
+    row = replace(
+        survey.row(DECOUPLING_RUN),
+        geometry="LF",
+        geometry_source="coils",
+        sample_temperature_logged=52.76,
+        sample_temperature_log_source=PSI_HEADER_SAMPLE_SENSOR,
+    )
+    text = _render(replace(survey, runs=[row]), tmp_path / "survey.json")
+    line = next(line for line in text.splitlines() if line.startswith(f"{DECOUPLING_RUN} "))
+    assert "LF+" in line
+    assert "52.76" in line
+    assert "geom+: geometry read from the run's logged field-coil readbacks" in text
+    assert "T log (PSI): header sensor 1, an unlabelled sensor inferred" in text
 
 
 def test_survey_scans_block_names_the_instrument(
@@ -261,6 +403,23 @@ def test_every_command_offers_the_same_default_work_directory() -> None:
     }
 
 
+def test_every_command_with_a_work_directory_or_run_files_takes_an_instrument() -> None:
+    parser = cli.build_parser()
+    subparsers = next(
+        action
+        for action in parser._actions  # noqa: SLF001 — argparse exposes no public walk
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    dests = {
+        name: {action.dest for action in subparser._actions}  # noqa: SLF001
+        for name, subparser in subparsers.choices.items()
+    }
+    with_instrument = {name for name, found in dests.items() if "instrument" in found}
+    # `audit` reads work directories' output logs; it binds none to a folder.
+    with_workdir = {name for name, found in dests.items() if "workdir" in found} - {"audit"}
+    assert with_instrument == with_workdir | {"alpha"}
+
+
 def test_a_work_directory_holds_one_data_folder(
     workflow_folder: Path, tmp_path: Path, capsys
 ) -> None:
@@ -320,6 +479,23 @@ def test_survey_on_a_missing_folder_is_a_user_error(tmp_path: Path, capsys) -> N
         cli.main(["survey", str(tmp_path / "nowhere")])
     assert exc.value.code == 1
     assert "not a directory" in capsys.readouterr().err
+
+
+def test_survey_of_a_folder_with_only_subfolders_names_them_and_writes_nothing(
+    tmp_path: Path, capsys
+) -> None:
+    data = tmp_path / "data"
+    rg = data / "RG"
+    rg.mkdir(parents=True)
+    (rg / "SIM00000700.nxs").touch()
+    (rg / "SIM00000701.nxs").touch()
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["survey", str(data), "--workdir", str(tmp_path / "wd")])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "RG (2 runs)" in err
+    assert not (tmp_path / "wd").exists()
 
 
 # -- alpha ------------------------------------------------------------------
@@ -487,6 +663,8 @@ def test_reduce_selects_and_records_a_multi_period_run(
         return dataset
 
     monkeypatch.setattr("asymmetry.core.io.load", _load_two_periods)
+    # ``reduce`` loads through the reduction module, which binds the loader at import.
+    monkeypatch.setattr("asymmetry.core.workflow.reduction.load", _load_two_periods)
     workdir = tmp_path / "period-wd"
     cli.main(
         [
@@ -535,6 +713,8 @@ def _two_identical_periods(monkeypatch: pytest.MonkeyPatch) -> None:
         return dataset
 
     monkeypatch.setattr("asymmetry.core.io.load", _load_two_periods)
+    # ``reduce`` loads through the reduction module, which binds the loader at import.
+    monkeypatch.setattr("asymmetry.core.workflow.reduction.load", _load_two_periods)
 
 
 def test_reduce_green_red_is_the_difference_of_the_two_periods(
@@ -584,6 +764,104 @@ def test_integral_scan_green_red_needs_two_periods(
     data = _json_output(capsys)
     assert [point["value"] for point in data["scan"]["points"]] == pytest.approx([0.0, 0.0])
     assert data["settings"]["period"] == "green_minus_red"
+
+
+def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_offset(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from asymmetry.core import io
+
+    _two_identical_periods(monkeypatch)
+    two_period_load = io.load
+    # A probe reading -1.25 per gauss about a 950-unit zero offset, at two fields:
+    # the step converts by that slope, which one run's ratio of means would miss.
+    logs = iter([(9000.0, 43.0), (10000.0, 45.0)])
+
+    def _with_offset(path):
+        dataset = two_period_load(path)
+        main, step = next(logs)
+        dataset.run.metadata["nexus_time_series"] = {
+            "Field_Main": {"values": [main]},
+            "Field_Hall_Z": {"values": [950.0 - 1.25 * main]},
+        }
+        dataset.run.metadata["period_hall_offset"] = step * 1.25
+        return dataset
+
+    monkeypatch.setattr("asymmetry.core.io.load", _with_offset)
+    base = [
+        "integral-scan",
+        str(workflow_folder),
+        "--runs",
+        f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+        "--period",
+        "green-red",
+        "--order",
+        "run",
+        "--model",
+        "LorentzianLCRPair",
+        "--fix",
+        "f=0",
+        "--fix",
+        "Bwid=1",
+        "--fix",
+        "B0=102.5",
+        "--workdir",
+        str(tmp_path / "wd"),
+    ]
+    cli.main(base)
+    out = capsys.readouterr().out
+    assert "period field offset (red - green): -44.00 G, mean of 2 run(s)" in out
+    assert "--fix dB=44.00" in out
+
+    logs = iter([(9000.0, 43.0), (10000.0, 45.0)])
+    cli.main([*base, "--json"])
+    data = _json_output(capsys)
+    assert data["period_field_offset"] == {"gauss": pytest.approx(-44.0), "runs": 2}
+
+
+def test_integral_scan_single_period_reports_the_source_run_number(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A period run's own number is encoded (run*1000+period); the scan reports
+    the source run it was cut from, not that internal key.
+    """
+    _two_identical_periods(monkeypatch)
+    cli.main(
+        [
+            "integral-scan",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+            "--period",
+            "red",
+            "--order",
+            "run",
+            "--json",
+            "--workdir",
+            str(tmp_path / "wd"),
+        ]
+    )
+    data = _json_output(capsys)
+    assert [point["run"] for point in data["scan"]["points"]] == [SCAN_RUNS[0], SCAN_RUNS[1]]
+
+
+def test_alpha_period_red_reports_the_source_run_number(
+    workflow_folder: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_identical_periods(monkeypatch)
+    cli.main(
+        [
+            "alpha",
+            str(workflow_folder),
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--period",
+            "red",
+            "--json",
+        ]
+    )
+    data = _json_output(capsys)
+    assert data["alpha"]["run_number"] == SCAN_RUNS[0]
 
 
 def test_reduce_with_a_pair_and_offsets_records_them(
@@ -757,6 +1035,32 @@ def test_integral_scan_writes_points_for_the_named_runs(
     assert (workdir / "scans" / "integral.json").exists()
 
 
+def test_integral_scan_subtracts_the_requested_background(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    def scan(*extra: str) -> dict:
+        cli.main(
+            [
+                "integral-scan",
+                str(workflow_folder),
+                "--runs",
+                f"{SCAN_RUNS[0]}-{SCAN_RUNS[2]}",
+                *extra,
+                "--json",
+                "--workdir",
+                str(tmp_path / "wd"),
+            ]
+        )
+        return _json_output(capsys)
+
+    plain = scan()
+    subtracted = scan("--background", "tail_fit")
+    assert subtracted["settings"]["background"] == "tail_fit"
+    # The fitted level's correlated error only ever adds to the integral's.
+    for before, after in zip(plain["scan"]["points"], subtracted["scan"]["points"], strict=True):
+        assert after["error"] > before["error"]
+
+
 @pytest.mark.parametrize(
     "fit_only_args",
     [
@@ -820,13 +1124,15 @@ def test_wizard_takes_the_geometry_the_survey_resolved(
     from asymmetry.core.workflow.workdir import WorkDir
 
     workdir = WorkDir(tmp_path / "wd")
-    assert _survey_geometry(workdir, CALIBRATION_RUN) is None
+    every_run = RunSelection(workflow_folder, None)
+    assert _survey_geometry(workdir, every_run, CALIBRATION_RUN) is None
 
     cli.main(["survey", str(workflow_folder), "--workdir", str(workdir.root)])
     capsys.readouterr()
-    assert _survey_geometry(workdir, CALIBRATION_RUN) == "TF"
-    assert _survey_geometry(workdir, SCAN_RUNS[0]) == "ZF"
-    assert _survey_geometry(workdir, 900) is None
+    assert _survey_geometry(workdir, every_run, CALIBRATION_RUN) == "TF"
+    assert _survey_geometry(workdir, every_run, SCAN_RUNS[0]) == "ZF"
+    assert _survey_geometry(workdir, every_run, 900) is None
+    assert _survey_geometry(workdir, RunSelection(workflow_folder, "EMU"), SCAN_RUNS[0]) is None
 
 
 def test_wizard_rejects_an_unknown_scope_preset(
@@ -1173,7 +1479,7 @@ def test_trend_csv_has_one_header_line_and_one_row_per_run(
     assert "Lambda" in out
 
     lines = csv_path.read_text(encoding="utf-8").strip().split("\n")
-    assert lines[0].split(",")[:2] == ["run", "x"]
+    assert lines[0].split(",")[:2] == ["key", "x"]
     assert len(lines) == 1 + len(SCAN_RUNS)
 
 
@@ -1241,11 +1547,11 @@ def test_trend_model_fits_a_trend_column_and_stores_the_fit(
 
     # The scan was simulated with Lambda = 0.10 + 0.004 T.
     assert fit["success"]
-    assert fit["runs"] == list(SCAN_RUNS)
+    assert fit["keys"] == [str(run) for run in SCAN_RUNS]
     assert abs(fit["parameters"]["m"] - 0.004) <= 3.0 * fit["uncertainties"]["m"]
     assert abs(fit["parameters"]["b"] - 0.10) <= 3.0 * fit["uncertainties"]["b"]
     stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
-    assert stored["trend_fits"]["Lambda"] == fit
+    assert stored["trend_fits"]["Lambda:Linear"] == fit
     assert (fitting_workdir / "plots" / "scan-trend-Lambda.png").exists()
 
 
@@ -1379,7 +1685,7 @@ def test_fit_series_orders_along_values_the_analyst_supplies(
     )
     series = _json_output(capsys)["series"]
     assert series["order_key"] == "foils"
-    assert [row["run"] for row in series["trend"]["rows"]] == list(reversed(runs))
+    assert [row["key"] for row in series["trend"]["rows"]] == [str(run) for run in reversed(runs)]
 
 
 @pytest.mark.parametrize(
@@ -1414,6 +1720,360 @@ def test_fit_series_refuses_an_axis_it_cannot_build(
         )
     assert exc.value.code == 1
     assert message in capsys.readouterr().err
+
+
+def _cli(workflow_folder: Path, fitting_workdir: Path, command: str, *arguments: str) -> None:
+    cli.main([command, str(workflow_folder), *arguments, "--workdir", str(fitting_workdir)])
+
+
+def _refused(workflow_folder: Path, fitting_workdir: Path, capsys, *arguments: str) -> str:
+    """Run a command expected to exit 1; its stderr."""
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        _cli(workflow_folder, fitting_workdir, *arguments)
+    assert exc.value.code == 1
+    return capsys.readouterr().err
+
+
+#: Two groups of two scan runs, at mean setpoints 15 K and 35 K.
+_GROUPS = f"{SCAN_RUNS[0]},{SCAN_RUNS[1]};{SCAN_RUNS[2]},{SCAN_RUNS[3]}"
+
+
+def _fit_batch(workflow_folder: Path, fitting_workdir: Path, *extra: str) -> None:
+    """Store the batch ``batch`` of :data:`_GROUPS`, the relaxation rate shared per group."""
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-global",
+        "--groups",
+        _GROUPS,
+        "--recipe",
+        "relax",
+        "--shared",
+        "Lambda,A_bg",
+        "--strategy",
+        "least_squares",
+        "--name",
+        "batch",
+        *extra,
+    )
+
+
+def test_fit_global_groups_stores_each_group_and_their_shared_trend(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    from tests.core.conftest import scan_rate
+
+    _fit_batch(workflow_folder, fitting_workdir, "--json")
+    batch = _json_output(capsys)["global_batch"]
+
+    assert batch["kind"] == "global-batch"
+    assert [member["series"] for member in batch["members"]] == ["batch-1", "batch-2"]
+    assert [group["name"] for group in batch["groups"]] == ["batch-1", "batch-2"]
+    trend = batch["trend"]
+    assert trend["order_key"] == "temperature"
+    assert trend["columns"] == ["key", "x", "Lambda", "Lambda_err", "A_bg", "A_bg_err", "flags"]
+    assert [row["key"] for row in trend["rows"]] == ["batch-1", "batch-2"]
+    assert [row["x"] for row in trend["rows"]] == [15.0, 35.0]
+    # A rate shared by two runs of a linear law sits at the law's value at their mean.
+    for row in trend["rows"]:
+        assert row["Lambda"] == pytest.approx(scan_rate(row["x"]), abs=0.02)
+    for member in ("batch-1", "batch-2"):
+        stored = json.loads((fitting_workdir / "series" / f"{member}.json").read_text("utf-8"))
+        assert stored["kind"] == "global"
+
+    _cli(workflow_folder, fitting_workdir, "trend", "--series", "batch")
+    assert "batch-2" in capsys.readouterr().out
+
+
+def test_a_batch_orders_its_groups_along_values_the_analyst_supplies(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_batch(workflow_folder, fitting_workdir, "--group-order", "dose", "--group-x", "1=5,2=1")
+    capsys.readouterr()
+    stored = json.loads((fitting_workdir / "series" / "batch.json").read_text("utf-8"))
+    assert stored["order_key"] == "dose"
+    assert [(row["key"], row["x"]) for row in stored["trend"]["rows"]] == [
+        ("batch-2", 1.0),
+        ("batch-1", 5.0),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--group-order", "dose"], "'dose' is not recorded in the files"),
+        (
+            ["--group-order", "dose", "--group-x", "1=5,2=1,3=2"],
+            "dose values given for group(s) batch-3, which are not in the series",
+        ),
+        (["--group-order", "dose", "--group-x", "one=5"], "--group-x entry 'one=5' is not GROUP"),
+        (
+            ["--groups", f"{SCAN_RUNS[0]},{SCAN_RUNS[1]};{SCAN_RUNS[1]},{SCAN_RUNS[2]}"],
+            "in two groups",
+        ),
+        (["--groups", f"{SCAN_RUNS[0]},{SCAN_RUNS[1]};{SCAN_RUNS[2]}"], "too few in batch-2"),
+        (["--runs", f"{SCAN_RUNS[0]},{SCAN_RUNS[1]}", "--group-x", "1=5"], "order a batch"),
+    ],
+)
+def test_fit_global_refuses_a_batch_it_cannot_build(
+    workflow_folder: Path, fitting_workdir: Path, capsys, arguments: list[str], message: str
+) -> None:
+    if "--groups" not in arguments and "--runs" not in arguments:
+        arguments = ["--groups", _GROUPS, *arguments]
+    err = _refused(
+        workflow_folder,
+        fitting_workdir,
+        capsys,
+        "fit-global",
+        *arguments,
+        "--recipe",
+        "relax",
+        "--shared",
+        "A_bg",
+        "--name",
+        "batch",
+    )
+    assert message in err
+
+
+def test_a_batch_whose_group_is_refitted_is_stale(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_batch(workflow_folder, fitting_workdir)
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-global",
+        "--runs",
+        f"{SCAN_RUNS[0]},{SCAN_RUNS[1]}",
+        "--recipe",
+        "relax",
+        "--shared",
+        "A_bg",
+        "--strategy",
+        "least_squares",
+        "--name",
+        "batch-1",
+    )
+    err = _refused(workflow_folder, fitting_workdir, capsys, "trend", "--series", "batch")
+    assert "Series 'batch' is stale: its member(s) batch-1 were refitted" in err
+
+
+#: Three overlapping stretches of the temperature scan, at mean setpoints 20, 30 and 40 K.
+_STRETCHES = {"s1": SCAN_RUNS[0:3], "s2": SCAN_RUNS[1:4], "s3": SCAN_RUNS[2:5]}
+
+
+def _fit_stretches(workflow_folder: Path, fitting_workdir: Path) -> None:
+    """Store each stretch as a series, with Linear fitted to its relaxation rate."""
+    for name, runs in _STRETCHES.items():
+        _cli(
+            workflow_folder,
+            fitting_workdir,
+            "fit-series",
+            "--runs",
+            ",".join(map(str, runs)),
+            "--recipe",
+            "relax",
+            "--order",
+            "temperature",
+            "--name",
+            name,
+        )
+        _cli(
+            workflow_folder,
+            fitting_workdir,
+            "trend",
+            "--series",
+            name,
+            "--model",
+            "Linear",
+            "--param",
+            "Lambda",
+        )
+
+
+def test_trend_from_fits_tabulates_a_law_parameter_per_series_and_fits_it(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_stretches(workflow_folder, fitting_workdir)
+    capsys.readouterr()
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "trend",
+        "--series",
+        "slopes",
+        "--from-fits",
+        "s1,s2,s3",
+        "--param",
+        "m",
+        "--model",
+        "Linear",
+        "--json",
+    )
+    data = _json_output(capsys)
+
+    trend = data["trend"]
+    assert trend["order_key"] == "temperature"
+    assert [(row["key"], row["x"]) for row in trend["rows"]] == [
+        ("s1", 20.0),
+        ("s2", 30.0),
+        ("s3", 40.0),
+    ]
+    # Every stretch of the scan has the slope it was simulated with, 0.004 per K.
+    for row in trend["rows"]:
+        assert row["m"] == pytest.approx(0.004, abs=3.0 * row["m_err"])
+    fit = data["fit"]
+    assert fit["keys"] == ["s1", "s2", "s3"]
+    assert fit["parameters"]["b"] == pytest.approx(0.004, abs=3.0 * fit["uncertainties"]["b"])
+    stored = json.loads((fitting_workdir / "series" / "slopes.json").read_text("utf-8"))
+    assert stored["kind"] == "fit-trend"
+    assert [member["fit"] for member in stored["members"]] == ["Lambda:Linear"] * 3
+    assert stored["trend_fits"]["m:Linear"] == fit
+
+    # A member series refitted leaves the trend built from it stale.
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-series",
+        "--runs",
+        ",".join(map(str, _STRETCHES["s2"])),
+        "--recipe",
+        "relax",
+        "--order",
+        "temperature",
+        "--tmax",
+        "6",
+        "--name",
+        "s2",
+    )
+    err = _refused(workflow_folder, fitting_workdir, capsys, "trend", "--series", "slopes")
+    assert "its member(s) s2 were refitted" in err
+
+
+def test_trend_from_fits_takes_supplied_values_and_excludes_by_series(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_stretches(workflow_folder, fitting_workdir)
+    capsys.readouterr()
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "trend",
+        "--series",
+        "slopes",
+        "--from-fits",
+        "s1,s2,s3",
+        "--param",
+        "m",
+        "--fit",
+        "Lambda",
+        "--order",
+        "pressure",
+        "--x",
+        "s1=3,s2=2,s3=1",
+        "--json",
+    )
+    trend = _json_output(capsys)["trend"]
+    assert trend["order_key"] == "pressure"
+    assert [row["key"] for row in trend["rows"]] == ["s3", "s2", "s1"]
+
+    err = _refused(
+        workflow_folder,
+        fitting_workdir,
+        capsys,
+        "trend",
+        "--series",
+        "slopes",
+        "--model",
+        "Linear",
+        "--param",
+        "m",
+        "--exclude",
+        "s1,nope",
+    )
+    assert "Not in the trend: nope" in err
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--from-fits", "s1"], "--from-fits needs --param NAME"),
+        (["--fit", "Lambda"], "--fit, --order and --x build a trend --from-fits"),
+        (["--from-fits", "s1,slopes", "--param", "m"], "cannot be a member too"),
+        (["--from-fits", "s1", "--param", "m", "--fit", "A_1"], "none is --fit A_1"),
+        (["--from-fits", "s1", "--param", "Ea"], "has no parameter 'Ea'"),
+        (["--from-fits", "s1,nope", "--param", "m"], "No series 'nope'"),
+    ],
+)
+def test_trend_from_fits_refuses_a_malformed_request(
+    workflow_folder: Path, fitting_workdir: Path, capsys, arguments: list[str], message: str
+) -> None:
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-series",
+        "--runs",
+        ",".join(map(str, _STRETCHES["s1"])),
+        "--recipe",
+        "relax",
+        "--order",
+        "temperature",
+        "--name",
+        "s1",
+    )
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "trend",
+        "--series",
+        "s1",
+        "--model",
+        "Linear",
+        "--param",
+        "Lambda",
+    )
+    err = _refused(
+        workflow_folder, fitting_workdir, capsys, "trend", "--series", "slopes", *arguments
+    )
+    assert message in err
+
+
+def test_two_laws_on_one_trend_column_are_both_kept(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_scan(workflow_folder, fitting_workdir)
+    for law in ("Linear", "Quadratic"):
+        _cli(
+            workflow_folder,
+            fitting_workdir,
+            "trend",
+            "--series",
+            "scan",
+            "--model",
+            law,
+            "--param",
+            "Lambda",
+        )
+    stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
+    assert sorted(stored["trend_fits"]) == ["Lambda:Linear", "Lambda:Quadratic"]
+    capsys.readouterr()
+    err = _refused(
+        workflow_folder,
+        fitting_workdir,
+        capsys,
+        "trend",
+        "--series",
+        "laws",
+        "--from-fits",
+        "scan",
+        "--param",
+        "b",
+    )
+    assert (
+        "holds trend fits: Lambda:Linear, Lambda:Quadratic; name one with --fit PARAM:EXPR" in err
+    )
 
 
 def test_the_order_help_names_every_order_key() -> None:
@@ -1561,7 +2221,7 @@ def test_verbose_leaves_pythons_own_warning_handling_in_place(
 def test_an_internal_error_exits_two_with_a_traceback(
     workflow_folder: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
-    def _boom(_folder, *, pair):
+    def _boom(_folder, *, pair, instrument):
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr("asymmetry.core.workflow.survey.survey_folder", _boom)

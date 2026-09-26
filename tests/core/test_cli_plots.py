@@ -148,7 +148,13 @@ def test_trend_frame_has_no_range_when_no_value_is_finite() -> None:
 
 def _trend_rows(values, errors):
     return [
-        {"x": float(index), "run": 100 + index, "lam": value, "lam_err": error, "flags": ["bad"]}
+        {
+            "x": float(index),
+            "key": str(100 + index),
+            "lam": value,
+            "lam_err": error,
+            "flags": ["bad"],
+        }
         for index, (value, error) in enumerate(zip(values, errors))
     ]
 
@@ -240,6 +246,7 @@ def test_fourier_plot_writes_real_and_magnitude_channels(tmp_path: Path) -> None
         real,
         magnitude,
         run_number=20721,
+        coupling=False,
         out_path=tmp_path / "fourier.png",
     )
 
