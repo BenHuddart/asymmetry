@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from asymmetry.cli._output import UserError
@@ -21,23 +20,21 @@ from asymmetry.cli._runs import resolve_run
 
 if TYPE_CHECKING:
     from asymmetry.core.workflow.reduction import ReductionSettings
+    from asymmetry.core.workflow.workdir import RunSelection
 
 #: The command-line spelling of the green − red period difference.
 GREEN_RED = "green-red"
 
 
-def add_reduction_arguments(
-    parser: argparse.ArgumentParser, *, alpha: bool = True, background: bool = True
-) -> None:
+def add_reduction_arguments(parser: argparse.ArgumentParser, *, alpha: bool = True) -> None:
     """Declare the reduction options on *parser*.
 
     ``alpha`` adds ``--alpha``/``--alpha-from`` (a command that measures alpha
-    has neither); ``background`` adds ``--background`` (the integral scan does
-    not subtract one).
+    has neither).
     """
     # An option a command does not declare still reads as its default, so the
     # settings are built from one namespace shape.
-    parser.set_defaults(alpha=None, alpha_from=None, background="none")
+    parser.set_defaults(alpha=None, alpha_from=None)
     if alpha:
         parser.add_argument("--alpha", type=float, default=None, help="Fixed alpha to reduce with")
         parser.add_argument(
@@ -57,17 +54,16 @@ def add_reduction_arguments(
         help="Deadtime correction (default: off, matching the GUI's fresh-run default)",
     )
     add_pair_argument(parser)
-    if background:
-        parser.add_argument(
-            "--background",
-            default="none",
-            metavar="none|tail_fit|range[:FIRST:LAST]",
-            help=(
-                "Background subtraction: tail_fit fits a flat rate under the late-time "
-                "decay (pulsed sources); range averages a pre-t0 bin range (continuous "
-                "sources; default range 0.1·t0–0.6·t0). Default: none"
-            ),
-        )
+    parser.add_argument(
+        "--background",
+        default="none",
+        metavar="none|tail_fit|range[:FIRST:LAST]",
+        help=(
+            "Background subtraction: tail_fit fits a flat rate under the late-time "
+            "decay (pulsed sources); range averages a pre-t0 bin range (continuous "
+            "sources; default range 0.1·t0–0.6·t0). Default: none"
+        ),
+    )
     parser.add_argument(
         "--t0-offset",
         type=int,
@@ -129,12 +125,15 @@ def _background(text: str) -> dict[str, Any]:
         raise UserError(f"--background {text!r}: the range is FIRST:LAST in bins.") from None
 
 
-def reduction_settings(args: argparse.Namespace, folder: Path, **window: Any) -> ReductionSettings:
+def reduction_settings(
+    args: argparse.Namespace, selection: RunSelection, **window: Any
+) -> ReductionSettings:
     """The settings the reduction options in *args* ask for.
 
     *window* carries the command's own ``rebin``/``t_min``/``t_max``. With
-    ``--alpha-from`` the calibration run is reduced under the same settings, so
-    alpha balances the spectra it will be applied to.
+    ``--alpha-from`` the calibration run — one of *selection*'s, so of the same
+    instrument — is reduced under the same settings, so alpha balances the
+    spectra it will be applied to.
     """
     from asymmetry.core.io import load
     from asymmetry.core.workflow.reduction import (
@@ -161,7 +160,9 @@ def reduction_settings(args: argparse.Namespace, folder: Path, **window: Any) ->
         )
         if alpha_from is None:
             return settings
-        calibration = reduction_source(load(str(resolve_run(folder, alpha_from))), settings.period)
+        calibration = reduction_source(
+            load(str(resolve_run(selection, alpha_from))), settings.period
+        )
         estimate = estimate_alpha_for_run(calibration.run, settings)
     except (TypeError, ValueError) as exc:
         # ReductionSettings owns the vocabulary the CLI accepts; a value it

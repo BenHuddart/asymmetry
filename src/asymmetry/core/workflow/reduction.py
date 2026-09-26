@@ -11,10 +11,18 @@ grouping or the corrections here.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
+from asymmetry.core.data.combine import (
+    combine_runs,
+    reduce_combined_run,
+    runs_with_dataset_metadata,
+)
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.io import load
 from asymmetry.core.io.periods import (
     GREEN_INDEX,
     RED_INDEX,
@@ -22,6 +30,7 @@ from asymmetry.core.io.periods import (
     period_count,
     period_run,
     select_period,
+    source_run_of,
 )
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
@@ -273,6 +282,26 @@ def reduction_source(loaded: MuonDataset | list[MuonDataset], period: str | None
     return select_period(loaded, period)
 
 
+def load_reduction_source(paths: Sequence[str | Path], period: str | None) -> MuonDataset:
+    """The dataset :func:`reduce_run` starts from for one run file, or the co-add of several.
+
+    Several files are summed at the count level exactly as the GUI's data
+    browser co-adds (:func:`combine_runs`), each member first narrowed to
+    *period*. The sum is identified as its first member — it keeps that run's
+    number and instrument metadata, under the combination's event-weighted
+    temperature and field and its ``combination`` provenance — since
+    :func:`combine_runs` records only what it combined. Raises
+    :class:`~asymmetry.core.data.combine.CombineError` (a :class:`ValueError`)
+    when the members cannot be summed.
+    """
+    sources = [reduction_source(load(str(path)), period) for path in paths]
+    if len(sources) == 1:
+        return sources[0]
+    runs = runs_with_dataset_metadata(sources)
+    combined = combine_runs(runs, sign=1)
+    return reduce_combined_run(replace(combined, metadata=runs[0].metadata | combined.metadata))
+
+
 def resolve_reduction_grouping(run: Run, settings: ReductionSettings) -> dict[str, Any]:
     """The full grouping payload :func:`reduce_run` will reduce *run* with.
 
@@ -320,7 +349,7 @@ def _reduce_period(run: Run, settings: ReductionSettings) -> MuonDataset:
     )
     if settings.background != "none" and "values" not in result.background_state:
         raise ValueError(
-            f"Run {run.run_number}: the {settings.background} background could not be "
+            f"Run {source_run_of(run)}: the {settings.background} background could not be "
             f"subtracted ({result.background_state})."
         )
     return MuonDataset(
@@ -387,7 +416,7 @@ def estimate_alpha_for_run(run: Run, settings: ReductionSettings) -> AlphaEstima
     profile = _profile_for_run(counts, settings, alpha_policy=AlphaPolicy(mode="per_run_estimate"))
     grouping = resolve_effective_grouping(profile, counts)
     return AlphaEstimate(
-        run_number=int(run.run_number),
+        run_number=source_run_of(run),
         alpha=float(grouping["alpha"]),
         method=str(grouping["alpha_method"]),
         forward_group=int(grouping["forward_group"]),
@@ -402,6 +431,7 @@ __all__ = [
     "AlphaEstimate",
     "ReductionSettings",
     "estimate_alpha_for_run",
+    "load_reduction_source",
     "reduce_run",
     "reduction_source",
     "resolve_reduction_grouping",

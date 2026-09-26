@@ -13,6 +13,7 @@ from itertools import product
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.optimize import least_squares
 from scipy.special import expit
 
 from asymmetry.core.fitting.ballistic import lambda_total as ballistic_lambda_total
@@ -30,7 +31,7 @@ from asymmetry.core.fitting.latex_preview import (
     wrap_if_compound,
 )
 from asymmetry.core.fitting.member_quality import parameters_at_bound
-from asymmetry.core.fitting.muon_proton import rf_resonance_mup
+from asymmetry.core.fitting.muon_proton import rf_resonance_mup, rf_transition_freqs
 from asymmetry.core.fitting.muonium import (
     G_E_MHZ_PER_G,
     G_MU_MHZ_PER_G,
@@ -375,6 +376,11 @@ def isotropic_mu_b0_gauss(A_hf_mhz: float) -> float:
     return max(abs(float(A_hf_mhz)), 1e-12) / _ISOTROPIC_MU_B0_DENOM_MHZ_PER_G
 
 
+def _isotropic_mu_a_hf_mhz(b0_gauss: float) -> float:
+    """Inverse of :func:`isotropic_mu_b0_gauss`: A_hf = B0 * (γₑ + γ_μ), in MHz."""
+    return abs(float(b0_gauss)) * _ISOTROPIC_MU_B0_DENOM_MHZ_PER_G
+
+
 def _mu_repolarisation(
     x: NDArray, a_Mu: float, A_hf: float, a_Dia: float = 0.0
 ) -> NDArray[np.float64]:
@@ -413,6 +419,17 @@ def _lcr_lorentzian(x: NDArray, f: float, B0: float, Bwid: float) -> NDArray[np.
     xx = np.asarray(x, dtype=float)
     bwid_safe = max(abs(float(Bwid)), 1e-12)
     return float(f) / (1.0 + ((xx - float(B0)) / bwid_safe) ** 2)
+
+
+def _lcr_lorentzian_pair(
+    x: NDArray, f: float, B0: float, Bwid: float, dB: float
+) -> NDArray[np.float64]:
+    """Green − red signal of a Lorentzian LCR: the line at B0 less the same line at B0 + dB.
+
+    The red period's field sits dB below the recorded one, so the red period
+    meets the resonance when the recorded field is dB higher.
+    """
+    return _lcr_lorentzian(x, f, B0, Bwid) - _lcr_lorentzian(x, f, float(B0) + float(dB), Bwid)
 
 
 def _lambda_bg(x: NDArray, lambda_BG: float) -> NDArray[np.float64]:
@@ -778,6 +795,26 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         latex_equation=r"\lambda_{LCR}(B) = \frac{f}{1 + \left((B-B_0)/B_{wid}\right)^2}",
         scopes=("field",),
         fwhm_factor=2.0,  # half-max at |B - B0| = Bwid
+    ),
+    "LorentzianLCRPair": ParameterModelComponentDefinition(
+        name="LorentzianLCRPair",
+        description="f*[L(B; B0, Bwid) - L(B; B0+dB, Bwid)]",
+        function=_lcr_lorentzian_pair,
+        param_names=["f", "B0", "Bwid", "dB"],
+        param_defaults={"f": 0.1, "B0": 1000.0, "Bwid": 100.0, "dB": 50.0},
+        param_info={
+            "f": get_param_info("f"),
+            "B0": get_param_info("B0"),
+            "Bwid": get_param_info("Bwid"),
+            "dB": get_param_info("dB"),
+        },
+        formula_template="{f}*[L(x; {B0}; {Bwid}) - L(x; {B0}+{dB}; {Bwid})]",
+        latex_equation=(
+            r"\lambda_{LCR}(B) = \frac{f}{1 + \left((B-B_0)/B_{wid}\right)^2}"
+            r" - \frac{f}{1 + \left((B-B_0-\Delta B)/B_{wid}\right)^2}"
+        ),
+        scopes=("field",),
+        fwhm_factor=2.0,  # each line's half-max at |B - centre| = Bwid
     ),
     "DiffusionLF_1D": ParameterModelComponentDefinition(
         name="DiffusionLF_1D",
@@ -1354,6 +1391,7 @@ _PARAMETER_MODEL_CATEGORIES: dict[str, str] = {
             "MuRepolarisation",
             "GaussianLCR",
             "LorentzianLCR",
+            "LorentzianLCRPair",
             "RFResonanceMuP",
         ],
         "Field scan",
@@ -2140,13 +2178,19 @@ def _wls_line(
 
 
 def _estimate_constant(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     return {"c": _weighted_median(y, _point_weights(y, yerr))}
 
 
 def _estimate_linear(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     line = _wls_line(x, y, _point_weights(y, yerr))
     if line is None:
@@ -2156,7 +2200,10 @@ def _estimate_linear(
 
 
 def _estimate_polynomial(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Seed only the constant + linear terms of a polynomial baseline.
 
@@ -2172,7 +2219,10 @@ def _estimate_polynomial(
 
 
 def _estimate_power_law(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Seed ``a·|x|^n + c`` via a log-log line on the positive-x subset.
 
@@ -2203,7 +2253,10 @@ def _estimate_power_law(
 
 
 def _estimate_exp_decay(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Seed ``a·exp(−x/τ) + c`` from a semi-log line on the baseline-subtracted trace.
 
@@ -2252,7 +2305,10 @@ def _estimate_exp_decay(
 
 
 def _estimate_arrhenius(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Seed ``a·exp(−Ea/(k_B·T))`` from a ln y vs 1/T line.
 
@@ -2315,7 +2371,10 @@ def _peak_seed(
 
 
 def _estimate_lorentzian(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Seed ``a/(1 + (B/B0)^2) + c`` — a peak *centred at the origin*.
 
@@ -2365,9 +2424,9 @@ def _robust_baseline(x: NDArray[np.float64], y: NDArray[np.float64]) -> NDArray[
 
 
 def _lcr_peaks(
-    x: NDArray[np.float64], y: NDArray[np.float64], count: int
+    x: NDArray[np.float64], y: NDArray[np.float64], partners: Sequence[float]
 ) -> list[tuple[float, float, float]]:
-    """The *count* strongest resonances of a scan, strongest first: ``(centre, height, HWHM)``.
+    """One resonance per entry of *partners*, strongest first: ``(centre, height, HWHM)``.
 
     Heights are signed excursions from :func:`_robust_baseline`, so a sloping
     background is not mistaken for a resonance. A resonance is an excursion that
@@ -2375,6 +2434,12 @@ def _lcr_peaks(
     curves away at one end of the scan never does. Each resonance found masks
     ±3 half-widths before the next is sought, so several LCR components start on
     several resonances rather than all on the largest.
+
+    A partner offset ``d`` makes the resonance a differential pair: the line at
+    ``centre`` recurs with the opposite sign at ``centre + d``. The lobe found is
+    the copy when the larger opposite-signed excursion lies within a half-width
+    of ``d`` below it rather than above, and both lobes are masked. A single
+    line is the pair with ``d = inf``.
     """
     if x.size < 3:
         return []
@@ -2382,7 +2447,7 @@ def _lcr_peaks(
     free = np.ones(x.size, dtype=bool)
     peaks: list[tuple[float, float, float]] = []
     for index in np.argsort(-np.abs(excursion), kind="stable"):
-        if len(peaks) == count:
+        if len(peaks) == len(partners):
             break
         height = float(excursion[index])
         if not free[index] or height == 0.0:
@@ -2393,48 +2458,248 @@ def _lcr_peaks(
         if not left.size or not right.size:
             continue
         width = float(min(x[index] - x[left[-1]], x[index + 1 + right[0]] - x[index]))
-        peaks.append((float(x[index]), height, width))
-        free &= np.abs(x - x[index]) > 3.0 * width
+        offset = float(partners[len(peaks)])
+        centre = float(x[index])
+        opposite = -np.sign(height) * excursion
+        above, below = (
+            np.max(opposite, where=np.abs(x - centre - side * offset) <= width, initial=0.0)
+            for side in (1.0, -1.0)
+        )
+        if below > above:
+            centre, height = centre - offset, -height
+        peaks.append((centre, height, width))
+        free &= (np.abs(x - centre) > 3.0 * width) & (np.abs(x - centre - offset) > 3.0 * width)
     return peaks
 
 
+#: A component seeded in a group (:data:`_GROUP_SEEDERS`) and the values its
+#: caller already holds, by base name.
+_GroupMember = tuple[ParameterModelComponentDefinition, Mapping[str, float]]
+
+#: Half-widths beyond a transition centre (in natural-log field) trusted as
+#: pure low/high plateau when locating that transition's B0 — see
+#: :func:`_mu_repol_transition_centre`.
+_MU_REPOL_PLATEAU_MARGIN_LOG_FIELD = 2.0
+
+
+def _mu_repol_transition_centre(
+    x: NDArray[np.float64], y: NDArray[np.float64]
+) -> tuple[float, float, float] | None:
+    """Locate one ``MuRepolarisation`` half-rise: ``(B0, low plateau, high plateau)``.
+
+    ``P(B) = a_Mu*(1/2 + r^2)/(1 + r^2) + a_Dia`` with ``r = B/B0`` is a step
+    in log(B), so its transition is the peak of ``dy/d(log B)`` — a logistic
+    step's derivative is itself bell-shaped — found the same way
+    :func:`_lcr_peaks` finds a resonance. The plateaus, read more than
+    :data:`_MU_REPOL_PLATEAU_MARGIN_LOG_FIELD` HWHM either side of that peak,
+    are only a rough amplitude for :func:`_mu_repol_seeds` to subtract this
+    term and search the residual for the next one — with several transitions
+    close together a plateau can still carry another term's tail, which the
+    linear refit in :func:`_mu_repol_seeds` corrects once every centre is
+    known. Returns ``None`` when fewer than three points give a strictly
+    increasing log(x) (nothing to take a resolvable derivative of) or no peak
+    is found.
+    """
+    t = np.log(x)
+    dt = np.diff(t)
+    valid = dt > 0.0
+    if int(np.sum(valid)) < 3:
+        return None
+    dt_valid = dt[valid]
+    t_mid = 0.5 * (t[:-1][valid] + t[1:][valid])
+    slope = np.diff(y)[valid] / dt_valid
+    peaks = _lcr_peaks(t_mid, slope, (np.inf,))
+    if not peaks:
+        return None
+    centre, _height, width = peaks[0]
+    margin = _MU_REPOL_PLATEAU_MARGIN_LOG_FIELD * width
+    below = t <= centre - margin
+    above = t >= centre + margin
+    lo = float(np.median(y[below])) if np.any(below) else float(y[0])
+    hi = float(np.median(y[above])) if np.any(above) else float(y[-1])
+    return float(np.exp(centre)), lo, hi
+
+
+def _mu_repol_seeds(
+    x: NDArray[np.float64], y: NDArray[np.float64], members: Sequence[_GroupMember]
+) -> list[dict[str, float]]:
+    """Seed one ``MuRepolarisation`` term per member from successive half-rises.
+
+    ``(1/2+r^2)/(1+r^2) = 3/4`` exactly at ``r = B/B0 = 1``, so the half-rise
+    field *is* B0 (:func:`isotropic_mu_b0_gauss`'s defining field) and the
+    rise (high plateau − low plateau) is exactly ``a_Mu/2``. Terms are found
+    one at a time — :func:`_mu_repol_transition_centre` on the residual after
+    the previous term's rough fit is subtracted out — the same strongest
+    -first, mask-and-repeat idiom :func:`_lcr_seeds` uses via
+    :func:`_lcr_peaks`, so a second term starts on the second half-rise
+    rather than the first.
+
+    Once every term's B0 is located, the model is linear in the amplitudes
+    (``a_Mu`` per term, plus one shared additive offset — every term's
+    ``a_Dia`` sums into the same constant, so it is one degree of freedom,
+    not ``count`` of them), so a single least-squares solve on the *original*
+    curve recovers each ``a_Mu`` accurately even where the transitions
+    overlap too much for the per-term plateau read above to see cleanly. That
+    shared offset is unobservable as a per-term split, so by convention only
+    the lowest-B0 term's ``a_Dia`` carries it; every other term seeds
+    ``a_Dia = 0``.
+
+    Returns one dict per transition found, strongest first — fewer than the
+    members when the scan resolves fewer (the rest keep their defaults).
+    """
+    positive = x > 0.0
+    xx = x[positive]
+    yy = y[positive]
+
+    b0_values: list[float] = []
+    residual = yy.copy()
+    for _ in members:
+        found = _mu_repol_transition_centre(xx, residual)
+        if found is None:
+            break
+        b0, lo, hi = found
+        a_mu_guess = 2.0 * (hi - lo)
+        a_dia_guess = lo - 0.5 * a_mu_guess
+        b0_values.append(b0)
+        residual = residual - _mu_repolarisation(
+            xx, a_mu_guess, _isotropic_mu_a_hf_mhz(b0), a_dia_guess
+        )
+    if not b0_values:
+        return []
+
+    design = np.column_stack(
+        [(0.5 + (xx / b0) ** 2) / (1.0 + (xx / b0) ** 2) for b0 in b0_values] + [np.ones_like(xx)]
+    )
+    coefficients, *_ = np.linalg.lstsq(design, yy, rcond=None)
+    a_mu_values = coefficients[:-1]
+    a_dia_total = float(coefficients[-1])
+    lowest = int(np.argmin(b0_values))
+
+    return [
+        {
+            "a_Mu": float(a_mu),
+            "A_hf": _isotropic_mu_a_hf_mhz(b0),
+            "a_Dia": a_dia_total if i == lowest else 0.0,
+        }
+        for i, (b0, a_mu) in enumerate(zip(b0_values, a_mu_values, strict=True))
+    ]
+
+
+#: The coupling solve must reach a root: a transition left further than this
+#: fraction of ``ν_RF`` from it means no couplings place both dips.
+_RF_SEED_DETUNING_TOLERANCE = 1e-6
+
+
 def _estimate_rf_resonance(
-    x: NDArray[np.float64], y: NDArray[np.float64], yerr: NDArray[np.float64] | None
+    x: NDArray[np.float64],
+    y: NDArray[np.float64],
+    yerr: NDArray[np.float64] | None,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
-    """Seed the data-scaled half of ``RFResonanceMuP``: dip depths, widths and background.
+    """Seed ``RFResonanceMuP``: depths, widths, background and, with ``ν_RF`` known, the couplings.
 
     The registered depths assume a paper-graded dip an integrated scan does not
     have, so ``BG`` is the median value, ``ampl1 = ampl2`` the signed largest
     excursion from it (peaks or dips alike), and each width a twentieth of the
-    field span. The couplings and ``ν_RF`` that place the dips stay physics
-    inputs.
+    field span.
+
+    Given ``nu_RF`` in *known*, the two strongest resonances of the scan are
+    the fields where the two RF transitions equal ``ν_RF``: ``f₁`` (E₇−E₅) at
+    the upper dip ``B₁`` and ``f₂`` (E₈−E₆) at the lower ``B₂`` (the order of
+    a positive ``A_p``). ``f₁(B₁; A_µ, A_p) = f₂(B₂; A_µ, A_p) = ν_RF`` is two
+    equations in the two couplings, solved from the component defaults with
+    the transitions evaluated at the fixed dip fields — never through
+    :func:`~asymmetry.core.fitting.muon_proton.rf_resonance_fields`, which is
+    ``nan`` wherever a trial coupling loses a crossing. The couplings are
+    returned only when the solution places both transitions on ``ν_RF``.
     """
     bg = float(np.median(y))
     deviations = y - bg
     ampl = float(deviations[int(np.argmax(np.abs(deviations)))]) or 1.0
     span = float(x.max() - x.min())
     width = span / 20.0 if span > 0.0 else 25.0
-    return {"ampl1": ampl, "wid1": width, "ampl2": ampl, "wid2": width, "BG": bg}
+    seeds = {"ampl1": ampl, "wid1": width, "ampl2": ampl, "wid2": width, "BG": bg}
+    if "nu_RF" not in known:
+        return seeds
+    peaks = _lcr_peaks(x, y, (np.inf, np.inf))
+    if len(peaks) < 2:
+        return seeds
+    nu_rf = float(known["nu_RF"])
+    dip_fields = np.array(sorted((centre for centre, _height, _width in peaks), reverse=True))
+
+    def detuning(couplings: NDArray[np.float64]) -> NDArray[np.float64]:
+        f1, f2 = rf_transition_freqs(dip_fields, couplings[0], couplings[1])
+        return np.array([f1[0] - nu_rf, f2[1] - nu_rf])
+
+    defaults = PARAMETER_MODEL_COMPONENTS["RFResonanceMuP"].param_defaults
+    solution = least_squares(
+        detuning, x0=(defaults["A_mu"], defaults["A_p"]), x_scale=(100.0, 30.0)
+    )
+    if solution.success and np.max(np.abs(solution.fun)) < _RF_SEED_DETUNING_TOLERANCE * nu_rf:
+        seeds.update(A_mu=float(solution.x[0]), A_p=float(solution.x[1]))
+    return seeds
 
 
 #: The resonance-peak components (shared ``f``, ``B0``, ``Bwid``), seeded together
-#: by :func:`_lcr_peaks` so that several of them start on several resonances.
-_LCR_COMPONENTS = frozenset({"GaussianLCR", "LorentzianLCR"})
+#: by :func:`_lcr_peaks` so that several of them start on several resonances; one
+#: with a ``dB`` is a differential pair whose copy sits ``dB`` above ``B0``.
+_LCR_COMPONENTS = frozenset({"GaussianLCR", "LorentzianLCR", "LorentzianLCRPair"})
+
+
+def _lcr_seeds(
+    x: NDArray[np.float64], y: NDArray[np.float64], members: Sequence[_GroupMember]
+) -> list[dict[str, float]]:
+    """One resonance per LCR member, strongest first, a pair's partner at its ``dB``."""
+    partners = [
+        float(known.get("dB", component.param_defaults["dB"]))
+        if "dB" in component.param_defaults
+        else np.inf
+        for component, known in members
+    ]
+    return [
+        {"f": height, "B0": centre, "Bwid": width}
+        for centre, height, width in _lcr_peaks(x, y, partners)
+    ]
+
+
+#: Components seeded as a group, so several start on successive features of the
+#: scan rather than all on the strongest. Each seeder takes the finite, x-sorted
+#: ``(x, y)`` and the group's members (component, caller-held values by base
+#: name) and returns base-name seeds for as many members as it placed, in order.
+_GROUP_SEEDERS: dict[
+    frozenset[str],
+    Callable[
+        [NDArray[np.float64], NDArray[np.float64], Sequence[_GroupMember]],
+        list[dict[str, float]],
+    ],
+] = {
+    _LCR_COMPONENTS: _lcr_seeds,
+    frozenset({"MuRepolarisation"}): _mu_repol_seeds,
+}
 
 
 #: Registry mapping a *component* name to a closed-form seed estimator. Each
-#: estimator takes the finite, x-sorted ``(x, y, yerr)`` subset and returns a
-#: mapping of that component's *base* parameter names (e.g. ``"m"``, not the
-#: uniquified ``"m_2"``) to suggested values. Components without an entry keep
+#: estimator takes the finite, x-sorted ``(x, y, yerr)`` subset and the values
+#: the caller already holds for that component (``known``, by *base* name), and
+#: returns a mapping of that component's *base* parameter names (e.g. ``"m"``,
+#: not the uniquified ``"m_2"``) to suggested values. Components without an entry keep
 #: their static defaults. Estimators return only the parameters they are
 #: confident about — a partial dict is fine, an empty dict leaves everything to
 #: defaults. ``CriticalDivergence``/``OrderParameter``/``FermiStep`` are handled
 #: by :func:`suggest_trend_seeds` (the trend-model seed table reads only that
-#: helper) and are intentionally absent here.
+#: helper) and are intentionally absent here. ``MuRepolarisation`` is also
+#: absent: several terms are seeded *together* (:data:`_GROUP_SEEDERS`), which a
+#: per-component estimator cannot do.
 _MODEL_SEED_ESTIMATORS: dict[
     str,
     Callable[
-        [NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None], dict[str, float]
+        [
+            NDArray[np.float64],
+            NDArray[np.float64],
+            NDArray[np.float64] | None,
+            Mapping[str, float],
+        ],
+        dict[str, float],
     ],
 ] = {
     "Constant": _estimate_constant,
@@ -2458,8 +2723,15 @@ def suggest_model_seeds(
     x: NDArray,
     y: NDArray,
     yerr: NDArray | None = None,
+    *,
+    known: Mapping[str, float],
 ) -> dict[str, float]:
     """Data-aware seed overrides keyed by *unique* param name (``model.param_names``).
+
+    *known* holds the values the caller already has (starting values and fixed
+    values, by unique name). Each estimator reads its component's share as
+    inputs — ``RFResonanceMuP`` needs ``nu_RF`` to place its couplings — and
+    the known values are returned as given, over any estimate.
 
     A generic, per-component extension of :func:`suggest_trend_seeds`: for every
     component with a registered closed-form estimator (see
@@ -2468,33 +2740,43 @@ def suggest_model_seeds(
     the same component/mapping idiom the trend seeder uses. The
     critical-temperature components (``CriticalDivergence``/``OrderParameter``)
     are delegated to :func:`suggest_trend_seeds` and merged in, so its behaviour
-    is preserved exactly.
+    is preserved exactly. The components of :data:`_GROUP_SEEDERS` are each
+    seeded as a group instead, so several resonances/half-rises start on
+    successive features rather than all on the same one.
 
-    Only parameters the estimators are confident about are returned; the caller
-    merges these over :attr:`ParameterCompositeModel.param_defaults` and leaves
-    everything else untouched. Returns an empty mapping when the data is unusable
-    (fewer than two finite points). Pure and Qt-free.
+    Only parameters the estimators are confident about, and the known values,
+    are returned; the caller merges these over
+    :attr:`ParameterCompositeModel.param_defaults` and leaves everything else
+    untouched. Returns just the known values when the data is unusable (fewer
+    than two finite points). Pure and Qt-free.
     """
     xf, yf, ef = _finite_xy(x, y, yerr)
     if xf.size < 2:
-        return {}
+        return dict(known)
 
     seeds: dict[str, float] = {}
-    lcr_components = [
-        mapping
-        for component, mapping in zip(model.components, model._param_mappings, strict=True)
-        if component.name in _LCR_COMPONENTS
+    components = list(zip(model.components, model._param_mappings, strict=True))
+    component_known = [
+        {
+            base_name: float(known[unique])
+            for base_name, unique in mapping.items()
+            if unique in known
+        }
+        for _component, mapping in components
     ]
-    for mapping, (centre, height, width) in zip(
-        lcr_components, _lcr_peaks(xf, yf, len(lcr_components)), strict=False
-    ):
-        seeds.update({mapping["f"]: height, mapping["B0"]: centre, mapping["Bwid"]: width})
-    for component, mapping in zip(model.components, model._param_mappings, strict=True):
+    for names, group_seeder in _GROUP_SEEDERS.items():
+        group = [
+            index for index, (component, _) in enumerate(components) if component.name in names
+        ]
+        members = [(components[index][0], component_known[index]) for index in group]
+        for index, base_seeds in zip(group, group_seeder(xf, yf, members), strict=False):
+            seeds.update({components[index][1][base]: value for base, value in base_seeds.items()})
+    for (component, mapping), known_here in zip(components, component_known, strict=True):
         estimator = _MODEL_SEED_ESTIMATORS.get(component.name)
         if estimator is None:
             continue
         try:
-            base_seeds = estimator(xf, yf, ef)
+            base_seeds = estimator(xf, yf, ef, known_here)
         except (ValueError, FloatingPointError, ZeroDivisionError):
             continue
         for base_name, value in base_seeds.items():
@@ -2505,6 +2787,7 @@ def suggest_model_seeds(
 
     # Preserve the existing critical-temperature seeding exactly.
     seeds.update(suggest_trend_seeds(model, x, y))
+    seeds.update(known)
     return seeds
 
 
@@ -3638,11 +3921,17 @@ def fit_parameter_model(
 
     if extra_starts > 0:
         base_values = _parameter_values_by_name(parameters)
-        # A generic data-aware seed, merged over the user's current values.
-        data_seed = suggest_model_seeds(model, x_fit, y_fit, e_fit)
-        if data_seed:
-            merged = dict(base_values)
-            merged.update(data_seed)
+        # A generic data-aware seed, merged over the user's current values; the
+        # fixed values are the ones this fit holds.
+        data_seed = suggest_model_seeds(
+            model,
+            x_fit,
+            y_fit,
+            e_fit,
+            known={p.name: float(p.value) for p in parameters if p.fixed},
+        )
+        merged = {**base_values, **data_seed}
+        if merged != base_values:
             initial_candidates.append(("generic", merged))
         # Deterministic perturbed starts (RNG constructed only when requested,
         # so the extra_starts == 0 path never touches the RNG). The y-span is a

@@ -27,7 +27,10 @@ from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
     ParameterCompositeModel,
     component_names_for_x,
+    suggest_model_seeds,
 )
+from asymmetry.core.transform import FieldScan
+from asymmetry.core.workflow.integral_scan import fit_integral_scan
 
 # Paper-graded targets (McKenzie et al., J. Phys. Chem. B 117, 13614 (2013),
 # Table 1): cyclohexadienyl C6H6Mu in benzene at 293 K, ν_RF = 218.5 MHz.
@@ -270,3 +273,64 @@ def test_component_finite_for_pathological_params(params: tuple[float, float, fl
     a_mu, a_p, nu = params
     y = rf_resonance_mup(x, a_mu, a_p, nu, -1.0, 10.0, -1.0, 10.0, 0.0)
     assert np.all(np.isfinite(y))
+
+
+# --------------------------------------------------------------------------
+# Coupling seeds from the scan
+# --------------------------------------------------------------------------
+_SCAN_NU_RF = 200.0
+
+
+def _rf_scan(a_mu: float, a_p: float, width: float, *, nu_rf: float = _SCAN_NU_RF):
+    """A noisy integral RF scan on a 10 G grid, the two lines resolved by ``width``."""
+    b1, b2 = rf_resonance_fields(a_mu, a_p, nu_rf)
+    x = np.arange(round(b2, -1) - 200.0, round(b1, -1) + 200.0, 10.0)
+    error = np.full(x.size, 7e-4)
+    y = rf_resonance_mup(x, a_mu, a_p, nu_rf, 0.015, width, 0.015, width, 0.002)
+    y = y + np.random.default_rng(0).normal(0.0, 7e-4, x.size)
+    return FieldScan(
+        x=x,
+        value=y,
+        error=error,
+        run_numbers=list(range(x.size)),
+        order_key="field",
+        method="integral",
+    )
+
+
+@pytest.mark.parametrize(("a_mu", "a_p", "width"), [(540.0, 140.0, 15.0), (480.0, 90.0, 12.0)])
+def test_rf_scan_fits_from_its_own_coupling_seeds(a_mu: float, a_p: float, width: float) -> None:
+    scan = _rf_scan(a_mu, a_p, width)
+    model = ParameterCompositeModel(["RFResonanceMuP"])
+    seeds = suggest_model_seeds(model, scan.x, scan.value, scan.error, known={"nu_RF": _SCAN_NU_RF})
+    # The dips sit on a 10 G grid, so the solved couplings are close, not exact.
+    assert seeds["A_mu"] == pytest.approx(a_mu, abs=5.0)
+    assert seeds["A_p"] == pytest.approx(a_p, abs=15.0)
+
+    _fit_scan, fit = fit_integral_scan(scan, "RFResonanceMuP", fixed={"nu_RF": _SCAN_NU_RF})
+    assert fit["success"]
+    assert fit["parameters"]["A_mu"] == pytest.approx(a_mu, abs=4.0 * fit["uncertainties"]["A_mu"])
+    assert fit["parameters"]["A_p"] == pytest.approx(a_p, abs=4.0 * fit["uncertainties"]["A_p"])
+
+
+def test_rf_couplings_need_nu_rf_to_be_seeded() -> None:
+    scan = _rf_scan(540.0, 140.0, 15.0)
+    seeds = suggest_model_seeds(
+        ParameterCompositeModel(["RFResonanceMuP"]), scan.x, scan.value, scan.error, known={}
+    )
+    assert "A_mu" not in seeds
+    assert "A_p" not in seeds
+
+
+def test_rf_fit_converges_from_a_hand_given_start_far_off() -> None:
+    # The start the user gives is tried, and so is the scan's own seed.
+    scan = _rf_scan(A_MU_PAPER, A_P_PAPER, 25.0, nu_rf=NU_RF)
+    _fit_scan, fit = fit_integral_scan(
+        scan,
+        "RFResonanceMuP",
+        initial={"A_mu": 470.0, "A_p": 90.0},
+        fixed={"nu_RF": NU_RF},
+    )
+    assert fit["success"]
+    assert fit["parameters"]["A_mu"] == pytest.approx(A_MU_PAPER, abs=1.0)
+    assert fit["parameters"]["A_p"] == pytest.approx(A_P_PAPER, abs=5.0)

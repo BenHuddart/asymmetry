@@ -2047,13 +2047,19 @@ class ModelFitDialog(QDialog):
             yerr_masked = yerr_full[mask]
         else:
             x_masked, y_masked, yerr_masked = x_full, y_full, yerr_full
+        # The fixed rows are the values this range holds (RFResonanceMuP needs a
+        # fixed nu_RF to seed its couplings); Guess returns only the rest.
+        known = {p.name: float(p.value) for p in fit_range.parameters if p.fixed}
 
         self._set_guess_busy(True)
         self._guess_status_label.setText(info_html("Guessing seeds…"))
 
         def _worker(_worker: object) -> object:
             # OFF-THREAD: reads only the plain snapshots captured above.
-            return suggest_model_seeds(model_snapshot, x_masked, y_masked, yerr_masked)
+            seeds = suggest_model_seeds(
+                model_snapshot, x_masked, y_masked, yerr_masked, known=known
+            )
+            return {name: value for name, value in seeds.items() if name not in known}
 
         self._guess_target_idx = idx
         self._tasks.start(

@@ -85,7 +85,7 @@ def run(args: argparse.Namespace) -> None:
         plots.require_matplotlib()
 
     folder = Path(args.folder)
-    workdir = workdir_for(folder, args.workdir)
+    workdir, selection = workdir_for(folder, args.workdir, args.instrument)
     dataset = reduced_datasets(workdir, [args.run])[args.run]
     if args.tmin is not None or args.tmax is not None:
         dataset = dataset.time_range(args.tmin, args.tmax)
@@ -94,7 +94,7 @@ def run(args: argparse.Namespace) -> None:
         result = screen_run(
             dataset,
             geometry=args.geometry,
-            survey_geometry=_survey_geometry(workdir, args.run),
+            survey_geometry=_survey_geometry(workdir, selection, args.run),
             scope_preset=args.scope,
             include=_names(args.include),
             exclude=_names(args.exclude),
@@ -222,19 +222,21 @@ def _names(text: str) -> list[str]:
     return [name.strip() for name in text.split(",") if name.strip()]
 
 
-def _survey_geometry(workdir, run_number: int) -> str | None:
+def _survey_geometry(workdir, selection, run_number: int) -> str | None:
     """The geometry the folder's survey resolved for *run_number*, if surveyed.
 
     The survey may have *measured* it from Larmor precession, which is the only
     source that can speak for a file recording no field state; so when a survey
     exists in the work directory its reading beats this one dataset's metadata.
-    ``None`` when the folder was never surveyed, the run is not in the survey,
-    or the survey could not decide either.
+    The row is the *selection*'s — a survey without ``--instrument`` lists
+    every instrument in the folder, and two may share the run number. ``None`` when the folder was
+    never surveyed, the run is not in the survey, or the survey could not
+    decide either.
     """
     if not workdir.survey_path.exists():
         return None
     for row in workdir.read_survey()["runs"]:
-        if row["run_number"] == run_number:
+        if row["run_number"] == run_number and selection.matches(row["prefix"]):
             return row["geometry"]
     return None
 

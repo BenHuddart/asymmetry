@@ -38,11 +38,13 @@ from asymmetry.core.fitting.fit_wizard import (
     fingerprint_spectrum,
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.workflow.reduction import (
     ReductionSettings,
     estimate_alpha_for_run,
     reduce_run,
 )
+from asymmetry.core.workflow.workdir import RunSelection, instrument_name
 
 #: Timestamp spellings the loaders hand us: ISO-8601 from the ISIS NeXus
 #: headers and the PSI ``dd-MMM-yy HH:MM:SS`` run header form. External file
@@ -78,7 +80,16 @@ PRECESSION_STATES = ("larmor", "other", "none")
 
 #: Where :func:`resolve_row_geometry` got a run's geometry from. (The screening
 #: layer has its own, wider list — it can also be told by a person.)
-ROW_GEOMETRY_SOURCES = ("field", "measured", "refuted", "file", "none")
+ROW_GEOMETRY_SOURCES = ("field", "measured", "coils", "refuted", "file", "none")
+
+#: One field component must exceed the other this many times over before the
+#: logged coils name a geometry (see :func:`coil_geometry`).
+COIL_DOMINANCE = 10.0
+
+#: HiFi's Z coil carries up to this much field cancelling the stray axial field
+#: (7–12 G on the transverse runs checked), so that much of a Z reading is not an
+#: applied field.
+COIL_Z_COMPENSATION_GAUSS = 12.0
 
 
 def _parse_timestamp(text: object) -> datetime | None:
@@ -275,6 +286,34 @@ def _spontaneous_precession(fingerprint: Any) -> PrecessionEvidence:
     )
 
 
+def coil_geometry(metadata: dict[str, Any]) -> str | None:
+    """``"LF"``/``"TF"`` from the run's own logged field-coil readbacks, else ``None``.
+
+    HiFi logs every coil it drives (``Field_Main``, ``Field_Z`` along the beam;
+    ``Field_X``, ``Field_Y`` across it). The axial field is ``Field_Main +
+    Field_Z`` and the transverse ``hypot(Field_X, Field_Y)``, each the mean over
+    the run (:func:`~asymmetry.core.io.nexus.active_series_mean`). Axial above
+    :data:`COIL_DOMINANCE` times the transverse is LF; transverse above that
+    many times the axial field left after :data:`COIL_Z_COMPENSATION_GAUSS` is
+    TF; anything between, or a file that does not log all four coils, is
+    ``None``.
+    """
+    series = metadata.get("nexus_time_series", {})
+    main, z, x, y = (
+        active_series_mean(series.get(name))
+        for name in ("Field_Main", "Field_Z", "Field_X", "Field_Y")
+    )
+    if main is None or z is None or x is None or y is None:
+        return None
+    axial = abs(main + z)
+    transverse = float(np.hypot(x, y))
+    if axial > COIL_DOMINANCE * transverse:
+        return "LF"
+    if transverse > COIL_DOMINANCE * max(axial - COIL_Z_COMPENSATION_GAUSS, 0.0):
+        return "TF"
+    return None
+
+
 def resolve_row_geometry(
     metadata: dict[str, Any], evidence: PrecessionEvidence
 ) -> tuple[str | None, str]:
@@ -289,6 +328,12 @@ def resolve_row_geometry(
         transverse field, whatever the file says or fails to say — the case
         :func:`run_geometry` cannot reach, because ISIS EMU files record no
         field state at all.
+    ``"coils"``
+        The run's logged field-coil readbacks (:func:`coil_geometry`) name the
+        geometry. They are the run's own measurement of the field it applied,
+        so they outrank both a silent spectrum (a transverse line can be too
+        damped to resolve) and the file's field-state stamp, which HiFi sets to
+        ``TF`` on its longitudinal runs; they rank below measured precession.
     ``"refuted"``
         The spectrum was read and holds no line at all, so the applied field is
         not precessing the muon and the file's ``TF`` stamp is contradicted.
@@ -309,6 +354,9 @@ def resolve_row_geometry(
         return "ZF", "field"
     if evidence.state == "larmor":
         return "TF", "measured"
+    coils = coil_geometry(metadata)
+    if coils is not None:
+        return coils, "coils"
     if evidence.state == "none":
         return None, "refuted"
     geometry = run_geometry(metadata)
@@ -360,6 +408,9 @@ class RunRow:
     #: The setpoint, and the measured sample temperature when the file logs one.
     temperature: float | None
     sample_temperature_logged: float | None
+    #: Where the loader read ``sample_temperature_logged`` from (a log path, or a
+    #: PSI header sensor), ``None`` when there is no reading.
+    sample_temperature_log_source: str | None
     field: float | None
     field_direction: str
     geometry: str | None
@@ -398,6 +449,7 @@ class RunRow:
             "sample": self.sample,
             "temperature": self.temperature,
             "sample_temperature_logged": self.sample_temperature_logged,
+            "sample_temperature_log_source": self.sample_temperature_log_source,
             "field": self.field,
             "field_direction": self.field_direction,
             "geometry": self.geometry,
@@ -436,6 +488,8 @@ class CalibrationCandidate:
     """
 
     run_number: int
+    #: The run file's prefix, which names its instrument where two share run numbers.
+    prefix: str
     field_gauss: float | None
     reason: str
     source: str
@@ -449,6 +503,7 @@ class CalibrationCandidate:
         """Serialize to a plain, JSON-safe dict."""
         return {
             "run_number": self.run_number,
+            "prefix": self.prefix,
             "field_gauss": self.field_gauss,
             "reason": self.reason,
             "source": self.source,
@@ -511,9 +566,14 @@ def alpha_steps(candidates: list[CalibrationCandidate]) -> list[AlphaStep]:
     """Every place, in run order, where alpha moves by more than :data:`ALPHA_STEP_TOLERANCE`.
 
     A step means no single calibration run serves the folder: each block of runs
-    between steps needs a calibration run from inside it.
+    between steps needs a calibration run from inside it. Run order is taken
+    one instrument at a time, so two instruments sharing run numbers are never
+    interleaved.
     """
-    ordered = sorted(candidates, key=lambda candidate: candidate.run_number)
+    ordered = sorted(
+        candidates,
+        key=lambda candidate: (instrument_name(candidate.prefix), candidate.run_number),
+    )
     return [
         AlphaStep(
             before_run=first.run_number,
@@ -656,6 +716,7 @@ def build_run_row(
         sample=sample,
         temperature=dataset.temperature,
         sample_temperature_logged=dataset.sample_temperature_logged,
+        sample_temperature_log_source=metadata.get("sample_temperature_log_source"),
         field=dataset.field,
         field_direction=str(metadata.get("field_direction") or metadata.get("field_state") or ""),
         geometry=geometry,
@@ -726,15 +787,18 @@ def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
     groups: list[tuple[str, str, float, str, list[RunRow]]] = []
     by_field: dict[tuple, list[RunRow]] = {}
     by_temperature: dict[tuple, list[RunRow]] = {}
-    stretch: dict[int, int] = {}
-    count, current = 0, None
+    # Stretches of consecutive runs at one temperature, counted per instrument
+    # and keyed by file: two instruments in one folder interleave in run order.
+    stretch: dict[str, int] = {}
+    current: dict[str, float] = {}
+    count = 0
     for row in rows:
         if row.temperature is None or row.field is None:
             continue
         temperature = round(float(row.temperature), _SCAN_KEY_DECIMALS)
-        if temperature != current:
-            count, current = count + 1, temperature
-        stretch[row.run_number] = count
+        if current.get(row.instrument) != temperature:
+            count, current[row.instrument] = count + 1, temperature
+        stretch[row.file] = count
         field = round(float(row.field), _SCAN_KEY_DECIMALS)
         by_field.setdefault((row.instrument, field), []).append(row)
         key = (row.instrument, temperature, row.notes, row.n_periods)
@@ -769,23 +833,26 @@ def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
                 notes=notes,
             )
         )
-    longest_field_scan: dict[int, int] = {}
+    longest_field_scan: dict[tuple[str, int], int] = {}
     for scan in scans:
         if scan.axis == "field":
             for run in scan.runs:
-                longest_field_scan[run] = max(longest_field_scan.get(run, 0), len(scan.runs))
+                key = (scan.instrument, run)
+                longest_field_scan[key] = max(longest_field_scan.get(key, 0), len(scan.runs))
     cross_sections = [
         scan
         for scan in scans
         if scan.axis == "temperature"
-        and all(longest_field_scan.get(run, 0) > len(scan.runs) for run in scan.runs)
+        and all(
+            longest_field_scan.get((scan.instrument, run), 0) > len(scan.runs) for run in scan.runs
+        )
     ]
     scans = [scan for scan in scans if scan not in cross_sections]
     scans.sort(key=lambda scan: (scan.axis, scan.runs[0]))
     return [_note_shared_unresolved(scan, scans, rows) for scan in scans], len(cross_sections)
 
 
-def _field_scan_members(members: list[RunRow], stretch: dict[int, int]) -> list[list[RunRow]]:
+def _field_scan_members(members: list[RunRow], stretch: dict[str, int]) -> list[list[RunRow]]:
     """The field scans in *members*, runs sharing an instrument, temperature, note and period count.
 
     Two cuts. A run at a field its scan already holds, taken after the cryostat
@@ -796,14 +863,14 @@ def _field_scan_members(members: list[RunRow], stretch: dict[int, int]) -> list[
     do not are transverse calibrations taken beside a longitudinal scan, and are
     not part of it; where they are the majority the scan is transverse, and runs
     too slow or too fast to show a line belong to it. *stretch* numbers each
-    run's stretch of consecutive runs at one temperature.
+    file's stretch of consecutive runs at one temperature.
     """
     scans: list[list[RunRow]] = []
     for row in members:
         field = round(float(row.field), _SCAN_KEY_DECIMALS)
         if scans:
             fields = {round(float(member.field), _SCAN_KEY_DECIMALS) for member in scans[-1]}
-            if field not in fields or stretch[row.run_number] == stretch[scans[-1][-1].run_number]:
+            if field not in fields or stretch[row.file] == stretch[scans[-1][-1].file]:
                 scans[-1].append(row)
                 continue
         scans.append([row])
@@ -826,16 +893,19 @@ def _note_shared_unresolved(
     transverse line of its own, is most likely holding that field scan's
     (longitudinal) points — which a precession model then fails to fit. A grid
     of fields by temperatures, where every run belongs to both kinds of scan,
-    does not qualify: its scans are not mostly resolved.
+    does not qualify: its scans are not mostly resolved. Only *scan*'s own
+    instrument is consulted, since another may share its run numbers.
     """
-    geometry = {row.run_number: row.geometry for row in rows}
+    geometry = {row.run_number: row.geometry for row in rows if row.instrument == scan.instrument}
     unresolved = [run for run in scan.runs if geometry[run] is None]
     if scan.axis != "temperature" or not unresolved or 4 * len(unresolved) > len(scan.runs):
         return scan
     longitudinal_like = {
         run
         for other in scans
-        if other.axis == "field" and all(geometry[member] != "TF" for member in other.runs)
+        if other.instrument == scan.instrument
+        and other.axis == "field"
+        and all(geometry[member] != "TF" for member in other.runs)
         for run in other.runs
     }
     shared = [run for run in unresolved if run in longitudinal_like]
@@ -888,16 +958,17 @@ def calibration_verdict(
 
 
 def _calibration_candidates(
-    rows: list[RunRow], metadatas: list[dict[str, Any] | None], alphas: dict[int, float]
+    rows: list[RunRow], metadatas: list[dict[str, Any] | None], alphas: dict[str, float]
 ) -> tuple[list[CalibrationCandidate], int | None]:
     """The runs that could calibrate alpha, and the best of them.
 
     Each run is judged by :func:`calibration_verdict`. The best candidate is the
     strongest measured line; with no measured candidate at all it falls back to
     the metadata classifier's own ranking, which prefers a field near the middle
-    of the weak-TF window.
+    of the weak-TF window. *alphas* is keyed by file name, since two instruments
+    in one folder can share a run number.
     """
-    candidates: list[CalibrationCandidate] = []
+    candidates: list[tuple[RunRow, CalibrationCandidate]] = []
     # Runs the classifier is allowed to speak for, masked to ``None`` elsewhere
     # so ``best_calibration_run_index`` ranks only those.
     unmeasured: list[dict[str, Any] | None] = []
@@ -907,32 +978,56 @@ def _calibration_candidates(
         if source is None:
             continue
         candidates.append(
-            CalibrationCandidate(
-                run_number=row.run_number,
-                field_gauss=row.field,
-                reason=reason,
-                source=source,
-                snr=row.precession.snr if source == "measured" else None,
-                alpha=alphas[row.run_number],
-                best=False,
+            (
+                row,
+                CalibrationCandidate(
+                    run_number=row.run_number,
+                    prefix=row.prefix,
+                    field_gauss=row.field,
+                    reason=reason,
+                    source=source,
+                    snr=row.precession.snr if source == "measured" else None,
+                    alpha=alphas[row.file],
+                    best=False,
+                ),
             )
         )
 
-    measured = [candidate for candidate in candidates if candidate.source == "measured"]
+    measured = [pair for pair in candidates if pair[1].source == "measured"]
     if measured:
-        best_run = max(measured, key=lambda candidate: candidate.snr).run_number
+        best_row = max(measured, key=lambda pair: pair[1].snr)[0]
     else:
         index = best_calibration_run_index(unmeasured)
-        best_run = None if index is None else rows[index].run_number
+        best_row = None if index is None else rows[index]
 
-    candidates = [
-        replace(candidate, best=candidate.run_number == best_run) for candidate in candidates
-    ]
-    return candidates, best_run
+    return (
+        [replace(candidate, best=row is best_row) for row, candidate in candidates],
+        None if best_row is None else best_row.run_number,
+    )
 
 
-def survey_folder(folder: str | Path, *, pair: tuple[str, str] | None = None) -> FolderSurvey:
-    """Load every run file in *folder* and report what the experiment contains.
+def _run_holding_subfolders(folder: Path) -> list[tuple[str, int]]:
+    """Immediate sub-folders of *folder* that hold run files, with their counts.
+
+    One level only, matching :func:`survey_folder`'s own non-recursive scan: a
+    sub-folder's own sub-folders are not inspected.
+    """
+    from asymmetry.core.io.run_range import scan_run_files
+
+    holders: list[tuple[str, int]] = []
+    for entry in sorted(folder.iterdir()):
+        if not entry.is_dir():
+            continue
+        count = len(scan_run_files(entry).entries)
+        if count:
+            holders.append((entry.name, count))
+    return holders
+
+
+def survey_folder(
+    folder: str | Path, *, pair: tuple[str, str] | None = None, instrument: str | None = None
+) -> FolderSurvey:
+    """Load every run file in *folder* — or *instrument*'s — and report what it contains.
 
     Every run is also reduced under the default
     :class:`~asymmetry.core.workflow.reduction.ReductionSettings` — on *pair*
@@ -940,19 +1035,35 @@ def survey_folder(folder: str | Path, *, pair: tuple[str, str] | None = None) ->
     :func:`precession_evidence`); the file is loaded once and that one
     :class:`~asymmetry.core.data.dataset.Run` is reduced, never re-read.
 
-    Raises :class:`ValueError` when *folder* is not a directory (from
-    :func:`asymmetry.core.io.run_range.scan_run_files`).
+    Two instruments in one folder may share run numbers, so everything the
+    survey measures per run is keyed by file, and scans never mix instruments.
+
+    Raises :class:`ValueError` when *folder* is not a directory or *instrument*
+    names none of its files (from :meth:`RunSelection.scan`), or when it holds
+    no run files of its own but its immediate sub-folders do — naming them with
+    their run counts, so the caller can point at one instead of at a folder
+    that merely contains the experiment.
     """
-    from asymmetry.core.io import load, scan_run_files
+    from asymmetry.core.io import load
     from asymmetry.core.io.periods import period_count
 
     folder = Path(folder)
-    found = scan_run_files(folder)
+    found = RunSelection(folder, instrument).scan()
+    if not found.entries:
+        holders = _run_holding_subfolders(folder)
+        if holders:
+            listing = ", ".join(
+                f"{name} ({count} run{'s' if count != 1 else ''})" for name, count in holders
+            )
+            raise ValueError(
+                f"{folder} holds no run files directly; its sub-folders do: {listing}. "
+                "Survey one of them instead."
+            )
     settings = ReductionSettings(pair=pair)
 
     rows: list[RunRow] = []
     metadatas: list[dict[str, Any] | None] = []
-    alphas: dict[int, float] = {}
+    alphas: dict[str, float] = {}
     for prefix, run_number, path in found.entries:
         result = load(str(path))
         # A multi-period file loads as a list; the survey describes its first
@@ -971,7 +1082,7 @@ def survey_folder(folder: str | Path, *, pair: tuple[str, str] | None = None) ->
         )
         metadatas.append(dataset.run.metadata)
         if calibration_verdict(dataset.run.metadata, dataset.field, precession)[0] is not None:
-            alphas[run_number] = estimate_alpha_for_run(dataset.run, settings).alpha
+            alphas[path.name] = estimate_alpha_for_run(dataset.run, settings).alpha
 
     candidates, best_run = _calibration_candidates(rows, metadatas, alphas)
 
@@ -1007,6 +1118,7 @@ __all__ = [
     "alpha_steps",
     "build_run_row",
     "calibration_verdict",
+    "coil_geometry",
     "departs",
     "has_file_deadtime",
     "precession_evidence",

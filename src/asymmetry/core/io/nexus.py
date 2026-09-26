@@ -143,31 +143,41 @@ def _normalize_field_to_gauss(value: float | None, units: str | None) -> float |
     return float(value)
 
 
-def active_series_mean(entry: Any) -> float | None:
-    """Mean of a logged NXlog series over its run-active (t >= 0) samples.
+def active_series_samples(entry: dict[str, Any]) -> np.ndarray:
+    """The finite samples of a logged NXlog series over its run-active (t >= 0) span.
 
     The stored ``mean`` / ``min`` / ``max`` summarise the *whole* record,
     including the pre-run (t < 0) plateau — so the first run of a setpoint block
     reads the previous setpoint (Sn 91516 -> 4.62 K vs the correct 1.599 K).
-    When the series carries a time axis, average only the t >= 0 samples;
-    otherwise fall back to the precomputed full-record ``mean``.
+    A series with no time axis, or none of it at t >= 0, gives every finite
+    sample; one with no sample list gives none.
+    """
+    values = entry.get("values")
+    if not isinstance(values, (list, tuple)) or not values:
+        return np.empty(0)
+    v = np.asarray(values, dtype=float)
+    times = entry.get("time")
+    if isinstance(times, (list, tuple)) and times:
+        t = np.asarray(times, dtype=float)
+        n = min(t.size, v.size)
+        active = v[:n][(t[:n] >= 0.0) & np.isfinite(v[:n])]
+        if active.size:
+            return active
+    return v[np.isfinite(v)]
 
-    Pure (no Qt) so the loader (``sample_temperature_logged``) and the GUI Data
-    Browser share one definition of the run-active mean and never disagree.
+
+def active_series_mean(entry: Any) -> float | None:
+    """Mean of a logged NXlog series over its run-active samples (:func:`active_series_samples`).
+
+    Falls back to the precomputed ``mean`` for a series that carries no samples.
+    Pure (no Qt) so the loader and the GUI Data Browser share one definition of
+    the run-active mean and never disagree.
     """
     if not isinstance(entry, dict):
         return None
-    times = entry.get("time")
-    values = entry.get("values")
-    if isinstance(times, (list, tuple)) and isinstance(values, (list, tuple)) and times and values:
-        t = np.asarray(times, dtype=float)
-        v = np.asarray(values, dtype=float)
-        n = min(t.size, v.size)
-        if n:
-            t, v = t[:n], v[:n]
-            active = v[(t >= 0.0) & np.isfinite(v)]
-            if active.size:
-                return float(np.mean(active))
+    samples = active_series_samples(entry)
+    if samples.size:
+        return float(np.mean(samples))
     try:
         mean = float(entry.get("mean"))
     except (TypeError, ValueError):
@@ -198,6 +208,52 @@ def _add_main_field(metadata: dict[str, Any], time_series: dict[str, dict[str, A
     metadata["field_main_gauss"] = float(main)
     metadata["field"] = float(main) + float(recorded)
     metadata["field_source"] = "main+sweep"
+
+
+def _add_period_hall_offset(
+    metadata: dict[str, Any],
+    time_series: dict[str, dict[str, Any]],
+    data_periods: list[int],
+) -> None:
+    """Record ``period_hall_offset``, the red period's Hall reading less the green's.
+
+    HiFi logs no red/green coil current, but its Hall probe (``Field_Hall_Z``)
+    sees the coil: each Hall sample belongs to the DAE period in force at its
+    time (``Beamlog_Period_Num``, sample-and-hold), and the red and green data
+    periods (*data_periods*, their DAE period numbers) differ by the offset.
+    Medians, so a field ramp spilling into a period does not drag it. The step
+    stays in probe units: one run cannot convert a difference to gauss (see
+    :func:`asymmetry.core.workflow.integral_scan.period_field_offset_gauss`), so
+    it is recorded only beside the ``Field_Main`` log that conversion reads.
+    """
+    periods = time_series.get("Beamlog_Period_Num")
+    hall = time_series.get("Field_Hall_Z")
+    if (
+        periods is None
+        or hall is None
+        or active_series_mean(time_series.get("Field_Main")) is None
+        or len(data_periods) != 2
+    ):
+        return
+    change_times, period_numbers = _logged_samples(periods)
+    order = np.argsort(change_times, kind="stable")
+    hall_times, hall_values = _logged_samples(hall)
+    in_force = np.searchsorted(change_times[order], hall_times, side="right") - 1
+    active = (hall_times >= 0.0) & (in_force >= 0) & np.isfinite(hall_values)
+    period_of_sample = period_numbers[order][np.maximum(in_force, 0)]
+    red, green = (hall_values[active & (period_of_sample == number)] for number in data_periods)
+    if not red.size or not green.size:
+        return
+    metadata["period_hall_offset"] = float(np.median(red) - np.median(green))
+
+
+def _logged_samples(entry: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    """A logged series' ``(time, value)`` pairs, cut to the shorter of the two lists."""
+    n = min(len(entry["time"]), len(entry["values"]))
+    return (
+        np.asarray(entry["time"][:n], dtype=float),
+        np.asarray(entry["values"][:n], dtype=float),
+    )
 
 
 @dataclass
@@ -430,9 +486,10 @@ class NexusLoader(BaseLoader):
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
-        logged_temperature = self._logged_sample_temperature(time_series)
-        if logged_temperature is not None:
-            metadata_base["sample_temperature_logged"] = logged_temperature
+        _add_period_hall_offset(
+            metadata_base, time_series, self._data_periods(entry, len(counts_periods))
+        )
+        logged_temperature = self._record_logged_sample_temperature(metadata_base, time_series)
 
         suspect, reason = self._temperature_unit_suspect(
             instrument_name, temperature, logged_temperature, temperature_units
@@ -641,9 +698,10 @@ class NexusLoader(BaseLoader):
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
-        logged_temperature = self._logged_sample_temperature(time_series)
-        if logged_temperature is not None:
-            metadata_base["sample_temperature_logged"] = logged_temperature
+        _add_period_hall_offset(
+            metadata_base, time_series, self._data_periods(entry, len(counts_periods))
+        )
+        logged_temperature = self._record_logged_sample_temperature(metadata_base, time_series)
 
         suspect, reason = self._temperature_unit_suspect(
             instrument_name, temperature, logged_temperature, temperature_units
@@ -695,6 +753,20 @@ class NexusLoader(BaseLoader):
             if values.size:
                 return values
         return np.asarray([], dtype=np.float64)
+
+    def _data_periods(self, entry: Any, n_periods: int) -> list[int]:
+        """The DAE period numbers of the file's *n_periods* data periods, in order.
+
+        ``instrument/beam/period_type`` marks each DAE period as data-taking
+        (1) or dwell: a HiFi red/green run cycles ramp up, field on, ramp down,
+        field off (``[2, 1, 2, 1]``), so its data periods are DAE periods 2 and
+        4. Without that field the DAE periods are the data periods.
+        """
+        beam = self._read_optional(self._read_optional(entry, "instrument"), "beam")
+        types = np.asarray(self._read_optional(beam, "period_type", default=[]), dtype=float)
+        if types.size:
+            return [int(number) for number in np.flatnonzero(types == 1) + 1]
+        return list(range(1, n_periods + 1))
 
     def _build_period_datasets(
         self,
@@ -1369,46 +1441,55 @@ class NexusLoader(BaseLoader):
         _walk(root, "")
         return series
 
-    def _logged_sample_temperature(self, time_series: dict[str, dict[str, Any]]) -> float | None:
-        """Return a representative *logged* sample temperature, if available.
+    def _record_logged_sample_temperature(
+        self, metadata: dict[str, Any], time_series: dict[str, dict[str, Any]]
+    ) -> float | None:
+        """Record the run's *logged* sample temperature in *metadata*, and return it.
 
         Unlike ``metadata['temperature']`` (the ``sample/temperature``
-        setpoint), this is derived from a sample-thermometer NXlog — the actual
-        recorded sample temperature, which can differ from the parked setpoint
-        (e.g. CdS parks at 1 K while the sample sits near 5 K). The series mean
-        over the run is used as the representative value. Returns ``None`` when
-        no usable logged series is present.
-
-        Block matching is deliberately conservative: a candidate path must name
-        a *sample* thermometer (a segment containing both "sample" and "temp"),
-        which catches ``Temp_Sample`` at any depth — flat as
-        ``sample/Temp_Sample``, or nested on ISIS selog files as
-        ``selog/Temp_Sample/value_log``. Controller / cryostat / furnace
-        readbacks (``Temp_RBV``, ``Temp_Cryostat``, ``Temp_Set`` …) are **not**
-        matched: an EMU furnace run that logs only those has no sample
+        setpoint), this is the mean over the run of a sample-thermometer NXlog —
+        the recorded sample temperature, which can differ from the parked
+        setpoint (e.g. CdS parks at 1 K while the sample sits near 5 K). The
+        first candidate (:meth:`_is_sample_temperature_path`) with a reading
+        sets ``sample_temperature_logged`` and ``sample_temperature_log_source``
+        (its log path); a candidate without one is listed in
+        ``temperature_log_rejected`` with the reason. Controller / cryostat /
+        furnace readbacks (``Temp_RBV``, ``Temp_Cryostat``, ``Temp_Set`` …) are
+        never candidates: an EMU furnace run that logs only those has no sample
         thermometer, so ``None`` is the honest answer rather than a guess.
 
-        Two robustness rules:
-
-        * The value is normalized to kelvin via the logged series' ``units``
-          attribute (a Celsius log → +273.15), mirroring the setpoint path.
-        * A logged sample temperature is a physical reading > 0 K. An all-zero
-          series (mean 0.0 K — a disconnected/unlogged sensor, seen on some EMU
-          runs) is skipped rather than reported as a misleading ``0.0``.
+        Samples are run-active (:func:`active_series_samples`), converted to
+        kelvin by the series' ``units`` (a Celsius log → +273.15, as for the
+        setpoint), and those at or below 0 K dropped: absolute zero is not a
+        reading but a sensor dropout, which ISIS logs as 0.
         """
+        rejections: list[dict[str, str]] = []
+        reading: float | None = None
         for path, entry in time_series.items():
             if not self._is_sample_temperature_path(path, entry):
                 continue
-            # Gate to run-active (t >= 0) samples so a parked pre-run plateau
-            # does not contaminate the representative value (shared with the GUI).
-            mean = active_series_mean(entry)
-            if mean is None or not np.isfinite(mean):
+            units = entry.get("units", "")
+            kelvin = np.array(
+                [_normalize_temperature_to_kelvin(v, units) for v in active_series_samples(entry)]
+            )
+            physical = kelvin[kelvin > 0.0]
+            if not physical.size:
+                rejections.append(
+                    {
+                        "source": path,
+                        "reason": (
+                            "no sample above 0 K while the run was active: a disconnected sensor"
+                        ),
+                    }
+                )
                 continue
-            kelvin = _normalize_temperature_to_kelvin(float(mean), entry.get("units", ""))
-            if kelvin is None or not np.isfinite(kelvin) or kelvin <= 0.0:
-                continue
-            return float(kelvin)
-        return None
+            reading = float(np.mean(physical))
+            metadata["sample_temperature_logged"] = reading
+            metadata["sample_temperature_log_source"] = path
+            break
+        if rejections:
+            metadata["temperature_log_rejected"] = rejections
+        return reading
 
     @staticmethod
     def _is_sample_temperature_path(path: str, entry: Any = None) -> bool:

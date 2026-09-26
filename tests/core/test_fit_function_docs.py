@@ -108,3 +108,16 @@ def test_applicability_text_cites_via_reference_lists() -> None:
         assert "eq." not in lowered, name
         assert "ms-intro" not in lowered, name
         assert "phys. rev." not in text, name
+
+
+def test_every_resonance_model_has_applicability_and_references() -> None:
+    from asymmetry.core.fitting.component_docs import (
+        PARAMETER_MODEL_APPLICABILITY,
+        get_component_references,
+    )
+    from asymmetry.core.fitting.parameter_models import _LCR_COMPONENTS
+
+    assert "LorentzianLCRPair" in _LCR_COMPONENTS
+    for name in _LCR_COMPONENTS:
+        assert name in PARAMETER_MODEL_APPLICABILITY, name
+        assert get_component_references(name, kind="parameter_model"), name

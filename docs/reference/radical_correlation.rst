@@ -99,6 +99,12 @@ in the Fourier panel's display-mode list. Two controls appear:
   are penalised. The default of 2 follows WiMDA; raise it to sharpen against
   noise, set 0 for a plain product.
 
+From a script or an agent, ``asymmetry fourier --run N --correlation``
+(:doc:`agent_workflow`) builds the same spectrum on the command line, with
+``--correlation-field`` and ``--correlation-order`` for the two controls
+above; the stored peak table is already on the hyperfine-coupling axis, so
+no unit conversion is needed after it.
+
 With several detector groups selected the correlation is built from the averaged
 spectrum; select a single group to correlate that group alone. The peak position
 is the coupling — read it straight off the axis.

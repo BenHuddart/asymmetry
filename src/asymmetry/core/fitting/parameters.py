@@ -407,6 +407,7 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "Bwid": ParamInfo(
         "Bwid", "Bwid", "B_wid", r"$B_{wid}$", r"{\it B}_{wid}", "G", default_min=0.0
     ),
+    "dB": ParamInfo("dB", "dB", "ΔB", r"$\Delta B$", r"\Delta {\it B}", "G", default_min=0.0),
     "Tc": ParamInfo("Tc", "Tc", "T_c", r"$T_c$", r"{\it T}_{c}", "K", default_min=0.0),
     "Bc2": ParamInfo("Bc2", "Bc2", "B_c2", r"$B_{c2}$", r"{\it B}_{c2}", "T", default_min=0.0),
     "lambda_ab": ParamInfo(
@@ -606,6 +607,7 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "tau": "Characteristic decay scale of x in the exponential term.",
     "B0": "Characteristic field scale or resonance-center field.",
     "Bwid": "Characteristic Gaussian field width around the resonance center.",
+    "dB": "Field by which the green period exceeds the red one in a red/green (differential) ALC scan.",
     "Tc": "Critical temperature where the ordered/superconducting state emerges.",
     "Bc2": "Upper critical field (T) setting the reduced field b = B0/Bc2 in the Brandt vortex-lattice line width.",
     "lambda_ab": "Magnetic (ab-plane) penetration depth (nm) extracted from the field-dependent vortex-lattice line width.",

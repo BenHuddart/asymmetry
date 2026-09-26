@@ -15,6 +15,7 @@ from asymmetry.core.workflow.survey import (
     _scan_groups,
     alpha_steps,
     calibration_verdict,
+    coil_geometry,
     resolve_row_geometry,
     survey_folder,
     temperature_departures,
@@ -64,6 +65,7 @@ def _row(
         sample=None,
         temperature=temperature,
         sample_temperature_logged=None,
+        sample_temperature_log_source=None,
         field=field,
         field_direction="",
         geometry=geometry,
@@ -301,6 +303,61 @@ def test_the_files_own_token_stands_when_nothing_was_measured() -> None:
     assert resolve_row_geometry({"field_state": "LF"}, unmeasured) == ("LF", "file")
 
 
+def _coils(main: float, x: float, y: float, z: float) -> dict:
+    """Run metadata logging HiFi's four field coils, each steady over the run."""
+    return {
+        "field": main + z,
+        "field_state": "TF",
+        "nexus_time_series": {
+            name: {"time": [0.0, 60.0], "values": [value, value]}
+            for name, value in (
+                ("Field_Main", main),
+                ("Field_X", x),
+                ("Field_Y", y),
+                ("Field_Z", z),
+            )
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("main", "x", "y", "z", "expected"),
+    [
+        (19810.0, 0.0, 0.0, 0.0, "LF"),  # the main solenoid alone
+        (0.0, 0.01, 19.96, 11.99, "TF"),  # TF20 on the Y coil, Z compensating stray field
+        (20900.0, 0.0, 0.07, 160.0, "LF"),  # a Z sweep on a persistent main
+        (0.0, 0.0, 50.0, 100.0, None),  # neither dominates
+        (0.0, 0.0, 0.0, 0.0, None),  # nothing applied
+    ],
+)
+def test_logged_coils_name_the_geometry_when_one_component_dominates(
+    main: float, x: float, y: float, z: float, expected: str | None
+) -> None:
+    assert coil_geometry(_coils(main, x, y, z)) == expected
+
+
+def test_a_file_without_coil_logs_has_no_coil_geometry() -> None:
+    assert coil_geometry({"field": 100.0, "field_state": "TF"}) is None
+    partial = _coils(19810.0, 0.0, 0.0, 0.0)
+    del partial["nexus_time_series"]["Field_Y"]
+    assert coil_geometry(partial) is None
+
+
+def test_logged_coils_rank_below_measured_precession_and_above_the_rest() -> None:
+    # HiFi stamps TF on its longitudinal runs; the coils it logged say LF.
+    longitudinal = _coils(19810.0, 0.0, 0.0, 0.0)
+    unmeasured = PrecessionEvidence(
+        state=None, frequency_mhz=None, snr=None, larmor_mhz=268.5, note="above Nyquist"
+    )
+    silent = PrecessionEvidence(state="none", frequency_mhz=None, snr=3.0, larmor_mhz=1.0, note="")
+    larmor = PrecessionEvidence(
+        state="larmor", frequency_mhz=0.27, snr=90.0, larmor_mhz=0.27, note=""
+    )
+    assert resolve_row_geometry(longitudinal, unmeasured) == ("LF", "coils")
+    assert resolve_row_geometry(longitudinal, silent) == ("LF", "coils")
+    assert resolve_row_geometry(_coils(0.0, 0.01, 19.96, 11.99), larmor) == ("TF", "measured")
+
+
 def test_survey_groups_the_zero_field_scan_with_temperature_as_axis(survey) -> None:
     scans = [scan for scan in survey.scans if scan.axis == "temperature"]
     assert len(scans) == 1
@@ -484,6 +541,51 @@ def test_two_instruments_in_one_folder_never_share_a_scan() -> None:
     assert all(len(scan.runs) == 2 for scan in scans)
 
 
+def test_a_return_sweep_stays_whole_while_another_instruments_runs_interleave() -> None:
+    """Two instruments sharing run numbers interleave in run order; neither splits the other."""
+    rows = [
+        _row(run_number=run, temperature=temperature, field=field, instrument=instrument)
+        for run, field in enumerate((100.0, 200.0, 100.0, 300.0), start=1)
+        for instrument, temperature in (("EMU", 10.0), ("MUSR", 20.0))
+    ]
+    field_scans = [scan for scan in _scan_groups(rows)[0] if scan.axis == "field"]
+    assert sorted((scan.instrument, len(scan.runs)) for scan in field_scans) == [
+        ("EMU", 4),
+        ("MUSR", 4),
+    ]
+
+
+def test_two_instruments_sharing_a_run_number_each_get_their_own_alpha(tmp_path: Path) -> None:
+    pytest.importorskip("h5py")
+    from asymmetry.core.io.nexus_writer import write_nexus_v1
+    from asymmetry.core.simulate import simulate_run
+    from tests.core.conftest import _calibration_signal, _template_for
+
+    for prefix, alpha in (("EMU", 1.25), ("MUSR", 0.8)):
+        title = f"Calibrant {prefix}"
+        run = simulate_run(
+            _template_for(temperature=5.0, field=CALIBRATION_FIELD_G, title=title),
+            _calibration_signal,
+            total_events=2.0e6,
+            seed=1,
+            alpha=alpha,
+            run_number=42,
+            title=title,
+        )
+        write_nexus_v1(run, tmp_path / f"{prefix}00000042.nxs")
+
+    result = survey_folder(tmp_path)
+
+    assert sorted(row.file for row in result.runs) == ["EMU00000042.nxs", "MUSR00000042.nxs"]
+    alphas = {c.prefix: c.alpha for c in result.calibration_candidates}
+    assert alphas["EMU"] == pytest.approx(1.25, rel=0.05)
+    assert alphas["MUSR"] == pytest.approx(0.8, rel=0.05)
+    assert sum(c.best for c in result.calibration_candidates) == 1
+    assert [row.file for row in survey_folder(tmp_path, instrument="MUSR").runs] == [
+        "MUSR00000042.nxs"
+    ]
+
+
 def test_survey_reports_no_field_scan_when_no_two_runs_share_a_temperature(survey) -> None:
     assert [scan for scan in survey.scans if scan.axis == "field"] == []
 
@@ -506,9 +608,38 @@ def test_survey_rejects_a_path_that_is_not_a_directory(tmp_path: Path) -> None:
         survey_folder(missing)
 
 
-def _candidate(run_number: int, alpha: float) -> CalibrationCandidate:
+def test_survey_of_a_folder_with_only_subfolders_of_runs_names_them(tmp_path: Path) -> None:
+    """No run files directly in *folder*: point at the sub-folder that holds them.
+
+    ``scan_run_files`` never opens a file, so bare touched names are enough
+    to exercise this without a real (h5py-backed) NeXus fixture.
+    """
+    rg1 = tmp_path / "RG1"
+    rg1.mkdir()
+    for run in range(700, 703):
+        (rg1 / f"SIM{run:08d}.nxs").touch()
+    rg2 = tmp_path / "RG2"
+    rg2.mkdir()
+    (rg2 / "SIM00000710.nxs").touch()
+    # Two levels down: scan_run_files (and survey_folder) never recurse this far.
+    nested = rg1 / "nested"
+    nested.mkdir()
+    (nested / "SIM00000720.nxs").touch()
+
+    with pytest.raises(ValueError, match=r"RG1 \(3 runs\), RG2 \(1 run\)"):
+        survey_folder(tmp_path)
+
+
+def test_survey_of_a_genuinely_empty_folder_is_still_an_empty_survey(tmp_path: Path) -> None:
+    """A folder with nothing in it at all is not the "point at a sub-folder" case."""
+    empty = survey_folder(tmp_path)
+    assert empty.runs == []
+
+
+def _candidate(run_number: int, alpha: float, prefix: str = "SIM") -> CalibrationCandidate:
     return CalibrationCandidate(
         run_number=run_number,
+        prefix=prefix,
         field_gauss=100.0,
         reason="",
         source="measured",
@@ -531,6 +662,17 @@ def test_an_alpha_step_is_reported_between_consecutive_candidates_in_run_order()
         {"before_run": 280, "after_run": 281, "alpha_before": 1.068, "alpha_after": 1.401}
     ]
     assert alpha_steps(candidates[1:3]) == []
+
+
+def test_alpha_steps_take_run_order_one_instrument_at_a_time() -> None:
+    """Interleaving two instruments' shared run numbers would invent a step at every run."""
+    candidates = [
+        _candidate(1, 1.0, "EMU"),
+        _candidate(1, 1.4, "MUSR"),
+        _candidate(2, 1.01, "emu"),
+        _candidate(2, 1.41, "MUSR"),
+    ]
+    assert [(step.before_run, step.after_run) for step in alpha_steps(candidates)] == [(2, 1)]
 
 
 def test_a_logged_temperature_far_from_its_setpoint_is_a_departure() -> None:

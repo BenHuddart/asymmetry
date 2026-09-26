@@ -538,17 +538,28 @@ def plot_spectrum(
     magnitude: np.ndarray,
     *,
     run_number: int,
+    coupling: bool,
     out_path: str | Path,
 ) -> Path:
-    """Real and magnitude Fourier channels for one reduced run."""
+    """Real and magnitude Fourier channels for one reduced run.
+
+    A correlation spectrum (*coupling*) has one real channel, on the hyperfine
+    coupling axis.
+    """
     figure = _new_figure(_FIGSIZE)
     axes = figure.add_subplot(111)
-    axes.plot(frequency, magnitude, color="C0", lw=1.2, label="magnitude")
-    axes.plot(frequency, real, color="C1", lw=1.0, alpha=0.8, label="real")
-    axes.set_xlabel("frequency / MHz")
-    axes.set_ylabel("Fourier amplitude")
-    axes.set_title(f"Run {run_number} — Fourier spectrum")
-    axes.legend(loc="best", fontsize="small")
+    if coupling:
+        axes.plot(frequency, magnitude, color="C0", lw=1.2)
+        axes.set_xlabel("hyperfine coupling A_mu / MHz")
+        axes.set_ylabel("correlation (a.u.)")
+        axes.set_title(f"Run {run_number} — correlation spectrum")
+    else:
+        axes.plot(frequency, magnitude, color="C0", lw=1.2, label="magnitude")
+        axes.plot(frequency, real, color="C1", lw=1.0, alpha=0.8, label="real")
+        axes.set_xlabel("frequency / MHz")
+        axes.set_ylabel("Fourier amplitude")
+        axes.set_title(f"Run {run_number} — Fourier spectrum")
+        axes.legend(loc="best", fontsize="small")
     return _save(figure, out_path)
 
 

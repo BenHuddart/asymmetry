@@ -120,6 +120,7 @@ def fit_scan_model(
     x_min: float | None = None,
     x_max: float | None = None,
     method: str = "migrad",
+    extra_starts: int = 0,
 ) -> ParameterModelFitResult:
     """Fit a parameter model to a field scan's ``(x, value, error)``.
 
@@ -135,7 +136,9 @@ def fit_scan_model(
     set may be empty.
 
     Pass starting values via *either* an explicit ``parameters`` set *or* an
-    ``initial`` override dict, not both.
+    ``initial`` override dict, not both. ``extra_starts`` is
+    :func:`~asymmetry.core.fitting.parameter_models.fit_parameter_model`'s
+    multi-start, which also tries the scan's own data seed.
     """
     composite = as_composite_model(model)
     if parameters is not None and initial is not None:
@@ -151,6 +154,7 @@ def fit_scan_model(
         x_min=x_min,
         x_max=x_max,
         method=method,
+        extra_starts=extra_starts,
     )
 
 
@@ -171,12 +175,10 @@ def rf_resonance_seeds(
     the GUI's RF fit and a scripted one start from the same place.
     """
     composite = as_composite_model(RF_RESONANCE_COMPONENT)
+    known = {"A_mu": float(a_mu), "A_p": float(a_p), "nu_RF": float(nu_rf)}
     return {
         **composite.param_defaults,
-        **suggest_model_seeds(composite, scan.x, scan.value, scan.error),
-        "A_mu": float(a_mu),
-        "A_p": float(a_p),
-        "nu_RF": float(nu_rf),
+        **suggest_model_seeds(composite, scan.x, scan.value, scan.error, known=known),
     }
 
 

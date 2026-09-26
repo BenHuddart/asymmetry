@@ -63,7 +63,9 @@ options:
 ## `asymmetry survey`
 
 ```
-usage: asymmetry survey [-h] [--pair FWD/BWD] [--json] [--workdir WORKDIR] folder
+usage: asymmetry survey [-h] [--pair FWD/BWD] [--json] [--workdir WORKDIR]
+                        [--instrument NAME]
+                        folder
 
 positional arguments:
   folder             Directory holding the run files
@@ -76,6 +78,9 @@ options:
   --json             Emit the machine-readable payload
   --workdir WORKDIR  Work directory to write survey.json into (default: ./asymmetry-
                      work)
+  --instrument NAME  Use only this instrument's runs — the file prefix, in any case
+                     (EMU selects EMU… and emu…); needed where two instruments in the
+                     folder share run numbers
 ```
 
 ## `asymmetry alpha`
@@ -84,7 +89,7 @@ options:
 usage: asymmetry alpha [-h] --run RUN [--deadtime {off,from_file}] [--pair FWD/BWD]
                        [--background none|tail_fit|range[:FIRST:LAST]]
                        [--t0-offset BINS] [--t-good-offset BINS]
-                       [--period RED|GREEN|N|green-red] [--json]
+                       [--period RED|GREEN|N|green-red] [--instrument NAME] [--json]
                        folder
 
 positional arguments:
@@ -112,19 +117,23 @@ options:
                         Select one period from a multi-period file (red is period 1,
                         green period 2), or green-red for the difference of a two-
                         period run
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
   --json                Emit the machine-readable payload
 ```
 
 ## `asymmetry reduce`
 
 ```
-usage: asymmetry reduce [-h] --runs RUNS [--alpha ALPHA] [--alpha-from ALPHA_FROM]
-                        [--deadtime {off,from_file}] [--pair FWD/BWD]
+usage: asymmetry reduce [-h] --runs RUNS [--coadd] [--alpha ALPHA]
+                        [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
+                        [--pair FWD/BWD]
                         [--background none|tail_fit|range[:FIRST:LAST]]
                         [--t0-offset BINS] [--t-good-offset BINS]
                         [--period RED|GREEN|N|green-red] [--rebin REBIN] [--tmin TMIN]
                         [--tmax TMAX] [--plot-tmax PLOT_TMAX] [--plot] [--json]
-                        [--workdir WORKDIR]
+                        [--workdir WORKDIR] [--instrument NAME]
                         folder
 
 positional arguments:
@@ -133,6 +142,10 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --runs RUNS           Run numbers, e.g. '17294-17296,17300'
+  --coadd               Sum the named runs' counts (the GUI's co-add) and reduce the
+                        sum as one run, stored under the first run's number; that
+                        run's own reduction is replaced, so keep both in separate
+                        --workdir directories
   --alpha ALPHA         Fixed alpha to reduce with
   --alpha-from ALPHA_FROM
                         Estimate alpha on this run (a weak-TF calibration run), with
@@ -167,6 +180,9 @@ options:
   --plot                Write plots/reduced-<run>.png for each run
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry integral-scan`
@@ -174,15 +190,16 @@ options:
 ```
 usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                                [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
-                               [--pair FWD/BWD] [--t0-offset BINS]
-                               [--t-good-offset BINS] [--period RED|GREEN|N|green-red]
-                               [--tmin TMIN] [--tmax TMAX]
-                               [--method {integral,differential}]
+                               [--pair FWD/BWD]
+                               [--background none|tail_fit|range[:FIRST:LAST]]
+                               [--t0-offset BINS] [--t-good-offset BINS]
+                               [--period RED|GREEN|N|green-red] [--tmin TMIN]
+                               [--tmax TMAX] [--method {integral,differential}]
                                [--order {field,temperature,run}] [--model MODEL]
                                [--initial NAME=VALUE] [--fix NAME=VALUE] [--xmin XMIN]
                                [--xmax XMAX] [--baseline MODEL]
                                [--baseline-regions LO:HI,...] [--plot] [--json]
-                               [--workdir WORKDIR]
+                               [--workdir WORKDIR] [--instrument NAME]
                                folder
 
 positional arguments:
@@ -202,6 +219,11 @@ options:
   --pair FWD/BWD        Forward and backward groups by name or id, e.g. 'Up/Down' or
                         '3/4' (default: the file's own pair; `asymmetry info` lists
                         the groups)
+  --background none|tail_fit|range[:FIRST:LAST]
+                        Background subtraction: tail_fit fits a flat rate under the
+                        late-time decay (pulsed sources); range averages a pre-t0 bin
+                        range (continuous sources; default range 0.1·t0–0.6·t0).
+                        Default: none
   --t0-offset BINS      Shift every detector's file t0 by this many bins (signed;
                         default 0)
   --t-good-offset BINS  First good bin this many bins after the effective t0 (default:
@@ -225,6 +247,9 @@ options:
   --plot                Write plots/<name>.png
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry wizard`
@@ -232,7 +257,7 @@ options:
 ```
 usage: asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope PRESET]
                         [--include C,D] [--exclude C,D] [--tmin TMIN] [--tmax TMAX]
-                        [--plot] [--json] [--workdir WORKDIR]
+                        [--plot] [--json] [--workdir WORKDIR] [--instrument NAME]
                         folder
 
 positional arguments:
@@ -256,6 +281,9 @@ options:
   --plot                Write plots/wizard-<run>.png of data + recommendation
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry recipe`
@@ -263,7 +291,7 @@ options:
 ```
 usage: asymmetry recipe [-h] --expression EXPRESSION --name NAME [--run RUN]
                         [--initial NAME=VALUE] [--fix NAME=VALUE] [--tmin TMIN]
-                        [--tmax TMAX] [--json] [--workdir WORKDIR]
+                        [--tmax TMAX] [--json] [--workdir WORKDIR] [--instrument NAME]
                         folder
 
 positional arguments:
@@ -274,14 +302,17 @@ options:
   --expression EXPRESSION
                         Time-domain model, e.g. 'Oscillatory * Exponential + Constant'
   --name NAME           Name to store the recipe under
-  --run RUN             Seed amplitudes, background and applied field from this
-                        reduced run
+  --run RUN             Seed amplitudes, phase, background, applied field and Larmor
+                        frequency from this reduced run
   --initial NAME=VALUE  Starting value (repeatable)
   --fix NAME=VALUE      Hold a parameter at a value (repeatable)
   --tmin TMIN           Fit window start / µs
   --tmax TMAX           Fit window end / µs
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry fit`
@@ -289,6 +320,7 @@ options:
 ```
 usage: asymmetry fit [-h] --run RUN --recipe RECIPE [--fix NAME=VALUE] [--free NAME]
                      [--tmin TMIN] [--tmax TMAX] [--plot] [--json] [--workdir WORKDIR]
+                     [--instrument NAME]
                      folder
 
 positional arguments:
@@ -305,16 +337,22 @@ options:
   --plot             Write plots/fit-<run>.png
   --json             Emit the machine-readable payload
   --workdir WORKDIR  Work directory to read (default: ./asymmetry-work)
+  --instrument NAME  Use only this instrument's runs — the file prefix, in any case
+                     (EMU selects EMU… and emu…); needed where two instruments in the
+                     folder share run numbers
 ```
 
 ## `asymmetry fit-global`
 
 ```
-usage: asymmetry fit-global [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
-                            [--free NAME] --shared P,Q [--field-param NAME]
+usage: asymmetry fit-global [-h] (--runs RUNS | --groups RUNS;RUNS;...) --recipe
+                            RECIPE [--fix NAME=VALUE] [--free NAME] --shared P,Q
+                            [--field-param NAME]
                             [--strategy {joint,profiled,least_squares}]
-                            [--order QUANTITY] [--x RUN=VALUE,...] [--name NAME]
-                            [--plot] [--json] [--workdir WORKDIR]
+                            [--order QUANTITY] [--x RUN=VALUE,...]
+                            [--group-order QUANTITY] [--group-x GROUP=VALUE,...]
+                            [--name NAME] [--plot] [--json] [--workdir WORKDIR]
+                            [--instrument NAME]
                             folder
 
 positional arguments:
@@ -323,6 +361,11 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --runs RUNS           Runs in one simultaneous-fit group
+  --groups RUNS;RUNS;...
+                        Several simultaneous-fit groups, e.g.
+                        '101,102,103;104,105,106': each is fitted and stored as
+                        <name>-<i> (i from 1), and <name> stores the groups' shared
+                        parameters as a trend along --group-order
   --recipe RECIPE       Recipe file, or the name of one in the work directory's
                         recipes/
   --fix NAME=VALUE      Hold a parameter at a value (repeatable)
@@ -334,13 +377,25 @@ options:
   --order QUANTITY      Quantity the runs are ordered and trended along: temperature
                         (the setpoint), sample_temperature_logged, field or run, read
                         from the files; or any other name, whose value for every run
-                        you give with --x
+                        you give with --x (default: run)
   --x RUN=VALUE,...     Per-run values of a quantity the files do not record, e.g. '--
                         order concentration --x 101=0,102=0.25,103=0.5'
+  --group-order QUANTITY
+                        Quantity the groups of --groups are ordered and trended along:
+                        temperature (the setpoint), sample_temperature_logged, field
+                        or run, read from the files and averaged over the runs of each
+                        group; or any other name, whose value for every group you give
+                        with --group-x (default: temperature)
+  --group-x GROUP=VALUE,...
+                        Per-group values of a quantity the files do not record, e.g. '
+                        --group-order concentration --group-x 1=0,2=0.25,3=0.5'
   --name NAME           Stored fit name
   --plot                Write one fitted plot per run
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry fit-series`
@@ -349,7 +404,7 @@ options:
 usage: asymmetry fit-series [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
                             --order QUANTITY [--x RUN=VALUE,...] [--tmin TMIN]
                             [--tmax TMAX] [--global P,Q] [--start RUN] [--name NAME]
-                            [--plot] [--json] [--workdir WORKDIR]
+                            [--plot] [--json] [--workdir WORKDIR] [--instrument NAME]
                             folder
 
 positional arguments:
@@ -381,15 +436,20 @@ options:
                      plots/<name>-trend-<param>.png per free parameter
   --json             Emit the machine-readable payload
   --workdir WORKDIR  Work directory to read and write (default: ./asymmetry-work)
+  --instrument NAME  Use only this instrument's runs — the file prefix, in any case
+                     (EMU selects EMU… and emu…); needed where two instruments in the
+                     folder share run numbers
 ```
 
 ## `asymmetry trend`
 
 ```
-usage: asymmetry trend [-h] --series SERIES [--csv CSV] [--plot] [--model EXPR]
-                       [--param PARAM] [--xmin XMIN] [--xmax XMAX]
-                       [--initial NAME=VALUE] [--fix NAME=VALUE] [--exclude RUNS]
-                       [--json] [--workdir WORKDIR]
+usage: asymmetry trend [-h] --series SERIES [--from-fits SERIES,...]
+                       [--fit PARAM[:EXPR]] [--order QUANTITY] [--x SERIES=VALUE,...]
+                       [--csv CSV] [--plot] [--model EXPR] [--param PARAM]
+                       [--xmin XMIN] [--xmax XMAX] [--initial NAME=VALUE]
+                       [--fix NAME=VALUE] [--exclude KEYS] [--json]
+                       [--workdir WORKDIR] [--instrument NAME]
                        folder
 
 positional arguments:
@@ -397,33 +457,56 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  --series SERIES       Name the series was stored under
+  --series SERIES       Name the series was stored under (with --from-fits, the name
+                        to store it under)
+  --from-fits SERIES,...
+                        Build --series from these stored series: each one's trend-fit
+                        parameter --param (e.g. a rate constant fitted per
+                        temperature), against --order
+  --fit PARAM[:EXPR]    With --from-fits, the members' trend fit to read, by the
+                        column it was fitted to (or column:expression); needed only
+                        when a member holds several
+  --order QUANTITY      Quantity the --from-fits series are ordered and trended along:
+                        temperature (the setpoint), sample_temperature_logged, field
+                        or run, read from the files and averaged over the runs of each
+                        series; or any other name, whose value for every series you
+                        give with --x (default: temperature)
+  --x SERIES=VALUE,...  Per-series values of a quantity the files do not record, e.g.
+                        '--order concentration --x scan-1=0,scan-2=0.25'
   --csv CSV             Also write the table to this CSV file
   --plot                Write plots/<series>-trend-<param>.png for every free
                         parameter (with --model, only for --param, with the fitted
                         curve)
   --model EXPR          Fit this parameter-vs-x expression to --param, e.g.
                         'OrderParameter', 'Redfield'
-  --param PARAM         The trend column --model is fitted to
+  --param PARAM         The trend column --model is fitted to; with --from-fits, the
+                        members' trend-fit parameter the built series tabulates (and
+                        --model fits)
   --xmin XMIN           Fit range start, in x units
   --xmax XMAX           Fit range end, in x units
   --initial NAME=VALUE  Model start value (repeatable)
   --fix NAME=VALUE      Hold a model parameter at this value (repeatable)
-  --exclude RUNS        Leave these runs out of the fit (every other run with a value
+  --exclude KEYS        Leave these rows out of the fit — runs, or member series for a
+                        trend built from other series (every other row with a value
                         enters)
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry fourier`
 
 ```
-usage: asymmetry fourier [-h] --run RUN [--name NAME]
+usage: asymmetry fourier [-h] --run RUN [--name NAME] [--correlation]
+                         [--correlation-field GAUSS]
+                         [--correlation-order CORRELATION_ORDER]
                          [--window {none,hann,cosine,gaussian,lorentzian}]
                          [--padding PADDING] [--tmin TMIN] [--tmax TMAX]
                          [--phase PHASE] [--filter-tau FILTER_TAU] [--fmin FMIN]
                          [--fmax FMAX] [--peaks PEAKS] [--plot] [--json]
-                         [--workdir WORKDIR]
+                         [--workdir WORKDIR] [--instrument NAME]
                          folder
 
 positional arguments:
@@ -432,7 +515,19 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --run RUN             Reduced run number
-  --name NAME           Stored spectrum name (default: run-<N>)
+  --name NAME           Stored spectrum name (default: run-<N>, or
+                        run-<N>-correlation)
+  --correlation         Muoniated-radical correlation spectrum: pair the radical lines
+                        of the run's forward and backward groups (reloaded from the
+                        run files, the co-add's members for a co-add, on the file's
+                        own bins) onto the hyperfine coupling axis; peaks are
+                        couplings A_mu / MHz, --fmin/--fmax bound the coupling
+  --correlation-field GAUSS
+                        Transverse field the line pairs are computed at (default: the
+                        run's own field)
+  --correlation-order CORRELATION_ORDER
+                        Ratio-penalty order of the correlation function (default: 2,
+                        as WiMDA)
   --window {none,hann,cosine,gaussian,lorentzian}
   --padding PADDING     Zero-padding factor (default: 4)
   --tmin TMIN           Transform-window start / µs
@@ -446,6 +541,9 @@ options:
   --plot                Write plots/<name>.png
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
+  --instrument NAME     Use only this instrument's runs — the file prefix, in any case
+                        (EMU selects EMU… and emu…); needed where two instruments in
+                        the folder share run numbers
 ```
 
 ## `asymmetry audit`

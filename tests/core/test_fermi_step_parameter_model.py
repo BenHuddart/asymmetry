@@ -142,7 +142,7 @@ def test_suggest_trend_seeds_fermi_step_suffixed_for_repeated_component() -> Non
     seeds = suggest_trend_seeds(model, temperature, values)
     assert {"Tc_1", "Tc_2", "dT_1", "dT_2"} <= set(seeds)
     # The generic seeder merges the same trend seeds.
-    assert suggest_model_seeds(model, temperature, values)["Tc_1"] == seeds["Tc_1"]
+    assert suggest_model_seeds(model, temperature, values, known={})["Tc_1"] == seeds["Tc_1"]
 
 
 def test_fermi_step_fit_from_seeds_recovers_parameters() -> None:

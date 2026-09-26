@@ -7,7 +7,7 @@ from pathlib import Path
 
 from asymmetry.cli._output import UserError, emit_json, payload
 from asymmetry.cli._reduction import add_reduction_arguments, reduction_settings
-from asymmetry.cli._runs import resolve_run
+from asymmetry.cli._runs import add_instrument_argument, resolve_run
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -19,6 +19,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("folder", help="Directory holding the run files")
     parser.add_argument("--run", type=int, required=True, help="Run number to estimate alpha on")
     add_reduction_arguments(parser, alpha=False)
+    add_instrument_argument(parser)
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
     parser.set_defaults(func=run)
 
@@ -32,10 +33,11 @@ def run(args: argparse.Namespace) -> None:
         reduction_source,
     )
     from asymmetry.core.workflow.survey import calibration_verdict, precession_evidence
+    from asymmetry.core.workflow.workdir import RunSelection
 
-    folder = Path(args.folder)
-    settings = reduction_settings(args, folder)
-    path = resolve_run(folder, args.run)
+    selection = RunSelection(Path(args.folder), args.instrument)
+    settings = reduction_settings(args, selection)
+    path = resolve_run(selection, args.run)
     try:
         dataset = reduction_source(load(str(path)), settings.period)
         estimate = estimate_alpha_for_run(dataset.run, settings)

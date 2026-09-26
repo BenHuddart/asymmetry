@@ -47,6 +47,23 @@ _TEMPERATURE_FILE_MAX_SEARCH_DEPTH = 3
 #: being loaded; in practice a genuine sidecar starts within seconds of its
 #: run, so a slack of days separates the two cases with a wide margin.
 _TEMPERATURE_LOG_EPOCH_SLACK = timedelta(days=7)
+#: PSI-BIN header: four unlabelled sensor means (float32, K) at byte 716 and
+#: their deviations at byte 738, as musrfit's ``PRunDataHandler`` reads them.
+_BIN_SENSOR_MEANS_OFFSET = 716
+_BIN_SENSOR_DEVIATIONS_OFFSET = 738
+#: The header sensor read as the sample's. The header names none of the four;
+#: sensor 0 sits on the setpoint (the control sensor) while sensor 1 tracks the
+#: sample on every GPS and GPD run checked — an inference from the readings,
+#: not a label.
+_SAMPLE_SENSOR_INDEX = 1
+#: How ``sample_temperature_log_source`` names a reading from that sensor.
+PSI_HEADER_SAMPLE_SENSOR = "PSI header sensor 1 (unlabelled; inferred to be the sample's)"
+#: Sensor 1 is taken as the sample's temperature only when its deviation over the
+#: run is under this fraction of its mean (a steady reading) ...
+_SAMPLE_SENSOR_MAX_SCATTER = 0.05
+#: ... and it lies within this factor of the setpoint either way (the sensor is
+#: on the controlled stage, not a warm shield or a sensor left unconnected).
+_SAMPLE_SENSOR_SETPOINT_FACTOR = 2.0
 #: Pivot for two-digit years in PSI date strings: ``25`` is 2025, ``95`` is 1995.
 _PSI_TWO_DIGIT_YEAR_PIVOT = 70
 _PTA_TAG_TYPE_POSITRON = b"P"
@@ -88,6 +105,28 @@ def _extract_field_from_comment(comment: str) -> float | None:
     return None
 
 
+def header_sensor_rejection(setpoint: float, mean: float, deviation: float) -> str:
+    """Why header sensor 1 is not the sample's temperature, or ``""`` when it is.
+
+    It must lie within :data:`_SAMPLE_SENSOR_SETPOINT_FACTOR` of the *setpoint*
+    either way and be steady — *deviation* under
+    :data:`_SAMPLE_SENSOR_MAX_SCATTER` of *mean*.
+    """
+    reading = f"header sensor 1 reads {mean:.4g} ± {deviation:.2g} K"
+    factor = _SAMPLE_SENSOR_SETPOINT_FACTOR
+    if not setpoint / factor <= mean <= setpoint * factor:
+        return (
+            f"{reading}, more than a factor of {factor:g} from the {setpoint:g} K setpoint: "
+            "not the controlled sample stage"
+        )
+    if not deviation < _SAMPLE_SENSOR_MAX_SCATTER * mean:
+        return (
+            f"{reading}: a scatter of {_SAMPLE_SENSOR_MAX_SCATTER:.0%} of its mean or more "
+            "is not a steady sample temperature"
+        )
+    return ""
+
+
 @dataclass
 class _PsiTemperatureLogs:
     source_file: str
@@ -122,6 +161,9 @@ class _PsiRawRun:
     muon_source: str
     temperature_logs: _PsiTemperatureLogs | None = None
     temperature_log_rejections: list[dict[str, str]] = field(default_factory=list)
+    #: PSI-BIN header sensor means and deviations in K, four each; MDU has none.
+    sensor_temperatures: list[float] = field(default_factory=list)
+    sensor_temperature_deviations: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -274,6 +316,12 @@ class PsiLoader(BaseLoader):
             muon_source=muon_source,
             temperature_logs=temperature_logs,
             temperature_log_rejections=temperature_log_rejections,
+            sensor_temperatures=[
+                float(v) for v in struct.unpack_from("<4f", header, _BIN_SENSOR_MEANS_OFFSET)
+            ],
+            sensor_temperature_deviations=[
+                float(v) for v in struct.unpack_from("<4f", header, _BIN_SENSOR_DEVIATIONS_OFFSET)
+            ],
         )
 
     # ------------------------------------------------------------------
@@ -541,7 +589,7 @@ class PsiLoader(BaseLoader):
                 continue
             reason = self._temperature_log_epoch_mismatch(parsed, started, stopped)
             if reason:
-                rejections.append({"source_file": str(log_path), "reason": reason})
+                rejections.append({"source": str(log_path), "reason": reason})
                 continue
             parsed_logs.append(parsed)
         if not parsed_logs:
@@ -1140,14 +1188,28 @@ class PsiLoader(BaseLoader):
             }
             metadata["psi_temperature_log_file"] = raw.temperature_logs.source_file
             metadata["psi_temperature_log_channels"] = list(raw.temperature_logs.channels)
-        if raw.temperature_log_rejections:
-            # Sidecars that matched by run number but not by date. Recorded so a
-            # run whose only ``.mon`` file is a leftover from an earlier beam
-            # period reports why it has no temperature log, instead of silently
-            # loading another experiment's temperatures.
-            metadata["psi_temperature_log_rejected"] = [
-                dict(entry) for entry in raw.temperature_log_rejections
-            ]
+        # Sidecars that matched by run number but not by date, and a header
+        # sensor that failed its gates: recorded so a run without a logged
+        # temperature says why instead of silently carrying another
+        # experiment's temperatures or none.
+        rejections = [dict(entry) for entry in raw.temperature_log_rejections]
+        if raw.sensor_temperatures:
+            metadata["psi_sensor_temperatures"] = list(raw.sensor_temperatures)
+            metadata["psi_sensor_temperature_deviations"] = list(raw.sensor_temperature_deviations)
+        # A ``.mon`` sidecar is the run's own labelled log; the header's
+        # unlabelled sensor never stands in beside it.
+        if raw.sensor_temperatures and raw.temperature_logs is None:
+            mean = raw.sensor_temperatures[_SAMPLE_SENSOR_INDEX]
+            reason = header_sensor_rejection(
+                raw.temperature, mean, raw.sensor_temperature_deviations[_SAMPLE_SENSOR_INDEX]
+            )
+            if reason:
+                rejections.append({"source": PSI_HEADER_SAMPLE_SENSOR, "reason": reason})
+            else:
+                metadata["sample_temperature_logged"] = mean
+                metadata["sample_temperature_log_source"] = PSI_HEADER_SAMPLE_SENSOR
+        if rejections:
+            metadata["temperature_log_rejected"] = rejections
 
         grouping = {
             "groups": groups,

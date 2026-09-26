@@ -136,6 +136,14 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "Use as the Lorentzian-shaped alternative to GaussianLCR for avoided-level-crossing resonance peaks, "
         "appropriate when lifetime (rather than inhomogeneous) broadening dominates the resonance width."
     ),
+    "LorentzianLCRPair": (
+        "Use for a red/green (differential) ALC scan, where the green − red integral asymmetry of each "
+        "run is fitted rather than either period alone. The red period's field sits ΔB below the green "
+        "one, so each resonance appears twice with opposite signs: the line at B₀ and its copy ΔB above. "
+        "Hold ΔB at the field step between the periods that the run files record: with ΔB free the fit is degenerate "
+        "when the field step is comparable to the line width, since a closer pair with a larger f "
+        "describes the same sparsely sampled lobes."
+    ),
     "DiffusionLF_1D": (
         "Use when longitudinal-field relaxation is governed by spin excitations diffusing in effectively one "
         "dimension, such as transport along chains or channel-like pathways. The 1D spectral density gives the "
@@ -698,6 +706,7 @@ PARAMETER_MODEL_REFERENCES: dict[str, tuple[str, ...]] = {
     "Redfield": ("N. Bloembergen, E. M. Purcell, and R. V. Pound, Phys. Rev. 73, 679 (1948).",),
     "GaussianLCR": ("S. R. Kreitzman et al., Phys. Rev. Lett. 56, 181 (1986).",),
     "LorentzianLCR": ("S. R. Kreitzman et al., Phys. Rev. Lett. 56, 181 (1986).",),
+    "LorentzianLCRPair": ("S. R. Kreitzman et al., Phys. Rev. Lett. 56, 181 (1986).",),
     "DiffusionLF_1D": ("F. L. Pratt, J. Phys.: Conf. Ser. 2462, 012038 (2023).",),
     "DiffusionLF_2D": ("F. L. Pratt, J. Phys.: Conf. Ser. 2462, 012038 (2023).",),
     "DiffusionLF_3D": ("F. L. Pratt, J. Phys.: Conf. Ser. 2462, 012038 (2023).",),

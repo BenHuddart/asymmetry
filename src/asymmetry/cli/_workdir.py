@@ -1,8 +1,9 @@
 """Where a command's work directory comes from — declared and resolved once.
 
 ``--workdir`` and its default are the same on every command that has one, and
-so is the rule that one work directory holds one data folder. Both live here
-rather than in each command module, so a new command cannot spell the default
+so is the rule that one work directory holds one folder's runs of one
+instrument (``--instrument``, declared beside it). All of it lives here rather
+than in each command module, so a new command cannot spell the default
 differently or reach the work directory without the binding check.
 
 The name is spelled here as well as in
@@ -19,9 +20,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from asymmetry.cli._output import UserError
+from asymmetry.cli._runs import add_instrument_argument
 
 if TYPE_CHECKING:
-    from asymmetry.core.workflow.workdir import WorkDir
+    from asymmetry.core.workflow.workdir import RunSelection, WorkDir
 
 #: The default work directory's name, relative to the current directory.
 WORKDIR_NAME = "asymmetry-work"
@@ -32,25 +34,32 @@ OUTPUT_LOG = "cli-output.log"
 
 
 def add_workdir_argument(parser: argparse.ArgumentParser, *, purpose: str) -> None:
-    """Declare ``--workdir`` on *parser*, with the default every command shares."""
+    """Declare ``--workdir``, with the default every command shares, and ``--instrument``."""
     parser.add_argument(
         "--workdir",
         default=None,
         help=f"Work directory to {purpose} (default: ./{WORKDIR_NAME})",
     )
+    add_instrument_argument(parser)
 
 
-def workdir_for(folder: str | Path, root: str | Path | None) -> WorkDir:
-    """The work directory for *folder*: ``./asymmetry-work``, or *root* if given.
+def workdir_for(
+    folder: str | Path, root: str | Path | None, instrument: str | None
+) -> tuple[WorkDir, RunSelection]:
+    """The work directory for *folder* — ``./asymmetry-work``, or *root* — and the runs it serves.
 
-    Raises :class:`UserError` when the directory already holds a different
-    data folder's session — the two would otherwise overwrite each other's
-    spectra, recipes and series, which are keyed on run number alone.
+    The runs are *instrument*'s in *folder*, or, with no instrument named, the
+    instrument the directory is already bound to (every run while it is bound
+    to none). Raises :class:`UserError` when the directory already holds
+    another folder's or another instrument's session — the two would otherwise
+    overwrite each other's spectra, recipes and series, which are keyed on run
+    number alone.
     """
     from asymmetry.core.workflow.workdir import WorkDir, WorkDirMismatchError
 
+    workdir = WorkDir.default(root)
     try:
-        return WorkDir.default(root).bind(folder)
+        return workdir, workdir.bind(folder, instrument)
     except WorkDirMismatchError as exc:
         raise UserError(str(exc)) from None
 

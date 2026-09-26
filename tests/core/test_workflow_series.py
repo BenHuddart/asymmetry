@@ -104,7 +104,7 @@ def test_a_supplied_axis_orders_the_series_and_labels_its_trend(
 
     assert outcome.order_key == "foils"
     assert outcome.trend.order_key == "foils"
-    assert [row["run"] for row in outcome.trend.rows] == list(reversed(runs))
+    assert [row["key"] for row in outcome.trend.rows] == [str(run) for run in reversed(runs)]
     assert [row["x"] for row in outcome.trend.rows] == [1.0, 2.0, 3.0]
 
 
@@ -157,13 +157,13 @@ def test_fit_series_flags_the_broken_run_without_dropping_it(outcome) -> None:
     assert "spurious_reseeded" in broken["quality_flags"]
     assert broken["parameters"]["A_1"] < 1.0
     # ... and it keeps its row. Excluding a point is the analyst's call.
-    assert FLAT_RUN in [row["run"] for row in outcome.trend.rows]
+    assert str(FLAT_RUN) in [row["key"] for row in outcome.trend.rows]
 
 
 def test_the_trend_table_carries_every_free_parameter_with_its_error(outcome) -> None:
     assert outcome.free_params == ["A_1", "Lambda", "A_bg"]
     assert outcome.trend.columns == [
-        "run",
+        "key",
         "x",
         "A_1",
         "A_1_err",
@@ -178,7 +178,7 @@ def test_the_trend_table_carries_every_free_parameter_with_its_error(outcome) ->
     assert len(outcome.trend.rows) == len(ZF_RUNS)
     first = outcome.trend.rows[0]
     assert first["Lambda"] == pytest.approx(
-        next(e["parameters"]["Lambda"] for e in outcome.results if e["run"] == first["run"])
+        next(e["parameters"]["Lambda"] for e in outcome.results if str(e["run"]) == first["key"])
     )
 
 
@@ -433,18 +433,17 @@ def test_a_frequency_trend_sets_the_surveyed_line_beside_the_fit() -> None:
     assert survey_line(dataset({"precession": "none", "precession_frequency_mhz": None})) is None
     assert survey_line(dataset({})) is None
 
-    results = [
-        {
-            "run": run,
+    results = {
+        key: {
             "x": x,
             "parameters": {"frequency": f},
             "uncertainties": {"frequency": 0.1},
             "quality_flags": [],
         }
-        for run, x, f in ((1, 10.0, 29.8), (2, 60.0, 0.4))
-    ]
+        for key, x, f in (("1", 10.0, 29.8), ("2", 60.0, 0.4))
+    }
     trend = build_trend_table(
-        results, ["frequency"], "temperature", survey_lines={1: 29.9, 2: None}
+        results, ["frequency"], "temperature", survey_lines={"1": 29.9, "2": None}
     )
     assert "survey_line_mhz" in trend.columns
     assert [row["survey_line_mhz"] for row in trend.rows] == [29.9, None]
@@ -538,9 +537,9 @@ def test_the_lineless_end_of_a_precession_scan_is_named() -> None:
     from asymmetry.core.workflow.series import TrendTable, lineless_end
 
     def row(run: int, line: float | None, flags: list[str]) -> dict:
-        return {"run": run, "x": float(run), "survey_line_mhz": line, "flags": flags}
+        return {"key": str(run), "x": float(run), "survey_line_mhz": line, "flags": flags}
 
-    columns = ["run", "x", "frequency", "survey_line_mhz", "flags"]
+    columns = ["key", "x", "frequency", "survey_line_mhz", "flags"]
     rows = [
         row(1, 30.0, []),
         row(2, None, ["large_rel_err"]),  # no line, but the fit describes it
@@ -549,7 +548,7 @@ def test_the_lineless_end_of_a_precession_scan_is_named() -> None:
         row(5, None, ["amplitude_exceeds_data"]),
         row(6, None, ["frequency_unresolved"]),
     ]
-    assert lineless_end(TrendTable("temperature", columns, rows)) == [4, 5, 6]
+    assert lineless_end(TrendTable("temperature", columns, rows)) == ["4", "5", "6"]
     # One such run is not a block; a series fitting no frequency has none.
     assert lineless_end(TrendTable("temperature", columns, rows[:4])) == []
-    assert lineless_end(TrendTable("temperature", ["run", "x", "flags"], [])) == []
+    assert lineless_end(TrendTable("temperature", ["key", "x", "flags"], [])) == []

@@ -272,7 +272,7 @@ def reduced_workdir(workflow_folder: Path, tmp_path_factory: pytest.TempPathFact
             dataset,
             ReducedEntry(
                 run_number=run_number,
-                digest=reduction_digest(source_file=path, grouping=grouping, settings=settings),
+                digest=reduction_digest(source_files=[path], grouping=grouping, settings=settings),
                 source_file=str(path),
                 n_points=dataset.n_points,
                 settings=settings,
@@ -287,6 +287,7 @@ def reduced_workdir(workflow_folder: Path, tmp_path_factory: pytest.TempPathFact
                 deadtime_mode=str(grouping["deadtime_mode"]),
                 forward_group=int(grouping["forward_group"]),
                 backward_group=int(grouping["backward_group"]),
+                members=[],
             ),
         )
     return workdir

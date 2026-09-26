@@ -1617,8 +1617,16 @@ def test_suggest_model_seeds_linear() -> None:
     model = ParameterCompositeModel(["Linear"])
     x = np.linspace(0.0, 10.0, 40)
     y = 3.5 * x - 2.0
-    seeds = suggest_model_seeds(model, x, y)
+    seeds = suggest_model_seeds(model, x, y, known={})
     assert seeds["m"] == pytest.approx(3.5, rel=1e-6)
+    assert seeds["b"] == pytest.approx(-2.0, abs=1e-6)
+
+
+def test_suggest_model_seeds_returns_known_values_over_estimates() -> None:
+    model = ParameterCompositeModel(["Linear"])
+    x = np.linspace(0.0, 10.0, 40)
+    seeds = suggest_model_seeds(model, x, 3.5 * x - 2.0, known={"m": 1.0})
+    assert seeds["m"] == 1.0
     assert seeds["b"] == pytest.approx(-2.0, abs=1e-6)
 
 
@@ -1626,7 +1634,7 @@ def test_suggest_model_seeds_constant() -> None:
     model = ParameterCompositeModel(["Constant"])
     x = np.linspace(0.0, 5.0, 21)
     y = np.full_like(x, 7.25)
-    seeds = suggest_model_seeds(model, x, y)
+    seeds = suggest_model_seeds(model, x, y, known={})
     assert seeds["c"] == pytest.approx(7.25, rel=1e-6)
 
 
@@ -1635,7 +1643,7 @@ def test_suggest_model_seeds_power_law() -> None:
     true_a, true_n, true_c = 2.0, 1.5, 0.3
     x = np.linspace(0.5, 20.0, 40)
     y = true_a * np.abs(x) ** true_n + true_c
-    seeds = suggest_model_seeds(model, x, y)
+    seeds = suggest_model_seeds(model, x, y, known={})
     # Order-of-magnitude on the amplitude, close on the exponent.
     assert 0.5 * true_a < seeds["a"] < 2.0 * true_a
     assert seeds["n"] == pytest.approx(true_n, abs=0.3)
@@ -1646,7 +1654,7 @@ def test_suggest_model_seeds_exp_decay() -> None:
     true_a, true_tau, true_c = 5.0, 4.0, 1.0
     x = np.linspace(0.0, 20.0, 60)
     y = true_a * np.exp(-x / true_tau) + true_c
-    seeds = suggest_model_seeds(model, x, y)
+    seeds = suggest_model_seeds(model, x, y, known={})
     assert seeds["tau"] == pytest.approx(true_tau, rel=0.25)
     assert 0.5 * true_a < seeds["a"] < 2.0 * true_a
     assert seeds["c"] == pytest.approx(true_c, abs=0.5)
@@ -1659,7 +1667,7 @@ def test_suggest_model_seeds_arrhenius() -> None:
     true_a, true_ea = 3.0, 25.0
     x = np.linspace(50.0, 400.0, 40)
     y = _arrhenius(x, a=true_a, Ea=true_ea)
-    seeds = suggest_model_seeds(model, x, y)
+    seeds = suggest_model_seeds(model, x, y, known={})
     assert seeds["Ea"] == pytest.approx(true_ea, rel=0.1)
     assert 0.5 * true_a < seeds["a"] < 2.0 * true_a
 
@@ -1671,7 +1679,7 @@ def test_suggest_model_seeds_lcr_gaussian() -> None:
     true_f, true_b0, true_bwid = 0.8, 1200.0, 150.0
     x = np.linspace(500.0, 2000.0, 80)
     y = _lcr_gaussian(x, f=true_f, B0=true_b0, Bwid=true_bwid)
-    seeds = suggest_model_seeds(model, x, y)
+    seeds = suggest_model_seeds(model, x, y, known={})
     # Centre within a width, amplitude the right order, width within 2x.
     assert abs(seeds["B0"] - true_b0) < true_bwid
     assert 0.5 * true_f < seeds["f"] < 2.0 * true_f
@@ -1687,7 +1695,7 @@ def test_suggest_model_seeds_lorentzian_b0_positive_and_in_range() -> None:
     model = ParameterCompositeModel(["Lorentzian"])
     x = np.linspace(-500.0, 500.0, 80)
     y = _lorentzian(x, a=2.0, B0=120.0, c=0.1)
-    seeds = suggest_model_seeds(model, x, y)
+    seeds = suggest_model_seeds(model, x, y, known={})
     span = float(np.max(x) - np.min(x))
     if "B0" in seeds:
         assert seeds["B0"] > 0.0
@@ -1703,7 +1711,7 @@ def test_suggest_model_seeds_lorentzian_pathological_drops_b0() -> None:
     model = ParameterCompositeModel(["Lorentzian"])
     x = np.linspace(0.0, 10.0, 5)
     y = np.array([1.0, 1.0, 1.0001, 1.0, 1.0])
-    seeds = suggest_model_seeds(model, x, y)
+    seeds = suggest_model_seeds(model, x, y, known={})
     span = float(np.max(x) - np.min(x))
     if "B0" in seeds:
         assert seeds["B0"] > 0.0
@@ -1715,14 +1723,14 @@ def test_suggest_model_seeds_unknown_component_returns_no_seed() -> None:
     model = ParameterCompositeModel(["Redfield"])
     x = np.linspace(1.0, 100.0, 30)
     y = np.linspace(1.0, 0.1, 30)
-    assert suggest_model_seeds(model, x, y) == {}
+    assert suggest_model_seeds(model, x, y, known={}) == {}
 
 
 def test_suggest_model_seeds_all_nan_returns_empty() -> None:
     model = ParameterCompositeModel(["Linear"])
     x = np.array([np.nan, np.nan, np.nan])
     y = np.array([1.0, 2.0, 3.0])
-    assert suggest_model_seeds(model, x, y) == {}
+    assert suggest_model_seeds(model, x, y, known={}) == {}
 
 
 def test_suggest_model_seeds_delegates_critical_component() -> None:
@@ -1731,7 +1739,7 @@ def test_suggest_model_seeds_delegates_critical_component() -> None:
     model = ParameterCompositeModel(["CriticalDivergence"])
     x = np.array([90.0, 91.0, 95.0, 120.0, 280.0])
     y = np.array([0.59, 0.30, 0.14, 0.04, 0.017])
-    generic = suggest_model_seeds(model, x, y)
+    generic = suggest_model_seeds(model, x, y, known={})
     trend = suggest_trend_seeds(model, x, y)
     for name, value in trend.items():
         assert generic[name] == pytest.approx(value)
@@ -1978,6 +1986,24 @@ def test_parameter_model_categories_cover_registry() -> None:
     )
 
 
+@pytest.mark.parametrize("sign", [-1.0, 1.0])
+def test_suggest_model_seeds_puts_a_differential_pair_on_its_line_not_its_copy(
+    sign: float,
+) -> None:
+    from asymmetry.core.fitting.parameter_models import _lcr_lorentzian_pair
+
+    model = ParameterCompositeModel(["LorentzianLCRPair", "LorentzianLCRPair", "Constant"])
+    # Three fields every 100 G: the copy, 44 G above each line, falls between samples.
+    x = np.sort(np.concatenate([np.arange(28500.0, 30000.0, 100.0) + d for d in (0, 20, 40)]))
+    y = _lcr_lorentzian_pair(x, sign * 0.015, 28938.5, 14.0, 44.4) + _lcr_lorentzian_pair(
+        x, sign * 0.015, 29536.3, 14.0, 44.4
+    )
+    seeds = suggest_model_seeds(model, x, y, known={"dB_1": 44.4, "dB_2": 44.4})
+    assert sorted([seeds["B0_1"], seeds["B0_2"]]) == pytest.approx([28938.5, 29536.3], abs=5.0)
+    assert np.sign(seeds["f_1"]) == np.sign(seeds["f_2"]) == sign
+    assert seeds["dB_1"] == seeds["dB_2"] == 44.4
+
+
 def test_suggest_model_seeds_puts_each_lcr_component_on_its_own_resonance() -> None:
     from asymmetry.core.fitting.parameter_models import _lcr_lorentzian
 
@@ -1991,8 +2017,79 @@ def test_suggest_model_seeds_puts_each_lcr_component_on_its_own_resonance() -> N
         + _lcr_lorentzian(x, f=-0.02, B0=20800.0, Bwid=60.0)
         + _lcr_lorentzian(x, f=-0.012, B0=27500.0, Bwid=150.0)
     )
-    seeds = suggest_model_seeds(model, x, y)
+    seeds = suggest_model_seeds(model, x, y, known={})
     assert abs(seeds["B0_1"] - 20800.0) < 60.0
     assert abs(seeds["B0_2"] - 27500.0) < 150.0
     assert seeds["f_1"] < 0.0 and seeds["f_2"] < 0.0
     assert 30.0 < seeds["Bwid_1"] < 120.0
+
+
+def test_suggest_model_seeds_mu_repolarisation_single_term() -> None:
+    from asymmetry.core.fitting.parameter_models import _mu_repolarisation
+
+    true = dict(a_Mu=20.0, A_hf=4463.0, a_Dia=5.0)
+    x = np.geomspace(1.0, 4000.0, 60)
+    y = _mu_repolarisation(x, **true)
+    model = ParameterCompositeModel(["MuRepolarisation"])
+    seeds = suggest_model_seeds(model, x, y, known={})
+
+    assert seeds["a_Mu"] == pytest.approx(true["a_Mu"], rel=0.2)
+    assert seeds["A_hf"] == pytest.approx(true["A_hf"], rel=0.2)
+    assert seeds["a_Dia"] == pytest.approx(true["a_Dia"], rel=0.2)
+
+    yerr = np.full_like(x, 0.05)
+    params = ParameterSet(
+        [
+            Parameter("a_Mu", value=seeds["a_Mu"]),
+            Parameter("A_hf", value=seeds["A_hf"], min=1.0, max=1.0e5),
+            Parameter("a_Dia", value=seeds["a_Dia"]),
+        ]
+    )
+    result = fit_parameter_model(x, y, yerr, model, params)
+    assert result.success
+    fitted = {p.name: p.value for p in result.parameters}
+    assert fitted["a_Mu"] == pytest.approx(true["a_Mu"], rel=1e-3)
+    assert fitted["A_hf"] == pytest.approx(true["A_hf"], rel=1e-3)
+    assert fitted["a_Dia"] == pytest.approx(true["a_Dia"], abs=1e-2)
+
+
+def test_suggest_model_seeds_mu_repolarisation_two_terms() -> None:
+    # Benzene-radical-shaped: A_hf ~= 943 and 5311 MHz (docs/plans/cli-open-items.md
+    # D5) -> B0 a factor of ~5.6 apart, close enough that the transitions'
+    # derivative bumps overlap and only the linear amplitude refit separates them.
+    from asymmetry.core.fitting.parameter_models import _mu_repolarisation
+
+    true1 = dict(a_Mu=15.0, A_hf=943.0, a_Dia=5.0)
+    true2 = dict(a_Mu=8.0, A_hf=5311.0, a_Dia=0.0)
+    x = np.geomspace(1.0, 4000.0, 60)
+    y = _mu_repolarisation(x, **true1) + _mu_repolarisation(x, **true2)
+    model = ParameterCompositeModel(["MuRepolarisation", "MuRepolarisation"], operators=["+"])
+    seeds = suggest_model_seeds(model, x, y, known={})
+
+    assert seeds["a_Mu_1"] == pytest.approx(true1["a_Mu"], rel=0.2)
+    assert seeds["A_hf_1"] == pytest.approx(true1["A_hf"], rel=0.2)
+    assert seeds["a_Dia_1"] == pytest.approx(true1["a_Dia"], rel=0.2)
+    assert seeds["a_Mu_2"] == pytest.approx(true2["a_Mu"], rel=0.2)
+    assert seeds["A_hf_2"] == pytest.approx(true2["A_hf"], rel=0.2)
+    # The lower-B0 term (component 1) carries the shared plateau offset; the
+    # higher-B0 term's a_Dia seeds at 0 by convention (see _mu_repol_seeds).
+    assert seeds["a_Dia_2"] == 0.0
+
+    yerr = np.full_like(x, 0.05)
+    params = ParameterSet(
+        [
+            Parameter("a_Mu_1", value=seeds["a_Mu_1"]),
+            Parameter("A_hf_1", value=seeds["A_hf_1"], min=1.0, max=1.0e5),
+            Parameter("a_Dia_1", value=seeds["a_Dia_1"]),
+            Parameter("a_Mu_2", value=seeds["a_Mu_2"]),
+            Parameter("A_hf_2", value=seeds["A_hf_2"], min=1.0, max=1.0e5),
+            Parameter("a_Dia_2", value=seeds["a_Dia_2"]),
+        ]
+    )
+    result = fit_parameter_model(x, y, yerr, model, params)
+    assert result.success
+    fitted = {p.name: p.value for p in result.parameters}
+    assert fitted["a_Mu_1"] == pytest.approx(true1["a_Mu"], rel=1e-3)
+    assert fitted["A_hf_1"] == pytest.approx(true1["A_hf"], rel=1e-3)
+    assert fitted["a_Mu_2"] == pytest.approx(true2["a_Mu"], rel=1e-3)
+    assert fitted["A_hf_2"] == pytest.approx(true2["A_hf"], rel=1e-3)

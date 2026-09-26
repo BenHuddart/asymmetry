@@ -42,6 +42,20 @@ loaded runs to the same behaviour. The Get Info checkbox affects only the
 target run, making it useful for per-dataset overrides. Log-derived temperature
 values are shown with red text in the Data Browser.
 
+Separately from that display choice, the loader also derives
+``sample_temperature_logged`` — the mean of a *sample-thermometer* NXlog over
+the run, distinct from the parked ``temperature`` setpoint (a sample can sit
+several kelvin from where the cryostat is parked). Only a log whose path or
+NXlog ``name`` names both "sample" and "temp" is a candidate — a controller,
+cryostat or furnace readback (``Temp_RBV``, ``Temp_Cryostat``, ``Temp_Set``)
+never is, so a run that logs only those reports no logged sample temperature
+rather than a controller's guess. Samples at or below 0 K are dropped before
+the mean is taken: ISIS logs a disconnected sensor's dropout as exactly 0 K,
+which is a sensor fault, never a physical reading. A candidate log with no
+sample above 0 K, or none of the required name, is recorded in
+``temperature_log_rejected`` with the reason, the same key the PSI loader
+above uses.
+
 The applied field is read from the ``sample/magnetic_field`` header and stored
 in gauss, matching the convention the rest of Asymmetry (and the PSI and
 MusrRoot loaders) uses. Most ISIS files store the value in gauss with no unit,
@@ -59,6 +73,50 @@ run's field is their sum (20950.6 G for that run), and the offset and the main
 field are kept beside it in the run's metadata as ``field_sweep_gauss`` and
 ``field_main_gauss``, with ``field_source`` ``main+sweep``. A run whose recorded
 field is the main field itself is left as recorded.
+
+Geometry from the logged coils
+""""""""""""""""""""""""""""""
+
+HiFi's field-state stamp is not reliable evidence of the applied field's
+*direction* (see :ref:`agent-workflow-precession`); the coils it logs are.
+Where ``nexus_time_series`` carries active-run means for ``Field_Main``,
+``Field_Z``, ``Field_X`` and ``Field_Y``, the survey's ``coils`` geometry
+source (:doc:`agent_workflow`) compares the axial field
+(``Field_Main + Field_Z``) against the transverse
+(:math:`\sqrt{\mathrm{Field\_X}^2 + \mathrm{Field\_Z}^2}`, i.e.
+:math:`\mathrm{hypot}(\mathrm{Field\_X}, \mathrm{Field\_Y})`): an axial
+reading more than ten times the transverse is longitudinal, and a
+transverse reading more than ten times the axial left over after
+discounting up to 12 G of Z-coil compensation is transverse. These are the
+run's own readbacks of the field it applied, not a name in the header, so
+they outrank the file's ``TF``/``LF`` stamp; a measured precession line
+still outranks them, since a transverse field can precess too weakly to be
+resolved.
+
+Per-period Hall-probe offset (red/green ALC)
+""""""""""""""""""""""""""""""""""""""""""""
+
+A red/green (differential) ALC scan steps the small RG coil between the
+two periods of each run, so the two periods sit at slightly different
+fields — but HiFi logs no channel for the RG coil current itself. The
+loader instead reads it off the Hall probe, ``Field_Hall_Z``, which tracks
+whichever period is in force: each logged Hall sample is assigned to the
+DAE period active at its time (from ``Beamlog_Period_Num``, a
+sample-and-hold log, matched against the data periods NeXus itself records
+via ``period_type``), and the median Hall reading of each period is taken
+so a field ramp spilling across the boundary does not bias it. The
+difference — red period's reading less green's — is recorded per run as
+``period_hall_offset``, in the Hall probe's own units.
+
+That is not yet gauss: the Hall probe reads the main field through a
+roughly linear response with a zero offset of order a kilogauss, so one
+run's *ratio* of period means would understate the true field difference
+by a few percent. Converting a *difference* correctly needs the probe's
+*slope*, ``d(Field_Main)/d(Field_Hall_Z)``, which
+``integral-scan --period green-red`` (:doc:`agent_workflow`) regresses over
+every run in the scan (not from one run alone) to report the step in gauss
+and a ready-made ``--fix dB=…`` for ``LorentzianLCRPair``
+(:doc:`alc_mode`).
 
 For NeXus good-data windows, Asymmetry treats integer bin metadata as
 canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
@@ -204,10 +262,42 @@ match the run being loaded while belonging to an earlier experiment. Each
 candidate sidecar's start timestamp is therefore cross-checked against the
 run's started/stopped window, with a week of slack for clock skew. A sidecar
 outside that window is not loaded; it is listed instead in
-``psi_temperature_log_rejected`` metadata, with the reason, so a run without a
+``temperature_log_rejected`` metadata, with the reason, so a run without a
 temperature log says why rather than silently carrying another experiment's
 temperatures. When either timestamp is missing or unparseable there is nothing
-to check against and the sidecar is kept.
+to check against and the sidecar is kept. (This is the same
+``temperature_log_rejected`` key the NeXus loader below records its own
+rejections under, so a caller checks one key regardless of format.)
+
+The header sensors and the logged sample temperature
+""""""""""""""""""""""""""""""""""""""""""""""""""""
+
+Independently of any ``.mon`` sidecar, every PSI-BIN header carries four
+unlabelled temperature sensor means (and their deviations over the run) —
+readings musrfit's own reader exposes but does not interpret. Asymmetry
+records all four as ``psi_sensor_temperatures`` and
+``psi_sensor_temperature_deviations`` (in header order), and additionally
+promotes sensor 1 to ``sample_temperature_logged`` — with
+``sample_temperature_log_source`` set to a string naming it as an inferred,
+unlabelled header sensor rather than a genuine channel label — when it looks
+like a reading of the sample rather than the setpoint or an unconnected
+probe:
+
+- it must be **steady**: its deviation over the run under 5 % of its mean;
+- it must sit **within a factor of two of the setpoint** either way.
+
+Sensor 0 consistently tracks the *setpoint* (the control sensor) rather than
+the sample, on every GPS/GPD run checked, so it is never promoted; sensor 1
+consistently tracks the sample. This is a reading of the numbers on the
+files checked, not a manufacturer's label, so treat
+``sample_temperature_logged`` from this source with the same caution as any
+other inferred quantity — corroborate it against the run's title or a
+``.mon`` log where one is available. A ``.mon`` sidecar is the run's own
+*labelled* log and always takes precedence: the header sensor is never
+promoted beside one, only in its absence. A sensor that fails either gate is
+recorded in ``temperature_log_rejected`` with the reason (how far from the
+setpoint, or how much it scattered), so a PSI run with no logged temperature
+says why instead of silently reporting nothing.
 
 MusrRoot / LEM ROOT (.root)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~

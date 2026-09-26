@@ -64,7 +64,11 @@ from asymmetry.core.fitting.resolution import (
     assess_component_resolution,
     relaxation_rate_parameter_names,
 )
-from asymmetry.core.fitting.seeding import record_scale_estimate, record_scale_window_counts
+from asymmetry.core.fitting.seeding import (
+    phase_seed_from_sign,
+    record_scale_estimate,
+    record_scale_window_counts,
+)
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.wizard_scope import (
     ScopeResolution,
@@ -4830,7 +4834,7 @@ def _initial_parameters_for_template(
     # (gamma_mu * B via spectral.field_gauss_to_frequency_mhz) plus finer
     # rebinning, which spans the GUI populate path; tracked as a separate change.
     frequency_guess = max(fingerprint.dominant_fft_frequency_mhz, 0.25 / duration)
-    phase_guess = 0.0 if (y[0] - fingerprint.tail_estimate) >= 0.0 else math.pi
+    phase_guess = phase_seed_from_sign(y[0] - fingerprint.tail_estimate)
 
     # Peak-detection seeds supersede the single-line fingerprint guess; a
     # field-derived Larmor seed (gamma_mu * B) covers the high-TF case where the

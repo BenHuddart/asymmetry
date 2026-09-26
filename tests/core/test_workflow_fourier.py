@@ -70,3 +70,37 @@ def test_with_nothing_detected_the_strongest_maxima_are_offered_as_candidates() 
     assert heights == sorted(heights, reverse=True)
     assert all(0.5 <= entry["frequency_mhz"] <= 6.0 for entry in candidates)
     assert outcome.to_dict()["candidate_maxima"] == candidates
+
+
+def test_a_radical_line_pair_correlates_to_a_peak_at_the_sum_of_its_lines() -> None:
+    from asymmetry.core.fourier.correlation import breit_rabi_pair
+    from asymmetry.core.workflow.fourier import CorrelationSettings, correlation_spectrum
+    from tests.core.test_fourier_correlation import _radical_tf_run
+
+    field, coupling = 2900.0, 514.4
+    run = _radical_tf_run(field_gauss=field, couplings_mhz=(coupling,))
+    time = np.arange(2048) * 0.001
+
+    outcome = correlation_spectrum(
+        run, time, FourierSettings(), CorrelationSettings(field_gauss=field), group_ids=[1, 2]
+    )
+
+    strongest = max(outcome.peaks["peaks"], key=lambda peak: peak["amplitude"])
+    assert strongest["frequency_mhz"] == pytest.approx(
+        sum(breit_rabi_pair(field, coupling)), abs=2.0
+    )
+    assert outcome.to_dict()["axis"] == "hyperfine_coupling"
+    assert outcome.to_dict()["correlation"] == {"field_gauss": field, "order": 2}
+
+
+def test_a_plain_spectrum_is_on_the_frequency_axis() -> None:
+    outcome = fourier_spectrum(_line(2.5, 4.0), FourierSettings(window="none"))
+    assert outcome.to_dict()["axis"] == "frequency"
+    assert outcome.to_dict()["correlation"] is None
+
+
+def test_the_correlation_needs_a_transverse_field() -> None:
+    from asymmetry.core.workflow.fourier import CorrelationSettings
+
+    with pytest.raises(ValueError, match="transverse field"):
+        CorrelationSettings(field_gauss=0.0)
