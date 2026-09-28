@@ -62,6 +62,7 @@ from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.joint_fit import JointFit
 from asymmetry.core.representation.naming import default_joint_fit_label
 from asymmetry.gui.panels.fit.recipe_inputs import build_recipe_engine_inputs
+from asymmetry.gui.panels.fit.tab_base import _sample_fit_curve
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.tasks import TaskRunner
@@ -170,18 +171,21 @@ class JointFitRun:
     model evaluation per run — and for a helical, Overhauser or dipolar
     component that is seconds over a wide series, which the GUI thread may not
     spend (see AGENTS.md, "Never run long work on the GUI thread"). So the
-    worker evaluates them here, on the same cropped axes the fit used, and the
-    completion handler only draws.
+    worker evaluates them here, sampled exactly as a Batch-tab run samples its
+    members (``_sample_fit_curve``: over the series' fit range, not the first
+    and last surviving bin), and the completion handler only draws.
     """
 
     result: Any
-    #: ``{series key: {run number: (t, y)}}`` — empty when the fit failed.
-    curves: dict[str, dict[int, tuple[Any, Any]]]
+    #: ``{series key: {run number: (t, y, additive components)}}`` — empty
+    #: when the fit failed.
+    curves: dict[str, dict[int, tuple[Any, Any, tuple]]]
 
 
 def run_joint_fit_with_curves(
     problems: Sequence[JointSeriesProblem],
     shared: Sequence[SharedParameter],
+    models: Mapping[str, CompositeModel],
     *,
     cancel_callback: Callable[[], bool],
 ) -> JointFitRun:
@@ -192,18 +196,19 @@ def run_joint_fit_with_curves(
     ``fit_joint`` it calls is the module global a test can substitute.
     """
     result = fit_joint(problems, shared, strategy="least_squares", cancel_callback=cancel_callback)
-    curves: dict[str, dict[int, tuple[Any, Any]]] = {}
+    curves: dict[str, dict[int, tuple[Any, Any, tuple]]] = {}
     if not result.success:
         # A failed fit records and draws nothing, so its parameters are not
         # worth evaluating — and may not even be finite.
         return JointFitRun(result=result, curves=curves)
     for problem in problems:
-        per_run: dict[int, tuple[Any, Any]] = {}
+        model = models[problem.key]
+        per_run: dict[int, tuple[Any, Any, tuple]] = {}
         for dataset in problem.datasets:
             run_number = int(dataset.run_number)
             fit_result = result.series_results[problem.key][run_number]
             values = {p.name: p.value for p in fit_result.parameters}
-            per_run[run_number] = (dataset.time, problem.model_fn(dataset.time, **values))
+            per_run[run_number] = _sample_fit_curve(model, values, dataset)
         curves[str(problem.key)] = per_run
     return JointFitRun(result=result, curves=curves)
 
@@ -258,8 +263,8 @@ class JointFitWindow(QMainWindow):
     """Compose recorded series into one coupled fit with shared parameters."""
 
     #: Emitted ``(JointFitLaunch, JointFitResult, curves)`` when a joint fit
-    #: converges, where ``curves`` is ``{batch_id: {run: (t, y)}}`` already
-    #: evaluated in the worker. The host records and draws it (D8) without
+    #: converges, where ``curves`` is ``{batch_id: {run: (t, y, components)}}``
+    #: already evaluated in the worker. The host records and draws it (D8) without
     #: touching a model; a failed fit is shown here and emits nothing.
     joint_fit_completed = Signal(object, object, object)
     #: Emitted (batch_id) from a per-series "Open in Batch tab" button.
@@ -902,7 +907,7 @@ class JointFitWindow(QMainWindow):
         self._set_busy(True)
         self._worker = self._tasks.start(
             lambda worker: run_joint_fit_with_curves(
-                problems, shared, cancel_callback=worker.is_cancelled
+                problems, shared, launch.models, cancel_callback=worker.is_cancelled
             ),
             on_finished=self._on_fit_finished,
             on_error=self._on_fit_error,

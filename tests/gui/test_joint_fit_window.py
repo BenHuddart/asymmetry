@@ -532,9 +532,10 @@ def test_the_completion_payload_carries_worker_evaluated_curves(mw, app) -> None
     launch, result, curves = captured[0]
     assert set(curves) == {"batch-a", "batch-b"}
     assert sorted(curves["batch-a"]) == [1001, 1002]
-    times, values = curves["batch-a"][1001]
+    times, values, components = curves["batch-a"][1001]
     assert len(times) == len(values) > 0
     assert np.all(np.isfinite(values))
+    assert [name for name, _curve in components] == ["Exponential", "Constant"]
 
     # Re-drawing with every model replaced by one that raises on evaluation:
     # the overlay path must be satisfied by the curves it was handed.
@@ -542,6 +543,31 @@ def test_the_completion_payload_carries_worker_evaluated_curves(mw, app) -> None
         launch, models={batch_id: _ExplodingModel() for batch_id in launch.member_batch_ids}
     )
     mw._draw_joint_fit_overlays(dry_launch, result, curves)
+
+
+def test_joint_curves_span_the_series_fit_range_not_the_first_bin(mw, app) -> None:
+    """A member's curve starts where its recipe window starts, as a Batch run's does.
+
+    The synthetic data's first bin sits at 0.05 µs; with the window opened to
+    t = 0 the curve must reach back to 0 on a dense grid rather than stop at
+    that first bin and join the data points.
+    """
+    _load_project(mw)
+    series_a, _series_b = _record_two_series(mw)
+    series_a.recipe["fit_range"] = {"min": 0.0, "max": 4.0}
+
+    captured: list[dict] = []
+    window = _prepare_joint_fit(mw)
+    window.joint_fit_completed.connect(lambda _launch, _result, curves: captured.append(curves))
+    window._on_run_clicked()
+    wait_for(lambda: window._worker is None, app, timeout_s=30.0)
+
+    times, _values, _components = captured[0]["batch-a"][1001]
+    assert times[0] == pytest.approx(0.0)
+    assert times[-1] == pytest.approx(4.0)
+    assert len(times) > 80  # denser than the member's own bins
+    other_times, _values, _components = captured[0]["batch-b"][1003]
+    assert other_times[0] == pytest.approx(0.05)
 
 
 # ── v1 is time-domain only ──────────────────────────────────────────────────

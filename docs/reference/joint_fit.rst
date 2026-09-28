@@ -120,7 +120,9 @@ or Max cell directly to override. Every other seed, bound, fixed or
 file-pinned value, and the fit range, is read from each member's own recipe
 exactly as a solo Batch-tab run of that series would read it — the Batch
 tab's inherited single-fit seeds and its Initial-values dialog do not apply
-here.
+here. Each member's fitted curve is drawn over that same fit range, so a
+series whose range starts at 0 has its curve reach back to t = 0 even when
+the first data point sits later.
 
 .. _joint-fit-initial-asymmetry-caveat:
 

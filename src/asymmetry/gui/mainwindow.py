@@ -14828,7 +14828,7 @@ class MainWindow(QMainWindow):
     def _draw_joint_fit_overlays(self, launch, result, curves) -> None:
         """Draw each member series' fitted curves — draw only, never evaluate.
 
-        *curves* is ``{batch_id: {run: (t, y)}}``, already evaluated in the
+        *curves* is ``{batch_id: {run: (t, y, components)}}``, already evaluated in the
         joint-fit worker (:class:`JointFitRun`): a fitted curve is a model call
         per run, and an expensive component would cost seconds of the GUI
         thread over a wide series. Each member's curves are keyed under its own
@@ -14842,13 +14842,13 @@ class MainWindow(QMainWindow):
         for batch_id in launch.member_batch_ids:
             name = self._series_label_for(batch_id)
             fit_curves: dict[int, tuple] = {}
-            for run_number, (t_fit, y_fit) in curves.get(batch_id, {}).items():
+            for run_number, (t_fit, y_fit, components) in curves.get(batch_id, {}).items():
                 dataset = self._data_browser.get_dataset(int(run_number))
                 fit_curves[int(run_number)] = (
                     t_fit,
                     y_fit,
                     name,
-                    [],
+                    components,
                     result.series_results[batch_id][int(run_number)],
                     None,
                     self._fit_overlay_axis_key(dataset) if dataset is not None else None,

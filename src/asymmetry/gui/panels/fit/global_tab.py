@@ -206,6 +206,7 @@ from .tab_base import (
     _normalized_model_param_values,
     _param_table_rows_by_name,
     _reseed_seeded_values,
+    _sample_fit_curve,
     _set_formula_label_text,
     _set_value_provenance,
     _size_param_table_to_content,
@@ -4563,17 +4564,7 @@ class GlobalFitTab(FitTabBase):
             if result is None:
                 continue
             param_dict = {parameter.name: parameter.value for parameter in result.parameters}
-            t_min, t_max = _fit_curve_time_bounds(dataset)
-            n_samples = _fit_curve_sample_count(model, param_dict, t_min, t_max)
-            t_fit = np.linspace(t_min, t_max, n_samples)
-            y_fit = model.function(t_fit, **param_dict)
-            component_curves = tuple(
-                model.evaluate_components(
-                    t_fit,
-                    additive_only=True,
-                    **param_dict,
-                )
-            )
+            t_fit, y_fit, component_curves = _sample_fit_curve(model, param_dict, dataset)
             results_with_curves[int(dataset.run_number)] = (
                 result,
                 (t_fit, y_fit),

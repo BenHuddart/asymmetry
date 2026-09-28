@@ -557,6 +557,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the boundary — looking like the fit was never asked to start at t=0. The crop now carries
   its requested boundary with it, and single and batch fit curves are drawn from that literal
   range.
+- **A joint fit draws each member's curve over that series' fit range, like a Batch run.**
+  The curves were evaluated only at the member's own data points, so they stopped at the first
+  bin instead of reaching back to a range starting at 0, joined the bins with straight lines
+  (visibly faceted on an oscillation), and carried no component curves. They are now sampled
+  on the same dense grid over the series' recipe window, with components, as a Batch-tab run
+  of that series.
 - **`integral-scan --period red|green` and `alpha --period red|green` report the run number
   the file was reduced from, not the internal `run*1000 + period` encoding a period dataset
   carries — a period-selected `green-red` scan and its run-ordered x axis do the same.**
