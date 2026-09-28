@@ -74,7 +74,12 @@ representation, or pick a recorded one from the **Analysis ▸ Joint fits**
 submenu (a stale entry is suffixed " (stale)"; see `Staleness and
 detaching`_ below).
 
-The **Series** section lists every series of the active representation.
+The **Series** section lists every series of the active representation,
+with its model, its **Fit range**, its member count and its status (how many
+members converged when it was last fitted, and at what time). Each member is fitted over its own range — the one set on the Batch tab
+when the series was recorded — so two members may cover different windows; a
+series recorded without a range reads "Plot's fit range" and uses the range
+set on the plot. Change a member's range on the Batch tab.
 Only a *time-domain*, run-membered series with a fit model can be a member;
 everything else is listed disabled, with the reason on its tooltip:
 
@@ -120,7 +125,9 @@ or Max cell directly to override. Every other seed, bound, fixed or
 file-pinned value, and the fit range, is read from each member's own recipe
 exactly as a solo Batch-tab run of that series would read it — the Batch
 tab's inherited single-fit seeds and its Initial-values dialog do not apply
-here.
+here. Each member's fitted curve is drawn over that same fit range, so a
+series whose range starts at 0 has its curve reach back to t = 0 even when
+the first data point sits later.
 
 .. _joint-fit-initial-asymmetry-caveat:
 

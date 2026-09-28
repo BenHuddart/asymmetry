@@ -1257,6 +1257,16 @@ def _fit_curve_time_bounds(dataset: MuonDataset) -> tuple[float, float]:
     return float(time.min()), float(time.max())
 
 
+def _sample_fit_curve(
+    model: CompositeModel, param_values: dict[str, float], dataset: MuonDataset
+) -> tuple[np.ndarray, np.ndarray, tuple[tuple[str, np.ndarray], ...]]:
+    """A fitted curve over *dataset*'s fit range: ``(t, y, additive components)``."""
+    t_min, t_max = _fit_curve_time_bounds(dataset)
+    t_fit = np.linspace(t_min, t_max, _fit_curve_sample_count(model, param_values, t_min, t_max))
+    components = tuple(model.evaluate_components(t_fit, additive_only=True, **param_values))
+    return t_fit, model.function(t_fit, **param_values), components
+
+
 def _fit_work_pending(panel) -> bool:
     """True while *panel* has a worker fit in flight on its TaskRunner."""
     runner = getattr(panel, "_fit_call_runner", None)
