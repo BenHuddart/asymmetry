@@ -450,6 +450,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model-bearing series as active. See `docs/reference/project_files.rst` § "Fit series recipe
   and active series".
 
+- **The packaged `asymmetry-analysis` skill picks the Kubo–Toyabe family by physics, and
+  no longer reads an empty FFT peak table as an absent line.** Two Sonnet evaluations of the
+  new workflows failed on these: a dense nuclear-moment electrolyte was fitted with a
+  Lorentzian Kubo–Toyabe because AICc preferred it, and a cold Fourier spectrum whose peak
+  table was empty was reported as featureless even though the same session's survey and
+  time-domain fit both showed the line. The skill now separates the Gaussian KT of a dense
+  moment array from the Lorentzian KT of dilute moments (motion being the rate `nu` on top of
+  a Gaussian `Delta`), and requires a missing FFT line to be reconciled against the survey's
+  precession column and the run's own fit before it is described as absent.
+
 ### Removed
 
 - **The grouping window's "Compare vs raw (uncorrected)" checkbox and pager stop**
@@ -467,18 +477,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now kept side by side rather than one silently replacing the other.
 - **The "Run batch fit" button label** — the Batch tab's run button now reads `Run series`,
   reflecting that it edits and records one series rather than firing an anonymous batch.
-
-### Changed
-
-- **The packaged `asymmetry-analysis` skill picks the Kubo–Toyabe family by physics, and
-  no longer reads an empty FFT peak table as an absent line.** Two Sonnet evaluations of the
-  new workflows failed on these: a dense nuclear-moment electrolyte was fitted with a
-  Lorentzian Kubo–Toyabe because AICc preferred it, and a cold Fourier spectrum whose peak
-  table was empty was reported as featureless even though the same session's survey and
-  time-domain fit both showed the line. The skill now separates the Gaussian KT of a dense
-  moment array from the Lorentzian KT of dilute moments (motion being the rate `nu` on top of
-  a Gaussian `Delta`), and requires a missing FFT line to be reconciled against the survey's
-  precession column and the run's own fit before it is described as absent.
 
 ### Fixed
 
