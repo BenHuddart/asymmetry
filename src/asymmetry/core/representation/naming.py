@@ -27,7 +27,7 @@ at record time so the chips stay distinguishable.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from asymmetry.core.representation.series import FitSeries
@@ -100,12 +100,15 @@ def fit_range_label(series: FitSeries) -> str:
     one. An unbounded side renders as nothing (``"–6 µs"`` reads "up to 6 µs");
     a window unbounded on *both* sides has nothing to say and returns ``""``.
     """
-    fit_range = series.recipe["fit_range"]
+    return fit_window_label(series.recipe["fit_range"], series.rep_type.domain)
+
+
+def fit_window_label(fit_range: Mapping[str, float | None], domain: str) -> str:
+    """A recipe ``fit_range`` in *domain*'s unit, as :func:`fit_range_label` renders it."""
     low, high = fit_range["min"], fit_range["max"]
     if low is None and high is None:
         return ""
-    unit = _DOMAIN_UNITS[series.rep_type.domain]
-    return f"{_format_bound(low)}–{_format_bound(high)} {unit}"
+    return f"{_format_bound(low)}–{_format_bound(high)} {_DOMAIN_UNITS[domain]}"
 
 
 def default_series_label(series: FitSeries, *, group_name: str | None = None) -> str:

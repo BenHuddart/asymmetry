@@ -251,6 +251,28 @@ def test_group_and_model_less_series_are_listed_with_their_reason(app) -> None:
 # ── D7: autodetection proposes the default shared table ─────────────────────
 
 
+def test_each_series_shows_its_own_fit_range(app) -> None:
+    """Members fit over their own recipe windows, so the picker says which."""
+    window = JointFitWindow()
+    entries = [
+        _entry(
+            "batch-a",
+            "Ordered",
+            (1001,),
+            recipe={"parameters": [], "fit_range": {"min": 0.0, "max": 8.0}},
+        ),
+        # An unbounded recipe window crops to the plot's range.
+        _entry("batch-b", "Para", (1003,)),
+    ]
+    window.set_providers(lambda: entries, lambda _bid: [])
+    window.start_new(_FB)
+
+    table = window._series_table
+    assert table.horizontalHeaderItem(2).text() == "Fit range"
+    assert table.item(0, 2).text() == "0–8 µs"
+    assert table.item(1, 2).text() == "Plot's fit range"
+
+
 def test_suggest_ticks_exact_rows_and_keeps_user_rows(app) -> None:
     window = JointFitWindow()
     entries = [

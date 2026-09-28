@@ -72,6 +72,7 @@ def _build_entries():
                 {"name": "Lambda", "value": 0.30, "bounds": "0,inf"},
                 {"name": "A_bg", "value": 0.0, "bounds": "-inf,inf"},
             ],
+            "fit_range": {"min": 0.0, "max": 8.0},
         },
         short_label="Ordered phase",
     )
@@ -91,6 +92,7 @@ def _build_entries():
                 {"name": "Lambda", "value": 0.15, "bounds": "0,inf"},
                 {"name": "A_bg", "value": 0.0, "bounds": "-inf,inf"},
             ],
+            "fit_range": {"min": 0.0, "max": 10.0},
         },
         short_label="Paramagnetic phase",
     )

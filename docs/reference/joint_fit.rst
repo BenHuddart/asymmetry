@@ -74,7 +74,12 @@ representation, or pick a recorded one from the **Analysis ▸ Joint fits**
 submenu (a stale entry is suffixed " (stale)"; see `Staleness and
 detaching`_ below).
 
-The **Series** section lists every series of the active representation.
+The **Series** section lists every series of the active representation,
+with its model, its **Fit range**, its member count and its status (how many
+members converged when it was last fitted, and at what time). Each member is fitted over its own range — the one set on the Batch tab
+when the series was recorded — so two members may cover different windows; a
+series recorded without a range reads "Plot's fit range" and uses the range
+set on the plot. Change a member's range on the Batch tab.
 Only a *time-domain*, run-membered series with a fit model can be a member;
 everything else is listed disabled, with the reason on its tooltip:
 

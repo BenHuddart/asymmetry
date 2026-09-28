@@ -60,7 +60,7 @@ from asymmetry.core.fitting.joint import (
 )
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.joint_fit import JointFit
-from asymmetry.core.representation.naming import default_joint_fit_label
+from asymmetry.core.representation.naming import default_joint_fit_label, fit_window_label
 from asymmetry.gui.panels.fit.recipe_inputs import build_recipe_engine_inputs
 from asymmetry.gui.panels.fit.tab_base import _sample_fit_curve
 from asymmetry.gui.styles import tokens
@@ -336,14 +336,20 @@ class JointFitWindow(QMainWindow):
         # ── Series ──────────────────────────────────────────────────────────
         self._series_section = PanelSection("Series")
         series_section = self._series_section
-        self._series_table = QTableWidget(0, 4)
-        self._series_table.setHorizontalHeaderLabels(["Series", "Model", "Members", "Status"])
+        self._series_table = QTableWidget(0, 5)
+        self._series_table.setHorizontalHeaderLabels(
+            ["Series", "Model", "Fit range", "Members", "Status"]
+        )
+        # Each member fits over its own recipe window; this window edits none.
+        self._series_table.horizontalHeaderItem(2).setToolTip(
+            "Each series fits over its own range. Edit it on the Batch tab."
+        )
         self._series_table.verticalHeader().setVisible(False)
         self._series_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self._series_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         series_header = self._series_table.horizontalHeader()
         series_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in (1, 2, 3):
+        for column in (1, 2, 3, 4):
             series_header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self._series_table.itemChanged.connect(self._on_series_item_changed)
         series_section.addWidget(self._series_table)
@@ -562,6 +568,10 @@ class JointFitWindow(QMainWindow):
                 cells = [
                     name_item,
                     QTableWidgetItem(entry.model_text),
+                    QTableWidgetItem(
+                        fit_window_label(entry.recipe["fit_range"], entry.rep_type.domain)
+                        or "Plot's fit range"
+                    ),
                     QTableWidgetItem(str(len(entry.members))),
                     QTableWidgetItem(entry.status),
                 ]

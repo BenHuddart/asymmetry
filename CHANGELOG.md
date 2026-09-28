@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The joint-fit window shows each series' fit range.** The Series table has a new
+  **Fit range** column. Each member is fitted over its own range, set on the Batch tab, so
+  two members can cover different windows. A series recorded without a range reads
+  "Plot's fit range".
 - **`integral-scan` fits several resonances at once, and inside a window.** Each
   `LorentzianLCR`/`GaussianLCR` component of a field-scan model now starts on its
   own resonance — found in turn against a straight baseline, and only where the
