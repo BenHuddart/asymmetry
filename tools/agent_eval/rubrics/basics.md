@@ -54,7 +54,7 @@ recognises these as separate exercises and reports each on its own terms.
 - [ ] Range curve: reports the 100 G diamagnetic amplitude as small and
       roughly flat for thin stacks, then rising steeply and saturating for the
       thickest. It names, from its own fits, the foil count (as the run notes
-      give it) where saturation begins.
+      give it) where saturation begins — about 12–14 foils.
 - [ ] Quartz scan: identifies the few-gauss lines as muonium (about 100 times
       the bare-muon Larmor frequency). It reports the muonium amplitude
       falling as the frequency rises, and the line lost at the top fields,

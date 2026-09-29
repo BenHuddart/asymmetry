@@ -1701,6 +1701,8 @@ def test_trend_model_prints_the_fit_and_what_it_left_out(
     ) in out
     assert f"{SCAN_RUNS[0]} (excluded)" in out
     assert f"{SCAN_RUNS[-1]} (outside the x range)" in out
+    # What the trend shows is still named beside the law fitted to one column.
+    assert "NOTE: Lambda changes along the scan" in out
 
 
 @pytest.mark.parametrize(
@@ -2823,7 +2825,10 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
     assert "FAILED (Fit failed: call limit reached, hesse failed; at a bound: B0_2)" in text
     assert (
         "Next: the scan's own largest dips are at B0_1 1200, B0_2 1800. The fit already "
-        "started each centre there; fit one resonance per window: --model 'LorentzianLCR + "
+        "started each centre there, so the usual cause is the background"
+    ) in text
+    assert (
+        "fit one resonance per window on its own local background: --model 'LorentzianLCR + "
         "Linear' --xmin 1000 --xmax 1400; --model 'LorentzianLCR + Linear' --xmin 1600 "
         "--xmax 2000."
     ) in text
@@ -2837,7 +2842,7 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
     text = _render(result, ReductionSettings(), [], [])
     assert (
         "The fit started away from them: refit with --initial B0_1=1200 --initial "
-        "B0_2=1800, or fit one resonance per window"
+        "B0_2=1800, or fit one resonance per window on its own local background"
     ) in text
 
 
@@ -3047,10 +3052,18 @@ def test_fourier_names_two_peaks_closer_than_two_resolution_elements() -> None:
             ]
         },
         "candidate_maxima": [],
+        "frequency_min_mhz": 812.0,
+        "frequency_max_mhz": 816.0,
+        "full_band_mhz": [0.0, 900.0],
+        "outside_band": [],
         "array_path": "a.npz",
         "metadata_path": "a.json",
         "plot": None,
     }
     text = _render(result)
+    assert "band 812–816 of 0–900 MHz" in text
     assert "NOTE: 813.497 and 813.596 MHz lie within 2 resolution elements" in text
     assert "815.9" not in text.split("NOTE:")[1]
+    # Lines the transform detected outside the band are named, not hidden.
+    hidden = _render(result | {"outside_band": [{"frequency_mhz": 208.7, "snr": 35.0}]})
+    assert "NOTE: the transform also holds lines outside this band — 208.7 MHz (SNR 35)" in hidden

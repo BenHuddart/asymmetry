@@ -339,19 +339,24 @@ def _render(
         "",
         render_trend(trend),
     ]
-    if fit is not None:
-        lines.extend(["", *_render_fit(fit, series["free_params"])])
-    else:
-        from asymmetry.core.workflow.series import envelope_change
+    from asymmetry.core.workflow.series import envelope_change
 
-        change = envelope_change(trend)
+    # What the trend itself shows is printed whether or not a law is fitted
+    # to it: a law answers one question, these name the others.
+    change = envelope_change(trend)
+    readings = [
+        *([change] if change is not None else []),
+        *_rate_steps(trend, series["free_params"]),
+        *_phase_drift(trend, series["free_params"]),
+        *_frequency_response(series, trend),
+    ]
+    if fit is not None:
+        lines.extend(["", *_render_fit(fit, series["free_params"]), *readings])
+    else:
         lines.extend(
             [
                 "",
-                *([change] if change is not None else []),
-                *_rate_steps(trend, series["free_params"]),
-                *_phase_drift(trend, series["free_params"]),
-                *_frequency_response(series, trend),
+                *readings,
                 *_law_hints(series["name"], trend, series["free_params"]),
                 *_doublet_hint(series, trend),
             ]
@@ -450,8 +455,13 @@ def _rate_steps(trend, free_params: list[str]) -> list[str]:
     """
     notes = []
     axis = trend.order_key
+    # An amplitude steps along a supplied or field axis (a range curve, a
+    # steering scan); along temperature its changes are the physics' own.
+    stepping = _RATE_BASES | (
+        set() if trend.order_key in ("temperature", "sample_temperature_logged") else {"A"}
+    )
     for param in free_params:
-        if re.sub(r"_\d+$", "", param) not in _RATE_BASES:
+        if re.sub(r"_\d+$", "", param) not in stepping:
             continue
         rows = _measured(trend, param)
         splits = []
@@ -679,7 +689,8 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
     frequencies = [p for base, ps in by_base.items() if base in _FREQUENCY_BASES for p in ps]
     command = f"asymmetry trend <folder> --series {name} --model"
     hints: list[str] = []
-    if order_key == "field" and rates:
+    # A precessing line's rate is its width (TF), not a Redfield relaxation (LF).
+    if order_key == "field" and rates and not frequencies:
         hints.append(
             f"A relaxation rate against field is the decoupling question: {command} "
             f"Redfield --param {rates[0]} (--fix m=2 for the textbook form)."

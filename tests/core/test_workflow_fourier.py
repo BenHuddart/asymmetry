@@ -104,3 +104,13 @@ def test_the_correlation_needs_a_transverse_field() -> None:
 
     with pytest.raises(ValueError, match="transverse field"):
         CorrelationSettings(field_gauss=0.0)
+
+
+def test_a_line_outside_the_band_is_named_not_lost() -> None:
+    outcome = fourier_spectrum(
+        _line(2.5, 4.0), FourierSettings(window="none", f_min=0.2, f_max=1.5)
+    )
+
+    assert outcome.peaks["peaks"] == []
+    assert [round(entry["frequency_mhz"], 1) for entry in outcome.outside_band][:1] == [2.5]
+    assert outcome.full_band_mhz[1] > 2.5

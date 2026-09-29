@@ -339,10 +339,14 @@ def _failed_fit_next(fit: dict) -> str:
         starts = " ".join(f"--initial {w['parameter']}={w['centre']:g}" for w in windows)
         text += f"The fit started away from them: refit with {starts}, or "
     else:
-        text += "The fit already started each centre there; "
+        text += (
+            "The fit already started each centre there, so the usual cause is the "
+            "background: across a long scan it rises or steps where no polynomial can "
+            "follow, and the resonances cannot be fitted on it together — say so, and "
+        )
     return (
         text
-        + "fit one resonance per window: "
+        + "fit one resonance per window on its own local background: "
         + "; ".join(
             f"--model '{window['component']} + Linear' --xmin {window['x_min']:g} "
             f"--xmax {window['x_max']:g}"

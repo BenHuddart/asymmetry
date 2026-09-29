@@ -219,7 +219,9 @@ def _render(result: dict) -> str:
     )
     lines = [
         f"{title} — FFT, window {result['settings']['window']}, {result['n_points']} bins, "
-        f"resolution {result['resolution_mhz']:.6g} MHz",
+        f"resolution {result['resolution_mhz']:.6g} MHz, band "
+        f"{result['frequency_min_mhz']:.6g}–{result['frequency_max_mhz']:.6g} of "
+        f"{result['full_band_mhz'][0]:.6g}–{result['full_band_mhz'][1]:.6g} MHz",
         "",
         render_table([axis, "amplitude", "width/MHz", "SNR"], rows)
         if rows
@@ -243,6 +245,16 @@ def _render(result: dict) -> str:
     ]
     if result["plot"] is not None:
         lines.append(f"Plot written to {result['plot']}")
+    if result["outside_band"]:
+        lines.append(
+            "NOTE: the transform also holds lines outside this band — "
+            + ", ".join(
+                f"{entry['frequency_mhz']:.6g} MHz (SNR {entry['snr']:.0f})"
+                for entry in result["outside_band"]
+            )
+            + ". --fmin/--fmax hid them from this table; widen the band (or drop --fmax) "
+            "before saying a line is absent."
+        )
     resolution = result["resolution_mhz"]
     close = sorted(peak["frequency_mhz"] for peak in peaks)
     pairs = [
@@ -261,8 +273,9 @@ def _render(result: dict) -> str:
     if coupling:
         lines.append(
             f"Next: the radical lines themselves — asymmetry fourier <folder> --run "
-            f"{result['run']} with the same window and time range — and report them with "
-            f"the transform, window and resolution beside A_mu."
+            f"{result['run']} with the same window and time range and no --fmax (the "
+            f"lines sit either side of the diamagnetic one, up to A_mu) — and report them "
+            f"with the transform, window and resolution beside A_mu."
         )
     return "\n".join(lines)
 

@@ -699,8 +699,10 @@ co-add repeated runs at the same field and temperature first
 (`reduce --runs … --coadd`, in its own `--workdir`), transform the sum, and
 run `fourier --run <first run> --correlation`, which prints A_μ directly as the
 correlation spectrum's peak — never add the two frequencies by hand. Transform
-the co-add up to its Nyquist frequency too, and read its peak table for the
-two radical lines. Never conclude "no radical" from one run at another field
+the co-add over its whole band too — `asymmetry fourier <folder> --run <first
+run> --window none`, with no `--fmax` — and read its peak table for the two
+radical lines; the header prints the band searched, and a note names any line
+a narrower band hid. Never conclude "no radical" from one run at another field
 or a band below the lines: the survey's `REPEATS` sets are what to co-add.
 
 `fourier` writes `spectra/<name>.npz`, a JSON provenance file and, with

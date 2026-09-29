@@ -702,8 +702,8 @@ def fit_series(
         }
         for run, lines in field_lines.items():
             if run in starts:
-                for name, value in lines.items():
-                    starts[run][name].value = value
+                for param, value in lines.items():
+                    starts[run][param].value = value
         # The chaining coordinate runs forward along the branch, which for the
         # descending one means the scan coordinate negated: that is the whole
         # mechanism by which fit_asymmetry_series walks a scan downward.

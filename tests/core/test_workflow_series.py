@@ -487,6 +487,7 @@ def test_a_line_at_the_applied_field_follows_it_along_a_field_scan(
     assert [entry["parameters"]["frequency"] for entry in outcome.results] == pytest.approx(
         [0.013554 * field for field in _TF_FIELDS], rel=0.01
     )
+    assert outcome.name == "tf-field"
 
 
 def test_fit_one_starts_from_the_recipe_as_written() -> None:
