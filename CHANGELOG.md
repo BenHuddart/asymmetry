@@ -28,7 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is named a t0 offset (with the implied Δt and the `--t0-offset` to test); an amplitude
   falling as its frequency rises is named the instrument's frequency response; a held
   high-field line gets a ready two-line recipe; `fourier` notes two peaks within two
-  resolution elements.
+  resolution elements, names lines detected outside a `--fmin/--fmax` band, and states
+  that a correlation peak is A_μ = ν₁ + ν₂. Trend readings leave out bound-pinned,
+  reseeded and over-amplitude rows.
 - **`integral-scan` prints each fitted parameter with its error**, `fixed` for a held one
   and `(at bound)` for one pinned on a bound, instead of the values alone.
 
@@ -51,6 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--alpha-from` a single-period calibration run works with `--period`** — the
   detector balance is the same in every period — instead of refusing the red/green scan.
 - **`asymmetry info` on a file no loader reads** prints the error, not a traceback.
+- **`integral-scan` points at what a poor fit left out.** A converged resonance fit at
+  χ²ᵣ above 2 names the window of a further dip (checked by fitting a line there) or
+  the background as the cause; an LCR fit notes that no radical ALC/hyperfine model
+  exists; `--json` keeps every NOTE and Next line under `notes`.
+- **A mistyped data folder is named as missing**, with the folder the work directory
+  holds, before any work-directory binding error.
 - **A failed field-scan fit says why** — the minimiser's reasons and any parameter at
   a bound — and suggests one resonance per `--xmin/--xmax` window from the scan's dips;
   `integral-scan` on two-period runs without `--period` notes that it summed them.

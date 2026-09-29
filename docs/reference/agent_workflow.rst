@@ -1082,8 +1082,15 @@ parameters print as a table of value and error — ``fixed`` for a held one,
 ``(at bound)`` beside one pinned on a bound, and ``-`` for the errors of a fit
 that failed; a failed fit names the minimiser's reasons and any parameter at a
 bound, and suggests fitting one resonance per ``--xmin``/``--xmax`` window
-around the scan's own dips. Without ``--period``, a scan of two-period runs
-notes that it summed the periods. ``--alpha-from`` a single-period calibration run serves a
+around the scan's own dips. A fit that converges with a χ²\ :sub:`r` above 2
+is told why that may be — a background no polynomial can follow across a long
+scan, or a dip the model leaves out — and, when a single line fitted inside the
+seeder's window for one more resonance falls below its background by five
+errors, that window is named with the command that fits it. An LCR fit notes
+that no radical ALC or hyperfine model is available, so its fields are not
+converted into couplings. Without ``--period``, a scan of two-period runs
+notes that it summed the periods. With ``--json`` every NOTE and Next line is
+kept under ``notes``. ``--alpha-from`` a single-period calibration run serves a
 ``--period`` scan too: the detector balance is the same in every period.
 Every field-scan component with a resonance or a half-rise to find in the
 data — the LCR line shapes, ``LorentzianLCRPair``, ``RFResonanceMuP`` and
@@ -1179,7 +1186,10 @@ Combined with ``reduce --coadd``, a correlation spectrum can be built from
 several runs at one field summed for statistics before the FFT. The report's
 header names the transform, its window and resolution; after a correlation
 spectrum it points at the plain transform of the same run, whose radical
-lines belong beside :math:`A_\mu` in a summary.
+lines belong beside :math:`A_\mu` in a summary; it states that the peak is
+:math:`A_\mu = \nu_1 + \nu_2`, the sum of the radical's two lines. The header
+also gives the band searched against the whole transform, and a note names the
+strongest lines detected outside a ``--fmin``/``--fmax`` band.
 
 The command stores numerical arrays in ``spectra/<name>.npz`` and settings,
 resolution and the peak table in ``spectra/<name>.json``. Zero padding makes
