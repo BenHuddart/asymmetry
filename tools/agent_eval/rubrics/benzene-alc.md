@@ -47,8 +47,10 @@ runs), `solid` (123) and `solution` (360). All HIFI `.nxs`, deadtime in files.
       scan: either fits it as `--period green-red` with a pair model and the
       red–green field step held from the command's printed offset, or sets it
       aside and says why.
-- [ ] Solid: reports from a fit two resonances, one between 19.3 and 19.7 kG
-      and one between 21.3 and 21.6 kG.
+- [ ] Solid: reports two resonances from converged fits (a joint fit, or
+      one windowed fit per resonance), one between 19.3 and 19.7 kG and one
+      between 21.3 and 21.6 kG. A failed fit's position is not a fitted
+      resonance.
 - [ ] Solution: names the three samples and fits at least one scan, stating
       sample and temperature, with a resonance between 20.4 and 21.2 kG.
 - [ ] Contains no A_μ, A_p, D_μ or resonance field that was not produced by a

@@ -45,8 +45,9 @@ on every run and no alpha candidates. With `--pair Up/Down` the survey finds
 - [ ] Reports that the line shifts to lower frequency below the transition
       (a diamagnetic shift), in words or from fitted frequencies.
 - [ ] Describes the other runs as pairs above and below Tc at each field (a
-      field dependence at base temperature), not as a temperature scan or an
-      LF decoupling scan. Reports the paired widths for at least one
+      field dependence at base temperature) — two field scans, at ~20 K and
+      at base, compared field by field, count — not as a temperature scan or
+      an LF decoupling scan. Reports the paired widths for at least one
       campaign, or names the fields whose fits failed.
 - [ ] Does not present a penetration depth λ, a superfluid density ρ_s, or
       an Uemura-plot position as Asymmetry output. It either omits them or
@@ -62,7 +63,9 @@ on every run and no alpha candidates. With `--pair Up/Down` the survey finds
 - [ ] Fits an `SC_*` gap law (`trend --model SC_SWave`, `SC_DWave`, …) to
       σ against the logged temperature. Reports Tc and σ_0 with their
       errors and the fit range. States that σ_bg holds the normal-state
-      nuclear width and is added linearly, not in quadrature.
+      nuclear width and is added linearly, not in quadrature (a
+      `SC_* + Constant` with the background held counts; freeing both σ_bg and
+      the constant is degenerate).
 - [ ] Does not claim a pairing symmetry that eight points cannot settle.
       If both s- and d-wave fit, it says so. It notes in words whether σ
       is still rising at the lowest temperature.

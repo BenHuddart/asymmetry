@@ -55,8 +55,9 @@ members) as the alpha candidates; the 2014 set has none of its own.
       higher fields and finds nothing convincing at the lowest; single-run
       radical lines are at most visual candidates at this statistics.
 - [ ] Subtracts the pre-t0 background (`--background range`, a continuous
-      source) and says so; states the alpha treatment (assumed 1.0, or a
-      named run from the other campaign, with that caveat).
+      source) and says so; states the alpha treatment (assumed 1.0, a named
+      run from the other campaign, or a run of the set itself — each with its
+      caveat).
 - [ ] Identifies the ~50.6 MHz line (and the weaker ~101 MHz feature on the
       PNG) as instrumental, e.g. the cyclotron RF and its harmonic.
 - [ ] Says the four-detector views and the worksheet's "average correlation"

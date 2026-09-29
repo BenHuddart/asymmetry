@@ -666,6 +666,13 @@ the plotted field dependence support that interpretation.
 `integral-scan` takes the same `--pair`, `--background`, `--deadtime` and
 `--period` as `reduce`.
 
+**Which runs are the ALC scan.** An ALC scan is the stretch of evenly stepped
+fields (tens to hundreds of gauss apart) across the resonances. Low fields
+at the same temperature — zero field, then a few gauss up to a few kilogauss
+in growing steps — are a separate decoupling (repolarisation) measurement,
+even when the survey lists them in the same field scan: integrate and report
+them apart, and give the ALC scan's run range from where the even steps start.
+
 **The same sample at two temperatures.** Compare each resonance's centre and
 width between the scans. A Δ₁ resonance exists only through the anisotropic
 part of the hyperfine coupling, so one that narrows, shifts or appears on
@@ -691,7 +698,10 @@ of the diamagnetic line, whose sum is the muon hyperfine coupling A_μ:
 co-add repeated runs at the same field and temperature first
 (`reduce --runs … --coadd`, in its own `--workdir`), transform the sum, and
 run `fourier --run <first run> --correlation`, which prints A_μ directly as the
-correlation spectrum's peak — never add the two frequencies by hand.
+correlation spectrum's peak — never add the two frequencies by hand. Transform
+the co-add up to its Nyquist frequency too, and read its peak table for the
+two radical lines. Never conclude "no radical" from one run at another field
+or a band below the lines: the survey's `REPEATS` sets are what to co-add.
 
 `fourier` writes `spectra/<name>.npz`, a JSON provenance file and, with
 `--plot`, a spectrum PNG. Its table reports detected frequency, amplitude,
@@ -1169,7 +1179,12 @@ width Δ or in an exponential rate Λ, whichever carries it. Fit the ZF scan
 with one static-KT recipe across Tc, compare *every* width and rate above and
 below the Tc the TF scan gives (`trend` names any that step), and report a
 step of a few percent at Tc as the finding it is. Do not decide in advance
-which parameter the signal must appear in.
+which parameter the signal must appear in. A Kubo–Toyabe width that grows
+below Tc while Λ stays flat, and that a small longitudinal field decouples, is
+a *static* spontaneous field — the time-reversal-symmetry-breaking result
+itself, not a lesser candidate for being in Δ rather than Λ. Place its onset
+where Δ leaves its normal-state level (the `trend` note brackets it), and set
+it beside the TF Tc.
 
 ## 4. What things cost
 
@@ -1185,6 +1200,13 @@ which parameter the signal must appear in.
 
 So: screen **one or two** runs, not every run. Reduce and fit whole scans
 freely — those are cheap.
+
+**Finish the analysis in this session.** Nobody answers a question mid-way:
+the user sees only your final reply. Do not end on "shall I continue?" or with
+a partial pass — take every scan through reduction, the fit, `trend` and the
+audit, and put what you could not do under "Not done, and why". When a
+command is refused (a shell loop, a pipe), run the same `asymmetry` commands
+one at a time instead.
 
 **Let long commands finish.** Give a `wizard` or `fit-series` call several
 minutes through your shell tool's own timeout setting (in Claude Code, the Bash
@@ -1387,6 +1409,12 @@ MaxEnt field spectra, a multi-group field-distribution analysis, count-domain
 fits, a hyperfine or site model), so the reader sees where this preliminary
 analysis stops — and never let what the tool could not resolve stand as a
 finding (an unresolved splitting is not the absence of order).
+
+**Not done, and why** — each part of the experiment's question this analysis
+did not answer, with the reason: the model or method the tool lacks (MaxEnt
+field spectra, a radical ALC or hyperfine model, a multi-group analysis,
+count-domain fits), a fit that did not converge, a scan set aside and why.
+"Not analysed" without a reason is not an answer.
 
 **Files** — the work directory (`asymmetry-work/`), any stored `scans/` or
 `spectra/` products, and the paths of the PNGs worth looking at.

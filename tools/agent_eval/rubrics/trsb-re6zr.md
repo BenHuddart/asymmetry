@@ -42,10 +42,12 @@ decouples the relaxation, so the fields are static.
       precession. It does not adopt the wizard's Bessel or Overhauser
       precession recommendation as the ZF physics.
 - [ ] States the headline in words: the ZF KT rate (`Delta`, the paper's σ)
-      rises on cooling below a temperature between 6 and 7.5 K while Λ shows
-      no such change; the extra relaxation is small against the nuclear rate
-      and is read as spontaneous static fields appearing at Tc — broken
-      time-reversal symmetry.
+      rises on cooling below a temperature at or near the TF Tc (between 6 and
+      7.5 K, located to the point spacing) while Λ shows no such change; the
+      extra relaxation is small against the nuclear rate and is read as
+      spontaneous static fields appearing at Tc — broken time-reversal
+      symmetry. Calling it a candidate pending a check passes; explaining it
+      away (as nuclear, or as "not TRSB because it is not in Λ") does not.
 - [ ] Reports the TF Gaussian rate σ rising below a Tc between 6 and 7 K from
       a flat normal-state value, fits σ(T) with an `SC_*` gap law, quotes Tc
       and the gap parameter with uncertainties, χ²ᵣ and the temperature axis,

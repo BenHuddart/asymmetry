@@ -58,10 +58,11 @@ LF from the coil readbacks (`LF+`).
       (and a line appears near 7 kG), consistent with molecular reorientation
       averaging the hyperfine anisotropy. This is presented as interpretation,
       not a fitted result.
-- [ ] Says plainly what was not fitted and why: the background across a whole
-      ALC scan (a rise plus a step near 20 kG) is not a polynomial, so there is
-      no whole-scan fit; no radical ALC or hyperfine model is available, so
-      there are no muon/proton hyperfine couplings or site assignments.
+- [ ] Says why there is no whole-scan fit: the background across a whole
+      ALC scan (a rise plus a step near 20 kG) is not a polynomial.
+- [ ] Says why there are no hyperfine couplings or site assignments: no
+      radical ALC or hyperfine model is available (not merely that the
+      fields were not converted).
 - [ ] Contains no resonance field, width, hyperfine coupling, temperature,
       activation energy or run number that was not produced by a tool call in
       this session. The paper's 40 K/410 K and its couplings are background.

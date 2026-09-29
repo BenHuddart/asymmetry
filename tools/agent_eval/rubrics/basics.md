@@ -72,6 +72,14 @@ recognises these as separate exercises and reports each on its own terms.
 
 ## Should
 
+- [ ] Reads each exercise's pattern the right way round: the steering
+      scan's silver signal is smallest where the beam is centred on the
+      (depolarising) sample; the range curve's step is where the muons stop
+      passing through the degraders into the sample. An inverted reading is
+      a gap even when the Must's pattern is reported.
+- [ ] Does not dismiss a relative amplitude trend (the muonium frequency
+      response) on the ground that alpha is uncertain: one alpha scales every
+      amplitude alike.
 - [ ] Deadtime: reduces ZF Ag 34998 with deadtime off and from the file, and
       describes the early-time sag in asymmetry that the correction removes,
       with both fits' χ²ᵣ. Says the 2010 files carry no deadtime values.
