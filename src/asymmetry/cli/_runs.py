@@ -142,6 +142,11 @@ def resolve_runs(selection: RunSelection, spec: str) -> list[tuple[int, str, Pat
     return resolved
 
 
+def present_runs(selection: RunSelection, spec: str) -> list[int]:
+    """The run numbers *spec* names that the folder holds (see :func:`resolve_runs`)."""
+    return [run for run, _, _ in resolve_runs(selection, spec)]
+
+
 def resolve_run(selection: RunSelection, run_number: int) -> Path:
     """The file for one selected run; :class:`UserError` when it is not there."""
     available = run_files(selection)
@@ -236,6 +241,7 @@ __all__ = [
     "run_clashes",
     "window_note",
     "parse_run_spec",
+    "present_runs",
     "reduced_datasets",
     "resolve_run",
     "resolve_runs",

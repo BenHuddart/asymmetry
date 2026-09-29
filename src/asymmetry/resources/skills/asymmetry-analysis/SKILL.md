@@ -1264,6 +1264,18 @@ penetration depth. Is the line shape Gaussian or exponential, and does it
 change with temperature (a nuclear-dipolar Gaussian narrowing to a Lorentzian
 as the muon starts to hop)?
 
+**A high transverse field on a magnet** (tesla fields, hundreds of MHz) is
+where one tabulated line can be two: muons at inequivalent sites, or a
+sublattice field adding to and subtracting from the applied one, split the
+line by as little as one FFT resolution element. When the peak table shows one
+line whose width is of the resolution or more, or `fit-series` strongly
+prefers an exponential envelope on the cold side, fit the coldest run with two
+lines (`Oscillatory * Gaussian + Oscillatory * Gaussian`, the second started a
+resolution element away) and compare χ²ᵣ and the two amplitudes' errors
+before reporting one line. A single-line fit never shows that a magnet is
+unordered: a broadening or splitting on cooling through a transition is the
+order, seen through a field much larger than it.
+
 ## 6. The summary template
 
 Use these headings. Fill only from command output.

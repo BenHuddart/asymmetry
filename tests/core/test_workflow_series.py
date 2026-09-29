@@ -431,6 +431,40 @@ def test_a_line_away_from_the_applied_fields_larmor_frequency_is_kept_along_the_
     )
 
 
+def test_a_line_at_the_applied_field_follows_it_along_a_field_scan() -> None:
+    # A transverse-field scan: each run precesses at its own Larmor frequency,
+    # so the neighbour's fitted frequency is no start for the next field.
+    expression = "Oscillatory * Gaussian + Constant"
+    model = CompositeModel.from_expression(expression)
+    time = np.linspace(0.05, 8.0, 800)
+    noise = np.random.default_rng(5).normal(0.0, 0.3, time.size)
+    fields = (100.0, 200.0, 400.0, 800.0)
+    datasets = {
+        400 + index: MuonDataset(
+            time=time,
+            asymmetry=model.function(
+                time,
+                A_1=18.0,
+                frequency=0.013554 * field,
+                phase=0.0,
+                sigma=0.3,
+                A_bg=2.0,
+            )
+            + noise,
+            error=np.full_like(time, 0.3),
+            metadata={"run_number": 400 + index, "field": field, "temperature": 2.0},
+        )
+        for index, field in enumerate(fields)
+    }
+    recipe = FitRecipe.from_expression(expression, dataset=datasets[400])
+
+    outcome = fit_series(datasets, recipe, axis=scan_axis(datasets, "field"), name="tf-field")
+
+    assert [entry["parameters"]["frequency"] for entry in outcome.results] == pytest.approx(
+        [0.013554 * field for field in fields], rel=0.01
+    )
+
+
 def test_fit_one_starts_from_the_recipe_as_written() -> None:
     # No re-seeding for a single fit: the caller aimed this recipe at this run.
     datasets = _lf_datasets()

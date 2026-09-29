@@ -2689,3 +2689,48 @@ def test_integral_scan_fits_inside_the_window_and_reports_a_failed_fit(
     cli.main([*base, "--name", "failed", "--model", "Linear"])
     assert "FAILED (Fit failed)" in capsys.readouterr().out
     assert (tmp_path / "wd" / "scans" / "failed.json").exists()
+
+
+def test_fit_series_skips_run_numbers_the_folder_does_not_hold(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    # A scan's range routinely has gaps (an aborted run); reduce skips them,
+    # and so does the fit, rather than asking for a run that does not exist.
+    workdir = str(tmp_path / "wd")
+    folder = str(workflow_folder)
+    spec = f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]},9999"
+    cli.main(["reduce", folder, "--runs", spec, "--workdir", workdir])
+    cli.main(
+        [
+            "recipe",
+            folder,
+            "--expression",
+            "Exponential + Constant",
+            "--name",
+            "relax",
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--workdir",
+            workdir,
+        ]
+    )
+    capsys.readouterr()
+    cli.main(
+        [
+            "fit-series",
+            folder,
+            "--runs",
+            spec,
+            "--recipe",
+            "relax",
+            "--order",
+            "temperature",
+            "--json",
+            "--workdir",
+            workdir,
+        ]
+    )
+    assert [entry["run"] for entry in _json_output(capsys)["series"]["results"]] == [
+        SCAN_RUNS[0],
+        SCAN_RUNS[1],
+    ]

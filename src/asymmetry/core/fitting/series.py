@@ -28,7 +28,7 @@ signpost so both agree on what "went wrong".
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import BrokenExecutor, as_completed
 from dataclasses import dataclass, field
 
@@ -147,14 +147,15 @@ def _chain_seed(
     previous: FitResult,
     provided: ParameterSet,
     local_params: Sequence[str],
+    restart: Collection[str] = (),
 ) -> ParameterSet:
     """Warm-start the next run: carry the previous good run's free Local values.
 
     Keeps the provided structure (names, bounds, fixed flags) but overrides each free
-    Local parameter with the previous run's fitted value. Fixed and Global parameters
-    keep their provided values.
+    Local parameter with the previous run's fitted value. Fixed and Global parameters,
+    and the *restart* ones, keep their provided values.
     """
-    local = set(local_params)
+    local = set(local_params) - set(restart)
     rebuilt = ParameterSet()
     for parameter in provided:
         value = parameter.value
@@ -418,6 +419,7 @@ def fit_asymmetry_series(
     frequency_param: str | None = None,
     error_oversampling: float = 1.0,
     max_workers: int | None = None,
+    restart_params: Mapping[int, Collection[str]] | None = None,
 ) -> AsymmetrySeriesResult:
     """Fit a block-separable F-B asymmetry batch with optional robust chaining.
 
@@ -427,6 +429,11 @@ def fit_asymmetry_series(
     warm-starts from the previous good run and a converged-but-spurious run is
     reseeded from the good-run trend and refit. ``"auto"`` resolves to one of those via
     :func:`recommend_series_seeding` over the ``order_key``.
+
+    restart_params
+        Per run, the parameters that start from their provided value even when the
+        chain would carry the previous run's: a line that follows an applied field
+        changing along the scan, whose previous value belongs to another field.
 
     max_workers
         Opt-in process-level parallelism for the ``as_provided`` mode only, whose runs
@@ -544,7 +551,9 @@ def fit_asymmetry_series(
             order = float(order_key.get(run, run)) if order_key else float(run)
 
             if resolved == "chain" and last_good is not None:
-                seed = _chain_seed(last_good, provided, local_params)
+                seed = _chain_seed(
+                    last_good, provided, local_params, (restart_params or {}).get(run, ())
+                )
             else:
                 seed = provided
 

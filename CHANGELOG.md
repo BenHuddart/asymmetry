@@ -14,9 +14,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fit-global` or `integral-scan` fitted, with those runs — a TF scan used only for
   alpha (with the commands that fit it), or the far side of a transition — so a
   summary cannot silently leave a measurement out.
+- **`asymmetry survey` names the detector pair that precesses.** When no run precesses
+  on the files' own pair, the survey tries the others on the first silent run in a field
+  and prints `PAIR:` with the one across the field — on a PSI GPS transverse-field run,
+  `Up/Down` — and the `--pair` to pass on.
+- **`integral-scan` prints each fitted parameter with its error**, `fixed` for a held one
+  and `(at bound)` for one pinned on a bound, instead of the values alone.
+
+### Changed
+
+- **`fit-series` starts a line at each run's own field along a field scan.** A recipe
+  frequency at the start run's Larmor value is scaled by each run's field rather than
+  carried from the neighbouring run, which belongs to another field; lines away from the
+  Larmor frequency, and scans at one field, chain as before.
+- **Clearer notes on a series' trend.** The envelope note names motional narrowing only
+  for a Gaussian on the cold side (an exponential there is a skewed distribution, such
+  as a vortex lattice beside a background line), and `trend` names a line held near the
+  applied field that still moves by many errors (a Knight or diamagnetic shift).
 
 ### Fixed
 
+- **`fit-series` and `fit-global` skip run numbers the folder does not hold**, as
+  `reduce` does, instead of asking for them to be reduced.
+- **`--alpha-from` a single-period calibration run works with `--period`** — the
+  detector balance is the same in every period — instead of refusing the red/green scan.
+- **`asymmetry info` on a file no loader reads** prints the error, not a traceback.
 - **A series fit keeps a line away from the applied field's Larmor frequency.** Since
   0.21.0 every `fit-series` and `fit-global` run restarted `frequency` at γ_μB/2π,
   overwriting the recipe's line; a critical-field line in a type-I superconductor or
