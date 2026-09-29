@@ -392,8 +392,8 @@ def test_survey_points_a_red_green_field_scan_at_the_period_difference(
     assert "T = 300 K, 2 periods (red/green): 3 runs" in text
     assert (
         f"asymmetry integral-scan {workflow_folder} --runs 701-703 --period green-red; with a "
-        "field step between the periods (differential ALC) fit --model LorentzianLCRPair, "
-        "holding its dB at the red - green offset"
+        "field step between the periods (differential ALC) fit --model LorentzianLCRPair "
+        "with its dB held at the value that command's Next line gives"
     ) in text
     # A single-period scan says neither.
     text = _render(replace(survey, scans=[replace(scan, n_periods=1)]), tmp_path / "s.json")
@@ -3067,3 +3067,35 @@ def test_fourier_names_two_peaks_closer_than_two_resolution_elements() -> None:
     # Lines the transform detected outside the band are named, not hidden.
     hidden = _render(result | {"outside_band": [{"frequency_mhz": 208.7, "snr": 35.0}]})
     assert "NOTE: the transform also holds lines outside this band — 208.7 MHz (SNR 35)" in hidden
+
+
+def test_a_muonium_phase_drift_is_timed_against_its_own_frequency() -> None:
+    from asymmetry.cli.commands.trend import _phase_drift
+    from asymmetry.core.workflow.series import TrendTable
+
+    # Muonium precesses ~103 times faster than the bare muon, so the same
+    # 40 ns timing offset turns its phase ~103 times faster per gauss.
+    rows = [
+        {
+            "key": str(run),
+            "x": field,
+            "frequency": 1.394 * field,
+            "frequency_err": 0.001,
+            "phase": -2 * math.pi * 1.394 * field * 0.040,
+            "phase_err": 0.01,
+            "flags": [],
+        }
+        for run, field in enumerate((1.0, 2.0, 3.0, 4.0))
+    ]
+    columns = ["key", "x", "frequency", "phase", "flags"]
+    (note,) = _phase_drift(TrendTable("field", columns, rows), ["frequency", "phase"])
+    assert "Δt = +40 ns" in note
+
+
+def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
+    from asymmetry.cli.commands.integral_scan import _poor_fit_note
+
+    fit = {"parameters": {"f": 0.01, "B0": 19480.0, "Bwid": 150.0}, "reduced_chi_squared": 12.6}
+    (note,) = _poor_fit_note(fit)
+    assert "converged with 1 resonance(s) at chi2_red 12.6" in note
+    assert _poor_fit_note(fit | {"reduced_chi_squared": 1.2}) == []

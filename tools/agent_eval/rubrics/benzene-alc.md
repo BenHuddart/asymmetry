@@ -75,6 +75,9 @@ runs), `solid` (123) and `solution` (360). All HIFI `.nxs`, deadtime in files.
 
 ## Known traps
 
+- `dB` in `LorentzianLCRPair` is the green field less the red: the printed
+  "period field offset (red - green)" negated. Holding it at the printed
+  value (sign included) shifts both pair centres by about 40 G.
 - `--alpha-from 29799` with any `--period` fails — "The green − red
   difference needs a two-period (red/green) run", or "Unknown period selector"
   for `--period green`: the period is applied to the single-period

@@ -59,7 +59,9 @@ LF from the coil readbacks (`LF+`).
       averaging the hyperfine anisotropy. This is presented as interpretation,
       not a fitted result.
 - [ ] Says why there is no whole-scan fit: the background across a whole
-      ALC scan (a rise plus a step near 20 kG) is not a polynomial.
+      ALC scan is not a polynomial (e.g. a rise plus a step near 20 kG; the
+      detail is illustrative — "a cubic cannot follow the background over the
+      whole range" is enough).
 - [ ] Says why there are no hyperfine couplings or site assignments: no
       radical ALC or hyperfine model is available (not merely that the
       fields were not converted).

@@ -54,11 +54,14 @@ recognises these as separate exercises and reports each on its own terms.
 - [ ] Range curve: reports the 100 G diamagnetic amplitude as small and
       roughly flat for thin stacks, then rising steeply and saturating for the
       thickest. It names, from its own fits, the foil count (as the run notes
-      give it) where saturation begins — about 12–14 foils.
+      give it) where saturation begins — about 12–14 foils (a range such as
+      "13–15" counts).
 - [ ] Quartz scan: identifies the few-gauss lines as muonium (about 100 times
       the bare-muon Larmor frequency). It reports the muonium amplitude
       falling as the frequency rises, and the line lost at the top fields,
-      and presents this as the instrument's frequency-response limit.
+      and presents the amplitude fall as the instrument's frequency-response
+      limit (attributing the line's loss at the top fields to it too is a
+      Should).
 - [ ] Ag field scan: reports the fitted frequency tracking the applied field.
       It also reports the fitted phase against field. On the file's t0 the
       phase drifts steadily with field (a t0 offset), so calling it

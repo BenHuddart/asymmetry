@@ -309,18 +309,39 @@ def _render(result: dict, settings, free_offsets: list[str], summed: list[int]) 
         )
     if result["fit"] is not None and result["fit"]["resonance_windows"]:
         lines.append(_failed_fit_next(result["fit"]))
+    elif result["fit"] is not None:
+        lines.extend(_poor_fit_note(result["fit"]))
     if summed:
         lines.append(
             f"NOTE: {range_text(summed)} are two-period (red/green) runs, and without --period "
             f"this scan summed both periods, blurring the red/green contrast they were taken "
             f"for. Measure their difference: rerun with --period green-red; with a field step "
-            f"between the periods (differential ALC) fit --model LorentzianLCRPair, holding "
-            f"its dB at the red - green offset it prints."
+            f"between the periods (differential ALC) fit --model LorentzianLCRPair with its dB "
+            f"held at the value that command's Next line gives (the printed red - green "
+            f"offset, negated)."
         )
     lines.append(f"Scan written to {result['scan_path']}")
     if result["plot"] is not None:
         lines.append(f"Plot written to {result['plot']}")
     return "\n".join(lines)
+
+
+#: A converged fit this far above its errors has left structure unfitted.
+_POOR_SCAN_FIT = 2.0
+
+
+def _poor_fit_note(fit: dict) -> list[str]:
+    """A note when a converged resonance fit leaves the scan poorly described."""
+    fitted = sum(1 for name in fit["parameters"] if name.split("_")[0] == "B0")
+    if not fitted or fit["reduced_chi_squared"] <= _POOR_SCAN_FIT:
+        return []
+    return [
+        f"NOTE: the fit converged with {fitted} resonance(s) at chi2_red "
+        f"{format_number(fit['reduced_chi_squared'], 3)}: the scan may hold more dips than "
+        f"the model has, or a background the polynomial cannot follow. Look at the plot "
+        f"(--plot), then add a component per dip, or fit one resonance per --xmin/--xmax "
+        f"window on its own local background, and report every dip the scan shows."
+    ]
 
 
 def _failed_fit_next(fit: dict) -> str:

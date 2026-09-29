@@ -498,6 +498,11 @@ def _rate_steps(trend, free_params: list[str]) -> list[str]:
 _LINEAR_SHARE = 0.9
 
 
+#: A timing offset is a few bins: a phase slope implying more than this (µs)
+#: is another effect, not t0.
+_MAX_T0_OFFSET_US = 1.0
+
+
 def _phase_drift(trend, free_params: list[str]) -> list[str]:
     """The t0 note for a phase that runs linearly with field along a field scan."""
     from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
@@ -506,27 +511,32 @@ def _phase_drift(trend, free_params: list[str]) -> list[str]:
         return []
     offsets: dict[str, float] = {}
     for param in (p for p in free_params if re.sub(r"_\d+$", "", p) == "phase"):
-        rows = _measured(trend, param)
+        # The line's own fitted frequency (same component suffix) sets how fast
+        # its phase runs; without one, the bare muon's γ times the field does.
+        line = "frequency" + param.removeprefix("phase")
+        own_line = line in free_params
+        rows = _measured(trend, param, *([line] if own_line else []))
         if len(rows) < 3:
             continue
+        f = [row[line] if own_line else field_gauss_to_frequency_mhz(row["x"]) for row in rows]
         weights = [1.0 / row[f"{param}_err"] ** 2 for row in rows]
-        x_mean, y_mean = (
-            sum(w * row[key] for w, row in zip(weights, rows)) / sum(weights)
-            for key in ("x", param)
-        )
-        spread = sum(w * (row["x"] - x_mean) ** 2 for w, row in zip(weights, rows))
+        f_mean = sum(w * x for w, x in zip(weights, f)) / sum(weights)
+        y_mean = sum(w * row[param] for w, row in zip(weights, rows)) / sum(weights)
+        spread = sum(w * (x - f_mean) ** 2 for w, x in zip(weights, f))
         slope = (
-            sum(w * (row["x"] - x_mean) * (row[param] - y_mean) for w, row in zip(weights, rows))
+            sum(w * (x - f_mean) * (row[param] - y_mean) for w, x, row in zip(weights, f, rows))
             / spread
         )
         scatter = sum(w * (row[param] - y_mean) ** 2 for w, row in zip(weights, rows))
-        # |slope| / slope error, with the slope's error 1/sqrt(spread).
-        if abs(slope) * math.sqrt(spread) > _STEP_SIGNIFICANCE and (
-            slope**2 * spread >= _LINEAR_SHARE * scatter
+        # φ = φ0 - 2π f Δt for a signal arriving Δt (µs) after t0: slope -2π Δt
+        # in rad/MHz. |slope| / its error 1/sqrt(spread) is the significance.
+        offset = -slope / (2.0 * math.pi)
+        if (
+            abs(slope) * math.sqrt(spread) > _STEP_SIGNIFICANCE
+            and slope**2 * spread >= _LINEAR_SHARE * scatter
+            and abs(offset) <= _MAX_T0_OFFSET_US
         ):
-            # φ = φ0 - 2π f Δt for a signal arriving Δt after t0, with f = γ B:
-            # the slope in rad/G is -2π γ Δt.
-            offsets[param] = -slope / (2.0 * math.pi * field_gauss_to_frequency_mhz(1.0))
+            offsets[param] = offset
     if not offsets:
         return []
     late = next(iter(offsets.values())) > 0.0

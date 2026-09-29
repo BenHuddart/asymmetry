@@ -940,6 +940,13 @@ When the model has one Gaussian or exponential envelope, the `envelope` column
 says which shape each run prefers (`either` when they fit alike). A change of
 shape along the scan is a result: report it with the runs on each side.
 
+**Every NOTE a command prints about a scan is a finding to report or refute**
+— a step and where it happens, a shift, an envelope change, a phase that runs
+with field (a t0 offset: say so, and test it with the `--t0-offset` it gives),
+an amplitude that falls with frequency (the frequency response), a pair of
+lines. Carry each into the summary with what it means, or say why it does not
+apply; a note left out is a result left out.
+
 **Look at the trend PNGs with the Read tool before writing anything.** A trend
 that is flat, that jumps, or whose scatter swamps the error bars is telling you
 something the table alone will not.

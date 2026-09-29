@@ -320,8 +320,8 @@ def _render(survey, survey_path: Path) -> str:
                     f"{shlex.quote(survey.folder)} --runs {run_spec(scan.runs)}"
                     f"{_selection_options(survey, scan.instrument, clashes)} "
                     f"--period green-red; with a field step between the periods (differential "
-                    f"ALC) fit --model LorentzianLCRPair, holding its dB at the red - green "
-                    f"offset that command prints."
+                    f"ALC) fit --model LorentzianLCRPair with its dB held at the value that "
+                    f"command's Next line gives (the printed red - green offset, negated)."
                 )
         if survey.cross_sections:
             lines.append(
