@@ -142,6 +142,11 @@ def resolve_runs(selection: RunSelection, spec: str) -> list[tuple[int, str, Pat
     return resolved
 
 
+def present_runs(selection: RunSelection, spec: str) -> list[int]:
+    """The run numbers *spec* names that the folder holds (see :func:`resolve_runs`)."""
+    return [run for run, _, _ in resolve_runs(selection, spec)]
+
+
 def resolve_run(selection: RunSelection, run_number: int) -> Path:
     """The file for one selected run; :class:`UserError` when it is not there."""
     available = run_files(selection)
@@ -218,13 +223,18 @@ def range_text(runs: list[int]) -> str:
         return "no runs"
     if len(runs) == 1:
         return f"run {runs[0]}"
+    return "runs " + run_spec(runs, separator=", ")
+
+
+def run_spec(runs: list[int], separator: str = ",") -> str:
+    """*runs* as the ``--runs`` spelling :func:`parse_run_spec` reads: ``"101,103-105"``."""
     spans: list[list[int]] = []
-    for run in runs:
+    for run in sorted(runs):
         if spans and run == spans[-1][-1] + 1:
             spans[-1].append(run)
         else:
             spans.append([run])
-    return "runs " + ", ".join(
+    return separator.join(
         str(span[0]) if len(span) == 1 else f"{span[0]}-{span[-1]}" for span in spans
     )
 
@@ -236,8 +246,10 @@ __all__ = [
     "run_clashes",
     "window_note",
     "parse_run_spec",
+    "present_runs",
     "reduced_datasets",
     "resolve_run",
     "resolve_runs",
     "run_files",
+    "run_spec",
 ]

@@ -398,6 +398,98 @@ def test_a_global_run_bound_parameter_is_held_at_the_recipes_value() -> None:
     )
 
 
+def test_a_line_away_from_the_applied_fields_larmor_frequency_is_kept_along_the_series() -> None:
+    # A type-I superconductor's normal domains precess at the critical field,
+    # not the applied one; the recipe's frequency is that line and no run's
+    # applied field may replace it.
+    expression = "Oscillatory * Exponential + Constant"
+    model = CompositeModel.from_expression(expression)
+    time = np.linspace(0.05, 8.0, 400)
+    noise = np.random.default_rng(3).normal(0.0, 0.2, time.size)
+    datasets = {
+        300 + index: MuonDataset(
+            time=time,
+            asymmetry=model.function(
+                time, A_1=0.8, frequency=line, phase=0.0, Lambda=0.3, A_bg=15.0
+            )
+            + noise,
+            error=np.full_like(time, 0.2),
+            metadata={"run_number": 300 + index, "field": 40.0, "temperature": temperature},
+        )
+        for index, (temperature, line) in enumerate(((2.0, 1.9), (2.5, 1.6), (3.0, 1.2)))
+    }
+    recipe = FitRecipe.from_expression(expression, dataset=datasets[300]).with_overrides(
+        initial={"frequency": 1.9}
+    )
+
+    outcome = fit_series(
+        datasets, recipe, axis=scan_axis(datasets, "temperature"), name="critical-field"
+    )
+
+    assert [entry["parameters"]["frequency"] for entry in outcome.results] == pytest.approx(
+        [1.9, 1.6, 1.2], abs=0.05
+    )
+
+
+_TF_EXPRESSION = "Oscillatory * Gaussian + Constant"
+_TF_FIELDS = (100.0, 200.0, 400.0, 800.0)
+
+
+def _tf_field_scan() -> dict[int, MuonDataset]:
+    """A transverse-field scan, runs 400.., each precessing at its own Larmor frequency."""
+    model = CompositeModel.from_expression(_TF_EXPRESSION)
+    time = np.linspace(0.05, 8.0, 800)
+    noise = np.random.default_rng(5).normal(0.0, 0.3, time.size)
+    return {
+        400 + index: MuonDataset(
+            time=time,
+            asymmetry=model.function(
+                time,
+                A_1=18.0,
+                frequency=0.013554 * field,
+                phase=0.0,
+                sigma=0.3,
+                A_bg=2.0,
+            )
+            + noise,
+            error=np.full_like(time, 0.3),
+            metadata={"run_number": 400 + index, "field": field, "temperature": 2.0},
+        )
+        for index, field in enumerate(_TF_FIELDS)
+    }
+
+
+@pytest.mark.parametrize(
+    ("seed_run", "start_run"),
+    [
+        # Seeded and started on the lowest field.
+        (400, None),
+        # Seeded on the highest field, started on the lowest: the recipe's line
+        # is that run's Larmor frequency, not the start run's.
+        (403, 400),
+    ],
+)
+def test_a_line_at_the_applied_field_follows_it_along_a_field_scan(
+    seed_run: int, start_run: int | None
+) -> None:
+    # The neighbour's fitted frequency is no start for the next field.
+    datasets = _tf_field_scan()
+    recipe = FitRecipe.from_expression(_TF_EXPRESSION, dataset=datasets[seed_run])
+
+    outcome = fit_series(
+        datasets,
+        recipe,
+        axis=scan_axis(datasets, "field"),
+        start_run=start_run,
+        name="tf-field",
+    )
+
+    assert [entry["parameters"]["frequency"] for entry in outcome.results] == pytest.approx(
+        [0.013554 * field for field in _TF_FIELDS], rel=0.01
+    )
+    assert outcome.name == "tf-field"
+
+
 def test_fit_one_starts_from_the_recipe_as_written() -> None:
     # No re-seeding for a single fit: the caller aimed this recipe at this run.
     datasets = _lf_datasets()
@@ -517,6 +609,10 @@ def test_the_series_weighs_a_gaussian_against_an_exponential_envelope_run_by_run
     by_field = envelope_change(replace(outcome.trend, order_key="field"))
     assert "motional narrowing" not in by_field
     assert "A change of shape along field is a result" in by_field
+    # Exponential when cold is the other way round: a skewed distribution, not narrowing.
+    reversed_rows = [row | {"x": 400.0 - row["x"]} for row in outcome.trend.rows]
+    reversed_note = envelope_change(replace(outcome.trend, rows=reversed_rows))
+    assert "is not motional narrowing" in reversed_note
 
 
 def test_a_model_with_two_envelopes_is_not_weighed() -> None:

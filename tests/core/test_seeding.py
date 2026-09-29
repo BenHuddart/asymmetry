@@ -241,7 +241,8 @@ def test_applied_field_seeds_frequency_from_its_larmor_value_below_nyquist() -> 
     seeds = seed_parameters(model, SeedContext(dataset=dataset, field_gauss=150.0))
 
     assert seeds["frequency"].value == pytest.approx(field_gauss_to_frequency_mhz(150.0))
-    assert seeds["frequency"].run_bound is True
+    # A start, not a description of the run: a fitted line may sit elsewhere.
+    assert seeds["frequency"].run_bound is False
 
 
 def test_applied_field_leaves_frequency_alone_above_the_records_nyquist() -> None:

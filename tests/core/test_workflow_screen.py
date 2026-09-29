@@ -123,6 +123,7 @@ def test_screen_run_recommends_a_relaxation_model_and_writes_a_usable_recipe(
         "wizard_run": run,
         "template_key": result.recommended_key,
     }
+    assert result.recipe.seed_field == dataset.field
     curve = result.recipe.model().function(
         dataset.time, **{p.name: p.value for p in result.recipe.parameters}
     )

@@ -224,7 +224,7 @@ def screen_run(
     recipe = (
         None
         if recommended is None
-        else FitRecipe.from_assessment(recommended, run_number=run_number)
+        else FitRecipe.from_assessment(recommended, run_number=run_number, seed_field=dataset.field)
     )
 
     return ScreenResult(

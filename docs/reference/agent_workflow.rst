@@ -467,6 +467,38 @@ names it — "run 20898 also belongs to a field scan with no transverse line at
 this temperature — likely its points, not this scan's" — since a longitudinal
 point the file does not label is otherwise fitted with a precession model.
 
+Consecutive runs of one sample at one condition — field, temperature,
+geometry, note and set-up — whose co-add at least halves the counting
+variance of the largest print as a repeat set with the command that co-adds
+them (``REPEATS: runs 3678-3682 repeat one condition … asymmetry reduce …
+--coadd --workdir asymmetry-work-coadd``); when their shared note names a
+scan (``P scan``), the runs step a quantity the files do not record and print
+as ``UNRECORDED SCAN`` instead. Runs of different bin widths or period counts
+are different set-ups and never share a scan; a scan of two-period (red/green)
+runs says so on its line and, for a field scan, names ``integral-scan
+--period green-red``.
+
+Each scan line also names its members' samples — the file's own sample name,
+or the run title before its ``T=``/``F=`` fields — so a folder holding several
+samples scanned on the same fields reads as several measurements, and a scan
+naming more than one sample says it crosses them. A folder of more than a
+hundred runs prints these findings (the notes, the calibration candidates and
+the scans) before the per-run table, which comes last under ``Runs:``.
+
+When no run precesses on the files' own detector pair, the survey tries every
+other pair of groups on the first run in a field that shows no line, and
+prints ``PAIR:`` with the one the field precesses the muon across — a pair
+whose names face each other (``Up``/``Down``, ``Left``/``Right``) before the
+strongest line — and the ``--pair`` to survey again with:
+
+.. code-block:: text
+
+   PAIR: no run precesses on the file's own detector pair, but run 3366 does on Up/Down (at the Larmor frequency: yes — 5.427 MHz (SNR 21) against a Larmor 5.422 MHz), the pair across the field. Survey again with --pair Up/Down, and pass the same --pair to alpha, reduce and integral-scan.
+
+A PSI GPS run in a transverse field is the usual case: the spin precesses
+across the beam, on ``Up``/``Down``, and the file's ``Back``/``Forw`` pair
+sees nothing.
+
 ``alpha``
 ~~~~~~~~~
 
@@ -654,9 +686,12 @@ frequency from that reduced run (the same seeding every fit surface uses):
 an amplitude role is seeded positive, with its sign carried instead by
 ``phase`` (0 or π, the fit wizard's own rule), and a ``frequency`` parameter
 is seeded from the applied field's Larmor value when it sits below the
-run's Nyquist frequency — both marked run-bound, so ``fit-series`` and
-``fit-global`` re-seed them per run from each run's own field rather than
-carrying the first run's value down the scan (see `The fit recipe`_).
+run's Nyquist frequency. The applied field (``field``, ``B_L``) is marked
+run-bound, so ``fit-series`` and ``fit-global`` re-seed it per run from each
+run's own record rather than carrying the first run's value down the scan (see
+`The fit recipe`_); the Larmor frequency is only a start, since the line being
+fitted may be an internal or critical field's, and a series keeps the
+recipe's or the neighbouring run's frequency.
 ``--initial`` moves a start value, ``--fix`` holds one (and pins it, so a series never re-seeds it), and
 ``--tmin``/``--tmax`` set the fit window. The command writes
 ``recipes/<name>.json`` and prints every parameter — the names a repeated
@@ -666,7 +701,7 @@ component is numbered with are otherwise easy to guess wrong:
 
    $ asymmetry recipe runs --name mu --run 101 \
          --expression "Oscillatory * Exponential + Oscillatory * Exponential" \
-         --fix frequency_1=2.79 --fix frequency_3=0.0279
+         --fix frequency_1=2.79 --fix frequency_3=0.0271
    mu — Oscillatory * Exponential + Oscillatory * Exponential, seeded from run 101
 
    parameter    start      min     max  state
@@ -676,7 +711,7 @@ component is numbered with are otherwise easy to guess wrong:
    phase_1      0.000000   -inf    inf  free
    Lambda_2     ...        0.0000  inf  free
    A_3          ...        0.0000  inf  free
-   frequency_3  0.027900   0.0000  inf  fixed
+   frequency_3  0.027100   0.0000  inf  fixed
    phase_3      0.000000   -inf    inf  free
    Lambda_4     ...        0.0000  inf  free
 
@@ -697,10 +732,10 @@ Fit one reduced run with a recipe.
 ``--recipe`` takes a name in the work directory's ``recipes/`` (no path, no
 ``.json``) or an explicit path. ``--fix NAME=VALUE`` holds a parameter
 (repeatable); ``--free NAME`` releases one the recipe holds fixed. ``fit``
-reads the reduced run and the recipe but does not persist its own result —
-only ``plots/fit-<run>.png`` with ``--plot`` — so it is the quick way to check
-a hand-edited recipe converges on one run before spending a whole series on
-it (see `Hand-editing a recipe`_).
+stores its result in ``fits/<recipe>-<run>.json`` (so ``audit`` counts the run
+as fitted) and ``plots/fit-<run>.png`` with ``--plot``; it is the quick way to
+check a hand-edited recipe converges on one run before spending a whole series
+on it (see `Hand-editing a recipe`_).
 
 ``fit-global``
 ~~~~~~~~~~~~~~
@@ -772,7 +807,13 @@ quantity given values by hand is refused.
 ``--start RUN`` chains outward from that run in both directions instead of
 from the first run in scan order — see `Series fitting`_ for why this
 matters. ``--global P,Q`` pins those parameters at their recipe value for
-every run rather than fitting them (see `The fit recipe`_). Besides the engine's quality flags, a run whose fitted amplitudes
+every run rather than fitting them (see `The fit recipe`_). ``--runs`` skips
+run numbers the folder does not hold, as ``reduce`` does. Along a field scan,
+a recipe line at the start run's Larmor frequency starts every run at another
+field scaled by that field over the start run's, rather than at the
+neighbouring run's fitted frequency, which belongs to another field; a line
+away from the Larmor frequency — an internal or critical field — is chained as
+along any other scan. Besides the engine's quality flags, a run whose fitted amplitudes
 (backgrounds included) add up to more than 1.5 times the record's own
 early-time asymmetry is flagged ``amplitude_exceeds_data`` — two components
 cancelling to describe a signal the data do not hold — and one whose fitted
@@ -788,7 +829,10 @@ by a χ² margin of 10 (the two have the same parameter count), or ``either`` �
 and ``envelope_dchi2``, χ²(other) − χ²(recipe). When the winning shape changes
 along the scan the command ends with a note naming the runs on each side; on a
 temperature axis it adds that a Gaussian (a static spread of fields) turning
-exponential as the fluctuations outrun it is motional narrowing. When the series fits a frequency and at least
+exponential as the fluctuations outrun it is motional narrowing — and, when
+the exponential is the cold side instead, that it is not: a broad, skewed
+distribution (a vortex lattice beside a narrow background line) fits an
+exponential better. When the series fits a frequency and at least
 two runs at one end of the scan show no survey line and carry a flag saying
 the fit does not describe them (``failed``, ``frequency_unresolved``,
 ``amplitude_exceeds_data``), the command names them: either the other side of
@@ -863,9 +907,22 @@ the report ends by naming the law the series' axis and parameters call for —
 Redfield for a rate against field (and a warning when the model splits the
 rate between two components), ``OrderParameter`` for a frequency that falls
 with temperature — one that holds within 10 % along the scan follows a fixed
-field and is pointed at the relaxation's rate and shape instead — and
-``Linear`` for a rate against a supplied quantity; a note repeats a change of
-envelope along the scan. A fitted law's
+field and is pointed at the relaxation's rate and shape instead, with a note
+when it still moves by more than five combined errors (a Knight or
+diamagnetic shift) — and ``Linear`` for a rate against a supplied quantity; a
+note repeats a change of envelope along the scan. For every fitted width or
+rate (``sigma``, ``Delta``, ``Lambda``, ``nu``) the report also finds the split
+of the scan into two contiguous blocks whose weighted means differ most and,
+when that is more than five combined errors, names the step and where it
+falls, bracketed by where the parameter leaves the level of each end of the
+scan — a Kubo–Toyabe width a few percent larger below a superconductor's
+T\ :sub:`c` is the time-reversal-symmetry-breaking signal, however small. Along
+a field scan it names a phase that runs linearly with field as a t0 offset
+(printing the implied Δt and the ``reduce --t0-offset`` to test it) and an
+amplitude that falls as its frequency rises as the instrument's frequency
+response; a line held near a high field, or with an exponential envelope on
+its cold side, is offered a ready two-line ``recipe``, since an unresolved
+pair fits as one line. A fitted law's
 report states the x span of the points it rests on and each parameter's unit,
 and judges the law on the √χ²\ :sub:`r`-scaled errors of its physical
 parameters (a prefactor or offset — ``a``, ``b``, ``c`` — that the data leave
@@ -963,6 +1020,23 @@ logged session printed ``LAW NOT ESTABLISHED``. Bulk arrays a ``--json`` payload
 left out of the match, since a rounded sum would otherwise find one of their
 elements by chance.
 
+Before the numbers, ``audit`` lists every scan in the stored survey whose runs
+no ``fit-series``, ``fit-global`` or ``integral-scan`` holds a result for, with
+the runs left out:
+
+.. code-block:: text
+
+   Scans the survey found with runs that no fit, fit-series, fit-global or integral-scan fitted. Each scan is a measurement:
+     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
+         not fitted: runs 105-107. Fit it — a scan crossing a transition needs a series on each side — or say in the summary which runs cannot be fitted and why.
+
+The far side of a transition that one series stopped short of is still a
+measurement, and so is a temperature scan whose runs served to measure alpha:
+for one of those ``audit`` says that the calibration does not account for the
+scan and prints the ``wizard`` and ``fit-series`` commands that fit it. Scans of
+two or three runs share one line. A run fitted on its own with ``fit`` counts
+as fitted.
+
 ``integral-scan``
 ~~~~~~~~~~~~~~~~~
 
@@ -1003,7 +1077,21 @@ of the scan axis — the way to fit one resonance at a time where the background
 is not a polynomial across the whole scan. A window holding no more points than
 the model has free parameters is refused. A fit that does not converge is
 reported with ``FAILED`` and the parameters it ended on (the component that ran
-away is usually plain from them); the scan is written either way.
+away is usually plain from them); the scan is written either way. The fitted
+parameters print as a table of value and error — ``fixed`` for a held one,
+``(at bound)`` beside one pinned on a bound, and ``-`` for the errors of a fit
+that failed; a failed fit names the minimiser's reasons and any parameter at a
+bound, and suggests fitting one resonance per ``--xmin``/``--xmax`` window
+around the scan's own dips. A fit that converges with a χ²\ :sub:`r` above 2
+is told why that may be — a background no polynomial can follow across a long
+scan, or a dip the model leaves out — and, when a single line fitted inside the
+seeder's window for one more resonance falls below its background by five
+errors, that window is named with the command that fits it. An LCR fit notes
+that no radical ALC or hyperfine model is available, so its fields are not
+converted into couplings. Without ``--period``, a scan of two-period runs
+notes that it summed the periods. With ``--json`` every NOTE and Next line is
+kept under ``notes``. ``--alpha-from`` a single-period calibration run serves a
+``--period`` scan too: the detector balance is the same in every period.
 Every field-scan component with a resonance or a half-rise to find in the
 data — the LCR line shapes, ``LorentzianLCRPair``, ``RFResonanceMuP`` and
 ``MuRepolarisation`` — is seeded from the scan itself this way, so a fit
@@ -1095,7 +1183,13 @@ table are on the **hyperfine-coupling** axis (MHz), not frequency — a peak
 names a coupling :math:`A_\mu` directly, the way ``RFResonanceMuP`` and
 ``LorentzianLCRPair`` do for the corresponding field-swept methods.
 Combined with ``reduce --coadd``, a correlation spectrum can be built from
-several runs at one field summed for statistics before the FFT.
+several runs at one field summed for statistics before the FFT. The report's
+header names the transform, its window and resolution; after a correlation
+spectrum it points at the plain transform of the same run, whose radical
+lines belong beside :math:`A_\mu` in a summary; it states that the peak is
+:math:`A_\mu = \nu_1 + \nu_2`, the sum of the radical's two lines. The header
+also gives the band searched against the whole transform, and a note names the
+strongest lines detected outside a ``--fmin``/``--fmax`` band.
 
 The command stores numerical arrays in ``spectra/<name>.npz`` and settings,
 resolution and the peak table in ``spectra/<name>.json``. Zero padding makes
@@ -1156,10 +1250,10 @@ reduces on by default (``Groups      : 1 Forw, 2 Back, 3 Up, 4 Down, 5 Righ
 The work directory
 -------------------
 
-``survey``, ``reduce``, ``integral-scan``, ``wizard``, ``recipe``,
-``fit-global``, ``fit-series`` and ``fourier`` persist their state in ``./asymmetry-work/``;
-``fit`` and ``trend`` read it and add only what
-``--plot`` (and ``trend --csv``) asks for. ``alpha`` and ``info`` are
+``survey``, ``reduce``, ``integral-scan``, ``wizard``, ``recipe``, ``fit``
+(``fits/<recipe>-<run>.json``), ``fit-global``, ``fit-series`` and ``fourier``
+persist their state in ``./asymmetry-work/``; ``trend`` reads it and adds its
+law fits and what ``--plot`` and ``--csv`` ask for. ``alpha`` and ``info`` are
 stateless — they load a file, print, and write nothing — and ``skill`` writes
 into the agent's own skill directory instead.
 
@@ -1182,6 +1276,7 @@ The work directory holds:
      wizard/<run>.json      # screening payload: recommendation, narrative, recipe
      recipes/<name>.json    # a fit recipe (model + parameters + window)
      series/<name>.json     # per-run results, trend table, quality flags, trend fits
+     fits/<recipe>-<run>.json  # one run's `fit`
      scans/<name>.json      # integral-scan points, exclusions and optional fit
      spectra/<name>.npz     # Fourier frequency, real part and magnitude
      spectra/<name>.json    # Fourier settings, resolution and peak table

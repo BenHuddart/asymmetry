@@ -7,6 +7,7 @@ from each of several series, against their temperature or supplied values.
 from __future__ import annotations
 
 import argparse
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -338,17 +339,26 @@ def _render(
         "",
         render_trend(trend),
     ]
-    if fit is not None:
-        lines.extend(["", *_render_fit(fit, series["free_params"])])
-    else:
-        from asymmetry.core.workflow.series import envelope_change
+    from asymmetry.core.workflow.series import envelope_change
 
-        change = envelope_change(trend)
+    # What the trend itself shows is printed whether or not a law is fitted
+    # to it: a law answers one question, these name the others.
+    change = envelope_change(trend)
+    readings = [
+        *([change] if change is not None else []),
+        *_rate_steps(trend, series["free_params"]),
+        *_phase_drift(trend, series["free_params"]),
+        *_frequency_response(series, trend),
+    ]
+    if fit is not None:
+        lines.extend(["", *_render_fit(fit, series["free_params"]), *readings])
+    else:
         lines.extend(
             [
                 "",
-                *([change] if change is not None else []),
+                *readings,
                 *_law_hints(series["name"], trend, series["free_params"]),
+                *_doublet_hint(series, trend),
             ]
         )
     if csv_path is not None:
@@ -386,6 +396,316 @@ def _held_frequency(trend, param: str) -> float | None:
     return median if (max(values) - min(values)) < _HELD_FREQUENCY_SPREAD * abs(median) else None
 
 
+#: A width or rate whose two blocks along the scan differ by more than this
+#: many combined errors has changed there, however small the change looks.
+_STEP_SIGNIFICANCE = 5.0
+
+#: A row further than this many combined errors from an end's level has left it.
+_LEVEL_DEPARTURE = 3.0
+
+
+#: Flags that say a row's values are not a measurement (``large_rel_err`` is
+#: carried by its own error bar and stays).
+_UNRELIABLE = frozenset(
+    {
+        "failed",
+        "frequency_unresolved",
+        "bound_pinned",
+        "spurious_reseeded",
+        "amplitude_exceeds_data",
+    }
+)
+
+
+def _measured(trend, *params: str) -> list[dict[str, Any]]:
+    """The rows, in scan order, that fitted every one of *params* reliably, with an error."""
+    return sorted(
+        (
+            row
+            for row in trend.rows
+            if all(row[param] is not None and row[f"{param}_err"] for param in params)
+            and not _UNRELIABLE & set(row["flags"])
+        ),
+        key=lambda row: row["x"],
+    )
+
+
+def _weighted_mean(rows, param: str) -> tuple[float, float]:
+    """The error-weighted mean of *param* over *rows*, and its error."""
+    weights = [1.0 / row[f"{param}_err"] ** 2 for row in rows]
+    mean = sum(w * row[param] for w, row in zip(weights, rows)) / sum(weights)
+    return mean, 1.0 / math.sqrt(sum(weights))
+
+
+def _held_level(block: list[dict[str, Any]], param: str) -> tuple[float, list[dict[str, Any]]]:
+    """The level at *block*'s far end, and the rows from that end that still hold it.
+
+    *block* runs from an end of the scan inward. The level is the weighted mean
+    of its outer half (two rows at least); walking inward, the first row further
+    from it than ``_LEVEL_DEPARTURE`` combined errors has left it.
+    """
+    outer = max(2, len(block) // 2)
+    level, error = _weighted_mean(block[:outer], param)
+    held = next(
+        (
+            index
+            for index in range(outer, len(block))
+            if abs(block[index][param] - level)
+            > _LEVEL_DEPARTURE * math.hypot(block[index][f"{param}_err"], error)
+        ),
+        len(block),
+    )
+    return level, block[:held]
+
+
+def _rate_steps(trend, free_params: list[str]) -> list[str]:
+    """A note per width or rate that steps along the scan, with where it leaves each level.
+
+    The step is the split of the scan into two contiguous blocks (two runs or
+    more each) whose error-weighted means differ most, in combined errors. Its
+    place is bracketed by where the parameter leaves each end's level (see
+    :func:`_held_level`), so a gradual change is not reported as a midpoint.
+    """
+    notes = []
+    axis = trend.order_key
+    # An amplitude steps along a supplied or field axis (a range curve, a
+    # steering scan); along temperature its changes are the physics' own.
+    stepping = _RATE_BASES | (
+        set() if trend.order_key in ("temperature", "sample_temperature_logged") else {"A"}
+    )
+    for param in free_params:
+        if re.sub(r"_\d+$", "", param) not in stepping:
+            continue
+        rows = _measured(trend, param)
+        splits = []
+        for k in range(2, len(rows) - 1):
+            (low, low_err), (high, high_err) = (
+                _weighted_mean(rows[:k], param),
+                _weighted_mean(rows[k:], param),
+            )
+            splits.append((abs(high - low) / math.hypot(low_err, high_err), k))
+        if not splits:
+            continue
+        significance, k = max(splits)
+        if significance <= _STEP_SIGNIFICANCE:
+            continue
+        low_level, low_rows = _held_level(rows[:k], param)
+        high_level, high_rows = _held_level(rows[k:][::-1], param)
+        low_edge, high_edge = low_rows[-1]["x"], high_rows[-1]["x"]
+        notes.append(
+            f"NOTE: {param} changes along the scan ({significance:.0f}x the combined error "
+            f"between the weighted means of its two sides). It leaves its low-{axis} level "
+            f"({format_number(low_level, 4)} over {low_rows[0]['x']:g}–{low_edge:g}) above "
+            f"{low_edge:g} and its high-{axis} level ({format_number(high_level, 4)} over "
+            f"{high_edge:g}–{high_rows[0]['x']:g}) below {high_edge:g}: the change lies between "
+            f"{low_edge:g} and {high_edge:g}, and an onset is where it leaves a level, not a "
+            f"midpoint. Report it and that span: a small step in a width or rate is often the "
+            f"physics (a transition, an onset), even when the parameter you expected to move "
+            f"did not."
+        )
+    return notes
+
+
+#: A phase whose straight line in field explains less of its variation than
+#: this is not a timing offset (φ = 2π f Δt is exactly linear in f).
+_LINEAR_SHARE = 0.9
+
+
+#: A timing offset is a few bins: a phase slope implying more than this (µs)
+#: is another effect, not t0.
+_MAX_T0_OFFSET_US = 1.0
+
+
+def _phase_drift(trend, free_params: list[str]) -> list[str]:
+    """The t0 note for a phase that runs linearly with field along a field scan."""
+    from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+
+    if trend.order_key != "field":
+        return []
+    offsets: dict[str, float] = {}
+    for param in (p for p in free_params if re.sub(r"_\d+$", "", p) == "phase"):
+        # The line's own fitted frequency (same component suffix) sets how fast
+        # its phase runs; without one, the bare muon's γ times the field does.
+        line = "frequency" + param.removeprefix("phase")
+        own_line = line in free_params
+        rows = _measured(trend, param, *([line] if own_line else []))
+        if len(rows) < 3:
+            continue
+        f = [row[line] if own_line else field_gauss_to_frequency_mhz(row["x"]) for row in rows]
+        weights = [1.0 / row[f"{param}_err"] ** 2 for row in rows]
+        f_mean = sum(w * x for w, x in zip(weights, f)) / sum(weights)
+        y_mean = sum(w * row[param] for w, row in zip(weights, rows)) / sum(weights)
+        spread = sum(w * (x - f_mean) ** 2 for w, x in zip(weights, f))
+        slope = (
+            sum(w * (x - f_mean) * (row[param] - y_mean) for w, x, row in zip(weights, f, rows))
+            / spread
+        )
+        scatter = sum(w * (row[param] - y_mean) ** 2 for w, row in zip(weights, rows))
+        # φ = φ0 - 2π f Δt for a signal arriving Δt (µs) after t0: slope -2π Δt
+        # in rad/MHz. |slope| / its error 1/sqrt(spread) is the significance.
+        offset = -slope / (2.0 * math.pi)
+        if (
+            abs(slope) * math.sqrt(spread) > _STEP_SIGNIFICANCE
+            and slope**2 * spread >= _LINEAR_SHARE * scatter
+            and abs(offset) <= _MAX_T0_OFFSET_US
+        ):
+            offsets[param] = offset
+    if not offsets:
+        return []
+    late = next(iter(offsets.values())) > 0.0
+    verb = "changes" if len(offsets) == 1 else "change"
+    return [
+        f"NOTE: {', '.join(offsets)} {verb} linearly with field along the scan (Δt = "
+        + ", ".join(f"{1e3 * offset:+.3g} ns" for offset in offsets.values())
+        + " from the slope). A phase that runs linearly with field — that is, with frequency, "
+        f"φ = 2π f Δt — is a timing offset between t0 and the muons' arrival, not the sample. "
+        f"It {'falls' if late else 'rises'} with field, so t0 sits "
+        f"{'before' if late else 'after'} the arrival: re-reduce with asymmetry reduce "
+        f"<folder> --runs <runs> --t0-offset <bins> ({'positive' if late else 'negative'}, "
+        f"|Δt| over the bin width) and refit; the phase should then hold steady."
+    ]
+
+
+#: The frequency must rise by at least this factor along the scan for a falling
+#: amplitude to be the instrument's response: a line held near one field
+#: (a superconductor's, a Knight-shifted one) loses amplitude for other reasons.
+_RESPONSE_FREQUENCY_SPAN = 1.5
+
+
+def _frequency_response(series: dict[str, Any], trend) -> list[str]:
+    """A note per precession amplitude that falls as its frequency rises along the scan."""
+    from asymmetry.core.fitting.composite import CompositeModel
+
+    free = series["free_params"]
+    frequencies = [p for p in free if re.sub(r"_\d+$", "", p) in _FREQUENCY_BASES]
+    if not frequencies or not any(re.sub(r"_\d+$", "", p) == "A" for p in free):
+        return []
+    names = CompositeModel.from_expression(series["expression"]).param_names
+    notes = []
+    for frequency in frequencies:
+        # A product term lists its amplitude first: the line's amplitude is the
+        # last one before its frequency.
+        amplitude = next(
+            (
+                n
+                for n in reversed(names[: names.index(frequency)])
+                if re.sub(r"_\d+$", "", n) == "A"
+            ),
+            None,
+        )
+        if amplitude not in free:
+            continue
+        rows = _measured(trend, frequency, amplitude)
+        if len(rows) < 2:
+            continue
+        first, last = rows[0], rows[-1]
+
+        def change(param: str) -> float:
+            return (last[param] - first[param]) / math.hypot(
+                first[f"{param}_err"], last[f"{param}_err"]
+            )
+
+        if (
+            change(frequency) <= _STEP_SIGNIFICANCE
+            or change(amplitude) >= -_STEP_SIGNIFICANCE
+            or last[frequency] < _RESPONSE_FREQUENCY_SPAN * first[frequency]
+        ):
+            continue
+        halved = next((row for row in rows if row[amplitude] <= first[amplitude] / 2.0), None)
+        notes.append(
+            f"NOTE: {amplitude} falls from {first[amplitude]:.4g} to {last[amplitude]:.4g} while "
+            f"{frequency} rises from {first[frequency]:.4g} to {last[frequency]:.4g} "
+            f"along the scan"
+            + (
+                ""
+                if halved is None
+                else f", halving by {frequency} {halved[frequency]:.4g} "
+                f"({trend.order_key} {halved['x']:g})"
+            )
+            + ". A precession amplitude that falls as the frequency rises is the instrument's "
+            "frequency response — the muon pulse's width at a pulsed source, or the time "
+            "binning — not the sample losing its signal: report it as that, and compare "
+            "amplitudes only between runs at similar frequencies."
+        )
+    return notes
+
+
+#: A held frequency whose ends differ by more than this many combined errors
+#: has moved: a shift worth reporting, not scatter.
+_SHIFT_SIGNIFICANCE = 5.0
+
+
+def _frequency_shift(trend, param: str) -> tuple[float, float] | None:
+    """The coldest and warmest ``(value, value)`` of a held frequency that still moved."""
+    rows = _measured(trend, param)
+    if len(rows) < 2:
+        return None
+    first, last = rows[0], rows[-1]
+    error = math.hypot(first[f"{param}_err"], last[f"{param}_err"])
+    if abs(last[param] - first[param]) <= _SHIFT_SIGNIFICANCE * error:
+        return None
+    return first[param], last[param]
+
+
+#: A held line above this frequency (MHz) sits in a field of tesla order,
+#: where inequivalent sites or sublattices split it by about the resolution.
+_HIGH_FIELD_LINE_MHZ = 100.0
+
+
+def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
+    """The two-line fit to try when a held line may be an unresolved pair."""
+    from asymmetry.core.fitting.composite import CompositeModel
+    from asymmetry.core.workflow.series import RIVAL_ENVELOPES
+
+    free = series["free_params"]
+    frequencies = [p for p in free if re.sub(r"_\d+$", "", p) in _FREQUENCY_BASES]
+    if len(frequencies) != 1 or trend.order_key not in (
+        "temperature",
+        "sample_temperature_logged",
+    ):
+        return []
+    held = _held_frequency(trend, frequencies[0])
+    terms = series["expression"].split(" + ")
+    lines = [index for index, term in enumerate(terms) if "Oscillatory" in term]
+    if held is None or len(lines) != 1:
+        return []
+    decided = (
+        [row for row in trend.rows if row["envelope"] in RIVAL_ENVELOPES]
+        if "envelope" in trend.columns
+        else []
+    )
+    cold_exponential = bool(decided) and min(decided, key=lambda row: row["x"])["envelope"] == (
+        "Exponential"
+    )
+    if held < _HIGH_FIELD_LINE_MHZ and not cold_exponential:
+        return []
+    two_line = " + ".join([*terms[: lines[0] + 1], terms[lines[0]], *terms[lines[0] + 1 :]])
+    new_frequencies = [
+        name
+        for name in CompositeModel.from_expression(two_line).param_names
+        if re.sub(r"_\d+$", "", name) in _FREQUENCY_BASES
+    ]
+    coldest = min(
+        (row for row in trend.rows if row[frequencies[0]] is not None), key=lambda r: r["x"]
+    )
+    rates = [p for p in free if re.sub(r"_\d+$", "", p) in _RATE_BASES and coldest[p]]
+    # Two lines split by about their width fit as one broadened line.
+    split = coldest[rates[0]] / math.pi if rates else 0.0
+    initial = "".join(
+        f" --initial {name}={format_number(held + sign * split / 2.0, 7)}"
+        for name, sign in zip(new_frequencies, (1.0, -1.0))
+    )
+    return [
+        f"A held line can still be two: inequivalent muon sites or magnetic sublattices "
+        f"split it by as little as the FFT resolution, and an unresolved pair fits as one "
+        f"line whose envelope turns exponential. Before reading the relaxation as the whole "
+        f"story — or the sample as unordered — fit the coldest run with two lines and "
+        f"compare chi2_red: asymmetry recipe <folder> --run {coldest['key']} --name two-line "
+        f"--expression '{two_line}'{initial}, then asymmetry fit <folder> --run "
+        f"{coldest['key']} --recipe two-line."
+    ]
+
+
 def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
     """Which trend law this series' axis and parameters call for (Step 6a).
 
@@ -402,7 +722,8 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
     frequencies = [p for base, ps in by_base.items() if base in _FREQUENCY_BASES for p in ps]
     command = f"asymmetry trend <folder> --series {name} --model"
     hints: list[str] = []
-    if order_key == "field" and rates:
+    # A precessing line's rate is its width (TF), not a Redfield relaxation (LF).
+    if order_key == "field" and rates and not frequencies:
         hints.append(
             f"A relaxation rate against field is the decoupling question: {command} "
             f"Redfield --param {rates[0]} (--fix m=2 for the textbook form)."
@@ -424,8 +745,16 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
                 f"OrderParameter --param {frequencies[0]} (fit below the transition)."
             )
         else:
+            shift = _frequency_shift(trend, frequencies[0])
+            if shift is not None:
+                hints.append(
+                    f"{frequencies[0]} moves from {format_number(shift[0], 5)} to "
+                    f"{format_number(shift[1], 5)} MHz, many times its error, while staying "
+                    f"near one field: a shift of the line (a Knight shift, or a "
+                    f"superconductor's diamagnetic shift below Tc). Report it."
+                )
             hints.append(
-                f"{frequencies[0]} holds at {format_number(held, 4)} MHz along the scan: the "
+                f"{frequencies[0]} stays near {format_number(held, 4)} MHz along the scan (within 10 %): the "
                 f"line follows a fixed field, not an order parameter. The physics is in the "
                 f"relaxation — its rate"
                 + (f" ({', '.join(rates)})" if rates else "")

@@ -23,6 +23,7 @@ from asymmetry.core.fitting.composite import (
     parse_component_expression,
 )
 from asymmetry.core.fitting.diffusion import lambda_total as diffusion_lambda_total
+from asymmetry.core.fitting.engine import _minuit_status_message
 from asymmetry.core.fitting.latex_preview import (
     LatexTerm,
     fallback_function_latex,
@@ -3764,7 +3765,9 @@ def _run_parameter_model_minuit(
             reduced_chi_squared=float(m.fval) / ndof,
             parameters=result_params,
             uncertainties=uncertainties,
-            message="Fit successful" if m.valid else "Fit failed",
+            message=_minuit_status_message(
+                m, success_message="Fit successful", failure_prefix="Fit failed"
+            ),
             covariance=covariance,
         ),
         float(m.fval),

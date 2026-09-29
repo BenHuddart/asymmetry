@@ -23,7 +23,7 @@ from asymmetry.cli._output import (
     render_trend,
 )
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
-from asymmetry.cli._runs import parse_run_spec, reduced_datasets
+from asymmetry.cli._runs import present_runs, reduced_datasets
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -85,7 +85,7 @@ def run(args: argparse.Namespace) -> None:
     if args.plot:
         plots.require_matplotlib()
     folder = Path(args.folder)
-    workdir, _selection = workdir_for(folder, args.workdir, args.instrument)
+    workdir, selection = workdir_for(folder, args.workdir, args.instrument)
     recipe = recipe_with_overrides(
         load_recipe(workdir, args.recipe),
         fix=args.fix,
@@ -99,16 +99,16 @@ def run(args: argparse.Namespace) -> None:
         "strategy": args.strategy,
     }
     if args.groups is None:
-        _fit_group(args, workdir, recipe, name, options)
+        _fit_group(args, workdir, selection, recipe, name, options)
     else:
-        _fit_batch(args, workdir, recipe, name, options)
+        _fit_batch(args, workdir, selection, recipe, name, options)
 
 
-def _fit_group(args, workdir, recipe, name: str, options: dict[str, Any]) -> None:
+def _fit_group(args, workdir, selection, recipe, name: str, options: dict[str, Any]) -> None:
     """One simultaneous fit of ``--runs``, stored and reported."""
     from asymmetry.core.workflow.global_fit import fit_global
 
-    datasets = reduced_datasets(workdir, parse_run_spec(args.runs))
+    datasets = reduced_datasets(workdir, present_runs(selection, args.runs))
     axis = axis_from_arguments(args, datasets)
     try:
         outcome = fit_global(datasets, recipe, axis=axis, **options)
@@ -131,7 +131,7 @@ def _fit_group(args, workdir, recipe, name: str, options: dict[str, Any]) -> Non
         )
 
 
-def _fit_batch(args, workdir, recipe, name: str, options: dict[str, Any]) -> None:
+def _fit_batch(args, workdir, selection, recipe, name: str, options: dict[str, Any]) -> None:
     """One simultaneous fit per group of ``--groups``, and the batch trend, stored and reported."""
     from asymmetry.core.workflow.global_fit import fit_global_batch
     from asymmetry.core.workflow.workdir import series_digest
@@ -140,7 +140,7 @@ def _fit_batch(args, workdir, recipe, name: str, options: dict[str, Any]) -> Non
     if not all(specs):
         raise UserError(f"--groups {args.groups!r} has an empty group between semicolons.")
     groups = {
-        f"{name}-{index}": reduced_datasets(workdir, parse_run_spec(spec))
+        f"{name}-{index}": reduced_datasets(workdir, present_runs(selection, spec))
         for index, spec in enumerate(specs, start=1)
     }
     every_run: dict[int, Any] = {}

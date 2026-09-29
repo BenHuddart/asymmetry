@@ -21,13 +21,18 @@ also has `--help`.
 - a temperature scan or a field scan at one geometry;
 - named or numbered acquisition periods in a multi-period run;
 - Fourier spectra and quantitative peak finding on reduced data;
-- integral-asymmetry field scans, including ALC/QLCR resonance fits;
-- a simultaneous group of runs with genuinely shared fit parameters;
+- integral-asymmetry field scans, including ALC/QLCR resonance fits, a
+  red − green differential scan and an RF resonance;
+- a simultaneous group of runs with genuinely shared fit parameters, and a
+  batch of such groups whose shared parameters form a trend;
 - a parameter trend fitted with a physical law — an order parameter, an
   Arrhenius or Redfield law, a superconducting gap, a linear rate law — along
   temperature (setpoint or logged), field, or a quantity you supply per run;
+  and a second law fitted through the parameters of several such fits (an
+  Arrhenius law through rate constants each fitted at one temperature);
 - ISIS NeXus (`.nxs`) and PSI (`.bin`, `.mdu`) files, one forward group
-  against one backward group.
+  against one backward group — the file's own pair or any other you name —
+  with or without a background subtraction, run by run or co-added.
 
 "Preliminary" is the operative word. You produce a defensible first pass — the
 right model family, a trend, and flagged runs — not a publication analysis.
@@ -40,12 +45,10 @@ do it*, and stop without producing fit numbers.
 | Case | How the survey shows it |
 |---|---|
 | Count-domain fitting | You need per-detector counts with N₀ and a relaxation term, not asymmetry. `reduce` only produces asymmetry. |
-| Multi-group / orientation-resolved analysis | The run has many detector groups that must be fit together (angle-dependent Knight shift, crystal rotations). This CLI reduces exactly one forward/backward pair. |
+| Multi-group / orientation-resolved analysis | The run has many detector groups that must be fit together (angle-dependent Knight shift, crystal rotations). This CLI reduces one forward/backward pair at a time (`--pair` picks which). |
 | Maximum-entropy spectra | `fourier` provides an FFT and peak table, not maximum entropy reconstruction. Do not describe its output as MaxEnt. |
 | Negative-muon (μ⁻) elemental analysis | Gamma spectra, elemental lines. Not asymmetry data. |
-| Rotating-reference-frame or RF-resonance runs | Titles or notes naming RF; data modulated at a reference frequency. |
-| A series of simultaneous groups | `fit-global` fits one group of runs jointly and `trend` reads that group's run-local parameters, but there is not yet one command that repeats the coupled fit for every temperature and trends the *shared* parameters. Fit and report each group separately; do not substitute independent fits. |
-| A trend of fitted trend parameters | `trend --model` fits one stored series. A law fitted *across* several such fits — an Arrhenius law through rate constants each fitted at one temperature — has no command. Report each fit's parameters; do not fit the second level by hand. |
+| Rotating-reference-frame analysis | Titles or notes naming a rotating reference frame; data demodulated at a reference frequency. (An RF-*resonance* field scan is in scope: Step 5b.) |
 | A fragment of a published multi-field campaign | No self-contained scan in the survey's `scans` list, and fields the files do not record. Check `scans` first: two complete temperature scans at two recorded fields are analysable even with a large gap in run numbers between them. |
 
 A folder the tool can *load* is not automatically a folder the tool can
@@ -56,11 +59,11 @@ A folder the tool can *load* is not automatically a folder the tool can
 Run every command from the project directory you are working in, and pass the
 data folder as the command's argument — an absolute path is fine, and is what
 you want when the data sits on a share or in an archive. `survey`, `reduce`,
-`wizard`, `recipe`, `integral-scan`, `fourier`, `fit-global` and `fit-series` write into
-`./asymmetry-work/` — the work directory,
+`wizard`, `recipe`, `integral-scan`, `fourier`, `fit`, `fit-global` and `fit-series`
+write into `./asymmetry-work/` — the work directory,
 in the project, never in the data folder — so the next command picks the state
-up; `fit` and `trend` read it and add only what `--plot` (and `trend --csv`)
-asks for. `alpha` and `info` are stateless — they load a file, print, and
+up; `trend` reads it and adds its law fits and what `--plot` and `--csv` ask
+for. `alpha` and `info` are stateless — they load a file, print, and
 write nothing — and `skill` writes into the agent's own skill directory, not
 the work directory.
 
@@ -75,7 +78,15 @@ default is right, and a directory that already holds another folder's session
 says so rather than mixing the two.
 
 Add `--json` when you need to parse a payload; the default human table is
-usually easier to read and is what these examples show.
+usually easier to read, is what these examples show, and prints each NOTE and
+Next line where you will see it (in `--json` they sit under `notes`, where
+available — read them there).
+
+Run each `asymmetry` command as its own shell call, with the literal paths
+written out — no `cd`, `&&` chains, pipes or shell variables. Permission rules
+commonly allow `asymmetry` but not an arbitrary shell line, and a refused
+compound line loses every command in it. Read a logbook or notes file with
+your file-reading tool, not a converter.
 
 ### Step 1 — survey the folder
 
@@ -116,6 +127,13 @@ by run, even if a time-domain fit of a weak line will not converge; say that
 the values are the survey's spectral lines, and use your fits where they
 succeed.
 
+**When the survey prints `PAIR:`**, no run precesses on the files' own detector
+pair but one does on another — a PSI GPS transverse field precesses the spin
+across the beam, on `Up`/`Down`. Survey again with the `--pair` it names and
+pass that `--pair` to every `alpha`, `reduce` and `integral-scan`; otherwise a
+transverse-field experiment reads as a folder of longitudinal runs with no
+signal.
+
 `scans` groups by **instrument** and the held quantity, never by geometry, so a
 physical scan stays one scan even where the measurement resolves only part of it
 — and two instruments in one folder never merge. When the members disagree the
@@ -135,12 +153,25 @@ below.
 - Whether more than one instrument is present. The header line names every
   instrument found (`— EMU, MUSR`). Run numbers from different instruments are
   different campaigns even in one folder: analyse them separately and say so.
-  `asymmetry survey <folder> --json` carries `instrument` per run.
+  `asymmetry survey <folder> --json` carries `instrument` per run. When the
+  survey prints `RUN NUMBERS COLLIDE`, pass `--instrument NAME` to every
+  command on that folder.
 - Whether the run numbers run in temperature order. Very often they do not —
   a coarse pass followed by infill points. Never assume run number tracks
   temperature; read the temperature column.
 - Which runs are *not* part of any scan (detector tests, a lone reference run,
   an above-Tc run). Mention them; do not analyse them as scan members.
+- Whether the folder is one experiment or a set of separate exercises (a
+  teaching or commissioning folder: a field scan on silver, a range curve, a
+  steering scan, a weak-field scan). Analyse **each** exercise to its result —
+  never stop at listing them for the user to choose. A quantity varied only in
+  the titles or notes (a steering current, a degrader foil count) is a scan
+  like any other: fit it with `--order <name> --x <run>=<value>,…`.
+
+For a folder of more than a hundred runs the survey prints its findings first
+and the run table last. If any command's output is cut off, read what it
+stored — `asymmetry-work/survey.json`, `series/`, `scans/` — with your
+file-reading tool rather than guessing at the part you did not see.
 
 **When the survey prints a `TEMPERATURE:` line**, the listed runs were not at
 their setpoint — a cryostat still cooling, a block of runs at the wrong
@@ -170,9 +201,11 @@ measurements at that temperature. The survey's `T log/K` column is the logged
 sample temperature (`sample_temperature_logged` in `--json`) where the file
 records one; `T/K` is the setpoint. Call the setpoint a setpoint, order the
 series by the logged value (`--order sample_temperature_logged`) when the two
-disagree, and do not claim that run number is a temperature proxy. PSI `.bin`
-files carry no logged column yet; for those, say that the trend is against the
-setpoint rather than constructing a false precision.
+disagree, and do not claim that run number is a temperature proxy. For PSI
+`.bin` files `T log/K` is the header's sample sensor, printed only where it is
+steady and plausible against the setpoint; a run whose reading was set aside
+shows none. Where a PSI scan has readings on most runs, order it by them and
+say which runs fell back to the setpoint.
 
 `asymmetry info <file>` prints one file's metadata if you need to check a
 single file directly.
@@ -224,7 +257,10 @@ Then:
   scan you are about to analyse and a separate run is available. A dedicated run at 20 G is
   the calibration; twelve runs of a 100 G paramagnetic scan are candidates
   *because* the sample is paramagnetic there, and calibrating on one of them is
-  legitimate — **say which run alpha came from**.
+  legitimate — **say which run alpha came from**. Calibrating on a run does
+  not make its scan calibration-only: when the candidates form a temperature
+  scan, that scan is still a measurement (its linewidth and line shape against
+  temperature), and it gets fitted like any other.
 - **No candidates at all** → nothing in this folder precesses at its own
   applied field, so there is nothing to measure alpha on. Reduce with the
   default alpha 1.0 and state in the summary that alpha was assumed to be 1.0
@@ -264,6 +300,16 @@ asymmetry reduce <folder> --runs 102-107 --alpha-from 101 --deadtime from_file -
   cache digest. Because reduced files are keyed by source run number, use
   separate work directories if you need two periods of the same run cached at
   once.
+- `--pair FWD/BWD` reduces a pair other than the file's own (`Up/Down` on a
+  PSI GPS run whose precession is transverse to the beam; `asymmetry info
+  <file>` lists the groups, and `survey --pair` measures precession on them).
+  `--background range` subtracts the pre-t0 level (continuous sources — PSI),
+  `--background tail_fit` a flat rate under the late-time decay (pulsed).
+  `--t0-offset`/`--t-good-offset` shift t0 and the first good bin, in bins.
+  `--coadd` sums the named runs' counts and stores the sum under the first
+  run's number, replacing that run's own reduction — co-add in its own
+  `--workdir`. Every one of these is part of the reduction's provenance: say
+  in the summary which you used.
 
 For a two-period photo-μSR folder, close the loop rather than merely proving
 that both periods load:
@@ -544,10 +590,39 @@ and its table and stored trend carry every run-local parameter along that
 axis — so `asymmetry trend <folder> --series <name>` reads it, and
 `trend --model` can fit it: a muonium relaxation rate fitted per sample with a
 shared amplitude, ordered by `--order concentration --x …`, gives the rate
-constant from `trend --model Linear`. Repeat `fit-global` for each temperature
-group. There is not yet a batch command that trends a sequence of global fits,
-so quote each stored group's shared values and uncertainties directly rather
-than presenting independent fits as a coupled analysis.
+constant from `trend --model Linear`.
+
+**A sequence of groups** — the same triplet at every temperature, the same
+concentration series at every temperature — is one command, not one per group:
+
+```bash
+asymmetry fit-global <folder> --groups "101,102,103;104,105,106;107,108,109" \
+    --recipe dynamic-gkt --shared A_1,Delta,nu,A_bg --field-param B_L \
+    --group-order temperature --name ionic
+asymmetry trend <folder> --series ionic --plot
+asymmetry trend <folder> --series ionic --model Arrhenius --param nu
+```
+
+Each group is stored as `<name>-<i>` (from 1) and `<name>` holds the groups'
+shared parameters as a trend along `--group-order` (each group's mean
+temperature by default; `sample_temperature_logged`, `field`, or any name with
+`--group-x 1=…,2=…`). If the default `--strategy joint` fails on some groups,
+rerun with `--strategy least_squares` and say so.
+
+**A law through laws.** When each group gives a quantity only through its own
+trend fit — a rate constant k_Mu from `trend --model Linear` along
+concentration at one temperature — fit each member, then build a series from
+those fits and fit the second law to it:
+
+```bash
+asymmetry trend <folder> --series mu-1 --model Linear --param Lambda_2   # per member
+asymmetry trend <folder> --series k-vs-T --from-fits mu-1,mu-2,mu-3 \
+    --param m --order temperature --model Arrhenius --plot
+```
+
+`--param` names the members' law parameter (`m`, the slope, for `Linear`);
+the built series is stored as `k-vs-T` and can be refitted like any other.
+Never fit the second level by hand from printed values.
 
 ### Step 5b — build and fit an integral-asymmetry field scan
 
@@ -568,6 +643,48 @@ only away from the resonance, use, for example,
 Only call a feature an ALC resonance when the fitted peak, its uncertainty and
 the plotted field dependence support that interpretation.
 
+- **Several resonances**: sum the components (`LorentzianLCR + LorentzianLCR +
+  Cubic`); each is seeded on its own dip. `--xmin`/`--xmax` fit a window of a
+  long scan when one background shape does not span it all.
+- **A two-period (red/green) HiFi scan**: `--period green-red` integrates the
+  difference of the two periods' counts, the differential line shape of a
+  resonance; fit it with `LorentzianLCRPair` (a resonance minus its copy
+  shifted by `dB`, the red − green field step — hold it with `--fix dB=…` from
+  the experiment notes, since it is degenerate with the width when free).
+- **An RF resonance** (a DEVA/RF run, notes naming an RF frequency):
+  `--period green-red --model RFResonanceMuP --fix nu_RF=<MHz from the notes>`
+  gives the muon and proton hyperfine couplings `A_mu`, `A_p`. Which period
+  had the RF on is read from the sign, not a colour convention: the RF
+  depolarises at resonance, so green − red peaking positive means green kept
+  its polarisation — green was RF-off.
+- **Muonium repolarisation** (an LF scan of the integral asymmetry rising to a
+  plateau): `--model MuRepolarisation` gives the isotropic hyperfine constant
+  `A_hf` of a muonium-like state. A radical's curve (muon plus proton
+  couplings) is not that shape: a second `MuRepolarisation` term may improve
+  χ²ᵣ without being a second species — an `A_hf` above vacuum muonium's is
+  not a physical coupling. Report such a fit as an empirical description, with
+  its χ²ᵣ, and say the radical repolarisation model is not available.
+
+`integral-scan` takes the same `--pair`, `--background`, `--deadtime` and
+`--period` as `reduce`.
+
+**Which runs are the ALC scan.** An ALC scan is the stretch of evenly stepped
+fields (tens to hundreds of gauss apart) across the resonances. Low fields
+at the same temperature — zero field, then a few gauss up to a few kilogauss
+in growing steps — are a separate decoupling (repolarisation) measurement,
+even when the survey lists them in the same field scan: integrate and report
+them apart, and give the ALC scan's run range from where the even steps start.
+
+**The same sample at two temperatures.** Compare each resonance's centre and
+width between the scans. A Δ₁ resonance exists only through the anisotropic
+part of the hyperfine coupling, so one that narrows, shifts or appears on
+warming while another fades is molecular motion (reorientation) averaging
+that anisotropy — say so in those terms. Two temperatures show the change;
+they support no activation law, and the summary says that too. Quote both
+fitted centres and widths side by side when you compare them, and state the
+direction from those printed numbers (which is at higher field, which is
+broader) — never from memory of the plot.
+
 Report the quantities `integral-scan` actually emits — the resonance field,
 width, amplitude, uncertainties and fit quality. A field can *constrain* a
 hyperfine coupling physically, but do not convert it into a coupling constant
@@ -580,6 +697,20 @@ leave it qualitative.
 ```bash
 asymmetry fourier <folder> --run 20721 --window none --fmax 5 --plot
 ```
+
+**Radicals in a high transverse field** precess at two frequencies whose sum is
+the muon hyperfine coupling A_μ (in a field where A_μ/2 exceeds the muon Larmor
+frequency both lie above the diamagnetic line; their *sum*, not their
+difference, is A_μ):
+co-add repeated runs at the same field and temperature first
+(`reduce --runs … --coadd`, in its own `--workdir`), transform the sum, and
+run `fourier --run <first run> --correlation`, which prints A_μ directly as the
+correlation spectrum's peak — never add the two frequencies by hand. Transform
+the co-add over its whole band too — `asymmetry fourier <folder> --run <first
+run> --window none`, with no `--fmax` — and read its peak table for the two
+radical lines; the header prints the band searched, and a note names any line
+a narrower band hid. Never conclude "no radical" from one run at another field
+or a band below the lines: the survey's `REPEATS` sets are what to co-add.
 
 `fourier` writes `spectra/<name>.npz`, a JSON provenance file and, with
 `--plot`, a spectrum PNG. Its table reports detected frequency, amplitude,
@@ -816,6 +947,13 @@ When the model has one Gaussian or exponential envelope, the `envelope` column
 says which shape each run prefers (`either` when they fit alike). A change of
 shape along the scan is a result: report it with the runs on each side.
 
+**Every NOTE a command prints about a scan is a finding to report or refute**
+— a step and where it happens, a shift, an envelope change, a phase that runs
+with field (a t0 offset: say so, and test it with the `--t0-offset` it gives),
+an amplitude that falls with frequency (the frequency response), a pair of
+lines. Carry each into the summary with what it means, or say why it does not
+apply; a note left out is a result left out.
+
 **Look at the trend PNGs with the Read tool before writing anything.** A trend
 that is flat, that jumps, or whose scatter swamps the error bars is telling you
 something the table alone will not.
@@ -879,21 +1017,28 @@ it as Asymmetry output.
 
 ### Step 7 — write the summary, audit its numbers, then send it
 
-Template in section 6. Write the draft to `summary.md` in the project directory,
-then run
+Template in section 6. Write the full draft to `summary.md` in the project
+directory with your file-writing tool (not a shell heredoc, `sed` or `echo`),
+then run, from the project directory and without `--workdir` (it reads every
+`asymmetry-work*` directory there, so numbers from each work directory count)
 
 ```bash
 asymmetry audit summary.md
 ```
 
 Every command's printed output is logged in the work directory, and `audit`
-lists each number in the draft that no command printed. Each one it lists is
+lists each number in the draft that no command printed. It first lists every
+scan the survey found whose runs no `fit-series`, `fit-global` or
+`integral-scan` (or single `fit`) covered — a TF scan used only for alpha, the far side of a
+transition. Fit those runs, or say in the draft which cannot be fitted and
+why. Each number it lists is
 almost always arithmetic on printed values — a percentage change, a ratio, a
 difference of two columns, a unit conversion (MHz to gauss, relative to molar),
 a significance in σ — or a value from memory. Remove it, quote the printed
 value instead, or say the relation in words ("rises by several percent", "an
-order of magnitude faster"). Re-run `audit` until it lists nothing you would
-defend as printed. Do not mention the audit in the reply; it is a check on
+order of magnitude faster"). Make every correction in `summary.md` itself with
+your file-editing tool and re-run `audit` after each round, until it lists
+nothing you would defend as printed. Skipping the audit is not an option. Do not mention the audit in the reply; it is a check on
 your draft, not a finding.
 
 **The user sees neither tool output nor files — only your final message.** So
@@ -1003,7 +1148,12 @@ for a quantity — a rate constant, a transition temperature, a correlation
 time — and the data allow a fit, do the fit and report it with its caveat (a
 temperature offset between samples, a poor χ²ᵣ, a short range), rather than
 declining because the comparison is imperfect. Declining is for a question the
-data cannot answer at all.
+data cannot answer at all. When the question is a comparison with an accepted
+value — a transition temperature checked against the literature to judge a
+thermometer, a rate against a published one — make it in words: name the
+accepted value as literature, and say whether this session's fitted value sits
+above or below it and what that suggests. The number rule forbids presenting a
+literature value or a hand-computed difference as a result, not discussing one.
 
 **One negative run is not a negative folder.** When a feature the physics
 predicts — a line, a dip, a step — is missing from one run, test the run where
@@ -1033,7 +1183,24 @@ template when the ranked table offers one, even if AICc prefers the exponential
 shift of the precession frequency, **and** the non-superconducting fraction
 (the `Constant` amplitude, and any second, weakly relaxing oscillating term the
 ranked table offers): a σ(T) reported without saying what happened to the rest
-of the asymmetry is an incomplete answer for a superconductor.
+of the asymmetry is an incomplete answer for a superconductor. When you fit two
+lines (the vortex line and a narrow background line), fit the gap law to the
+broad line's σ with the narrow line's width held from the normal state; if the
+two lines trade amplitude near Tc, fit the scan with one Gaussian and give the
+law on that σ — a gap-law fit is the expected result, not an optional extra.
+
+**Zero field in a superconductor** tests time-reversal symmetry breaking: a
+spontaneous field appears below Tc as extra relaxation — in the Kubo–Toyabe
+width Δ or in an exponential rate Λ, whichever carries it. Fit the ZF scan
+with one static-KT recipe across Tc, compare *every* width and rate above and
+below the Tc the TF scan gives (`trend` names any that step), and report a
+step of a few percent at Tc as the finding it is. Do not decide in advance
+which parameter the signal must appear in. A Kubo–Toyabe width that grows
+below Tc while Λ stays flat, and that a small longitudinal field decouples, is
+a *static* spontaneous field — the time-reversal-symmetry-breaking result
+itself, not a lesser candidate for being in Δ rather than Λ. Place its onset
+where Δ leaves its normal-state level (the `trend` note brackets it), and set
+it beside the TF Tc.
 
 ## 4. What things cost
 
@@ -1049,6 +1216,13 @@ of the asymmetry is an incomplete answer for a superconductor.
 
 So: screen **one or two** runs, not every run. Reduce and fit whole scans
 freely — those are cheap.
+
+**Finish the analysis in this session.** Nobody answers a question mid-way:
+the user sees only your final reply. Do not end on "shall I continue?" or with
+a partial pass — take every scan through reduction, the fit, `trend` and the
+audit, and put what you could not do under "Not done, and why". When a
+command is refused (a shell loop, a pipe), run the same `asymmetry` commands
+one at a time instead.
 
 **Let long commands finish.** Give a `wizard` or `fit-series` call several
 minutes through your shell tool's own timeout setting (in Claude Code, the Bash
@@ -1119,7 +1293,7 @@ that. The H_c(T) law is `OrderParameter` with `alpha=2`, `beta=1`.
 **Weak-TF muonium.** In water, solutions and many insulators a fraction of the
 muons form muonium (Mu). In a weak transverse field its triplet precesses at
 1.394 MHz/G — 103 times the bare muon's 13.55 kHz/G — so a 2 G run shows a
-line near 2.8 MHz from Mu and a diamagnetic line (27 kHz) that completes less
+line near 2.8 MHz from Mu and a diamagnetic line (27.1 kHz) that completes less
 than a cycle in the record. The 100 G runs beside them are for the diamagnetic
 fraction and for alpha. The survey reports the 2 G runs as `prec other` or
 `none` (the Mu line is not the applied field's Larmor line), and a full-record
@@ -1136,7 +1310,7 @@ recipe:
 ```bash
 asymmetry recipe <folder> --name mu --run <2 G run> \
     --expression "Oscillatory * Exponential + Oscillatory * Exponential" \
-    --fix frequency_1=2.79 --fix frequency_3=0.0279 --initial Lambda_2=0.5
+    --fix frequency_1=2.79 --fix frequency_3=0.0271 --initial Lambda_2=0.5
 ```
 
 (frequency_1 = 1.394 MHz/G × B for Mu and frequency_3 = 0.01355 MHz/G × B for
@@ -1148,7 +1322,10 @@ diamagnetic amplitudes and phases shared, ordered by
 the titles or notes — and take k_Mu from `trend --model Linear`. Concentrations
 given as "quarter", "half", "full" or "0.25" are **relative**: keep k_Mu per
 unit of that relative concentration, write the values as the titles do (no "M"
-after them), and never invent a molarity. Faster Mu relaxation in untreated
+after them), and never invent a molarity. An undiluted sample ("neat", "full",
+"stock") is 1 on that scale and the deoxygenated pure-water blank is 0, so both
+belong in the concentration set of the temperature they were measured at — a
+set of two points cannot fit a line with an intercept. Faster Mu relaxation in untreated
 than in deoxygenated water is dissolved O₂.
 
 **Transverse field.** The precession frequency gives the local field at the
@@ -1158,6 +1335,18 @@ lattice broadens it: a Gaussian σ(T) rising below Tc, related to the London
 penetration depth. Is the line shape Gaussian or exponential, and does it
 change with temperature (a nuclear-dipolar Gaussian narrowing to a Lorentzian
 as the muon starts to hop)?
+
+**A high transverse field on a magnet** (tesla fields, hundreds of MHz) is
+where one tabulated line can be two: muons at inequivalent sites, or a
+sublattice field adding to and subtracting from the applied one, split the
+line by as little as one FFT resolution element. When the peak table shows one
+line whose width is of the resolution or more, or `fit-series` strongly
+prefers an exponential envelope on the cold side, fit the coldest run with two
+lines (`Oscillatory * Gaussian + Oscillatory * Gaussian`, the second started a
+resolution element away) and compare χ²ᵣ and the two amplitudes' errors
+before reporting one line. A single-line fit never shows that a magnet is
+unordered: a broadening or splitting on cooling through a transition is the
+order, seen through a field much larger than it.
 
 ## 6. The summary template
 
@@ -1220,12 +1409,28 @@ survey and inspected reduced/fit PNGs as evidence. If the feature disappears
 and its fit becomes flagged, report that physical non-observation explicitly;
 do not leave it implicit in an excluded-run list.
 
+For every spectrum you quote, say which dataset it transformed (one run, or
+the co-add of which runs), the transform (FFT, not MaxEnt), its window and the
+resolution the command printed — and take the lines you quote from that
+spectrum's own peak table.
+
 **Excluded or flagged runs** — every flagged run, its flag, and what you think
 went wrong. State plainly that these values are not results.
 
 **What this suggests** — the physics, in words: what the trend means, what it is
 consistent with, what would need checking. Interpretation belongs here, and
-here it may be qualitative.
+here it may be qualitative. Name the steps a full analysis of this experiment
+would take that this tool cannot (the out-of-scope table in section 1:
+MaxEnt field spectra, a multi-group field-distribution analysis, count-domain
+fits, a hyperfine or site model), so the reader sees where this preliminary
+analysis stops — and never let what the tool could not resolve stand as a
+finding (an unresolved splitting is not the absence of order).
+
+**Not done, and why** — each part of the experiment's question this analysis
+did not answer, with the reason: the model or method the tool lacks (MaxEnt
+field spectra, a radical ALC or hyperfine model, a multi-group analysis,
+count-domain fits), a fit that did not converge, a scan set aside and why.
+"Not analysed" without a reason is not an answer.
 
 **Files** — the work directory (`asymmetry-work/`), any stored `scans/` or
 `spectra/` products, and the paths of the PNGs worth looking at.

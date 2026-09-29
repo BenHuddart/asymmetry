@@ -19,8 +19,10 @@ an agent would be left guessing. The result is JSON-serialisable via
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +41,7 @@ from asymmetry.core.fitting.fit_wizard import (
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.io.nexus import active_series_mean
+from asymmetry.core.transform.grouping import group_names
 from asymmetry.core.workflow.reduction import (
     ReductionSettings,
     estimate_alpha_for_run,
@@ -616,6 +619,11 @@ class ScanGroup:
     #: identity, since one sample at one temperature is often scanned several
     #: ways; empty for a temperature scan, whose identity it is not.
     notes: str = ""
+    #: The members' samples in scan order (see :func:`sample_name`), each once:
+    #: more than one says the scan crosses samples.
+    samples: tuple[str, ...] = ()
+    #: The acquisition periods every member records (part of the set-up key).
+    n_periods: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -629,7 +637,114 @@ class ScanGroup:
             "runs": list(self.runs),
             "values": list(self.values),
             "notes": self.notes,
+            "samples": list(self.samples),
+            "n_periods": self.n_periods,
         }
+
+
+#: Co-adding a repeat set is worth reporting only when its other runs hold at
+#: least half the events of its largest: the counting errors then shrink by at
+#: least 1 - 1/sqrt(1.5), about 18 %. A run aborted beside its restart adds nothing.
+REPEAT_STATISTICS_GAIN = 1.5
+
+#: A run note naming a scan ("P scan", "Tscan", "o-p scan"): the experimenter
+#: stepped something between runs.
+SCAN_NOTE = re.compile("scan", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class RepeatSet:
+    """Consecutive runs of one instrument that record one condition.
+
+    One condition is one sample, setpoint temperature, field, geometry, run
+    note and set-up (:func:`measurement_setup`), with logged sample
+    temperatures that do not depart from each other.
+    """
+
+    instrument: str
+    temperature: float
+    field: float
+    notes: str
+    #: In run order.
+    runs: list[int]
+    #: ``True`` for repeats to co-add; ``False`` when the shared note names a
+    #: scan (:data:`SCAN_NOTE`), so each run is a point in a quantity the files
+    #: do not record (a laser delay, a pulse timing).
+    co_add: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict."""
+        return {
+            "instrument": self.instrument,
+            "temperature": self.temperature,
+            "field": self.field,
+            "notes": self.notes,
+            "runs": list(self.runs),
+            "co_add": self.co_add,
+        }
+
+
+@dataclass(frozen=True)
+class PrecessingPair:
+    """Another detector pair of *run* that precesses where the file's own pair does not."""
+
+    run_number: int
+    forward: str
+    backward: str
+    precession: PrecessionEvidence
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict."""
+        return {
+            "run_number": self.run_number,
+            "pair": [self.forward, self.backward],
+            "precession": self.precession.to_dict(),
+        }
+
+
+#: Detector names that face each other, as instruments label their groups
+#: (PSI truncates to four letters: ``Forw``, ``Righ``).
+OPPOSITE_GROUP_NAMES: tuple[tuple[str, str], ...] = (
+    ("up", "down"),
+    ("left", "right"),
+    ("forward", "backward"),
+    ("top", "bottom"),
+)
+
+
+def _facing(first: str, second: str) -> bool:
+    """Whether groups named *first* and *second* face each other across the sample."""
+    a, b = first.lower(), second.lower()
+    return any(
+        (one.startswith(a) and other.startswith(b)) or (one.startswith(b) and other.startswith(a))
+        for one, other in OPPOSITE_GROUP_NAMES
+    )
+
+
+def precessing_pair(run: Run, run_number: int, field: float) -> PrecessingPair | None:
+    """The pair of *run*'s groups, other than its own, across which the field precesses the muon.
+
+    A PSI GPS run in a transverse field precesses on the pair across the field
+    (``Up``/``Down``), not along the beam, so the file's default pair shows
+    nothing: the pair, not the physics, is what is missing. Every pair of
+    detectors not parallel to the spin shows the line, so a pair whose names
+    face each other is preferred, then the strongest line.
+    """
+    names = group_names(run)
+    own = {int(run.grouping["forward_group"]), int(run.grouping["backward_group"])}
+    found = []
+    for forward, backward in combinations(names, 2):
+        if {forward, backward} == own:
+            continue
+        pair = (names[forward], names[backward])
+        evidence = precession_evidence(reduce_run(run, ReductionSettings(pair=pair)), field)
+        if evidence.state == "larmor":
+            found.append(PrecessingPair(run_number, *pair, evidence))
+    return max(
+        found,
+        key=lambda entry: (_facing(entry.forward, entry.backward), entry.precession.snr),
+        default=None,
+    )
 
 
 @dataclass(frozen=True)
@@ -645,6 +760,7 @@ class FolderSurvey:
     #: Runs whose logged sample temperature departs from the setpoint.
     temperature_departures: list[int]
     scans: list[ScanGroup]
+    repeats: list[RepeatSet]
     #: ``True`` when the directory held more entries than the scan cap, so
     #: ``runs`` may be missing files that exist (see ``scan_run_files``).
     truncated: bool
@@ -654,6 +770,9 @@ class FolderSurvey:
     #: Temperature scans left out of ``scans`` as cross-sections of a grid of
     #: longer field scans.
     cross_sections: int
+    #: When no run precesses on the files' own pair, the pair that does on the
+    #: first run in a field showing no line; ``None`` otherwise.
+    other_pair: PrecessingPair | None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -668,6 +787,8 @@ class FolderSurvey:
             "alpha_steps": [step.to_dict() for step in self.alpha_steps],
             "temperature_departures": list(self.temperature_departures),
             "scans": [scan.to_dict() for scan in self.scans],
+            "repeats": [repeat.to_dict() for repeat in self.repeats],
+            "other_pair": None if self.other_pair is None else self.other_pair.to_dict(),
         }
 
     def row(self, run_number: int) -> RunRow:
@@ -737,6 +858,69 @@ def build_run_row(
     )
 
 
+def sample_name(row: RunRow) -> str:
+    """The run's sample: the file's own name for it, else its title before any ``T=``/``F=``."""
+    return row.sample or re.split(r"[\s_,]+[TFB]\s*=", row.title, maxsplit=1)[0].strip()
+
+
+#: Decimal places (in µs) a bin width is rounded to before it keys a set-up:
+#: files store it as float32, so one nominal 16 ns width reads 0.01600000262 or
+#: 0.01600001007 µs, while two real set-ups differ by at least a PSI TDC
+#: channel (0.195 ns).
+_BIN_WIDTH_KEY_DECIMALS = 6
+
+
+def measurement_setup(row: RunRow) -> tuple[float, int]:
+    """The run's acquisition set-up, ``(bin width / µs, periods)``: runs of two set-ups never pool."""
+    return round(row.bin_width_us, _BIN_WIDTH_KEY_DECIMALS), row.n_periods
+
+
+def repeat_sets(rows: list[RunRow]) -> list[RepeatSet]:
+    """Consecutive runs, one instrument at a time, that record one condition (see :class:`RepeatSet`).
+
+    A set is kept only when co-adding it gains :data:`REPEAT_STATISTICS_GAIN`
+    over its largest run. A run that records no temperature or field repeats
+    nothing.
+    """
+
+    def condition(row: RunRow) -> tuple:
+        return (
+            row.instrument,
+            round(float(row.temperature), _SCAN_KEY_DECIMALS),
+            round(float(row.field), _SCAN_KEY_DECIMALS),
+            row.geometry,
+            row.notes,
+            sample_name(row),
+            measurement_setup(row),
+        )
+
+    recorded = [row for row in rows if row.temperature is not None and row.field is not None]
+    chains: list[list[RunRow]] = []
+    for row in sorted(recorded, key=lambda row: (row.instrument, row.run_number)):
+        if (
+            chains
+            and condition(chains[-1][0]) == condition(row)
+            and not departs(chains[-1][0].sample_temperature_logged, row.sample_temperature_logged)
+        ):
+            chains[-1].append(row)
+        else:
+            chains.append([row])
+    return [
+        RepeatSet(
+            instrument=chain[0].instrument,
+            temperature=float(chain[0].temperature),
+            field=float(chain[0].field),
+            notes=chain[0].notes,
+            runs=[row.run_number for row in chain],
+            co_add=SCAN_NOTE.search(chain[0].notes) is None,
+        )
+        for chain in chains
+        if len(chain) > 1
+        and sum(row.total_events for row in chain)
+        >= REPEAT_STATISTICS_GAIN * max(row.total_events for row in chain)
+    ]
+
+
 def _group_geometry(members: list[RunRow]) -> tuple[str | None, str]:
     """A scan's ``(geometry, note)``: the members' agreed geometry, or a tally.
 
@@ -765,11 +949,12 @@ def _group_geometry(members: list[RunRow]) -> tuple[str | None, str]:
 def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
     """Group *rows* into temperature scans and field scans.
 
-    A temperature scan is every run sharing an (instrument, field) pair, ordered
-    by temperature. A field scan is every run sharing an instrument,
-    temperature, run note and period count, ordered by field (see
-    :func:`_field_scan_members` for how one is cut into repeats and cleared of
-    calibration runs).
+    A temperature scan is every run sharing an instrument, field and set-up
+    (:func:`measurement_setup`), ordered by temperature. A field scan is every
+    run sharing an instrument, temperature, run note and set-up, ordered by
+    field (see :func:`_field_scan_members` for how one is cut into repeats and
+    cleared of calibration runs). A different bin width or period count is a
+    different measurement set-up, so it never shares a scan.
 
     A group qualifies only when it holds at least two runs *at two different
     axis values*: a single run is not a scan, and neither are three zero-field
@@ -784,7 +969,7 @@ def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
     per run and a scan that resolves only in part is still one scan (see
     :func:`_group_geometry`).
     """
-    groups: list[tuple[str, str, float, str, list[RunRow]]] = []
+    groups: list[tuple[str, str, float, str, int, list[RunRow]]] = []
     by_field: dict[tuple, list[RunRow]] = {}
     by_temperature: dict[tuple, list[RunRow]] = {}
     # Stretches of consecutive runs at one temperature, counted per instrument
@@ -800,17 +985,18 @@ def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
             count, current[row.instrument] = count + 1, temperature
         stretch[row.file] = count
         field = round(float(row.field), _SCAN_KEY_DECIMALS)
-        by_field.setdefault((row.instrument, field), []).append(row)
-        key = (row.instrument, temperature, row.notes, row.n_periods)
+        setup = measurement_setup(row)
+        by_field.setdefault((row.instrument, field, setup), []).append(row)
+        key = (row.instrument, temperature, row.notes, setup)
         by_temperature.setdefault(key, []).append(row)
-    for (instrument, field), members in by_field.items():
-        groups.append(("temperature", instrument, field, "", members))
-    for (instrument, temperature, notes, _periods), members in by_temperature.items():
+    for (instrument, field, (_width, periods)), members in by_field.items():
+        groups.append(("temperature", instrument, field, "", periods, members))
+    for (instrument, temperature, notes, (_width, periods)), members in by_temperature.items():
         for scan in _field_scan_members(members, stretch):
-            groups.append(("field", instrument, temperature, notes, scan))
+            groups.append(("field", instrument, temperature, notes, periods, scan))
 
     scans: list[ScanGroup] = []
-    for axis, instrument, held_value, notes, members in groups:
+    for axis, instrument, held_value, notes, periods, members in groups:
         ordered = sorted(members, key=lambda row: float(getattr(row, axis)))
         axis_values = [float(getattr(row, axis)) for row in ordered]
         if len(ordered) < 2 or len(set(axis_values)) < 2:
@@ -831,6 +1017,8 @@ def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
                 runs=[row.run_number for row in ordered],
                 values=axis_values,
                 notes=notes,
+                samples=tuple(name for name in dict.fromkeys(map(sample_name, ordered)) if name),
+                n_periods=periods,
             )
         )
     longest_field_scan: dict[tuple[str, int], int] = {}
@@ -853,7 +1041,7 @@ def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
 
 
 def _field_scan_members(members: list[RunRow], stretch: dict[str, int]) -> list[list[RunRow]]:
-    """The field scans in *members*, runs sharing an instrument, temperature, note and period count.
+    """The field scans in *members*, runs sharing an instrument, temperature, note and set-up.
 
     Two cuts. A run at a field its scan already holds, taken after the cryostat
     visited another temperature, starts a repeat of the scan — a field point
@@ -1064,6 +1252,7 @@ def survey_folder(
     rows: list[RunRow] = []
     metadatas: list[dict[str, Any] | None] = []
     alphas: dict[str, float] = {}
+    silent: tuple[Run, int, float] | None = None
     for prefix, run_number, path in found.entries:
         result = load(str(path))
         # A multi-period file loads as a list; the survey describes its first
@@ -1081,12 +1270,18 @@ def survey_folder(
             )
         )
         metadatas.append(dataset.run.metadata)
+        if silent is None and precession.state == "none" and dataset.field:
+            silent = (dataset.run, run_number, float(dataset.field))
         if calibration_verdict(dataset.run.metadata, dataset.field, precession)[0] is not None:
             alphas[path.name] = estimate_alpha_for_run(dataset.run, settings).alpha
 
     candidates, best_run = _calibration_candidates(rows, metadatas, alphas)
 
     scans, cross_sections = _scan_groups(rows)
+    precessing = any(row.precession.state == "larmor" for row in rows)
+    other_pair = (
+        precessing_pair(*silent) if pair is None and not precessing and silent is not None else None
+    )
     return FolderSurvey(
         folder=str(folder),
         runs=rows,
@@ -1095,22 +1290,29 @@ def survey_folder(
         alpha_steps=alpha_steps(candidates),
         temperature_departures=temperature_departures(rows),
         scans=scans,
+        repeats=repeat_sets(rows),
         truncated=found.truncated,
         pair=pair,
         cross_sections=cross_sections,
+        other_pair=other_pair,
     )
 
 
 __all__ = [
     "ALPHA_STEP_TOLERANCE",
     "LARMOR_FREQUENCY_TOLERANCE",
+    "OPPOSITE_GROUP_NAMES",
     "PRECESSION_SNR_FLOOR",
     "PRECESSION_STATES",
     "ROW_GEOMETRY_SOURCES",
     "AlphaStep",
     "CalibrationCandidate",
     "FolderSurvey",
+    "PrecessingPair",
     "PrecessionEvidence",
+    "REPEAT_STATISTICS_GAIN",
+    "RepeatSet",
+    "SCAN_NOTE",
     "RunRow",
     "ScanGroup",
     "TEMPERATURE_DEPARTURE_FRACTION",
@@ -1121,10 +1323,14 @@ __all__ = [
     "coil_geometry",
     "departs",
     "has_file_deadtime",
+    "measurement_setup",
+    "precessing_pair",
     "precession_evidence",
+    "repeat_sets",
     "resolve_row_geometry",
     "run_facility",
     "run_geometry",
+    "sample_name",
     "survey_folder",
     "temperature_departures",
 ]

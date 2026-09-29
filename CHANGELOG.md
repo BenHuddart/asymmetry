@@ -7,8 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`asymmetry audit` lists the scans no fit covered.** Before checking the draft's
+  numbers it names every scan in the stored survey with runs that no `fit-series`,
+  `fit-global` or `integral-scan` fitted, with those runs — a TF scan used only for
+  alpha (with the commands that fit it), or the far side of a transition — so a
+  summary cannot silently leave a measurement out.
+- **`asymmetry survey` names the detector pair that precesses.** When no run precesses
+  on the files' own pair, the survey tries the others on the first silent run in a field
+  and prints `PAIR:` with the one across the field — on a PSI GPS transverse-field run,
+  `Up/Down` — and the `--pair` to pass on.
+- **`asymmetry survey` names repeat sets to co-add.** Consecutive runs of one sample
+  at one condition and set-up print as `REPEATS:` with the `reduce --coadd` command
+  (a run note naming a scan prints `UNRECORDED SCAN:` instead); a scan of two-period
+  runs says so and names `integral-scan --period green-red`; runs of different bin
+  widths or period counts never share a scan.
+- **`asymmetry trend` places a step and names two instrument effects.** A width or rate
+  that steps is bracketed by where it leaves each end's level; a phase linear in field
+  is named a t0 offset (with the implied Δt and the `--t0-offset` to test); an amplitude
+  falling as its frequency rises is named the instrument's frequency response; a held
+  high-field line gets a ready two-line recipe; `fourier` notes two peaks within two
+  resolution elements, names lines detected outside a `--fmin/--fmax` band, and states
+  that a correlation peak is A_μ = ν₁ + ν₂. Trend readings leave out bound-pinned,
+  reseeded and over-amplitude rows.
+- **`integral-scan` prints each fitted parameter with its error**, `fixed` for a held one
+  and `(at bound)` for one pinned on a bound, instead of the values alone.
+
 ### Changed
 
+- **`fit-series` starts a line at each run's own field along a field scan.** A recipe
+  frequency at the Larmor value of the field it was seeded at (now recorded in the
+  recipe) is scaled by each run's field rather than
+  carried from the neighbouring run, which belongs to another field; lines away from the
+  Larmor frequency, and scans at one field, chain as before.
+- **Clearer notes on a series' trend.** The envelope note names motional narrowing only
+  for a Gaussian on the cold side (an exponential there is a skewed distribution, such
+  as a vortex lattice beside a background line), and `trend` names a line held near the
+  applied field that still moves by many errors (a Knight or diamagnetic shift).
 - **The Grouping window opens on the current run's profile.** When the current
   run is assigned to a profile other than the ★ default, the window now edits
   that profile. Before, it always opened on the default, which showed another
@@ -16,6 +52,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`fit-series` and `fit-global` skip run numbers the folder does not hold**, as
+  `reduce` does, instead of asking for them to be reduced.
+- **`--alpha-from` a single-period calibration run works with `--period`** — the
+  detector balance is the same in every period — instead of refusing the red/green scan.
+- **`asymmetry info` on a file no loader reads** prints the error, not a traceback.
+- **`integral-scan` points at what a poor fit left out.** A converged resonance fit at
+  χ²ᵣ above 2 names the window of a further dip (checked by fitting a line there) or
+  the background as the cause; an LCR fit notes that no radical ALC/hyperfine model
+  exists; `--json` keeps every NOTE and Next line under `notes`.
+- **A mistyped data folder is named as missing**, with the folder the work directory
+  holds, before any work-directory binding error.
+- **A failed field-scan fit says why** — the minimiser's reasons and any parameter at
+  a bound — and suggests one resonance per `--xmin/--xmax` window from the scan's dips;
+  `integral-scan` on two-period runs without `--period` notes that it summed them.
+- **A series fit keeps a line away from the applied field's Larmor frequency.** Since
+  0.21.0 every `fit-series` and `fit-global` run restarted `frequency` at γ_μB/2π,
+  overwriting the recipe's line; a critical-field line in a type-I superconductor or
+  a muonium line in weak TF was then lost on every run. The Larmor value now only
+  starts a fresh recipe (`recipe --run`); the recipe's or the neighbouring run's
+  frequency is kept along a series.
 - **Deadtime "From file" is saved with the grouping profile.** Applying the
   Grouping window with deadtime set to **From file** stored the profile's deadtime
   as off. The runs were corrected until the project was reopened, but the window

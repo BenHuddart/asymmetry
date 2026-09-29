@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from asymmetry.cli._output import (
     UserError,
@@ -13,8 +15,11 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._reduction import add_pair_argument, parse_pair
-from asymmetry.cli._runs import run_clashes
-from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+from asymmetry.cli._runs import range_text, run_clashes, run_spec
+from asymmetry.cli._workdir import WORKDIR_NAME, add_workdir_argument, workdir_for
+
+if TYPE_CHECKING:
+    from asymmetry.core.workflow.survey import ScanGroup
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -35,8 +40,6 @@ def run(args: argparse.Namespace) -> None:
     from asymmetry.core.workflow.survey import survey_folder
 
     folder = Path(args.folder)
-    if not folder.is_dir():
-        raise UserError(f"{folder} does not exist or is not a directory.")
 
     # Resolved before the folder is read: surveying measures precession on
     # every run, and a work directory that belongs to another folder should
@@ -58,6 +61,33 @@ def run(args: argparse.Namespace) -> None:
 
     print(_render(survey, survey_path))
 
+
+def scan_label(scan: ScanGroup) -> str:
+    """One line naming a scan: axis, instrument, geometry, held value, periods, span and end runs."""
+    held = f"B = {scan.field:g} G" if scan.axis == "temperature" else f"T = {scan.temperature:g} K"
+    geometry = scan.geometry or ("mixed geometry" if scan.geometry_note else "unknown geometry")
+    unit = "K" if scan.axis == "temperature" else "G"
+    instrument = f"{scan.instrument}, " if scan.instrument else ""
+    notes = f', notes "{scan.notes}"' if scan.notes else ""
+    notes += (
+        f", sample{'s' if len(scan.samples) > 1 else ''} "
+        + ", ".join(f'"{sample}"' for sample in scan.samples)
+        if scan.samples
+        else ""
+    )
+    if scan.n_periods > 1:
+        notes += f", {scan.n_periods} periods" + (" (red/green)" if scan.n_periods == 2 else "")
+    # Runs are listed in axis order, which need not be run order, so the
+    # endpoints are shown with an arrow rather than as a range.
+    return (
+        f"{scan.axis} scan, {instrument}{geometry}, {held}{notes}: {len(scan.runs)} runs, "
+        f"{scan.values[0]:g} to {scan.values[-1]:g} {unit} "
+        f"(run {scan.runs[0]} -> {scan.runs[-1]})"
+    )
+
+
+#: A survey of more runs than this prints its findings before the run table.
+_LONG_SURVEY_RUNS = 100
 
 #: Suffixes on the ``geom`` column naming a geometry the file's stamp did not decide.
 _GEOMETRY_MARKS = {"measured": "*", "coils": "+"}
@@ -99,22 +129,17 @@ def _departure_blocks(survey) -> list[tuple[str, list[int], float, float]]:
     ]
 
 
-def _run_list(runs: list[int]) -> str:
-    """``[1, 2, 3, 7]`` as ``"1-3, 7"``."""
-    spans: list[list[int]] = []
-    for run in sorted(runs):
-        if spans and run == spans[-1][-1] + 1:
-            spans[-1].append(run)
-        else:
-            spans.append([run])
-    return ", ".join(f"{span[0]}-{span[-1]}" if len(span) > 1 else str(span[0]) for span in spans)
-
-
 def _run_label(prefix: str, run_number: int, clashes: dict[int, list[Path]]) -> str:
     """A run as the survey names it: with its instrument where the number is shared."""
     from asymmetry.core.workflow.workdir import instrument_name
 
     return f"{instrument_name(prefix)} {run_number}" if run_number in clashes else str(run_number)
+
+
+def _selection_options(survey, instrument: str, clashes: dict[int, list[Path]]) -> str:
+    """The ``--instrument``/``--pair`` a command on this folder needs to select what the survey did."""
+    options = f" --instrument {instrument}" if clashes else ""
+    return options + (f" --pair {'/'.join(survey.pair)}" if survey.pair else "")
 
 
 def _render(survey, survey_path: Path) -> str:
@@ -162,15 +187,14 @@ def _render(survey, survey_path: Path) -> str:
         for row in survey.runs
     ]
     instruments = sorted({row.instrument for row in survey.runs if row.instrument})
-    lines = [
+    header = [
         f"{len(survey.runs)} run(s) in {survey.folder}"
         + (f" — {', '.join(instruments)}" if instruments else ""),
         "",
-        render_table(headers, rows) if rows else "(no run files found)",
-        "",
     ]
+    table = [render_table(headers, rows) if rows else "(no run files found)", ""]
     if rows:
-        lines.append(
+        table.append(
             "prec: precession measured"
             + (f" on the {'/'.join(survey.pair)} pair" if survey.pair else "")
             + " against the Larmor frequency of the recorded field "
@@ -183,11 +207,26 @@ def _render(survey, survey_path: Path) -> str:
         if any(
             row.sample_temperature_log_source == PSI_HEADER_SAMPLE_SENSOR for row in survey.runs
         ):
-            lines.append(
+            table.append(
                 "T log (PSI): header sensor 1, an unlabelled sensor inferred to be the sample's "
                 "because it tracks the sample on the runs checked; reported only when steady and "
                 "within a factor of two of the setpoint."
             )
+        table.append("")
+    # A long run table would bury the findings under it — and past a few
+    # hundred lines, cut them off — so after it come the notes and scans;
+    # for a large folder it goes last.
+    long = len(rows) > _LONG_SURVEY_RUNS
+    lines = header if long else header + table
+    if survey.other_pair is not None:
+        other = survey.other_pair
+        lines.append(
+            f"PAIR: no run precesses on the file's own detector pair, but run "
+            f"{other.run_number} does on {other.forward}/{other.backward} "
+            f"({other.precession.describe()}), the pair across the field. Survey again with "
+            f"--pair {other.forward}/{other.backward}, and pass the same --pair to alpha, "
+            f"reduce and integral-scan."
+        )
         lines.append("")
     if clashes:
         shared = sorted(
@@ -212,8 +251,31 @@ def _render(survey, survey_path: Path) -> str:
         )
         for instrument, runs, lo, hi in _departure_blocks(survey):
             span = f"{lo:+.2f} K" if abs(hi - lo) < 0.005 else f"{lo:+.2f} to {hi:+.2f} K"
-            shown = f"{instrument} {_run_list(runs)}" if clashes else _run_list(runs)
+            listed = run_spec(runs, separator=", ")
+            shown = f"{instrument} {listed}" if clashes else listed
             lines.append(f"  {shown}: {span}")
+        lines.append("")
+    for repeat in survey.repeats:
+        condition = f"{repeat.field:g} G, {repeat.temperature:g} K" + (
+            f', notes "{repeat.notes}"' if repeat.notes else ""
+        )
+        runs = range_text(repeat.runs)
+        if clashes:
+            runs = f"{repeat.instrument} {runs}"
+        if repeat.co_add:
+            lines.append(
+                f"REPEATS: {runs} repeat one condition ({condition}) — co-add them for "
+                f"statistics before a spectrum: asymmetry reduce {shlex.quote(survey.folder)} "
+                f"--runs {run_spec(repeat.runs)} --coadd"
+                f"{_selection_options(survey, repeat.instrument, clashes)} "
+                f"--workdir {WORKDIR_NAME}-coadd"
+            )
+        else:
+            lines.append(
+                f"UNRECORDED SCAN: {runs} record one condition ({condition}), but their note "
+                f"names a scan: each run is a point in a quantity the files do not record. Do "
+                f"not co-add them; find what was stepped in the logbook or the brief."
+            )
         lines.append("")
     if survey.truncated:
         lines.append(
@@ -246,27 +308,19 @@ def _render(survey, survey_path: Path) -> str:
     if survey.scans:
         lines.append("Scans:")
         for scan in survey.scans:
-            held = (
-                f"B = {scan.field:g} G"
-                if scan.axis == "temperature"
-                else f"T = {scan.temperature:g} K"
-            )
-            geometry = scan.geometry or (
-                "mixed geometry" if scan.geometry_note else "unknown geometry"
-            )
-            unit = "K" if scan.axis == "temperature" else "G"
-            instrument = f"{scan.instrument}, " if scan.instrument else ""
-            # Runs are listed in axis order, which need not be run order, so
-            # the endpoints are shown with an arrow rather than as a range.
-            notes = f', notes "{scan.notes}"' if scan.notes else ""
-            lines.append(
-                f"  {scan.axis} scan, {instrument}{geometry}, {held}{notes}: "
-                f"{len(scan.runs)} runs, "
-                f"{scan.values[0]:g} to {scan.values[-1]:g} {unit} "
-                f"(run {scan.runs[0]} -> {scan.runs[-1]})"
-            )
+            lines.append(f"  {scan_label(scan)}")
             if scan.geometry_note:
                 lines.append(f"      geometry: {scan.geometry_note}")
+            if scan.axis == "field" and scan.n_periods == 2:
+                lines.append(
+                    f"      red/green: a two-period scan is measured in the green - red "
+                    f"difference, not the summed periods — asymmetry integral-scan "
+                    f"{shlex.quote(survey.folder)} --runs {run_spec(scan.runs)}"
+                    f"{_selection_options(survey, scan.instrument, clashes)} "
+                    f"--period green-red; with a field step between the periods (differential "
+                    f"ALC) fit --model LorentzianLCRPair with its dB held at the value that "
+                    f"command's Next line gives (the printed red - green offset, negated)."
+                )
         if survey.cross_sections:
             lines.append(
                 f"  ({survey.cross_sections} temperature scan(s) through the field scans' points "
@@ -276,5 +330,7 @@ def _render(survey, survey_path: Path) -> str:
         lines.append("Scans: none — no two runs share a geometry and a held quantity.")
 
     lines.append("")
+    if long:
+        lines.extend(["Runs:", *table])
     lines.append(f"Survey written to {survey_path}")
     return "\n".join(lines)

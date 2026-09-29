@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from asymmetry.cli._output import emit_json, payload
+from asymmetry.cli._output import UserError, emit_json, payload
 
 #: Metadata key held back from ``--json``: the loader's verbatim copy of the
 #: NeXus tree, which is thousands of nodes and would bury the run's own
@@ -30,7 +30,11 @@ def run(args: argparse.Namespace) -> None:
     from asymmetry.core.io import load
     from asymmetry.core.transform.grouping import group_names
 
-    run_result = load(args.file)
+    try:
+        run_result = load(args.file)
+    except ValueError as exc:
+        # The file boundary: a format no loader reads is the user's to hear about.
+        raise UserError(str(exc)) from None
     # The names `--pair` takes, and the pair the file reduces on by default.
     groups = group_names(run_result.run)
     grouping = run_result.run.grouping

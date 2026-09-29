@@ -12,8 +12,11 @@ temperatures.
 
 ## Run structure
 
-47 EMU `.nxs` runs, 78251–78302. Concentrations are in the titles and notes
-only ("quarter", "half", "full"; "0.25", "0.5"), never in the metadata:
+47 EMU `.nxs` runs, 78251–78302. Concentrations are never in the metadata:
+titles say "0.25" and "0.5", notes say "neat" for the full concentration,
+and "quarter", "half", "full" appear only in the folder's `run_summary.xlsx`
+(which the evaluation's tool allow-list cannot read). Taking "neat" as 1 on
+the relative scale, and saying so, meets the concentration Must:
 
 - Deoxygenated water: 78251 (2 G), 78252 (100 G), 290 K.
 - Full concentration: 78256 (100 G), 78257 (2 G) at 290 K; 2 G runs from
@@ -46,15 +49,16 @@ later run as the best calibration.
 ## Should
 
 - [ ] Compares deoxygenated with untreated water (the untreated Mu signal
-      relaxes faster: dissolved O₂).
+      relaxes faster, or leaves no resolvable line: dissolved O₂).
 - [ ] Uses a calibration run appropriate to the sample being reduced rather
       than one alpha for the whole folder, or notes the alpha step.
 - [ ] Holds the Mu and diamagnetic frequencies or amplitudes common across
       the concentration set (shared in `fit-global`, or fixed) and says so.
 - [ ] States that the Arrhenius step needs k_Mu at several temperatures,
       each from its own concentration fit, and either does it per
-      temperature and stops before a hand-made Arrhenius fit, or declines
-      that step with the reason.
+      temperature and fits the Arrhenius law through them with a command
+      (`trend --from-fits … --model Arrhenius`) rather than by hand, or
+      declines that step with the reason.
 
 ## Known traps
 

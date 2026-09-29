@@ -50,9 +50,9 @@ contiguous, no gaps), no ISIS-style field stamp in the filename:
 - [ ] Frames the comparison to theory (e.g. mean-field/Heisenberg
       critical behaviour) as the paper's stated goal. A critical
       exponent, if quoted, comes from a `trend --model OrderParameter`
-      fit in this session with its fit range stated, and is labelled as
-      measured against the setpoint temperature (the PSI header's
-      sensor readings are not yet read).
+      fit in this session with its fit range stated, and is labelled
+      with the temperature axis it was measured against (the PSI
+      header's logged sensor reading, or the setpoint with a reason).
 
 ## Known traps
 
@@ -64,8 +64,8 @@ contiguous, no gaps), no ISIS-style field stamp in the filename:
   in a `.nxs`-style filename or an ISIS-convention stamp — grouping by
   filename alone (as for the ISIS datasets) will not separate the ZF
   and TF blocks; the survey's own field metadata must be used.
-- Without background subtraction (not yet exposed by the CLI for PSI
-  data) a paramagnetic exponential fit carries a large constant and a
+- Without background subtraction (`reduce --background range`) a
+  paramagnetic exponential fit carries a large constant and a
   relaxation rate above the paper's; a summary should present the rate
   as this reduction's, not as the intrinsic value.
 - Run order is not monotonic in temperature in either block; treating

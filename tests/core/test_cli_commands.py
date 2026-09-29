@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 
@@ -339,6 +340,65 @@ def test_survey_scans_block_names_the_instrument(
     cli.main(["survey", str(workflow_folder), "--workdir", str(tmp_path / "wd")])
     out = capsys.readouterr().out
     assert "temperature scan, SIM, ZF, B = 0 G" in out
+
+
+def test_survey_names_repeats_to_co_add_and_a_scan_the_files_do_not_record(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import RepeatSet, survey_folder
+
+    survey = survey_folder(workflow_folder)
+    repeats = [
+        RepeatSet("SIM", 300.0, 3000.0, "", [501, 502, 503, 504, 505], co_add=True),
+        RepeatSet("SIM", 291.0, -100.0, "P scan", [601, 602], co_add=False),
+    ]
+    text = _render(replace(survey, repeats=repeats), tmp_path / "survey.json")
+    assert (
+        "REPEATS: runs 501-505 repeat one condition (3000 G, 300 K) — co-add them for "
+        f"statistics before a spectrum: asymmetry reduce {workflow_folder} --runs 501-505 "
+        "--coadd --workdir asymmetry-work-coadd"
+    ) in text
+    assert (
+        'UNRECORDED SCAN: runs 601-602 record one condition (-100 G, 291 K, notes "P scan"), '
+        "but their note names a scan"
+    ) in text
+    assert "REPEATS" not in _render(survey, tmp_path / "survey.json")
+
+
+def test_survey_points_a_red_green_field_scan_at_the_period_difference(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import ScanGroup, survey_folder
+
+    scan = ScanGroup(
+        axis="field",
+        instrument="SIM",
+        geometry="LF",
+        geometry_note="",
+        temperature=300.0,
+        field=None,
+        runs=[701, 702, 703],
+        values=[28500.0, 28600.0, 28700.0],
+        n_periods=2,
+    )
+    survey = survey_folder(workflow_folder)
+    text = _render(replace(survey, scans=[scan]), tmp_path / "survey.json")
+    assert "T = 300 K, 2 periods (red/green): 3 runs" in text
+    assert (
+        f"asymmetry integral-scan {workflow_folder} --runs 701-703 --period green-red; with a "
+        "field step between the periods (differential ALC) fit --model LorentzianLCRPair "
+        "with its dB held at the value that command's Next line gives"
+    ) in text
+    # A single-period scan says neither.
+    text = _render(replace(survey, scans=[replace(scan, n_periods=1)]), tmp_path / "s.json")
+    assert "periods" not in text.split("Scans:")[1]
+    assert "green-red" not in text
 
 
 def test_survey_candidate_block_names_the_source_of_each_candidate(
@@ -688,8 +748,10 @@ def test_reduce_selects_and_records_a_multi_period_run(
     )
 
 
-def _two_identical_periods(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make every loaded run a two-period run whose red and green are the same counts."""
+def _two_identical_periods(
+    monkeypatch: pytest.MonkeyPatch, single_period_run: int | None = None
+) -> None:
+    """Make every loaded run (bar *single_period_run*) a two-period run with red equal to green."""
     from asymmetry.core.data.dataset import Histogram
     from asymmetry.core.io import load as real_load
 
@@ -704,6 +766,8 @@ def _two_identical_periods(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def _load_two_periods(path):
         dataset = real_load(path)
+        if dataset.run_number == single_period_run:
+            return dataset
         dataset.run.grouping["period_histograms"] = [
             [_clone(histogram) for histogram in dataset.run.histograms] for _period in range(2)
         ]
@@ -737,6 +801,32 @@ def test_reduce_green_red_is_the_difference_of_the_two_periods(
     data = _json_output(capsys)
     assert data["settings"]["period"] == "green_minus_red"
     assert data["entries"][0]["a0_percent"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_a_single_period_calibration_run_calibrates_a_period_reduction(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # HiFi calibration runs are single-period beside a red/green scan; the
+    # detector balance they measure holds in every period.
+    _two_identical_periods(monkeypatch, single_period_run=CALIBRATION_RUN)
+    cli.main(["alpha", str(workflow_folder), "--run", str(CALIBRATION_RUN), "--json"])
+    alpha = _json_output(capsys)["alpha"]["alpha"]
+    cli.main(
+        [
+            "reduce",
+            str(workflow_folder),
+            "--runs",
+            str(SCAN_RUNS[0]),
+            "--period",
+            "red",
+            "--alpha-from",
+            str(CALIBRATION_RUN),
+            "--json",
+            "--workdir",
+            str(tmp_path / "wd"),
+        ]
+    )
+    assert _json_output(capsys)["settings"]["alpha"] == pytest.approx(alpha)
 
 
 def test_integral_scan_green_red_needs_two_periods(
@@ -812,11 +902,39 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     out = capsys.readouterr().out
     assert "period field offset (red - green): -44.00 G, mean of 2 run(s)" in out
     assert "--fix dB=44.00" in out
+    # Each fitted parameter is printed with its error; a held one says so.
+    bwid = next(line.split() for line in out.splitlines() if line.startswith("Bwid "))
+    assert bwid[1:] == ["1.000000", "fixed"]
 
     logs = iter([(9000.0, 43.0), (10000.0, 45.0)])
     cli.main([*base, "--json"])
     data = _json_output(capsys)
     assert data["period_field_offset"] == {"gauss": pytest.approx(-44.0), "runs": 2}
+    # The Next line survives --json.
+    assert any("--fix dB=44.00" in note for note in data["notes"])
+
+
+def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_identical_periods(monkeypatch)
+    base = [
+        "integral-scan",
+        str(workflow_folder),
+        "--runs",
+        f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+        "--order",
+        "run",
+        "--workdir",
+        str(tmp_path / "wd"),
+    ]
+    cli.main(base)
+    assert (
+        f"NOTE: runs {SCAN_RUNS[0]}-{SCAN_RUNS[1]} are two-period (red/green) runs, and "
+        "without --period this scan summed both periods"
+    ) in capsys.readouterr().out
+    cli.main([*base, "--period", "green-red"])
+    assert "summed both periods" not in capsys.readouterr().out
 
 
 def test_integral_scan_single_period_reports_the_source_run_number(
@@ -1585,6 +1703,8 @@ def test_trend_model_prints_the_fit_and_what_it_left_out(
     ) in out
     assert f"{SCAN_RUNS[0]} (excluded)" in out
     assert f"{SCAN_RUNS[-1]} (outside the x range)" in out
+    # What the trend shows is still named beside the law fitted to one column.
+    assert "NOTE: Lambda changes along the scan" in out
 
 
 @pytest.mark.parametrize(
@@ -2478,7 +2598,9 @@ def test_trend_names_the_law_its_axis_and_parameters_call_for(
         # A line falling to zero at the transition is an order parameter.
         ([15.2, 11.0, 2.8], "OrderParameter --param frequency"),
         # One held at the applied field's Larmor frequency is not.
-        ([0.285, 0.280, 0.273], "frequency holds at 0.2800 MHz"),
+        ([0.285, 0.280, 0.273], "frequency stays near 0.2800 MHz"),
+        # A held line that still moves by many errors is a shift to report.
+        ([5.3735, 5.385, 5.3977], "frequency moves from 5.37350 to 5.39770 MHz"),
     ],
 )
 def test_a_frequency_held_along_the_scan_is_not_called_an_order_parameter(
@@ -2488,7 +2610,14 @@ def test_a_frequency_held_along_the_scan_is_not_called_an_order_parameter(
     from asymmetry.core.workflow.series import TrendTable
 
     rows = [
-        {"run": run, "x": 50.0 * run, "frequency": value, "sigma": 0.3, "flags": []}
+        {
+            "run": run,
+            "x": 50.0 * run,
+            "frequency": value,
+            "frequency_err": 0.001 if value > 1.0 else 0.01,
+            "sigma": 0.3,
+            "flags": [],
+        }
         for run, value in enumerate(frequencies, start=1)
     ]
     trend = TrendTable("temperature", ["run", "x", "frequency", "sigma", "flags"], rows)
@@ -2645,5 +2774,415 @@ def test_integral_scan_fits_inside_the_window_and_reports_a_failed_fit(
         lambda *args, **kwargs: ParameterModelFitResult(success=False, message="Fit failed"),
     )
     cli.main([*base, "--name", "failed", "--model", "Linear"])
-    assert "FAILED (Fit failed)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "FAILED (Fit failed)" in out
+    # No resonance in the model, so no window to fit one in.
+    assert "Next:" not in out
     assert (tmp_path / "wd" / "scans" / "failed.json").exists()
+
+
+def _failed_resonance_fit(**changes) -> dict:
+    return {
+        "success": False,
+        "message": "Fit failed: call limit reached, hesse failed",
+        "expression": "LorentzianLCR + LorentzianLCR + Cubic",
+        "parameters": {"B0_1": 1500.0, "B0_2": 1500.0},
+        "uncertainties": {},
+        "reduced_chi_squared": 9.0,
+        "params_at_bound": ["B0_2"],
+        "initial": {},
+        "fixed": [],
+        "resonance_windows": [
+            {
+                "parameter": "B0_1",
+                "component": "LorentzianLCR",
+                "centre": 1200.0,
+                "x_min": 1000.0,
+                "x_max": 1400.0,
+            },
+            {
+                "parameter": "B0_2",
+                "component": "LorentzianLCR",
+                "centre": 1800.0,
+                "x_min": 1600.0,
+                "x_max": 2000.0,
+            },
+        ],
+    } | changes
+
+
+def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Path) -> None:
+    from asymmetry.cli.commands.integral_scan import _notes, _render
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    result = {
+        "name": "scan",
+        "scan": {"points": [], "order_key": "field"},
+        "period_field_offset": None,
+        "fit": _failed_resonance_fit(),
+        "scan_path": str(tmp_path / "scan.json"),
+        "plot": None,
+    }
+    text = _render(result, ReductionSettings(), _notes(result, [], []))
+    assert "FAILED (Fit failed: call limit reached, hesse failed; at a bound: B0_2)" in text
+    assert (
+        "Next: the scan's own largest dips are at B0_1 1200, B0_2 1800. The fit already "
+        "started each centre there, so the usual cause is the background"
+    ) in text
+    assert (
+        "fit one resonance per window on its own local background: --model 'LorentzianLCR + "
+        "Linear' --xmin 1000 --xmax 1400; --model 'LorentzianLCR + Linear' --xmin 1600 "
+        "--xmax 2000."
+    ) in text
+    assert "--initial" not in text
+
+    # A start inside its dip's window is where the fit already began ...
+    result["fit"] = _failed_resonance_fit(initial={"B0_1": 1250.0})
+    assert "--initial" not in _render(result, ReductionSettings(), _notes(result, [], []))
+    # ... and one away from it is pointed back at the dips.
+    result["fit"] = _failed_resonance_fit(initial={"B0_1": 1500.0})
+    text = _render(result, ReductionSettings(), _notes(result, [], []))
+    assert (
+        "The fit started away from them: refit with --initial B0_1=1200 --initial "
+        "B0_2=1800, or fit one resonance per window on its own local background"
+    ) in text
+
+
+def test_fit_series_skips_run_numbers_the_folder_does_not_hold(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    # A scan's range routinely has gaps (an aborted run); reduce skips them,
+    # and so does the fit, rather than asking for a run that does not exist.
+    workdir = str(tmp_path / "wd")
+    folder = str(workflow_folder)
+    spec = f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]},9999"
+    cli.main(["reduce", folder, "--runs", spec, "--workdir", workdir])
+    cli.main(
+        [
+            "recipe",
+            folder,
+            "--expression",
+            "Exponential + Constant",
+            "--name",
+            "relax",
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--workdir",
+            workdir,
+        ]
+    )
+    capsys.readouterr()
+    cli.main(
+        [
+            "fit-series",
+            folder,
+            "--runs",
+            spec,
+            "--recipe",
+            "relax",
+            "--order",
+            "temperature",
+            "--json",
+            "--workdir",
+            workdir,
+        ]
+    )
+    assert [entry["run"] for entry in _json_output(capsys)["series"]["results"]] == [
+        SCAN_RUNS[0],
+        SCAN_RUNS[1],
+    ]
+
+
+def test_a_small_step_in_a_width_is_named_with_where_it_happens() -> None:
+    from asymmetry.cli.commands.trend import _rate_steps
+    from asymmetry.core.workflow.series import TrendTable
+
+    # A Kubo–Toyabe width that rises by a few percent below a transition near
+    # 6 K: small against the value, large against the errors.
+    rows = [
+        {"key": str(run), "x": x, "Delta": delta, "Delta_err": 0.001, "flags": []}
+        for run, (x, delta) in enumerate(
+            [(0.3, 0.261), (2.0, 0.260), (4.0, 0.259), (6.8, 0.253), (8.0, 0.252), (10.0, 0.253)]
+        )
+    ]
+    trend = TrendTable("temperature", ["key", "x", "Delta", "Delta_err", "flags"], rows)
+
+    (note,) = _rate_steps(trend, ["Delta"])
+    assert "the change lies between 4 and 6.8" in note
+    # A flat width draws no note.
+    flat = [row | {"Delta": 0.26} for row in rows]
+    assert _rate_steps(TrendTable("temperature", trend.columns, flat), ["Delta"]) == []
+
+
+def test_a_gradual_step_is_bracketed_by_where_the_width_leaves_each_level() -> None:
+    from asymmetry.cli.commands.trend import _rate_steps
+    from asymmetry.core.workflow.series import TrendTable
+
+    # A width at one level below 5.6, another above 6.8, and intermediate
+    # between: the best two-block split falls mid-rise, the onset does not.
+    points = [
+        *((x, 0.2597) for x in (0.3, 1.0, 2.0, 3.0, 4.0, 5.0, 5.6)),
+        (6.0, 0.2585),
+        (6.2, 0.2570),
+        (6.4, 0.2555),
+        (6.6, 0.2545),
+        *((x, 0.2534) for x in (6.8, 7.5, 8.0, 9.0, 10.0)),
+    ]
+    rows = [
+        {"key": str(run), "x": x, "Delta": delta, "Delta_err": 0.0002, "flags": []}
+        for run, (x, delta) in enumerate(points)
+    ]
+
+    (note,) = _rate_steps(
+        TrendTable("temperature", ["key", "x", "Delta", "Delta_err", "flags"], rows), ["Delta"]
+    )
+
+    assert "low-temperature level (0.2597 over 0.3–5.6) above 5.6" in note
+    assert "high-temperature level (0.2534 over 6.8–10) below 6.8" in note
+    assert "the change lies between 5.6 and 6.8" in note
+
+
+@pytest.mark.parametrize(("delay_us", "direction"), [(0.02, "positive"), (-0.02, "negative")])
+def test_a_phase_linear_in_field_is_named_a_t0_offset(delay_us: float, direction: str) -> None:
+    from asymmetry.cli.commands.trend import _phase_drift
+    from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+    from asymmetry.core.workflow.series import TrendTable
+
+    # A signal arriving delay_us after t0 fits the phase 0.1 - 2π f Δt.
+    fields = (100.0, 200.0, 400.0, 800.0, 1600.0)
+    rows = [
+        {
+            "key": str(run),
+            "x": field,
+            "phase": 0.1
+            - 2.0 * math.pi * field_gauss_to_frequency_mhz(field) * delay_us
+            + (0.01 if run % 2 else -0.01),
+            "phase_err": 0.01,
+            "flags": [],
+        }
+        for run, field in enumerate(fields)
+    ]
+    trend = TrendTable("field", ["key", "x", "phase", "flags"], rows)
+
+    (note,) = _phase_drift(trend, ["A_1", "phase"])
+    assert f"Δt = {1e3 * delay_us:+.3g} ns" in note
+    assert f"--t0-offset <bins> ({direction}" in note
+    # A phase that holds, or a phase along another axis, draws no note.
+    held = [row | {"phase": 0.1} for row in rows]
+    assert _phase_drift(TrendTable("field", trend.columns, held), ["phase"]) == []
+    assert _phase_drift(TrendTable("temperature", trend.columns, rows), ["phase"]) == []
+
+
+def test_a_precession_amplitude_falling_with_frequency_is_the_instruments_response() -> None:
+    from asymmetry.cli.commands.trend import _frequency_response
+    from asymmetry.core.workflow.series import TrendTable
+
+    fields = (100.0, 500.0, 1000.0, 1500.0, 2000.0, 3000.0)
+    rows = [
+        {
+            "key": str(run),
+            "x": field,
+            "A_1": 20.0 * math.exp(-((field / 1500.0) ** 2)),
+            "A_1_err": 0.2,
+            "frequency": 0.013554 * field,
+            "frequency_err": 0.001,
+            "A_bg": 2.0,
+            "A_bg_err": 0.1,
+            "flags": [],
+        }
+        for run, field in enumerate(fields)
+    ]
+    trend = TrendTable("field", ["key", "x", "A_1", "frequency", "A_bg", "flags"], rows)
+    series = {
+        "expression": "Oscillatory * Gaussian + Constant",
+        "free_params": ["A_1", "frequency", "phase", "sigma", "A_bg"],
+    }
+
+    (note,) = _frequency_response(series, trend)
+    assert note.startswith("NOTE: A_1 falls from 19.91 to 0.3663 while frequency rises")
+    assert "halving by frequency 20.33 (field 1500)" in note
+    assert "frequency response" in note
+    # An amplitude that holds draws no note.
+    held = [row | {"A_1": 20.0} for row in rows]
+    assert _frequency_response(series, TrendTable("field", trend.columns, held)) == []
+
+
+def test_a_held_high_field_line_is_offered_a_two_line_fit() -> None:
+    from asymmetry.cli.commands.trend import _doublet_hint
+    from asymmetry.core.workflow.series import TrendTable
+
+    rows = [
+        {
+            "key": str(run),
+            "x": x,
+            "frequency": 813.57,
+            "frequency_err": 0.001,
+            "Lambda": rate,
+            "Lambda_err": 0.01,
+            "flags": [],
+        }
+        for run, x, rate in ((686, 5.0, 0.2), (690, 30.0, 0.1), (693, 50.0, 0.1))
+    ]
+    trend = TrendTable("temperature", ["key", "x", "frequency", "Lambda", "flags"], rows)
+    series = {
+        "expression": "Oscillatory * Exponential + Constant",
+        "free_params": ["A_1", "frequency", "Lambda", "A_bg"],
+    }
+
+    (hint,) = _doublet_hint(series, trend)
+    assert "--run 686 --name two-line" in hint
+    assert "'Oscillatory * Exponential + Oscillatory * Exponential + Constant'" in hint
+    assert "--initial frequency_1=" in hint and "--initial frequency_3=" in hint
+    # A low-field line with no exponential on the cold side draws no hint.
+    low = [row | {"frequency": 1.36} for row in rows]
+    assert _doublet_hint(series, TrendTable("temperature", trend.columns, low)) == []
+
+
+def test_fourier_names_two_peaks_closer_than_two_resolution_elements() -> None:
+    from asymmetry.cli.commands.fourier import _render
+
+    result = {
+        "run": 693,
+        "axis": "frequency",
+        "n_points": 1000,
+        "resolution_mhz": 0.105,
+        "settings": {"window": "none"},
+        "peak_analysis": {
+            "peaks": [
+                {"frequency_mhz": f, "amplitude": 1.0, "width_mhz": 0.1, "snr": 90.0}
+                for f in (813.497, 813.596, 815.9)
+            ]
+        },
+        "candidate_maxima": [],
+        "frequency_min_mhz": 812.0,
+        "frequency_max_mhz": 816.0,
+        "full_band_mhz": [0.0, 900.0],
+        "outside_band": [],
+        "array_path": "a.npz",
+        "metadata_path": "a.json",
+        "plot": None,
+    }
+    text = _render(result)
+    assert "band 812–816 of 0–900 MHz" in text
+    assert "NOTE: 813.497 and 813.596 MHz lie within 2 resolution elements" in text
+    assert "815.9" not in text.split("NOTE:")[1]
+    # Lines the transform detected outside the band are named, not hidden.
+    hidden = _render(result | {"outside_band": [{"frequency_mhz": 208.7, "snr": 35.0}]})
+    assert "NOTE: the transform also holds lines outside this band — 208.7 MHz (SNR 35)" in hidden
+
+
+def test_a_muonium_phase_drift_is_timed_against_its_own_frequency() -> None:
+    from asymmetry.cli.commands.trend import _phase_drift
+    from asymmetry.core.workflow.series import TrendTable
+
+    # Muonium precesses ~103 times faster than the bare muon, so the same
+    # 40 ns timing offset turns its phase ~103 times faster per gauss.
+    rows = [
+        {
+            "key": str(run),
+            "x": field,
+            "frequency": 1.394 * field,
+            "frequency_err": 0.001,
+            "phase": -2 * math.pi * 1.394 * field * 0.040,
+            "phase_err": 0.01,
+            "flags": [],
+        }
+        for run, field in enumerate((1.0, 2.0, 3.0, 4.0))
+    ]
+    columns = ["key", "x", "frequency", "phase", "flags"]
+    (note,) = _phase_drift(TrendTable("field", columns, rows), ["frequency", "phase"])
+    assert "Δt = +40 ns" in note
+
+
+def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
+    from asymmetry.cli.commands.integral_scan import _poor_fit_note
+
+    # One resonance fitted at 19480 G; the seeder puts the next dip's window
+    # at 19850–23000 G, and one around the fitted line is already covered.
+    windows = [
+        {"x_min": 18200.0, "x_max": 19850.0},
+        {"x_min": 19850.0, "x_max": 23000.0},
+    ]
+    fit = {
+        "parameters": {"f": -0.01, "B0": 19480.0, "Bwid": 150.0},
+        "reduced_chi_squared": 12.6,
+        "x_range": [17000.0, 23000.0],
+        "x_min": None,
+        "x_max": None,
+        "next_dip_windows": windows,
+    }
+    dip, poor = _poor_fit_note(fit)
+    assert "another dip this fit does not include, in 19850–23000" in dip
+    assert "--xmin 18200" not in dip
+    assert "converged at chi2_red 12.600: over a long range the background" in poor
+    # With no further dip found it says the background may be why.
+    (bare,) = _poor_fit_note(fit | {"next_dip_windows": windows[:1]})
+    assert "a fit that cannot is not a result" in bare
+    assert _poor_fit_note(fit | {"reduced_chi_squared": 1.2, "next_dip_windows": []}) == []
+    # A line whose flank runs off the fitted range may be a step, not a dip.
+    (edge,) = _poor_fit_note(
+        fit
+        | {
+            "parameters": {"f": -0.02, "B0": 6918.0, "Bwid": 1082.0},
+            "x_range": [5000.0, 11000.0],
+            "x_min": 5000.0,
+            "x_max": 11000.0,
+            "reduced_chi_squared": 1.5,
+            "next_dip_windows": [],
+        }
+    )
+    assert "runs off the fitted range 5000–11000" in edge
+    # A whole scan narrower than its line is not a window that cut it off.
+    whole = {"x_min": None, "x_max": None}
+    assert _poor_fit_note(fit | {"reduced_chi_squared": 1.5, "next_dip_windows": []} | whole) == []
+
+
+def test_a_mistyped_folder_is_named_as_missing_with_the_folder_the_session_holds(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    workdir = str(tmp_path / "wd")
+    cli.main(["survey", str(workflow_folder), "--workdir", workdir])
+    capsys.readouterr()
+    typo = str(workflow_folder) + "-typo"
+    with pytest.raises(SystemExit):
+        cli.main(["reduce", typo, "--runs", str(SCAN_RUNS[0]), "--workdir", workdir])
+    err = capsys.readouterr().err
+    assert f"{typo} does not exist or is not a directory." in err
+    assert f"This work directory holds {workflow_folder.resolve()}" in err
+
+
+def test_readings_leave_out_unreliable_rows_and_small_frequency_drifts() -> None:
+    from asymmetry.cli.commands.trend import _frequency_response, _rate_steps
+    from asymmetry.core.workflow.series import TrendTable
+
+    # A flat width with one bound-pinned row at a wild value draws no step.
+    rows = [
+        {"key": str(run), "x": 10.0 * run, "Lambda": 0.077, "Lambda_err": 0.001, "flags": []}
+        for run in range(1, 7)
+    ]
+    rows[0] = rows[0] | {"Lambda": 1e-14, "flags": ["bound_pinned"]}
+    steps = TrendTable("temperature", ["key", "x", "Lambda", "Lambda_err", "flags"], rows)
+    assert _rate_steps(steps, ["Lambda"]) == []
+
+    # An amplitude that sags while a held line moves by 0.15 % is not the
+    # instrument's frequency response.
+    held = [
+        {
+            "key": str(run),
+            "x": x,
+            "A_1": amplitude,
+            "A_1_err": 0.05,
+            "frequency": frequency,
+            "frequency_err": 0.0001,
+            "flags": [],
+        }
+        for run, (x, amplitude, frequency) in enumerate(
+            [(5.0, 19.04, 2.071), (40.0, 18.9, 2.072), (80.0, 18.78, 2.074)]
+        )
+    ]
+    columns = ["key", "x", "A_1", "frequency", "flags"]
+    series = {
+        "expression": "Oscillatory * Gaussian + Constant",
+        "free_params": ["A_1", "frequency"],
+    }
+    assert _frequency_response(series, TrendTable("temperature", columns, held)) == []

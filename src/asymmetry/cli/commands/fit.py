@@ -46,6 +46,11 @@ def run(args: argparse.Namespace) -> None:
         recipe = recipe.with_window(t_min=args.tmin, t_max=args.tmax)
 
     result = fit_one(dataset, recipe)
+    workdir.write_fit(
+        args.run,
+        Path(args.recipe).stem,
+        {"expression": recipe.expression, "recipe": recipe.to_dict(), "fit": result},
+    )
 
     plot_path = None
     if args.plot:

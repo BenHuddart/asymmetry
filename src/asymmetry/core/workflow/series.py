@@ -89,6 +89,7 @@ from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.fitting.seeding import SeedContext, seed_parameters
 from asymmetry.core.fitting.series import fit_asymmetry_series
 from asymmetry.core.fitting.series_seeding import resolve_series_params
+from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.workflow.recipe import FitRecipe
 
 #: Quantities a series may be ordered along by reading each run's metadata.
@@ -239,17 +240,29 @@ def envelope_change(trend: TrendTable) -> str | None:
         f"{shape} on {', '.join(row['key'] for row in rows)} ({trend.order_key} {_span(rows)})"
         for shape, rows in blocks
     )
-    return (
-        f"NOTE: the relaxation shape changes along this scan — {described} (the envelope "
-        f"column; runs marked 'either' fit both alike). "
-        + (
+    temperature_axis = trend.order_key in ("temperature", "sample_temperature_logged")
+    coldest = min(decided, key=lambda row: row["x"])["envelope"]
+    if temperature_axis and coldest == "Gaussian":
+        meaning = (
             "A Gaussian (a static spread of fields) turning exponential on warming, as the "
             "fluctuations outrun it, is motional narrowing: report the shape against "
             f"{trend.order_key}, not only the rate."
-            if trend.order_key in ("temperature", "sample_temperature_logged")
-            else f"A change of shape along {trend.order_key} is a result: report it with the "
+        )
+    elif temperature_axis:
+        meaning = (
+            "An exponential on the cold side is not motional narrowing (that runs the other "
+            "way): a broad, skewed field distribution — a vortex lattice beside a narrow "
+            "background line, or dilute moments — fits an exponential better. Report the "
+            f"shape against {trend.order_key} with the runs on each side."
+        )
+    else:
+        meaning = (
+            f"A change of shape along {trend.order_key} is a result: report it with the "
             "runs on each side, not only the rate."
         )
+    return (
+        f"NOTE: the relaxation shape changes along this scan — {described} (the envelope "
+        f"column; runs marked 'either' fit both alike). {meaning}"
     )
 
 
@@ -508,6 +521,45 @@ def _run_parameter_set(
     return parameters
 
 
+#: A recipe line within this fraction of its seed field's Larmor frequency
+#: follows the applied field (a Knight or diamagnetic shift is well inside it).
+_FIELD_LINE_TOLERANCE = 0.05
+
+#: Runs whose field differs from the recipe's seed field by more than this
+#: fraction are at another field.
+_FIELD_CHANGE = 0.01
+
+
+def _field_line_starts(
+    recipe: FitRecipe, records: Mapping[int, MuonDataset], start_run: int
+) -> dict[int, dict[str, float]]:
+    """Per run at another field, the start of each recipe line that follows the applied field.
+
+    A line at γ_μB/2π moves with B, so across a field scan the previous run's
+    fitted frequency belongs to another field; each run starts the line at the
+    recipe's value scaled by its own field over the field the recipe was seeded
+    at (the start run's, for a recipe built without a run). A line away from
+    that field's Larmor frequency (an internal or critical field) is left to the chain.
+    """
+    seed_field = records[start_run].field if recipe.seed_field is None else recipe.seed_field
+    if not seed_field:
+        return {}
+    larmor = field_gauss_to_frequency_mhz(abs(seed_field))
+    lines = {
+        parameter.name: parameter.value
+        for parameter in recipe.parameters
+        if split_parameter_name(parameter.name)[0] == "frequency"
+        and not parameter.fixed
+        and parameter.name not in recipe.pinned
+        and abs(parameter.value / larmor - 1.0) <= _FIELD_LINE_TOLERANCE
+    }
+    return {
+        run: {name: value * record.field / seed_field for name, value in lines.items()}
+        for run, record in records.items()
+        if lines and record.field and abs(record.field / seed_field - 1.0) > _FIELD_CHANGE
+    }
+
+
 def _prepared(dataset: MuonDataset, recipe: FitRecipe) -> MuonDataset:
     """The record a recipe is fitted against (its rebin applied)."""
     return dataset if recipe.rebin <= 1 else dataset.rebin(recipe.rebin)
@@ -636,11 +688,22 @@ def fit_series(
         ).free_parameters
     ]
 
+    chains = _branches(runs, start_run)
+    # Every branch starts at the start run.
+    field_lines = _field_line_starts(recipe, records, chains[0][1][0])
     fitted: dict[int, Any] = {}
     quality_by_run: dict[int, Any] = {}
     reseeded: set[int] = set()
     branches: list[SeriesBranch] = []
-    for direction, chain in _branches(runs, start_run):
+    for direction, chain in chains:
+        starts = {
+            run: _run_parameter_set(recipe, model, records[run], global_params=global_params)
+            for run in chain
+        }
+        for run, lines in field_lines.items():
+            if run in starts:
+                for param, value in lines.items():
+                    starts[run][param].value = value
         # The chaining coordinate runs forward along the branch, which for the
         # descending one means the scan coordinate negated: that is the whole
         # mechanism by which fit_asymmetry_series walks a scan downward.
@@ -652,16 +715,14 @@ def fit_series(
             local_params,
             # A fresh set per branch: the start run is in both, and both must
             # fit it from the recipe's values rather than from each other's.
-            {
-                run: _run_parameter_set(recipe, model, records[run], global_params=global_params)
-                for run in chain
-            },
+            starts,
             t_min=recipe.t_min,
             t_max=recipe.t_max,
             seeding="auto",
             order_key={run: sign * order[run] for run in chain},
             amplitude_param=amplitude_param,
             frequency_param=frequency_param,
+            restart_params={run: set(lines) for run, lines in field_lines.items()},
         )
         fitted.update(outcome.results)
         quality_by_run.update(outcome.member_quality)

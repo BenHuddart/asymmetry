@@ -20,7 +20,7 @@ from asymmetry.core.fitting.field_scan import (
     fit_scan_model,
     parameter_set_for_model,
 )
-from asymmetry.core.fitting.parameter_models import suggest_model_seeds
+from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, suggest_model_seeds
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.io.periods import (
@@ -235,17 +235,11 @@ def fit_integral_scan(
     *x_min*/*x_max* crop the scan to that window first, so the seeds, the
     resonance bounds and the fit all see only the resonances inside it.
     """
+    # Dips outside a --xmin/--xmax window are still the scan's: they are
+    # searched for on the whole of it.
+    whole_scan = scan
     if x_min is not None or x_max is not None:
-        inside = (scan.x >= (-np.inf if x_min is None else x_min)) & (
-            scan.x <= (np.inf if x_max is None else x_max)
-        )
-        scan = replace(
-            scan,
-            x=scan.x[inside],
-            value=scan.value[inside],
-            error=scan.error[inside],
-            run_numbers=[run for run, kept in zip(scan.run_numbers, inside, strict=True) if kept],
-        )
+        scan = _cropped(scan, x_min, x_max)
     fitted_scan = scan
     baseline_payload = None
     if baseline_model is not None:
@@ -295,11 +289,130 @@ def fit_integral_scan(
         "reduced_chi_squared": float(result.reduced_chi_squared),
         "n_points": int(result.n_points),
         "params_at_bound": list(result.params_at_bound),
+        "initial": {str(name): float(value) for name, value in (initial or {}).items()},
+        "fixed": [parameter.name for parameter in parameters if parameter.fixed],
         "baseline": baseline_payload,
         "x_min": x_min,
         "x_max": x_max,
+        "resonance_windows": (
+            [] if result.success else resonance_windows(fitted_scan, model, fixed or {})
+        ),
+        # Where one more line would go: the seeder's window around the next dip
+        # (its centre can sit off the resonance on a curved background; the
+        # window still holds it).
+        "x_range": [float(np.min(fitted_scan.x)), float(np.max(fitted_scan.x))],
+        "next_dip_windows": (
+            [
+                window
+                for window in resonance_windows(
+                    whole_scan, as_composite_model(f"LorentzianLCR + {expression}"), {}
+                )
+                if _holds_a_line(whole_scan, window)
+            ]
+            if result.success and any(c.name in _LCR_LINES for c in model.components)
+            else []
+        ),
     }
     return fitted_scan, fit_payload
+
+
+def _cropped(scan: FieldScan, x_min: float | None, x_max: float | None) -> FieldScan:
+    """*scan* restricted to ``x_min <= x <= x_max`` (an open end where ``None``)."""
+    inside = (scan.x >= (-np.inf if x_min is None else x_min)) & (
+        scan.x <= (np.inf if x_max is None else x_max)
+    )
+    return replace(
+        scan,
+        x=scan.x[inside],
+        value=scan.value[inside],
+        error=scan.error[inside],
+        run_numbers=[run for run, kept in zip(scan.run_numbers, inside, strict=True) if kept],
+    )
+
+
+#: A line is a dip only with this many widths of data on each side of its
+#: centre inside the range fitted: one nearer the edge may be a step or the
+#: background's rise.
+DIP_FLANK_WIDTHS = 2.0
+
+#: A dip's depth must exceed this many of its errors to be named: a line's
+#: wing or a bump in the background fits a line of depth near zero.
+_DIP_SIGNIFICANCE = 5.0
+
+#: A window must hold this many points to be tried with one line on a slope.
+_WINDOW_MIN_POINTS = 8
+
+
+def _holds_a_line(scan: FieldScan, window: Mapping[str, Any]) -> bool:
+    """Whether one line on a straight background fits inside *window* as a resonance.
+
+    A seeder's window on a curved background can hold only the background's
+    rise or step, or a line's wing: there a line's fit runs its centre to the
+    window's edge or its width to a bound, or finds no significant depth.
+    """
+    part = _cropped(scan, window["x_min"], window["x_max"])
+    if part.x.size < _WINDOW_MIN_POINTS:
+        return False
+    model, parameters = _parameters(part, "LorentzianLCR + Linear", initial=None, fixed=None)
+    result = fit_scan_model(part, model, parameters=parameters, extra_starts=1)
+    centre = float(result.parameters["B0"].value)
+    flank = DIP_FLANK_WIDTHS * abs(float(result.parameters["Bwid"].value))
+    depth = float(result.parameters["f"].value)
+    return (
+        bool(result.success)
+        and not {"B0", "Bwid"} & set(result.params_at_bound)
+        and window["x_min"] < centre - flank
+        and centre + flank < window["x_max"]
+        # An ALC dip lowers the integral asymmetry, well beyond its error.
+        and depth < -_DIP_SIGNIFICANCE * float(result.uncertainties["f"])
+    )
+
+
+#: Single-line resonance shapes a scan can be searched for one more of.
+_LCR_LINES = frozenset({"LorentzianLCR", "GaussianLCR"})
+
+#: Half-widths either side of a resonance's seeded centre that its own window
+#: spans: a Lorentzian there has fallen to 1/26 of its depth, leaving baseline
+#: on both sides for the background to fit.
+_WINDOW_HALF_WIDTHS = 5.0
+
+
+def resonance_windows(
+    scan: FieldScan, model: ParameterCompositeModel, fixed: Mapping[str, float]
+) -> list[dict[str, Any]]:
+    """One x window per resonance of *model*, around the dip the scan's own seeding puts it on.
+
+    The centres and widths are :func:`suggest_model_seeds`' starts with only
+    *fixed* known, in x order. Each window spans :data:`_WINDOW_HALF_WIDTHS`
+    half-widths of its resonance, cut at the midpoints to its neighbours and
+    at the scan's ends. A resonance the seeding could not place has none.
+    """
+    seeds = suggest_model_seeds(model, scan.x, scan.value, scan.error, known=dict(fixed))
+    resonances = []
+    for index, component in enumerate(model.components):
+        if not {"B0", "Bwid"}.issubset(component.param_names):
+            continue
+        name = model.component_param_name(index, "B0")
+        width = seeds.get(model.component_param_name(index, "Bwid"))
+        if name in seeds and width is not None:
+            resonances.append((seeds[name], width, name, component.name))
+    resonances.sort()
+    centres = [centre for centre, *_ in resonances]
+    edges = [
+        float(np.min(scan.x)),
+        *((low + high) / 2.0 for low, high in zip(centres, centres[1:])),
+        float(np.max(scan.x)),
+    ]
+    return [
+        {
+            "parameter": name,
+            "component": component,
+            "centre": float(centre),
+            "x_min": float(max(low, centre - _WINDOW_HALF_WIDTHS * abs(width))),
+            "x_max": float(min(high, centre + _WINDOW_HALF_WIDTHS * abs(width))),
+        }
+        for (centre, width, name, component), low, high in zip(resonances, edges, edges[1:])
+    ]
 
 
 def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
@@ -307,8 +420,10 @@ def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
 
 
 __all__ = [
+    "DIP_FLANK_WIDTHS",
     "period_field_offset_gauss",
     "build_integral_scan",
     "field_scan_payload",
     "fit_integral_scan",
+    "resonance_windows",
 ]

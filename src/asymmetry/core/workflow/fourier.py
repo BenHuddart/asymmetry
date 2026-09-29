@@ -94,6 +94,9 @@ class CorrelationSettings:
 #: Sub-threshold maxima reported when no line passes the detector.
 _CANDIDATE_MAXIMA = 3
 
+#: Lines detected outside the band that are named, strongest first.
+_OUTSIDE_BAND_LINES = 4
+
 
 @dataclass(frozen=True)
 class FourierOutcome:
@@ -106,6 +109,11 @@ class FourierOutcome:
     #: ``{"frequency_mhz", "height_over_noise"}`` for the strongest maxima in
     #: the band — filled only when no peak was detected there.
     candidate_maxima: list[dict[str, float]]
+    #: The whole transform's frequency span (MHz), before the band was cut.
+    full_band_mhz: tuple[float, float]
+    #: ``{"frequency_mhz", "snr"}`` for the strongest lines detected outside the
+    #: band — the band hid them, the transform did not.
+    outside_band: list[dict[str, float]]
     #: Set for a correlation spectrum, whose ``frequency`` axis — and every
     #: peak's ``frequency_mhz`` — is the hyperfine coupling A_µ.
     correlation: CorrelationSettings | None = None
@@ -121,6 +129,8 @@ class FourierOutcome:
             "frequency_max_mhz": float(self.frequency[-1]),
             "peak_analysis": self.peaks,
             "candidate_maxima": [dict(entry) for entry in self.candidate_maxima],
+            "full_band_mhz": list(self.full_band_mhz),
+            "outside_band": [dict(entry) for entry in self.outside_band],
         }
 
 
@@ -227,6 +237,11 @@ def _quantified(
     )
     f_hi = np.inf if settings.f_max is None else settings.f_max
     in_band = [peak for peak in analysis.peaks if settings.f_min <= peak.frequency_mhz <= f_hi]
+    outside = sorted(
+        (peak for peak in analysis.peaks if peak not in in_band),
+        key=lambda peak: peak.snr,
+        reverse=True,
+    )[:_OUTSIDE_BAND_LINES]
     analysis = replace(analysis, peaks=tuple(in_band[: settings.max_peaks]))
     return FourierOutcome(
         frequency=frequency,
@@ -236,6 +251,10 @@ def _quantified(
         resolution_mhz=resolution,
         peaks=serialize_peak_analysis(analysis),
         candidate_maxima=[] if in_band else _strongest_maxima(frequency, magnitude, analysis),
+        full_band_mhz=(float(full_frequency[0]), float(full_frequency[-1])),
+        outside_band=[
+            {"frequency_mhz": float(peak.frequency_mhz), "snr": float(peak.snr)} for peak in outside
+        ],
     )
 
 

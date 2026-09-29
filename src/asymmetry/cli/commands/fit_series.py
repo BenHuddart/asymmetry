@@ -16,7 +16,7 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
-from asymmetry.cli._runs import parse_run_spec, reduced_datasets, window_note
+from asymmetry.cli._runs import present_runs, reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -87,7 +87,7 @@ def run(args: argparse.Namespace) -> None:
         plots.require_matplotlib()
 
     folder = Path(args.folder)
-    workdir, _selection = workdir_for(folder, args.workdir, args.instrument)
+    workdir, selection = workdir_for(folder, args.workdir, args.instrument)
 
     recipe = recipe_with_overrides(load_recipe(workdir, args.recipe), fix=args.fix)
     if args.tmin is not None or args.tmax is not None:
@@ -99,7 +99,7 @@ def run(args: argparse.Namespace) -> None:
     default_name = f"series-{Path(args.recipe).stem}"
     name = checked_name(default_name if args.name is None else args.name, flag="--name")
 
-    datasets = reduced_datasets(workdir, parse_run_spec(args.runs))
+    datasets = reduced_datasets(workdir, present_runs(selection, args.runs))
 
     # Both of these are the user's choices, checked before a minute of fitting
     # starts so a typo or an unlabelled run exits 1 rather than 2.

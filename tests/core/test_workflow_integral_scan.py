@@ -271,3 +271,90 @@ def test_a_differential_pair_with_its_offset_held_recovers_each_resonance() -> N
     assert parameters["Bwid_1"] == pytest.approx(14.0, abs=2.0)
     assert parameters["Bwid_2"] == pytest.approx(14.0, abs=2.0)
     assert parameters["dB_1"] == parameters["dB_2"] == 44.4
+
+
+def test_a_failed_fit_carries_the_engines_reason_and_a_window_per_resonance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow import integral_scan
+
+    # Whether a minimiser converges on noise depends on the platform's
+    # arithmetic, so the fit is made to fail: what is tested is the payload.
+    real_fit = integral_scan.fit_scan_model
+
+    def failing_fit(*args, **kwargs):
+        return replace(
+            real_fit(*args, **kwargs), success=False, message="Fit failed: call limit reached"
+        )
+
+    monkeypatch.setattr(integral_scan, "fit_scan_model", failing_fit)
+    x = np.linspace(0.0, 100.0, 21)
+    scan = FieldScan(
+        x=x,
+        value=np.random.default_rng(0).normal(0.0, 1e-3, x.size),
+        error=np.full_like(x, 1e-3),
+        run_numbers=list(range(x.size)),
+        order_key="field",
+        method="integral",
+        x_label="B (G)",
+    )
+    _, fit = fit_integral_scan(scan, "LorentzianLCR + LorentzianLCR + Cubic")
+    assert not fit["success"]
+    assert fit["message"] == "Fit failed: call limit reached"
+    assert [window["parameter"] for window in fit["resonance_windows"]] == ["B0_1", "B0_2"]
+    assert fit["initial"] == {}
+
+
+def test_each_resonance_window_surrounds_its_own_dip() -> None:
+    from asymmetry.core.fitting.field_scan import as_composite_model
+    from asymmetry.core.workflow.integral_scan import resonance_windows
+
+    x = np.arange(17000.0, 23050.0, 50.0)
+    value = (
+        0.30
+        - 0.015 / (1.0 + ((x - 19500.0) / 200.0) ** 2)
+        - 0.008 / (1.0 + ((x - 21450.0) / 110.0) ** 2)
+    )
+    scan = FieldScan(
+        x=x,
+        value=value,
+        error=np.full_like(x, 4e-4),
+        run_numbers=list(range(x.size)),
+        order_key="field",
+        method="integral",
+        x_label="B (G)",
+    )
+    windows = resonance_windows(scan, as_composite_model("LorentzianLCR + LorentzianLCR"), {})
+    # In field order, whichever component the seeding put on each dip.
+    assert [window["centre"] for window in windows] == pytest.approx([19500.0, 21450.0], abs=50)
+    first, second = windows
+    assert first["x_min"] < 19500.0 < first["x_max"] <= second["x_min"] < 21450.0
+    assert second["x_max"] > 21450.0
+    assert first["x_max"] <= (first["centre"] + second["centre"]) / 2.0
+
+
+def test_a_successful_fit_has_no_resonance_windows() -> None:
+    _, fit = fit_integral_scan(_scan(), "LorentzianLCR + Constant", initial={"B0": 3400.0})
+    assert fit["success"]
+    assert fit["resonance_windows"] == []
+    assert fit["initial"] == {"B0": 3400.0}
+
+
+def test_only_a_window_holding_a_line_is_named_as_another_dip() -> None:
+    from asymmetry.core.transform.integral import FieldScan
+    from asymmetry.core.workflow.integral_scan import _holds_a_line
+
+    x = np.linspace(1000.0, 3000.0, 81)
+    error = np.full_like(x, 0.0005)
+    dip = 0.2 - 0.03 / (1.0 + ((x - 2200.0) / 40.0) ** 2) + 1e-6 * (x - 2000.0)
+    # A background rising across the window, as an ALC scan's does near a step.
+    step = 0.2 + 0.03 * np.tanh((x - 2200.0) / 400.0)
+
+    def scan(value) -> FieldScan:
+        return FieldScan(x, value, error, list(range(x.size)), "field", "integral")
+
+    window = {"x_min": 1900.0, "x_max": 2500.0}
+    assert _holds_a_line(scan(dip), window)
+    assert not _holds_a_line(scan(step), window)

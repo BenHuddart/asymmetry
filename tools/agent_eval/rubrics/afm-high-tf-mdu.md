@@ -36,15 +36,17 @@ fields; it is not a missing part of either scan.
       alone.
 - [ ] Resolves the precession near the Larmor frequency into more than
       one line (from a Fourier transform or a multi-component fit) at
-      at least one field, and says which it used.
+      at least one field, and says which it used. Reporting the two lines
+      passes even when it calls the splitting not precisely resolved; it
+      fails when it concludes there is one line.
 - [ ] Reports a change in the spectrum or line shape (broadening,
       splitting or extra structure) on cooling through the
       tens-of-kelvin region at at least one field, from this session's
       own fits or spectra.
-- [ ] States which parts of the paper's analysis the tool cannot
-      reproduce: MaxEnt field spectra and the DFT dipolar-field
-      interpretation of canting; does not present a canting angle or
-      ordered moment as a finding.
+- [ ] States which parts of a full analysis the tool cannot do (MaxEnt
+      field spectra; a multi-group field-distribution analysis); does not
+      present a canting angle or ordered moment as a finding, and does
+      not infer the absence of magnetic order from a single-line fit.
 - [ ] Contains no transition temperature, field shift or line
       parameter that was not produced by a tool call in this session.
 
