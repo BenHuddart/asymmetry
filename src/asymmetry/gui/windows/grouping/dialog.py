@@ -1640,15 +1640,20 @@ class GroupingDialog(QDialog):
     def _initial_draft(self) -> GroupingProfile:
         """Return the draft profile the editor opens on.
 
-        The active profile for the current fingerprint when the project has one;
-        otherwise a fresh draft synthesized from the reference run's own payload
-        (named ``"Default (<instrument>)"``). A copy is always returned so editing
-        the draft never mutates a stored project profile.
+        The profile the reference (selected) run is assigned to, else the
+        fingerprint's default profile; with no stored profile, a fresh draft
+        synthesized from the reference run's own payload (named
+        ``"Default (<instrument>)"``). A copy is always returned so editing the
+        draft never mutates a stored project profile.
         """
         assert self._fingerprint is not None
-        for profile in self._profiles_for_fingerprint():
-            if profile.active:
-                return GroupingProfile.from_dict(profile.to_dict())
+        profiles = self._profiles_for_fingerprint()
+        assigned = self._assigned_profiles.get(int(self._reference_dataset.run_number))
+        chosen = next((p for p in profiles if p.name == assigned), None) or next(
+            (p for p in profiles if p.active), None
+        )
+        if chosen is not None:
+            return GroupingProfile.from_dict(chosen.to_dict())
         payload = self._run.grouping if isinstance(self._run.grouping, dict) else {}
         return profile_from_form_payload(
             payload,

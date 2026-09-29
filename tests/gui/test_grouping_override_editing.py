@@ -323,6 +323,18 @@ def test_runs_without_assignment_follow_the_default_profile(qapp: QApplication) 
     assert profile_result["default_profile"] == "Sample A"
 
 
+def test_editor_opens_on_the_selected_runs_profile(qapp: QApplication) -> None:
+    """Opening on a run assigned off the default edits that run's profile."""
+    dialog = _two_profile_dialog({2: "Sample B"}, selected=2)
+    assert dialog._draft_name == "Sample B"
+    assert dialog._profile_combo.currentData() == "Sample B"
+    assert dialog._alpha_spin.value() == pytest.approx(2.0)
+    result = dialog.get_grouping_result()
+    assert set(result["run_numbers"]) == {2}
+    # Opening on another profile never moves the ★ default.
+    assert dialog.get_profile_result()["default_profile"] == "Sample A"
+
+
 def test_run_assigned_elsewhere_is_excluded_from_profile_apply(qapp: QApplication) -> None:
     """A run assigned to another profile is not an Apply target of this one."""
     dialog = _two_profile_dialog({2: "Sample B"})

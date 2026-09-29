@@ -1206,16 +1206,13 @@ def _deadtime_policy_from_payload(payload: dict[str, Any]) -> DeadtimePolicy:
     if not bool(payload.get("deadtime_correction", False)):
         return DeadtimePolicy(mode="off")
     mode = str(payload.get("deadtime_mode", payload.get("deadtime_method", "off"))).strip().lower()
-    if mode == "load":
-        mode = "manual"
+    # The payload names file deadtime "file" (see _apply_deadtime_policy); the
+    # policy names it "from_file". Translate before the membership check.
+    mode = {"load": "manual", "file": "from_file"}.get(mode, mode)
     if mode not in DEADTIME_POLICY_MODES:
         mode = "off"
-    if mode == "off":
-        return DeadtimePolicy(mode="off")
-    if mode == "file":
-        # Payload's ``deadtime_mode`` uses "file"; the profile policy names it
-        # "from_file" to make the file-derived nature explicit.
-        return DeadtimePolicy(mode="from_file")
+    if mode in ("off", "from_file"):
+        return DeadtimePolicy(mode=mode)
     raw_values = payload.get("dead_time_us")
     if not isinstance(raw_values, (list, tuple)):
         raw_values = payload.get("deadtime_loaded_us")

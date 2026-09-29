@@ -502,6 +502,26 @@ def test_profile_from_payload_round_trips_through_resolve():
     assert resolved["backward_group"] == 2
 
 
+@pytest.mark.parametrize(
+    "policy",
+    [
+        DeadtimePolicy(mode="off"),
+        DeadtimePolicy(mode="from_file"),
+        DeadtimePolicy(mode="manual", values=[0.01, 0.02, 0.03, 0.04], method="manual"),
+        DeadtimePolicy(mode="estimate", estimated_us=0.015, values=[0.015] * 4, source_run=7),
+    ],
+    ids=lambda p: p.mode,
+)
+def test_deadtime_policy_round_trips_through_resolved_payload(policy):
+    """Every deadtime mode survives resolve → payload → profile (the grouping-editor Apply path)."""
+    facts = _per_run_facts()
+    facts["dead_time_us"] = [0.011, 0.012, 0.013, 0.014]
+    run = _run(grouping=facts)
+    resolved = resolve_effective_grouping(_base_profile(deadtime_policy=policy), run)
+    lifted = profile_from_payload(resolved, "P", ProfileFingerprint("EMU", 4))
+    assert lifted.deadtime_policy.mode == policy.mode
+
+
 # --------------------------------------------------------------------------- #
 # Loaded-run inheritance helper
 # --------------------------------------------------------------------------- #

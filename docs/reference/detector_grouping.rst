@@ -212,7 +212,9 @@ draft is what gets applied to every run following the profile.
   assign them from the scope panel). Only profiles for the selected
   instrument are listed — non-default profiles with their identity-colour
   swatch, and the instrument's default-for-new-runs profile marked ★. Switching away from a
-  profile with unsaved edits prompts to discard them.
+  profile with unsaved edits prompts to discard them. The window opens on the
+  profile the current run is assigned to, so opening it from a run of
+  "Sample B" edits "Sample B" rather than the ★ default.
 
   **Rename…** renames the edited profile in place — the stored profile is
   replaced under its new name on Apply and every run's assignment follows;
