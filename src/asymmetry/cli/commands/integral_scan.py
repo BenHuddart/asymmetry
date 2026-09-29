@@ -348,21 +348,21 @@ def _notes(result: dict, free_offsets: list[str], summed: list[int]) -> list[str
 _POOR_SCAN_FIT = 2.0
 
 
-#: A fitted line needs this many widths of data on each side of its centre
-#: to be a dip: one closer to the range's edge may be a step or an edge.
-_FLANK_WIDTHS = 2.0
-
-
 def _poor_fit_note(fit: dict) -> list[str]:
     """Notes on what a converged resonance fit left out or cannot vouch for."""
+    from asymmetry.core.workflow.integral_scan import DIP_FLANK_WIDTHS
+
     lines = {name: value for name, value in fit["parameters"].items() if name.split("_")[0] == "B0"}
     if not lines:
         return []
     notes = []
     low, high = fit["x_range"]
-    for name, centre in lines.items():
+    # Only a chosen --xmin/--xmax window can cut a line's flank off; a whole
+    # scan narrower than its line just leaves the width unmeasured.
+    windowed = fit["x_min"] is not None or fit["x_max"] is not None
+    for name, centre in lines.items() if windowed else ():
         width = abs(fit["parameters"][name.replace("B0", "Bwid", 1)])
-        if centre - _FLANK_WIDTHS * width < low or centre + _FLANK_WIDTHS * width > high:
+        if centre - DIP_FLANK_WIDTHS * width < low or centre + DIP_FLANK_WIDTHS * width > high:
             notes.append(
                 f"NOTE: the line at {centre:g} (width {width:g}) runs off the fitted range "
                 f"{low:g}–{high:g}: without data rising again on both sides it may be a step "

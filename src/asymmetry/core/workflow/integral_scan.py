@@ -330,6 +330,11 @@ def _cropped(scan: FieldScan, x_min: float | None, x_max: float | None) -> Field
     )
 
 
+#: A line is a dip only with this many widths of data on each side of its
+#: centre inside the range fitted: one nearer the edge may be a step or the
+#: background's rise.
+DIP_FLANK_WIDTHS = 2.0
+
 #: A dip's depth must exceed this many of its errors to be named: a line's
 #: wing or a bump in the background fits a line of depth near zero.
 _DIP_SIGNIFICANCE = 5.0
@@ -351,11 +356,13 @@ def _holds_a_line(scan: FieldScan, window: Mapping[str, Any]) -> bool:
     model, parameters = _parameters(part, "LorentzianLCR + Linear", initial=None, fixed=None)
     result = fit_scan_model(part, model, parameters=parameters, extra_starts=1)
     centre = float(result.parameters["B0"].value)
+    flank = DIP_FLANK_WIDTHS * abs(float(result.parameters["Bwid"].value))
     depth = float(result.parameters["f"].value)
     return (
         bool(result.success)
         and not {"B0", "Bwid"} & set(result.params_at_bound)
-        and window["x_min"] < centre < window["x_max"]
+        and window["x_min"] < centre - flank
+        and centre + flank < window["x_max"]
         # An ALC dip lowers the integral asymmetry, well beyond its error.
         and depth < -_DIP_SIGNIFICANCE * float(result.uncertainties["f"])
     )
@@ -413,6 +420,7 @@ def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
 
 
 __all__ = [
+    "DIP_FLANK_WIDTHS",
     "period_field_offset_gauss",
     "build_integral_scan",
     "field_scan_payload",

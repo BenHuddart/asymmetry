@@ -680,7 +680,10 @@ width between the scans. A Δ₁ resonance exists only through the anisotropic
 part of the hyperfine coupling, so one that narrows, shifts or appears on
 warming while another fades is molecular motion (reorientation) averaging
 that anisotropy — say so in those terms. Two temperatures show the change;
-they support no activation law, and the summary says that too.
+they support no activation law, and the summary says that too. Quote both
+fitted centres and widths side by side when you compare them, and state the
+direction from those printed numbers (which is at higher field, which is
+broader) — never from memory of the plot.
 
 Report the quantities `integral-scan` actually emits — the resonance field,
 width, amplitude, uncertainties and fit quality. A field can *constrain* a

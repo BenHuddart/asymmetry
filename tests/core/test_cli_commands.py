@@ -3107,6 +3107,8 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
         "parameters": {"f": -0.01, "B0": 19480.0, "Bwid": 150.0},
         "reduced_chi_squared": 12.6,
         "x_range": [17000.0, 23000.0],
+        "x_min": None,
+        "x_max": None,
         "next_dip_windows": windows,
     }
     dip, poor = _poor_fit_note(fit)
@@ -3123,11 +3125,16 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
         | {
             "parameters": {"f": -0.02, "B0": 6918.0, "Bwid": 1082.0},
             "x_range": [5000.0, 11000.0],
+            "x_min": 5000.0,
+            "x_max": 11000.0,
             "reduced_chi_squared": 1.5,
             "next_dip_windows": [],
         }
     )
     assert "runs off the fitted range 5000–11000" in edge
+    # A whole scan narrower than its line is not a window that cut it off.
+    whole = {"x_min": None, "x_max": None}
+    assert _poor_fit_note(fit | {"reduced_chi_squared": 1.5, "next_dip_windows": []} | whole) == []
 
 
 def test_a_mistyped_folder_is_named_as_missing_with_the_folder_the_session_holds(
