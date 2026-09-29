@@ -39,12 +39,12 @@ decouples the relaxation, so the fields are static.
       temperature: the ZF relaxation is decoupled, so its fields are static.
 - [ ] Fits the ZF scan with a static Gaussian Kubo–Toyabe × exponential +
       constant (or an equivalent KT model) and says there is no spontaneous
-      precession. It does not adopt the wizard's Bessel or Overhauser
-      precession recommendation as the ZF physics.
+      precession. It does not adopt a precession model (the wizard has
+      ranked Bessel or Overhauser forms first on some runs) as the ZF physics.
 - [ ] States the headline in words: the ZF KT rate (`Delta`, the paper's σ)
       rises on cooling below a temperature at or near the TF Tc (within a
       point spacing of the Tc this session's TF fit gives, or 6–7.5 K) while Λ
-      shows no such change; the
+      (or, in a dynamic KT fit, the fluctuation rate ν) shows no such change; the
       extra relaxation is small against the nuclear rate and is read as
       spontaneous static fields appearing at Tc — broken time-reversal
       symmetry. Calling it a candidate pending a check passes; explaining it
@@ -80,9 +80,9 @@ decouples the relaxation, so the fields are static.
   10 K are cross-sections mixing ZF, TF and LF runs of both geometries.
   `audit` lists all of these as "not fitted"; fitting them as scans is wrong —
   saying why they are not scans is the answer.
-- The ZF wizard ranks a two-cut-off Overhauser and a Bessel precession above
-  the static GKT, although it detects no line and its own pattern search names
-  a static KT. The recipe must be written: `recipe --expression
+- The ZF wizard has ranked a two-cut-off Overhauser and a Bessel precession
+  above the static GKT on some runs (on others it recommends a dynamic GKT),
+  although it detects no line and its own pattern search names a static KT. The recipe must be written: `recipe --expression
   "StaticGKT_ZF * Exponential + Constant"`. The TF wizard recommends three
   Gaussian cosines, one at twice the Larmor frequency.
 - The ZF step is only a few per cent of `Delta`. Per-run `A_bg` scatters beyond

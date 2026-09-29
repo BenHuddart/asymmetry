@@ -326,6 +326,10 @@ def _cropped(scan: FieldScan, x_min: float | None, x_max: float | None) -> Field
     )
 
 
+#: A dip's depth must exceed this many of its errors to be named: a line's
+#: wing or a bump in the background fits a line of depth near zero.
+_DIP_SIGNIFICANCE = 5.0
+
 #: A window must hold this many points to be tried with one line on a slope.
 _WINDOW_MIN_POINTS = 8
 
@@ -334,8 +338,8 @@ def _holds_a_line(scan: FieldScan, window: Mapping[str, Any]) -> bool:
     """Whether one line on a straight background fits inside *window* as a resonance.
 
     A seeder's window on a curved background can hold only the background's
-    rise or step: there a line's fit runs its centre to the window's edge or
-    its width to a bound, and the window is no dip.
+    rise or step, or a line's wing: there a line's fit runs its centre to the
+    window's edge or its width to a bound, or finds no significant depth.
     """
     part = _cropped(scan, window["x_min"], window["x_max"])
     if part.x.size < _WINDOW_MIN_POINTS:
@@ -343,10 +347,13 @@ def _holds_a_line(scan: FieldScan, window: Mapping[str, Any]) -> bool:
     model, parameters = _parameters(part, "LorentzianLCR + Linear", initial=None, fixed=None)
     result = fit_scan_model(part, model, parameters=parameters, extra_starts=1)
     centre = float(result.parameters["B0"].value)
+    depth = float(result.parameters["f"].value)
     return (
         bool(result.success)
         and not {"B0", "Bwid"} & set(result.params_at_bound)
         and window["x_min"] < centre < window["x_max"]
+        # An ALC dip lowers the integral asymmetry, well beyond its error.
+        and depth < -_DIP_SIGNIFICANCE * float(result.uncertainties["f"])
     )
 
 

@@ -36,7 +36,9 @@ fields; it is not a missing part of either scan.
       alone.
 - [ ] Resolves the precession near the Larmor frequency into more than
       one line (from a Fourier transform or a multi-component fit) at
-      at least one field, and says which it used.
+      at least one field, and says which it used. Reporting the two lines
+      passes even when it calls the splitting not precisely resolved; it
+      fails when it concludes there is one line.
 - [ ] Reports a change in the spectrum or line shape (broadening,
       splitting or extra structure) on cooling through the
       tens-of-kelvin region at at least one field, from this session's

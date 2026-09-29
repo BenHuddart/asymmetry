@@ -404,14 +404,27 @@ _STEP_SIGNIFICANCE = 5.0
 _LEVEL_DEPARTURE = 3.0
 
 
+#: Flags that say a row's values are not a measurement (``large_rel_err`` is
+#: carried by its own error bar and stays).
+_UNRELIABLE = frozenset(
+    {
+        "failed",
+        "frequency_unresolved",
+        "bound_pinned",
+        "spurious_reseeded",
+        "amplitude_exceeds_data",
+    }
+)
+
+
 def _measured(trend, *params: str) -> list[dict[str, Any]]:
-    """The rows, in scan order, that fitted every one of *params* with an error."""
+    """The rows, in scan order, that fitted every one of *params* reliably, with an error."""
     return sorted(
         (
             row
             for row in trend.rows
             if all(row[param] is not None and row[f"{param}_err"] for param in params)
-            and not {"failed", "frequency_unresolved"} & set(row["flags"])
+            and not _UNRELIABLE & set(row["flags"])
         ),
         key=lambda row: row["x"],
     )
@@ -553,6 +566,12 @@ def _phase_drift(trend, free_params: list[str]) -> list[str]:
     ]
 
 
+#: The frequency must rise by at least this factor along the scan for a falling
+#: amplitude to be the instrument's response: a line held near one field
+#: (a superconductor's, a Knight-shifted one) loses amplitude for other reasons.
+_RESPONSE_FREQUENCY_SPAN = 1.5
+
+
 def _frequency_response(series: dict[str, Any], trend) -> list[str]:
     """A note per precession amplitude that falls as its frequency rises along the scan."""
     from asymmetry.core.fitting.composite import CompositeModel
@@ -586,7 +605,11 @@ def _frequency_response(series: dict[str, Any], trend) -> list[str]:
                 first[f"{param}_err"], last[f"{param}_err"]
             )
 
-        if change(frequency) <= _STEP_SIGNIFICANCE or change(amplitude) >= -_STEP_SIGNIFICANCE:
+        if (
+            change(frequency) <= _STEP_SIGNIFICANCE
+            or change(amplitude) >= -_STEP_SIGNIFICANCE
+            or last[frequency] < _RESPONSE_FREQUENCY_SPAN * first[frequency]
+        ):
             continue
         halved = next((row for row in rows if row[amplitude] <= first[amplitude] / 2.0), None)
         notes.append(

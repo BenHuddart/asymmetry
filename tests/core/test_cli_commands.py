@@ -3130,3 +3130,40 @@ def test_a_mistyped_folder_is_named_as_missing_with_the_folder_the_session_holds
     err = capsys.readouterr().err
     assert f"{typo} does not exist or is not a directory." in err
     assert f"This work directory holds {workflow_folder.resolve()}" in err
+
+
+def test_readings_leave_out_unreliable_rows_and_small_frequency_drifts() -> None:
+    from asymmetry.cli.commands.trend import _frequency_response, _rate_steps
+    from asymmetry.core.workflow.series import TrendTable
+
+    # A flat width with one bound-pinned row at a wild value draws no step.
+    rows = [
+        {"key": str(run), "x": 10.0 * run, "Lambda": 0.077, "Lambda_err": 0.001, "flags": []}
+        for run in range(1, 7)
+    ]
+    rows[0] = rows[0] | {"Lambda": 1e-14, "flags": ["bound_pinned"]}
+    steps = TrendTable("temperature", ["key", "x", "Lambda", "Lambda_err", "flags"], rows)
+    assert _rate_steps(steps, ["Lambda"]) == []
+
+    # An amplitude that sags while a held line moves by 0.15 % is not the
+    # instrument's frequency response.
+    held = [
+        {
+            "key": str(run),
+            "x": x,
+            "A_1": amplitude,
+            "A_1_err": 0.05,
+            "frequency": frequency,
+            "frequency_err": 0.0001,
+            "flags": [],
+        }
+        for run, (x, amplitude, frequency) in enumerate(
+            [(5.0, 19.04, 2.071), (40.0, 18.9, 2.072), (80.0, 18.78, 2.074)]
+        )
+    ]
+    columns = ["key", "x", "A_1", "frequency", "flags"]
+    series = {
+        "expression": "Oscillatory * Gaussian + Constant",
+        "free_params": ["A_1", "frequency"],
+    }
+    assert _frequency_response(series, TrendTable("temperature", columns, held)) == []
