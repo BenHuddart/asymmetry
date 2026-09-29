@@ -342,6 +342,65 @@ def test_survey_scans_block_names_the_instrument(
     assert "temperature scan, SIM, ZF, B = 0 G" in out
 
 
+def test_survey_names_repeats_to_co_add_and_a_scan_the_files_do_not_record(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import RepeatSet, survey_folder
+
+    survey = survey_folder(workflow_folder)
+    repeats = [
+        RepeatSet("SIM", 300.0, 3000.0, "", [501, 502, 503, 504, 505], co_add=True),
+        RepeatSet("SIM", 291.0, -100.0, "P scan", [601, 602], co_add=False),
+    ]
+    text = _render(replace(survey, repeats=repeats), tmp_path / "survey.json")
+    assert (
+        "REPEATS: runs 501-505 repeat one condition (3000 G, 300 K) — co-add them for "
+        f"statistics before a spectrum: asymmetry reduce {workflow_folder} --runs 501-505 "
+        "--coadd --workdir asymmetry-work-coadd"
+    ) in text
+    assert (
+        'UNRECORDED SCAN: runs 601-602 record one condition (-100 G, 291 K, notes "P scan"), '
+        "but their note names a scan"
+    ) in text
+    assert "REPEATS" not in _render(survey, tmp_path / "survey.json")
+
+
+def test_survey_points_a_red_green_field_scan_at_the_period_difference(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import ScanGroup, survey_folder
+
+    scan = ScanGroup(
+        axis="field",
+        instrument="SIM",
+        geometry="LF",
+        geometry_note="",
+        temperature=300.0,
+        field=None,
+        runs=[701, 702, 703],
+        values=[28500.0, 28600.0, 28700.0],
+        n_periods=2,
+    )
+    survey = survey_folder(workflow_folder)
+    text = _render(replace(survey, scans=[scan]), tmp_path / "survey.json")
+    assert "T = 300 K, 2 periods (red/green): 3 runs" in text
+    assert (
+        f"asymmetry integral-scan {workflow_folder} --runs 701-703 --period green-red; with a "
+        "field step between the periods (differential ALC) fit --model LorentzianLCRPair, "
+        "holding its dB at the red - green offset"
+    ) in text
+    # A single-period scan says neither.
+    text = _render(replace(survey, scans=[replace(scan, n_periods=1)]), tmp_path / "s.json")
+    assert "periods" not in text.split("Scans:")[1]
+    assert "green-red" not in text
+
+
 def test_survey_candidate_block_names_the_source_of_each_candidate(
     workflow_folder: Path, tmp_path: Path, capsys
 ) -> None:
@@ -851,6 +910,29 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     cli.main([*base, "--json"])
     data = _json_output(capsys)
     assert data["period_field_offset"] == {"gauss": pytest.approx(-44.0), "runs": 2}
+
+
+def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _two_identical_periods(monkeypatch)
+    base = [
+        "integral-scan",
+        str(workflow_folder),
+        "--runs",
+        f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+        "--order",
+        "run",
+        "--workdir",
+        str(tmp_path / "wd"),
+    ]
+    cli.main(base)
+    assert (
+        f"NOTE: runs {SCAN_RUNS[0]}-{SCAN_RUNS[1]} are two-period (red/green) runs, and "
+        "without --period this scan summed both periods"
+    ) in capsys.readouterr().out
+    cli.main([*base, "--period", "green-red"])
+    assert "summed both periods" not in capsys.readouterr().out
 
 
 def test_integral_scan_single_period_reports_the_source_run_number(
@@ -2688,8 +2770,75 @@ def test_integral_scan_fits_inside_the_window_and_reports_a_failed_fit(
         lambda *args, **kwargs: ParameterModelFitResult(success=False, message="Fit failed"),
     )
     cli.main([*base, "--name", "failed", "--model", "Linear"])
-    assert "FAILED (Fit failed)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "FAILED (Fit failed)" in out
+    # No resonance in the model, so no window to fit one in.
+    assert "Next:" not in out
     assert (tmp_path / "wd" / "scans" / "failed.json").exists()
+
+
+def _failed_resonance_fit(**changes) -> dict:
+    return {
+        "success": False,
+        "message": "Fit failed: call limit reached, hesse failed",
+        "expression": "LorentzianLCR + LorentzianLCR + Cubic",
+        "parameters": {"B0_1": 1500.0, "B0_2": 1500.0},
+        "uncertainties": {},
+        "reduced_chi_squared": 9.0,
+        "params_at_bound": ["B0_2"],
+        "initial": {},
+        "fixed": [],
+        "resonance_windows": [
+            {
+                "parameter": "B0_1",
+                "component": "LorentzianLCR",
+                "centre": 1200.0,
+                "x_min": 1000.0,
+                "x_max": 1400.0,
+            },
+            {
+                "parameter": "B0_2",
+                "component": "LorentzianLCR",
+                "centre": 1800.0,
+                "x_min": 1600.0,
+                "x_max": 2000.0,
+            },
+        ],
+    } | changes
+
+
+def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Path) -> None:
+    from asymmetry.cli.commands.integral_scan import _render
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    result = {
+        "name": "scan",
+        "scan": {"points": [], "order_key": "field"},
+        "period_field_offset": None,
+        "fit": _failed_resonance_fit(),
+        "scan_path": str(tmp_path / "scan.json"),
+        "plot": None,
+    }
+    text = _render(result, ReductionSettings(), [], [])
+    assert "FAILED (Fit failed: call limit reached, hesse failed; at a bound: B0_2)" in text
+    assert (
+        "Next: the scan's own largest dips are at B0_1 1200, B0_2 1800. The fit already "
+        "started each centre there; fit one resonance per window: --model 'LorentzianLCR + "
+        "Linear' --xmin 1000 --xmax 1400; --model 'LorentzianLCR + Linear' --xmin 1600 "
+        "--xmax 2000."
+    ) in text
+    assert "--initial" not in text
+
+    # A start inside its dip's window is where the fit already began ...
+    result["fit"] = _failed_resonance_fit(initial={"B0_1": 1250.0})
+    assert "--initial" not in _render(result, ReductionSettings(), [], [])
+    # ... and one away from it is pointed back at the dips.
+    result["fit"] = _failed_resonance_fit(initial={"B0_1": 1500.0})
+    text = _render(result, ReductionSettings(), [], [])
+    assert (
+        "The fit started away from them: refit with --initial B0_1=1200 --initial "
+        "B0_2=1800, or fit one resonance per window"
+    ) in text
 
 
 def test_fit_series_skips_run_numbers_the_folder_does_not_hold(

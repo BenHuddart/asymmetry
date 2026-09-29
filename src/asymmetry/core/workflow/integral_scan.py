@@ -20,7 +20,7 @@ from asymmetry.core.fitting.field_scan import (
     fit_scan_model,
     parameter_set_for_model,
 )
-from asymmetry.core.fitting.parameter_models import suggest_model_seeds
+from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, suggest_model_seeds
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.io.periods import (
@@ -295,12 +295,60 @@ def fit_integral_scan(
         "reduced_chi_squared": float(result.reduced_chi_squared),
         "n_points": int(result.n_points),
         "params_at_bound": list(result.params_at_bound),
+        "initial": {str(name): float(value) for name, value in (initial or {}).items()},
         "fixed": [parameter.name for parameter in parameters if parameter.fixed],
         "baseline": baseline_payload,
         "x_min": x_min,
         "x_max": x_max,
+        "resonance_windows": (
+            [] if result.success else resonance_windows(fitted_scan, model, fixed or {})
+        ),
     }
     return fitted_scan, fit_payload
+
+
+#: Half-widths either side of a resonance's seeded centre that its own window
+#: spans: a Lorentzian there has fallen to 1/26 of its depth, leaving baseline
+#: on both sides for the background to fit.
+_WINDOW_HALF_WIDTHS = 5.0
+
+
+def resonance_windows(
+    scan: FieldScan, model: ParameterCompositeModel, fixed: Mapping[str, float]
+) -> list[dict[str, Any]]:
+    """One x window per resonance of *model*, around the dip the scan's own seeding puts it on.
+
+    The centres and widths are :func:`suggest_model_seeds`' starts with only
+    *fixed* known, in x order. Each window spans :data:`_WINDOW_HALF_WIDTHS`
+    half-widths of its resonance, cut at the midpoints to its neighbours and
+    at the scan's ends. A resonance the seeding could not place has none.
+    """
+    seeds = suggest_model_seeds(model, scan.x, scan.value, scan.error, known=dict(fixed))
+    resonances = []
+    for index, component in enumerate(model.components):
+        if not {"B0", "Bwid"}.issubset(component.param_names):
+            continue
+        name = model.component_param_name(index, "B0")
+        width = seeds.get(model.component_param_name(index, "Bwid"))
+        if name in seeds and width is not None:
+            resonances.append((seeds[name], width, name, component.name))
+    resonances.sort()
+    centres = [centre for centre, *_ in resonances]
+    edges = [
+        float(np.min(scan.x)),
+        *((low + high) / 2.0 for low, high in zip(centres, centres[1:])),
+        float(np.max(scan.x)),
+    ]
+    return [
+        {
+            "parameter": name,
+            "component": component,
+            "centre": float(centre),
+            "x_min": float(max(low, centre - _WINDOW_HALF_WIDTHS * abs(width))),
+            "x_max": float(min(high, centre + _WINDOW_HALF_WIDTHS * abs(width))),
+        }
+        for (centre, width, name, component), low, high in zip(resonances, edges, edges[1:])
+    ]
 
 
 def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
@@ -312,4 +360,5 @@ __all__ = [
     "build_integral_scan",
     "field_scan_payload",
     "fit_integral_scan",
+    "resonance_windows",
 ]

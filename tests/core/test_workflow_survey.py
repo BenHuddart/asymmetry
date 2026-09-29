@@ -16,6 +16,7 @@ from asymmetry.core.workflow.survey import (
     alpha_steps,
     calibration_verdict,
     coil_geometry,
+    repeat_sets,
     resolve_row_geometry,
     survey_folder,
     temperature_departures,
@@ -53,6 +54,10 @@ def _row(
     geometry_source: str = "field",
     notes: str = "",
     precession: PrecessionEvidence = _NOT_MEASURED,
+    bin_width_us: float = 0.016,
+    n_periods: int = 1,
+    total_events: int = 1000,
+    sample_temperature_logged: float | None = None,
 ) -> RunRow:
     """A :class:`RunRow` for the grouping tests, which read only a few of its fields."""
     return RunRow(
@@ -64,7 +69,7 @@ def _row(
         title="",
         sample=None,
         temperature=temperature,
-        sample_temperature_logged=None,
+        sample_temperature_logged=sample_temperature_logged,
         sample_temperature_log_source=None,
         field=field,
         field_direction="",
@@ -75,11 +80,12 @@ def _row(
         notes=notes,
         n_histograms=2,
         n_points=100,
-        total_events=1000,
-        bin_width_us=0.016,
+        total_events=total_events,
+        bin_width_us=bin_width_us,
         start_time=None,
         duration_s=None,
         has_file_deadtime=False,
+        n_periods=n_periods,
     )
 
 
@@ -555,6 +561,112 @@ def test_a_return_sweep_stays_whole_while_another_instruments_runs_interleave() 
     ]
 
 
+def test_runs_of_another_bin_width_never_share_a_scan() -> None:
+    # A field scan at 294 K on one TDC binning, then repeats at its top field
+    # at 300 K on another: a changed set-up, not a 294 -> 300 K temperature scan.
+    scan = [
+        _row(run_number=run, temperature=294.0, field=field, geometry="TF", bin_width_us=0.00039)
+        for run, field in zip(range(1, 5), (200.0, 1000.0, 2000.0, 3000.0))
+    ]
+    repeats = [
+        _row(run_number=run, temperature=300.0, field=3000.0, geometry="TF", bin_width_us=0.000586)
+        for run in range(11, 16)
+    ]
+    scans, _ = _scan_groups(scan + repeats)
+    assert [(s.axis, s.runs) for s in scans] == [("field", [1, 2, 3, 4])]
+
+    # One nominal width read back through float32 is still one set-up.
+    nominal = [
+        _row(run_number=1, temperature=10.0, bin_width_us=0.01600000262260437),
+        _row(run_number=2, temperature=20.0, bin_width_us=0.016000010073184967),
+    ]
+    assert [s.runs for s in _scan_groups(nominal)[0]] == [[1, 2]]
+
+
+def test_two_period_runs_form_their_own_scan_which_says_so() -> None:
+    rows = [
+        _row(run_number=run, temperature=300.0, field=field, n_periods=periods)
+        for run, field, periods in (
+            (1, 28500.0, 1),
+            (2, 28600.0, 1),
+            (3, 28500.0, 2),
+            (4, 28600.0, 2),
+        )
+    ]
+    scans = [scan for scan in _scan_groups(rows)[0] if scan.axis == "field"]
+    assert [(scan.runs, scan.n_periods) for scan in scans] == [([1, 2], 1), ([3, 4], 2)]
+    assert scans[1].to_dict()["n_periods"] == 2
+
+
+def test_consecutive_runs_at_one_condition_are_a_repeat_set() -> None:
+    field_scan = [
+        _row(run_number=run, temperature=294.0, field=field, geometry="TF")
+        for run, field in zip(range(1, 4), (200.0, 1000.0, 3000.0))
+    ]
+    repeats = [
+        _row(run_number=run, temperature=300.0, field=3000.0, geometry="TF", notes="3 kG")
+        for run in range(11, 16)
+    ]
+    (repeat,) = repeat_sets(field_scan + repeats)
+    assert (repeat.runs, repeat.temperature, repeat.field) == ([11, 12, 13, 14, 15], 300.0, 3000.0)
+    assert repeat.co_add
+    assert repeat.to_dict()["runs"] == [11, 12, 13, 14, 15]
+
+
+def test_another_instruments_runs_between_repeats_do_not_break_them() -> None:
+    rows = [
+        _row(run_number=run, temperature=temperature, instrument=instrument)
+        for run in (1, 2)
+        for instrument, temperature in (("EMU", 10.0), ("MUSR", 20.0))
+    ]
+    assert sorted((r.instrument, r.runs) for r in repeat_sets(rows)) == [
+        ("EMU", [1, 2]),
+        ("MUSR", [1, 2]),
+    ]
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        {"notes": "4 foils"},
+        {"field": 100.0},
+        {"n_periods": 2},
+        {"bin_width_us": 0.008},
+        # A cryostat still cooling: the setpoint repeats, the sample does not.
+        {"sample_temperature_logged": 250.0},
+    ],
+)
+def test_a_changed_condition_ends_a_repeat_set(second: dict) -> None:
+    first = {"temperature": 290.0, "sample_temperature_logged": 285.0}
+    rows = [_row(run_number=1, **first), _row(run_number=2, **(first | second))]
+    assert repeat_sets(rows) == []
+
+
+def test_a_run_aborted_beside_its_restart_is_not_a_repeat_set() -> None:
+    # Co-adding 2 % more events gains nothing worth a finding; half as many does.
+    aborted = [
+        _row(run_number=1, temperature=8.0, total_events=30_000_000),
+        _row(run_number=2, temperature=8.0, total_events=550_000),
+    ]
+    assert repeat_sets(aborted) == []
+    halves = [
+        _row(run_number=1, temperature=8.0, total_events=30_000_000),
+        _row(run_number=2, temperature=8.0, total_events=15_000_000),
+    ]
+    assert [r.runs for r in repeat_sets(halves)] == [[1, 2]]
+
+
+def test_runs_whose_note_names_a_scan_are_not_repeats_to_co_add() -> None:
+    # The files record one condition, but the note says something was stepped
+    # between runs (a laser delay) that they do not record.
+    rows = [
+        _row(run_number=run, temperature=291.0, field=-100.0, notes="Laser on, P scan")
+        for run in (1, 2, 3)
+    ]
+    (repeat,) = repeat_sets(rows)
+    assert not repeat.co_add
+
+
 def test_two_instruments_sharing_a_run_number_each_get_their_own_alpha(tmp_path: Path) -> None:
     pytest.importorskip("h5py")
     from asymmetry.core.io.nexus_writer import write_nexus_v1
@@ -595,6 +707,7 @@ def test_survey_round_trips_through_its_dict(survey) -> None:
     assert data["best_calibration_run"] == CALIBRATION_RUN
     assert [row["run_number"] for row in data["runs"]] == list(ALL_RUNS)
     assert data["scans"][0]["axis"] == "temperature"
+    assert data["repeats"] == []
 
 
 def test_row_raises_key_error_for_an_absent_run(survey) -> None:

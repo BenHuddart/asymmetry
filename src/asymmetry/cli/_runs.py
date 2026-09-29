@@ -223,13 +223,18 @@ def range_text(runs: list[int]) -> str:
         return "no runs"
     if len(runs) == 1:
         return f"run {runs[0]}"
+    return "runs " + run_spec(runs, separator=", ")
+
+
+def run_spec(runs: list[int], separator: str = ",") -> str:
+    """*runs* as the ``--runs`` spelling :func:`parse_run_spec` reads: ``"101,103-105"``."""
     spans: list[list[int]] = []
-    for run in runs:
+    for run in sorted(runs):
         if spans and run == spans[-1][-1] + 1:
             spans[-1].append(run)
         else:
             spans.append([run])
-    return "runs " + ", ".join(
+    return separator.join(
         str(span[0]) if len(span) == 1 else f"{span[0]}-{span[-1]}" for span in spans
     )
 
@@ -246,4 +251,5 @@ __all__ = [
     "resolve_run",
     "resolve_runs",
     "run_files",
+    "run_spec",
 ]

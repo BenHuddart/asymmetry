@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,8 +15,8 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._reduction import add_pair_argument, parse_pair
-from asymmetry.cli._runs import run_clashes
-from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+from asymmetry.cli._runs import range_text, run_clashes, run_spec
+from asymmetry.cli._workdir import WORKDIR_NAME, add_workdir_argument, workdir_for
 
 if TYPE_CHECKING:
     from asymmetry.core.workflow.survey import ScanGroup
@@ -64,7 +65,7 @@ def run(args: argparse.Namespace) -> None:
 
 
 def scan_label(scan: ScanGroup) -> str:
-    """One line naming a scan: axis, instrument, geometry, held value, span and end runs."""
+    """One line naming a scan: axis, instrument, geometry, held value, periods, span and end runs."""
     held = f"B = {scan.field:g} G" if scan.axis == "temperature" else f"T = {scan.temperature:g} K"
     geometry = scan.geometry or ("mixed geometry" if scan.geometry_note else "unknown geometry")
     unit = "K" if scan.axis == "temperature" else "G"
@@ -76,6 +77,8 @@ def scan_label(scan: ScanGroup) -> str:
         if scan.samples
         else ""
     )
+    if scan.n_periods > 1:
+        notes += f", {scan.n_periods} periods" + (" (red/green)" if scan.n_periods == 2 else "")
     # Runs are listed in axis order, which need not be run order, so the
     # endpoints are shown with an arrow rather than as a range.
     return (
@@ -128,22 +131,17 @@ def _departure_blocks(survey) -> list[tuple[str, list[int], float, float]]:
     ]
 
 
-def _run_list(runs: list[int]) -> str:
-    """``[1, 2, 3, 7]`` as ``"1-3, 7"``."""
-    spans: list[list[int]] = []
-    for run in sorted(runs):
-        if spans and run == spans[-1][-1] + 1:
-            spans[-1].append(run)
-        else:
-            spans.append([run])
-    return ", ".join(f"{span[0]}-{span[-1]}" if len(span) > 1 else str(span[0]) for span in spans)
-
-
 def _run_label(prefix: str, run_number: int, clashes: dict[int, list[Path]]) -> str:
     """A run as the survey names it: with its instrument where the number is shared."""
     from asymmetry.core.workflow.workdir import instrument_name
 
     return f"{instrument_name(prefix)} {run_number}" if run_number in clashes else str(run_number)
+
+
+def _selection_options(survey, instrument: str, clashes: dict[int, list[Path]]) -> str:
+    """The ``--instrument``/``--pair`` a command on this folder needs to select what the survey did."""
+    options = f" --instrument {instrument}" if clashes else ""
+    return options + (f" --pair {'/'.join(survey.pair)}" if survey.pair else "")
 
 
 def _render(survey, survey_path: Path) -> str:
@@ -255,8 +253,31 @@ def _render(survey, survey_path: Path) -> str:
         )
         for instrument, runs, lo, hi in _departure_blocks(survey):
             span = f"{lo:+.2f} K" if abs(hi - lo) < 0.005 else f"{lo:+.2f} to {hi:+.2f} K"
-            shown = f"{instrument} {_run_list(runs)}" if clashes else _run_list(runs)
+            listed = run_spec(runs, separator=", ")
+            shown = f"{instrument} {listed}" if clashes else listed
             lines.append(f"  {shown}: {span}")
+        lines.append("")
+    for repeat in survey.repeats:
+        condition = f"{repeat.field:g} G, {repeat.temperature:g} K" + (
+            f', notes "{repeat.notes}"' if repeat.notes else ""
+        )
+        runs = range_text(repeat.runs)
+        if clashes:
+            runs = f"{repeat.instrument} {runs}"
+        if repeat.co_add:
+            lines.append(
+                f"REPEATS: {runs} repeat one condition ({condition}) — co-add them for "
+                f"statistics before a spectrum: asymmetry reduce {shlex.quote(survey.folder)} "
+                f"--runs {run_spec(repeat.runs)} --coadd"
+                f"{_selection_options(survey, repeat.instrument, clashes)} "
+                f"--workdir {WORKDIR_NAME}-coadd"
+            )
+        else:
+            lines.append(
+                f"UNRECORDED SCAN: {runs} record one condition ({condition}), but their note "
+                f"names a scan: each run is a point in a quantity the files do not record. Do "
+                f"not co-add them; find what was stepped in the logbook or the brief."
+            )
         lines.append("")
     if survey.truncated:
         lines.append(
@@ -292,6 +313,16 @@ def _render(survey, survey_path: Path) -> str:
             lines.append(f"  {scan_label(scan)}")
             if scan.geometry_note:
                 lines.append(f"      geometry: {scan.geometry_note}")
+            if scan.axis == "field" and scan.n_periods == 2:
+                lines.append(
+                    f"      red/green: a two-period scan is measured in the green - red "
+                    f"difference, not the summed periods — asymmetry integral-scan "
+                    f"{shlex.quote(survey.folder)} --runs {run_spec(scan.runs)}"
+                    f"{_selection_options(survey, scan.instrument, clashes)} "
+                    f"--period green-red; with a field step between the periods (differential "
+                    f"ALC) fit --model LorentzianLCRPair, holding its dB at the red - green "
+                    f"offset that command prints."
+                )
         if survey.cross_sections:
             lines.append(
                 f"  ({survey.cross_sections} temperature scan(s) through the field scans' points "

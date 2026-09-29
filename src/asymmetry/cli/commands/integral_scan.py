@@ -15,7 +15,7 @@ from asymmetry.cli._output import (
 )
 from asymmetry.cli._recipes import parse_fix
 from asymmetry.cli._reduction import add_reduction_arguments, describe, reduction_settings
-from asymmetry.cli._runs import resolve_runs
+from asymmetry.cli._runs import range_text, resolve_runs
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -96,6 +96,7 @@ def _regions(text: str | None) -> list[tuple[float, float]]:
 def run(args: argparse.Namespace) -> None:
     from asymmetry.cli import plots
     from asymmetry.core.io import load
+    from asymmetry.core.io.periods import period_count
     from asymmetry.core.workflow.integral_scan import (
         build_integral_scan,
         field_scan_payload,
@@ -229,10 +230,20 @@ def run(args: argparse.Namespace) -> None:
         ]
     )
     free_offsets = [name for name in offset_names if name not in fixed]
-    print(_render(result_payload, settings, free_offsets))
+    # Without --period a two-period run reduces as its periods summed.
+    summed = (
+        []
+        if settings.period is not None
+        else [
+            run_number
+            for (run_number, _prefix, _path), dataset in zip(targets, datasets, strict=True)
+            if period_count(dataset) == 2
+        ]
+    )
+    print(_render(result_payload, settings, free_offsets, summed))
 
 
-def _render(result: dict, settings, free_offsets: list[str]) -> str:
+def _render(result: dict, settings, free_offsets: list[str], summed: list[int]) -> str:
     points = result["scan"]["points"]
     rows = [
         [
@@ -260,7 +271,10 @@ def _render(result: dict, settings, free_offsets: list[str]) -> str:
         fit = result["fit"]
         # A failed fit is reported, not raised: the scan is worth keeping, and
         # where the parameters ended up says which component ran away.
-        verdict = "" if fit["success"] else f" — FAILED ({fit['message'] or 'no message'})"
+        at_bound = (
+            f"; at a bound: {', '.join(fit['params_at_bound'])}" if fit["params_at_bound"] else ""
+        )
+        verdict = "" if fit["success"] else f" — FAILED ({fit['message']}{at_bound})"
         # A held parameter has no error; one pinned on a bound is not determined.
         rows = [
             [
@@ -293,10 +307,49 @@ def _render(result: dict, settings, free_offsets: list[str]) -> str:
             f"Next: the red period sat {format_number(-offset['gauss'], 2)} G below the green; "
             f"with the pair offset free the fit is degenerate, so refit with {fixes}."
         )
+    if result["fit"] is not None and result["fit"]["resonance_windows"]:
+        lines.append(_failed_fit_next(result["fit"]))
+    if summed:
+        lines.append(
+            f"NOTE: {range_text(summed)} are two-period (red/green) runs, and without --period "
+            f"this scan summed both periods, blurring the red/green contrast they were taken "
+            f"for. Measure their difference: rerun with --period green-red; with a field step "
+            f"between the periods (differential ALC) fit --model LorentzianLCRPair, holding "
+            f"its dB at the red - green offset it prints."
+        )
     lines.append(f"Scan written to {result['scan_path']}")
     if result["plot"] is not None:
         lines.append(f"Plot written to {result['plot']}")
     return "\n".join(lines)
+
+
+def _failed_fit_next(fit: dict) -> str:
+    """What to try after a failed resonance fit: the scan's own dips, and a window each."""
+    windows = fit["resonance_windows"]
+    dips = ", ".join(f"{window['parameter']} {window['centre']:g}" for window in windows)
+    # A hand-given centre outside its dip's window started on another feature.
+    moved = [
+        window
+        for window in windows
+        if window["parameter"] in fit["initial"]
+        and not window["x_min"] <= fit["initial"][window["parameter"]] <= window["x_max"]
+    ]
+    text = f"Next: the scan's own largest dips are at {dips}. "
+    if moved:
+        starts = " ".join(f"--initial {w['parameter']}={w['centre']:g}" for w in windows)
+        text += f"The fit started away from them: refit with {starts}, or "
+    else:
+        text += "The fit already started each centre there; "
+    return (
+        text
+        + "fit one resonance per window: "
+        + "; ".join(
+            f"--model '{window['component']} + Linear' --xmin {window['x_min']:g} "
+            f"--xmax {window['x_max']:g}"
+            for window in windows
+        )
+        + "."
+    )
 
 
 __all__ = ["add_parser", "run"]
