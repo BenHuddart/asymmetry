@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Grouping window opens on the current run's profile.** When the current
+  run is assigned to a profile other than the ★ default, the window now edits
+  that profile. Before, it always opened on the default, which showed another
+  profile's settings next to the selected run.
+
+### Fixed
+
+- **Deadtime "From file" is saved with the grouping profile.** Applying the
+  Grouping window with deadtime set to **From file** stored the profile's deadtime
+  as off. The runs were corrected until the project was reopened, but the window
+  then showed **Off**, and a reload or a later Apply turned the correction off.
+  Profiles saved with this bug still say off: set **From file** again and Apply.
+  The same fix applies to older projects, from before grouping profiles, that
+  used file deadtime. Their profile is now created with **From file** when they
+  are opened.
+
 ## [0.21.0] - 2026-09-28
 
 ### Added
