@@ -3114,7 +3114,7 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
     dip, poor = _poor_fit_note(fit)
     assert "another dip this fit does not include, in 19850–23000" in dip
     assert "--xmin 18200" not in dip
-    assert "converged at chi2_red 12.600; fit the dip named above" in poor
+    assert "converged at chi2_red 12.600: over a long range the background" in poor
     # With no further dip found it says the background may be why.
     (bare,) = _poor_fit_note(fit | {"next_dip_windows": windows[:1]})
     assert "a fit that cannot is not a result" in bare

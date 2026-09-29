@@ -1612,17 +1612,34 @@ and papers, each checked against what the CLI prints: `lifeas-psi`,
 `benzene-repolarisation`, `benzene-alc` (sets `corpus-2026`, plus `workflow`
 and `tier-b` in `run_wave.py`).
 
-| Case | Wave 1 | Wave 2 | Failing Must, latest |
-|---|---|---|---|
-| lifeas-psi | pass | pass | — |
-| benzene-rf | pass | — | — |
-| benzene-repolarisation | pass | — | — |
-| trsb-re6zr | fail (missed ZF Δ step) | fail (step found, onset placed at the midpoint, hedged) | M5 |
-| basics | fail (one exercise of seven) | fail (phase-vs-field t0 test, frequency response) | M6, M7 |
-| corannulene-alc | fail (no interpretation) | fail (50 K decoupling runs merged into the ALC scan) | M1, M2 |
-| benzene-high-tf | fail (correlation only) | fail (no co-add; "no radical" from one run) | M2–M4 |
-| benzene-alc | fail (third sample unnamed) | fail (red/green repeat integrated as one) | M4 |
-| afm-high-tf-mdu | fail ×3 (one line, "no order") | 1/2 after the doublet notes | — |
+Waves 1–6 iterated on the failures; a final wave then ran all 20 other cases
+once on one snapshot (`final-a`), and the last cases again on the finished
+tooling.
+
+| Case | Record on 5.5 | Final state |
+|---|---|---|
+| 20 cases: Tier A (4), trend-fit (4), hold-outs (2), workflow gate (4), spin-Peierls, high-TF AFM, TRSB, LiFeAs, benzene RF, benzene repolarisation | each passed on every run of the final waves | 20/20 in `final-a`; TCNQ, copper, cuprate and nickel 4/4 again after the quieter-notes change |
+| trsb-re6zr | fail, fail, then 2/2 | pass |
+| afm-high-tf-mdu | 3 fails, then 3 of the last 4 | pass |
+| basics | fail ×2, then 5 of the last 6 | pass (judgement calls on the bad-sensor Must) |
+| benzene-high-tf | fail ×3, then 5 of the last 6 | pass |
+| benzene-alc | fail ×2, then 6 of the last 8 (2/2 on the latest tooling) | pass |
+| corannulene-alc | 2 of 10 | the one case that does not pass reliably: see below |
+
+Corannulene's physics lands in every recent run (windowed fits of both
+temperatures, motional averaging, no model for couplings); what fails is the
+comparison between the two scans' lines — once left without a direction, once
+stated backwards (fixed on the last pair by a skill line: quote both centres
+and widths) — and Must 8, the reason no whole-scan fit is given: the
+background, a rise with a step near 20 kG, which no polynomial follows. On the
+last pair the CLI's dip search still named the cold scan's rise–plateau–rise
+background (19.6–29.8 kG) as another dip, and that note displaced the
+background sentence; the background sentence now prints on every poor fit. A
+test that separates a dip on a steep slope (benzene solid's 21.47 kG line,
+lower on one side than its own bottom) from a rise–plateau–rise step was tried
+and reverted: it rejected the real line. Open: a background model for a step
+(the GUI's `FermiStep` did not fit it either), or a dip test on residuals from
+a smoothed background.
 
 CLI changes that answered them (the output lines agents act on):
 `survey` names the detector pair that precesses (`PAIR:`), each scan's
@@ -1636,7 +1653,13 @@ line's shift, and offers a two-line recipe for a held high-field line.
 `fit-series` starts a Larmor-following line at each run's field (keyed on the
 field the recipe was seeded at). `integral-scan` prints errors, at-bound marks
 and a failed fit's reasons; `fit` stores its result so `audit` counts it;
-`--alpha-from` a single-period run serves a period scan.
+`--alpha-from` a single-period run serves a period scan. Later waves added:
+`integral-scan` naming the window of a dip a fit left out (checked by fitting a
+line there: centre and flanks inside, depth five errors below the background),
+a note when a windowed line runs off its range, the background as the cause of
+a poor long-range fit, no-model and `--json` notes; `fourier` naming lines
+outside its band and A_μ = ν₁ + ν₂; `trend` readings printed beside a law and
+leaving out unreliable rows; a mistyped data folder named as missing.
 
 Skill text alone again rarely changed behaviour — the high-TF two-line
 paragraph was read and ignored until `fourier` and `trend` printed the pair

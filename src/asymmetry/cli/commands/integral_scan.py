@@ -387,16 +387,11 @@ def _poor_fit_note(fit: dict) -> list[str]:
         )
     if fit["reduced_chi_squared"] > _POOR_SCAN_FIT:
         notes.append(
-            f"NOTE: the fit converged at chi2_red {format_number(fit['reduced_chi_squared'], 3)}"
-            + (
-                ": over a long range the background may rise or step where no polynomial "
-                "can follow — a fit that cannot is not a result, and the summary should say "
-                "that is why — or the range holds more dips than the model. Look at the plot "
-                "(--plot) and fit one resonance per --xmin/--xmax window on its own local "
-                "background."
-                if not unfitted
-                else "; fit the dip named above before reading this fit's parameters."
-            )
+            f"NOTE: the fit converged at chi2_red {format_number(fit['reduced_chi_squared'], 3)}: "
+            "over a long range the background may rise or step where no polynomial can "
+            "follow — a fit that cannot is not a result, and the summary should say that is "
+            "why — or the range holds more dips than the model. Look at the plot (--plot) "
+            "and fit one resonance per --xmin/--xmax window on its own local background."
         )
     return notes
 
