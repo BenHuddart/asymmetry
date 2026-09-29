@@ -59,11 +59,11 @@ A folder the tool can *load* is not automatically a folder the tool can
 Run every command from the project directory you are working in, and pass the
 data folder as the command's argument — an absolute path is fine, and is what
 you want when the data sits on a share or in an archive. `survey`, `reduce`,
-`wizard`, `recipe`, `integral-scan`, `fourier`, `fit-global` and `fit-series` write into
-`./asymmetry-work/` — the work directory,
+`wizard`, `recipe`, `integral-scan`, `fourier`, `fit`, `fit-global` and `fit-series`
+write into `./asymmetry-work/` — the work directory,
 in the project, never in the data folder — so the next command picks the state
-up; `fit` and `trend` read it and add only what `--plot` (and `trend --csv`)
-asks for. `alpha` and `info` are stateless — they load a file, print, and
+up; `trend` reads it and adds its law fits and what `--plot` and `--csv` ask
+for. `alpha` and `info` are stateless — they load a file, print, and
 write nothing — and `skill` writes into the agent's own skill directory, not
 the work directory.
 
@@ -159,6 +159,17 @@ below.
   temperature; read the temperature column.
 - Which runs are *not* part of any scan (detector tests, a lone reference run,
   an above-Tc run). Mention them; do not analyse them as scan members.
+- Whether the folder is one experiment or a set of separate exercises (a
+  teaching or commissioning folder: a field scan on silver, a range curve, a
+  steering scan, a weak-field scan). Analyse **each** exercise to its result —
+  never stop at listing them for the user to choose. A quantity varied only in
+  the titles or notes (a steering current, a degrader foil count) is a scan
+  like any other: fit it with `--order <name> --x <run>=<value>,…`.
+
+For a folder of more than a hundred runs the survey prints its findings first
+and the run table last. If any command's output is cut off, read what it
+stored — `asymmetry-work/survey.json`, `series/`, `scans/` — with your
+file-reading tool rather than guessing at the part you did not see.
 
 **When the survey prints a `TEMPERATURE:` line**, the listed runs were not at
 their setpoint — a cryostat still cooling, a block of runs at the wrong
@@ -640,7 +651,10 @@ the plotted field dependence support that interpretation.
   the experiment notes, since it is degenerate with the width when free).
 - **An RF resonance** (a DEVA/RF run, notes naming an RF frequency):
   `--period green-red --model RFResonanceMuP --fix nu_RF=<MHz from the notes>`
-  gives the muon and proton hyperfine couplings `A_mu`, `A_p`.
+  gives the muon and proton hyperfine couplings `A_mu`, `A_p`. Which period
+  had the RF on is read from the sign, not a colour convention: the RF
+  depolarises at resonance, so green − red peaking positive means green kept
+  its polarisation — green was RF-off.
 - **Muonium repolarisation** (an LF scan of the integral asymmetry rising to a
   plateau): `--model MuRepolarisation` gives the isotropic hyperfine constant
   `A_hf` of a muonium-like state. A radical's curve (muon plus proton
@@ -651,6 +665,13 @@ the plotted field dependence support that interpretation.
 
 `integral-scan` takes the same `--pair`, `--background`, `--deadtime` and
 `--period` as `reduce`.
+
+**The same sample at two temperatures.** Compare each resonance's centre and
+width between the scans. A Δ₁ resonance exists only through the anisotropic
+part of the hyperfine coupling, so one that narrows, shifts or appears on
+warming while another fades is molecular motion (reorientation) averaging
+that anisotropy — say so in those terms. Two temperatures show the change;
+they support no activation law, and the summary says that too.
 
 Report the quantities `integral-scan` actually emits — the resonance field,
 width, amplitude, uncertainties and fit quality. A field can *constrain* a
@@ -972,7 +993,8 @@ it as Asymmetry output.
 
 Template in section 6. Write the full draft to `summary.md` in the project
 directory with your file-writing tool (not a shell heredoc, `sed` or `echo`),
-then run
+then run, from the project directory and without `--workdir` (it reads every
+`asymmetry-work*` directory there, so numbers from each work directory count)
 
 ```bash
 asymmetry audit summary.md
@@ -981,7 +1003,7 @@ asymmetry audit summary.md
 Every command's printed output is logged in the work directory, and `audit`
 lists each number in the draft that no command printed. It first lists every
 scan the survey found whose runs no `fit-series`, `fit-global` or
-`integral-scan` fitted — a TF scan used only for alpha, the far side of a
+`integral-scan` (or single `fit`) covered — a TF scan used only for alpha, the far side of a
 transition. Fit those runs, or say in the draft which cannot be fitted and
 why. Each number it lists is
 almost always arithmetic on printed values — a percentage change, a ratio, a
@@ -1135,7 +1157,19 @@ template when the ranked table offers one, even if AICc prefers the exponential
 shift of the precession frequency, **and** the non-superconducting fraction
 (the `Constant` amplitude, and any second, weakly relaxing oscillating term the
 ranked table offers): a σ(T) reported without saying what happened to the rest
-of the asymmetry is an incomplete answer for a superconductor.
+of the asymmetry is an incomplete answer for a superconductor. When you fit two
+lines (the vortex line and a narrow background line), fit the gap law to the
+broad line's σ with the narrow line's width held from the normal state; if the
+two lines trade amplitude near Tc, fit the scan with one Gaussian and give the
+law on that σ — a gap-law fit is the expected result, not an optional extra.
+
+**Zero field in a superconductor** tests time-reversal symmetry breaking: a
+spontaneous field appears below Tc as extra relaxation — in the Kubo–Toyabe
+width Δ or in an exponential rate Λ, whichever carries it. Fit the ZF scan
+with one static-KT recipe across Tc, compare *every* width and rate above and
+below the Tc the TF scan gives (`trend` names any that step), and report a
+step of a few percent at Tc as the finding it is. Do not decide in advance
+which parameter the signal must appear in.
 
 ## 4. What things cost
 
@@ -1336,6 +1370,11 @@ present, weakened, unresolved, heavily damped or absent at each end, using the
 survey and inspected reduced/fit PNGs as evidence. If the feature disappears
 and its fit becomes flagged, report that physical non-observation explicitly;
 do not leave it implicit in an excluded-run list.
+
+For every spectrum you quote, say which dataset it transformed (one run, or
+the co-add of which runs), the transform (FFT, not MaxEnt), its window and the
+resolution the command printed — and take the lines you quote from that
+spectrum's own peak table.
 
 **Excluded or flagged runs** — every flagged run, its flag, and what you think
 went wrong. State plainly that these values are not results.

@@ -48,7 +48,7 @@ runs), `solid` (123) and `solution` (360). All HIFI `.nxs`, deadtime in files.
       red–green field step held from the command's printed offset, or sets it
       aside and says why.
 - [ ] Solid: reports from a fit two resonances, one between 19.3 and 19.7 kG
-      and one between 21.3 and 21.6 kG, the lower one the broader.
+      and one between 21.3 and 21.6 kG.
 - [ ] Solution: names the three samples and fits at least one scan, stating
       sample and temperature, with a resonance between 20.4 and 21.2 kG.
 - [ ] Contains no A_μ, A_p, D_μ or resonance field that was not produced by a
@@ -57,6 +57,9 @@ runs), `solid` (123) and `solution` (360). All HIFI `.nxs`, deadtime in files.
 
 ## Should
 
+- [ ] Solid: from a converged joint fit of both resonances, notes that the
+      lower one is the broader (separately windowed fits with their own
+      backgrounds can hide the difference).
 - [ ] Assigns in words: liquid lines are Δ0 (the 20.8 kG one the methylene
       CHMu proton, the pair near 29 kG ring protons); the solid's broad lower
       line is the Δ1 muon resonance and the narrower upper one a Δ0 line.
@@ -77,9 +80,9 @@ runs), `solid` (123) and `solution` (360). All HIFI `.nxs`, deadtime in files.
 - The two-period repeat integrated without `--period` places the ring-proton
   lines ~35 G higher than the single-period scan: red and green sit ~44 G
   apart. With the pair offset free the fit fails; the command prints the fix.
-- The human `integral-scan` output prints neither uncertainties nor a
-  parameter at its bound. In the short solution scans the Lorentzian width
-  sits at its bound on nearly every scan: those widths are not measurements.
+- In the short solution scans the Lorentzian width sits at its bound on
+  nearly every scan (`integral-scan` prints `(at bound)`): those widths are
+  not measurements.
 - The survey lists 91 "temperature scans" through the solution field scans'
   points; they are cross-sections, not measurements.
 - The two solution campaigns use different persistent main fields ("new

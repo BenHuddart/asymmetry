@@ -818,3 +818,22 @@ def test_a_transverse_field_across_another_pair_names_that_pair() -> None:
 
     assert (found.forward, found.backward) == ("Up", "Down")
     assert found.precession.state == "larmor"
+
+
+@pytest.mark.parametrize(
+    ("sample", "title", "expected"),
+    [
+        (None, "Benzene(aq) T=350.0 F=160.0", "Benzene(aq)"),
+        (None, "nickel_T=100_F=0", "nickel"),
+        ("LiFeAs powder", "LFA T=2 B=400", "LiFeAs powder"),
+        (None, "", ""),
+    ],
+)
+def test_a_runs_sample_is_its_own_name_or_its_title_before_the_conditions(
+    sample, title, expected
+) -> None:
+    from types import SimpleNamespace
+
+    from asymmetry.core.workflow.survey import sample_name
+
+    assert sample_name(SimpleNamespace(sample=sample, title=title)) == expected

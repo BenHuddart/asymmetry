@@ -40,7 +40,8 @@ on every run and no alpha candidates. With `--pair Up/Down` the survey finds
       samples or campaigns, not one series.
 - [ ] Identifies 3366–3373 as the 400 G temperature scan. Reports that the
       Gaussian TF width σ is roughly flat at the warm end and rises
-      steeply on cooling. The onset of the rise lies between 14 and 17 K.
+      steeply on cooling (or, with a two-line fit, that the broad vortex
+      component appears on cooling). The onset lies between 14 and 17 K.
 - [ ] Reports that the line shifts to lower frequency below the transition
       (a diamagnetic shift), in words or from fitted frequencies.
 - [ ] Describes the other runs as pairs above and below Tc at each field (a

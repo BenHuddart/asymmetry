@@ -36,7 +36,9 @@ Nyquist limit (`prec -`), not measured.
       calibration (excluded from the scan), and the repeated fields of the
       return pass.
 - [ ] Establishes the LF geometry of the high-field runs despite their TF
-      stamp, and says how.
+      stamp, and says how — e.g. that their integral asymmetry continues
+      the LF curve where a transverse field would integrate to near zero,
+      or that the survey refutes the stamp where it can measure.
 - [ ] Measures alpha on one of the 100 G TF runs, names it and the value, and
       states the deadtime treatment.
 - [ ] Runs `integral-scan` with `--model MuRepolarisation` over the LF runs
@@ -67,10 +69,9 @@ Nyquist limit (`prec -`), not measured.
 
 ## Known traps
 
-- The skill says a sum of two `MuRepolarisation` terms "describes two
-  muoniated species". Benzene gives one radical (no free muonium survives);
-  the two-term fit gives a second `A_hf` above the vacuum muonium coupling,
-  which no species has. Calling the two terms two species is wrong.
+- Benzene gives one radical (no free muonium survives); a two-term
+  `MuRepolarisation` fit gives a second `A_hf` above the vacuum muonium
+  coupling, which no species has. Calling the two terms two species is wrong.
 - Including the 100 G TF runs as scan points puts precessing (near-zero
   integral) points into the curve.
 - The survey's "TF on 4 of 38 runs" is the file stamp on above-Nyquist runs,

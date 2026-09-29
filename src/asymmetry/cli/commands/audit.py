@@ -127,7 +127,7 @@ def _unfitted_report(
     from asymmetry.cli.commands.survey import scan_label
 
     lines = [
-        "Scans the survey found with runs that no fit-series, fit-global or integral-scan "
+        "Scans the survey found with runs that no fit, fit-series, fit-global or integral-scan "
         "fitted. Each scan is a measurement:"
     ]
     long_scans = [entry for entry in unfitted if len(entry[1].runs) > _SHORT_SCAN_RUNS]
@@ -142,7 +142,12 @@ def _unfitted_report(
         verdict = (
             "never fitted" if len(runs) == len(scan.runs) else f"not fitted: {range_text(runs)}"
         )
-        if calibrators and scan.axis == "temperature":
+        if len(scan.samples) > 1:
+            lines.append(
+                f"      {verdict}. It crosses samples ({', '.join(scan.samples)}): fit the runs "
+                f"of each sample that form a measurement, or say in the summary why not."
+            )
+        elif calibrators and scan.axis == "temperature":
             start = calibrators[0]
             lines.append(
                 f"      {verdict}. Alpha was measured on {range_text(calibrators)}, and that "

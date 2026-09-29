@@ -184,3 +184,32 @@ def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> Non
         "short scans of 2-3 runs, not fitted: runs 21-22 — fit them where they bear on the "
         "question."
     )
+
+
+def test_a_run_fitted_on_its_own_counts_as_fitted(
+    workflow_folder: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    folder = str(workflow_folder)
+    cli.main(["survey", folder])
+    cli.main(["reduce", folder, "--runs", ",".join(str(run) for run in ZF_RUNS)])
+    cli.main(
+        [
+            "recipe",
+            folder,
+            "--expression",
+            "Exponential + Constant",
+            "--name",
+            "relax",
+            "--run",
+            str(SCAN_RUNS[0]),
+        ]
+    )
+    for run in ZF_RUNS:
+        cli.main(["fit", folder, "--run", str(run), "--recipe", "relax"])
+    draft = tmp_path / "summary.md"
+    draft.write_text("A draft.\n", encoding="utf-8")
+    capsys.readouterr()
+
+    cli.main(["audit", str(draft), "--json"])
+    assert json.loads(capsys.readouterr().out)["unfitted_scans"] == []

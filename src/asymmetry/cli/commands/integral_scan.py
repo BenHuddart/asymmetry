@@ -267,9 +267,11 @@ def _render(result: dict, settings, free_offsets: list[str]) -> str:
                 name,
                 format_number(value, 6),
                 (
-                    format_number(fit["uncertainties"][name], 6)
-                    if fit["uncertainties"].get(name)
-                    else "fixed"
+                    "fixed"
+                    if name in fit["fixed"]
+                    else format_number(fit["uncertainties"][name], 6)
+                    if fit["success"]
+                    else "-"
                 )
                 + (" (at bound)" if name in fit["params_at_bound"] else ""),
             ]

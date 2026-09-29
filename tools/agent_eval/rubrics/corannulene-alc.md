@@ -61,15 +61,15 @@ LF from the coil readbacks (`LF+`).
 - [ ] Says plainly what was not fitted and why: the background across a whole
       ALC scan (a rise plus a step near 20 kG) is not a polynomial, so there is
       no whole-scan fit; no radical ALC or hyperfine model is available, so
-      there are no muon/proton hyperfine couplings or site assignments; and
-      with only two ALC temperatures, no activation law can be fitted to the
-      line positions or widths.
+      there are no muon/proton hyperfine couplings or site assignments.
 - [ ] Contains no resonance field, width, hyperfine coupling, temperature,
       activation energy or run number that was not produced by a tool call in
       this session. The paper's 40 K/410 K and its couplings are background.
 
 ## Should
 
+- [ ] Says that two ALC temperatures show a change but support no
+      activation law for the line positions or widths.
 - [ ] Flags that the cold-scan line is asymmetric (a powder-like shape), so a
       single Lorentzian leaves χ²ᵣ well above 1 and the width depends on the
       window.

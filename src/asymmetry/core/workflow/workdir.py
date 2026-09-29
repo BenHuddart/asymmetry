@@ -11,6 +11,7 @@ folder, which is routinely a read-only share or archive::
     wizard/<run>.json      # screening payload: recommendation, narrative, recipe
     recipes/<name>.json    # a fit recipe (model + parameters + window)
     series/<name>.json     # per-run results, trend table, quality flags
+    fits/<recipe>-<run>.json  # one run's fit (`fit`)
     plots/*.png            # headless PNGs written by --plot
 
 so a later command can pick up a reduced spectrum without reloading and
@@ -362,6 +363,10 @@ class WorkDir:
         return self.root / "recipes"
 
     @property
+    def fits_dir(self) -> Path:
+        return self.root / "fits"
+
+    @property
     def series_dir(self) -> Path:
         return self.root / "series"
 
@@ -384,6 +389,7 @@ class WorkDir:
             self.wizard_dir,
             self.recipes_dir,
             self.series_dir,
+            self.fits_dir,
             self.scans_dir,
             self.spectra_dir,
             self.plots_dir,
@@ -673,8 +679,18 @@ class WorkDir:
         """The names of every stored series, sorted."""
         return sorted(path.stem for path in self.series_dir.glob("*.json"))
 
+    def write_fit(self, run_number: int, recipe_name: str, payload: dict[str, Any]) -> Path:
+        """Write one run's fit to ``fits/<recipe>-<run>.json`` and return its path."""
+        self.ensure()
+        path = self.fits_dir / f"{safe_name(recipe_name)}-{run_number}.json"
+        _write_json(
+            path,
+            {"schema": SCHEMA, "asymmetry_version": __version__, "run": run_number} | payload,
+        )
+        return path
+
     def fitted_runs(self) -> set[int]:
-        """Every run a stored series, simultaneous fit or integral scan holds a result for."""
+        """Every run a stored fit, series, simultaneous fit or integral scan holds a result for."""
         stored = [
             json.loads(path.read_text(encoding="utf-8")) for path in self.series_dir.glob("*.json")
         ]
@@ -686,6 +702,10 @@ class WorkDir:
         }
         for path in self.scans_dir.glob("*.json"):
             runs.update(int(run) for run in json.loads(path.read_text(encoding="utf-8"))["runs"])
+        runs.update(
+            int(json.loads(path.read_text(encoding="utf-8"))["run"])
+            for path in self.fits_dir.glob("*.json")
+        )
         return runs
 
     def alpha_calibration_runs(self) -> set[int]:

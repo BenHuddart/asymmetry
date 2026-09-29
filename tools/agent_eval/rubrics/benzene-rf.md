@@ -65,9 +65,8 @@ carry deadtime values.
 - A single-period integral (no `--period`) mixes RF-on and RF-off counts; the
   resonance is the green − red difference.
 - The two-Lorentzian model auto-seeded as dips fits the positive peaks upside
-  down (χ²ᵣ ~22, widths at the upper bound); it needs `--initial` seeds. The
-  human `integral-scan` output does not flag a parameter at a bound and does
-  not print uncertainties — they are in the scan JSON / `--json`.
+  down (χ²ᵣ ~22, widths at the upper bound); it needs `--initial` seeds; its
+  widths print `(at bound)`.
 - The worksheet says the high-field linear relation is inaccurate here, so a
   hand conversion of the peak fields into couplings is wrong physics as well
   as a number-rule failure.

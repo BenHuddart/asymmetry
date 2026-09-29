@@ -295,6 +295,7 @@ def fit_integral_scan(
         "reduced_chi_squared": float(result.reduced_chi_squared),
         "n_points": int(result.n_points),
         "params_at_bound": list(result.params_at_bound),
+        "fixed": [parameter.name for parameter in parameters if parameter.fixed],
         "baseline": baseline_payload,
         "x_min": x_min,
         "x_max": x_max,

@@ -2734,3 +2734,24 @@ def test_fit_series_skips_run_numbers_the_folder_does_not_hold(
         SCAN_RUNS[0],
         SCAN_RUNS[1],
     ]
+
+
+def test_a_small_step_in_a_width_is_named_with_where_it_happens() -> None:
+    from asymmetry.cli.commands.trend import _rate_steps
+    from asymmetry.core.workflow.series import TrendTable
+
+    # A Kubo–Toyabe width that rises by a few percent below a transition near
+    # 6 K: small against the value, large against the errors.
+    rows = [
+        {"key": str(run), "x": x, "Delta": delta, "Delta_err": 0.001, "flags": []}
+        for run, (x, delta) in enumerate(
+            [(0.3, 0.261), (2.0, 0.260), (4.0, 0.259), (6.8, 0.253), (8.0, 0.252), (10.0, 0.253)]
+        )
+    ]
+    trend = TrendTable("temperature", ["key", "x", "Delta", "Delta_err", "flags"], rows)
+
+    (note,) = _rate_steps(trend, ["Delta"])
+    assert "the step is between 4 and 6.8" in note
+    # A flat width draws no note.
+    flat = [row | {"Delta": 0.26} for row in rows]
+    assert _rate_steps(TrendTable("temperature", trend.columns, flat), ["Delta"]) == []

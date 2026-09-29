@@ -19,6 +19,7 @@ an agent would be left guessing. The result is JSON-serialisable via
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 from itertools import combinations
@@ -618,6 +619,9 @@ class ScanGroup:
     #: identity, since one sample at one temperature is often scanned several
     #: ways; empty for a temperature scan, whose identity it is not.
     notes: str = ""
+    #: The members' samples in scan order (see :func:`sample_name`), each once:
+    #: more than one says the scan crosses samples.
+    samples: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -631,6 +635,7 @@ class ScanGroup:
             "runs": list(self.runs),
             "values": list(self.values),
             "notes": self.notes,
+            "samples": list(self.samples),
         }
 
 
@@ -806,6 +811,11 @@ def build_run_row(
     )
 
 
+def sample_name(row: RunRow) -> str:
+    """The run's sample: the file's own name for it, else its title before any ``T=``/``F=``."""
+    return row.sample or re.split(r"[\s_,]+[TFB]\s*=", row.title, maxsplit=1)[0].strip()
+
+
 def _group_geometry(members: list[RunRow]) -> tuple[str | None, str]:
     """A scan's ``(geometry, note)``: the members' agreed geometry, or a tally.
 
@@ -900,6 +910,7 @@ def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
                 runs=[row.run_number for row in ordered],
                 values=axis_values,
                 notes=notes,
+                samples=tuple(name for name in dict.fromkeys(map(sample_name, ordered)) if name),
             )
         )
     longest_field_scan: dict[tuple[str, int], int] = {}
@@ -1205,6 +1216,7 @@ __all__ = [
     "resolve_row_geometry",
     "run_facility",
     "run_geometry",
+    "sample_name",
     "survey_folder",
     "temperature_departures",
 ]

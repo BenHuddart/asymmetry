@@ -972,7 +972,7 @@ the runs left out:
 
 .. code-block:: text
 
-   Scans the survey found with runs that no fit-series, fit-global or integral-scan fitted. Each scan is a measurement:
+   Scans the survey found with runs that no fit, fit-series, fit-global or integral-scan fitted. Each scan is a measurement:
      temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
          not fitted: runs 105-107. Fit it — a scan crossing a transition needs a series on each side — or say in the summary which runs cannot be fitted and why.
 
@@ -980,8 +980,8 @@ The far side of a transition that one series stopped short of is still a
 measurement, and so is a temperature scan whose runs served to measure alpha:
 for one of those ``audit`` says that the calibration does not account for the
 scan and prints the ``wizard`` and ``fit-series`` commands that fit it. Scans of
-two or three runs share one line. A single ``fit`` does not count, since it
-stores nothing.
+two or three runs share one line. A run fitted on its own with ``fit`` counts
+as fitted.
 
 ``integral-scan``
 ~~~~~~~~~~~~~~~~~
@@ -1176,10 +1176,10 @@ reduces on by default (``Groups      : 1 Forw, 2 Back, 3 Up, 4 Down, 5 Righ
 The work directory
 -------------------
 
-``survey``, ``reduce``, ``integral-scan``, ``wizard``, ``recipe``,
-``fit-global``, ``fit-series`` and ``fourier`` persist their state in ``./asymmetry-work/``;
-``fit`` and ``trend`` read it and add only what
-``--plot`` (and ``trend --csv``) asks for. ``alpha`` and ``info`` are
+``survey``, ``reduce``, ``integral-scan``, ``wizard``, ``recipe``, ``fit``
+(``fits/<recipe>-<run>.json``), ``fit-global``, ``fit-series`` and ``fourier``
+persist their state in ``./asymmetry-work/``; ``trend`` reads it and adds its
+law fits and what ``--plot`` and ``--csv`` ask for. ``alpha`` and ``info`` are
 stateless — they load a file, print, and write nothing — and ``skill`` writes
 into the agent's own skill directory instead.
 

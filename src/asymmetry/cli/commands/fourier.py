@@ -213,7 +213,8 @@ def _render(result: dict) -> str:
         else f"Run {result['run']} Fourier spectrum"
     )
     lines = [
-        f"{title} — {result['n_points']} bins, resolution {result['resolution_mhz']:.6g} MHz",
+        f"{title} — FFT, window {result['settings']['window']}, {result['n_points']} bins, "
+        f"resolution {result['resolution_mhz']:.6g} MHz",
         "",
         render_table([axis, "amplitude", "width/MHz", "SNR"], rows)
         if rows
@@ -237,6 +238,12 @@ def _render(result: dict) -> str:
     ]
     if result["plot"] is not None:
         lines.append(f"Plot written to {result['plot']}")
+    if coupling:
+        lines.append(
+            f"Next: the radical lines themselves — asymmetry fourier <folder> --run "
+            f"{result['run']} with the same window and time range — and report them with "
+            f"the transform, window and resolution beside A_mu."
+        )
     return "\n".join(lines)
 
 

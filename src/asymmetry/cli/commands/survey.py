@@ -70,6 +70,12 @@ def scan_label(scan: ScanGroup) -> str:
     unit = "K" if scan.axis == "temperature" else "G"
     instrument = f"{scan.instrument}, " if scan.instrument else ""
     notes = f', notes "{scan.notes}"' if scan.notes else ""
+    notes += (
+        f", sample{'s' if len(scan.samples) > 1 else ''} "
+        + ", ".join(f'"{sample}"' for sample in scan.samples)
+        if scan.samples
+        else ""
+    )
     # Runs are listed in axis order, which need not be run order, so the
     # endpoints are shown with an arrow rather than as a range.
     return (
@@ -78,6 +84,9 @@ def scan_label(scan: ScanGroup) -> str:
         f"(run {scan.runs[0]} -> {scan.runs[-1]})"
     )
 
+
+#: A survey of more runs than this prints its findings before the run table.
+_LONG_SURVEY_RUNS = 100
 
 #: Suffixes on the ``geom`` column naming a geometry the file's stamp did not decide.
 _GEOMETRY_MARKS = {"measured": "*", "coils": "+"}
@@ -182,15 +191,14 @@ def _render(survey, survey_path: Path) -> str:
         for row in survey.runs
     ]
     instruments = sorted({row.instrument for row in survey.runs if row.instrument})
-    lines = [
+    header = [
         f"{len(survey.runs)} run(s) in {survey.folder}"
         + (f" — {', '.join(instruments)}" if instruments else ""),
         "",
-        render_table(headers, rows) if rows else "(no run files found)",
-        "",
     ]
+    table = [render_table(headers, rows) if rows else "(no run files found)", ""]
     if rows:
-        lines.append(
+        table.append(
             "prec: precession measured"
             + (f" on the {'/'.join(survey.pair)} pair" if survey.pair else "")
             + " against the Larmor frequency of the recorded field "
@@ -203,12 +211,17 @@ def _render(survey, survey_path: Path) -> str:
         if any(
             row.sample_temperature_log_source == PSI_HEADER_SAMPLE_SENSOR for row in survey.runs
         ):
-            lines.append(
+            table.append(
                 "T log (PSI): header sensor 1, an unlabelled sensor inferred to be the sample's "
                 "because it tracks the sample on the runs checked; reported only when steady and "
                 "within a factor of two of the setpoint."
             )
-        lines.append("")
+        table.append("")
+    # A long run table would bury the findings under it — and past a few
+    # hundred lines, cut them off — so after it come the notes and scans;
+    # for a large folder it goes last.
+    long = len(rows) > _LONG_SURVEY_RUNS
+    lines = header if long else header + table
     if survey.other_pair is not None:
         other = survey.other_pair
         lines.append(
@@ -288,5 +301,7 @@ def _render(survey, survey_path: Path) -> str:
         lines.append("Scans: none — no two runs share a geometry and a held quantity.")
 
     lines.append("")
+    if long:
+        lines.extend(["Runs:", *table])
     lines.append(f"Survey written to {survey_path}")
     return "\n".join(lines)

@@ -349,6 +349,7 @@ def _render(
             [
                 "",
                 *([change] if change is not None else []),
+                *_rate_steps(trend, series["free_params"]),
                 *_law_hints(series["name"], trend, series["free_params"]),
             ]
         )
@@ -385,6 +386,65 @@ def _held_frequency(trend, param: str) -> float | None:
         return None
     median = statistics.median(values)
     return median if (max(values) - min(values)) < _HELD_FREQUENCY_SPREAD * abs(median) else None
+
+
+#: A width or rate whose two blocks along the scan differ by more than this
+#: many combined errors has changed there, however small the change looks.
+_STEP_SIGNIFICANCE = 5.0
+
+
+def _weighted_mean(rows, param: str) -> tuple[float, float]:
+    """The error-weighted mean of *param* over *rows*, and its error."""
+    weights = [1.0 / row[f"{param}_err"] ** 2 for row in rows]
+    mean = sum(w * row[param] for w, row in zip(weights, rows)) / sum(weights)
+    return mean, 1.0 / math.sqrt(sum(weights))
+
+
+def _rate_steps(trend, free_params: list[str]) -> list[str]:
+    """A note per width or rate that steps along the scan, with where the step is.
+
+    The step is the split of the scan into two contiguous blocks (two runs or
+    more each) whose error-weighted means differ most, in combined errors.
+    """
+    notes = []
+    for param in free_params:
+        if re.sub(r"_\d+$", "", param) not in _RATE_BASES:
+            continue
+        rows = sorted(
+            (
+                row
+                for row in trend.rows
+                if row[param] is not None
+                and row[f"{param}_err"]
+                and not {"failed", "frequency_unresolved"} & set(row["flags"])
+            ),
+            key=lambda row: row["x"],
+        )
+        splits = []
+        for k in range(2, len(rows) - 1):
+            (low, low_err), (high, high_err) = (
+                _weighted_mean(rows[:k], param),
+                _weighted_mean(rows[k:], param),
+            )
+            splits.append((abs(high - low) / math.hypot(low_err, high_err), k, low, high))
+        if not splits:
+            continue
+        significance, k, low, high = max(splits)
+        if significance <= _STEP_SIGNIFICANCE:
+            continue
+        below, above = rows[:k], rows[k:]
+        notes.append(
+            f"NOTE: {param} changes along the scan — {format_number(low, 4)} over "
+            f"{trend.order_key} {below[0]['x']:g}–"
+            f"{below[-1]['x']:g} against {format_number(high, 4)} over "
+            f"{above[0]['x']:g}–{above[-1]['x']:g} "
+            f"(weighted means, {significance:.0f}x the combined error; the step is between "
+            f"{below[-1]['x']:g} and {above[0]['x']:g}). "
+            f"Report it and where it happens: a small step in a width or rate is often the "
+            f"physics (a transition, an onset), even when the parameter you expected to "
+            f"move did not."
+        )
+    return notes
 
 
 #: A held frequency whose ends differ by more than this many combined errors

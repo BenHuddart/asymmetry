@@ -74,8 +74,9 @@ members) as the alpha candidates; the 2014 set has none of its own.
   0.2–0.4 MHz: the baseline, not lines.
 - The table prints A_μ as two rows ~0.4 MHz apart; quoting their difference,
   or 208.x + 305.x, as a number is arithmetic on printed values.
-- `--correlation` is documented only in `references/commands.md` and
-  `fourier --help`, not in the skill body; an agent that stops at the plain
-  FFT has no printed A_μ and must not supply one by hand.
+- An agent that stops at the plain FFT has no printed A_μ and must not
+  supply one by hand; and one that runs only `--correlation` on the co-add
+  has no radical-line table for it — quoting single-run lines as the
+  co-add's misattributes them.
 - The best alpha candidate (1813) belongs to the 2016 campaign; alpha barely
   matters for line positions, but its provenance must be stated.
