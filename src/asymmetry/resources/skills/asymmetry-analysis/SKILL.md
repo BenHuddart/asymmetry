@@ -125,6 +125,13 @@ by run, even if a time-domain fit of a weak line will not converge; say that
 the values are the survey's spectral lines, and use your fits where they
 succeed.
 
+**When the survey prints `PAIR:`**, no run precesses on the files' own detector
+pair but one does on another — a PSI GPS transverse field precesses the spin
+across the beam, on `Up`/`Down`. Survey again with the `--pair` it names and
+pass that `--pair` to every `alpha`, `reduce` and `integral-scan`; otherwise a
+transverse-field experiment reads as a folder of longitudinal runs with no
+signal.
+
 `scans` groups by **instrument** and the held quantity, never by geometry, so a
 physical scan stays one scan even where the measurement resolves only part of it
 — and two instruments in one folder never merge. When the members disagree the
@@ -635,8 +642,12 @@ the plotted field dependence support that interpretation.
   `--period green-red --model RFResonanceMuP --fix nu_RF=<MHz from the notes>`
   gives the muon and proton hyperfine couplings `A_mu`, `A_p`.
 - **Muonium repolarisation** (an LF scan of the integral asymmetry rising to a
-  plateau): `--model MuRepolarisation` gives the hyperfine constant `A_hf`;
-  a sum of two components describes two muoniated species.
+  plateau): `--model MuRepolarisation` gives the isotropic hyperfine constant
+  `A_hf` of a muonium-like state. A radical's curve (muon plus proton
+  couplings) is not that shape: a second `MuRepolarisation` term may improve
+  χ²ᵣ without being a second species — an `A_hf` above vacuum muonium's is
+  not a physical coupling. Report such a fit as an empirical description, with
+  its χ²ᵣ, and say the radical repolarisation model is not available.
 
 `integral-scan` takes the same `--pair`, `--background`, `--deadtime` and
 `--period` as `reduce`.
@@ -653,6 +664,13 @@ leave it qualitative.
 ```bash
 asymmetry fourier <folder> --run 20721 --window none --fmax 5 --plot
 ```
+
+**Radicals in a high transverse field** precess at two frequencies either side
+of the diamagnetic line, whose sum is the muon hyperfine coupling A_μ:
+co-add repeated runs at the same field and temperature first
+(`reduce --runs … --coadd`, in its own `--workdir`), transform the sum, and
+run `fourier --run <first run> --correlation`, which prints A_μ directly as the
+correlation spectrum's peak — never add the two frequencies by hand.
 
 `fourier` writes `spectra/<name>.npz`, a JSON provenance file and, with
 `--plot`, a spectrum PNG. Its table reports detected frequency, amplitude,

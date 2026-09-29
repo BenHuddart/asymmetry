@@ -38,8 +38,7 @@ alone, without needing to see the agent's tool calls or the raw data.
   `photo-musr-silicon.md`, `cds-fourier.md`): must pass when adding or changing
   the period-selection, integral-scan, Fourier or coupled-group workflows.
   These cases were chosen specifically because an earlier CLI could not carry
-  them out. They grade a representative new workflow; where batching is still
-  absent, the rubric requires the agent to state that boundary.
+  them out. They grade a representative new workflow.
 
 ## How to tick a rubric
 

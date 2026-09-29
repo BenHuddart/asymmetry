@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,7 @@ from asymmetry.core.fitting.fit_wizard import (
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.io.nexus import active_series_mean
+from asymmetry.core.transform.grouping import group_names
 from asymmetry.core.workflow.reduction import (
     ReductionSettings,
     estimate_alpha_for_run,
@@ -633,6 +635,69 @@ class ScanGroup:
 
 
 @dataclass(frozen=True)
+class PrecessingPair:
+    """Another detector pair of *run* that precesses where the file's own pair does not."""
+
+    run_number: int
+    forward: str
+    backward: str
+    precession: PrecessionEvidence
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict."""
+        return {
+            "run_number": self.run_number,
+            "pair": [self.forward, self.backward],
+            "precession": self.precession.to_dict(),
+        }
+
+
+#: Detector names that face each other, as instruments label their groups
+#: (PSI truncates to four letters: ``Forw``, ``Righ``).
+OPPOSITE_GROUP_NAMES: tuple[tuple[str, str], ...] = (
+    ("up", "down"),
+    ("left", "right"),
+    ("forward", "backward"),
+    ("top", "bottom"),
+)
+
+
+def _facing(first: str, second: str) -> bool:
+    """Whether groups named *first* and *second* face each other across the sample."""
+    a, b = first.lower(), second.lower()
+    return any(
+        (one.startswith(a) and other.startswith(b)) or (one.startswith(b) and other.startswith(a))
+        for one, other in OPPOSITE_GROUP_NAMES
+    )
+
+
+def precessing_pair(run: Run, run_number: int, field: float) -> PrecessingPair | None:
+    """The pair of *run*'s groups, other than its own, across which the field precesses the muon.
+
+    A PSI GPS run in a transverse field precesses on the pair across the field
+    (``Up``/``Down``), not along the beam, so the file's default pair shows
+    nothing: the pair, not the physics, is what is missing. Every pair of
+    detectors not parallel to the spin shows the line, so a pair whose names
+    face each other is preferred, then the strongest line.
+    """
+    names = group_names(run)
+    own = {int(run.grouping["forward_group"]), int(run.grouping["backward_group"])}
+    found = []
+    for forward, backward in combinations(names, 2):
+        if {forward, backward} == own:
+            continue
+        pair = (names[forward], names[backward])
+        evidence = precession_evidence(reduce_run(run, ReductionSettings(pair=pair)), field)
+        if evidence.state == "larmor":
+            found.append(PrecessingPair(run_number, *pair, evidence))
+    return max(
+        found,
+        key=lambda entry: (_facing(entry.forward, entry.backward), entry.precession.snr),
+        default=None,
+    )
+
+
+@dataclass(frozen=True)
 class FolderSurvey:
     """Everything :func:`survey_folder` found in one directory."""
 
@@ -654,6 +719,9 @@ class FolderSurvey:
     #: Temperature scans left out of ``scans`` as cross-sections of a grid of
     #: longer field scans.
     cross_sections: int
+    #: When no run precesses on the files' own pair, the pair that does on the
+    #: first run in a field showing no line; ``None`` otherwise.
+    other_pair: PrecessingPair | None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -668,6 +736,7 @@ class FolderSurvey:
             "alpha_steps": [step.to_dict() for step in self.alpha_steps],
             "temperature_departures": list(self.temperature_departures),
             "scans": [scan.to_dict() for scan in self.scans],
+            "other_pair": None if self.other_pair is None else self.other_pair.to_dict(),
         }
 
     def row(self, run_number: int) -> RunRow:
@@ -1064,6 +1133,7 @@ def survey_folder(
     rows: list[RunRow] = []
     metadatas: list[dict[str, Any] | None] = []
     alphas: dict[str, float] = {}
+    silent: tuple[Run, int, float] | None = None
     for prefix, run_number, path in found.entries:
         result = load(str(path))
         # A multi-period file loads as a list; the survey describes its first
@@ -1081,12 +1151,18 @@ def survey_folder(
             )
         )
         metadatas.append(dataset.run.metadata)
+        if silent is None and precession.state == "none" and dataset.field:
+            silent = (dataset.run, run_number, float(dataset.field))
         if calibration_verdict(dataset.run.metadata, dataset.field, precession)[0] is not None:
             alphas[path.name] = estimate_alpha_for_run(dataset.run, settings).alpha
 
     candidates, best_run = _calibration_candidates(rows, metadatas, alphas)
 
     scans, cross_sections = _scan_groups(rows)
+    precessing = any(row.precession.state == "larmor" for row in rows)
+    other_pair = (
+        precessing_pair(*silent) if pair is None and not precessing and silent is not None else None
+    )
     return FolderSurvey(
         folder=str(folder),
         runs=rows,
@@ -1098,18 +1174,21 @@ def survey_folder(
         truncated=found.truncated,
         pair=pair,
         cross_sections=cross_sections,
+        other_pair=other_pair,
     )
 
 
 __all__ = [
     "ALPHA_STEP_TOLERANCE",
     "LARMOR_FREQUENCY_TOLERANCE",
+    "OPPOSITE_GROUP_NAMES",
     "PRECESSION_SNR_FLOOR",
     "PRECESSION_STATES",
     "ROW_GEOMETRY_SOURCES",
     "AlphaStep",
     "CalibrationCandidate",
     "FolderSurvey",
+    "PrecessingPair",
     "PrecessionEvidence",
     "RunRow",
     "ScanGroup",
@@ -1121,6 +1200,7 @@ __all__ = [
     "coil_geometry",
     "departs",
     "has_file_deadtime",
+    "precessing_pair",
     "precession_evidence",
     "resolve_row_geometry",
     "run_facility",

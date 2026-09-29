@@ -688,8 +688,10 @@ def test_reduce_selects_and_records_a_multi_period_run(
     )
 
 
-def _two_identical_periods(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make every loaded run a two-period run whose red and green are the same counts."""
+def _two_identical_periods(
+    monkeypatch: pytest.MonkeyPatch, single_period_run: int | None = None
+) -> None:
+    """Make every loaded run (bar *single_period_run*) a two-period run with red equal to green."""
     from asymmetry.core.data.dataset import Histogram
     from asymmetry.core.io import load as real_load
 
@@ -704,6 +706,8 @@ def _two_identical_periods(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def _load_two_periods(path):
         dataset = real_load(path)
+        if dataset.run_number == single_period_run:
+            return dataset
         dataset.run.grouping["period_histograms"] = [
             [_clone(histogram) for histogram in dataset.run.histograms] for _period in range(2)
         ]
@@ -737,6 +741,32 @@ def test_reduce_green_red_is_the_difference_of_the_two_periods(
     data = _json_output(capsys)
     assert data["settings"]["period"] == "green_minus_red"
     assert data["entries"][0]["a0_percent"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_a_single_period_calibration_run_calibrates_a_period_reduction(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # HiFi calibration runs are single-period beside a red/green scan; the
+    # detector balance they measure holds in every period.
+    _two_identical_periods(monkeypatch, single_period_run=CALIBRATION_RUN)
+    cli.main(["alpha", str(workflow_folder), "--run", str(CALIBRATION_RUN), "--json"])
+    alpha = _json_output(capsys)["alpha"]["alpha"]
+    cli.main(
+        [
+            "reduce",
+            str(workflow_folder),
+            "--runs",
+            str(SCAN_RUNS[0]),
+            "--period",
+            "red",
+            "--alpha-from",
+            str(CALIBRATION_RUN),
+            "--json",
+            "--workdir",
+            str(tmp_path / "wd"),
+        ]
+    )
+    assert _json_output(capsys)["settings"]["alpha"] == pytest.approx(alpha)
 
 
 def test_integral_scan_green_red_needs_two_periods(
@@ -812,6 +842,9 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     out = capsys.readouterr().out
     assert "period field offset (red - green): -44.00 G, mean of 2 run(s)" in out
     assert "--fix dB=44.00" in out
+    # Each fitted parameter is printed with its error; a held one says so.
+    bwid = next(line.split() for line in out.splitlines() if line.startswith("Bwid "))
+    assert bwid[1:] == ["1.000000", "fixed"]
 
     logs = iter([(9000.0, 43.0), (10000.0, 45.0)])
     cli.main([*base, "--json"])
@@ -2479,6 +2512,8 @@ def test_trend_names_the_law_its_axis_and_parameters_call_for(
         ([15.2, 11.0, 2.8], "OrderParameter --param frequency"),
         # One held at the applied field's Larmor frequency is not.
         ([0.285, 0.280, 0.273], "frequency holds at 0.2800 MHz"),
+        # A held line that still moves by many errors is a shift to report.
+        ([5.3735, 5.385, 5.3977], "frequency moves from 5.37350 to 5.39770 MHz"),
     ],
 )
 def test_a_frequency_held_along_the_scan_is_not_called_an_order_parameter(
@@ -2488,7 +2523,14 @@ def test_a_frequency_held_along_the_scan_is_not_called_an_order_parameter(
     from asymmetry.core.workflow.series import TrendTable
 
     rows = [
-        {"run": run, "x": 50.0 * run, "frequency": value, "sigma": 0.3, "flags": []}
+        {
+            "run": run,
+            "x": 50.0 * run,
+            "frequency": value,
+            "frequency_err": 0.001 if value > 1.0 else 0.01,
+            "sigma": 0.3,
+            "flags": [],
+        }
         for run, value in enumerate(frequencies, start=1)
     ]
     trend = TrendTable("temperature", ["run", "x", "frequency", "sigma", "flags"], rows)

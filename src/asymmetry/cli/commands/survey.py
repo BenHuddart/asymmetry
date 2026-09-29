@@ -209,6 +209,16 @@ def _render(survey, survey_path: Path) -> str:
                 "within a factor of two of the setpoint."
             )
         lines.append("")
+    if survey.other_pair is not None:
+        other = survey.other_pair
+        lines.append(
+            f"PAIR: no run precesses on the file's own detector pair, but run "
+            f"{other.run_number} does on {other.forward}/{other.backward} "
+            f"({other.precession.describe()}), the pair across the field. Survey again with "
+            f"--pair {other.forward}/{other.backward}, and pass the same --pair to alpha, "
+            f"reduce and integral-scan."
+        )
+        lines.append("")
     if clashes:
         shared = sorted(
             {instrument_name(row.prefix) for row in survey.runs if row.run_number in clashes}

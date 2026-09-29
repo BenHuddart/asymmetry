@@ -136,6 +136,7 @@ def reduction_settings(
     spectra it will be applied to.
     """
     from asymmetry.core.io import load
+    from asymmetry.core.io.periods import period_count
     from asymmetry.core.workflow.reduction import (
         ALPHA_ESTIMATED_PREFIX,
         GREEN_MINUS_RED,
@@ -161,10 +162,13 @@ def reduction_settings(
         )
         if alpha_from is None:
             return settings
-        calibration = reduction_source(
-            load(str(resolve_run(selection, alpha_from))), settings.period
-        )
-        estimate = estimate_alpha_for_run(calibration.run, settings)
+        loaded = load(str(resolve_run(selection, alpha_from)))
+        # Alpha is a detector balance, the same in every period, so a calibration
+        # run recorded in one period calibrates each period of a two-period scan.
+        periods = len(loaded) if isinstance(loaded, list) else period_count(loaded)
+        calibration_settings = settings if periods > 1 else replace(settings, period=None)
+        calibration = reduction_source(loaded, calibration_settings.period)
+        estimate = estimate_alpha_for_run(calibration.run, calibration_settings)
     except (TypeError, ValueError) as exc:
         # ReductionSettings owns the vocabulary the CLI accepts; a value it
         # rejects is the user's, so it exits 1 with a message, not 2.

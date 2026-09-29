@@ -550,6 +550,10 @@ def test_the_series_weighs_a_gaussian_against_an_exponential_envelope_run_by_run
     by_field = envelope_change(replace(outcome.trend, order_key="field"))
     assert "motional narrowing" not in by_field
     assert "A change of shape along field is a result" in by_field
+    # Exponential when cold is the other way round: a skewed distribution, not narrowing.
+    reversed_rows = [row | {"x": 400.0 - row["x"]} for row in outcome.trend.rows]
+    reversed_note = envelope_change(replace(outcome.trend, rows=reversed_rows))
+    assert "is not motional narrowing" in reversed_note
 
 
 def test_a_model_with_two_envelopes_is_not_weighed() -> None:

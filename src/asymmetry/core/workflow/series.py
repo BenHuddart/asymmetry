@@ -239,17 +239,29 @@ def envelope_change(trend: TrendTable) -> str | None:
         f"{shape} on {', '.join(row['key'] for row in rows)} ({trend.order_key} {_span(rows)})"
         for shape, rows in blocks
     )
-    return (
-        f"NOTE: the relaxation shape changes along this scan — {described} (the envelope "
-        f"column; runs marked 'either' fit both alike). "
-        + (
+    temperature_axis = trend.order_key in ("temperature", "sample_temperature_logged")
+    coldest = min(decided, key=lambda row: row["x"])["envelope"]
+    if temperature_axis and coldest == "Gaussian":
+        meaning = (
             "A Gaussian (a static spread of fields) turning exponential on warming, as the "
             "fluctuations outrun it, is motional narrowing: report the shape against "
             f"{trend.order_key}, not only the rate."
-            if trend.order_key in ("temperature", "sample_temperature_logged")
-            else f"A change of shape along {trend.order_key} is a result: report it with the "
+        )
+    elif temperature_axis:
+        meaning = (
+            "An exponential on the cold side is not motional narrowing (that runs the other "
+            "way): a broad, skewed field distribution — a vortex lattice beside a narrow "
+            "background line, or dilute moments — fits an exponential better. Report the "
+            f"shape against {trend.order_key} with the runs on each side."
+        )
+    else:
+        meaning = (
+            f"A change of shape along {trend.order_key} is a result: report it with the "
             "runs on each side, not only the rate."
         )
+    return (
+        f"NOTE: the relaxation shape changes along this scan — {described} (the envelope "
+        f"column; runs marked 'either' fit both alike). {meaning}"
     )
 
 

@@ -7,6 +7,7 @@ from each of several series, against their temperature or supplied values.
 from __future__ import annotations
 
 import argparse
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -386,6 +387,32 @@ def _held_frequency(trend, param: str) -> float | None:
     return median if (max(values) - min(values)) < _HELD_FREQUENCY_SPREAD * abs(median) else None
 
 
+#: A held frequency whose ends differ by more than this many combined errors
+#: has moved: a shift worth reporting, not scatter.
+_SHIFT_SIGNIFICANCE = 5.0
+
+
+def _frequency_shift(trend, param: str) -> tuple[float, float] | None:
+    """The coldest and warmest ``(value, value)`` of a held frequency that still moved."""
+    rows = sorted(
+        (
+            row
+            for row in trend.rows
+            if row[param] is not None
+            and row[f"{param}_err"] is not None
+            and not {"failed", "frequency_unresolved"} & set(row["flags"])
+        ),
+        key=lambda row: row["x"],
+    )
+    if len(rows) < 2:
+        return None
+    first, last = rows[0], rows[-1]
+    error = math.hypot(first[f"{param}_err"], last[f"{param}_err"])
+    if abs(last[param] - first[param]) <= _SHIFT_SIGNIFICANCE * error:
+        return None
+    return first[param], last[param]
+
+
 def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
     """Which trend law this series' axis and parameters call for (Step 6a).
 
@@ -424,6 +451,14 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
                 f"OrderParameter --param {frequencies[0]} (fit below the transition)."
             )
         else:
+            shift = _frequency_shift(trend, frequencies[0])
+            if shift is not None:
+                hints.append(
+                    f"{frequencies[0]} moves from {format_number(shift[0], 5)} to "
+                    f"{format_number(shift[1], 5)} MHz, many times its error, while staying "
+                    f"near one field: a shift of the line (a Knight shift, or a "
+                    f"superconductor's diamagnetic shift below Tc). Report it."
+                )
             hints.append(
                 f"{frequencies[0]} holds at {format_number(held, 4)} MHz along the scan: the "
                 f"line follows a fixed field, not an order parameter. The physics is in the "

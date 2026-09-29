@@ -50,6 +50,14 @@ CASES: dict[str, str] = {
     "ionic-motion-llz": "Nuclear magnetism and ionic motion/Ionic motion in a solid electrolyte/Data",
     "photo-musr-silicon": "Semiconductors/Photo-muSR in silicon/Data",
     "cds-fourier": "Semiconductors/Shallow donor state in cadmium sulphide/Data",
+    "lifeas-psi": "Superconductivity/LiFeAs/data",
+    "trsb-re6zr": "Superconductivity/TRSB/data",
+    "basics": "Basics/data",
+    "corannulene-alc": "Chemistry/Molecular dynamics of corannulene/data",
+    "benzene-high-tf": "Chemistry/Muon spectroscopy of benzene/data/High TF rotation",
+    "benzene-rf": "Chemistry/Muon spectroscopy of benzene/data/RF resonance",
+    "benzene-repolarisation": "Chemistry/Muon spectroscopy of benzene/data/Repolarisation",
+    "benzene-alc": "Chemistry/Muon spectroscopy of benzene/data/ALC resonance",
 }
 
 #: Named waves: the trend-fit cases the 2026-09-23/24 loop iterated on, the
@@ -58,6 +66,18 @@ SETS: dict[str, tuple[str, ...]] = {
     "trend-fit": ("plateau-redfield", "sn-critical-field", "euo-psi", "maleic-mu-kinetics"),
     "tier-a": ("ferromagnetic-nickel", "fmuf-ptfe", "spin-glass-ymnal", "high-tc-cuprate"),
     "hold-out": ("copper-diffusion", "molecular-antiferromagnet"),
+    "workflow": ("alc-tcnq", "ionic-motion-llz", "photo-musr-silicon", "cds-fourier"),
+    "tier-b": ("spin-peierls", "afm-high-tf-mdu"),
+    "corpus-2026": (
+        "lifeas-psi",
+        "trsb-re6zr",
+        "basics",
+        "corannulene-alc",
+        "benzene-high-tf",
+        "benzene-rf",
+        "benzene-repolarisation",
+        "benzene-alc",
+    ),
 }
 
 

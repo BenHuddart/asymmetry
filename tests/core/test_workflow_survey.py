@@ -781,3 +781,40 @@ def test_departs_needs_both_an_absolute_and_a_relative_offset() -> None:
     assert not departs(300.0, 302.0)
     assert not departs(None, 5.0)
     assert not departs(5.0, None)
+
+
+def test_a_transverse_field_across_another_pair_names_that_pair() -> None:
+    import numpy as np
+
+    from asymmetry.core.simulate import InstrumentTemplate, simulate_run_from_group_signals
+    from asymmetry.core.workflow.survey import precessing_pair
+
+    # A GPS-like run: the field precesses the spin in the plane of Up and Down,
+    # so the file's own Forw/Back pair sees no line at all.
+    template = InstrumentTemplate(
+        key="gps_like",
+        label="GPS-like",
+        description="",
+        n_detectors=4,
+        n_bins=8000,
+        bin_width_us=0.001,
+        t0_bin=500,
+        forward_detectors=(1,),
+        backward_detectors=(2,),
+        groups={1: (1,), 2: (2,), 3: (3,), 4: (4,)},
+        group_names={1: "Forw", 2: "Back", 3: "Up", 4: "Down"},
+        default_forward_group=1,
+        default_backward_group=2,
+    ).build()
+
+    def line(sign: float):
+        return lambda t: sign * 0.2 * np.cos(2 * np.pi * 1.355 * np.asarray(t))
+
+    run = simulate_run_from_group_signals(
+        template, {3: line(1.0), 4: line(-1.0)}, total_events=40e6, seed=2
+    )
+
+    found = precessing_pair(run, 7, 100.0)
+
+    assert (found.forward, found.backward) == ("Up", "Down")
+    assert found.precession.state == "larmor"

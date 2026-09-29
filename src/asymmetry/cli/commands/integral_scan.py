@@ -261,14 +261,25 @@ def _render(result: dict, settings, free_offsets: list[str]) -> str:
         # A failed fit is reported, not raised: the scan is worth keeping, and
         # where the parameters ended up says which component ran away.
         verdict = "" if fit["success"] else f" — FAILED ({fit['message'] or 'no message'})"
+        # A held parameter has no error; one pinned on a bound is not determined.
+        rows = [
+            [
+                name,
+                format_number(value, 6),
+                (
+                    format_number(fit["uncertainties"][name], 6)
+                    if fit["uncertainties"].get(name)
+                    else "fixed"
+                )
+                + (" (at bound)" if name in fit["params_at_bound"] else ""),
+            ]
+            for name, value in fit["parameters"].items()
+        ]
         lines.extend(
             [
                 f"fit: {fit['expression']}, chi2_red "
                 f"{format_number(fit['reduced_chi_squared'], 3)}{verdict}",
-                "parameters: "
-                + ", ".join(
-                    f"{name}={format_number(value, 6)}" for name, value in fit["parameters"].items()
-                ),
+                render_table(["parameter", "value", "error"], rows),
             ]
         )
     if offset is not None and free_offsets:
