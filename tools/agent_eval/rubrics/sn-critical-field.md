@@ -55,7 +55,8 @@ temperature; they differ by 0.4–0.7 K on the good runs.
 - The sample amplitude is a fraction of a percent against a ~20 %
   background; many fits carry `large_rel_err` or `bound_pinned`. A trend fit
   resting on those without comment overstates the result.
-- The survey marks the 40 G runs `prec none` because the applied-field
-  Larmor line is weak; the sample line sits elsewhere.
+- The applied-field Larmor line is weak; the survey reports the sample
+  line as `other@<MHz>` on the colder 40 G runs and `none` at the warm
+  end of the scan, where the line has gone.
 - Phase and flux questions need detector-resolved analysis beyond one
   forward/backward pair; declining them is acceptable if said plainly.

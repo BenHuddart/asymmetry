@@ -1577,6 +1577,96 @@ To pick up: rerun `run_wave.py --set trend-fit --set hold-out` twice on the
 current tooling before changing anything, so the corrections above have a
 baseline; then the CLI gaps in the order listed.
 
+### Sonnet 5.5 — 2026-09-29, on `feat/skill-sonnet-5-5`
+
+Host Claude Code 2.1.284, model `claude-sonnet-5-5` (the CLI must be recent
+enough to know it; 2.1.258 refused the id and its `sonnet` alias was still
+`claude-sonnet-5`). Runs cost $0.4–2.3 and 1–10 min, against $2–5 and
+15–20 min for `claude-sonnet-5`. From the second wave on, waves ran from a
+detached worktree snapshot of the branch (`PYTHONPATH=<snapshot>/src`) so code
+could change while a wave ran. Scoring was delegated per wave with
+`scoring_brief.md`; verdicts only are recorded here.
+
+**The pass-17a failures, first.**
+
+| Case | Sonnet 5 record | 5.5 baseline | After the fixes |
+|---|---|---|---|
+| euo-psi | 5/10 | 1/2 | 2/2 |
+| sn-critical-field | 3/10 | 2/2 (no H_c law) | 2/2, OrderParameter T_c 3.4848 ± 0.0263 K |
+| copper-diffusion | 0/3 | 0/2 | 0/2, then 2/2 |
+| maleic-mu-kinetics | 9/11 | — | 1/2, then 2/2 |
+| Tier A + plateau + molecular AFM | — | — | 6/6 |
+| workflow gate (TCNQ, Al-LLZ, silicon, CdS) + spin-Peierls | — | 5/5 | — |
+
+What moved them: a #336 regression fixed (series fits restarted every
+unpinned `frequency` at the applied field's Larmor value, losing the Sn
+critical-field and muonium lines); `audit` listing survey scans no fit covered
+(copper's TF scans "used only for alpha" were then fitted and the envelope
+change reported); the eval runner giving the agent `Edit`; skill text for
+#334–#336 features, neat = 1 / blank = 0 concentrations, one command per shell
+call.
+
+**The rest of the corpus.** Rubrics written this session from the worksheets
+and papers, each checked against what the CLI prints: `lifeas-psi`,
+`trsb-re6zr`, `basics`, `corannulene-alc`, `benzene-high-tf`, `benzene-rf`,
+`benzene-repolarisation`, `benzene-alc` (sets `corpus-2026`, plus `workflow`
+and `tier-b` in `run_wave.py`).
+
+Waves 1–6 iterated on the failures; a final wave then ran all 20 other cases
+once on one snapshot (`final-a`), and the last cases again on the finished
+tooling.
+
+| Case | Record on 5.5 | Final state |
+|---|---|---|
+| 20 cases: Tier A (4), trend-fit (4), hold-outs (2), workflow gate (4), spin-Peierls, high-TF AFM, TRSB, LiFeAs, benzene RF, benzene repolarisation | each passed on every run of the final waves | 20/20 in `final-a`; TCNQ, copper, cuprate and nickel 4/4 again after the quieter-notes change |
+| trsb-re6zr | fail, fail, then 2/2 | pass |
+| afm-high-tf-mdu | 3 fails, then 3 of the last 4 | pass |
+| basics | fail ×2, then 5 of the last 6 | pass (judgement calls on the bad-sensor Must) |
+| benzene-high-tf | fail ×3, then 5 of the last 6 | pass |
+| benzene-alc | fail ×2, then 6 of the last 8 (2/2 on the latest tooling) | pass |
+| corannulene-alc | 2 of 10 | the one case that does not pass reliably: see below |
+
+Corannulene's physics lands in every recent run (windowed fits of both
+temperatures, motional averaging, no model for couplings); what fails is the
+comparison between the two scans' lines — once left without a direction, once
+stated backwards (fixed on the last pair by a skill line: quote both centres
+and widths) — and Must 8, the reason no whole-scan fit is given: the
+background, a rise with a step near 20 kG, which no polynomial follows. On the
+last pair the CLI's dip search still named the cold scan's rise–plateau–rise
+background (19.6–29.8 kG) as another dip, and that note displaced the
+background sentence; the background sentence now prints on every poor fit. A
+test that separates a dip on a steep slope (benzene solid's 21.47 kG line,
+lower on one side than its own bottom) from a rise–plateau–rise step was tried
+and reverted: it rejected the real line. Open: a background model for a step
+(the GUI's `FermiStep` did not fit it either), or a dip test on residuals from
+a smoothed background.
+
+CLI changes that answered them (the output lines agents act on):
+`survey` names the detector pair that precesses (`PAIR:`), each scan's
+samples, repeat sets to co-add (`REPEATS:`), two-period scans, and prints a
+large folder's findings before its run table; runs of different bin widths
+never share a scan. `trend` brackets a width or rate step by where it leaves
+each end's level, names a phase linear in field as a t0 offset and an
+amplitude falling with frequency as the frequency response, names a held
+line's shift, and offers a two-line recipe for a held high-field line.
+`fourier` names its window and notes peaks within two resolution elements.
+`fit-series` starts a Larmor-following line at each run's field (keyed on the
+field the recipe was seeded at). `integral-scan` prints errors, at-bound marks
+and a failed fit's reasons; `fit` stores its result so `audit` counts it;
+`--alpha-from` a single-period run serves a period scan. Later waves added:
+`integral-scan` naming the window of a dip a fit left out (checked by fitting a
+line there: centre and flanks inside, depth five errors below the background),
+a note when a windowed line runs off its range, the background as the cause of
+a poor long-range fit, no-model and `--json` notes; `fourier` naming lines
+outside its band and A_μ = ν₁ + ν₂; `trend` readings printed beside a law and
+leaving out unreliable rows; a mistyped data folder named as missing.
+
+Skill text alone again rarely changed behaviour — the high-TF two-line
+paragraph was read and ignored until `fourier` and `trend` printed the pair
+and the recipe. Open maintainer question: `spurious_reseeded` flags every
+reseeded run even when the reseed rescued it (GUI rule since #167); one
+copper run discarded a real 1 K ν upturn because of it.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

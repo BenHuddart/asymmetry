@@ -17,10 +17,11 @@ Two instrument eras/prefixes in one folder, no single calibration run
 called out by name (the low-field TF runs serve as the alpha/lineshape
 reference):
 
-- EMU (2010), 20882-20917 (36 runs): TF 20-100 G cooling series
-  280-100 K (20882-20885), ZF at 40 K and 1 K (20886-20887), an LF
-  field sweep at fixed 40 K from 40-150 G (20888-20900, the QLCR set),
-  then a ZF temperature series 60-200 K (20901-20917).
+- EMU (2010), 20882-20917 (36 runs): ZF at 280 K (20882), a TF 100 G
+  cooling series 280-100 K (20883-20885), ZF at 40 K and 1 K
+  (20886-20887), an LF field sweep at fixed 40 K from 40-120 G
+  (20888-20900, the QLCR set), then a ZF temperature series 60-200 K
+  (20901-20917).
 - ARGUS (2024), 76924-76961 (38 runs): TF 20 G decoupling series
   300-50 K (76924-76934), ZF runs at 40 K/4 K/100-140 K, and a second
   LF field sweep at fixed 40-44 K from 10-150 G (76941-76955, the QLCR
@@ -36,8 +37,9 @@ reference):
       Gaussian-like) as temperature decreases, from at least one of
       the two TF series.
 - [ ] Reports the ZF spectra as showing Kubo-Toyabe-like behaviour and
-      notes any qualitative change between the lowest-temperature run
-      and the next-lowest.
+      states whether the relaxation (e.g. the fluctuation rate ν) at the
+      lowest-temperature run differs from the next-lowest — the low-T
+      upturn — whether or not it interprets it.
 - [ ] Identifies the fixed-temperature, swept-field runs as the LF/QLCR
       data, distinct from the temperature scans.
 - [ ] Contains no hop rate, activation energy, or rate number not
@@ -47,9 +49,9 @@ reference):
 
 - [ ] Compares a hop rate or dynamics trend derived from TF against one
       derived from ZF, as the worksheet asks.
-- [ ] Notes that copper's own field/temperature labels in EMU and
-      ARGUS logs disagree by campaign (different step sizes and
-      ranges), rather than merging both eras' runs into one T-axis.
+- [ ] Keeps the EMU and ARGUS scans on separate axes and notes their
+      different fields, step sizes and ranges, rather than merging
+      both eras' runs into one T-axis.
 - [ ] Flags any run whose logged sample temperature deviates
       substantially from its nominal set-point.
 

@@ -2,10 +2,10 @@
 
 Data folder: `Nuclear magnetism and ionic motion/Ionic motion in a solid electrolyte/Data`
 
-This rubric replaces the former Tier C decline case. The CLI now has a true
-`fit-global` command for one coupled run group. It still has no one-command
-batch over all temperature triplets, so the evaluation requires a defensible
-representative group and an honest statement of that remaining boundary.
+This rubric replaces the former Tier C decline case. The CLI has a true
+`fit-global` command for one coupled run group, and `fit-global --groups`
+fits every temperature triplet in one call and trends their shared
+parameters.
 
 ## Must
 
@@ -25,9 +25,10 @@ representative group and an honest statement of that remaining boundary.
       group, a defensible first pass has `Delta` approximately 0.25–0.45 µs⁻¹
       and `nu` approximately 0.15–0.45 MHz; values outside those broad ranges
       must be called out as suspect rather than interpreted.
-- [ ] States that one coupled group is not a measured temperature trend. It
-      does not claim a fluctuation-rate-versus-temperature result unless it
-      actually repeated `fit-global` for the relevant groups.
+- [ ] Does not claim a fluctuation-rate-versus-temperature result unless
+      every group in that trend was fitted as a coupled group (with
+      `fit-global --groups`, or one `fit-global` per group); one coupled
+      group is not a trend.
 
 ## Should
 

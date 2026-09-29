@@ -194,6 +194,11 @@ def _reduced_counts(workdir, selection, entry):
     return replace(source.run, grouping=grouping)
 
 
+#: Tabulated peaks closer than this many resolution elements are a pair the
+#: transform barely separates.
+_CLOSE_PEAKS = 2
+
+
 def _render(result: dict) -> str:
     peaks = result["peak_analysis"]["peaks"]
     coupling = result["axis"] == "hyperfine_coupling"
@@ -213,7 +218,10 @@ def _render(result: dict) -> str:
         else f"Run {result['run']} Fourier spectrum"
     )
     lines = [
-        f"{title} — {result['n_points']} bins, resolution {result['resolution_mhz']:.6g} MHz",
+        f"{title} — FFT, window {result['settings']['window']}, {result['n_points']} bins, "
+        f"resolution {result['resolution_mhz']:.6g} MHz, band "
+        f"{result['frequency_min_mhz']:.6g}–{result['frequency_max_mhz']:.6g} of "
+        f"{result['full_band_mhz'][0]:.6g}–{result['full_band_mhz'][1]:.6g} MHz",
         "",
         render_table([axis, "amplitude", "width/MHz", "SNR"], rows)
         if rows
@@ -237,6 +245,39 @@ def _render(result: dict) -> str:
     ]
     if result["plot"] is not None:
         lines.append(f"Plot written to {result['plot']}")
+    if result["outside_band"]:
+        lines.append(
+            "NOTE: the transform also holds lines outside this band — "
+            + ", ".join(
+                f"{entry['frequency_mhz']:.6g} MHz (SNR {entry['snr']:.0f})"
+                for entry in result["outside_band"]
+            )
+            + ". --fmin/--fmax hid them from this table; widen the band (or drop --fmax) "
+            "before saying a line is absent."
+        )
+    resolution = result["resolution_mhz"]
+    close = sorted(peak["frequency_mhz"] for peak in peaks)
+    pairs = [
+        (low, high)
+        for low, high in zip(close, close[1:])
+        if high - low <= _CLOSE_PEAKS * resolution
+    ]
+    if pairs and not coupling:
+        lines.append(
+            "NOTE: "
+            + "; ".join(f"{low:.6g} and {high:.6g} MHz" for low, high in pairs)
+            + f" lie within {_CLOSE_PEAKS} resolution elements of each other: two lines "
+            "the FFT barely separates. Report both frequencies (a splitting, not one line), "
+            "and fit them in the time domain with two lines started there."
+        )
+    if coupling:
+        lines.append(
+            f"The correlation peak is the muon hyperfine coupling A_mu = nu_1 + nu_2, the sum "
+            f"of the radical's two precession lines. Next: those lines themselves — "
+            f"asymmetry fourier <folder> --run {result['run']} with the same window and time "
+            f"range and no --fmax (both lie below A_mu) — and report them with the "
+            f"transform, window and resolution beside A_mu."
+        )
     return "\n".join(lines)
 
 

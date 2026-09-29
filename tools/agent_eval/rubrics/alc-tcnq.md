@@ -23,8 +23,9 @@ or forcing the individual runs through time-domain decay fits.
       two-Lorentzian template.
 - [ ] Reports an observed negative resonance feature close to 3.1 kG, together
       with the fitted centre, width and uncertainty/quality information from
-      this run's command output. A centre outside 3.0–3.2 kG without an explicit
-      failed-fit warning is a fail.
+      this run's command output. A centre far outside 2.9–3.2 kG (the
+      resonance moves a few tens of gauss between the four temperature
+      blocks) without an explicit failed-fit warning is a fail.
 - [ ] Separates measured/fitted output from physical interpretation and does
       not invent hyperfine constants that the CLI did not calculate.
 

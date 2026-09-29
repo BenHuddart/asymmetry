@@ -58,6 +58,18 @@ def workdir_for(
     from asymmetry.core.workflow.workdir import WorkDir, WorkDirMismatchError
 
     workdir = WorkDir.default(root)
+    # Checked before the binding, so a mistyped path is named as one rather
+    # than reported as another folder's session.
+    if not Path(folder).is_dir():
+        bound = workdir.selection
+        raise UserError(
+            f"{folder} does not exist or is not a directory."
+            + (
+                f" This work directory holds {bound.folder}: copy that path exactly."
+                if bound is not None
+                else ""
+            )
+        )
     try:
         return workdir, workdir.bind(folder, instrument)
     except WorkDirMismatchError as exc:

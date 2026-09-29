@@ -130,6 +130,10 @@ class FitRecipe:
     #: Where this recipe came from: ``{"wizard_run": N, "template_key": "..."}``
     #: for a screened one, ``{"user": True}`` for one built from an expression.
     source: dict[str, Any] = dataclasses_field(default_factory=lambda: {"user": True})
+    #: Applied field (G) of the run the values were seeded from, stored in the
+    #: document under ``source["field"]``; ``None`` for a recipe built without a
+    #: run. A line at that field's Larmor frequency follows the field across a scan.
+    seed_field: float | None = None
     #: Parameters a *person* pinned — ``--fix``, ``--global``, or an edit to this
     #: file. A series fit re-seeds run-bound parameters (an applied field, a
     #: spectral peak) from each run's own record; one named here is never moved,
@@ -157,13 +161,20 @@ class FitRecipe:
             "t_min": None if self.t_min is None else float(self.t_min),
             "t_max": None if self.t_max is None else float(self.t_max),
             "rebin": int(self.rebin),
-            "source": dict(self.source),
+            "source": {**self.source, "field": self.seed_field},
             "pinned": list(self.pinned),
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> FitRecipe:
-        """Reconstruct a recipe from :meth:`to_dict` output."""
+        """Reconstruct a recipe from :meth:`to_dict` output.
+
+        A recipe stored before the seed field was recorded has no
+        ``source["field"]``: its seed field is unknown, as for one built
+        without a run.
+        """
+        source = dict(data["source"])
+        seed_field = source.pop("field", None)
         return cls(
             expression=str(data["expression"]),
             model_payload=dict(data["model"]),
@@ -171,8 +182,9 @@ class FitRecipe:
             t_min=None if data["t_min"] is None else float(data["t_min"]),
             t_max=None if data["t_max"] is None else float(data["t_max"]),
             rebin=int(data["rebin"]),
-            source=dict(data["source"]),
+            source=source,
             pinned=tuple(str(name) for name in data["pinned"]),
+            seed_field=None if seed_field is None else float(seed_field),
         )
 
     # -- what a fit needs ---------------------------------------------------
@@ -253,7 +265,9 @@ class FitRecipe:
     # -- construction -------------------------------------------------------
 
     @classmethod
-    def from_assessment(cls, assessment: Any, *, run_number: int) -> FitRecipe:
+    def from_assessment(
+        cls, assessment: Any, *, run_number: int, seed_field: float | None
+    ) -> FitRecipe:
         """Build a recipe from a fit-wizard :class:`CandidateAssessment`.
 
         The candidate's *fitted* values become the starting values and its
@@ -264,7 +278,8 @@ class FitRecipe:
         is measured from the single run it screened — a window around that
         run's detected line, a multiple of that run's seeded width — so
         carrying one would pin the fit of every *other* run in a scan at a
-        bound rather than letting it follow the physics.
+        bound rather than letting it follow the physics. *seed_field* is the
+        screened run's applied field (G).
         """
         model = assessment.template.model
         defaults = seed_parameters(model, SeedContext())
@@ -286,6 +301,7 @@ class FitRecipe:
                 "wizard_run": int(run_number),
                 "template_key": str(assessment.template.key),
             },
+            seed_field=seed_field,
         )
 
     @classmethod
@@ -332,6 +348,7 @@ class FitRecipe:
             t_max=t_max,
             rebin=rebin,
             source={"user": True},
+            seed_field=None if dataset is None else dataset.field,
         )
 
 

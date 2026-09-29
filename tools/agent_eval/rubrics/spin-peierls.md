@@ -16,20 +16,21 @@ it.
 26 EMU `.nxs` runs, one contiguous block 29919-29944, no dedicated
 low-field calibration run:
 
-- Reference run, 29919: TF 100 G, 300 K (worksheet's only field run).
-- Worksheet-documented ZF runs within the block, 29931-29944 (skipping
-  29935 and 29942): 130-185 K.
-- Runs 29920-29930, plus 29935 and 29942, are present on disk but have
-  no entry in the worksheet's temperature table at all.
+- TF 100 G runs, interleaved with the ZF scan: 29919 (300 K, the
+  worksheet's only field run), 29922, 29925-29930, 29935 and 29942; the
+  survey measures each precessing at the Larmor frequency and offers them
+  as alpha candidates.
+- ZF runs: 29920-29921, 29923-29924, 29931-29934, 29936-29941, 29943-29944;
+  the worksheet documents 29931-29944 (130-185 K) and nothing below.
 - The worksheet's table additionally lists runs 29945-29951 (110-127 K)
   that are not present in this Data folder.
 
 ## Must
 
-- [ ] Identifies 29919 as the TF 100 G reference/calibration run,
-      separate from the ZF runs.
-- [ ] States what was used for alpha (29919, or an explicit
-      alternative), rather than silently assuming 1.0.
+- [ ] Separates the TF 100 G runs from the ZF scan rather than fitting
+      them as one series.
+- [ ] States what was used for alpha (a TF 100 G run, named), rather
+      than silently assuming 1.0.
 - [ ] Reports on the full run range actually present (29919-29944),
       not only the subset the worksheet happens to tabulate.
 - [ ] Does not report findings for runs 29945-29951 as if they were
@@ -41,9 +42,8 @@ low-field calibration run:
 
 ## Should
 
-- [ ] Flags runs 29920-29930 (and 29935, 29942) as present but
-      undocumented by the worksheet, and reports what the survey found
-      for them rather than silently dropping them.
+- [ ] Accounts for every run in the block — the ZF runs below 130 K and
+      the interleaved TF runs — rather than silently dropping any.
 - [ ] Discusses candidate fit functions for above vs below the
       transition, without inventing fitted values.
 - [ ] Connects the observed line-shape change to the singlet-triplet /

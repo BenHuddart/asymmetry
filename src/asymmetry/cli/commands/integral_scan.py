@@ -15,7 +15,7 @@ from asymmetry.cli._output import (
 )
 from asymmetry.cli._recipes import parse_fix
 from asymmetry.cli._reduction import add_reduction_arguments, describe, reduction_settings
-from asymmetry.cli._runs import resolve_runs
+from asymmetry.cli._runs import range_text, resolve_runs
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -96,6 +96,7 @@ def _regions(text: str | None) -> list[tuple[float, float]]:
 def run(args: argparse.Namespace) -> None:
     from asymmetry.cli import plots
     from asymmetry.core.io import load
+    from asymmetry.core.io.periods import period_count
     from asymmetry.core.workflow.integral_scan import (
         build_integral_scan,
         field_scan_payload,
@@ -216,9 +217,6 @@ def run(args: argparse.Namespace) -> None:
             out_path=plot_path,
         )
 
-    if args.json:
-        emit_json(payload(**result_payload))
-        return
     offset_names = (
         []
         if model is None
@@ -229,10 +227,24 @@ def run(args: argparse.Namespace) -> None:
         ]
     )
     free_offsets = [name for name in offset_names if name not in fixed]
-    print(_render(result_payload, settings, free_offsets))
+    # Without --period a two-period run reduces as its periods summed.
+    summed = (
+        []
+        if settings.period is not None
+        else [
+            run_number
+            for (run_number, _prefix, _path), dataset in zip(targets, datasets, strict=True)
+            if period_count(dataset) == 2
+        ]
+    )
+    notes = _notes(result_payload, free_offsets, summed)
+    if args.json:
+        emit_json(payload(**result_payload, notes=notes))
+        return
+    print(_render(result_payload, settings, notes))
 
 
-def _render(result: dict, settings, free_offsets: list[str]) -> str:
+def _render(result: dict, settings, notes: list[str]) -> str:
     points = result["scan"]["points"]
     rows = [
         [
@@ -260,17 +272,45 @@ def _render(result: dict, settings, free_offsets: list[str]) -> str:
         fit = result["fit"]
         # A failed fit is reported, not raised: the scan is worth keeping, and
         # where the parameters ended up says which component ran away.
-        verdict = "" if fit["success"] else f" — FAILED ({fit['message'] or 'no message'})"
+        at_bound = (
+            f"; at a bound: {', '.join(fit['params_at_bound'])}" if fit["params_at_bound"] else ""
+        )
+        verdict = "" if fit["success"] else f" — FAILED ({fit['message']}{at_bound})"
+        # A held parameter has no error; one pinned on a bound is not determined.
+        rows = [
+            [
+                name,
+                format_number(value, 6),
+                (
+                    "fixed"
+                    if name in fit["fixed"]
+                    else format_number(fit["uncertainties"][name], 6)
+                    if fit["success"]
+                    else "-"
+                )
+                + (" (at bound)" if name in fit["params_at_bound"] else ""),
+            ]
+            for name, value in fit["parameters"].items()
+        ]
         lines.extend(
             [
                 f"fit: {fit['expression']}, chi2_red "
                 f"{format_number(fit['reduced_chi_squared'], 3)}{verdict}",
-                "parameters: "
-                + ", ".join(
-                    f"{name}={format_number(value, 6)}" for name, value in fit["parameters"].items()
-                ),
+                render_table(["parameter", "value", "error"], rows),
             ]
         )
+    lines.extend(notes)
+    lines.append(f"Scan written to {result['scan_path']}")
+    if result["plot"] is not None:
+        lines.append(f"Plot written to {result['plot']}")
+    return "\n".join(lines)
+
+
+def _notes(result: dict, free_offsets: list[str], summed: list[int]) -> list[str]:
+    """Every NOTE and Next line the scan calls for — printed, and kept in --json."""
+    fit = result["fit"]
+    offset = result["period_field_offset"]
+    lines: list[str] = []
     if offset is not None and free_offsets:
         # A differential pair's dB is the green field less the red: the offset, negated.
         fixes = " ".join(
@@ -280,10 +320,113 @@ def _render(result: dict, settings, free_offsets: list[str]) -> str:
             f"Next: the red period sat {format_number(-offset['gauss'], 2)} G below the green; "
             f"with the pair offset free the fit is degenerate, so refit with {fixes}."
         )
-    lines.append(f"Scan written to {result['scan_path']}")
-    if result["plot"] is not None:
-        lines.append(f"Plot written to {result['plot']}")
-    return "\n".join(lines)
+    if fit is not None and fit["resonance_windows"]:
+        lines.append(_failed_fit_next(fit))
+    elif fit is not None:
+        lines.extend(_poor_fit_note(fit))
+    if summed:
+        lines.append(
+            f"NOTE: {range_text(summed)} are two-period (red/green) runs, and without --period "
+            f"this scan summed both periods, blurring the red/green contrast they were taken "
+            f"for. Measure their difference: rerun with --period green-red; with a field step "
+            f"between the periods (differential ALC) fit --model LorentzianLCRPair with its dB "
+            f"held at the value that command's Next line gives (the printed red - green "
+            f"offset, negated)."
+        )
+    if fit is not None and any(
+        term.strip() in ("LorentzianLCR", "GaussianLCR") for term in fit["expression"].split("+")
+    ):
+        lines.append(
+            "NOTE: no radical ALC or hyperfine model is available: these resonance fields "
+            "are not converted into muon or proton couplings or site assignments — say so, "
+            "rather than only that none were quoted."
+        )
+    return lines
+
+
+#: A converged fit this far above its errors has left structure unfitted.
+_POOR_SCAN_FIT = 2.0
+
+
+def _poor_fit_note(fit: dict) -> list[str]:
+    """Notes on what a converged resonance fit left out or cannot vouch for."""
+    from asymmetry.core.workflow.integral_scan import DIP_FLANK_WIDTHS
+
+    lines = {name: value for name, value in fit["parameters"].items() if name.split("_")[0] == "B0"}
+    if not lines:
+        return []
+    notes = []
+    low, high = fit["x_range"]
+    # Only a chosen --xmin/--xmax window can cut a line's flank off; a whole
+    # scan narrower than its line just leaves the width unmeasured.
+    windowed = fit["x_min"] is not None or fit["x_max"] is not None
+    for name, centre in lines.items() if windowed else ():
+        width = abs(fit["parameters"][name.replace("B0", "Bwid", 1)])
+        if centre - DIP_FLANK_WIDTHS * width < low or centre + DIP_FLANK_WIDTHS * width > high:
+            notes.append(
+                f"NOTE: the line at {centre:g} (width {width:g}) runs off the fitted range "
+                f"{low:g}–{high:g}: without data rising again on both sides it may be a step "
+                f"or the background's edge, not a resonance. Widen the window and look at the "
+                f"plot before reporting it."
+            )
+    unfitted = [
+        window
+        for window in fit["next_dip_windows"]
+        if not any(window["x_min"] <= centre <= window["x_max"] for centre in lines.values())
+    ]
+    if unfitted:
+        notes.append(
+            "NOTE: the scan holds another dip this fit does not include, in "
+            + "; ".join(f"{w['x_min']:g}–{w['x_max']:g}" for w in unfitted)
+            + ": fit it on its own local background — "
+            + "; ".join(
+                f"--model 'LorentzianLCR + Linear' --xmin {w['x_min']:g} --xmax {w['x_max']:g}"
+                for w in unfitted
+            )
+            + " — and report every dip the scan shows."
+        )
+    if fit["reduced_chi_squared"] > _POOR_SCAN_FIT:
+        notes.append(
+            f"NOTE: the fit converged at chi2_red {format_number(fit['reduced_chi_squared'], 3)}: "
+            "over a long range the background may rise or step where no polynomial can "
+            "follow — a fit that cannot is not a result, and the summary should say that is "
+            "why — or the range holds more dips than the model. Look at the plot (--plot) "
+            "and fit one resonance per --xmin/--xmax window on its own local background."
+        )
+    return notes
+
+
+def _failed_fit_next(fit: dict) -> str:
+    """What to try after a failed resonance fit: the scan's own dips, and a window each."""
+    windows = fit["resonance_windows"]
+    dips = ", ".join(f"{window['parameter']} {window['centre']:g}" for window in windows)
+    # A hand-given centre outside its dip's window started on another feature.
+    moved = [
+        window
+        for window in windows
+        if window["parameter"] in fit["initial"]
+        and not window["x_min"] <= fit["initial"][window["parameter"]] <= window["x_max"]
+    ]
+    text = f"Next: the scan's own largest dips are at {dips}. "
+    if moved:
+        starts = " ".join(f"--initial {w['parameter']}={w['centre']:g}" for w in windows)
+        text += f"The fit started away from them: refit with {starts}, or "
+    else:
+        text += (
+            "The fit already started each centre there, so the usual cause is the "
+            "background: across a long scan it rises or steps where no polynomial can "
+            "follow, and the resonances cannot be fitted on it together — say so, and "
+        )
+    return (
+        text
+        + "fit one resonance per window on its own local background: "
+        + "; ".join(
+            f"--model '{window['component']} + Linear' --xmin {window['x_min']:g} "
+            f"--xmax {window['x_max']:g}"
+            for window in windows
+        )
+        + "."
+    )
 
 
 __all__ = ["add_parser", "run"]

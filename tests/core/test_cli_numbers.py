@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from asymmetry import cli
 from asymmetry.cli._numbers import unverified_numbers
-from tests.core.conftest import SCAN_RUNS
+from tests.core.conftest import SCAN_RUNS, ZF_RUNS
 
 _LOG = """$ asymmetry fit-series runs --runs 102-106
 run  temperature  chi2_red
@@ -113,3 +114,102 @@ def test_hedged_ratios_and_differences_are_always_listed() -> None:
         "the rates sit a factor of ~2 apart. B0 = 78.18 G."
     )
     assert [entry.text for entry in unverified_numbers(draft, log)] == ["2", "0.6", "2"]
+
+
+def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
+    workflow_folder: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    folder = str(workflow_folder)
+    cli.main(["survey", folder])
+    cli.main(["reduce", folder, "--runs", ",".join(str(run) for run in ZF_RUNS)])
+    cli.main(
+        [
+            "recipe",
+            folder,
+            "--expression",
+            "Exponential + Constant",
+            "--name",
+            "relax",
+            "--run",
+            str(SCAN_RUNS[0]),
+        ]
+    )
+    cold, warm = ZF_RUNS[:3], ZF_RUNS[3:]
+    series = ["--recipe", "relax", "--order", "temperature"]
+    cli.main(["fit-series", folder, "--runs", ",".join(map(str, cold)), *series, "--name", "cold"])
+    draft = tmp_path / "summary.md"
+    draft.write_text("A draft.\n", encoding="utf-8")
+    capsys.readouterr()
+
+    cli.main(["audit", str(draft), "--json"])
+    (scan,) = json.loads(capsys.readouterr().out)["unfitted_scans"]
+    assert scan["unfitted_runs"] == list(warm)
+
+    cli.main(["fit-series", folder, "--runs", ",".join(map(str, warm)), *series, "--name", "warm"])
+    capsys.readouterr()
+    cli.main(["audit", str(draft)])
+    assert "Now send its text" in capsys.readouterr().out
+
+
+def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> None:
+    from asymmetry.cli.commands.audit import _unfitted_report
+    from asymmetry.core.workflow.survey import ScanGroup
+
+    def scan(axis: str, runs: list[int]) -> ScanGroup:
+        return ScanGroup(
+            axis=axis,
+            instrument="SIM",
+            geometry="TF",
+            geometry_note="",
+            temperature=None if axis == "temperature" else 40.0,
+            field=100.0 if axis == "temperature" else None,
+            runs=runs,
+            values=[float(index) for index, _ in enumerate(runs)],
+        )
+
+    report = _unfitted_report(
+        [
+            ("data", scan("temperature", [11, 12, 13, 14]), [11, 12, 13, 14]),
+            ("data", scan("field", [21, 22]), [21, 22]),
+            ("data", scan("field", [13, 31]), [13]),
+        ],
+        calibration={12},
+    )
+
+    assert "never fitted. Alpha was measured on run 12" in report
+    assert "asymmetry fit-series data --runs 11,12,13,14 --recipe wizard-12" in report
+    # A short scan's runs appear once, and not again when a longer scan lists them.
+    assert report.endswith(
+        "short scans of 2-3 runs, not fitted: runs 21-22 — fit them where they bear on the "
+        "question."
+    )
+
+
+def test_a_run_fitted_on_its_own_counts_as_fitted(
+    workflow_folder: Path, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    folder = str(workflow_folder)
+    cli.main(["survey", folder])
+    cli.main(["reduce", folder, "--runs", ",".join(str(run) for run in ZF_RUNS)])
+    cli.main(
+        [
+            "recipe",
+            folder,
+            "--expression",
+            "Exponential + Constant",
+            "--name",
+            "relax",
+            "--run",
+            str(SCAN_RUNS[0]),
+        ]
+    )
+    for run in ZF_RUNS:
+        cli.main(["fit", folder, "--run", str(run), "--recipe", "relax"])
+    draft = tmp_path / "summary.md"
+    draft.write_text("A draft.\n", encoding="utf-8")
+    capsys.readouterr()
+
+    cli.main(["audit", str(draft), "--json"])
+    assert json.loads(capsys.readouterr().out)["unfitted_scans"] == []
