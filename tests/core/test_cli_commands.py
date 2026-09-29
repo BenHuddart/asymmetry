@@ -3104,18 +3104,30 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
         {"x_min": 19850.0, "x_max": 23000.0},
     ]
     fit = {
-        "parameters": {"f": 0.01, "B0": 19480.0, "Bwid": 150.0},
+        "parameters": {"f": -0.01, "B0": 19480.0, "Bwid": 150.0},
         "reduced_chi_squared": 12.6,
+        "x_range": [17000.0, 23000.0],
         "next_dip_windows": windows,
     }
-    (note,) = _poor_fit_note(fit)
-    assert "converged with 1 resonance(s) at chi2_red 12.6" in note
-    assert "another dip this model does not fit, in 19850–23000" in note
-    assert "--xmin 18200" not in note
-    # With no further dip found it says only that the fit is poor.
+    dip, poor = _poor_fit_note(fit)
+    assert "another dip this fit does not include, in 19850–23000" in dip
+    assert "--xmin 18200" not in dip
+    assert "converged at chi2_red 12.600; fit the dip named above" in poor
+    # With no further dip found it says the background may be why.
     (bare,) = _poor_fit_note(fit | {"next_dip_windows": windows[:1]})
-    assert "a whole-scan fit that cannot is not a result" in bare
-    assert _poor_fit_note(fit | {"reduced_chi_squared": 1.2}) == []
+    assert "a fit that cannot is not a result" in bare
+    assert _poor_fit_note(fit | {"reduced_chi_squared": 1.2, "next_dip_windows": []}) == []
+    # A line whose flank runs off the fitted range may be a step, not a dip.
+    (edge,) = _poor_fit_note(
+        fit
+        | {
+            "parameters": {"f": -0.02, "B0": 6918.0, "Bwid": 1082.0},
+            "x_range": [5000.0, 11000.0],
+            "reduced_chi_squared": 1.5,
+            "next_dip_windows": [],
+        }
+    )
+    assert "runs off the fitted range 5000–11000" in edge
 
 
 def test_a_mistyped_folder_is_named_as_missing_with_the_folder_the_session_holds(

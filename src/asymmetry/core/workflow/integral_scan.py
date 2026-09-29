@@ -235,6 +235,9 @@ def fit_integral_scan(
     *x_min*/*x_max* crop the scan to that window first, so the seeds, the
     resonance bounds and the fit all see only the resonances inside it.
     """
+    # Dips outside a --xmin/--xmax window are still the scan's: they are
+    # searched for on the whole of it.
+    whole_scan = scan
     if x_min is not None or x_max is not None:
         scan = _cropped(scan, x_min, x_max)
     fitted_scan = scan
@@ -297,13 +300,14 @@ def fit_integral_scan(
         # Where one more line would go: the seeder's window around the next dip
         # (its centre can sit off the resonance on a curved background; the
         # window still holds it).
+        "x_range": [float(np.min(fitted_scan.x)), float(np.max(fitted_scan.x))],
         "next_dip_windows": (
             [
                 window
                 for window in resonance_windows(
-                    fitted_scan, as_composite_model(f"LorentzianLCR + {expression}"), {}
+                    whole_scan, as_composite_model(f"LorentzianLCR + {expression}"), {}
                 )
-                if _holds_a_line(fitted_scan, window)
+                if _holds_a_line(whole_scan, window)
             ]
             if result.success and any(c.name in _LCR_LINES for c in model.components)
             else []

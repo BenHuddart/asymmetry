@@ -348,40 +348,57 @@ def _notes(result: dict, free_offsets: list[str], summed: list[int]) -> list[str
 _POOR_SCAN_FIT = 2.0
 
 
+#: A fitted line needs this many widths of data on each side of its centre
+#: to be a dip: one closer to the range's edge may be a step or an edge.
+_FLANK_WIDTHS = 2.0
+
+
 def _poor_fit_note(fit: dict) -> list[str]:
-    """A note when a converged resonance fit leaves the scan poorly described."""
-    centres = [value for name, value in fit["parameters"].items() if name.split("_")[0] == "B0"]
-    if not centres or fit["reduced_chi_squared"] <= _POOR_SCAN_FIT:
+    """Notes on what a converged resonance fit left out or cannot vouch for."""
+    lines = {name: value for name, value in fit["parameters"].items() if name.split("_")[0] == "B0"}
+    if not lines:
         return []
+    notes = []
+    low, high = fit["x_range"]
+    for name, centre in lines.items():
+        width = abs(fit["parameters"][name.replace("B0", "Bwid", 1)])
+        if centre - _FLANK_WIDTHS * width < low or centre + _FLANK_WIDTHS * width > high:
+            notes.append(
+                f"NOTE: the line at {centre:g} (width {width:g}) runs off the fitted range "
+                f"{low:g}–{high:g}: without data rising again on both sides it may be a step "
+                f"or the background's edge, not a resonance. Widen the window and look at the "
+                f"plot before reporting it."
+            )
     unfitted = [
         window
         for window in fit["next_dip_windows"]
-        if not any(window["x_min"] <= centre <= window["x_max"] for centre in centres)
+        if not any(window["x_min"] <= centre <= window["x_max"] for centre in lines.values())
     ]
-    lead = (
-        f"NOTE: the fit converged with {len(centres)} resonance(s) at chi2_red "
-        f"{format_number(fit['reduced_chi_squared'], 3)}. "
-    )
-    if not unfitted:
-        return [
-            lead + "Across a long scan the background may rise or step where no "
-            "polynomial can follow — a whole-scan fit that cannot is not a result, and the "
-            "summary should say that is why — or the scan holds more dips than the model: "
-            "look at the plot (--plot), and fit one resonance per --xmin/--xmax window on "
-            "its own local background."
-        ]
-    return [
-        lead + "Across a long scan the background may rise or step where no polynomial can "
-        "follow — a whole-scan fit that cannot is not a result. And the scan holds "
-        "another dip this model does not fit, in "
-        + "; ".join(f"{w['x_min']:g}–{w['x_max']:g}" for w in unfitted)
-        + ": fit it on its own local background — "
-        + "; ".join(
-            f"--model 'LorentzianLCR + Linear' --xmin {w['x_min']:g} --xmax {w['x_max']:g}"
-            for w in unfitted
+    if unfitted:
+        notes.append(
+            "NOTE: the scan holds another dip this fit does not include, in "
+            + "; ".join(f"{w['x_min']:g}–{w['x_max']:g}" for w in unfitted)
+            + ": fit it on its own local background — "
+            + "; ".join(
+                f"--model 'LorentzianLCR + Linear' --xmin {w['x_min']:g} --xmax {w['x_max']:g}"
+                for w in unfitted
+            )
+            + " — and report every dip the scan shows."
         )
-        + " — and report every dip the scan shows."
-    ]
+    if fit["reduced_chi_squared"] > _POOR_SCAN_FIT:
+        notes.append(
+            f"NOTE: the fit converged at chi2_red {format_number(fit['reduced_chi_squared'], 3)}"
+            + (
+                ": over a long range the background may rise or step where no polynomial "
+                "can follow — a fit that cannot is not a result, and the summary should say "
+                "that is why — or the range holds more dips than the model. Look at the plot "
+                "(--plot) and fit one resonance per --xmin/--xmax window on its own local "
+                "background."
+                if not unfitted
+                else "; fit the dip named above before reading this fit's parameters."
+            )
+        )
+    return notes
 
 
 def _failed_fit_next(fit: dict) -> str:
