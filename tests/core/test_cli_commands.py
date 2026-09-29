@@ -2512,7 +2512,7 @@ def test_trend_names_the_law_its_axis_and_parameters_call_for(
         # A line falling to zero at the transition is an order parameter.
         ([15.2, 11.0, 2.8], "OrderParameter --param frequency"),
         # One held at the applied field's Larmor frequency is not.
-        ([0.285, 0.280, 0.273], "frequency holds at 0.2800 MHz"),
+        ([0.285, 0.280, 0.273], "frequency stays near 0.2800 MHz"),
         # A held line that still moves by many errors is a shift to report.
         ([5.3735, 5.385, 5.3977], "frequency moves from 5.37350 to 5.39770 MHz"),
     ],

@@ -710,7 +710,7 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
                     f"superconductor's diamagnetic shift below Tc). Report it."
                 )
             hints.append(
-                f"{frequencies[0]} holds at {format_number(held, 4)} MHz along the scan: the "
+                f"{frequencies[0]} stays near {format_number(held, 4)} MHz along the scan (within 10 %): the "
                 f"line follows a fixed field, not an order parameter. The physics is in the "
                 f"relaxation — its rate"
                 + (f" ({', '.join(rates)})" if rates else "")
