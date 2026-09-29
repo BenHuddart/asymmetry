@@ -303,9 +303,20 @@ def fit_integral_scan(
         "resonance_windows": (
             [] if result.success else resonance_windows(fitted_scan, model, fixed or {})
         ),
+        # Where one more line would go: the seeder's window around the next dip
+        # (its centre can sit off the resonance on a curved background; the
+        # window still holds it).
+        "next_dip_windows": (
+            resonance_windows(fitted_scan, as_composite_model(f"LorentzianLCR + {expression}"), {})
+            if result.success and any(c.name in _LCR_LINES for c in model.components)
+            else []
+        ),
     }
     return fitted_scan, fit_payload
 
+
+#: Single-line resonance shapes a scan can be searched for one more of.
+_LCR_LINES = frozenset({"LorentzianLCR", "GaussianLCR"})
 
 #: Half-widths either side of a resonance's seeded centre that its own window
 #: spans: a Lorentzian there has fallen to 1/26 of its depth, leaving baseline

@@ -64,7 +64,7 @@ LF from the coil readbacks (`LF+`).
       whole range" is enough).
 - [ ] Says why there are no hyperfine couplings or site assignments: no
       radical ALC or hyperfine model is available (not merely that the
-      fields were not converted).
+      fields were not converted, or that the tool does not print couplings).
 - [ ] Contains no resonance field, width, hyperfine coupling, temperature,
       activation energy or run number that was not produced by a tool call in
       this session. The paper's 40 K/410 K and its couplings are background.

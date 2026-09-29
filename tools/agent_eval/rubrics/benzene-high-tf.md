@@ -67,6 +67,11 @@ members) as the alpha candidates; the 2014 set has none of its own.
 
 ## Known traps
 
+- A_μ is the *sum* of the two radical frequencies, both of which lie above
+  the diamagnetic line here (A_μ/2 exceeds the muon Larmor frequency). A
+  summary that calls A_μ a splitting, or draws the lines "either side of" or
+  "symmetric about" the diamagnetic line, has the physics wrong; "combined
+  coupling" without the word sum is ambiguous and does not meet M4.
 - The survey's `scans` block pairs 1809 with 3678–3682 as a "temperature
   scan at 3000 G, 294 to 300 K". It is two campaigns two years apart, not a
   temperature scan. (Co-adding 1809 into the set is refused: bin widths

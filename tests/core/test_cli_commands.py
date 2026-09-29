@@ -910,6 +910,8 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     cli.main([*base, "--json"])
     data = _json_output(capsys)
     assert data["period_field_offset"] == {"gauss": pytest.approx(-44.0), "runs": 2}
+    # The Next line survives --json.
+    assert any("--fix dB=44.00" in note for note in data["notes"])
 
 
 def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
@@ -2810,7 +2812,7 @@ def _failed_resonance_fit(**changes) -> dict:
 
 
 def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Path) -> None:
-    from asymmetry.cli.commands.integral_scan import _render
+    from asymmetry.cli.commands.integral_scan import _notes, _render
     from asymmetry.core.workflow.reduction import ReductionSettings
 
     result = {
@@ -2821,7 +2823,7 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
         "scan_path": str(tmp_path / "scan.json"),
         "plot": None,
     }
-    text = _render(result, ReductionSettings(), [], [])
+    text = _render(result, ReductionSettings(), _notes(result, [], []))
     assert "FAILED (Fit failed: call limit reached, hesse failed; at a bound: B0_2)" in text
     assert (
         "Next: the scan's own largest dips are at B0_1 1200, B0_2 1800. The fit already "
@@ -2836,10 +2838,10 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
 
     # A start inside its dip's window is where the fit already began ...
     result["fit"] = _failed_resonance_fit(initial={"B0_1": 1250.0})
-    assert "--initial" not in _render(result, ReductionSettings(), [], [])
+    assert "--initial" not in _render(result, ReductionSettings(), _notes(result, [], []))
     # ... and one away from it is pointed back at the dips.
     result["fit"] = _failed_resonance_fit(initial={"B0_1": 1500.0})
-    text = _render(result, ReductionSettings(), [], [])
+    text = _render(result, ReductionSettings(), _notes(result, [], []))
     assert (
         "The fit started away from them: refit with --initial B0_1=1200 --initial "
         "B0_2=1800, or fit one resonance per window on its own local background"
@@ -3095,7 +3097,36 @@ def test_a_muonium_phase_drift_is_timed_against_its_own_frequency() -> None:
 def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
     from asymmetry.cli.commands.integral_scan import _poor_fit_note
 
-    fit = {"parameters": {"f": 0.01, "B0": 19480.0, "Bwid": 150.0}, "reduced_chi_squared": 12.6}
+    # One resonance fitted at 19480 G; the seeder puts the next dip's window
+    # at 19850–23000 G, and one around the fitted line is already covered.
+    windows = [
+        {"x_min": 18200.0, "x_max": 19850.0},
+        {"x_min": 19850.0, "x_max": 23000.0},
+    ]
+    fit = {
+        "parameters": {"f": 0.01, "B0": 19480.0, "Bwid": 150.0},
+        "reduced_chi_squared": 12.6,
+        "next_dip_windows": windows,
+    }
     (note,) = _poor_fit_note(fit)
     assert "converged with 1 resonance(s) at chi2_red 12.6" in note
+    assert "another dip this model does not fit, in 19850–23000" in note
+    assert "--xmin 18200" not in note
+    # With no further dip found it says only that the fit is poor.
+    (bare,) = _poor_fit_note(fit | {"next_dip_windows": windows[:1]})
+    assert "may hold more dips than the model has" in bare
     assert _poor_fit_note(fit | {"reduced_chi_squared": 1.2}) == []
+
+
+def test_a_mistyped_folder_is_named_as_missing_with_the_folder_the_session_holds(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    workdir = str(tmp_path / "wd")
+    cli.main(["survey", str(workflow_folder), "--workdir", workdir])
+    capsys.readouterr()
+    typo = str(workflow_folder) + "-typo"
+    with pytest.raises(SystemExit):
+        cli.main(["reduce", typo, "--runs", str(SCAN_RUNS[0]), "--workdir", workdir])
+    err = capsys.readouterr().err
+    assert f"{typo} does not exist or is not a directory." in err
+    assert f"This work directory holds {workflow_folder.resolve()}" in err

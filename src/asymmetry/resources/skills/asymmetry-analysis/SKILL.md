@@ -78,7 +78,9 @@ default is right, and a directory that already holds another folder's session
 says so rather than mixing the two.
 
 Add `--json` when you need to parse a payload; the default human table is
-usually easier to read and is what these examples show.
+usually easier to read, is what these examples show, and prints each NOTE and
+Next line where you will see it (in `--json` they sit under `notes`, where
+available — read them there).
 
 Run each `asymmetry` command as its own shell call, with the literal paths
 written out — no `cd`, `&&` chains, pipes or shell variables. Permission rules
@@ -693,8 +695,10 @@ leave it qualitative.
 asymmetry fourier <folder> --run 20721 --window none --fmax 5 --plot
 ```
 
-**Radicals in a high transverse field** precess at two frequencies either side
-of the diamagnetic line, whose sum is the muon hyperfine coupling A_μ:
+**Radicals in a high transverse field** precess at two frequencies whose sum is
+the muon hyperfine coupling A_μ (in a field where A_μ/2 exceeds the muon Larmor
+frequency both lie above the diamagnetic line; their *sum*, not their
+difference, is A_μ):
 co-add repeated runs at the same field and temperature first
 (`reduce --runs … --coadd`, in its own `--workdir`), transform the sum, and
 run `fourier --run <first run> --correlation`, which prints A_μ directly as the

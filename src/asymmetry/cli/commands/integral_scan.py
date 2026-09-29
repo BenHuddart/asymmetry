@@ -217,9 +217,6 @@ def run(args: argparse.Namespace) -> None:
             out_path=plot_path,
         )
 
-    if args.json:
-        emit_json(payload(**result_payload))
-        return
     offset_names = (
         []
         if model is None
@@ -240,10 +237,14 @@ def run(args: argparse.Namespace) -> None:
             if period_count(dataset) == 2
         ]
     )
-    print(_render(result_payload, settings, free_offsets, summed))
+    notes = _notes(result_payload, free_offsets, summed)
+    if args.json:
+        emit_json(payload(**result_payload, notes=notes))
+        return
+    print(_render(result_payload, settings, notes))
 
 
-def _render(result: dict, settings, free_offsets: list[str], summed: list[int]) -> str:
+def _render(result: dict, settings, notes: list[str]) -> str:
     points = result["scan"]["points"]
     rows = [
         [
@@ -298,6 +299,18 @@ def _render(result: dict, settings, free_offsets: list[str], summed: list[int]) 
                 render_table(["parameter", "value", "error"], rows),
             ]
         )
+    lines.extend(notes)
+    lines.append(f"Scan written to {result['scan_path']}")
+    if result["plot"] is not None:
+        lines.append(f"Plot written to {result['plot']}")
+    return "\n".join(lines)
+
+
+def _notes(result: dict, free_offsets: list[str], summed: list[int]) -> list[str]:
+    """Every NOTE and Next line the scan calls for — printed, and kept in --json."""
+    fit = result["fit"]
+    offset = result["period_field_offset"]
+    lines: list[str] = []
     if offset is not None and free_offsets:
         # A differential pair's dB is the green field less the red: the offset, negated.
         fixes = " ".join(
@@ -307,10 +320,10 @@ def _render(result: dict, settings, free_offsets: list[str], summed: list[int]) 
             f"Next: the red period sat {format_number(-offset['gauss'], 2)} G below the green; "
             f"with the pair offset free the fit is degenerate, so refit with {fixes}."
         )
-    if result["fit"] is not None and result["fit"]["resonance_windows"]:
-        lines.append(_failed_fit_next(result["fit"]))
-    elif result["fit"] is not None:
-        lines.extend(_poor_fit_note(result["fit"]))
+    if fit is not None and fit["resonance_windows"]:
+        lines.append(_failed_fit_next(fit))
+    elif fit is not None:
+        lines.extend(_poor_fit_note(fit))
     if summed:
         lines.append(
             f"NOTE: {range_text(summed)} are two-period (red/green) runs, and without --period "
@@ -320,10 +333,15 @@ def _render(result: dict, settings, free_offsets: list[str], summed: list[int]) 
             f"held at the value that command's Next line gives (the printed red - green "
             f"offset, negated)."
         )
-    lines.append(f"Scan written to {result['scan_path']}")
-    if result["plot"] is not None:
-        lines.append(f"Plot written to {result['plot']}")
-    return "\n".join(lines)
+    if fit is not None and any(
+        term.strip() in ("LorentzianLCR", "GaussianLCR") for term in fit["expression"].split("+")
+    ):
+        lines.append(
+            "NOTE: no radical ALC or hyperfine model is available: these resonance fields "
+            "are not converted into muon or proton couplings or site assignments — say so, "
+            "rather than only that none were quoted."
+        )
+    return lines
 
 
 #: A converged fit this far above its errors has left structure unfitted.
@@ -332,15 +350,34 @@ _POOR_SCAN_FIT = 2.0
 
 def _poor_fit_note(fit: dict) -> list[str]:
     """A note when a converged resonance fit leaves the scan poorly described."""
-    fitted = sum(1 for name in fit["parameters"] if name.split("_")[0] == "B0")
-    if not fitted or fit["reduced_chi_squared"] <= _POOR_SCAN_FIT:
+    centres = [value for name, value in fit["parameters"].items() if name.split("_")[0] == "B0"]
+    if not centres or fit["reduced_chi_squared"] <= _POOR_SCAN_FIT:
         return []
+    unfitted = [
+        window
+        for window in fit["next_dip_windows"]
+        if not any(window["x_min"] <= centre <= window["x_max"] for centre in centres)
+    ]
+    lead = (
+        f"NOTE: the fit converged with {len(centres)} resonance(s) at chi2_red "
+        f"{format_number(fit['reduced_chi_squared'], 3)}. "
+    )
+    if not unfitted:
+        return [
+            lead + "The scan may hold more dips than the model has, or a background the "
+            "polynomial cannot follow: look at the plot (--plot), and fit one resonance per "
+            "--xmin/--xmax window on its own local background."
+        ]
     return [
-        f"NOTE: the fit converged with {fitted} resonance(s) at chi2_red "
-        f"{format_number(fit['reduced_chi_squared'], 3)}: the scan may hold more dips than "
-        f"the model has, or a background the polynomial cannot follow. Look at the plot "
-        f"(--plot), then add a component per dip, or fit one resonance per --xmin/--xmax "
-        f"window on its own local background, and report every dip the scan shows."
+        lead
+        + "The scan holds another dip this model does not fit, in "
+        + "; ".join(f"{w['x_min']:g}–{w['x_max']:g}" for w in unfitted)
+        + ": fit it on its own local background — "
+        + "; ".join(
+            f"--model 'LorentzianLCR + Linear' --xmin {w['x_min']:g} --xmax {w['x_max']:g}"
+            for w in unfitted
+        )
+        + " — and report every dip the scan shows."
     ]
 
 

@@ -266,16 +266,17 @@ def _render(result: dict) -> str:
         lines.append(
             "NOTE: "
             + "; ".join(f"{low:.6g} and {high:.6g} MHz" for low, high in pairs)
-            + f" lie within {_CLOSE_PEAKS} resolution elements of each other: a pair the "
-            "FFT barely separates, not one broadened line. Fit them in the time domain "
-            "with two lines started at those frequencies and report both."
+            + f" lie within {_CLOSE_PEAKS} resolution elements of each other: two lines "
+            "the FFT barely separates. Report both frequencies (a splitting, not one line), "
+            "and fit them in the time domain with two lines started there."
         )
     if coupling:
         lines.append(
-            f"Next: the radical lines themselves — asymmetry fourier <folder> --run "
-            f"{result['run']} with the same window and time range and no --fmax (the "
-            f"lines sit either side of the diamagnetic one, up to A_mu) — and report them "
-            f"with the transform, window and resolution beside A_mu."
+            f"The correlation peak is the muon hyperfine coupling A_mu = nu_1 + nu_2, the sum "
+            f"of the radical's two precession lines. Next: those lines themselves — "
+            f"asymmetry fourier <folder> --run {result['run']} with the same window and time "
+            f"range and no --fmax (both lie below A_mu) — and report them with the "
+            f"transform, window and resolution beside A_mu."
         )
     return "\n".join(lines)
 

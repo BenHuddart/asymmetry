@@ -99,6 +99,9 @@ recognises these as separate exercises and reports each on its own terms.
 
 ## Known traps
 
+- Converting a fitted frequency to a field by hand ("about 21 G" from
+  0.28 MHz) is arithmetic no command printed and fails the number rule;
+  say the line is at the frequency printed, well away from zero field.
 - The worksheet's run logs do not match the disk. 18851 is absent, and 18864
   and 19625 are unlisted. The worksheet's foil counts (0, 0, 1…10) disagree
   with the run notes (0, 4, 6, 8, 9, 9, 10…15), which are all the agent sees.

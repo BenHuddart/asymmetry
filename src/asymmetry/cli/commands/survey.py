@@ -40,8 +40,6 @@ def run(args: argparse.Namespace) -> None:
     from asymmetry.core.workflow.survey import survey_folder
 
     folder = Path(args.folder)
-    if not folder.is_dir():
-        raise UserError(f"{folder} does not exist or is not a directory.")
 
     # Resolved before the folder is read: surveying measures precession on
     # every run, and a work directory that belongs to another folder should
