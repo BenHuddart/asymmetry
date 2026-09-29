@@ -194,6 +194,11 @@ def _reduced_counts(workdir, selection, entry):
     return replace(source.run, grouping=grouping)
 
 
+#: Tabulated peaks closer than this many resolution elements are a pair the
+#: transform barely separates.
+_CLOSE_PEAKS = 2
+
+
 def _render(result: dict) -> str:
     peaks = result["peak_analysis"]["peaks"]
     coupling = result["axis"] == "hyperfine_coupling"
@@ -238,6 +243,21 @@ def _render(result: dict) -> str:
     ]
     if result["plot"] is not None:
         lines.append(f"Plot written to {result['plot']}")
+    resolution = result["resolution_mhz"]
+    close = sorted(peak["frequency_mhz"] for peak in peaks)
+    pairs = [
+        (low, high)
+        for low, high in zip(close, close[1:])
+        if high - low <= _CLOSE_PEAKS * resolution
+    ]
+    if pairs and not coupling:
+        lines.append(
+            "NOTE: "
+            + "; ".join(f"{low:.6g} and {high:.6g} MHz" for low, high in pairs)
+            + f" lie within {_CLOSE_PEAKS} resolution elements of each other: a pair the "
+            "FFT barely separates, not one broadened line. Fit them in the time domain "
+            "with two lines started at those frequencies and report both."
+        )
     if coupling:
         lines.append(
             f"Next: the radical lines themselves — asymmetry fourier <folder> --run "

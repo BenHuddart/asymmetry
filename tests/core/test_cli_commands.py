@@ -2755,3 +2755,59 @@ def test_a_small_step_in_a_width_is_named_with_where_it_happens() -> None:
     # A flat width draws no note.
     flat = [row | {"Delta": 0.26} for row in rows]
     assert _rate_steps(TrendTable("temperature", trend.columns, flat), ["Delta"]) == []
+
+
+def test_a_held_high_field_line_is_offered_a_two_line_fit() -> None:
+    from asymmetry.cli.commands.trend import _doublet_hint
+    from asymmetry.core.workflow.series import TrendTable
+
+    rows = [
+        {
+            "key": str(run),
+            "x": x,
+            "frequency": 813.57,
+            "frequency_err": 0.001,
+            "Lambda": rate,
+            "Lambda_err": 0.01,
+            "flags": [],
+        }
+        for run, x, rate in ((686, 5.0, 0.2), (690, 30.0, 0.1), (693, 50.0, 0.1))
+    ]
+    trend = TrendTable("temperature", ["key", "x", "frequency", "Lambda", "flags"], rows)
+    series = {
+        "expression": "Oscillatory * Exponential + Constant",
+        "free_params": ["A_1", "frequency", "Lambda", "A_bg"],
+    }
+
+    (hint,) = _doublet_hint(series, trend)
+    assert "--run 686 --name two-line" in hint
+    assert "'Oscillatory * Exponential + Oscillatory * Exponential + Constant'" in hint
+    assert "--initial frequency_1=" in hint and "--initial frequency_3=" in hint
+    # A low-field line with no exponential on the cold side draws no hint.
+    low = [row | {"frequency": 1.36} for row in rows]
+    assert _doublet_hint(series, TrendTable("temperature", trend.columns, low)) == []
+
+
+def test_fourier_names_two_peaks_closer_than_two_resolution_elements() -> None:
+    from asymmetry.cli.commands.fourier import _render
+
+    result = {
+        "run": 693,
+        "axis": "frequency",
+        "n_points": 1000,
+        "resolution_mhz": 0.105,
+        "settings": {"window": "none"},
+        "peak_analysis": {
+            "peaks": [
+                {"frequency_mhz": f, "amplitude": 1.0, "width_mhz": 0.1, "snr": 90.0}
+                for f in (813.497, 813.596, 815.9)
+            ]
+        },
+        "candidate_maxima": [],
+        "array_path": "a.npz",
+        "metadata_path": "a.json",
+        "plot": None,
+    }
+    text = _render(result)
+    assert "NOTE: 813.497 and 813.596 MHz lie within 2 resolution elements" in text
+    assert "815.9" not in text.split("NOTE:")[1]

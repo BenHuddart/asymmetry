@@ -1381,7 +1381,12 @@ went wrong. State plainly that these values are not results.
 
 **What this suggests** — the physics, in words: what the trend means, what it is
 consistent with, what would need checking. Interpretation belongs here, and
-here it may be qualitative.
+here it may be qualitative. Name the steps a full analysis of this experiment
+would take that this tool cannot (the out-of-scope table in section 1:
+MaxEnt field spectra, a multi-group field-distribution analysis, count-domain
+fits, a hyperfine or site model), so the reader sees where this preliminary
+analysis stops — and never let what the tool could not resolve stand as a
+finding (an unresolved splitting is not the absence of order).
 
 **Files** — the work directory (`asymmetry-work/`), any stored `scans/` or
 `spectra/` products, and the paths of the PNGs worth looking at.
