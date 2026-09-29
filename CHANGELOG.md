@@ -18,13 +18,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the files' own pair, the survey tries the others on the first silent run in a field
   and prints `PAIR:` with the one across the field — on a PSI GPS transverse-field run,
   `Up/Down` — and the `--pair` to pass on.
+- **`asymmetry survey` names repeat sets to co-add.** Consecutive runs of one sample
+  at one condition and set-up print as `REPEATS:` with the `reduce --coadd` command
+  (a run note naming a scan prints `UNRECORDED SCAN:` instead); a scan of two-period
+  runs says so and names `integral-scan --period green-red`; runs of different bin
+  widths or period counts never share a scan.
+- **`asymmetry trend` places a step and names two instrument effects.** A width or rate
+  that steps is bracketed by where it leaves each end's level; a phase linear in field
+  is named a t0 offset (with the implied Δt and the `--t0-offset` to test); an amplitude
+  falling as its frequency rises is named the instrument's frequency response; a held
+  high-field line gets a ready two-line recipe; `fourier` notes two peaks within two
+  resolution elements.
 - **`integral-scan` prints each fitted parameter with its error**, `fixed` for a held one
   and `(at bound)` for one pinned on a bound, instead of the values alone.
 
 ### Changed
 
 - **`fit-series` starts a line at each run's own field along a field scan.** A recipe
-  frequency at the start run's Larmor value is scaled by each run's field rather than
+  frequency at the Larmor value of the field it was seeded at (now recorded in the
+  recipe) is scaled by each run's field rather than
   carried from the neighbouring run, which belongs to another field; lines away from the
   Larmor frequency, and scans at one field, chain as before.
 - **Clearer notes on a series' trend.** The envelope note names motional narrowing only
@@ -39,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--alpha-from` a single-period calibration run works with `--period`** — the
   detector balance is the same in every period — instead of refusing the red/green scan.
 - **`asymmetry info` on a file no loader reads** prints the error, not a traceback.
+- **A failed field-scan fit says why** — the minimiser's reasons and any parameter at
+  a bound — and suggests one resonance per `--xmin/--xmax` window from the scan's dips;
+  `integral-scan` on two-period runs without `--period` notes that it summed them.
 - **A series fit keeps a line away from the applied field's Larmor frequency.** Since
   0.21.0 every `fit-series` and `fit-global` run restarted `frequency` at γ_μB/2π,
   overwriting the recipe's line; a critical-field line in a type-I superconductor or

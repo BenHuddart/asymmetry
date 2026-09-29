@@ -1577,6 +1577,73 @@ To pick up: rerun `run_wave.py --set trend-fit --set hold-out` twice on the
 current tooling before changing anything, so the corrections above have a
 baseline; then the CLI gaps in the order listed.
 
+### Sonnet 5.5 — 2026-09-29, on `feat/skill-sonnet-5-5`
+
+Host Claude Code 2.1.284, model `claude-sonnet-5-5` (the CLI must be recent
+enough to know it; 2.1.258 refused the id and its `sonnet` alias was still
+`claude-sonnet-5`). Runs cost $0.4–2.3 and 1–10 min, against $2–5 and
+15–20 min for `claude-sonnet-5`. From the second wave on, waves ran from a
+detached worktree snapshot of the branch (`PYTHONPATH=<snapshot>/src`) so code
+could change while a wave ran. Scoring was delegated per wave with
+`scoring_brief.md`; verdicts only are recorded here.
+
+**The pass-17a failures, first.**
+
+| Case | Sonnet 5 record | 5.5 baseline | After the fixes |
+|---|---|---|---|
+| euo-psi | 5/10 | 1/2 | 2/2 |
+| sn-critical-field | 3/10 | 2/2 (no H_c law) | 2/2, OrderParameter T_c 3.4848 ± 0.0263 K |
+| copper-diffusion | 0/3 | 0/2 | 0/2, then 2/2 |
+| maleic-mu-kinetics | 9/11 | — | 1/2, then 2/2 |
+| Tier A + plateau + molecular AFM | — | — | 6/6 |
+| workflow gate (TCNQ, Al-LLZ, silicon, CdS) + spin-Peierls | — | 5/5 | — |
+
+What moved them: a #336 regression fixed (series fits restarted every
+unpinned `frequency` at the applied field's Larmor value, losing the Sn
+critical-field and muonium lines); `audit` listing survey scans no fit covered
+(copper's TF scans "used only for alpha" were then fitted and the envelope
+change reported); the eval runner giving the agent `Edit`; skill text for
+#334–#336 features, neat = 1 / blank = 0 concentrations, one command per shell
+call.
+
+**The rest of the corpus.** Rubrics written this session from the worksheets
+and papers, each checked against what the CLI prints: `lifeas-psi`,
+`trsb-re6zr`, `basics`, `corannulene-alc`, `benzene-high-tf`, `benzene-rf`,
+`benzene-repolarisation`, `benzene-alc` (sets `corpus-2026`, plus `workflow`
+and `tier-b` in `run_wave.py`).
+
+| Case | Wave 1 | Wave 2 | Failing Must, latest |
+|---|---|---|---|
+| lifeas-psi | pass | pass | — |
+| benzene-rf | pass | — | — |
+| benzene-repolarisation | pass | — | — |
+| trsb-re6zr | fail (missed ZF Δ step) | fail (step found, onset placed at the midpoint, hedged) | M5 |
+| basics | fail (one exercise of seven) | fail (phase-vs-field t0 test, frequency response) | M6, M7 |
+| corannulene-alc | fail (no interpretation) | fail (50 K decoupling runs merged into the ALC scan) | M1, M2 |
+| benzene-high-tf | fail (correlation only) | fail (no co-add; "no radical" from one run) | M2–M4 |
+| benzene-alc | fail (third sample unnamed) | fail (red/green repeat integrated as one) | M4 |
+| afm-high-tf-mdu | fail ×3 (one line, "no order") | 1/2 after the doublet notes | — |
+
+CLI changes that answered them (the output lines agents act on):
+`survey` names the detector pair that precesses (`PAIR:`), each scan's
+samples, repeat sets to co-add (`REPEATS:`), two-period scans, and prints a
+large folder's findings before its run table; runs of different bin widths
+never share a scan. `trend` brackets a width or rate step by where it leaves
+each end's level, names a phase linear in field as a t0 offset and an
+amplitude falling with frequency as the frequency response, names a held
+line's shift, and offers a two-line recipe for a held high-field line.
+`fourier` names its window and notes peaks within two resolution elements.
+`fit-series` starts a Larmor-following line at each run's field (keyed on the
+field the recipe was seeded at). `integral-scan` prints errors, at-bound marks
+and a failed fit's reasons; `fit` stores its result so `audit` counts it;
+`--alpha-from` a single-period run serves a period scan.
+
+Skill text alone again rarely changed behaviour — the high-TF two-line
+paragraph was read and ignored until `fourier` and `trend` printed the pair
+and the recipe. Open maintainer question: `spurious_reseeded` flags every
+reseeded run even when the reseed rescued it (GUI rule since #167); one
+copper run discarded a real 1 K ν upturn because of it.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

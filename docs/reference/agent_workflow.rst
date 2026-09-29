@@ -467,6 +467,17 @@ names it — "run 20898 also belongs to a field scan with no transverse line at
 this temperature — likely its points, not this scan's" — since a longitudinal
 point the file does not label is otherwise fitted with a precession model.
 
+Consecutive runs of one sample at one condition — field, temperature,
+geometry, note and set-up — whose co-add at least halves the counting
+variance of the largest print as a repeat set with the command that co-adds
+them (``REPEATS: runs 3678-3682 repeat one condition … asymmetry reduce …
+--coadd --workdir asymmetry-work-coadd``); when their shared note names a
+scan (``P scan``), the runs step a quantity the files do not record and print
+as ``UNRECORDED SCAN`` instead. Runs of different bin widths or period counts
+are different set-ups and never share a scan; a scan of two-period (red/green)
+runs says so on its line and, for a field scan, names ``integral-scan
+--period green-red``.
+
 Each scan line also names its members' samples — the file's own sample name,
 or the run title before its ``T=``/``F=`` fields — so a folder holding several
 samples scanned on the same fields reads as several measurements, and a scan
@@ -903,8 +914,15 @@ note repeats a change of envelope along the scan. For every fitted width or
 rate (``sigma``, ``Delta``, ``Lambda``, ``nu``) the report also finds the split
 of the scan into two contiguous blocks whose weighted means differ most and,
 when that is more than five combined errors, names the step and where it
-falls — a Kubo–Toyabe width a few percent larger below a superconductor's
-T\ :sub:`c` is the time-reversal-symmetry-breaking signal, however small. A fitted law's
+falls, bracketed by where the parameter leaves the level of each end of the
+scan — a Kubo–Toyabe width a few percent larger below a superconductor's
+T\ :sub:`c` is the time-reversal-symmetry-breaking signal, however small. Along
+a field scan it names a phase that runs linearly with field as a t0 offset
+(printing the implied Δt and the ``reduce --t0-offset`` to test it) and an
+amplitude that falls as its frequency rises as the instrument's frequency
+response; a line held near a high field, or with an exponential envelope on
+its cold side, is offered a ready two-line ``recipe``, since an unresolved
+pair fits as one line. A fitted law's
 report states the x span of the points it rests on and each parameter's unit,
 and judges the law on the √χ²\ :sub:`r`-scaled errors of its physical
 parameters (a prefactor or offset — ``a``, ``b``, ``c`` — that the data leave
@@ -1062,7 +1080,10 @@ reported with ``FAILED`` and the parameters it ended on (the component that ran
 away is usually plain from them); the scan is written either way. The fitted
 parameters print as a table of value and error — ``fixed`` for a held one,
 ``(at bound)`` beside one pinned on a bound, and ``-`` for the errors of a fit
-that failed. ``--alpha-from`` a single-period calibration run serves a
+that failed; a failed fit names the minimiser's reasons and any parameter at a
+bound, and suggests fitting one resonance per ``--xmin``/``--xmax`` window
+around the scan's own dips. Without ``--period``, a scan of two-period runs
+notes that it summed the periods. ``--alpha-from`` a single-period calibration run serves a
 ``--period`` scan too: the detector balance is the same in every period.
 Every field-scan component with a resonance or a half-rise to find in the
 data — the LCR line shapes, ``LorentzianLCRPair``, ``RFResonanceMuP`` and
