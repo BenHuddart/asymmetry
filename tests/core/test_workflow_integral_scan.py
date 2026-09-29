@@ -273,8 +273,23 @@ def test_a_differential_pair_with_its_offset_held_recovers_each_resonance() -> N
     assert parameters["dB_1"] == parameters["dB_2"] == 44.4
 
 
-def test_a_failed_fit_carries_the_engines_reason_and_a_window_per_resonance() -> None:
-    # Two resonances and a cubic on pure noise: the fit cannot converge.
+def test_a_failed_fit_carries_the_engines_reason_and_a_window_per_resonance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow import integral_scan
+
+    # Whether a minimiser converges on noise depends on the platform's
+    # arithmetic, so the fit is made to fail: what is tested is the payload.
+    real_fit = integral_scan.fit_scan_model
+
+    def failing_fit(*args, **kwargs):
+        return replace(
+            real_fit(*args, **kwargs), success=False, message="Fit failed: call limit reached"
+        )
+
+    monkeypatch.setattr(integral_scan, "fit_scan_model", failing_fit)
     x = np.linspace(0.0, 100.0, 21)
     scan = FieldScan(
         x=x,
@@ -287,7 +302,7 @@ def test_a_failed_fit_carries_the_engines_reason_and_a_window_per_resonance() ->
     )
     _, fit = fit_integral_scan(scan, "LorentzianLCR + LorentzianLCR + Cubic")
     assert not fit["success"]
-    assert fit["message"].startswith("Fit failed: ")
+    assert fit["message"] == "Fit failed: call limit reached"
     assert [window["parameter"] for window in fit["resonance_windows"]] == ["B0_1", "B0_2"]
     assert fit["initial"] == {}
 
