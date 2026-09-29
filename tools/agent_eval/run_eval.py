@@ -101,7 +101,7 @@ _ALLOWED_UNSCOPED = ("Glob", "Grep", "Skill")
 DISALLOWED_TOOLS = ("WebFetch", "WebSearch", "Agent", "Task")
 
 #: Built-in tools the session is given at all, before the allow-list narrows it.
-TOOLS = ("Bash", "Read", "Glob", "Grep", "Write", "Skill")
+TOOLS = ("Bash", "Read", "Glob", "Grep", "Write", "Edit", "Skill")
 
 #: The work directory the CLI writes, looked for under the project directory.
 WORKDIR_NAME = "asymmetry-work"

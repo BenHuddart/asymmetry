@@ -62,7 +62,7 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.io.run_range import ScanRunFilesResult, scan_run_files
 from asymmetry.core.workflow.jsonio import write_json as _write_json
 from asymmetry.core.workflow.recipe import FitRecipe
-from asymmetry.core.workflow.reduction import ReductionSettings
+from asymmetry.core.workflow.reduction import ALPHA_ESTIMATED_PREFIX, ReductionSettings
 
 #: Schema version stamped into every file the work directory writes. 2: a
 #: reduced sidecar's run record carries ``sample_temperature_logged``, and every
@@ -672,6 +672,29 @@ class WorkDir:
     def series_names(self) -> list[str]:
         """The names of every stored series, sorted."""
         return sorted(path.stem for path in self.series_dir.glob("*.json"))
+
+    def fitted_runs(self) -> set[int]:
+        """Every run a stored series, simultaneous fit or integral scan holds a result for."""
+        stored = [
+            json.loads(path.read_text(encoding="utf-8")) for path in self.series_dir.glob("*.json")
+        ]
+        runs = {
+            int(row["key"])
+            for series in stored
+            if series["kind"] not in DERIVED_SERIES_KINDS
+            for row in series["trend"]["rows"]
+        }
+        for path in self.scans_dir.glob("*.json"):
+            runs.update(int(run) for run in json.loads(path.read_text(encoding="utf-8"))["runs"])
+        return runs
+
+    def alpha_calibration_runs(self) -> set[int]:
+        """The runs alpha was estimated on (``--alpha-from``) for any stored reduction."""
+        return {
+            int(source.removeprefix(ALPHA_ESTIMATED_PREFIX))
+            for run in self.reduced_runs()
+            if (source := self.entry(run).settings.alpha_source).startswith(ALPHA_ESTIMATED_PREFIX)
+        }
 
     # -- integral scans and frequency spectra ------------------------------
 

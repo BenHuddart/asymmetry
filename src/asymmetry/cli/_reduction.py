@@ -137,6 +137,7 @@ def reduction_settings(
     """
     from asymmetry.core.io import load
     from asymmetry.core.workflow.reduction import (
+        ALPHA_ESTIMATED_PREFIX,
         GREEN_MINUS_RED,
         ReductionSettings,
         estimate_alpha_for_run,
@@ -168,7 +169,9 @@ def reduction_settings(
         # ReductionSettings owns the vocabulary the CLI accepts; a value it
         # rejects is the user's, so it exits 1 with a message, not 2.
         raise UserError(str(exc)) from None
-    return replace(settings, alpha=estimate.alpha, alpha_source=f"estimated:{alpha_from}")
+    return replace(
+        settings, alpha=estimate.alpha, alpha_source=f"{ALPHA_ESTIMATED_PREFIX}{alpha_from}"
+    )
 
 
 def describe(settings: ReductionSettings) -> str:

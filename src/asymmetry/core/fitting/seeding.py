@@ -14,7 +14,9 @@ values the earlier ones set:
    :func:`phase_seed_from_sign`), and background parameters from the tail;
 3. **applied field** — ``field``/``B_L`` from a non-zero applied field, and
    ``frequency`` from its Larmor value when a bound dataset's Nyquist
-   frequency can gate it;
+   frequency can gate it (a start, not run-bound: the line being fitted may be
+   an internal or critical field's, which a fitted value carries and the
+   applied field does not);
 4. **frequency-domain peaks** — the displayed spectrum's dominant peak for one
    dataset, or the per-parameter mean across a batch's datasets;
 5. **individual-groups overrides** — background and ``phase`` held at zero,
@@ -167,6 +169,7 @@ def seed_parameters(model: CompositeModel, context: SeedContext) -> dict[str, Se
     seeds = _static_default_seeds(model, context)
     _apply_values(seeds, _record_scale_values(model, context), run_bound=False)
     _apply_values(seeds, _applied_field_values(model, context), run_bound=True)
+    _apply_values(seeds, _larmor_frequency_values(model, context), run_bound=False)
     _apply_values(seeds, _frequency_peak_values(model, context), run_bound=True)
     _hold_at_zero(seeds, _individual_group_held_names(model, context))
     return seeds
@@ -225,32 +228,35 @@ def _record_scale_values(model: CompositeModel, context: SeedContext) -> dict[st
 
 
 def _applied_field_values(model: CompositeModel, context: SeedContext) -> dict[str, float]:
-    """Layer 3: ``field``/``B_L`` from the applied field, and ``frequency`` from its Larmor value.
-
-    ``frequency`` (MHz) seeds ``gamma_mu/2pi * |field|`` only when a single
-    dataset is bound, so its own Nyquist frequency can gate the seed — a
-    Larmor value at or above it would alias, seeding a frequency the record
-    cannot show rather than the one it can.
-    """
+    """Layer 3: ``field``/``B_L`` from the applied field."""
     field_gauss = context.field_gauss
     if field_gauss is None or field_gauss == 0.0:
         return {}
-    values = {
+    return {
         param_name: float(field_gauss)
         for param_name in model.param_names
         if split_parameter_name(param_name)[0] in _FIELD_SEED_BASE_NAMES
     }
-    if context.dataset is not None:
-        larmor_mhz = field_gauss_to_frequency_mhz(abs(field_gauss))
-        if larmor_mhz < dataset_nyquist_mhz(context.dataset.time):
-            values.update(
-                {
-                    param_name: larmor_mhz
-                    for param_name in model.param_names
-                    if split_parameter_name(param_name)[0] == _FREQUENCY_SEED_BASE_NAME
-                }
-            )
-    return values
+
+
+def _larmor_frequency_values(model: CompositeModel, context: SeedContext) -> dict[str, float]:
+    """Layer 3: ``frequency`` (MHz) at the applied field's Larmor value.
+
+    Only when a single dataset is bound, so its own Nyquist frequency can gate
+    the seed — a Larmor value at or above it would alias, seeding a frequency
+    the record cannot show rather than the one it can.
+    """
+    field_gauss = context.field_gauss
+    if field_gauss is None or field_gauss == 0.0 or context.dataset is None:
+        return {}
+    larmor_mhz = field_gauss_to_frequency_mhz(abs(field_gauss))
+    if larmor_mhz >= dataset_nyquist_mhz(context.dataset.time):
+        return {}
+    return {
+        param_name: larmor_mhz
+        for param_name in model.param_names
+        if split_parameter_name(param_name)[0] == _FREQUENCY_SEED_BASE_NAME
+    }
 
 
 def _frequency_peak_values(model: CompositeModel, context: SeedContext) -> dict[str, float]:

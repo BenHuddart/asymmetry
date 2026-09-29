@@ -654,9 +654,12 @@ frequency from that reduced run (the same seeding every fit surface uses):
 an amplitude role is seeded positive, with its sign carried instead by
 ``phase`` (0 or π, the fit wizard's own rule), and a ``frequency`` parameter
 is seeded from the applied field's Larmor value when it sits below the
-run's Nyquist frequency — both marked run-bound, so ``fit-series`` and
-``fit-global`` re-seed them per run from each run's own field rather than
-carrying the first run's value down the scan (see `The fit recipe`_).
+run's Nyquist frequency. The applied field (``field``, ``B_L``) is marked
+run-bound, so ``fit-series`` and ``fit-global`` re-seed it per run from each
+run's own record rather than carrying the first run's value down the scan (see
+`The fit recipe`_); the Larmor frequency is only a start, since the line being
+fitted may be an internal or critical field's, and a series keeps the
+recipe's or the neighbouring run's frequency.
 ``--initial`` moves a start value, ``--fix`` holds one (and pins it, so a series never re-seeds it), and
 ``--tmin``/``--tmax`` set the fit window. The command writes
 ``recipes/<name>.json`` and prints every parameter — the names a repeated
@@ -666,7 +669,7 @@ component is numbered with are otherwise easy to guess wrong:
 
    $ asymmetry recipe runs --name mu --run 101 \
          --expression "Oscillatory * Exponential + Oscillatory * Exponential" \
-         --fix frequency_1=2.79 --fix frequency_3=0.0279
+         --fix frequency_1=2.79 --fix frequency_3=0.0271
    mu — Oscillatory * Exponential + Oscillatory * Exponential, seeded from run 101
 
    parameter    start      min     max  state
@@ -676,7 +679,7 @@ component is numbered with are otherwise easy to guess wrong:
    phase_1      0.000000   -inf    inf  free
    Lambda_2     ...        0.0000  inf  free
    A_3          ...        0.0000  inf  free
-   frequency_3  0.027900   0.0000  inf  fixed
+   frequency_3  0.027100   0.0000  inf  fixed
    phase_3      0.000000   -inf    inf  free
    Lambda_4     ...        0.0000  inf  free
 
@@ -962,6 +965,23 @@ forbids. It also lists a law's vocabulary ("critical slowing",
 logged session printed ``LAW NOT ESTABLISHED``. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
 left out of the match, since a rounded sum would otherwise find one of their
 elements by chance.
+
+Before the numbers, ``audit`` lists every scan in the stored survey whose runs
+no ``fit-series``, ``fit-global`` or ``integral-scan`` holds a result for, with
+the runs left out:
+
+.. code-block:: text
+
+   Scans the survey found with runs that no fit-series, fit-global or integral-scan fitted. Each scan is a measurement:
+     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
+         not fitted: runs 105-107. Fit it — a scan crossing a transition needs a series on each side — or say in the summary which runs cannot be fitted and why.
+
+The far side of a transition that one series stopped short of is still a
+measurement, and so is a temperature scan whose runs served to measure alpha:
+for one of those ``audit`` says that the calibration does not account for the
+scan and prints the ``wizard`` and ``fit-series`` commands that fit it. Scans of
+two or three runs share one line. A single ``fit`` does not count, since it
+stores nothing.
 
 ``integral-scan``
 ~~~~~~~~~~~~~~~~~

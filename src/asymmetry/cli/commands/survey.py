@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from asymmetry.cli._output import (
     UserError,
@@ -15,6 +16,9 @@ from asymmetry.cli._output import (
 from asymmetry.cli._reduction import add_pair_argument, parse_pair
 from asymmetry.cli._runs import run_clashes
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+
+if TYPE_CHECKING:
+    from asymmetry.core.workflow.survey import ScanGroup
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -57,6 +61,22 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(survey, survey_path))
+
+
+def scan_label(scan: ScanGroup) -> str:
+    """One line naming a scan: axis, instrument, geometry, held value, span and end runs."""
+    held = f"B = {scan.field:g} G" if scan.axis == "temperature" else f"T = {scan.temperature:g} K"
+    geometry = scan.geometry or ("mixed geometry" if scan.geometry_note else "unknown geometry")
+    unit = "K" if scan.axis == "temperature" else "G"
+    instrument = f"{scan.instrument}, " if scan.instrument else ""
+    notes = f', notes "{scan.notes}"' if scan.notes else ""
+    # Runs are listed in axis order, which need not be run order, so the
+    # endpoints are shown with an arrow rather than as a range.
+    return (
+        f"{scan.axis} scan, {instrument}{geometry}, {held}{notes}: {len(scan.runs)} runs, "
+        f"{scan.values[0]:g} to {scan.values[-1]:g} {unit} "
+        f"(run {scan.runs[0]} -> {scan.runs[-1]})"
+    )
 
 
 #: Suffixes on the ``geom`` column naming a geometry the file's stamp did not decide.
@@ -246,25 +266,7 @@ def _render(survey, survey_path: Path) -> str:
     if survey.scans:
         lines.append("Scans:")
         for scan in survey.scans:
-            held = (
-                f"B = {scan.field:g} G"
-                if scan.axis == "temperature"
-                else f"T = {scan.temperature:g} K"
-            )
-            geometry = scan.geometry or (
-                "mixed geometry" if scan.geometry_note else "unknown geometry"
-            )
-            unit = "K" if scan.axis == "temperature" else "G"
-            instrument = f"{scan.instrument}, " if scan.instrument else ""
-            # Runs are listed in axis order, which need not be run order, so
-            # the endpoints are shown with an arrow rather than as a range.
-            notes = f', notes "{scan.notes}"' if scan.notes else ""
-            lines.append(
-                f"  {scan.axis} scan, {instrument}{geometry}, {held}{notes}: "
-                f"{len(scan.runs)} runs, "
-                f"{scan.values[0]:g} to {scan.values[-1]:g} {unit} "
-                f"(run {scan.runs[0]} -> {scan.runs[-1]})"
-            )
+            lines.append(f"  {scan_label(scan)}")
             if scan.geometry_note:
                 lines.append(f"      geometry: {scan.geometry_note}")
         if survey.cross_sections:

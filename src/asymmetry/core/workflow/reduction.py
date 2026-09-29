@@ -70,6 +70,10 @@ GREEN_MINUS_RED = str(PeriodMode.GREEN_MINUS_RED)
 _PROFILE_NAME = "workflow"
 
 
+#: ``ReductionSettings.alpha_source`` for alpha estimated on a run: this, then the run number.
+ALPHA_ESTIMATED_PREFIX = "estimated:"
+
+
 @dataclass(frozen=True)
 class ReductionSettings:
     """The choices that turn a loaded run into an asymmetry curve.
@@ -425,6 +429,7 @@ def estimate_alpha_for_run(run: Run, settings: ReductionSettings) -> AlphaEstima
 
 
 __all__ = [
+    "ALPHA_ESTIMATED_PREFIX",
     "BACKGROUND_MODES",
     "DEADTIME_MODES",
     "GREEN_MINUS_RED",

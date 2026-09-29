@@ -398,6 +398,39 @@ def test_a_global_run_bound_parameter_is_held_at_the_recipes_value() -> None:
     )
 
 
+def test_a_line_away_from_the_applied_fields_larmor_frequency_is_kept_along_the_series() -> None:
+    # A type-I superconductor's normal domains precess at the critical field,
+    # not the applied one; the recipe's frequency is that line and no run's
+    # applied field may replace it.
+    expression = "Oscillatory * Exponential + Constant"
+    model = CompositeModel.from_expression(expression)
+    time = np.linspace(0.05, 8.0, 400)
+    noise = np.random.default_rng(3).normal(0.0, 0.2, time.size)
+    datasets = {
+        300 + index: MuonDataset(
+            time=time,
+            asymmetry=model.function(
+                time, A_1=0.8, frequency=line, phase=0.0, Lambda=0.3, A_bg=15.0
+            )
+            + noise,
+            error=np.full_like(time, 0.2),
+            metadata={"run_number": 300 + index, "field": 40.0, "temperature": temperature},
+        )
+        for index, (temperature, line) in enumerate(((2.0, 1.9), (2.5, 1.6), (3.0, 1.2)))
+    }
+    recipe = FitRecipe.from_expression(expression, dataset=datasets[300]).with_overrides(
+        initial={"frequency": 1.9}
+    )
+
+    outcome = fit_series(
+        datasets, recipe, axis=scan_axis(datasets, "temperature"), name="critical-field"
+    )
+
+    assert [entry["parameters"]["frequency"] for entry in outcome.results] == pytest.approx(
+        [1.9, 1.6, 1.2], abs=0.05
+    )
+
+
 def test_fit_one_starts_from_the_recipe_as_written() -> None:
     # No re-seeding for a single fit: the caller aimed this recipe at this run.
     datasets = _lf_datasets()

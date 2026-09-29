@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`asymmetry audit` lists the scans no fit covered.** Before checking the draft's
+  numbers it names every scan in the stored survey with runs that no `fit-series`,
+  `fit-global` or `integral-scan` fitted, with those runs — a TF scan used only for
+  alpha (with the commands that fit it), or the far side of a transition — so a
+  summary cannot silently leave a measurement out.
+
+### Fixed
+
+- **A series fit keeps a line away from the applied field's Larmor frequency.** Since
+  0.21.0 every `fit-series` and `fit-global` run restarted `frequency` at γ_μB/2π,
+  overwriting the recipe's line; a critical-field line in a type-I superconductor or
+  a muonium line in weak TF was then lost on every run. The Larmor value now only
+  starts a fresh recipe (`recipe --run`); the recipe's or the neighbouring run's
+  frequency is kept along a series.
+
 ## [0.21.0] - 2026-09-28
 
 ### Added
