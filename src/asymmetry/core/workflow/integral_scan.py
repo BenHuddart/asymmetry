@@ -236,16 +236,7 @@ def fit_integral_scan(
     resonance bounds and the fit all see only the resonances inside it.
     """
     if x_min is not None or x_max is not None:
-        inside = (scan.x >= (-np.inf if x_min is None else x_min)) & (
-            scan.x <= (np.inf if x_max is None else x_max)
-        )
-        scan = replace(
-            scan,
-            x=scan.x[inside],
-            value=scan.value[inside],
-            error=scan.error[inside],
-            run_numbers=[run for run, kept in zip(scan.run_numbers, inside, strict=True) if kept],
-        )
+        scan = _cropped(scan, x_min, x_max)
     fitted_scan = scan
     baseline_payload = None
     if baseline_model is not None:
@@ -307,12 +298,56 @@ def fit_integral_scan(
         # (its centre can sit off the resonance on a curved background; the
         # window still holds it).
         "next_dip_windows": (
-            resonance_windows(fitted_scan, as_composite_model(f"LorentzianLCR + {expression}"), {})
+            [
+                window
+                for window in resonance_windows(
+                    fitted_scan, as_composite_model(f"LorentzianLCR + {expression}"), {}
+                )
+                if _holds_a_line(fitted_scan, window)
+            ]
             if result.success and any(c.name in _LCR_LINES for c in model.components)
             else []
         ),
     }
     return fitted_scan, fit_payload
+
+
+def _cropped(scan: FieldScan, x_min: float | None, x_max: float | None) -> FieldScan:
+    """*scan* restricted to ``x_min <= x <= x_max`` (an open end where ``None``)."""
+    inside = (scan.x >= (-np.inf if x_min is None else x_min)) & (
+        scan.x <= (np.inf if x_max is None else x_max)
+    )
+    return replace(
+        scan,
+        x=scan.x[inside],
+        value=scan.value[inside],
+        error=scan.error[inside],
+        run_numbers=[run for run, kept in zip(scan.run_numbers, inside, strict=True) if kept],
+    )
+
+
+#: A window must hold this many points to be tried with one line on a slope.
+_WINDOW_MIN_POINTS = 8
+
+
+def _holds_a_line(scan: FieldScan, window: Mapping[str, Any]) -> bool:
+    """Whether one line on a straight background fits inside *window* as a resonance.
+
+    A seeder's window on a curved background can hold only the background's
+    rise or step: there a line's fit runs its centre to the window's edge or
+    its width to a bound, and the window is no dip.
+    """
+    part = _cropped(scan, window["x_min"], window["x_max"])
+    if part.x.size < _WINDOW_MIN_POINTS:
+        return False
+    model, parameters = _parameters(part, "LorentzianLCR + Linear", initial=None, fixed=None)
+    result = fit_scan_model(part, model, parameters=parameters, extra_starts=1)
+    centre = float(result.parameters["B0"].value)
+    return (
+        bool(result.success)
+        and not {"B0", "Bwid"} & set(result.params_at_bound)
+        and window["x_min"] < centre < window["x_max"]
+    )
 
 
 #: Single-line resonance shapes a scan can be searched for one more of.

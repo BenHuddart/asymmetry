@@ -91,6 +91,10 @@ LF from the coil readbacks (`LF+`).
 
 ## Known traps
 
+- A long scan's background can look like another resonance: a "feature"
+  fitted in a window the background rises or steps through (for instance near
+  20–25 kG), with its width at a bound, is not a resonance and must not be
+  reported as one.
 - The survey lumps the 50 K low-field runs (118242–118258) with the ALC scan
   into one 175-run "field scan 0 to 30000 G". The log-spaced decoupling runs
   and the 5 kG+ ALC runs are different measurements.

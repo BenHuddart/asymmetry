@@ -56,8 +56,9 @@ recognises these as separate exercises and reports each on its own terms.
       thickest. It names, from its own fits, the foil count (as the run notes
       give it) where saturation begins — about 12–14 foils (a range such as
       "13–15" counts).
-- [ ] Quartz scan: identifies the few-gauss lines as muonium (about 100 times
-      the bare-muon Larmor frequency). It reports the muonium amplitude
+- [ ] Quartz scan: identifies the few-gauss lines as muonium (a line far
+      faster per gauss than the bare muon's — the ratio itself need not be
+      quoted). It reports the muonium amplitude
       falling as the frequency rises, and the line lost at the top fields,
       and presents the amplitude fall as the instrument's frequency-response
       limit (attributing the line's loss at the top fields to it too is a

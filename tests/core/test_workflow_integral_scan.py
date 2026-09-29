@@ -325,3 +325,21 @@ def test_a_successful_fit_has_no_resonance_windows() -> None:
     assert fit["success"]
     assert fit["resonance_windows"] == []
     assert fit["initial"] == {"B0": 3400.0}
+
+
+def test_only_a_window_holding_a_line_is_named_as_another_dip() -> None:
+    from asymmetry.core.transform.integral import FieldScan
+    from asymmetry.core.workflow.integral_scan import _holds_a_line
+
+    x = np.linspace(1000.0, 3000.0, 81)
+    error = np.full_like(x, 0.0005)
+    dip = 0.2 - 0.03 / (1.0 + ((x - 2200.0) / 40.0) ** 2) + 1e-6 * (x - 2000.0)
+    # A background rising across the window, as an ALC scan's does near a step.
+    step = 0.2 + 0.03 * np.tanh((x - 2200.0) / 400.0)
+
+    def scan(value) -> FieldScan:
+        return FieldScan(x, value, error, list(range(x.size)), "field", "integral")
+
+    window = {"x_min": 1900.0, "x_max": 2500.0}
+    assert _holds_a_line(scan(dip), window)
+    assert not _holds_a_line(scan(step), window)

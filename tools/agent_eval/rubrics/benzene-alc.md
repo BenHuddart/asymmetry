@@ -37,8 +37,10 @@ runs), `solid` (123) and `solution` (360). All HIFI `.nxs`, deadtime in files.
 - [ ] Recognises the three sub-folders and analyses each separately, with its
       own work directory, never mixing runs between them.
 - [ ] Treats every folder as longitudinal-field ALC scans fitted with
-      `integral-scan`, uses the 20 G TF runs only for alpha (naming the run
-      and value), and says alpha was assumed 1.0 for `solution`.
+      `integral-scan`, uses the 20 G TF runs only for alpha (naming, for each
+      sub-folder it reduced with a measured alpha, a run and its value — one
+      of the liquid's two calibration runs is enough), and says alpha was
+      assumed 1.0 for `solution`.
 - [ ] Liquid: reports from `integral-scan` fits one resonance in the CHMu(0)
       scan between 20.7 and 20.9 kG and two in the 28.5–30 kG scan, one
       between 28.9 and 29.0 kG and one between 29.5 and 29.6 kG, with
@@ -78,10 +80,6 @@ runs), `solid` (123) and `solution` (360). All HIFI `.nxs`, deadtime in files.
 - `dB` in `LorentzianLCRPair` is the green field less the red: the printed
   "period field offset (red - green)" negated. Holding it at the printed
   value (sign included) shifts both pair centres by about 40 G.
-- `--alpha-from 29799` with any `--period` fails — "The green − red
-  difference needs a two-period (red/green) run", or "Unknown period selector"
-  for `--period green`: the period is applied to the single-period
-  calibration run too. Pass `--alpha` with the value `alpha` printed instead.
 - The two-period repeat integrated without `--period` places the ring-proton
   lines ~35 G higher than the single-period scan: red and green sit ~44 G
   apart. With the pair offset free the fit fails; the command prints the fix.

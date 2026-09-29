@@ -364,13 +364,16 @@ def _poor_fit_note(fit: dict) -> list[str]:
     )
     if not unfitted:
         return [
-            lead + "The scan may hold more dips than the model has, or a background the "
-            "polynomial cannot follow: look at the plot (--plot), and fit one resonance per "
-            "--xmin/--xmax window on its own local background."
+            lead + "Across a long scan the background may rise or step where no "
+            "polynomial can follow — a whole-scan fit that cannot is not a result, and the "
+            "summary should say that is why — or the scan holds more dips than the model: "
+            "look at the plot (--plot), and fit one resonance per --xmin/--xmax window on "
+            "its own local background."
         ]
     return [
-        lead
-        + "The scan holds another dip this model does not fit, in "
+        lead + "Across a long scan the background may rise or step where no polynomial can "
+        "follow — a whole-scan fit that cannot is not a result. And the scan holds "
+        "another dip this model does not fit, in "
         + "; ".join(f"{w['x_min']:g}–{w['x_max']:g}" for w in unfitted)
         + ": fit it on its own local background — "
         + "; ".join(
