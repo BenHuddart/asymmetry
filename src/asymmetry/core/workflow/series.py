@@ -521,12 +521,12 @@ def _run_parameter_set(
     return parameters
 
 
-#: A recipe line within this fraction of the start run's Larmor frequency
+#: A recipe line within this fraction of its seed field's Larmor frequency
 #: follows the applied field (a Knight or diamagnetic shift is well inside it).
 _FIELD_LINE_TOLERANCE = 0.05
 
-#: Runs whose field differs from the start run's by more than this fraction
-#: are at another field.
+#: Runs whose field differs from the recipe's seed field by more than this
+#: fraction are at another field.
 _FIELD_CHANGE = 0.01
 
 
@@ -537,13 +537,14 @@ def _field_line_starts(
 
     A line at γ_μB/2π moves with B, so across a field scan the previous run's
     fitted frequency belongs to another field; each run starts the line at the
-    recipe's value scaled by its own field over the start run's. A line away
-    from the Larmor frequency (an internal or critical field) is left to the chain.
+    recipe's value scaled by its own field over the field the recipe was seeded
+    at (the start run's, for a recipe built without a run). A line away from
+    that field's Larmor frequency (an internal or critical field) is left to the chain.
     """
-    start_field = records[start_run].field
-    if not start_field:
+    seed_field = records[start_run].field if recipe.seed_field is None else recipe.seed_field
+    if not seed_field:
         return {}
-    larmor = field_gauss_to_frequency_mhz(abs(start_field))
+    larmor = field_gauss_to_frequency_mhz(abs(seed_field))
     lines = {
         parameter.name: parameter.value
         for parameter in recipe.parameters
@@ -553,9 +554,9 @@ def _field_line_starts(
         and abs(parameter.value / larmor - 1.0) <= _FIELD_LINE_TOLERANCE
     }
     return {
-        run: {name: value * record.field / start_field for name, value in lines.items()}
+        run: {name: value * record.field / seed_field for name, value in lines.items()}
         for run, record in records.items()
-        if lines and record.field and abs(record.field / start_field - 1.0) > _FIELD_CHANGE
+        if lines and record.field and abs(record.field / seed_field - 1.0) > _FIELD_CHANGE
     }
 
 

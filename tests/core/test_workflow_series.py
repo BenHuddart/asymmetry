@@ -431,15 +431,16 @@ def test_a_line_away_from_the_applied_fields_larmor_frequency_is_kept_along_the_
     )
 
 
-def test_a_line_at_the_applied_field_follows_it_along_a_field_scan() -> None:
-    # A transverse-field scan: each run precesses at its own Larmor frequency,
-    # so the neighbour's fitted frequency is no start for the next field.
-    expression = "Oscillatory * Gaussian + Constant"
-    model = CompositeModel.from_expression(expression)
+_TF_EXPRESSION = "Oscillatory * Gaussian + Constant"
+_TF_FIELDS = (100.0, 200.0, 400.0, 800.0)
+
+
+def _tf_field_scan() -> dict[int, MuonDataset]:
+    """A transverse-field scan, runs 400.., each precessing at its own Larmor frequency."""
+    model = CompositeModel.from_expression(_TF_EXPRESSION)
     time = np.linspace(0.05, 8.0, 800)
     noise = np.random.default_rng(5).normal(0.0, 0.3, time.size)
-    fields = (100.0, 200.0, 400.0, 800.0)
-    datasets = {
+    return {
         400 + index: MuonDataset(
             time=time,
             asymmetry=model.function(
@@ -454,14 +455,37 @@ def test_a_line_at_the_applied_field_follows_it_along_a_field_scan() -> None:
             error=np.full_like(time, 0.3),
             metadata={"run_number": 400 + index, "field": field, "temperature": 2.0},
         )
-        for index, field in enumerate(fields)
+        for index, field in enumerate(_TF_FIELDS)
     }
-    recipe = FitRecipe.from_expression(expression, dataset=datasets[400])
 
-    outcome = fit_series(datasets, recipe, axis=scan_axis(datasets, "field"), name="tf-field")
+
+@pytest.mark.parametrize(
+    ("seed_run", "start_run"),
+    [
+        # Seeded and started on the lowest field.
+        (400, None),
+        # Seeded on the highest field, started on the lowest: the recipe's line
+        # is that run's Larmor frequency, not the start run's.
+        (403, 400),
+    ],
+)
+def test_a_line_at_the_applied_field_follows_it_along_a_field_scan(
+    seed_run: int, start_run: int | None
+) -> None:
+    # The neighbour's fitted frequency is no start for the next field.
+    datasets = _tf_field_scan()
+    recipe = FitRecipe.from_expression(_TF_EXPRESSION, dataset=datasets[seed_run])
+
+    outcome = fit_series(
+        datasets,
+        recipe,
+        axis=scan_axis(datasets, "field"),
+        start_run=start_run,
+        name="tf-field",
+    )
 
     assert [entry["parameters"]["frequency"] for entry in outcome.results] == pytest.approx(
-        [0.013554 * field for field in fields], rel=0.01
+        [0.013554 * field for field in _TF_FIELDS], rel=0.01
     )
 
 

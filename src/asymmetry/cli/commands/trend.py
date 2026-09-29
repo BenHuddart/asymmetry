@@ -350,6 +350,8 @@ def _render(
                 "",
                 *([change] if change is not None else []),
                 *_rate_steps(trend, series["free_params"]),
+                *_phase_drift(trend, series["free_params"]),
+                *_frequency_response(series, trend),
                 *_law_hints(series["name"], trend, series["free_params"]),
                 *_doublet_hint(series, trend),
             ]
@@ -393,6 +395,22 @@ def _held_frequency(trend, param: str) -> float | None:
 #: many combined errors has changed there, however small the change looks.
 _STEP_SIGNIFICANCE = 5.0
 
+#: A row further than this many combined errors from an end's level has left it.
+_LEVEL_DEPARTURE = 3.0
+
+
+def _measured(trend, *params: str) -> list[dict[str, Any]]:
+    """The rows, in scan order, that fitted every one of *params* with an error."""
+    return sorted(
+        (
+            row
+            for row in trend.rows
+            if all(row[param] is not None and row[f"{param}_err"] for param in params)
+            and not {"failed", "frequency_unresolved"} & set(row["flags"])
+        ),
+        key=lambda row: row["x"],
+    )
+
 
 def _weighted_mean(rows, param: str) -> tuple[float, float]:
     """The error-weighted mean of *param* over *rows*, and its error."""
@@ -401,49 +419,170 @@ def _weighted_mean(rows, param: str) -> tuple[float, float]:
     return mean, 1.0 / math.sqrt(sum(weights))
 
 
+def _held_level(block: list[dict[str, Any]], param: str) -> tuple[float, list[dict[str, Any]]]:
+    """The level at *block*'s far end, and the rows from that end that still hold it.
+
+    *block* runs from an end of the scan inward. The level is the weighted mean
+    of its outer half (two rows at least); walking inward, the first row further
+    from it than ``_LEVEL_DEPARTURE`` combined errors has left it.
+    """
+    outer = max(2, len(block) // 2)
+    level, error = _weighted_mean(block[:outer], param)
+    held = next(
+        (
+            index
+            for index in range(outer, len(block))
+            if abs(block[index][param] - level)
+            > _LEVEL_DEPARTURE * math.hypot(block[index][f"{param}_err"], error)
+        ),
+        len(block),
+    )
+    return level, block[:held]
+
+
 def _rate_steps(trend, free_params: list[str]) -> list[str]:
-    """A note per width or rate that steps along the scan, with where the step is.
+    """A note per width or rate that steps along the scan, with where it leaves each level.
 
     The step is the split of the scan into two contiguous blocks (two runs or
-    more each) whose error-weighted means differ most, in combined errors.
+    more each) whose error-weighted means differ most, in combined errors. Its
+    place is bracketed by where the parameter leaves each end's level (see
+    :func:`_held_level`), so a gradual change is not reported as a midpoint.
     """
     notes = []
+    axis = trend.order_key
     for param in free_params:
         if re.sub(r"_\d+$", "", param) not in _RATE_BASES:
             continue
-        rows = sorted(
-            (
-                row
-                for row in trend.rows
-                if row[param] is not None
-                and row[f"{param}_err"]
-                and not {"failed", "frequency_unresolved"} & set(row["flags"])
-            ),
-            key=lambda row: row["x"],
-        )
+        rows = _measured(trend, param)
         splits = []
         for k in range(2, len(rows) - 1):
             (low, low_err), (high, high_err) = (
                 _weighted_mean(rows[:k], param),
                 _weighted_mean(rows[k:], param),
             )
-            splits.append((abs(high - low) / math.hypot(low_err, high_err), k, low, high))
+            splits.append((abs(high - low) / math.hypot(low_err, high_err), k))
         if not splits:
             continue
-        significance, k, low, high = max(splits)
+        significance, k = max(splits)
         if significance <= _STEP_SIGNIFICANCE:
             continue
-        below, above = rows[:k], rows[k:]
+        low_level, low_rows = _held_level(rows[:k], param)
+        high_level, high_rows = _held_level(rows[k:][::-1], param)
+        low_edge, high_edge = low_rows[-1]["x"], high_rows[-1]["x"]
         notes.append(
-            f"NOTE: {param} changes along the scan — {format_number(low, 4)} over "
-            f"{trend.order_key} {below[0]['x']:g}–"
-            f"{below[-1]['x']:g} against {format_number(high, 4)} over "
-            f"{above[0]['x']:g}–{above[-1]['x']:g} "
-            f"(weighted means, {significance:.0f}x the combined error; the step is between "
-            f"{below[-1]['x']:g} and {above[0]['x']:g}). "
-            f"Report it and where it happens: a small step in a width or rate is often the "
-            f"physics (a transition, an onset), even when the parameter you expected to "
-            f"move did not."
+            f"NOTE: {param} changes along the scan ({significance:.0f}x the combined error "
+            f"between the weighted means of its two sides). It leaves its low-{axis} level "
+            f"({format_number(low_level, 4)} over {low_rows[0]['x']:g}–{low_edge:g}) above "
+            f"{low_edge:g} and its high-{axis} level ({format_number(high_level, 4)} over "
+            f"{high_edge:g}–{high_rows[0]['x']:g}) below {high_edge:g}: the change lies between "
+            f"{low_edge:g} and {high_edge:g}, and an onset is where it leaves a level, not a "
+            f"midpoint. Report it and that span: a small step in a width or rate is often the "
+            f"physics (a transition, an onset), even when the parameter you expected to move "
+            f"did not."
+        )
+    return notes
+
+
+#: A phase whose straight line in field explains less of its variation than
+#: this is not a timing offset (φ = 2π f Δt is exactly linear in f).
+_LINEAR_SHARE = 0.9
+
+
+def _phase_drift(trend, free_params: list[str]) -> list[str]:
+    """The t0 note for a phase that runs linearly with field along a field scan."""
+    from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+
+    if trend.order_key != "field":
+        return []
+    offsets: dict[str, float] = {}
+    for param in (p for p in free_params if re.sub(r"_\d+$", "", p) == "phase"):
+        rows = _measured(trend, param)
+        if len(rows) < 3:
+            continue
+        weights = [1.0 / row[f"{param}_err"] ** 2 for row in rows]
+        x_mean, y_mean = (
+            sum(w * row[key] for w, row in zip(weights, rows)) / sum(weights)
+            for key in ("x", param)
+        )
+        spread = sum(w * (row["x"] - x_mean) ** 2 for w, row in zip(weights, rows))
+        slope = (
+            sum(w * (row["x"] - x_mean) * (row[param] - y_mean) for w, row in zip(weights, rows))
+            / spread
+        )
+        scatter = sum(w * (row[param] - y_mean) ** 2 for w, row in zip(weights, rows))
+        # |slope| / slope error, with the slope's error 1/sqrt(spread).
+        if abs(slope) * math.sqrt(spread) > _STEP_SIGNIFICANCE and (
+            slope**2 * spread >= _LINEAR_SHARE * scatter
+        ):
+            # φ = φ0 - 2π f Δt for a signal arriving Δt after t0, with f = γ B:
+            # the slope in rad/G is -2π γ Δt.
+            offsets[param] = -slope / (2.0 * math.pi * field_gauss_to_frequency_mhz(1.0))
+    if not offsets:
+        return []
+    late = next(iter(offsets.values())) > 0.0
+    verb = "changes" if len(offsets) == 1 else "change"
+    return [
+        f"NOTE: {', '.join(offsets)} {verb} linearly with field along the scan (Δt = "
+        + ", ".join(f"{1e3 * offset:+.3g} ns" for offset in offsets.values())
+        + " from the slope). A phase that runs linearly with field — that is, with frequency, "
+        f"φ = 2π f Δt — is a timing offset between t0 and the muons' arrival, not the sample. "
+        f"It {'falls' if late else 'rises'} with field, so t0 sits "
+        f"{'before' if late else 'after'} the arrival: re-reduce with asymmetry reduce "
+        f"<folder> --runs <runs> --t0-offset <bins> ({'positive' if late else 'negative'}, "
+        f"|Δt| over the bin width) and refit; the phase should then hold steady."
+    ]
+
+
+def _frequency_response(series: dict[str, Any], trend) -> list[str]:
+    """A note per precession amplitude that falls as its frequency rises along the scan."""
+    from asymmetry.core.fitting.composite import CompositeModel
+
+    free = series["free_params"]
+    frequencies = [p for p in free if re.sub(r"_\d+$", "", p) in _FREQUENCY_BASES]
+    if not frequencies or not any(re.sub(r"_\d+$", "", p) == "A" for p in free):
+        return []
+    names = CompositeModel.from_expression(series["expression"]).param_names
+    notes = []
+    for frequency in frequencies:
+        # A product term lists its amplitude first: the line's amplitude is the
+        # last one before its frequency.
+        amplitude = next(
+            (
+                n
+                for n in reversed(names[: names.index(frequency)])
+                if re.sub(r"_\d+$", "", n) == "A"
+            ),
+            None,
+        )
+        if amplitude not in free:
+            continue
+        rows = _measured(trend, frequency, amplitude)
+        if len(rows) < 2:
+            continue
+        first, last = rows[0], rows[-1]
+
+        def change(param: str) -> float:
+            return (last[param] - first[param]) / math.hypot(
+                first[f"{param}_err"], last[f"{param}_err"]
+            )
+
+        if change(frequency) <= _STEP_SIGNIFICANCE or change(amplitude) >= -_STEP_SIGNIFICANCE:
+            continue
+        halved = next((row for row in rows if row[amplitude] <= first[amplitude] / 2.0), None)
+        notes.append(
+            f"NOTE: {amplitude} falls from {first[amplitude]:.4g} to {last[amplitude]:.4g} while "
+            f"{frequency} rises from {first[frequency]:.4g} to {last[frequency]:.4g} "
+            f"along the scan"
+            + (
+                ""
+                if halved is None
+                else f", halving by {frequency} {halved[frequency]:.4g} "
+                f"({trend.order_key} {halved['x']:g})"
+            )
+            + ". A precession amplitude that falls as the frequency rises is the instrument's "
+            "frequency response — the muon pulse's width at a pulsed source, or the time "
+            "binning — not the sample losing its signal: report it as that, and compare "
+            "amplitudes only between runs at similar frequencies."
         )
     return notes
 
@@ -455,16 +594,7 @@ _SHIFT_SIGNIFICANCE = 5.0
 
 def _frequency_shift(trend, param: str) -> tuple[float, float] | None:
     """The coldest and warmest ``(value, value)`` of a held frequency that still moved."""
-    rows = sorted(
-        (
-            row
-            for row in trend.rows
-            if row[param] is not None
-            and row[f"{param}_err"] is not None
-            and not {"failed", "frequency_unresolved"} & set(row["flags"])
-        ),
-        key=lambda row: row["x"],
-    )
+    rows = _measured(trend, param)
     if len(rows) < 2:
         return None
     first, last = rows[0], rows[-1]

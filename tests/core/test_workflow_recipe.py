@@ -106,6 +106,7 @@ def test_from_expression_with_a_dataset_seeds_the_records_own_scale(
 ) -> None:
     dataset = reduced_workdir.reduced(first_scan_run)
     recipe = FitRecipe.from_expression(_EXPRESSION, dataset=dataset)
+    assert recipe.seed_field == dataset.field
 
     # The amplitude and background start where the record's own scale says, not
     # at the component's static default — the same reading every fit surface
@@ -120,7 +121,7 @@ def test_from_expression_with_a_dataset_seeds_the_records_own_scale(
 
 
 def test_from_assessment_keeps_the_fitted_values_and_fixed_flags() -> None:
-    recipe = FitRecipe.from_assessment(_assessment(), run_number=102)
+    recipe = FitRecipe.from_assessment(_assessment(), run_number=102, seed_field=None)
 
     assert recipe.source == {"wizard_run": 102, "template_key": "exp_constant"}
     by_name = {parameter.name: parameter for parameter in recipe.parameters}
@@ -141,7 +142,7 @@ def test_from_assessment_takes_bounds_from_the_model_not_from_the_wizard() -> No
     assessment = _oscillatory_assessment()
     defaults = seed_parameters(assessment.template.model, SeedContext())
 
-    recipe = FitRecipe.from_assessment(assessment, run_number=102)
+    recipe = FitRecipe.from_assessment(assessment, run_number=102, seed_field=None)
 
     by_name = {parameter.name: parameter for parameter in recipe.parameters}
     for name, default in defaults.items():
@@ -169,19 +170,31 @@ def test_a_recipe_rejects_a_rebin_below_one_and_an_inverted_window() -> None:
 
 
 def test_a_recipe_round_trips_through_its_dict() -> None:
-    recipe = FitRecipe.from_assessment(_assessment(), run_number=102).with_window(
+    recipe = FitRecipe.from_assessment(_assessment(), run_number=102, seed_field=400.0).with_window(
         t_min=0.2, t_max=12.0
     )
-    restored = FitRecipe.from_dict(recipe.to_dict())
+    stored = recipe.to_dict()
+    restored = FitRecipe.from_dict(stored)
 
+    assert stored["source"]["field"] == 400.0
     assert restored == recipe
     assert restored.model().param_names == recipe.model().param_names
+
+
+def test_a_recipe_stored_before_its_seed_field_was_recorded_has_none() -> None:
+    stored = FitRecipe.from_expression(_EXPRESSION).to_dict()
+    del stored["source"]["field"]
+
+    restored = FitRecipe.from_dict(stored)
+
+    assert restored.seed_field is None
+    assert restored.source == {"user": True}
 
 
 def test_a_recipe_writes_standard_json_with_no_infinity_token(tmp_path: Path) -> None:
     # An infinite bound is JSON ``null``: Python would write ``Infinity``, which
     # only Python reads back, and a recipe is meant to be read by other tools.
-    recipe = FitRecipe.from_assessment(_assessment(), run_number=102)
+    recipe = FitRecipe.from_assessment(_assessment(), run_number=102, seed_field=None)
     path = tmp_path / "recipe.json"
     path.write_text(json.dumps(recipe.to_dict()), encoding="utf-8")
 
@@ -205,7 +218,7 @@ def test_parameter_set_is_a_fresh_object_every_call() -> None:
 
 
 def test_with_overrides_pins_and_releases_named_parameters() -> None:
-    recipe = FitRecipe.from_assessment(_assessment(), run_number=102)
+    recipe = FitRecipe.from_assessment(_assessment(), run_number=102, seed_field=None)
 
     edited = recipe.with_overrides(fix={"Lambda": 0.25}, free=["A_bg"])
 
@@ -220,7 +233,7 @@ def test_with_overrides_pins_and_releases_named_parameters() -> None:
 def test_fixing_a_parameter_records_that_a_person_pinned_it() -> None:
     # The distinction a series fit needs: a value a person chose is never
     # re-seeded from a run, while one the wizard or the model holds is.
-    recipe = FitRecipe.from_assessment(_assessment(), run_number=102)
+    recipe = FitRecipe.from_assessment(_assessment(), run_number=102, seed_field=None)
     assert recipe.pinned == ()
 
     pinned = recipe.with_overrides(fix={"Lambda": 0.25})

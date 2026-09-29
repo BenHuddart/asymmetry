@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 
@@ -2751,10 +2752,103 @@ def test_a_small_step_in_a_width_is_named_with_where_it_happens() -> None:
     trend = TrendTable("temperature", ["key", "x", "Delta", "Delta_err", "flags"], rows)
 
     (note,) = _rate_steps(trend, ["Delta"])
-    assert "the step is between 4 and 6.8" in note
+    assert "the change lies between 4 and 6.8" in note
     # A flat width draws no note.
     flat = [row | {"Delta": 0.26} for row in rows]
     assert _rate_steps(TrendTable("temperature", trend.columns, flat), ["Delta"]) == []
+
+
+def test_a_gradual_step_is_bracketed_by_where_the_width_leaves_each_level() -> None:
+    from asymmetry.cli.commands.trend import _rate_steps
+    from asymmetry.core.workflow.series import TrendTable
+
+    # A width at one level below 5.6, another above 6.8, and intermediate
+    # between: the best two-block split falls mid-rise, the onset does not.
+    points = [
+        *((x, 0.2597) for x in (0.3, 1.0, 2.0, 3.0, 4.0, 5.0, 5.6)),
+        (6.0, 0.2585),
+        (6.2, 0.2570),
+        (6.4, 0.2555),
+        (6.6, 0.2545),
+        *((x, 0.2534) for x in (6.8, 7.5, 8.0, 9.0, 10.0)),
+    ]
+    rows = [
+        {"key": str(run), "x": x, "Delta": delta, "Delta_err": 0.0002, "flags": []}
+        for run, (x, delta) in enumerate(points)
+    ]
+
+    (note,) = _rate_steps(
+        TrendTable("temperature", ["key", "x", "Delta", "Delta_err", "flags"], rows), ["Delta"]
+    )
+
+    assert "low-temperature level (0.2597 over 0.3–5.6) above 5.6" in note
+    assert "high-temperature level (0.2534 over 6.8–10) below 6.8" in note
+    assert "the change lies between 5.6 and 6.8" in note
+
+
+@pytest.mark.parametrize(("delay_us", "direction"), [(0.02, "positive"), (-0.02, "negative")])
+def test_a_phase_linear_in_field_is_named_a_t0_offset(delay_us: float, direction: str) -> None:
+    from asymmetry.cli.commands.trend import _phase_drift
+    from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+    from asymmetry.core.workflow.series import TrendTable
+
+    # A signal arriving delay_us after t0 fits the phase 0.1 - 2π f Δt.
+    fields = (100.0, 200.0, 400.0, 800.0, 1600.0)
+    rows = [
+        {
+            "key": str(run),
+            "x": field,
+            "phase": 0.1
+            - 2.0 * math.pi * field_gauss_to_frequency_mhz(field) * delay_us
+            + (0.01 if run % 2 else -0.01),
+            "phase_err": 0.01,
+            "flags": [],
+        }
+        for run, field in enumerate(fields)
+    ]
+    trend = TrendTable("field", ["key", "x", "phase", "flags"], rows)
+
+    (note,) = _phase_drift(trend, ["A_1", "phase"])
+    assert f"Δt = {1e3 * delay_us:+.3g} ns" in note
+    assert f"--t0-offset <bins> ({direction}" in note
+    # A phase that holds, or a phase along another axis, draws no note.
+    held = [row | {"phase": 0.1} for row in rows]
+    assert _phase_drift(TrendTable("field", trend.columns, held), ["phase"]) == []
+    assert _phase_drift(TrendTable("temperature", trend.columns, rows), ["phase"]) == []
+
+
+def test_a_precession_amplitude_falling_with_frequency_is_the_instruments_response() -> None:
+    from asymmetry.cli.commands.trend import _frequency_response
+    from asymmetry.core.workflow.series import TrendTable
+
+    fields = (100.0, 500.0, 1000.0, 1500.0, 2000.0, 3000.0)
+    rows = [
+        {
+            "key": str(run),
+            "x": field,
+            "A_1": 20.0 * math.exp(-((field / 1500.0) ** 2)),
+            "A_1_err": 0.2,
+            "frequency": 0.013554 * field,
+            "frequency_err": 0.001,
+            "A_bg": 2.0,
+            "A_bg_err": 0.1,
+            "flags": [],
+        }
+        for run, field in enumerate(fields)
+    ]
+    trend = TrendTable("field", ["key", "x", "A_1", "frequency", "A_bg", "flags"], rows)
+    series = {
+        "expression": "Oscillatory * Gaussian + Constant",
+        "free_params": ["A_1", "frequency", "phase", "sigma", "A_bg"],
+    }
+
+    (note,) = _frequency_response(series, trend)
+    assert note.startswith("NOTE: A_1 falls from 19.91 to 0.3663 while frequency rises")
+    assert "halving by frequency 20.33 (field 1500)" in note
+    assert "frequency response" in note
+    # An amplitude that holds draws no note.
+    held = [row | {"A_1": 20.0} for row in rows]
+    assert _frequency_response(series, TrendTable("field", trend.columns, held)) == []
 
 
 def test_a_held_high_field_line_is_offered_a_two_line_fit() -> None:
