@@ -36,6 +36,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Both fit wizards choose their models with a model family picker.** It
+  replaces the preset menu and component tree in the Fit Wizard and the Global
+  Fit Wizard. A **Field direction** row asks for the geometry when the files
+  record none (every geometry is screened until you answer); optional
+  **Looking for** chips combine, so LF dynamics and muonium can be screened
+  together; each family card shows its models under readable names with a
+  **slow** tag, and lists the models that do not apply to these runs; a
+  details panel says what a model is for and why it is in or out; the footer
+  counts the models to screen and offers **Leave out slow models**. The
+  direction answer is saved on the runs that record none, kept in the project,
+  and never overrides a direction a file records; an LF answer lets the wizard
+  hold B_L at the recorded field. The single-run wizard now shows the picker
+  open on its Welcome page, above **Analyze**. See
+  `docs/reference/fit_wizard.rst` § "Choosing which models to screen".
+- **`asymmetry wizard --scope` names physics only.** The names are unchanged,
+  but each now chooses the physics to look for and never the geometry, which
+  comes from the run or `--geometry`: `--scope lf-dynamics` on a zero-field run
+  now screens zero-field dynamics instead of forcing LF models.
+- **Project schema bumped to v23: saved wizard scopes are physics sets.** A
+  cached wizard result's scope was a preset that fixed both a geometry and the
+  physics; on open it is rewritten to the preset's physics classes, with its
+  include and exclude lists kept, so cached results still reopen. A dataset's
+  `metadata_overrides` may also carry the field direction you answered
+  (`field_direction`, with `field_direction_source: "user"`); an older project
+  simply has none. See `docs/reference/project_files.rst` § "Wizard cache state".
 - **`fit-series` starts a line at each run's own field along a field scan.** A recipe
   frequency at the Larmor value of the field it was seeded at (now recorded in the
   recipe) is scaled by each run's field rather than

@@ -26,7 +26,8 @@ import pytest
 import asymmetry.core.fitting.fit_wizard as fit_wizard_module
 import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.component_tags import FieldGeometry, PhysicsClass
+from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import CandidateTemplate, SelectionMetric
 from asymmetry.core.fitting.global_fit_wizard import (
@@ -45,7 +46,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
 )
 from asymmetry.core.fitting.models import longitudinal_field_kubo_toyabe
 from asymmetry.core.fitting.parameters import ParameterSet
-from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
+from asymmetry.core.fitting.wizard_scope import WizardScope
 
 # Every test here drives the real wizard end to end over a synthetic series.
 pytestmark = [pytest.mark.integration]
@@ -274,20 +275,20 @@ def test_lf_decoupling_series_shares_delta_and_localizes_the_field() -> None:
         )
         for index, field in enumerate((0.0, 10.0, 25.0, 50.0))
     ]
+    # The runs record no direction, so every geometry is screened; leave out the
+    # models that cannot apply in LF, and the competing KT and relaxation shapes.
+    not_lf = {name for name, d in COMPONENTS.items() if FieldGeometry.LF not in d.field_geometries}
     scope = WizardScope(
-        preset=WizardScopePreset.LF_DYNAMICS,
+        physics=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}),
         exclude_components=frozenset(
-            {
+            not_lf
+            | {
                 "StaticGKT_ZF",
                 "DynamicGaussianKT",
                 "DynamicLorentzianKT",
                 "GaussianBroadenedKT",
-                "ExponentialRelaxation",
-                "GaussianRelaxation",
                 "StretchedExponential",
                 "RischKehr",
-                "MuoniumLF",
-                "Oscillatory",
             }
         ),
     )

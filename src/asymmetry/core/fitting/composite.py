@@ -161,6 +161,10 @@ class ComponentDefinition:
 
     name: str
     description: str
+    #: Short readable name shown in pickers and docs (e.g. "Dynamic Gaussian KT").
+    label: str
+    #: One line on when the component applies (e.g. "Fluctuating Gaussian fields").
+    use_when: str
     function: Callable[..., NDArray[np.float64]]
     param_names: list[str]
     param_defaults: dict[str, float]
@@ -537,6 +541,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "Exponential": ComponentDefinition(
         name="Exponential",
         description="A exp(-Lambda t)",
+        label="Exponential",
+        use_when="Fast-fluctuating or dilute moments",
         function=_exp_component,
         param_names=["A", "Lambda"],
         param_defaults={"A": 25.0, "Lambda": 0.5},
@@ -551,6 +557,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "Gaussian": ComponentDefinition(
         name="Gaussian",
         description="A exp(-(sigma t)^2)",
+        label="Gaussian",
+        use_when="Static, dense nuclear moments",
         function=_gaussian_component,
         param_names=["A", "sigma"],
         param_defaults={"A": 25.0, "sigma": 0.5},
@@ -565,6 +573,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "Oscillatory": ComponentDefinition(
         name="Oscillatory",
         description="A cos(2 pi f t + phase)",
+        label="Cosine precession",
+        use_when="One well-defined local field",
         function=_oscillatory_component,
         param_names=["A", "frequency", "phase"],
         param_defaults={"A": 25.0, "frequency": 1.0, "phase": 0.0},
@@ -584,6 +594,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "OscillatoryField": ComponentDefinition(
         name="OscillatoryField",
         description="A cos(2 pi gamma_mu B t + phase)",
+        label="Precession in field units",
+        use_when="Same, fitted as a field B",
         function=_oscillatory_field_component,
         param_names=["A", "field", "phase"],
         param_defaults={"A": 25.0, "field": 100.0, "phase": 0.0},
@@ -606,6 +618,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Single-crystal vortex-lattice TF oscillation with the modified-London "
             "field distribution (non-Gaussian, skewed); fits lambda and Bc2"
         ),
+        label="Vortex lattice",
+        use_when="Superconductor field distribution, crystal",
         function=vortex_lattice_component,
         param_names=["A", "field", "phase", "lambda_ab", "Bc2"],
         param_defaults={"A": 20.0, "field": 100.0, "phase": 0.0, "lambda_ab": 200.0, "Bc2": 10.0},
@@ -630,6 +644,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Polycrystalline vortex-lattice TF oscillation (modified-London, skewed "
             "line, 3^(1/4) powder average); fits ab-plane lambda_ab and Bc2"
         ),
+        label="Vortex lattice powder",
+        use_when="Superconductor field distribution, powder",
         function=vortex_lattice_powder_component,
         param_names=["A", "field", "phase", "lambda_ab", "Bc2"],
         param_defaults={"A": 20.0, "field": 100.0, "phase": 0.0, "lambda_ab": 200.0, "Bc2": 10.0},
@@ -651,6 +667,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "Bessel": ComponentDefinition(
         name="Bessel",
         description="Zeroth-order Bessel oscillation for incommensurate (SDW) order",
+        label="Bessel (J₀)",
+        use_when="Incommensurate spin-density wave",
         function=_bessel_component,
         param_names=["A", "frequency", "phase"],
         param_defaults={"A": 25.0, "frequency": 1.0, "phase": 0.0},
@@ -673,6 +691,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Powder incommensurate (sine-wave) magnet: 1/3 exp(-lambda_L t) + "
             "2/3 J0(2 pi f t) exp(-lambda_T t), f the Overhauser field-distribution edge"
         ),
+        label="Overhauser powder",
+        use_when="Incommensurate sine-wave magnet, powder",
         function=_overhauser_powder_component,
         param_names=["A", "frequency", "lambda_T", "lambda_L"],
         param_defaults={"A": 25.0, "frequency": 1.0, "lambda_T": 0.5, "lambda_L": 0.1},
@@ -701,6 +721,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "use HelicalPowder for a helix): f = upper cut-off f_max, ratio r = B_min/B_max; "
             "f_av = f(1+r)/2, Delta f = f(1-r)/2"
         ),
+        label="Two-cut-off line",
+        use_when="Modulated field between two cut-offs",
         function=_overhauser_powder_cutoff_component,
         param_names=["A", "frequency", "ratio", "phase", "lambda_T", "lambda_L"],
         param_defaults={
@@ -739,6 +761,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Same two-cut-off powder line as OverhauserPowderCutoff, parametrised by the "
             "centre f = (f_max+f_min)/2 and half-width Delta f = (f_max-f_min)/2"
         ),
+        label="Two-cut-off line (centre, width)",
+        use_when="Same line, centre/width parameters",
         function=_overhauser_powder_centre_component,
         param_names=["A", "frequency", "delta_frequency", "phase", "lambda_T", "lambda_L"],
         param_defaults={
@@ -776,6 +800,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Powder helical (single-q) magnet: 1/3 exp(-lambda_L t) + 2/3 H(t) exp(-lambda_T t), "
             "H the exact transform of the elliptical field distribution between r f and f"
         ),
+        label="Helical powder",
+        use_when="Single-q helix, powder",
         function=_helical_powder_component,
         param_names=["A", "frequency", "ratio", "phase", "lambda_T", "lambda_L"],
         param_defaults={
@@ -814,6 +840,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Single-crystal helical (single-q) magnet: the HelicalPowder line with the "
             "non-precessing weight set by the polarization's orientation (theta_h, phi_h)"
         ),
+        label="Helical crystal",
+        use_when="Single-q helix, single crystal",
         function=_helical_crystal_component,
         param_names=[
             "A",
@@ -862,6 +890,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "MuoniumTF": ComponentDefinition(
         name="MuoniumTF",
         description="Transverse-field muonium: four Mu0 transitions about gamma_mu B",
+        label="Muonium, TF",
+        use_when="Four Mu⁰ lines about the Larmor frequency",
         function=_muonium_tf_component,
         param_names=["A", "field", "A_hf", "phase"],
         param_defaults={"A": 25.0, "field": 100.0, "A_hf": 0.24, "phase": 0.0},
@@ -885,6 +915,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "MuoniumLowTF": ComponentDefinition(
         name="MuoniumLowTF",
         description="Low transverse-field muonium: two Mu0 satellite frequencies",
+        label="Muonium, low TF",
+        use_when="Two Mu⁰ satellites, low field",
         function=_muonium_low_tf_component,
         param_names=["A", "field", "A_hf", "phase"],
         param_defaults={"A": 25.0, "field": 100.0, "A_hf": 0.24, "phase": 0.0},
@@ -907,6 +939,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "MuoniumZF": ComponentDefinition(
         name="MuoniumZF",
         description="Zero-field axial muonium: three hyperfine lines",
+        label="Muonium, ZF",
+        use_when="Three axial hyperfine lines",
         function=_muonium_zf_component,
         param_names=["A", "A_hf", "D_mu", "f_cut", "phase"],
         param_defaults={"A": 25.0, "A_hf": 1.0, "D_mu": 0.5, "f_cut": 0.0, "phase": 0.0},
@@ -930,6 +964,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "MuoniumHighTF": ComponentDefinition(
         name="MuoniumHighTF",
         description="High transverse-field muonium: the nu_12/nu_34 intratriplet pair",
+        label="Muonium, high TF",
+        use_when="The ν₁₂/ν₃₄ pair, high field",
         function=_muonium_high_tf_component,
         param_names=["A", "field", "A_hf", "phase"],
         param_defaults={
@@ -957,6 +993,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "MuoniumHighTFAniso": ComponentDefinition(
         name="MuoniumHighTFAniso",
         description="Powder-averaged anisotropic high-TF muonium pair (axial D)",
+        label="Anisotropic muonium, high TF",
+        use_when="Powder-averaged axial hyperfine pair",
         function=_muonium_high_tf_aniso_component,
         param_names=["A", "field", "A_hf", "D_mu", "phase"],
         param_defaults={
@@ -987,6 +1025,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "MuoniumLFRelax": ComponentDefinition(
         name="MuoniumLFRelax",
         description="Muonium longitudinal-field T1 relaxation (BPP at the nu_12 transition)",
+        label="Muonium LF relaxation",
+        use_when="Mu⁰ T₁ relaxation in LF",
         function=_muonium_lf_relax_component,
         param_names=["A", "delta_ex", "tau_c", "B_L", "A_hf"],
         param_defaults={
@@ -1018,6 +1058,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "StretchedExponential": ComponentDefinition(
         name="StretchedExponential",
         description="A exp(-(|Lambda| t)^beta)",
+        label="Stretched exponential",
+        use_when="A distribution of relaxation rates",
         function=_stretched_component,
         param_names=["A", "Lambda", "beta"],
         param_defaults={"A": 25.0, "Lambda": 0.5, "beta": 1.0},
@@ -1036,6 +1078,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "RischKehr": ComponentDefinition(
         name="RischKehr",
         description="Risch-Kehr relaxation from 1D diffusive spin transport",
+        label="Risch–Kehr",
+        use_when="1D diffusive spin transport",
         function=_risch_kehr_component,
         param_names=["A", "Gamma"],
         param_defaults={"A": 25.0, "Gamma": 1.0},
@@ -1050,6 +1094,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "StaticGKT_ZF": ComponentDefinition(
         name="StaticGKT_ZF",
         description="Static Gaussian Kubo-Toyabe (zero field)",
+        label="Static Gaussian KT",
+        use_when="Static random fields, zero field",
         function=_gkt_component,
         param_names=["A", "Delta"],
         param_defaults={"A": 25.0, "Delta": 0.5},
@@ -1066,6 +1112,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "LongitudinalFieldKT": ComponentDefinition(
         name="LongitudinalFieldKT",
         description="Static Gaussian Kubo-Toyabe with longitudinal field (Hayano et al. 1979)",
+        label="LF Kubo–Toyabe",
+        use_when="Static fields decoupled by an applied LF",
         function=_lf_kt_component,
         param_names=["A", "Delta", "B_L"],
         param_defaults={"A": 25.0, "Delta": 0.5, "B_L": 0.0},
@@ -1091,6 +1139,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Dynamic Gaussian Kubo-Toyabe (strong-collision; Hayano et al., "
             "Phys. Rev. B 20, 850 (1979))"
         ),
+        label="Dynamic Gaussian KT",
+        use_when="Fluctuating Gaussian fields (strong collision)",
         function=_dynamic_gkt_component,
         param_names=["A", "Delta", "nu", "B_L"],
         param_defaults={"A": 25.0, "Delta": 0.5, "nu": 1.0, "B_L": 0.0},
@@ -1117,6 +1167,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Dynamic Lorentzian Kubo-Toyabe (strong-collision; Uemura et al., "
             "Phys. Rev. B 31, 546 (1985))"
         ),
+        label="Dynamic Lorentzian KT",
+        use_when="Fluctuating fields from dilute moments",
         function=_dynamic_lkt_component,
         param_names=["A", "a_L", "nu", "B_L"],
         param_defaults={"A": 25.0, "a_L": 0.5, "nu": 1.0, "B_L": 0.0},
@@ -1139,6 +1191,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "GaussianBroadenedKT": ComponentDefinition(
         name="GaussianBroadenedKT",
         description="Static (LF) Gaussian Kubo-Toyabe averaged over a Gaussian spread of Delta",
+        label="Gaussian-broadened KT",
+        use_when="A spread of static field widths",
         function=_gaussian_broadened_kt_component,
         param_names=["A", "Delta", "B_L", "w_rel"],
         param_defaults={"A": 25.0, "Delta": 0.5, "B_L": 0.0, "w_rel": 0.2},
@@ -1164,6 +1218,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Keren dynamic Gaussian relaxation in a longitudinal field "
             "(Keren, Phys. Rev. B 50, 10039 (1994))"
         ),
+        label="Keren",
+        use_when="Dynamic Gaussian relaxation in LF",
         function=_keren_component,
         param_names=["A", "Delta", "nu", "B_L"],
         param_defaults={"A": 25.0, "Delta": 0.5, "nu": 1.0, "B_L": 0.0},
@@ -1190,6 +1246,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Abragam relaxation, Gaussian-to-exponential crossover "
             "(Abragam, Principles of Nuclear Magnetism, 1961)"
         ),
+        label="Abragam",
+        use_when="Gaussian-to-exponential crossover as motion sets in",
         function=_abragam_component,
         param_names=["A", "Delta", "nu"],
         param_defaults={"A": 25.0, "Delta": 0.5, "nu": 1.0},
@@ -1210,6 +1268,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "MuF": ComponentDefinition(
         name="MuF",
         description="Analytical mu-F polarization function D_z(t)",
+        label="μ–F pair",
+        use_when="Muon bound to one fluorine",
         function=_muf_component,
         param_names=["A", "r_muF"],
         param_defaults={"A": 25.0, "r_muF": 1.17},
@@ -1226,6 +1286,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "FmuF_Linear": ComponentDefinition(
         name="FmuF_Linear",
         description="Analytical collinear F-mu-F polarization function",
+        label="F–μ–F, linear",
+        use_when="Collinear F–μ–F complex",
         function=_linear_fmuf_component,
         param_names=["A", "r_muF"],
         param_defaults={"A": 25.0, "r_muF": 1.17},
@@ -1240,6 +1302,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "DynamicFmuF": ComponentDefinition(
         name="DynamicFmuF",
         description="Strong-collision dynamicized collinear F-mu-F polarization",
+        label="Dynamic F–μ–F",
+        use_when="F–μ–F with hopping",
         function=_dynamic_fmuf_component,
         param_names=["A", "r_muF", "nu"],
         param_defaults={"A": 25.0, "r_muF": 1.17, "nu": 0.5},
@@ -1261,6 +1325,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "FmuF_General": ComponentDefinition(
         name="FmuF_General",
         description="Numerical powder-averaged F-mu-F polarization (r1, r2, theta)",
+        label="F–μ–F, general geometry",
+        use_when="Bent F–μ–F, powder average",
         function=_general_fmuf_component,
         param_names=["A", "r1", "r2", "theta"],
         param_defaults={"A": 25.0, "r1": 1.17, "r2": 1.17, "theta": 180.0},
@@ -1280,6 +1346,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "FmuF_Triangle": ComponentDefinition(
         name="FmuF_Triangle",
         description="Collinear F-mu-F plus a third fluorine (16-dim powder average)",
+        label="F–μ–F + third F",
+        use_when="Collinear F–μ–F with a third fluorine",
         function=_fmuf_triangle_component,
         param_names=["A", "r_muF", "r3", "phi3"],
         param_defaults={"A": 25.0, "r_muF": 1.17, "r3": 2.5, "phi3": 90.0},
@@ -1299,6 +1367,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "DipolarPairField": ComponentDefinition(
         name="DipolarPairField",
         description="Spin-1/2 dipole pair parameterised by the dipolar field B_dip",
+        label="Dipole pair (field)",
+        use_when="Muon–spin-½ pair, fitted as a field",
         function=_dipolar_pair_field_component,
         param_names=["A", "B_dip", "lambda_T"],
         param_defaults={"A": 25.0, "B_dip": 10.0, "lambda_T": 0.0},
@@ -1324,6 +1394,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "ProtonDipole": ComponentDefinition(
         name="ProtonDipole",
         description="Spin-1/2 dipole pair: muon + proton at distance r",
+        label="μ–H pair",
+        use_when="Muon bound to a proton",
         function=_proton_dipole_component,
         param_names=["A", "r_muH", "lambda_T"],
         param_defaults={"A": 25.0, "r_muH": 1.7, "lambda_T": 0.0},
@@ -1346,6 +1418,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "ElectronDipole": ComponentDefinition(
         name="ElectronDipole",
         description="Spin-1/2 dipole pair: muon + localized electron moment at distance r",
+        label="μ–electron dipole",
+        use_when="Muon near a localised electron moment",
         function=_electron_dipole_component,
         param_names=["A", "r_mue", "lambda_T"],
         param_defaults={"A": 25.0, "r_mue": 5.0, "lambda_T": 0.0},
@@ -1368,6 +1442,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "DipolarSpinJ": ComponentDefinition(
         name="DipolarSpinJ",
         description="Muon coupled to one spin-J nucleus with dipolar + quadrupolar terms",
+        label="Muon + spin-J nucleus",
+        use_when="Dipolar and quadrupolar coupling",
         function=_dipolar_spin_j_component,
         param_names=["A", "f_dip", "f_quad", "J_spin"],
         param_defaults={"A": 25.0, "f_dip": 0.2, "f_quad": 0.0, "J_spin": 1.5},
@@ -1391,6 +1467,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "Constant": ComponentDefinition(
         name="Constant",
         description="Constant background A_bg",
+        label="Constant background",
+        use_when="Muons stopping outside the sample",
         function=_constant_component,
         param_names=["A_bg"],
         param_defaults={"A_bg": 0.0},
@@ -1405,6 +1483,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "GaussianPeak": ComponentDefinition(
         name="GaussianPeak",
         description="Gaussian spectral line, parameterised by its full width at half maximum",
+        label="Gaussian peak",
+        use_when="A Gaussian line in a frequency spectrum",
         function=_gaussian_peak_component,
         param_names=["height", "nu0", "fwhm"],
         param_defaults={"height": 1.0, "nu0": 1.0, "fwhm": 0.1},
@@ -1427,6 +1507,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "LorentzianPeak": ComponentDefinition(
         name="LorentzianPeak",
         description="Lorentzian spectral line, parameterised by its full width at half maximum",
+        label="Lorentzian peak",
+        use_when="A Lorentzian line in a frequency spectrum",
         function=_lorentzian_peak_component,
         param_names=["height", "nu0", "fwhm"],
         param_defaults={"height": 1.0, "nu0": 1.0, "fwhm": 0.1},
@@ -1446,6 +1528,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "ConstantBackground": ComponentDefinition(
         name="ConstantBackground",
         description="Frequency-domain constant background",
+        label="Constant spectral background",
+        use_when="A flat spectral baseline",
         function=_constant_background_component,
         param_names=["bg"],
         param_defaults={"bg": 0.0},
@@ -1461,6 +1545,8 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "LinearBackground": ComponentDefinition(
         name="LinearBackground",
         description="Frequency-domain linear background",
+        label="Linear spectral background",
+        use_when="A sloping spectral baseline",
         function=_linear_background_component,
         param_names=["bg", "slope"],
         param_defaults={"bg": 0.0, "slope": 0.0},
@@ -1978,6 +2064,8 @@ def placeholder_component_definition(name: str) -> ComponentDefinition:
     return ComponentDefinition(
         name=name,
         description=f"Missing user function '{name}' (not registered in this session)",
+        label=name,
+        use_when="Not registered in this session",
         function=_missing_component_function,
         param_names=[],
         param_defaults={},

@@ -29,6 +29,8 @@ from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 import asymmetry.gui.mainwindow as mw_module  # noqa: E402
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run  # noqa: E402
+from asymmetry.core.fitting.component_tags import FieldGeometry  # noqa: E402
+from asymmetry.core.fitting.wizard_scope import user_field_direction_overrides  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 
 
@@ -106,6 +108,33 @@ def test_fit_completion_signals_wired_to_dirty(win: MainWindow) -> None:
     win._fit_panel.fit_completed.disconnect(win._mark_dirty)
     win._fit_panel.global_fit_completed.disconnect(win._mark_dirty)
     win._fit_panel.grouped_fit_completed.disconnect(win._mark_dirty)
+
+
+def test_a_wizard_direction_answer_is_saved_on_the_browser_runs(
+    win: MainWindow, qapp: QApplication
+) -> None:
+    # The wizards answer on fit-range crops, whose metadata is a copy; the
+    # project saves the browser's own datasets, so the answer is applied there.
+    recorded, silent = _ds(13), _ds(14)
+    recorded.metadata["field_direction"] = "Transverse"
+    for dataset in (recorded, silent):
+        win._data_browser.add_dataset(dataset)
+    qapp.processEvents()
+    win._clear_dirty()
+
+    win._fit_panel._global_tab.field_direction_answered.emit(frozenset({13, 14}), FieldGeometry.LF)
+    assert user_field_direction_overrides(silent) == {
+        "field_direction": "Longitudinal",
+        "field_direction_source": "user",
+    }
+    assert recorded.metadata["field_direction"] == "Transverse"
+    assert user_field_direction_overrides(recorded) == {}
+    assert win._dirty is True
+
+    win._clear_dirty()
+    win._fit_panel._single_tab.field_direction_answered.emit(frozenset({14}), None)
+    assert "field_direction" not in silent.metadata
+    assert win._dirty is True
 
 
 def test_restore_does_not_mark_dirty(win: MainWindow, qapp: QApplication) -> None:

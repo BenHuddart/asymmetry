@@ -76,6 +76,7 @@ class _StubFitPanel(QWidget):
         self.global_fit_started = _DummySignal()
         self.global_fit_completed = _DummySignal()
         self.apply_wizard_phases_requested = _DummySignal()
+        self.field_direction_answered = _DummySignal()
         self.grouped_fit_completed = _DummySignal()
         self.grouped_time_domain_mode_changed = _DummySignal()
         self.trends_requested = _DummySignal()

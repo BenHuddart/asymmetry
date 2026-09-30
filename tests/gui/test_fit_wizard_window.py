@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 import asymmetry.gui.windows.fit_wizard_window as wizard_window_module
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import FieldGeometry, PhysicsClass
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -38,6 +39,7 @@ from asymmetry.core.fitting.peak_detection import (
     MultipletMatch,
     PeakAnalysis,
 )
+from asymmetry.core.fitting.wizard_scope import WizardScope
 from asymmetry.gui.windows.fit_wizard_window import (
     _PAGE_RESULT,
     _PAGE_RUNNING,
@@ -45,6 +47,8 @@ from asymmetry.gui.windows.fit_wizard_window import (
     FitWizardWindow,
 )
 from tests._qt_helpers import wait_for
+
+LF_DYNAMICS = WizardScope(physics=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}))
 
 
 def _canned_peak_analysis() -> PeakAnalysis:
@@ -456,7 +460,7 @@ def test_fit_wizard_window_emits_cached_analysis_payload(
     assert payload.get("signature") == {
         "run_number": int(dataset.run_number),
         "model": None,
-        "scope": {"version": 1, "preset": "auto", "include": [], "exclude": []},
+        "scope": WizardScope().to_payload(),
         "user_peaks": [],
     }
 
@@ -481,8 +485,8 @@ def test_fit_wizard_window_accepts_cached_recommendation(
     assert window._stack.currentIndex() == _PAGE_RESULT
     assert window._compare_table.rowCount() == 2
     assert window._answer_card.selected_key() == "exp_constant"
-    # Legacy signature (no scope/user_peaks keys) restores Auto and is not stale.
-    assert window._scope_selector.current_scope()["preset"] == "auto"
+    # A signature without scope/user_peaks keeps the default scope and is not stale.
+    assert window._picker.scope() == WizardScope()
     assert window._user_peaks == []
     # The result page is a scroll area (see test_fit_wizard_window_result_page_is_scrollable)
     # so an expanded trail step can never push content past the window unreachably.
@@ -518,45 +522,10 @@ def test_fit_wizard_window_result_page_is_scrollable(
     assert content.isAncestorOf(window._result_trail)
 
 
-# ── Resolver adapter shape ───────────────────────────────────────────────────
+# ── Welcome page: the picker open, peak seeding collapsed ────────────────────
 
 
-def test_fit_wizard_window_resolver_groups_time_domain_by_category(
-    qapp: QApplication,
-    dataset: MuonDataset,
-) -> None:
-    from asymmetry.core.fitting.composite import COMPONENTS
-
-    window = FitWizardWindow()
-    window.set_analysis_context(dataset)
-
-    result = window._resolve_scope("auto", {"include": [], "exclude": []})
-    families = result["families"]
-    names = [c["name"] for f in families for c in f["components"]]
-
-    assert names
-    # Frequency-domain components are skipped entirely.
-    assert all(COMPONENTS[name].domain == "time" for name in names)
-    # Each family is titled by the component category it groups.
-    for family in families:
-        first = family["components"][0]["name"]
-        assert family["title"] == COMPONENTS[first].category
-        assert all(COMPONENTS[c["name"]].category == family["title"] for c in family["components"])
-    # Estimate is a two-element (candidates, fits) pair.
-    assert len(result["estimate"]) == 2
-
-
-def test_fit_wizard_window_resolver_guards_without_dataset(qapp: QApplication) -> None:
-    window = FitWizardWindow()
-    result = window._resolve_scope("auto", {"include": [], "exclude": []})
-    assert result["families"] == []
-    assert result["note"] == "Load a dataset first"
-
-
-# ── Scope tab: ordering + selection ──────────────────────────────────────────
-
-
-def test_fit_wizard_window_opens_on_welcome_with_collapsed_guidance(
+def test_fit_wizard_window_opens_on_welcome_with_the_picker_open(
     qapp: QApplication,
     dataset: MuonDataset,
 ) -> None:
@@ -564,11 +533,22 @@ def test_fit_wizard_window_opens_on_welcome_with_collapsed_guidance(
     # No tabs on the new window: the base tab scaffolding is not built.
     assert window._tabs is None
     window.set_analysis_context(dataset)
+    window.show()
+    qapp.processEvents()
     # Opens on the Welcome state with the guidance section collapsed by default.
     assert window._stack.currentIndex() == _PAGE_WELCOME
     assert window._guidance_section.isExpanded() is False
-    # The scope selector lives inside the (collapsed) guidance section.
-    assert window._scope_panel.parent() is window._guidance_scope_slot
+    # The picker is shown open, outside the collapsed guidance section.
+    assert window._picker.parent() is window._welcome_scope_slot
+    assert not window._guidance_section.isAncestorOf(window._picker)
+    assert window._picker.isVisible()
+    # It sits between the intro and the Analyze button.
+    picker_top = window._picker.mapTo(window, window._picker.rect().topLeft()).y()
+    analyze_top = window._analyze_btn.mapTo(window, window._analyze_btn.rect().topLeft()).y()
+    assert picker_top < analyze_top
+    # The guidance section keeps only the peak seeding.
+    assert window._guidance_section.isAncestorOf(window._fingerprint_panel)
+    window.close()
 
 
 # ── Fingerprint plot decimation (GUI-thread stall guard) ─────────────────────
@@ -608,8 +588,6 @@ def test_fit_wizard_window_forwards_scope_and_user_peaks(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
-
     captured: dict[str, object] = {}
 
     def _capture(dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs):
@@ -620,17 +598,14 @@ def test_fit_wizard_window_forwards_scope_and_user_peaks(
     window = FitWizardWindow()
     window.set_analysis_context(dataset)
 
-    window._scope_selector.set_scope(
-        {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []}
-    )
+    window._picker.set_scope(LF_DYNAMICS)
     window._user_peaks = [{"freq_mhz": 3.5}, {"freq_mhz": 12.0}]
 
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
     scope = captured.get("scope")
-    assert isinstance(scope, WizardScope)
-    assert scope.preset is WizardScopePreset.LF_DYNAMICS
+    assert scope == LF_DYNAMICS
     assert captured.get("user_frequencies_mhz") == [3.5, 12.0]
     # The cooperative cancel_callback is threaded through to the engine.
     assert callable(captured.get("cancel_callback"))
@@ -659,12 +634,8 @@ def test_fit_wizard_window_scope_change_marks_stale(
     previous = window.current_recommendation()
     assert window._stale_banner.isHidden() is True
 
-    # Toggle scope via the selector's scope_changed emission.
-    window._scope_selector.set_scope(None)
-    window._scope_selector._preset_combo.setCurrentIndex(
-        window._scope_selector._preset_combo.findData("lf-dynamics")
-    )
-    qapp.processEvents()
+    # A picker edit: look for spin dynamics.
+    window._picker._chips[PhysicsClass.DYNAMICS].click()
 
     assert window._analysis_stale is True
     assert window._stale_banner.isHidden() is False
@@ -672,6 +643,37 @@ def test_fit_wizard_window_scope_change_marks_stale(
     # Old recommendation still displayed.
     assert window.current_recommendation() is previous
     assert window._compare_table.rowCount() == 2
+
+
+def test_fit_wizard_window_direction_answer_saves_on_the_run_and_marks_stale(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _fake_recommendation(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+    answers: list[tuple] = []
+    window.field_direction_answered.connect(lambda runs, geometry: answers.append((runs, geometry)))
+
+    window._picker._direction_group.button(2).click()  # Transverse
+
+    assert dataset.metadata["field_direction"] == "Transverse"
+    assert dataset.metadata["field_direction_source"] == "user"
+    assert answers == [(frozenset({101}), FieldGeometry.TF)]
+    assert window._analysis_stale is True
+    assert window._stale_banner.isHidden() is False
+    assert window._picker._direction_note.text() == (
+        "Set by you — saved on the run, which records none."
+    )
 
 
 # ── Mid-run scope change discards the result ─────────────────────────────────
@@ -719,7 +721,7 @@ def test_fit_wizard_window_start_disabled_when_scope_invalid(
     window.set_analysis_context(dataset)
     assert window._refresh_btn.isEnabled() is True
 
-    monkeypatch.setattr(window._scope_selector, "is_valid", lambda: False)
+    monkeypatch.setattr(window._picker, "is_valid", lambda: False)
     window._on_scope_validity_changed(False)
 
     assert window._refresh_btn.isEnabled() is False
@@ -742,13 +744,14 @@ def test_fit_wizard_window_cached_restore_with_scope_and_peaks(
         signature={
             "run_number": int(dataset.run_number),
             "model": None,
-            "scope": {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []},
+            "scope": LF_DYNAMICS.to_payload(),
             "user_peaks": [{"freq_mhz": 4.0}],
         },
         log_text="cached",
     )
 
-    assert window._scope_selector.current_scope()["preset"] == "lf-dynamics"
+    assert window._picker.scope() == LF_DYNAMICS
+    assert window._picker._chips[PhysicsClass.DYNAMICS].isChecked()
     assert window._user_peaks == [{"freq_mhz": 4.0}]
     assert window._analysis_stale is False
     assert window._stale_banner.isHidden() is True
@@ -1325,7 +1328,7 @@ def test_fit_wizard_window_trail_expansion_reveals_reparented_panels(
 
     # The scope, fingerprint (FFT+peaks) and compare panels are re-parented into
     # the trail's conditions / spectrum / candidates expansions.
-    assert window._scope_panel.parent() is not window._guidance_scope_slot
+    assert window._picker.parent() is not window._welcome_scope_slot
     trail = window._result_trail
     trail.set_step_expanded("spectrum", True)
     qapp.processEvents()
@@ -1356,8 +1359,8 @@ def test_fit_wizard_window_reanalyze_returns_to_welcome(
 
     window._reanalyze_btn.click()
     assert window._stack.currentIndex() == _PAGE_WELCOME
-    # The guidance panels are back in the Welcome expander for steering.
-    assert window._scope_panel.parent() is window._guidance_scope_slot
+    # The picker is back on the Welcome page for steering.
+    assert window._picker.parent() is window._welcome_scope_slot
 
 
 def test_fit_wizard_window_progress_callback_is_wired_through(

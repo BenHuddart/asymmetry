@@ -286,6 +286,8 @@ def register_component(
     definition = ComponentDefinition(
         name=name,
         description=str(description),
+        label=name,
+        use_when=str(description),
         function=function,
         param_names=params,
         param_defaults=defaults,

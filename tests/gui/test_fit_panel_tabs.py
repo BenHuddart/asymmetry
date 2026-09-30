@@ -448,6 +448,7 @@ def test_single_fit_open_fit_wizard_uses_active_dataset_and_model(
             self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
             self.apply_phases_requested = SimpleNamespace(connect=lambda _cb: None)
             self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
+            self.field_direction_answered = SimpleNamespace(connect=lambda _cb: None)
 
         def set_analysis_context(
             self, dataset_arg, current_model=None, *, full_dataset=None, fit_range=None
@@ -3534,6 +3535,7 @@ def test_global_tab_reopens_cached_results_for_prior_run_set_after_switching_gro
             self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
             self.apply_phases_requested = SimpleNamespace(connect=lambda _cb: None)
             self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
+            self.field_direction_answered = SimpleNamespace(connect=lambda _cb: None)
             self.single_fit_recommendations_generated = SimpleNamespace(connect=lambda _cb: None)
             self.parameter_setup_applied = SimpleNamespace(connect=lambda _cb: None)
 
@@ -3595,6 +3597,7 @@ def test_global_tab_reopens_historical_results_for_same_run_set_when_signature_c
             self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
             self.apply_phases_requested = SimpleNamespace(connect=lambda _cb: None)
             self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
+            self.field_direction_answered = SimpleNamespace(connect=lambda _cb: None)
             self.single_fit_recommendations_generated = SimpleNamespace(connect=lambda _cb: None)
             self.parameter_setup_applied = SimpleNamespace(connect=lambda _cb: None)
 
@@ -3736,6 +3739,7 @@ def test_global_tab_open_fit_wizard_passes_cached_single_fit_recommendations(
             self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
             self.apply_phases_requested = SimpleNamespace(connect=lambda _cb: None)
             self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
+            self.field_direction_answered = SimpleNamespace(connect=lambda _cb: None)
             self.single_fit_recommendations_generated = SimpleNamespace(connect=lambda _cb: None)
             self.parameter_setup_applied = SimpleNamespace(connect=lambda _cb: None)
 

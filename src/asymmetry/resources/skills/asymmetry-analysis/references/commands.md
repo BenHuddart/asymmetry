@@ -255,7 +255,7 @@ options:
 ## `asymmetry wizard`
 
 ```
-usage: asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope PRESET]
+usage: asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope NAME]
                         [--include C,D] [--exclude C,D] [--tmin TMIN] [--tmax TMAX]
                         [--plot] [--json] [--workdir WORKDIR] [--instrument NAME]
                         folder
@@ -270,10 +270,11 @@ options:
                         Applied-field geometry, overriding the survey's and the file's
                         (ISIS stamps TF on zero-field runs and some files record
                         nothing)
-  --scope PRESET        Candidate-family scope preset (default: auto, from the run's
-                        geometry)
-  --include C,D         Time-domain components to add to the scope's families, e.g.
-                        'Oscillatory' for a line in an LF run
+  --scope NAME          Physics to look for, e.g. lf-dynamics or muonium-radical
+                        (default: auto, every class). The name chooses physics, not
+                        geometry: the geometry comes from the run or --geometry
+  --include C,D         Time-domain components to add to the scope, e.g. 'Oscillatory'
+                        for a line in an LF run
   --exclude C,D         Components to drop from the scope, e.g.
                         'VortexLattice,VortexLatticePowder'
   --tmin TMIN           Screen only above this time / µs

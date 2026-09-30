@@ -251,11 +251,12 @@ def test_wizard_disqualifies_an_over_parameterised_candidate(time_axis: np.ndarr
     just as well — AICc alone separates them by only a few units — but their
     extra branches are not measured, and the ranked table now says so.
     """
+    from asymmetry.core.fitting.component_tags import PhysicsClass
     from asymmetry.core.fitting.fit_wizard import (
         SelectionMetric,
         build_fit_wizard_recommendation,
     )
-    from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
+    from asymmetry.core.fitting.wizard_scope import WizardScope
 
     truth = 0.075 * np.exp(-3.2 * time_axis) + 0.025 * np.exp(-0.42 * time_axis) + 0.012
     dataset = _dataset(time_axis, truth, 0.0016, seed=3)
@@ -263,7 +264,7 @@ def test_wizard_disqualifies_an_over_parameterised_candidate(time_axis: np.ndarr
     recommendation = build_fit_wizard_recommendation(
         dataset,
         metric=SelectionMetric.AICC,
-        scope=WizardScope(preset=WizardScopePreset.ZF_STATIC_MAGNETISM),
+        scope=WizardScope(physics=frozenset({PhysicsClass.MAGNETISM})),
         max_workers=1,
     )
 

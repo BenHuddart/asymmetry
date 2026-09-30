@@ -79,6 +79,7 @@ class _FakeSingleWizard:
         self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
         self.apply_phases_requested = SimpleNamespace(connect=lambda _cb: None)
         self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
+        self.field_direction_answered = SimpleNamespace(connect=lambda _cb: None)
         self.set_cached_recommendation_calls: list[tuple] = []
         self.analysis_context_calls: list[tuple] = []
 
@@ -308,6 +309,7 @@ class _FakeGlobalWizard:
         self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
         self.single_fit_recommendations_generated = SimpleNamespace(connect=lambda _cb: None)
         self.parameter_setup_applied = SimpleNamespace(connect=lambda _cb: None)
+        self.field_direction_answered = SimpleNamespace(connect=lambda _cb: None)
         self.set_cached_recommendation_calls: list[tuple] = []
 
     def set_analysis_context(self, *_args, **_kwargs) -> None:

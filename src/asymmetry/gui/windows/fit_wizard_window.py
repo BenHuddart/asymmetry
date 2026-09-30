@@ -51,7 +51,8 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.core.fitting.component_tags import FieldGeometry
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.damped_line_scan import measure_line_at_frequency
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import (
@@ -68,18 +69,18 @@ from asymmetry.core.fitting.wizard_narrative import (
 )
 from asymmetry.core.fitting.wizard_scope import (
     WizardScope,
-    estimate_screening_cost,
-    resolve_scope_for_dataset,
+    describe_scope,
+    set_user_field_direction,
 )
 from asymmetry.core.fourier.fft import fft_asymmetry
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_banner
 from asymmetry.gui.utils.plot_decimation import decimate_for_preview
 from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
+from asymmetry.gui.widgets.model_family_picker import ModelFamilyPicker
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.wizard_answer_card import WizardAnswerCard
-from asymmetry.gui.widgets.wizard_scope_selector import WizardScopeSelector
 from asymmetry.gui.windows.wizard_base import WizardWindowBase
 
 #: Short human-readable labels for multiplet-match kinds shown in the peaks table.
@@ -145,6 +146,9 @@ _PAGE_WELCOME = 0
 _PAGE_RUNNING = 1
 _PAGE_RESULT = 2
 
+#: The model family picker's height floor on the scrolling Welcome page, in table rows.
+_PICKER_MIN_ROWS = 18
+
 #: Cap on points drawn in the fingerprint plot's time-domain errorbar. This
 #: plot is a small visual fingerprint (not a precision analysis surface, per
 #: its module docstring) drawn synchronously on the GUI thread from
@@ -176,6 +180,9 @@ class FitWizardWindow(WizardWindowBase):
         object, object
     )  # CandidateAssessment, FitWizardRecommendation
     analysis_cached = Signal(object, str, object)
+    #: ``(run numbers, FieldGeometry | None)`` — the user answered the field
+    #: direction for a run whose file records none.
+    field_direction_answered = Signal(object, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         # WizardWindowBase.__init__ builds the shared frame (heading/status/
@@ -234,7 +241,15 @@ class FitWizardWindow(WizardWindowBase):
         self._peak_click_candidate: tuple[float, float, float] | None = None
 
         # --- Deep panels (built once, re-parented between states) ---
-        self._scope_panel = self._build_scope_panel()
+        self._picker = ModelFamilyPicker(
+            lambda scope: describe_scope([] if self._dataset is None else [self._dataset], scope)
+        )
+        self._picker.setMinimumHeight(metrics.row_height() * _PICKER_MIN_ROWS)
+        self._picker.scope_changed.connect(
+            lambda _scope: self._mark_analysis_stale("Scope changed")
+        )
+        self._picker.validity_changed.connect(self._on_scope_validity_changed)
+        self._picker.direction_answered.connect(self._answer_field_direction)
         self._fingerprint_panel = self._build_fingerprint_panel()
         self._compare_panel = self._build_compare_panel()
 
@@ -279,8 +294,8 @@ class FitWizardWindow(WizardWindowBase):
     # ------------------------------------------------------------------
 
     def _build_welcome_page(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setSpacing(10)
 
         intro = QLabel(
@@ -291,6 +306,11 @@ class FitWizardWindow(WizardWindowBase):
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
+
+        # The model family picker, shown open; a result moves it into the trail.
+        self._welcome_scope_slot = QWidget()
+        QVBoxLayout(self._welcome_scope_slot).setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._welcome_scope_slot, 1)
 
         analyze_row = QHBoxLayout()
         self._analyze_btn = QPushButton("Analyze")
@@ -305,26 +325,28 @@ class FitWizardWindow(WizardWindowBase):
         self._welcome_hint_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         layout.addWidget(self._welcome_hint_label)
 
-        # Collapsed optional-guidance section: scope selector + FFT/peaks seeding.
+        # Collapsed optional-guidance section: FFT/peaks seeding.
         self._guidance_section = PanelSection(
             "Guide the analysis (optional)", collapsible=True, expanded=False
         )
-        self._guidance_scope_slot = QWidget()
-        QVBoxLayout(self._guidance_scope_slot).setContentsMargins(0, 0, 0, 0)
         self._guidance_fingerprint_slot = QWidget()
         QVBoxLayout(self._guidance_fingerprint_slot).setContentsMargins(0, 0, 0, 0)
         guidance_hint = QLabel(
-            "Use these only if you know something the run metadata does not. Narrow "
-            "which physics families are screened, or seed a peak the automatic search "
-            "may miss."
+            "Use this only if you know of a line the automatic search may miss: "
+            "seed its peak on the spectrum below."
         )
         guidance_hint.setWordWrap(True)
         guidance_hint.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self._guidance_section.addWidget(guidance_hint)
-        self._guidance_section.addWidget(self._guidance_scope_slot)
         self._guidance_section.addWidget(self._guidance_fingerprint_slot)
         layout.addWidget(self._guidance_section)
-        layout.addStretch()
+
+        # The page scrolls, so the expanded guidance never squeezes the picker.
+        page = QScrollArea()
+        page.setWidgetResizable(True)
+        page.setFrameShape(QFrame.Shape.NoFrame)
+        page.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        page.setWidget(content)
         return page
 
     def _build_running_page(self) -> QWidget:
@@ -390,24 +412,6 @@ class FitWizardWindow(WizardWindowBase):
     # ------------------------------------------------------------------
     # Deep panels (built once; re-parented between states)
     # ------------------------------------------------------------------
-
-    def _build_scope_panel(self) -> QWidget:
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        intro = QLabel(
-            "Choose which candidate families the wizard screens. Start from a preset "
-            "(or Auto, inferred from run metadata) and include/exclude individual "
-            "components as needed."
-        )
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-
-        self._scope_selector = WizardScopeSelector()
-        self._scope_selector.scope_changed.connect(self._on_scope_changed)
-        self._scope_selector.validity_changed.connect(self._on_scope_validity_changed)
-        layout.addWidget(self._scope_selector, 1)
-        return panel
 
     def _build_fingerprint_panel(self) -> QWidget:
         panel = QWidget()
@@ -504,8 +508,8 @@ class FitWizardWindow(WizardWindowBase):
         panel.setVisible(True)
 
     def _show_welcome(self) -> None:
-        """Enter the Welcome state: guidance panels housed in the expander."""
-        self._reparent_into(self._guidance_scope_slot, self._scope_panel)
+        """Enter the Welcome state: the picker open, peak seeding in the expander."""
+        self._reparent_into(self._welcome_scope_slot, self._picker)
         self._reparent_into(self._guidance_fingerprint_slot, self._fingerprint_panel)
         self._update_start_button()
         self._stack.setCurrentIndex(_PAGE_WELCOME)
@@ -563,10 +567,7 @@ class FitWizardWindow(WizardWindowBase):
         self._recommendation = None
         self._selected_key = None
         self._invalidate_pending_curves()
-        # Install the scope resolver and reset the selector to Auto (signal-silent).
-        self._scope_selector.set_resolver(self._resolve_scope)
-        self._scope_selector.set_scope(None)
-        self._scope_selector.refresh_from_context()
+        self._picker.set_scope(WizardScope())
         # Render the time/FFT plot and the (user-only) peaks table straight away
         # so peak seeds can be added before the first analysis run.
         self._fingerprint_banner.setText("")
@@ -597,10 +598,8 @@ class FitWizardWindow(WizardWindowBase):
             return
         if self._analysis_in_progress:
             return
-        if not self._scope_selector.is_valid():
-            self._status_label.setText(
-                "Select at least one candidate family in the guidance section to enable analysis."
-            )
+        if not self._picker.is_valid():
+            self._status_label.setText("Select at least one candidate family to enable analysis.")
             return
         self._analysis_stale = False
         self._stale_banner.setVisible(False)
@@ -620,7 +619,7 @@ class FitWizardWindow(WizardWindowBase):
         # widgets, so it captures only these plain values plus worker.is_cancelled.
         dataset = self._dataset
         current_model = self._current_model
-        scope = WizardScope.from_payload(self._scope_selector.current_scope())
+        scope = self._picker.scope()
         user_frequencies_mhz = [float(peak["freq_mhz"]) for peak in self._user_peaks] or None
 
         def task(worker):
@@ -694,25 +693,27 @@ class FitWizardWindow(WizardWindowBase):
     def _update_start_button(self) -> None:
         """Refresh the Analyze/Re-run button state (both the welcome + base refs)."""
         busy = self._analysis_in_progress
-        enabled = self._dataset is not None and not busy and self._scope_selector.is_valid()
+        enabled = self._dataset is not None and not busy and self._picker.is_valid()
         label = "Re-run Analysis" if self._analysis_stale and not busy else "Analyze"
         for button in (self._refresh_btn, getattr(self, "_analyze_btn", None)):
             if button is not None:
                 button.setEnabled(enabled)
                 button.setText(label)
 
-    def _on_scope_changed(self, _scope: object) -> None:
-        self._mark_analysis_stale("Scope changed")
-
     def _on_scope_validity_changed(self, is_valid: bool) -> None:
         if not is_valid and not self._analysis_in_progress:
-            self._status_label.setText(
-                "Select at least one candidate family in the guidance section to enable analysis."
-            )
+            self._status_label.setText("Select at least one candidate family to enable analysis.")
         self._update_start_button()
 
+    def _answer_field_direction(self, geometry: FieldGeometry | None) -> None:
+        """Save the answer on the run when its file records no direction."""
+        set_user_field_direction([self._dataset], geometry)
+        self._picker.refresh()
+        self._mark_analysis_stale("Field direction changed")
+        self.field_direction_answered.emit(frozenset({self._dataset.run_number}), geometry)
+
     def _mark_analysis_stale(self, reason: str) -> None:
-        """Flag the displayed results as stale after a scope or peak-seed edit.
+        """Flag the displayed results as stale after a scope, direction or peak-seed edit.
 
         An in-flight analysis is orphaned by bumping the base's request id (its
         terminal signal is discarded on arrival), never cancelled cooperatively.
@@ -768,11 +769,11 @@ class FitWizardWindow(WizardWindowBase):
         if self._selected_key is None and recommendation.assessments:
             self._selected_key = recommendation.assessments[0].template.key
         self._cached_log_text = str(log_text or "")
-        # Restore scope + peak seeds from the signature. Legacy signatures without
-        # these keys restore as Auto / no peaks. Cached state is never stale.
+        # Restore scope + peak seeds from the signature. A signature without a
+        # scope keeps the default; without peaks, none. Cached state is never stale.
         signature_dict = signature if isinstance(signature, dict) else {}
-        cached_scope = signature_dict.get("scope")
-        self._scope_selector.set_scope(cached_scope if isinstance(cached_scope, dict) else None)
+        if "scope" in signature_dict:
+            self._picker.set_scope(WizardScope.from_payload(signature_dict["scope"]))
         cached_peaks = signature_dict.get("user_peaks")
         self._user_peaks = (
             [dict(peak) for peak in cached_peaks] if isinstance(cached_peaks, list) else []
@@ -795,7 +796,7 @@ class FitWizardWindow(WizardWindowBase):
                 else None
             ),
             "model": self._current_model.to_dict() if self._current_model is not None else None,
-            "scope": self._scope_selector.current_scope(),
+            "scope": self._picker.scope().to_payload(),
             "user_peaks": [dict(peak) for peak in self._user_peaks],
         }
 
@@ -839,58 +840,6 @@ class FitWizardWindow(WizardWindowBase):
         self.statusBar().showMessage("Analysis log copied to clipboard.")
 
     # ------------------------------------------------------------------
-    # Scope resolver (unchanged)
-    # ------------------------------------------------------------------
-
-    def _resolve_scope(self, preset_id: str, overrides: dict) -> dict:
-        """Adapt the core scope resolver to the WizardScopeSelector dict contract."""
-        if self._dataset is None:
-            return {
-                "effective_preset": preset_id,
-                "note": "Load a dataset first",
-                "families": [],
-                "estimate": [0, 0],
-            }
-        scope = WizardScope.from_payload(
-            {
-                "version": 1,
-                "preset": preset_id,
-                "include": overrides.get("include", []),
-                "exclude": overrides.get("exclude", []),
-            }
-        )
-        resolution = resolve_scope_for_dataset(self._dataset, scope)
-        included = resolution.included_set
-        reasons = {exc.name: exc.reason for exc in resolution.excluded_components}
-
-        families: list[dict] = []
-        by_category: dict[str, dict] = {}
-        for name, definition in COMPONENTS.items():
-            if definition.domain != "time":
-                continue
-            category = definition.category
-            family = by_category.get(category)
-            if family is None:
-                family = {"key": category, "title": category, "components": []}
-                by_category[category] = family
-                families.append(family)
-            family["components"].append(
-                {
-                    "name": name,
-                    "included": name in included,
-                    "reason": reasons.get(name, ""),
-                    "cost": definition.cost.value,
-                }
-            )
-
-        return {
-            "effective_preset": resolution.effective_preset.value,
-            "note": resolution.inference_note,
-            "families": families,
-            "estimate": list(estimate_screening_cost(resolution)),
-        }
-
-    # ------------------------------------------------------------------
     # Result-state population
     # ------------------------------------------------------------------
 
@@ -919,7 +868,7 @@ class FitWizardWindow(WizardWindowBase):
         # inject the re-parented deep panels for the steps that have one.
         trail = build_wizard_trail(self._recommendation)
         self._result_trail.set_steps(trail)
-        self._reparent_into_trail_slot("conditions", self._scope_panel)
+        self._reparent_into_trail_slot("conditions", self._picker)
         self._reparent_into_trail_slot("spectrum", self._fingerprint_panel)
         self._reparent_into_trail_slot("candidates", self._compare_panel)
 
@@ -1523,7 +1472,7 @@ class FitWizardWindow(WizardWindowBase):
         self._sync_selected_assessment()
         # The trail derives from the recommendation, so re-derive it after a re-rank.
         self._result_trail.set_steps(build_wizard_trail(self._recommendation))
-        self._reparent_into_trail_slot("conditions", self._scope_panel)
+        self._reparent_into_trail_slot("conditions", self._picker)
         self._reparent_into_trail_slot("spectrum", self._fingerprint_panel)
         self._reparent_into_trail_slot("candidates", self._compare_panel)
         if isinstance(self._cached_signature, dict):

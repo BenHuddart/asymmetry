@@ -140,7 +140,7 @@ structural harness.)
 - **`DockHeader`** (`widgets/dock_header.py`) — BENCH dock title bar
   (`setTitleBarWidget`).
 - **Wizard cards / decision trail** — `WizardAnswerCard`, `DecisionTrail`,
-  `WizardScopeSelector`, `WizardSeriesCard` (`widgets/`).
+  `ModelFamilyPicker`, `WizardSeriesCard` (`widgets/`).
 - **`WizardWindowBase`** (`windows/wizard_base.py`) — subclass this for a new
   guided-wizard window; it owns the `TaskRunner`, progress UI, staleness,
   cancel/closeEvent, and styled chrome. Do not hand-roll a wizard skeleton.

@@ -7,6 +7,7 @@ from dataclasses import replace
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import PhysicsClass
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
@@ -25,7 +26,6 @@ from asymmetry.core.fitting.global_fit_wizard import (
 from asymmetry.core.fitting.muon_fluorine.polarization import linear_fmuf_polarization
 from asymmetry.core.fitting.wizard_scope import (
     WizardScope,
-    WizardScopePreset,
     resolve_scope_for_datasets,
 )
 
@@ -72,7 +72,7 @@ def _fmuf_series(n: int = 2) -> list[MuonDataset]:
 
 def test_portfolio_scope_filters_templates() -> None:
     datasets = _exp_series()
-    scope = WizardScope(preset=WizardScopePreset.FLUORIDE_FMUF)
+    scope = WizardScope(physics=frozenset({PhysicsClass.MOLECULAR}))
     portfolio = build_global_fit_wizard_candidate_portfolio(datasets, scope=scope)
 
     resolution = resolve_scope_for_datasets(datasets, scope)
@@ -205,7 +205,7 @@ def test_alphabet_is_capped() -> None:
 
 def test_alphabet_portfolio_drops_templates_out_of_scope_for_every_run() -> None:
     datasets = _exp_series(2)
-    scope = WizardScope(preset=WizardScopePreset.FLUORIDE_FMUF)
+    scope = WizardScope(physics=frozenset({PhysicsClass.MOLECULAR}))
     oscillatory = _template("oscillatory_exp_constant", ("Oscillatory", "Exponential", "Constant"))
     recommendations = {
         int(dataset.run_number): replace(

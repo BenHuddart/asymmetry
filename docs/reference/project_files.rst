@@ -331,6 +331,23 @@ These blocks are optional and backward-compatible. Older project files do not
 need them, but when present they allow wizard results to reopen immediately
 without rerunning the expensive analysis.
 
+Each cache records the scope it was screened under (the model family picker's
+state; see :ref:`fit-wizard-model-family-picker`) in its signature, and a
+single-fit recommendation also inside its ``build_signature`` string. Since
+schema v23 a scope is ``{"version": 2, "physics", "include", "exclude",
+"skip_slow"}``: the physics classes looked for (an empty list means every
+class), the models switched on and off by name, and the **Leave out slow
+models** switch. Up to v22 a scope named a preset that fixed a geometry as
+well as the physics; ``_migrate_v22_to_v23`` rewrites each one to that
+preset's physics classes, keeps its include and exclude lists, and drops the
+geometry, which now always comes from the runs.
+
+A field direction the user answered in the picker, for a run whose file records
+none, is saved in that dataset's ``metadata_overrides`` as ``field_direction``
+(``"Zero field"``, ``"Longitudinal"``, or ``"Transverse"``) together with
+``field_direction_source: "user"``. On open it is re-applied only while the file
+still records no direction. The keys are optional, so no migration is involved.
+
 The stored recommendation is a **compact** form of the in-memory one. A live
 recommendation keeps, for every candidate it assessed, a fitted curve, its
 component curves and the fit residuals at the resolution of the analysed

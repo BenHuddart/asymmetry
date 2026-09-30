@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import PhysicsClass
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_wizard import (
     CandidateTemplate,
@@ -37,7 +38,6 @@ from asymmetry.core.fitting.global_fit_wizard import (
 from asymmetry.core.fitting.wizard_scope import (
     EffortTier,
     WizardScope,
-    WizardScopePreset,
 )
 from asymmetry.core.fitting.wizard_timing import (
     TIMING_KEY,
@@ -46,7 +46,7 @@ from asymmetry.core.fitting.wizard_timing import (
     timing_block,
 )
 
-ZF_SCOPE = WizardScope(preset=WizardScopePreset.ZF_STATIC_MAGNETISM)
+ZF_SCOPE = WizardScope(physics=frozenset({PhysicsClass.MAGNETISM}))
 
 
 def _series(count: int = 4, points: int = 220, seed: int = 0) -> list[MuonDataset]:

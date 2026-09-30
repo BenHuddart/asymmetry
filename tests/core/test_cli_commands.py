@@ -1270,7 +1270,7 @@ def test_wizard_rejects_an_unknown_scope_preset(
             ]
         )
     assert exc.value.code == 1
-    assert "Unknown scope preset" in capsys.readouterr().err
+    assert "Unknown scope" in capsys.readouterr().err
 
 
 # -- fit / fit-series / trend ------------------------------------------------

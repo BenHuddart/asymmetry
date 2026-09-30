@@ -62,8 +62,10 @@ check the wizard's working, not because you have to read it first.
 1. **Open.** The wizard opens on a plain explanation of what it is about to
    do — analyse this spectrum, fit a set of physics-motivated candidate
    models, and recommend one with a confidence grade, typically in about a
-   minute — followed by a one-line run-context summary (run number, field,
-   temperature, sample).
+   minute — with the run number, field, temperature, and sample beside the
+   title.
+   Below it sits the model family picker (see
+   `Choosing which models to screen`_), which you can leave as it is.
 2. **Analyze.** Click the **Analyze** button. There is no surprise
    computation before this point.
 3. **Watch the decision trail.** While the analysis runs, a short list of
@@ -83,50 +85,114 @@ check the wizard's working, not because you have to read it first.
    the single-fit tab, or expand any step of the decision trail below the
    card to see the reasoning behind it before deciding.
 
-Guiding the analysis (optional)
+.. _fit-wizard-model-family-picker:
+
+Choosing which models to screen
 --------------------------------
 
-The welcome page has a collapsed **"Guide the analysis (optional)"** section.
-Leave it closed and the wizard infers everything it needs from the run
-metadata; open it only when you know something the metadata does not:
+Both the wizard's running time and its answer depend on which candidate models
+it screens. Screening every model in the component library is safe but slow —
+a few numerically integrated models dominate the time — and a model that cannot
+describe your experiment only adds a chance of a spurious winner. The **model
+family picker**, shown open on the welcome page above **Analyze**, sets that
+list. Leave it as it is and the wizard screens every model that applies to the
+run; the same picker drives the :doc:`global_fit_wizard`.
 
-- **Scope.** A preset menu offers physics-motivated selections — ZF static
-  magnetism, TF Knight shift / precession, TF superconductor, LF dynamics,
-  fluoride (F-μ-F), muonium / radical, or everything — and the default
-  ``Auto`` preset infers a scope from the run metadata: the recorded field
-  geometry selects ZF, TF, or LF families, and for TF runs the field
-  magnitude excludes muonium components outside their validity regime (the
-  low-TF doublet above ~150 G, the Paschen-Back pair below ~1.5 kG; the exact
-  four-frequency muonium model is never field-excluded). Field geometry is
-  read from the data file only — it is never guessed from the field
-  magnitude — and when the metadata does not record a geometry the wizard
-  falls back to considering every family. A tree below the preset shows each
-  component with the reason it was excluded, and any component can be ticked
-  back in (or out); user-registered functions are always offered. A live
-  estimate of the candidate and fit counts indicates the cost of the current
-  selection.
-- **Peak seeding.** Below the scope selector, the same time-domain and FFT
-  plots you would see after analysis are already available, so you can seed a
-  peak before the first run. Clicking on the FFT plot adds a *user peak* at
-  that frequency (dashed red marker); clicking an existing user marker
-  removes it. A peaks table lists every seeded and already-detected line and
-  supports the same removal from a selected row. User peaks are treated as
-  trusted frequencies: they seed oscillatory candidates directly and
-  participate in pattern matching, which is the quickest way to steer the
-  wizard when you can see a line it underrates. Naming a frequency also buys
-  you its envelope: the same Δχ² test the damped-line scan uses is run at the
-  frequency you clicked, and the rate it measures appears in the peaks table's
-  **"Damping (µs⁻¹)"** column and seeds the oscillator's envelope. Because you
-  supplied the frequency, the test no longer has to correct for having
-  searched a whole band, so a line the blind scan declined can still be
-  measured this way; a click on empty spectrum measures nothing and the seed
-  stays a bare frequency. A heavily damped line that the windowed FFT plot
-  cannot show you no longer needs seeding by hand at all — see
-  :ref:`fit-wizard-damped-line-scan`.
+.. image:: /_generated/screenshots/fit_wizard_welcome.png
+   :alt: Fit Wizard welcome page — the model family picker with a Zero field answer above the Analyze button
+   :width: 100%
 
-Changing the scope or the peak seeds after an analysis has already run marks
-the displayed result stale — a banner says so, and the **Analyze** button
-relabels itself **Re-run Analysis** until you click it again.
+*The welcome page on the synthetic ZF Ag run. The file records no field*
+*direction, so the direction was answered "Zero field", and the TF- and*
+*LF-only models are listed under their cards as not applying. The details panel*
+*shows the static Gaussian Kubo–Toyabe model, and the footer names the six slow*
+*models still in the screen.*
+
+From top to bottom, the picker holds:
+
+- **Field direction.** Which models apply depends first on the applied-field
+  geometry, and the wizard reads it from the data file only — it never guesses
+  a direction from the field magnitude. When the file records one, the row
+  simply states it ("Recorded: Longitudinal", for example). When it records
+  none, as PSI ROOT files and synthetic runs often do, the note reads "The run
+  records no field direction." and every geometry is screened, which is the
+  slow path. Answering **Zero field**, **Longitudinal**, or **Transverse**
+  narrows the screen to that geometry's models. The answer is saved on the run
+  ("Set by you — saved on the run, which records none."), kept in the project
+  file, and re-applied when the project is reopened; it never overrides a
+  direction the file records, and if a later file does record one, the file
+  wins. **Not recorded** withdraws the answer. The answer matters beyond the
+  screen: a **Longitudinal** answer lets the wizard hold :math:`B_L` at the
+  recorded field instead of fitting it (see :ref:`fit-wizard-applied-field`).
+  A transverse- or longitudinal-field run whose setpoint is within 2 G of zero
+  also screens the zero-field models, and at a known transverse field the
+  muonium forms outside their validity regime are left out (the low-TF doublet
+  above ~150 G, the Paschen-Back pair below ~1.5 kG; the exact four-frequency
+  muonium model is never field-excluded).
+- **Looking for (optional).** Five chips name the physics you expect:
+  **Static magnetism**, **Spin dynamics**, **Superconductivity**,
+  **F–μ–F & nuclear dipoles**, and **Muonium**. With none selected every class
+  is screened. Selected chips combine, so a longitudinal-field run can be
+  screened for spin dynamics and muonium together. Generic relaxation and the
+  constant background are always included.
+- **Family cards.** One card per family — **Relaxation**, **Kubo–Toyabe**,
+  **Oscillation**, **Muonium**, **Nuclear dipolar**, and **Background**, plus
+  **Your functions** when you have registered :doc:`user_functions`. Each card
+  has a checkbox that switches the whole family on or off, a count of its
+  models in the screen ("5 of 5"), a one-line description of the family, and
+  one pill per model that applies, which you click to switch that model on or
+  off. A **slow** tag marks the models whose fits dominate screening time.
+  Models that do not apply to the run are listed under the card rather than
+  hidden — "Not ZF models: …", or, at a known transverse field, "Outside these
+  runs' field range: …".
+- **Search.** The box beside the direction row ("Find a model — Keren, F–μ–F,
+  helix…") matches a model's readable name, its registry name, and its
+  one-line use; matching pills are outlined and the rest dimmed.
+- **Details panel.** Hovering or clicking a pill shows what that model is for:
+  its name and one-line use, the component description, the **Geometries** it
+  applies in, its **Fitting cost** ("Quick", or "Slow — its fits dominate
+  screening time"), and under **This scope** either "Included" or why it is
+  out (for example "switched off by you"). A narrow window hides the panel;
+  each pill's tooltip still says what the model is for.
+- **Footer.** "Will screen *N* of *M* models" counts the included models out
+  of those that apply to the run, and the line beneath names the slow ones
+  still included. **Leave out slow
+  models** drops them in one step. Once you have switched individual models on
+  or off, **Reset to suggestions** appears; it discards those choices but keeps
+  the chips and the slow switch. With nothing but the background left, the
+  footer reads "Only the background is included — switch on a model to
+  screen." and **Analyze** stays disabled.
+
+After an analysis the picker moves into the first step of the decision trail
+(below), where it shows the scope the result was screened under.
+
+Seeding a peak (optional)
+--------------------------
+
+Below the picker, a collapsed **"Guide the analysis (optional)"** section holds
+peak seeding. Leave it closed unless you know of a line the automatic search
+may miss. Inside, the same time-domain and FFT plots you would see after
+analysis are already available, so you can seed a peak before the first run.
+Clicking on the FFT plot adds a *user peak* at that frequency (dashed red
+marker); clicking an existing user marker removes it. A peaks table lists every
+seeded and already-detected line and supports the same removal from a selected
+row. User peaks are treated as trusted frequencies: they seed oscillatory
+candidates directly and participate in pattern matching, which is the quickest
+way to steer the wizard when you can see a line it underrates. Naming a
+frequency also buys you its envelope: the same Δχ² test the damped-line scan
+uses is run at the frequency you clicked, and the rate it measures appears in
+the peaks table's **"Damping (µs⁻¹)"** column and seeds the oscillator's
+envelope. Because you supplied the frequency, the test no longer has to correct
+for having searched a whole band, so a line the blind scan declined can still
+be measured this way; a click on empty spectrum measures nothing and the seed
+stays a bare frequency. A heavily damped line that the windowed FFT plot cannot
+show you no longer needs seeding by hand at all — see
+:ref:`fit-wizard-damped-line-scan`.
+
+Changing the picker (including the field direction) or the peak seeds after an
+analysis has already run marks the displayed result stale — a banner says so,
+and the **Analyze** button relabels itself **Re-run Analysis** until you click
+it again.
 
 The decision trail
 -------------------
@@ -134,11 +200,12 @@ The decision trail
 Below the answer card sits the decision trail: six plain-sentence steps
 summarising how the wizard reached its recommendation. Each step expands to
 more detail; three of them expand into the same interactive panels you can
-reach from the guidance section, now populated with the finished analysis:
+reach from the welcome page, now populated with the finished analysis:
 
-1. **Run conditions read** — the scope inferred from run metadata (or a note
-   that none could be inferred). Expands to the same scope panel described
-   above, now showing the resolved outcome.
+1. **Run conditions read** — the field geometry the screen used, from the
+   file or your answer (or a note that none was recorded, so every family was
+   considered). Expands to the model family picker described above, which
+   moves here from the welcome page; editing it marks the result stale.
 2. **Physics families considered** — which candidate families were screened
    and whether each was expanded for detailed fitting.
 3. **Spectral search results** — how many spectral lines and recognised
@@ -208,10 +275,10 @@ global analysis, because the Global Fit Wizard can reuse the stored per-run
 tables instead of recomputing them.
 
 If you want to reconsider from scratch, **Re-analyze** returns to the opening
-page so you can adjust the guidance before running again — this is a
-different action from **Re-run Analysis**, which is what the Analyze button
-relabels itself to after a scope or peak-seed change makes the current result
-stale.
+page so you can adjust the picker or the peak seeds before running again —
+this is a different action from **Re-run Analysis**, which is what the Analyze
+button relabels itself to after a picker or peak-seed change makes the current
+result stale.
 
 **Copy analysis log** renders the full six-step decision trail — headline and
 detail bullets for every step — as plain text to the clipboard. This is the
@@ -261,7 +328,8 @@ does not say how much of the field lies along the muon spin:
   A ``ZF`` label means the magnet was nulled; a non-zero setpoint recorded
   beside it is a nominal or stale reading, not a longitudinal field;
 - a **longitudinal-field** run with a recorded setpoint pins ``B_L`` at that
-  setpoint;
+  setpoint — including a run whose file records no direction but which you
+  answered **Longitudinal** in the model family picker;
 - a field magnitude of zero (within 0.1 G) pins ``B_L`` at 0 in *any* geometry,
   recorded or not — a zero applied field has a zero longitudinal component
   however it is oriented;

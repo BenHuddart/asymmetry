@@ -20,6 +20,7 @@ import asymmetry.core.fitting.fit_wizard as fit_wizard_module
 import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
 from asymmetry.core import fitting as fitting_api
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fitting.component_tags import PhysicsClass
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -58,7 +59,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     single_fit_table_covers_portfolio,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
+from asymmetry.core.fitting.wizard_scope import WizardScope
 
 
 def _dataset_for(
@@ -430,7 +431,7 @@ def test_build_or_complete_single_fit_tables_does_not_reuse_another_scopes_analy
     _stub_single_run_wizard(monkeypatch, (template,), calls=generated_calls)
     _force_serial_phase_one(monkeypatch)
 
-    other_scope = WizardScope(preset=WizardScopePreset.FLUORIDE_FMUF)
+    other_scope = WizardScope(physics=frozenset({PhysicsClass.MOLECULAR}))
     stale_run = int(datasets[0].run_number)
     stale = replace(
         build_fit_wizard_recommendation_for_templates(datasets[0], (template,)),
@@ -508,7 +509,7 @@ def test_series_alphabet_holds_a_multiplet_only_a_minority_of_runs_show() -> Non
 
     table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         datasets,
-        scope=WizardScope(preset=WizardScopePreset.ZF_STATIC_MAGNETISM),
+        scope=WizardScope(physics=frozenset({PhysicsClass.MAGNETISM})),
         instrumentation=instrumentation,
     )
 
