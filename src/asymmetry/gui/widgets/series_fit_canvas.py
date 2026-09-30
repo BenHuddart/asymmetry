@@ -196,10 +196,10 @@ class SeriesFitCanvas(QWidget):
             run_number = int(dataset.run_number)
             if run_number in b_runs:
                 overlay.plot(
-                    *b_runs[run_number].curve, color=colour, linewidth=1.3, linestyle=_B_DASH
+                    *b_runs[run_number].curves.fit, color=colour, linewidth=1.3, linestyle=_B_DASH
                 )
             if run_number in a_runs:
-                a_time, a_value = a_runs[run_number].curve
+                a_time, a_value = a_runs[run_number].curves.fit
                 overlay.plot(a_time, a_value, color=colour, linewidth=1.7)
                 label_targets.append(float(a_value[-1]))
             else:
@@ -281,7 +281,7 @@ class SeriesFitCanvas(QWidget):
         ):
             if run_number not in runs:
                 continue
-            time, residual = runs[run_number].residuals
+            time, residual = runs[run_number].curves.residuals
             step = preview_stride(time.size, DISPLAY_POINTS_PER_RUN)
             axes.plot(
                 time[::step],

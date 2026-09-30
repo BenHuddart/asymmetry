@@ -154,7 +154,14 @@ def test_rows_carry_role_chips_and_a_fixed_line(qapp: QApplication) -> None:
     assert "Fixed: A_bg" in texts
 
     unfixed = _pool(_assessment("x|1", aicc=1.0), titles=("X",))
-    unfixed = (replace(unfixed[0], fixed_names=()),)
+    unfixed = (
+        replace(
+            unfixed[0],
+            parameters=tuple(
+                row for row in unfixed[0].parameters if row.role is not ParameterRole.FIXED
+            ),
+        ),
+    )
     row = _rows(_panel(unfixed))["x|1"]
     assert not any(label.text().startswith("Fixed:") for label in row.findChildren(QLabel))
 

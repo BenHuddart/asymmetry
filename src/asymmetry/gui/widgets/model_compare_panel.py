@@ -105,9 +105,9 @@ def format_weight(weight: float) -> str:
 
 def split_text(summary: CandidateSummary) -> str:
     """``"shares Δ, A_bg"`` for a candidate with globals, ``"all per run"`` otherwise."""
-    if not summary.global_names:
+    if not summary.names(ParameterRole.GLOBAL):
         return "all per run"
-    return "shares " + ", ".join(_symbol(name) for name in summary.global_names)
+    return "shares " + ", ".join(_symbol(name) for name in summary.names(ParameterRole.GLOBAL))
 
 
 def flag_lines(summary: CandidateSummary, run_labels: Mapping[int, str]) -> list[str]:
@@ -220,8 +220,8 @@ class CompareRow(QFrame):
         self.chips: list[QLabel] = [
             _chip(f"{role.value} {_symbol(name)}", *_CHIP_COLOURS[role])
             for role, names in (
-                (ParameterRole.GLOBAL, summary.global_names),
-                (ParameterRole.LOCAL, summary.local_names),
+                (ParameterRole.GLOBAL, summary.names(ParameterRole.GLOBAL)),
+                (ParameterRole.LOCAL, summary.names(ParameterRole.LOCAL)),
             )
             for name in names
         ]
@@ -237,10 +237,9 @@ class CompareRow(QFrame):
         top.addWidget(self.pin_button, 0, Qt.AlignmentFlag.AlignTop)
         body.addLayout(top)
 
-        if summary.fixed_names:
-            fixed = QLabel(
-                "Fixed: " + ", ".join(_symbol(name) for name in summary.fixed_names), self
-            )
+        fixed_names = summary.names(ParameterRole.FIXED)
+        if fixed_names:
+            fixed = QLabel("Fixed: " + ", ".join(_symbol(name) for name in fixed_names), self)
             fixed.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
             body.addWidget(fixed)
 
@@ -579,7 +578,8 @@ class ModelComparePanel(QWidget):
         else:
             self._pairs = compare_parameters(a, b)
         if self._trend not in self._trend_names():
-            self._trend = a.local_names[0] if a is not None and a.local_names else None
+            local_names = a.names(ParameterRole.LOCAL) if a is not None else ()
+            self._trend = local_names[0] if local_names else None
         self._table.setColumnHidden(_B_COLUMN, b is None)
         self._fill_table()
         self._draw_trend()

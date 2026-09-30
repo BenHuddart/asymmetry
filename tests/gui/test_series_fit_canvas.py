@@ -19,6 +19,7 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.fit_wizard import SelectionMetric
 from asymmetry.core.fitting.model_comparison import (
     CandidateSummary,
+    RunCurves,
     RunFit,
     summarise_candidates,
 )
@@ -143,8 +144,13 @@ def test_strips_label_the_run_and_both_chi_squared(qapp: QApplication) -> None:
 def test_residuals_are_clipped_to_the_strip(qapp: QApplication) -> None:
     a, _b = _pair()
     run = a.runs[0]
-    time, residual = run.residuals
-    wild = replace(run, residuals=(time, np.where(np.arange(time.size) % 2, 50.0, -50.0)))
+    time, _residual = run.curves.residuals
+    wild = replace(
+        run,
+        curves=replace(
+            run.curves, residuals=(time, np.where(np.arange(time.size) % 2, 50.0, -50.0))
+        ),
+    )
     canvas = _canvas()
     canvas.set_series(_datasets(), _LABELS, _AXIS)
     canvas.set_curves(replace(a, runs=(wild, *a.runs[1:])), None)
@@ -177,8 +183,7 @@ def _long_series(count: int) -> tuple[list[MuonDataset], CandidateSummary]:
             100 + index,
             str(100 + index),
             float(index),
-            (time, np.exp(-0.1 * index * time)),
-            (time, np.zeros_like(time)),
+            RunCurves((time, np.exp(-0.1 * index * time)), (time, np.zeros_like(time))),
             1.0,
         )
         for index in range(count)

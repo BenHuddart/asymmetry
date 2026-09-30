@@ -3,16 +3,17 @@
 Evidence weights, the shortlist rule, normalised residuals, parameter flags and
 the neutral :class:`CandidateSummary` a comparison panel renders. The summary is
 written for N runs; the single-run wizard adapts to it with N = 1. Design:
-``docs/plans/global-wizard-stepper.md`` (D4, D7, D8).
+``docs/plans/global-wizard-stepper.md`` (D4, D7, D8) and
+``docs/plans/fit-wizard-compare.md`` (D2, D3).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -22,13 +23,15 @@ from asymmetry.core.fitting.parameters import Parameter
 if TYPE_CHECKING:
     from asymmetry.core.data.dataset import MuonDataset
     from asymmetry.core.fitting.engine import FitResult
-    from asymmetry.core.fitting.fit_wizard import SelectionMetric
-    from asymmetry.core.fitting.global_fit_wizard import (
-        GlobalCandidateAssessment,
-        RunResidualDiagnostic,
+    from asymmetry.core.fitting.fit_wizard import (
+        CandidateAssessment,
+        FitWizardRecommendation,
+        SelectionMetric,
     )
+    from asymmetry.core.fitting.global_fit_wizard import GlobalCandidateAssessment
 
 Curve = tuple[NDArray[np.float64], NDArray[np.float64]]
+_Assessment = TypeVar("_Assessment", "GlobalCandidateAssessment", "CandidateAssessment")
 
 #: Burnham & Anderson: a model more than 10 information units behind the best
 #: has "essentially no support", so it is not pre-ticked for optimisation.
@@ -155,8 +158,11 @@ def parameter_flags(parameter: Parameter, error: float) -> tuple[ParameterFlag, 
 
 
 class ParameterRole(Enum):
+    """A parameter's part in a candidate; FITTED is a free parameter of a single-run fit."""
+
     GLOBAL = "Global"
     LOCAL = "Local"
+    FITTED = "Fitted"
     FIXED = "Fixed"
 
 
@@ -190,14 +196,28 @@ class ParameterRow:
 
 
 @dataclass(frozen=True)
+class RunCurves:
+    """One run's dense fit curve and the normalised residuals taken against it."""
+
+    fit: Curve
+    residuals: Curve
+
+
+@dataclass(frozen=True)
 class RunFit:
-    """One run's fit inside a candidate: its curve, normalised residuals and χ²ᵣ."""
+    """One run's fit inside a candidate: its curves and χ²ᵣ.
+
+    ``curves`` is ``None`` while the fit's dense curve has not been built: a
+    single-run build draws only the rows it answers with (the dense-curve
+    contract on :class:`~asymmetry.core.fitting.fit_wizard.CandidateAssessment`),
+    and the owner builds any other row on demand. ``axis_value`` is NaN for a
+    lone run, which has no series axis.
+    """
 
     run_number: int
     run_label: str
     axis_value: float
-    curve: Curve
-    residuals: Curve
+    curves: RunCurves | None
     reduced_chi_squared: float
 
 
@@ -212,9 +232,6 @@ class CandidateSummary:
 
     key: str
     title: str
-    global_names: tuple[str, ...]
-    local_names: tuple[str, ...]
-    fixed_names: tuple[str, ...]
     metric_value: float
     delta: float
     weight: float
@@ -224,6 +241,23 @@ class CandidateSummary:
     runs: tuple[RunFit, ...]
     parameters: tuple[ParameterRow, ...]
     prescreen: bool
+
+    def names(self, role: ParameterRole) -> tuple[str, ...]:
+        """The parameters playing ``role``, in row order."""
+        return tuple(row.name for row in self.parameters if row.role is role)
+
+    @property
+    def curves_built(self) -> bool:
+        """Whether every run carries its dense curve (see :class:`RunFit`)."""
+        return all(run.curves is not None for run in self.runs)
+
+
+def _scored(
+    assessments: Sequence[_Assessment], metric: SelectionMetric
+) -> Iterator[tuple[_Assessment, float, float, float]]:
+    """Each assessment with its score, Δ and evidence weight across exactly this pool."""
+    scores = [assessment.metric_value(metric) for assessment in assessments]
+    return zip(assessments, scores, score_deltas(scores), information_weights(scores), strict=True)
 
 
 def summarise_candidates(
@@ -237,15 +271,81 @@ def summarise_candidates(
     Screen. Runs follow each assessment's ``run_diagnostics`` (series order);
     a run with no fit result (an incomplete pre-screen) is left out of ``runs``.
     """
-    scores = [assessment.metric_value(metric) for assessment in assessments]
-    deltas = score_deltas(scores)
-    weights = information_weights(scores)
     datasets_by_run = {int(dataset.run_number): dataset for dataset in datasets}
     return tuple(
         _candidate_summary(assessment, datasets_by_run, score, delta, weight)
-        for assessment, score, delta, weight in zip(
-            assessments, scores, deltas, weights, strict=True
+        for assessment, score, delta, weight in _scored(assessments, metric)
+    )
+
+
+def summarise_single_candidates(
+    recommendation: FitWizardRecommendation,
+    dataset: MuonDataset,
+    metric: SelectionMetric,
+) -> tuple[CandidateSummary, ...]:
+    """One single-run summary per candidate row, ranked on ``metric``, with Δ and weight across all.
+
+    ``dataset`` is the record the recommendation was built from. A row the
+    build left without dense curves gets a :class:`RunFit` whose ``curves`` is
+    ``None``. Null baselines and disqualified rows are listed too, marked in
+    the title as the wizard's compare table marks them.
+    """
+    return tuple(
+        _single_candidate_summary(assessment, dataset, score, delta, weight)
+        for assessment, score, delta, weight in _scored(
+            recommendation.sorted_assessments(metric), metric
         )
+    )
+
+
+def _single_candidate_summary(
+    assessment: CandidateAssessment,
+    dataset: MuonDataset,
+    score: float,
+    delta: float,
+    weight: float,
+) -> CandidateSummary:
+    fit = assessment.fit_result
+    curve = (assessment.fitted_time, assessment.fitted_curve)
+    run = RunFit(
+        run_number=int(dataset.run_number),
+        run_label=dataset.run_label,
+        axis_value=math.nan,
+        curves=(
+            RunCurves(curve, normalised_residuals(dataset, curve))
+            if assessment.fitted_time.size
+            else None
+        ),
+        reduced_chi_squared=fit.reduced_chi_squared,
+    )
+    free = {parameter.name for parameter in fit.parameters.free_parameters}
+    parameters = tuple(
+        _parameter_row(name, role, [fit], shared=False)
+        for role, names in (
+            (ParameterRole.FITTED, [name for name in fit.parameters.names if name in free]),
+            (ParameterRole.FIXED, [name for name in fit.parameters.names if name not in free]),
+        )
+        for name in names
+    )
+    title = assessment.template.title
+    if assessment.is_null_baseline:
+        title = f"{title} (baseline)"
+    elif assessment.is_disqualified:
+        title = f"{title} (disqualified)"
+    return CandidateSummary(
+        key=assessment.template.key,
+        title=title,
+        metric_value=score,
+        delta=delta,
+        weight=weight,
+        gate_passed=assessment.residual_gate_passed,
+        gate_summary=_gate_summary(
+            [(run.run_number, run.run_label, assessment.residual_gate_reasons)], parameters, (run,)
+        ),
+        series_warnings=(),
+        runs=(run,),
+        parameters=parameters,
+        prescreen=False,
     )
 
 
@@ -261,10 +361,12 @@ def _candidate_summary(
             run_number=diagnostic.run_number,
             run_label=diagnostic.run_label,
             axis_value=diagnostic.axis_value,
-            curve=assessment.fitted_curves_by_run[diagnostic.run_number],
-            residuals=normalised_residuals(
-                datasets_by_run[diagnostic.run_number],
+            curves=RunCurves(
                 assessment.fitted_curves_by_run[diagnostic.run_number],
+                normalised_residuals(
+                    datasets_by_run[diagnostic.run_number],
+                    assessment.fitted_curves_by_run[diagnostic.run_number],
+                ),
             ),
             reduced_chi_squared=assessment.fit_results_by_run[
                 diagnostic.run_number
@@ -291,14 +393,15 @@ def _candidate_summary(
     return CandidateSummary(
         key=assessment.selection_key,
         title=assessment.template.title,
-        global_names=assessment.global_param_names,
-        local_names=assessment.local_param_names,
-        fixed_names=assessment.fixed_param_names,
         metric_value=score,
         delta=delta,
         weight=weight,
         gate_passed=assessment.residual_gate_passed,
-        gate_summary=_gate_summary(assessment.run_diagnostics, parameters, runs),
+        gate_summary=_gate_summary(
+            [(d.run_number, d.run_label, d.gate_reasons) for d in assessment.run_diagnostics],
+            parameters,
+            runs,
+        ),
         series_warnings=assessment.series_warnings,
         runs=runs,
         # Only a coupled fit shares a global; a pre-screen fits each run alone.
@@ -331,14 +434,16 @@ def _parameter_row(
 
 
 def _gate_summary(
-    diagnostics: Sequence[RunResidualDiagnostic],
+    reasons_by_run: Sequence[tuple[int, str, Sequence[str]]],
     parameters: Sequence[ParameterRow],
     runs: Sequence[RunFit],
 ) -> str:
-    """The gate reasons with their runs, minus the bound hits the parameter flags already carry.
+    """The gate reasons, minus the bound hits the parameter flags already carry.
 
-    The gate's "X at lower/upper bound" reason and the parameter flag share one
-    definition (:func:`bound_side`), so a flagged bound hit is said once, by the flag.
+    ``reasons_by_run`` holds (run number, run label, reasons); a reason names its
+    runs only when there is more than one run to tell apart. The gate's "X at
+    lower/upper bound" reason and the parameter flag share one definition
+    (:func:`bound_side`), so a flagged bound hit is said once, by the flag.
     """
     flagged = {
         (run.run_number, f"{row.name} {flag.value}")
@@ -348,10 +453,12 @@ def _gate_summary(
         if flag in _BOUND_FLAGS.values()
     }
     runs_by_reason: dict[str, list[str]] = {}
-    for diagnostic in diagnostics:
-        for reason in diagnostic.gate_reasons:
-            if (diagnostic.run_number, reason) not in flagged:
-                runs_by_reason.setdefault(reason, []).append(diagnostic.run_label)
+    for run_number, run_label, reasons in reasons_by_run:
+        for reason in reasons:
+            if (run_number, reason) not in flagged:
+                runs_by_reason.setdefault(reason, []).append(run_label)
+    if len(reasons_by_run) == 1:
+        return "; ".join(runs_by_reason)
     return "; ".join(
         f"{reason} ({'run' if len(labels) == 1 else 'runs'} {', '.join(labels)})"
         for reason, labels in runs_by_reason.items()
