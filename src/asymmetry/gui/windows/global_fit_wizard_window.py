@@ -706,7 +706,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         )
         self._leaderboard.selected_changed.connect(self._preview_screening_family)
         board.addWidget(self._leaderboard)
-        self._screen_empty = _muted_label("This result carries no screening rows.")
+        self._screen_empty = _muted_label("No screening table was kept with this result.")
         board.addWidget(self._screen_empty)
         board.addStretch()
         # Two thirds of the width, so family titles do not elide at 1180 px.
@@ -1066,7 +1066,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
             prescreen = recommendation.sorted_prescreen_assessments()
             steps["screen"] = (
                 done,
-                f"{prescreen[0].template.title} leads" if prescreen else "No screening rows",
+                f"{prescreen[0].template.title} leads" if prescreen else "Screening done",
             )
             optimised = len(recommendation.optimized_assessments())
             steps["compare"] = (
@@ -1760,14 +1760,17 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 assessment = recommendation.assessment_for_key(key)
                 self._apply_title.setText(assessment.template.title)
                 self._apply_roles_section.set_title("Parameter roles")
+                roles = assessment.applied_roles
                 self._apply_roles.set_rows(
                     [
-                        (role, html.escape(", ".join(map(_symbol, names)) or "none"))
-                        for role, names in (
-                            ("Global", assessment.global_param_names),
-                            ("Local", assessment.local_param_names),
-                            ("Fixed", assessment.fixed_param_names),
+                        (
+                            role,
+                            html.escape(
+                                ", ".join(_symbol(n) for n, r in roles.items() if r == role)
+                                or "none"
+                            ),
                         )
+                        for role in ("Global", "Local", "Fixed")
                     ]
                 )
                 # The global fit tab seeds every parameter from its first run's fit.

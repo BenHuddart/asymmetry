@@ -543,6 +543,24 @@ class GlobalCandidateAssessment:
             and not self.series_warnings
         )
 
+    @property
+    def applied_roles(self) -> dict[str, str]:
+        """The Global/Local/Fixed role each parameter gets when this candidate is applied.
+
+        The role search's recommendations override the assignment's names; a fixed
+        parameter stays Fixed whatever was recommended.
+        """
+        roles = {name: "Global" for name in self.global_param_names}
+        roles.update({name: "Local" for name in self.local_param_names})
+        roles.update(
+            {
+                parameter.name: parameter.recommended_role
+                for parameter in self.parameter_recommendations
+            }
+        )
+        roles.update({name: "Fixed" for name in self.fixed_param_names})
+        return roles
+
 
 @dataclass(frozen=True)
 class GlobalFitWizardRecommendation:
