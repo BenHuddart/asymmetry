@@ -1,4 +1,4 @@
-"""Tests for the global fit wizard window UI."""
+"""Tests for the Global Fit Wizard window: its five steps, runs and landing rules."""
 
 from __future__ import annotations
 
@@ -40,11 +40,10 @@ from asymmetry.core.fitting.global_fit_wizard import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
-from asymmetry.gui.windows.global_fit_wizard_window import (
-    _PAGE_RESULT,
-    _PAGE_SETUP,
-    GlobalFitWizardWindow,
-)
+from asymmetry.gui.panels.log_panel import LogPanel
+from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.widgets.wizard_stepper import StepState
+from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 from tests._qt_helpers import wait_for
 
 LF_DYNAMICS = WizardScope(physics=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}))
@@ -395,6 +394,31 @@ def _fake_screening_table(
     )
 
 
+def _step(window: GlobalFitWizardWindow, key: str) -> tuple[StepState, str]:
+    """A step's state and its one-line summary (the button's tooltip)."""
+    return window._stepper.state(key), window._stepper._buttons[key].toolTip()
+
+
+def _screen(window: GlobalFitWizardWindow, qapp: QApplication) -> None:
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+
+def _optimise(window: GlobalFitWizardWindow, qapp: QApplication, rows: int) -> None:
+    window._optimise_btn.click()
+    wait_for(
+        lambda: _analysis_complete(window) and window._optimised_table.rowCount() == rows, qapp
+    )
+
+
+def _run_progress_cancel(window: GlobalFitWizardWindow) -> QPushButton:
+    return next(
+        button
+        for button in window._run_progress.findChildren(QPushButton)
+        if button.text() == "Cancel"
+    )
+
+
 def test_global_fit_wizard_window_populates_tables(
     qapp: QApplication,
     datasets: list[MuonDataset],
@@ -408,28 +432,28 @@ def test_global_fit_wizard_window_populates_tables(
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
 
-    window._start_analysis()
-    wait_for(lambda: _analysis_complete(window), qapp)
+    _screen(window, qapp)
 
     assert "Field" in window._overview_banner.text()
     # No tab scaffolding on the _build_central override path; screening lands
-    # the window on the Result page of the three-state stack.
+    # the window on the Screen step.
     assert window._tabs is None
-    assert window._stack.currentIndex() == _PAGE_RESULT
+    assert window._stepper.current_key() == "screen"
     assert window._overview_table.rowCount() == len(datasets)
     assert window._portfolio_table.rowCount() == 1
-    assert window._compare_table.rowCount() == 1
-    assert window._optimized_table.rowCount() == 0
-    assert window._roles_table.rowCount() == 0
-    assert window._portfolio_table.columnWidth(0) >= 420
-    assert window._compare_table.columnWidth(0) >= 420
+    assert window._leaderboard.selected_key() == "exp_constant"
+    assert window._screening_table.rowCount() == 1
+    assert window._optimised_table.rowCount() == 0
+    assert window._compare_body.isHidden()
+    assert not window._compare_empty.isHidden()
 
 
-def test_global_fit_wizard_window_apply_recommended_emits_assessment(
+def test_global_fit_wizard_window_continue_then_apply_emits_the_assessment(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
     window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
     window.set_cached_recommendation(_fake_recommendation(datasets))
 
     emitted: dict[str, object] = {}
@@ -439,7 +463,12 @@ def test_global_fit_wizard_window_apply_recommended_emits_assessment(
         )
     )
 
-    window._apply_recommended_fit()
+    # Compare's A defaults to the recommended row; Continue opens Apply.
+    assert window._compare_panel.a_key() == "exp_constant"
+    window._compare_panel._continue.click()
+    assert window._stepper.current_key() == "apply"
+    assert window._apply_btn.text() == "Apply to the global fit tab"
+    window._apply_btn.click()
 
     assert emitted["assessment"].template.key == "exp_constant"
     assert emitted["recommendation"].recommended_key == "exp_constant"
@@ -465,17 +494,20 @@ def test_global_fit_wizard_window_shows_progress_log(
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
 
-    window._start_analysis()
-    wait_for(lambda: _analysis_complete(window), qapp)
+    _screen(window, qapp)
 
-    # Progress messages stream into the inline live-log panel and are mirrored
-    # into current_log_text() (the analysis_cached payload).
+    # Progress messages stream into the Screen step's progress block, which
+    # collapses to a Run log, and are mirrored into current_log_text() (the
+    # analysis_cached payload).
     log_text = window.current_log_text()
     assert "Starting screening for 3 datasets." in log_text
     assert "Preparing missing single-fit wizard tables for global screening." in log_text
     assert "Single-fit table 701: evaluating shared candidate portfolio." in log_text
-    panel_text = window._log_panel.to_plain_text()
+    panel_text = window._run_progress.findChild(LogPanel).to_plain_text()
     assert "Starting screening for 3 datasets." in panel_text
+    assert window._run_progress.parentWidget() is window._progress_hosts["screen"]
+    assert window._run_progress.findChild(PanelSection).title() == "Run log"
+    assert not window._run_progress.isHidden()
 
 
 def test_global_fit_wizard_window_optimizes_selected_candidates(
@@ -507,23 +539,23 @@ def test_global_fit_wizard_window_optimizes_selected_candidates(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window._start_analysis()
-    wait_for(lambda: _analysis_complete(window), qapp)
+    _screen(window, qapp)
 
-    window._compare_table.selectRow(0)
-    window._on_compare_selection_changed()
-    window._start_selected_optimisation()
-    wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
+    # The one screened family is within Δ ≤ 10 of the best, so it is pre-ticked (D7).
+    assert window._leaderboard.ticked() == ("exp_constant",)
+    _optimise(window, qapp, rows=2)
 
     assert captured["datasets"] == datasets
     assert captured["selected_template_keys"] == ("exp_constant",)
-    assert window._stack.currentIndex() == _PAGE_RESULT
-    assert window._compare_table.item(0, 5).text() == "Optimized"
-    assert window._optimized_table.columnWidth(0) >= 420
-    assert window._optimized_table.item(0, 6).text() == "A_1, A_bg"
-    assert window._optimized_table.item(0, 7).text() == "Lambda"
-    assert window._optimized_table.item(1, 6).text() == "A_1, Lambda, A_bg"
-    assert window._optimized_table.item(1, 7).text() == "None"
+    assert window._stepper.current_key() == "compare"
+    assert window._run_progress.parentWidget() is window._progress_hosts["compare"]
+    assert window._screening_table.item(0, 5).text() == "Optimized"
+    assert window._optimised_table.item(0, 6).text() == "A_1, A_bg"
+    assert window._optimised_table.item(0, 7).text() == "Lambda"
+    assert window._optimised_table.item(1, 6).text() == "A_1, Lambda, A_bg"
+    assert window._optimised_table.item(1, 7).text() == "None"
+    # An optimise keeps the user's ticks.
+    assert window._leaderboard.ticked() == ("exp_constant",)
     log_text = window.current_log_text()
     assert "Starting coupled global optimisation for: Exponential + Constant." in log_text
     assert "Coupled optimisation 1/1: Exponential + Constant." in log_text
@@ -705,23 +737,27 @@ def test_global_fit_wizard_window_invalid_expectation_bounds_block_screening(
 
     assert window._analysis_in_progress is False
     assert window._tasks.active_count == 0
-    assert window._stack.currentIndex() == _PAGE_SETUP
+    assert window._stepper.current_key() == "scope"
     # The section expands to surface the inline error naming the parameter.
     assert window._expectations_section.isExpanded() is True
     assert "Lambda" in window._expectations_error_label.text()
     assert "parameter expectations" in window._status_label.text()
 
 
-# ── Setup page: presence and builder wiring ──────────────────────────────────
+# ── Scope step: presence and builder wiring ───────────────────────────────────────────────────────────────────
 
 
-def test_global_fit_wizard_window_opens_on_setup_page(
+def test_global_fit_wizard_window_opens_on_the_scope_step(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    assert window._stack.currentIndex() == _PAGE_SETUP
+    assert window._stepper.current_key() == "scope"
+    assert _step(window, "scope")[0] is StepState.READY
+    for key in ("screen", "compare", "phases"):
+        assert _step(window, key) == (StepState.PENDING, "Not screened yet")
+    assert _step(window, "apply") == (StepState.PENDING, "Pick a model first")
 
 
 def test_global_fit_wizard_window_forwards_scope_to_screening(
@@ -776,13 +812,8 @@ def test_global_fit_wizard_window_forwards_scope_to_optimize(
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
     window._picker.set_scope(LF_DYNAMICS)
-    window._start_analysis()
-    wait_for(lambda: _analysis_complete(window), qapp)
-
-    window._compare_table.selectRow(0)
-    window._on_compare_selection_changed()
-    window._start_selected_optimisation()
-    wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
+    _screen(window, qapp)
+    _optimise(window, qapp, rows=2)
 
     scope = captured.get("scope")
     assert scope == LF_DYNAMICS
@@ -808,7 +839,7 @@ def test_global_fit_wizard_window_scope_in_analysis_signature(
 # ── Staleness after a scope change ───────────────────────────────────────────
 
 
-def test_global_fit_wizard_window_scope_change_marks_stale_and_clears_selection(
+def test_global_fit_wizard_window_scope_change_marks_the_results_stale(
     qapp: QApplication,
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
@@ -820,28 +851,27 @@ def test_global_fit_wizard_window_scope_change_marks_stale_and_clears_selection(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window._start_analysis()
-    wait_for(lambda: _analysis_complete(window), qapp)
+    _screen(window, qapp)
 
-    # Select a screening row so "Optimize Selected" is enabled.
-    window._compare_table.selectRow(0)
-    window._on_compare_selection_changed()
-    assert window._screening_selected_keys
-    assert window._optimize_btn.isEnabled() is True
+    assert window._optimise_btn.isEnabled() is True
     assert window._stale_banner.isHidden() is True
+    assert _step(window, "screen")[0] is StepState.DONE
 
     previous = window.current_recommendation()
+    window._show_step("scope")
 
     # A picker edit: look for spin dynamics.
     window._picker._chips[PhysicsClass.DYNAMICS].click()
 
     assert window._analysis_stale is True
     assert window._stale_banner.isHidden() is False
-    # Stale screening selection is cleared and Optimize Selected disabled.
-    assert window._screening_selected_keys == set()
-    assert window._optimize_btn.isEnabled() is False
-    # Old recommendation still displayed.
+    assert window._optimise_btn.isEnabled() is False
+    # Screen and Compare read stale; the results stay on show and reachable.
+    assert _step(window, "screen")[0] is StepState.STALE
+    assert _step(window, "compare")[0] is StepState.STALE
     assert window.current_recommendation() is previous
+    window._stepper._buttons["screen"].click()
+    assert window._stepper.current_key() == "screen"
 
 
 # ── Field-direction answer ───────────────────────────────────────────────────
@@ -860,8 +890,7 @@ def test_global_fit_wizard_window_direction_answer_saves_on_unrecorded_runs(
     datasets[0].metadata["field_direction"] = "Zero field"
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window._start_analysis()
-    wait_for(lambda: _analysis_complete(window), qapp)
+    _screen(window, qapp)
     answers: list[tuple] = []
     window.field_direction_answered.connect(lambda runs, geometry: answers.append((runs, geometry)))
     scopes: list = []
@@ -877,12 +906,14 @@ def test_global_fit_wizard_window_direction_answer_saves_on_unrecorded_runs(
     assert scopes == []
     assert window._analysis_stale is True
     assert window._stale_banner.isHidden() is False
-    assert window._optimize_btn.isEnabled() is False
+    assert window._optimise_btn.isEnabled() is False
+    assert _step(window, "screen")[0] is StepState.STALE
     # The picker re-describes the runs: the answer is checked and noted.
     assert window._picker._direction_group.checkedButton().text() == "Longitudinal"
     assert window._picker._direction_note.text() == (
         "Set by you — saved on the 2 runs that record none; the files record the other 1."
     )
+    assert _step(window, "scope")[1].startswith("Zero field / Longitudinal · ")
 
     window._picker._direction_group.button(3).click()  # Not recorded withdraws it
     assert all("field_direction" not in d.metadata for d in datasets[1:])
@@ -939,6 +970,7 @@ def test_global_fit_wizard_window_cached_restore_legacy_signature_is_auto(
     datasets: list[MuonDataset],
 ) -> None:
     window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
     window.set_cached_recommendation(_fake_recommendation(datasets))
 
     # A signature without a scope keeps the default scope and is not stale.
@@ -1007,13 +1039,8 @@ def test_global_fit_wizard_window_forwards_effort_tier_to_optimize(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window._start_analysis()
-    wait_for(lambda: _analysis_complete(window), qapp)
-
-    window._compare_table.selectRow(0)
-    window._on_compare_selection_changed()
-    window._start_selected_optimisation()
-    wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
+    _screen(window, qapp)
+    _optimise(window, qapp, rows=2)
 
     # The single visible mode always forwards the exact tier.
     assert captured.get("effort_tier") is EffortTier.EXHAUSTIVE
@@ -1067,6 +1094,7 @@ def test_global_fit_wizard_window_cached_restore_legacy_signature_is_exhaustive(
     from asymmetry.core.fitting.wizard_scope import EffortTier
 
     window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
     window.set_cached_recommendation(_fake_recommendation(datasets))
 
     # Legacy signature (no effort_tier key) restores the exact tier, not stale.
@@ -1078,17 +1106,18 @@ def test_global_fit_wizard_window_cached_restore_legacy_signature_is_exhaustive(
 # ── Cooperative cancel ───────────────────────────────────────────────────────
 
 
-def test_cancel_current_analysis_cancels_worker_and_hides_button(
+def test_cancel_in_the_progress_block_cancels_and_lands_on_the_origin(
     qapp: QApplication,
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The Cancel button, visible while busy, cooperatively cancels the run.
+    """The progress block's Cancel, shown while running, cooperatively cancels the run.
 
     Phase-one blocks on a threading.Event so the GUI thread can confirm the
     worker is live, click Cancel, then release phase-one. The worker's next
     cancel checkpoint raises FitCancelledError (declared in _cancel_exceptions);
-    the base's cancelled slot clears busy and hides the Cancel button. The
+    the base's cancelled slot clears busy, the progress block collapses to its
+    Run log, and the window lands on the step the run started from. The
     screening builder must never run.
     """
     import threading
@@ -1116,20 +1145,25 @@ def test_cancel_current_analysis_cancels_worker_and_hides_button(
 
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    assert window._cancel_btn.isVisibleTo(window) is False
+    assert window._run_progress.isHidden() is True
 
     window._start_analysis()
-    # Busy + Cancel button visible while phase-one blocks.
+    # Busy: the progress block, with Cancel, runs in the Screen step.
     wait_for(lambda: window._tasks.active_count == 1, qapp)
-    assert window._cancel_btn.isVisibleTo(window) is True
+    cancel = _run_progress_cancel(window)
+    assert window._stepper.current_key() == "screen"
+    assert _step(window, "screen") == (StepState.RUNNING, "Screening…")
+    assert cancel.isVisibleTo(window) is True
 
-    window._cancel_current_analysis()
+    cancel.click()
     released.set()
     wait_for(lambda: window._tasks.active_count == 0, qapp)
 
     assert window._analysis_in_progress is False
-    assert window._cancel_btn.isVisibleTo(window) is False
+    assert cancel.isVisibleTo(window) is False
     assert "cancelled" in window._status_label.text().lower()
+    assert window._stepper.current_key() == "scope"
+    assert _step(window, "screen") == (StepState.PENDING, "Not screened yet")
     window.close()
 
 
@@ -1350,44 +1384,41 @@ def test_global_fit_wizard_window_confidence_survives_cache_restore(
     assert window._overview_table.item(flagged_row, 7).text() == "No significant structure"
 
 
-# ── Series answer card + shortlist button (three-state rebuild) ──────────────
+# ── Screen and Compare ────────────────────────────────────────────────────────────────────
 
 
-def test_global_fit_wizard_window_series_card_reflects_recommendation(
+def test_global_fit_wizard_window_cached_optimised_result_lands_on_compare(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
-    """The card adapter feeds one trace per run, the verdict, and the trend."""
+    """A cached optimised recommendation lands on Compare with A drawn and trended."""
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window.set_cached_recommendation(_fake_recommendation(datasets))
+    window.set_cached_recommendation(_fake_recommendation(datasets), log_text="Cached run.\nDone.")
 
-    assert window._stack.currentIndex() == _PAGE_RESULT
-    card = window._series_card
-    # Verdict headline is the recommended assessment's template title; the
-    # confidence prose line is the recommendation summary, with no tier chip.
-    assert card._verdict_label.text() == "Exponential + Constant"
-    assert "Recommended" in card._confidence_label.text()
-    assert card._chip is None
-    # One overlay trace per run in dataset_order, each with its fitted curve.
-    assert len(card._runs) == len(datasets)
-    assert all(run.fitted_curve is not None for run in card._runs)
-    assert [run.axis_value for run in card._runs] == [100.0, 200.0, 300.0]
-    # First local parameter (Lambda) trends across the series axis.
-    assert card._trend is not None
-    assert card._trend.axis_values == (100.0, 200.0, 300.0)
-    assert card._trend.values == pytest.approx((0.2, 0.3, 0.4))
-    assert card._trend.axis_label == "Field (G)"
-    # A recommended optimized assessment exists, so the card apply is live.
-    assert card._apply_btn.isEnabled() is True
+    assert window._stepper.current_key() == "compare"
+    panel = window._compare_panel
+    assert panel.a_key() == "exp_constant"
+    a = panel._canvas._a
+    assert [run.run_number for run in a.runs] == [701, 702, 703]
+    assert [run.axis_value for run in a.runs] == [100.0, 200.0, 300.0]
+    # The first local parameter (Lambda) trends across the series axis.
+    assert panel._trend == "Lambda"
+    assert panel._continue.isEnabled() is True
+    assert window._roles_table.rowCount() == 3
+    # The cached log is restored in the landing step's Run log.
+    assert window.current_log_text() == "Cached run.\nDone."
+    assert window._run_progress.parentWidget() is window._progress_hosts["compare"]
+    assert window._run_progress.findChild(PanelSection).title() == "Run log"
+    assert not window._run_progress.isHidden()
 
 
-def test_global_fit_wizard_window_screening_only_card_has_no_fit_or_trend(
+def test_global_fit_wizard_window_screen_previews_the_selected_family(
     qapp: QApplication,
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Before optimisation the card shows data-only traces and no trend."""
+    """Screen previews the selected family's per-run fits; Compare waits for an optimise."""
     monkeypatch.setattr(
         wizard_window_module,
         "build_global_fit_wizard_screening_recommendation",
@@ -1395,17 +1426,19 @@ def test_global_fit_wizard_window_screening_only_card_has_no_fit_or_trend(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window._start_analysis()
-    wait_for(lambda: _analysis_complete(window), qapp)
+    _screen(window, qapp)
 
-    card = window._series_card
-    assert len(card._runs) == len(datasets)
-    assert all(run.fitted_curve is None for run in card._runs)
-    assert card._trend is None
-    assert card._apply_btn.isEnabled() is False
+    preview = window._screen_canvas._a
+    assert preview.key == "exp_constant"
+    assert preview.prescreen is True
+    assert len(preview.runs) == len(datasets)
+    assert window._compare_panel.a_key() is None
+    assert window._compare_body.isHidden()
+    window._compare_empty.findChild(QPushButton).click()
+    assert window._stepper.current_key() == "screen"
 
 
-def test_global_fit_wizard_window_optimize_button_label_tracks_selection(
+def test_global_fit_wizard_window_optimise_button_label_tracks_the_ticks(
     qapp: QApplication,
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
@@ -1417,72 +1450,72 @@ def test_global_fit_wizard_window_optimize_button_label_tracks_selection(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window._start_analysis()
-    wait_for(lambda: _analysis_complete(window), qapp)
+    _screen(window, qapp)
 
-    assert window._optimize_btn.text() == "Optimize selected"
-    assert window._optimize_btn.isEnabled() is False
+    assert window._optimise_btn.text() == "Optimise 1 family →"
+    assert window._optimise_btn.isEnabled() is True
 
-    window._compare_table.selectRow(0)
-    window._on_compare_selection_changed()
+    title = window._leaderboard._table.item(0, 0)
+    title.setCheckState(Qt.CheckState.Unchecked)
 
-    assert window._optimize_btn.text() == "Optimize selected (1)"
-    assert window._optimize_btn.isEnabled() is True
+    assert window._optimise_btn.text() == "Optimise 0 families →"
+    assert window._optimise_btn.isEnabled() is False
 
-    window._compare_table.clearSelection()
-    window._on_compare_selection_changed()
+    title.setCheckState(Qt.CheckState.Checked)
 
-    assert window._optimize_btn.text() == "Optimize selected"
-    assert window._optimize_btn.isEnabled() is False
+    assert window._optimise_btn.text() == "Optimise 1 family →"
+    assert window._optimise_btn.isEnabled() is True
 
 
-# ── Navigation between Setup and Result ──────────────────────────────────────
+# ── Navigation and landing ────────────────────────────────────────────────────────────────────────────────────────
 
 
-def _back_to_setup_button(window: GlobalFitWizardWindow) -> QPushButton:
-    (button,) = [
-        button
-        for button in window._result_page.findChildren(QPushButton)
-        if button.text() == "← Back to setup"
-    ]
-    return button
-
-
-def test_global_fit_wizard_window_result_page_returns_to_setup_and_back(
+def test_global_fit_wizard_window_stepper_navigates_both_ways(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    assert window._view_results_btn.isHidden() is True
     window.set_cached_recommendation(_fake_recommendation(datasets))
-    assert window._stack.currentIndex() == _PAGE_RESULT
+    assert window._stepper.current_key() == "compare"
 
-    _back_to_setup_button(window).click()
-    assert window._stack.currentIndex() == _PAGE_SETUP
+    window._stepper._buttons["scope"].click()
+    assert window._stepper.current_key() == "scope"
+    assert window._stack.currentWidget() is window._views["scope"]
     assert window._refresh_btn.isEnabled() is True
-    assert window._view_results_btn.isHidden() is False
 
-    window._view_results_btn.click()
-    assert window._stack.currentIndex() == _PAGE_RESULT
+    window._stepper._buttons["compare"].click()
+    assert window._stepper.current_key() == "compare"
+    assert window._stack.currentWidget() is window._views["compare"]
+    # A pending step is not a way in.
+    assert window._stepper._buttons["apply"].isEnabled() is False
 
 
-def test_global_fit_wizard_window_metric_rerank_on_setup_stays_on_setup(
+def test_global_fit_wizard_window_metric_rerank_stays_on_the_current_step(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
+    recommendation = _fake_multi_variant_recommendation(datasets)
+    _best, shared = recommendation.assessments
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window.set_cached_recommendation(_fake_recommendation(datasets))
-    _back_to_setup_button(window).click()
+    window.set_cached_recommendation(recommendation)
+    window._compare_panel.set_a(shared.selection_key)
 
+    # On Compare: the re-rank stays there and keeps the picked A.
     window._metric_combo.setCurrentText(SelectionMetric.BIC.value)
-
     assert window.current_recommendation().metric is SelectionMetric.BIC
-    assert window._stack.currentIndex() == _PAGE_SETUP
+    assert window._stepper.current_key() == "compare"
+    assert window._compare_panel.a_key() == shared.selection_key
+    assert window._compare_panel._caption.text() == "Role splits · ΔBIC from best"
+
+    window._stepper._buttons["scope"].click()
+    window._metric_combo.setCurrentText(SelectionMetric.AIC.value)
+    assert window.current_recommendation().metric is SelectionMetric.AIC
+    assert window._stepper.current_key() == "scope"
 
 
-def test_global_fit_wizard_window_failed_rescreen_lands_on_setup_with_runs(
+def test_global_fit_wizard_window_failed_rescreen_lands_on_scope_with_runs(
     qapp: QApplication,
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
@@ -1496,24 +1529,25 @@ def test_global_fit_wizard_window_failed_rescreen_lands_on_setup_with_runs(
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
     window.set_cached_recommendation(_fake_recommendation(datasets))
-    _back_to_setup_button(window).click()
+    window._stepper._buttons["scope"].click()
     # Change the scope so Run screening recomputes instead of serving the cache.
     window._picker._chips[PhysicsClass.DYNAMICS].click()
 
-    window._start_analysis()
+    window._refresh_btn.click()
     wait_for(lambda: window._tasks.active_count == 0, qapp)
 
     assert "screening exploded" in window._status_label.text()
     assert window.current_recommendation() is None
-    assert window._stack.currentIndex() == _PAGE_SETUP
+    assert window._stepper.current_key() == "scope"
     assert window._overview_table.rowCount() == len(datasets)
-    assert window._view_results_btn.isHidden() is True
+    assert _step(window, "screen") == (StepState.PENDING, "Not screened yet")
+    assert window._stepper._buttons["compare"].isEnabled() is False
 
 
-# ── Picking an alternative redraws the answer card ───────────────────────────
+# ── Picking A, continuing and applying ─────────────────────────────────────────────────────────────────
 
 
-def test_global_fit_wizard_window_alternative_pick_redraws_card_plots(
+def test_global_fit_wizard_window_picking_a_redraws_and_apply_applies_it(
     qapp: QApplication,
     datasets: list[MuonDataset],
 ) -> None:
@@ -1522,34 +1556,170 @@ def test_global_fit_wizard_window_alternative_pick_redraws_card_plots(
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
     window.set_cached_recommendation(recommendation)
-    card = window._series_card
+    panel = window._compare_panel
     # The recommended variant trends its local Lambda.
-    assert card._trend is not None
+    assert panel.a_key() == best.selection_key
+    assert panel._trend == "Lambda"
 
     applied: list[GlobalCandidateAssessment] = []
     window.apply_assessment_requested.connect(
         lambda assessment, _recommendation: applied.append(assessment)
     )
 
-    # Card chip → the all-global variant: no local parameter left to trend,
-    # and the card's Apply hands back the variant it now draws.
-    card._alt_buttons[shared.selection_key].click()
-    assert window._selected_key == shared.selection_key
-    assert card._trend is None
-    card._apply_btn.click()
+    # A → the all-global variant: no local parameter left to trend, and
+    # Continue → Apply hands back the variant Compare now draws.
+    panel.set_a(shared.selection_key)
+    assert panel._canvas._a.key == shared.selection_key
+    assert panel._trend is None
+    panel._continue.click()
+    assert window._apply_roles_section.title() == "Parameter roles"
+    window._apply_btn.click()
     assert [assessment.selection_key for assessment in applied] == [shared.selection_key]
-    selected_row = window._optimized_table.selectedItems()[0].row()
-    assert (
-        window._optimized_table.item(selected_row, 0).data(Qt.ItemDataRole.UserRole)
-        == shared.selection_key
-    )
 
-    # Optimized-table row → back to the recommended variant.
-    for row in range(window._optimized_table.rowCount()):
-        if window._optimized_table.item(row, 0).data(Qt.ItemDataRole.UserRole) == (
-            best.selection_key
-        ):
-            window._optimized_table.selectRow(row)
-    assert window._selected_key == best.selection_key
-    assert card._trend is not None
-    assert card.selected_key() == best.selection_key
+    panel.set_a(best.selection_key)
+    assert panel._canvas._a.key == best.selection_key
+    assert panel._trend == "Lambda"
+
+
+def test_global_fit_wizard_window_cached_screening_lands_on_screen(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window.set_cached_recommendation(_fake_screening_recommendation(datasets))
+
+    assert window._stepper.current_key() == "screen"
+    # No cached log, so no Run log either.
+    assert window._run_progress.isHidden()
+    assert window._leaderboard.ticked() == ("exp_constant",)
+
+
+def test_global_fit_wizard_window_cached_restore_needs_the_context_runs(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets[:2])
+    with pytest.raises(ValueError, match=r"runs \[703\] are missing"):
+        window.set_cached_recommendation(_fake_recommendation(datasets))
+
+
+def test_global_fit_wizard_window_failed_optimise_lands_on_screen(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail(*_args, **_kwargs):
+        raise RuntimeError("optimise exploded")
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+    monkeypatch.setattr(wizard_window_module, "build_global_fit_wizard_recommendation", _fail)
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    _screen(window, qapp)
+
+    window._optimise_btn.click()
+    assert window._stepper.current_key() == "compare"
+    assert window._leaderboard._table.item(0, 5).text() == "Running"
+    wait_for(lambda: window._tasks.active_count == 0, qapp)
+
+    assert "optimise exploded" in window._status_label.text()
+    assert window._stepper.current_key() == "screen"
+    assert window._leaderboard._table.item(0, 5).text() == "Not optimised"
+    assert _step(window, "compare") == (StepState.READY, "Next: optimise the shortlist")
+
+
+def test_the_stepper_follows_screening_optimise_and_apply(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_multi_variant_recommendation(datasets_arg),
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    _screen(window, qapp)
+
+    assert _step(window, "scope")[0] is StepState.DONE
+    assert _step(window, "scope")[1] == window._picker.summary()
+    assert _step(window, "screen") == (StepState.DONE, "Exponential + Constant leads")
+    assert _step(window, "compare") == (StepState.READY, "Next: optimise the shortlist")
+    assert _step(window, "phases") == (StepState.SKIPPED, "No transition found")
+    assert _step(window, "apply") == (StepState.PENDING, "Pick a model first")
+
+    _optimise(window, qapp, rows=2)
+    assert _step(window, "compare") == (StepState.DONE, "2 role splits optimised")
+
+    window._compare_panel._continue.click()
+    assert window._stepper.current_key() == "apply"
+    assert _step(window, "apply") == (StepState.READY, "Ready: Exponential + Constant")
+    assert window._apply_note.text() == (
+        "Review what will be handed to the global fit tab, then apply it."
+    )
+    window._apply_btn.click()
+    assert _step(window, "apply") == (StepState.DONE, "Applied: Exponential + Constant")
+    assert window._apply_note.text() == "Applied to the global fit tab."
+
+
+def test_the_apply_step_reviews_roles_values_and_rationale(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window.set_cached_recommendation(_fake_recommendation(datasets))
+    window._compare_panel._continue.click()
+
+    assert window._apply_title.text() == "Exponential + Constant"
+    rows = window._apply_roles._grid
+    assert [rows.itemAtPosition(row, 1).widget().text() for row in range(3)] == [
+        "A_1, A_bg",
+        "λ",
+        "none",
+    ]
+    table = window._apply_values_table
+    # Starting values come from the first run's fit, as the global fit tab takes them.
+    assert [table.item(row, 1).text() for row in range(table.rowCount())] == [
+        "0.2",
+        "0.2",
+        "0.01",
+    ]
+    assert "run 701" in window._apply_values_section._hint_label.text()
+    assert window._apply_why.isExpanded() is False
+    assert "Rate variation is strongly supported." in window._apply_rationale.text()
+    assert window._apply_warnings.isHidden()
+
+
+def test_a_rerank_keeps_the_users_ticks(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    _screen(window, qapp)
+    window._leaderboard._table.item(0, 0).setCheckState(Qt.CheckState.Unchecked)
+
+    window._metric_combo.setCurrentText(SelectionMetric.BIC.value)
+
+    # The shortlist pre-ticks only a new screening, never a re-rank of it.
+    assert window._leaderboard.ticked() == ()
+    assert window._stepper.current_key() == "screen"
