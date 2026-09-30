@@ -15,7 +15,7 @@ from asymmetry.core.fitting.wizard_scope import (
     DEFAULT_EFFORT_TIER,
     EFFORT_TIER_DESCRIPTIONS,
     EFFORT_TIER_LABELS,
-    FAMILY_ORDER,
+    FAMILY_TEXT,
     MUONIUM_HIGH_TF_MIN_GAUSS,
     MUONIUM_LOW_TF_MAX_GAUSS,
     USER_FAMILY_TITLE,
@@ -527,7 +527,15 @@ def test_describe_scope_direction_is_read_only_when_every_run_records_one():
 
 def test_describe_scope_lists_families_in_display_order_with_every_time_component():
     view = describe_scope([_fake_dataset("ZF")], WizardScope())
-    assert tuple(family.title for family in view.families) == FAMILY_ORDER
+    assert tuple(family.title for family in view.families) == (
+        "Relaxation",
+        "Kubo–Toyabe",
+        "Oscillation",
+        "Muonium",
+        "Nuclear dipolar",
+        "Background",
+    )
+    assert view.families[0].blurb == FAMILY_TEXT["Relaxation"][1]
     names = [c.name for family in view.families for c in family.components]
     assert sorted(names) == sorted(_time_component_names())
 
@@ -568,6 +576,28 @@ def test_describe_scope_counts_follow_inclusion():
     )
 
 
+def test_describe_scope_counts_the_components_that_apply():
+    view = describe_scope([_fake_dataset("LF", field=100.0)], WizardScope(physics=MOLECULAR))
+    components = [c for family in view.families for c in family.components]
+    assert view.applicable_count == sum(c.applies for c in components)
+    assert view.applicable_count < len(components)
+    assert view.included_count < view.applicable_count
+
+
+def test_describe_scope_background_alone_screens_no_model():
+    datasets = [_fake_dataset("ZF")]
+    view = describe_scope(datasets, WizardScope())
+    assert view.screens_a_model
+    everything_but_background = frozenset(
+        c.name for family in view.families[:-1] for c in family.components
+    )
+    only_background = describe_scope(
+        datasets, WizardScope(exclude_components=everything_but_background)
+    )
+    assert only_background.included_count == 1
+    assert not only_background.screens_a_model
+
+
 def test_describe_scope_notes_match_the_resolution():
     datasets = [_fake_dataset("TF", field=20.0, title="CaF2")]
     view = describe_scope(datasets, WizardScope())
@@ -579,6 +609,7 @@ def test_describe_scope_notes_match_the_resolution():
 def test_describe_scope_puts_user_functions_last(throwaway_user_component):
     view = describe_scope([_fake_dataset("ZF")], WizardScope())
     assert view.families[-1].title == USER_FAMILY_TITLE
+    assert view.families[-1].blurb == "Functions you defined."
     (component,) = view.families[-1].components
     assert component.name == throwaway_user_component
     assert component.included

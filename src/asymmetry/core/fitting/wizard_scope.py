@@ -516,8 +516,8 @@ def dataset_field_geometry(dataset: MuonDataset) -> FieldGeometry | None:
 #: ``metadata["field_direction_source"]`` on a direction the user answered.
 _USER_SOURCE = "user"
 
-#: The loader vocabulary (:func:`~asymmetry.core.io.base.field_direction_from_text`).
-_FIELD_DIRECTION_TEXT: dict[FieldGeometry, str] = {
+#: The loader vocabulary (:func:`~asymmetry.core.io.base.field_direction_from_text`), ZF/LF/TF.
+FIELD_DIRECTION_TEXT: dict[FieldGeometry, str] = {
     FieldGeometry.ZF: "Zero field",
     FieldGeometry.LF: "Longitudinal",
     FieldGeometry.TF: "Transverse",
@@ -545,7 +545,7 @@ def set_user_field_direction(
                 del metadata["field_direction"], metadata["field_direction_source"]
         if geometry is not None and dataset_field_geometry(dataset) is None:
             for metadata in metadatas:
-                metadata["field_direction"] = _FIELD_DIRECTION_TEXT[geometry]
+                metadata["field_direction"] = FIELD_DIRECTION_TEXT[geometry]
                 metadata["field_direction_source"] = _USER_SOURCE
 
 
@@ -561,7 +561,7 @@ def restore_user_field_direction(dataset: MuonDataset, saved: str) -> None:
     geometry = geometry_from_field_direction(saved)
     if geometry is None:
         raise ValueError(
-            f"a saved field-direction answer is one of {sorted(_FIELD_DIRECTION_TEXT.values())}, "
+            f"a saved field-direction answer is one of {sorted(FIELD_DIRECTION_TEXT.values())}, "
             f"got {saved!r}"
         )
     set_user_field_direction([dataset], geometry)
@@ -664,18 +664,23 @@ def resolve_scope_for_datasets(
 # --- the typed view the model family picker renders -----------------------
 
 
-#: Built-in family titles (registry ``category``) in picker display order.
-FAMILY_ORDER: tuple[str, ...] = (
-    "Relaxation",
-    "Kubo-Toyabe",
-    "Oscillation",
-    "Muonium",
-    "Nuclear dipolar",
-    "Background",
-)
-
 #: The family every user-registered time component is listed under, after the built-ins.
 USER_FAMILY_TITLE = "Your functions"
+
+#: Family cards in picker display order: registry ``category`` (or
+#: :data:`USER_FAMILY_TITLE`) → (display title, one-line blurb).
+FAMILY_TEXT: dict[str, tuple[str, str]] = {
+    "Relaxation": ("Relaxation", "Monotonic loss of polarisation — the usual first guess."),
+    "Kubo-Toyabe": (
+        "Kubo–Toyabe",
+        "Random static or fluctuating fields: the ⅓ tail, LF decoupling.",
+    ),
+    "Oscillation": ("Oscillation", "Coherent precession: ordered magnets, superconductors."),
+    "Muonium": ("Muonium", "Muon bound to an electron."),
+    "Nuclear dipolar": ("Nuclear dipolar", "Muon bound to F or H nuclei — F–μ–F and relatives."),
+    "Background": ("Background", "Always included."),
+    USER_FAMILY_TITLE: (USER_FAMILY_TITLE, "Functions you defined."),
+}
 
 
 @dataclass(frozen=True)
@@ -730,9 +735,10 @@ class ScopeComponent:
 
 @dataclass(frozen=True)
 class ScopeFamily:
-    """One family card: a title and its components in registry order."""
+    """One family card: its display title, blurb and components in registry order."""
 
     title: str
+    blurb: str
     components: tuple[ScopeComponent, ...]
 
 
@@ -748,6 +754,21 @@ class ScopeView:
     @property
     def included_count(self) -> int:
         return sum(c.included for family in self.families for c in family.components)
+
+    @property
+    def applicable_count(self) -> int:
+        return sum(c.applies for family in self.families for c in family.components)
+
+    @property
+    def screens_a_model(self) -> bool:
+        """Something besides the background constant is included."""
+        background, _ = FAMILY_TEXT["Background"]
+        return any(
+            c.included
+            for family in self.families
+            if family.title != background
+            for c in family.components
+        )
 
     @property
     def slow_included(self) -> tuple[ScopeComponent, ...]:
@@ -785,13 +806,12 @@ def describe_scope(datasets: Iterable[MuonDataset], scope: WizardScope) -> Scope
         unrecorded=recorded.count(None) + len(answered),
     )
 
-    members: dict[str, list[ScopeComponent]] = {title: [] for title in FAMILY_ORDER}
-    members[USER_FAMILY_TITLE] = []
+    members: dict[str, list[ScopeComponent]] = {key: [] for key in FAMILY_TEXT}
     for name, definition in COMPONENTS.items():
         if definition.domain != "time":
             continue
-        title = USER_FAMILY_TITLE if definition.user else definition.category
-        members[title].append(
+        key = USER_FAMILY_TITLE if definition.user else definition.category
+        members[key].append(
             ScopeComponent(
                 name=name,
                 label=definition.label,
@@ -809,8 +829,8 @@ def describe_scope(datasets: Iterable[MuonDataset], scope: WizardScope) -> Scope
         scope=scope,
         geometry=geometry,
         families=tuple(
-            ScopeFamily(title, tuple(components))
-            for title, components in members.items()
+            ScopeFamily(*FAMILY_TEXT[key], tuple(components))
+            for key, components in members.items()
             if components
         ),
         notes=resolution.notes,
