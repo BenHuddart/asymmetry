@@ -1330,19 +1330,18 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._run_progress.append_log(f"Analysis failed: {message}")
         self._land_after_interrupted_run()
 
-    def _on_analysis_cancelled(self) -> None:
-        self._land_after_interrupted_run()
-
     def _land_after_interrupted_run(self) -> None:
         """A run that ends without a result lands on the step it was started from.
 
-        A failed or cancelled screening has already dropped the recommendation,
-        so it started from, and lands on, Scope.
+        Screening starts from Scope and drops the recommendation first, so a
+        failed or cancelled screening lands on Scope with nothing to repopulate.
         """
         self._running_template_keys = set()
         if self._recommendation is not None:
             self._repopulate()
         self._show_step(self._run_origin)
+
+    _on_analysis_cancelled = _land_after_interrupted_run
 
     def _on_progress(self, current: int, total: int, message: str) -> None:
         # Base already guarded the request id; stream to the live log and the
