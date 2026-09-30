@@ -32,6 +32,7 @@ from asymmetry.core.fitting.wizard_scope import (
     resolve_scope,
     resolve_scope_for_dataset,
     resolve_scope_for_datasets,
+    restore_user_field_direction,
     set_user_field_direction,
     user_field_direction_overrides,
 )
@@ -676,6 +677,26 @@ def test_user_direction_overrides_carry_only_the_users_answer():
     set_user_field_direction([answered, recorded], FieldGeometry.LF)
     assert user_field_direction_overrides(answered) == USER_LF
     assert user_field_direction_overrides(recorded) == {}
+
+
+def test_restoring_a_saved_answer_fills_a_run_the_file_leaves_silent():
+    dataset = _run_dataset()
+    restore_user_field_direction(dataset, "Longitudinal")
+    assert _direction_keys(dataset.metadata) == USER_LF == _direction_keys(dataset.run.metadata)
+
+
+def test_restoring_a_saved_answer_yields_to_a_direction_the_file_now_records():
+    dataset = _run_dataset(field_direction="Transverse", field_direction_source="icp_log")
+    restore_user_field_direction(dataset, "Longitudinal")
+    assert dataset.metadata == {
+        "field_direction": "Transverse",
+        "field_direction_source": "icp_log",
+    }
+
+
+def test_restoring_an_unrecognised_saved_answer_names_the_vocabulary():
+    with pytest.raises(ValueError, match="saved field-direction answer"):
+        restore_user_field_direction(_run_dataset(), "sideways")
 
 
 def test_describe_scope_counts_a_user_answer_apart_from_the_files():

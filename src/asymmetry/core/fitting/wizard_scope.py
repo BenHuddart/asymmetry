@@ -556,6 +556,17 @@ def user_field_direction_overrides(dataset: MuonDataset) -> dict[str, str]:
     return {key: dataset.metadata[key] for key in ("field_direction", "field_direction_source")}
 
 
+def restore_user_field_direction(dataset: MuonDataset, saved: str) -> None:
+    """Re-apply a saved direction answer; a direction the file now records wins."""
+    geometry = geometry_from_field_direction(saved)
+    if geometry is None:
+        raise ValueError(
+            f"a saved field-direction answer is one of {sorted(_FIELD_DIRECTION_TEXT.values())}, "
+            f"got {saved!r}"
+        )
+    set_user_field_direction([dataset], geometry)
+
+
 def _dataset_sample_text(dataset: MuonDataset) -> str:
     """Best sample/title text for a dataset (first non-empty of title/sample)."""
     metadata = dataset.metadata or {}

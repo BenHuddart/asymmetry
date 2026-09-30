@@ -161,7 +161,10 @@ from asymmetry.core.fitting.parameter_models import (
     effective_range_bounds,
 )
 from asymmetry.core.fitting.parameters import ParameterSet
-from asymmetry.core.fitting.wizard_scope import user_field_direction_overrides
+from asymmetry.core.fitting.wizard_scope import (
+    restore_user_field_direction,
+    user_field_direction_overrides,
+)
 from asymmetry.core.fourier import (
     ApodisationSuggestion,
     GroupSpectrumConfig,
@@ -17128,11 +17131,18 @@ class MainWindow(QMainWindow):
                     if int(dataset.run_number) in loaded_run_numbers:
                         return
 
-                    # Apply saved metadata overrides without prompting.
-                    for key, val in ds_info.get("metadata_overrides", {}).items():
+                    # Apply saved metadata overrides without prompting. A saved
+                    # field-direction answer goes through the wizard-scope owner,
+                    # so a direction the file has since gained is never overridden.
+                    overrides = dict(ds_info.get("metadata_overrides", {}))
+                    saved_direction = overrides.pop("field_direction", None)
+                    overrides.pop("field_direction_source", None)
+                    for key, val in overrides.items():
                         dataset.metadata[key] = val
                         if dataset.run:
                             dataset.run.metadata[key] = val
+                    if saved_direction is not None:
+                        restore_user_field_direction(dataset, saved_direction)
 
                     # A freshly reloaded run is the ground truth for its own
                     # instrument. Heal a stale carried identity against fresh
