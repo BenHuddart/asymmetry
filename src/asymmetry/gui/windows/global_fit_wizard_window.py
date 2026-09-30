@@ -30,6 +30,7 @@ from __future__ import annotations
 import copy
 import re
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
@@ -423,8 +424,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         # Stale banner sits above the stack. Shown after a Scope edit
         # invalidates the shown results.
         self._stale_banner = make_warning_banner(
-            "Scope changed since the last analysis — the results below are stale. "
-            "Re-run the screening."
+            "Scope changed since the last analysis, so these results are stale. "
+            "Run screening again to refresh them."
         )
         self._stale_banner.setVisible(False)
         self._central_layout.addWidget(self._stale_banner)
@@ -548,6 +549,11 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._refresh_btn.setStyleSheet(build_primary_button_qss())
         self._refresh_btn.clicked.connect(self._start_analysis)
         cta_row.addWidget(self._refresh_btn)
+        # Visible while a result exists, so Setup is a detour, not a dead end.
+        self._view_results_btn = QPushButton("View results →")
+        self._view_results_btn.setVisible(False)
+        self._view_results_btn.clicked.connect(self._show_result_page)
+        cta_row.addWidget(self._view_results_btn)
         cta_row.addStretch()
         layout.addLayout(cta_row)
 
@@ -623,10 +629,21 @@ class GlobalFitWizardWindow(WizardWindowBase):
         content = QWidget()
         layout = QVBoxLayout(content)
 
-        # Series answer card at the top.
+        nav_row = QHBoxLayout()
+        back_btn = QPushButton("← Back to setup")
+        back_btn.setToolTip(
+            "Change the scope, ranking metric or parameter expectations and run "
+            "the screening again. These results stay available until then."
+        )
+        back_btn.clicked.connect(partial(self._stack.setCurrentIndex, _PAGE_SETUP))
+        nav_row.addWidget(back_btn)
+        nav_row.addStretch()
+        layout.addLayout(nav_row)
+
+        # Series answer card.
         self._series_card = WizardSeriesCard()
-        self._series_card.apply_requested.connect(self._apply_recommended_fit)
-        self._series_card.selection_changed.connect(self._on_card_selection_changed)
+        self._series_card.apply_requested.connect(self._apply_selected_fit)
+        self._series_card.selection_changed.connect(self._show_assessment)
         layout.addWidget(self._series_card)
 
         # Transitions: the penalty path, hidden until a series long enough to
@@ -977,6 +994,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
             bool(self._datasets) and not busy and self._scope_selector.is_valid()
         )
         self._metric_combo.setEnabled(self._recommendation is not None and not busy)
+        self._view_results_btn.setVisible(self._recommendation is not None)
         selected_count = len(self._screening_selected_keys)
         self._optimize_btn.setText(
             f"Optimize selected ({selected_count})" if selected_count else "Optimize selected"
@@ -1075,6 +1093,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self._stale_banner.setVisible(False)
             self._status_label.setText(self._recommendation.summary)
             self._populate_from_recommendation()
+            self._show_result_page()
             return
 
         self._analysis_stale = False
@@ -1224,23 +1243,25 @@ class GlobalFitWizardWindow(WizardWindowBase):
         # still the old value; re-assert enablement now it is set.
         self._update_action_enablement(False)
         self._populate_from_recommendation()
+        self._show_result_page()
 
     def _reset_result_state(self) -> None:
-        # Screening starts from a clean slate; both optimise modes merge into the
-        # existing screening recommendation, so they keep the current result and
-        # the running-template highlight rather than clearing them.
+        # Screening starts from a clean slate — no recommendation, so a cancel or
+        # failure lands on Setup rather than on emptied result tables; both
+        # optimise modes merge into the existing screening recommendation, so
+        # they keep the current result and the running-template highlight.
         if self._analysis_mode in _MERGING_MODES:
             return
+        self._recommendation = None
         self._set_empty_state()
+        self._populate_series_preview()
 
     def _on_analysis_failed(self, message: str) -> None:
         # The base has already cleared busy and run the request-id staleness
-        # guard; _analysis_mode was stashed when the run started. A failed
-        # screening leaves nothing to show (→ Setup); a failed optimize keeps the
-        # existing screening recommendation on the Result page.
+        # guard, and busy-clearing already left the Running page: a failed
+        # screening (reset to no recommendation) is on Setup, a failed optimize
+        # keeps the existing screening recommendation on the Result page.
         self._running_template_keys = set()
-        if self._analysis_mode == "screening":
-            self._recommendation = None
         # Keep the header's status line to the failure's first line — a
         # multi-line exception message (e.g. a multiprocessing bootstrap error)
         # would otherwise balloon the header band. The full text stays in the
@@ -1251,11 +1272,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         )
         self._status_label.setToolTip(failure_text)
         self._append_log(f"Analysis failed: {message}")
-        if self._recommendation is None:
-            self._set_empty_state()
-            self._populate_series_preview()
-            self._stack.setCurrentIndex(_PAGE_SETUP)
-        else:
+        if self._recommendation is not None:
             self._populate_from_recommendation()
 
     def _on_progress(self, current: int, total: int, message: str) -> None:
@@ -1344,6 +1361,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._status_label.setText(status_text or recommendation.summary)
         self._set_busy(False)
         self._populate_from_recommendation()
+        self._show_result_page()
 
     def current_effort_tier(self) -> EffortTier:
         """The effort tier the wizard will run.
@@ -1568,6 +1586,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._populate_series_card()
         self._populate_transitions_card()
         self._populate_result_trail()
+
+    def _show_result_page(self) -> None:
         self._stack.setCurrentIndex(_PAGE_RESULT)
         # Land at the top of the result page: a prior scroll position (or focus
         # handoff from the shortlist's Optimize button) would otherwise open the
@@ -1937,14 +1957,20 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._series_card.set_alternatives(alternatives)
         self._series_card.set_selected_key(self._selected_key)
 
-    def _on_card_selection_changed(self, key: str) -> None:
-        """Route a card alternative pick through the optimized-selection path."""
-        if not isinstance(key, str):
-            return
+    def _show_assessment(self, key: str) -> None:
+        """Show optimized assessment *key* everywhere: card plots, table, details.
+
+        The card chips and the optimized table both select assessments; each is
+        synced here with its signals blocked, so one pick redraws once.
+        """
         # A series-wide pick and a phase pick are alternatives, not layers.
         self._selected_phase_segment = None
         self._selected_key = key
-        self._select_row_for_key(self._optimized_table, key)
+        self._select_optimized_row(key)
+        self._series_card.blockSignals(True)
+        self._series_card.set_selected_key(key)
+        self._series_card.blockSignals(False)
+        self._populate_series_card()
         self._update_compare_warning_text()
         self._update_roles_table()
         self._update_apply_page()
@@ -2198,7 +2224,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self._recommendation
         )
         self._selected_key = target_key
-        self._select_row_for_key(self._optimized_table, target_key)
+        self._select_optimized_row(target_key)
         self._update_compare_warning_text()
 
     def _selected_assessment(self) -> GlobalCandidateAssessment | None:
@@ -2232,15 +2258,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         selected_items = self._optimized_table.selectedItems()
         if not selected_items:
             return
-        key = selected_items[0].data(Qt.ItemDataRole.UserRole)
-        if isinstance(key, str):
-            self._selected_key = key
-            # Keep the answer card's alternatives strip in step (no-op when
-            # already selected, so table↔card sync converges).
-            self._series_card.set_selected_key(key)
-        self._update_compare_warning_text()
-        self._update_roles_table()
-        self._update_apply_page()
+        self._show_assessment(selected_items[0].data(Qt.ItemDataRole.UserRole))
 
     def _update_compare_warning_text(self) -> None:
         if self._recommendation is None:
@@ -2361,8 +2379,11 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._apply_text.setPlainText("\n".join(lines))
 
         self._apply_recommended_btn.setEnabled(recommended is not None)
-        # The card's Apply mirrors "apply recommended" exactly.
-        self._series_card.set_apply_enabled(recommended is not None)
+        # The card applies the fit it is drawing. A phase pick draws one phase,
+        # which is not a series-wide fit, so only Apply phases hands it back.
+        self._series_card.set_apply_enabled(
+            assessment.is_successful and self._selected_phase_segment is None
+        )
         self._apply_selected_btn.setEnabled(assessment.is_successful)
 
     def _on_metric_changed(self, text: str) -> None:
@@ -2452,13 +2473,16 @@ class GlobalFitWizardWindow(WizardWindowBase):
             return optimized[0].selection_key
         return None
 
-    def _select_row_for_key(self, table: QTableWidget, key: str | None) -> None:
+    def _select_optimized_row(self, key: str | None) -> None:
+        """Select *key*'s optimized-table row without re-entering its selection slot."""
         if key is None:
             return
+        table = self._optimized_table
         for row in range(table.rowCount()):
-            item = table.item(row, 0)
-            if item is not None and item.data(Qt.ItemDataRole.UserRole) == key:
+            if table.item(row, 0).data(Qt.ItemDataRole.UserRole) == key:
+                table.blockSignals(True)
                 table.selectRow(row)
+                table.blockSignals(False)
                 return
 
     def _restore_screening_selection(self) -> None:

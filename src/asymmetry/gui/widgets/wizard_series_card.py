@@ -165,7 +165,7 @@ class WizardSeriesCard(QWidget):
 
         # Apply row: primary-styled button + stretch.
         apply_row = QHBoxLayout()
-        self._apply_btn = QPushButton("Apply recommended fit", self._frame)
+        self._apply_btn = QPushButton("Apply this fit", self._frame)
         self._apply_btn.setStyleSheet(build_primary_button_qss())
         self._apply_btn.clicked.connect(self._on_apply_clicked)
         apply_row.addWidget(self._apply_btn)
@@ -226,9 +226,6 @@ class WizardSeriesCard(QWidget):
 
     def selected_key(self) -> str | None:
         return self._selected_key
-
-    def set_apply_text(self, text: str) -> None:
-        self._apply_btn.setText(text)
 
     def set_apply_enabled(self, enabled: bool) -> None:
         self._apply_btn.setEnabled(enabled)
