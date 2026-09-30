@@ -108,7 +108,7 @@ def _pill_qss(*, included: bool, hit: bool, dim: bool) -> str:
 
 
 class _ComponentPill(QPushButton):
-    """One component's checkable pill: its label, and a small tag when it is slow."""
+    """One component's checkable pill: its label, and a small tag while it is slow."""
 
     hovered = Signal(str)
 
@@ -120,13 +120,11 @@ class _ComponentPill(QPushButton):
         row = QHBoxLayout(self)
         row.setContentsMargins(9, 3, 9, 3)
         row.setSpacing(5)
-        texts = [QLabel(component.label)]
-        if component.slow:
-            tag = QLabel("slow")
-            tag.setObjectName("slowTag")
-            tag.setFont(header_font())
-            texts.append(tag)
-        for label in texts:
+        # Slowness follows the measured fit times, which change between renders.
+        self.slow_tag = QLabel("slow")
+        self.slow_tag.setObjectName("slowTag")
+        self.slow_tag.setFont(header_font())
+        for label in (QLabel(component.label), self.slow_tag):
             label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             row.addWidget(label)
 
@@ -211,6 +209,16 @@ class _CardGrid(QWidget):
         self.fit_cards()
 
 
+def _cost_text(component: ScopeComponent) -> str:
+    """``Slow — ≈ 12 s per run on this computer``, or the untimed wording."""
+    speed = "Slow" if component.slow else "Quick"
+    seconds = component.estimated_seconds
+    if seconds is None:
+        return "Slow (not yet timed on this computer)" if component.slow else speed
+    amount = f"{seconds:.0f}" if seconds >= 10 else f"{seconds:.2g}"
+    return f"{speed} — ≈ {amount} s per run on this computer"
+
+
 class _DetailsPanel(QFrame):
     """What one component is for and why it is in or out of this scope."""
 
@@ -264,9 +272,7 @@ class _DetailsPanel(QFrame):
                 text for g, text in FIELD_DIRECTION_TEXT.items() if g in component.geometries
             )
         )
-        self.facts["Fitting cost"].setText(
-            "Slow — its fits dominate screening time" if component.slow else "Quick"
-        )
+        self.facts["Fitting cost"].setText(_cost_text(component))
         self.facts["This scope"].setText("Included" if component.included else component.reason)
 
 
@@ -555,6 +561,7 @@ class ModelFamilyPicker(QWidget):
                 )
                 pill.setVisible(component.applies)
                 pill.setChecked(component.included)
+                pill.slow_tag.setVisible(component.slow)
                 pill.setToolTip(
                     component.use_when
                     if component.included

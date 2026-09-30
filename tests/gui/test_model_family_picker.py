@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 from asymmetry.core.data.dataset import MuonDataset, Run  # noqa: E402
 from asymmetry.core.fitting.component_tags import FieldGeometry, PhysicsClass  # noqa: E402
 from asymmetry.core.fitting.wizard_scope import (  # noqa: E402
+    FitTimeEstimates,
     WizardScope,
     describe_scope,
     set_user_field_direction,
@@ -219,7 +220,7 @@ def test_a_pill_click_shows_its_details(qapp):
     assert details.use_when.text() == "Fluctuating Gaussian fields (strong collision)"
     assert details.category.text() == "KUBO–TOYABE"
     assert details.facts["Geometries"].text() == "Zero field · Longitudinal"
-    assert details.facts["Fitting cost"].text() == "Slow — its fits dominate screening time"
+    assert details.facts["Fitting cost"].text() == "Slow (not yet timed on this computer)"
     assert details.facts["This scope"].text() == "switched off by you"
 
 
@@ -229,6 +230,39 @@ def test_hovering_a_pill_shows_its_details(qapp):
     assert picker._details.label.text() == "Keren"
     assert picker._details.facts["This scope"].text() == "Included"
     assert picker._details.facts["Fitting cost"].text() == "Quick"
+
+
+def _slow_tag(picker: ModelFamilyPicker, name: str) -> bool:
+    return not _pill(picker, name).slow_tag.isHidden()
+
+
+def test_timed_models_show_their_estimate_and_are_tagged_by_it(qapp):
+    datasets = _series("Longitudinal")
+    timed = FitTimeEstimates({"DynamicGaussianKT": 0.4, "Keren": 12.3, "Oscillatory": 123.4})
+    picker = ModelFamilyPicker(lambda s: describe_scope(datasets, s, timed))
+    cost = picker._details.facts["Fitting cost"]
+    for name, text in (
+        ("DynamicGaussianKT", "Quick — ≈ 0.4 s per run on this computer"),
+        ("Keren", "Slow — ≈ 12 s per run on this computer"),
+        ("Oscillatory", "Slow — ≈ 123 s per run on this computer"),
+        ("DynamicLorentzianKT", "Slow (not yet timed on this computer)"),
+        ("Exponential", "Quick"),
+    ):
+        _pill(picker, name).hovered.emit(name)
+        assert cost.text() == text, name
+    assert not _slow_tag(picker, "DynamicGaussianKT")
+    assert _slow_tag(picker, "Keren")
+    assert _slow_tag(picker, "DynamicLorentzianKT")
+
+
+def test_a_refresh_retags_the_pills_when_the_fit_times_change(qapp):
+    datasets = _series("Longitudinal")
+    judgement = {"fit_times": FitTimeEstimates({})}
+    picker = ModelFamilyPicker(lambda s: describe_scope(datasets, s, judgement["fit_times"]))
+    assert _slow_tag(picker, "DynamicGaussianKT")
+    judgement["fit_times"] = FitTimeEstimates({"DynamicGaussianKT": 0.3})
+    picker.refresh()
+    assert not _slow_tag(picker, "DynamicGaussianKT")
 
 
 def test_an_excluded_pill_says_why_in_its_tooltip(qapp):
