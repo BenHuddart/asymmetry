@@ -1,11 +1,13 @@
-"""The Compare step's workspace: pick candidate A, pin B, read them side by side.
+"""The wizards' comparison workspace: pick candidate A, pin B, read them side by side.
 
-Left, the optimised role splits grouped by template in rank order, each with its
-Global/Local chips, a Δ(metric) bar, its evidence weight, a gate badge and flag
-lines. Right, the series overlay (A solid, B dashed) over residual strips, the
-A-vs-B parameter table, and one local parameter's trend along the series. Every
-judgement shown comes from ``core/fitting/model_comparison.py``. Design:
-``docs/plans/global-wizard-stepper.md`` (D4, D8, D9).
+Left, the candidates grouped by title in rank order, each with its Global/Local
+chips, a Δ(metric) bar, its evidence weight, a gate badge and flag lines. Right,
+the series overlay (A solid, B dashed) over residual strips, the A-vs-B
+parameter table, and one local parameter's trend along the series. Every
+judgement shown comes from ``core/fitting/model_comparison.py``. The global
+wizard's series has N runs; the single-run wizard's has one, with no role chips
+and no trend. Design: ``docs/plans/global-wizard-stepper.md`` (D4, D8, D9) and
+``docs/plans/fit-wizard-compare.md`` (D1–D3).
 """
 
 from __future__ import annotations
@@ -70,10 +72,12 @@ MAX_FLAG_LINES = 3
 NO_B_LEGEND = "Pin another row as B to overlay it dashed"
 NO_LOCAL_TREND = "A shares every parameter across the series"
 EMPTY_BOARD = "No optimised candidates yet"
+CONTINUE_WITH_A = "Continue with A →"
 
 _ROLE_SUFFIX = {
     ParameterRole.GLOBAL: "shared",
     ParameterRole.LOCAL: "per run",
+    ParameterRole.FITTED: "fitted",
     ParameterRole.FIXED: "fixed",
 }
 _CHIP_COLOURS = {
@@ -104,16 +108,23 @@ def format_weight(weight: float) -> str:
 
 
 def split_text(summary: CandidateSummary) -> str:
-    """``"shares Δ, A_bg"`` for a candidate with globals, ``"all per run"`` otherwise."""
-    if not summary.global_names:
-        return "all per run"
-    return "shares " + ", ".join(_symbol(name) for name in summary.global_names)
+    """``"shares Δ, A_bg"`` with globals, ``"all per run"`` with locals only, else empty."""
+    shared = summary.names(ParameterRole.GLOBAL)
+    if shared:
+        return "shares " + ", ".join(_symbol(name) for name in shared)
+    return "all per run" if summary.names(ParameterRole.LOCAL) else ""
+
+
+def headline(summary: CandidateSummary) -> str:
+    """The title, then the role split when the candidate has one."""
+    return " · ".join(part for part in (summary.title, split_text(summary)) if part)
 
 
 def flag_lines(summary: CandidateSummary, run_labels: Mapping[int, str]) -> list[str]:
     """One line per parameter flag, naming the runs that earned it.
 
-    A shared global's flag needs no run; a flag every run earned reads "at every run".
+    A shared global's flag, or any flag of a single-run candidate, needs no run;
+    a flag every run of several earned reads "at every run".
     """
     lines = []
     for row in summary.parameters:
@@ -121,7 +132,7 @@ def flag_lines(summary: CandidateSummary, run_labels: Mapping[int, str]) -> list
             runs = [
                 run for run, flags in zip(summary.runs, row.run_flags, strict=True) if flag in flags
             ]
-            if isinstance(row.values, Estimate):
+            if isinstance(row.values, Estimate) or len(summary.runs) == 1:
                 where = ""
             elif len(runs) == len(summary.runs) > 1:
                 where = " at every run"
@@ -203,7 +214,7 @@ class CompareRow(QFrame):
         self.key = summary.key
         self.setObjectName("compareRow")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setAccessibleName(f"{summary.title}, {split_text(summary)}")
+        self.setAccessibleName(headline(summary))
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(8)
@@ -220,8 +231,8 @@ class CompareRow(QFrame):
         self.chips: list[QLabel] = [
             _chip(f"{role.value} {_symbol(name)}", *_CHIP_COLOURS[role])
             for role, names in (
-                (ParameterRole.GLOBAL, summary.global_names),
-                (ParameterRole.LOCAL, summary.local_names),
+                (ParameterRole.GLOBAL, summary.names(ParameterRole.GLOBAL)),
+                (ParameterRole.LOCAL, summary.names(ParameterRole.LOCAL)),
             )
             for name in names
         ]
@@ -237,10 +248,9 @@ class CompareRow(QFrame):
         top.addWidget(self.pin_button, 0, Qt.AlignmentFlag.AlignTop)
         body.addLayout(top)
 
-        if summary.fixed_names:
-            fixed = QLabel(
-                "Fixed: " + ", ".join(_symbol(name) for name in summary.fixed_names), self
-            )
+        fixed_names = summary.names(ParameterRole.FIXED)
+        if fixed_names:
+            fixed = QLabel("Fixed: " + ", ".join(_symbol(name) for name in fixed_names), self)
             fixed.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
             body.addWidget(fixed)
 
@@ -250,7 +260,7 @@ class CompareRow(QFrame):
         scores.addWidget(self.delta_bar, 1)
         self.weight = QLabel(format_weight(summary.weight), self)
         self.weight.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        self.weight.setToolTip("Evidence weight: w ∝ exp(−Δ/2) across the optimised role splits")
+        self.weight.setToolTip("Evidence weight: w ∝ exp(−Δ/2) across the candidates listed")
         scores.addWidget(self.weight)
         text, background, foreground = _GATE_BADGES[summary.gate_passed]
         self.gate = _chip(text, background, foreground)
@@ -334,17 +344,23 @@ def _value_cell(
 
 
 class ModelComparePanel(QWidget):
-    """Optimised candidates on the left; A against B on the right; Continue with A below.
+    """Candidates on the left; A against B on the right; the host's A action below.
 
     Call :meth:`set_series` before :meth:`set_candidates`: every candidate run
     must be one of the series' runs, which name the runs in flag lines and tooltips.
+    ``continue_text`` labels the footer button that emits :attr:`continue_requested`.
+    :attr:`curves_required` names an A or B whose dense curves are not built yet;
+    the host builds them off the GUI thread and answers with :meth:`refresh_curves`.
     """
 
     a_changed = Signal(str)
     b_changed = Signal(object)
     continue_requested = Signal(str)
+    curves_required = Signal(str)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, *, continue_text: str = CONTINUE_WITH_A
+    ) -> None:
         super().__init__(parent)
         self._summaries: dict[str, CandidateSummary] = {}
         self._metric_label = ""
@@ -392,6 +408,7 @@ class ModelComparePanel(QWidget):
         right.addWidget(self._legend_a)
         right.addWidget(self._legend_b)
         self._canvas = SeriesFitCanvas(self)
+        self._canvas.curves_required.connect(self.curves_required)
         right.addWidget(self._canvas, 3)
         lower = QHBoxLayout()
         lower.setSpacing(8)
@@ -423,7 +440,7 @@ class ModelComparePanel(QWidget):
 
         footer = QHBoxLayout()
         footer.addStretch(1)
-        self._continue = QPushButton("Continue with A →", self)
+        self._continue = QPushButton(continue_text, self)
         self._continue.setStyleSheet(build_primary_button_qss())
         self._continue.clicked.connect(lambda: self.continue_requested.emit(self._a))
         footer.addWidget(self._continue)
@@ -453,6 +470,8 @@ class ModelComparePanel(QWidget):
             for dataset, label in zip(datasets, run_labels, strict=True)
         }
         self._axis_label = axis_label
+        # A lone run has nothing to trend along.
+        self._trend_canvas.setVisible(len(datasets) > 1)
         self._rebuild_board()
         self._show_pair()
 
@@ -476,6 +495,13 @@ class ModelComparePanel(QWidget):
         if self._b not in self._summaries or self._b == self._a:
             self._b = None
         self._rebuild_board()
+        self._show_pair()
+
+    def refresh_curves(self, summaries: Sequence[CandidateSummary]) -> None:
+        """Swap in the ranking already shown with more curves built; redraw A and B, not the board."""
+        if [summary.key for summary in summaries] != list(self._summaries):
+            raise ValueError("refresh_curves needs the ranking the panel already shows")
+        self._summaries = {summary.key: summary for summary in summaries}
         self._show_pair()
 
     def a_key(self) -> str | None:
@@ -533,7 +559,8 @@ class ModelComparePanel(QWidget):
 
     def _rebuild_board(self) -> None:
         """Rebuild the leaderboard rows: one bold title line per template group."""
-        self._caption.setText(f"Role splits · {self._metric_label}")
+        noun = "Candidates" if len(self._run_labels) == 1 else "Role splits"
+        self._caption.setText(f"{noun} · {self._metric_label}")
         self._caption.setVisible(bool(self._summaries))
         clear_layout(self._board)
         self._rows = {}
@@ -563,9 +590,9 @@ class ModelComparePanel(QWidget):
         self._legend_a.setVisible(a is not None)
         self._legend_b.setVisible(a is not None)
         if a is not None:
-            self._legend_a.setText(f"— A: {a.title} · {split_text(a)}")
+            self._legend_a.setText(f"— A: {headline(a)}")
         if b is not None:
-            self._legend_b.setText(f"- - B: {b.title} · {split_text(b)}")
+            self._legend_b.setText(f"- - B: {headline(b)}")
             self._legend_b.set_pen_color(tokens.TEXT)
         else:
             self._legend_b.setText(NO_B_LEGEND)
@@ -579,7 +606,8 @@ class ModelComparePanel(QWidget):
         else:
             self._pairs = compare_parameters(a, b)
         if self._trend not in self._trend_names():
-            self._trend = a.local_names[0] if a is not None and a.local_names else None
+            local_names = a.names(ParameterRole.LOCAL) if a is not None else ()
+            self._trend = local_names[0] if local_names else None
         self._table.setColumnHidden(_B_COLUMN, b is None)
         self._fill_table()
         self._draw_trend()
@@ -600,12 +628,17 @@ class ModelComparePanel(QWidget):
         table = self._table
         table.setRowCount(len(self._pairs))
         for index, pair in enumerate(self._pairs):
-            sides = [side for side in (pair.a, pair.b) if side is not None]
-            if len({side.role for side in sides}) == 1:
-                suffix = _ROLE_SUFFIX[sides[0].role]
+            roles = {side.role for side in (pair.a, pair.b) if side is not None}
+            if roles == {ParameterRole.FITTED}:
+                label = _symbol(pair.name)  # a single-run fit: every free parameter is fitted
+            elif len(roles) == 1:
+                label = f"{_symbol(pair.name)} · {_ROLE_SUFFIX[roles.pop()]}"
             else:
-                suffix = f"{_ROLE_SUFFIX[pair.a.role]} in A, {_ROLE_SUFFIX[pair.b.role]} in B"
-            name = QTableWidgetItem(f"{_symbol(pair.name)} · {suffix}")
+                label = (
+                    f"{_symbol(pair.name)} · {_ROLE_SUFFIX[pair.a.role]} in A,"
+                    f" {_ROLE_SUFFIX[pair.b.role]} in B"
+                )
+            name = QTableWidgetItem(label)
             name.setToolTip(
                 f"Click to plot {format_param_label(pair.name)} against the series"
                 if pair.name in trend_names
@@ -647,6 +680,8 @@ class ModelComparePanel(QWidget):
 
     def _draw_trend(self) -> None:
         """Plot the trend parameter along the series: A filled with a line, B hollow."""
+        if self._trend_canvas.isHidden():
+            return
         figure = self._trend_figure
         figure.clear()
         axes = figure.add_subplot()

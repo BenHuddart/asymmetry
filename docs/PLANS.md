@@ -6,9 +6,22 @@ subsystems or days.
 
 ## Active
 
+### Fit Wizard: a Compare section under the answer card
+
+Status: implemented 2026-09-30 on `feat/fit-wizard-compare`, PR to follow.
+Decision log (D1–D5), code map and phases are in
+[plans/fit-wizard-compare.md](plans/fit-wizard-compare.md).
+
+The single-run Fit Wizard adopts the Global Fit Wizard's `ModelComparePanel`
+with N = 1 run, through a `summarise_single_candidates` adapter. The answer
+card stays the verdict but loses its alternative chips; a **Compare
+candidates** section under it picks A (which the card draws and applies),
+pins B, and overlays both with residuals and a parameter table. Rows the
+build left without dense curves are drawn once a worker builds them.
+
 ### Measured fit times behind the wizards' slow tag
 
-Status: implemented 2026-09-30 on `feat/measured-fit-times`, not pushed.
+Status: merged 2026-09-30 (#345).
 It follows up D3 of the model family picker. Decision log (D1–D5), code map
 and phases are in [plans/measured-fit-times.md](plans/measured-fit-times.md).
 

@@ -3,8 +3,10 @@
 The top axes draw every run's asymmetry as small translucent markers with
 candidate A's curve solid and B's dashed, one colour per run along the series
 axis. Below, one strip per run shows the normalised residuals (y − f)/σ, A in
-the run colour over B in grey, clipped to ±4σ. Design:
-``docs/plans/global-wizard-stepper.md`` (D4).
+the run colour over B in grey, clipped to ±4σ. A candidate whose dense curves
+are not built yet is drawn without its line or residuals until the owner answers
+:attr:`SeriesFitCanvas.curves_required`. Design:
+``docs/plans/global-wizard-stepper.md`` (D4) and ``docs/plans/fit-wizard-compare.md`` (D3).
 """
 
 from __future__ import annotations
@@ -13,9 +15,10 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import numpy as np
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from asymmetry.core.fitting.model_comparison import CandidateSummary, RunFit
+from asymmetry.core.fitting.model_comparison import CandidateSummary, RunCurves, RunFit
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.plots import draw_zero_line, style_axes, style_figure
 from asymmetry.gui.utils.formatting import format_reduced_chi_squared
@@ -85,6 +88,9 @@ def spread_labels(targets: Sequence[float], gap: float, low: float, high: float)
 class SeriesFitCanvas(QWidget):
     """Data overlay with candidate A solid, B dashed, and optional residual strips."""
 
+    #: The key of an A or B handed to :meth:`set_curves` without its dense curves.
+    curves_required = Signal(str)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._figure, self._canvas = create_canvas(layout="none")
@@ -125,10 +131,17 @@ class SeriesFitCanvas(QWidget):
         self._redraw()
 
     def set_curves(self, a: CandidateSummary | None, b: CandidateSummary | None) -> None:
-        """Overlay candidate ``a`` solid and ``b`` dashed, matched to the runs by run number."""
+        """Overlay candidate ``a`` solid and ``b`` dashed, matched to the runs by run number.
+
+        Asks for the curves of either one that has not built them yet, and draws
+        it without them meanwhile; the owner answers with another ``set_curves``.
+        """
         self._a = a
         self._b = b
         self._redraw()
+        for summary in (a, b):
+            if summary is not None and not summary.curves_built:
+                self.curves_required.emit(summary.key)
 
     def set_residuals_visible(self, visible: bool) -> None:
         self._residuals_visible = visible
@@ -176,8 +189,8 @@ class SeriesFitCanvas(QWidget):
         style_axes(overlay)
         overlay.set_xlabel("Time (µs)")
         overlay.set_ylabel("Asymmetry")
-        a_runs = _runs_by_number(self._a)
-        b_runs = _runs_by_number(self._b)
+        a_curves = _curves_by_number(self._a)
+        b_curves = _curves_by_number(self._b)
         label_targets: list[float] = []
         for dataset, colour in zip(self._datasets, self._colours, strict=True):
             time = np.asarray(dataset.time, dtype=float)
@@ -194,12 +207,12 @@ class SeriesFitCanvas(QWidget):
                 color=colour,
             )
             run_number = int(dataset.run_number)
-            if run_number in b_runs:
+            if run_number in b_curves:
                 overlay.plot(
-                    *b_runs[run_number].curve, color=colour, linewidth=1.3, linestyle=_B_DASH
+                    *b_curves[run_number].fit, color=colour, linewidth=1.3, linestyle=_B_DASH
                 )
-            if run_number in a_runs:
-                a_time, a_value = a_runs[run_number].curve
+            if run_number in a_curves:
+                a_time, a_value = a_curves[run_number].fit
                 overlay.plot(a_time, a_value, color=colour, linewidth=1.7)
                 label_targets.append(float(a_value[-1]))
             else:
@@ -252,7 +265,7 @@ class SeriesFitCanvas(QWidget):
             for position, index in enumerate(strips):
                 bottom = strip_top - (position + 1) * (strip_height + _STRIP_GAP_PX)
                 axes = self._figure.add_axes(rect(bottom, strip_height), sharex=overlay)
-                self._draw_strip(axes, index, a_runs, b_runs)
+                self._draw_strip(axes, index, a_curves, b_curves)
             if len(strips) < len(self._datasets):
                 self._figure.text(
                     _LEFT_PX / width,
@@ -268,20 +281,20 @@ class SeriesFitCanvas(QWidget):
         self,
         axes: Axes,
         index: int,
-        a_runs: dict[int, RunFit],
-        b_runs: dict[int, RunFit],
+        a_curves: dict[int, RunCurves],
+        b_curves: dict[int, RunCurves],
     ) -> None:
         run_number = int(self._datasets[index].run_number)
         axes.set_axis_off()
         axes.set_ylim(-RESIDUAL_CLIP_SIGMA * 1.1, RESIDUAL_CLIP_SIGMA * 1.1)
         draw_zero_line(axes)
-        for runs, colour, zorder in (
-            (a_runs, self._colours[index], 3),
-            (b_runs, tokens.TEXT_DIM, 2),
+        for curves, colour, zorder in (
+            (a_curves, self._colours[index], 3),
+            (b_curves, tokens.TEXT_DIM, 2),
         ):
-            if run_number not in runs:
+            if run_number not in curves:
                 continue
-            time, residual = runs[run_number].residuals
+            time, residual = curves[run_number].residuals
             step = preview_stride(time.size, DISPLAY_POINTS_PER_RUN)
             axes.plot(
                 time[::step],
@@ -293,6 +306,8 @@ class SeriesFitCanvas(QWidget):
                 color=colour,
                 zorder=zorder,
             )
+        a_runs = _runs_by_number(self._a)
+        b_runs = _runs_by_number(self._b)
         # A run a pre-screen never fitted has no χ²ᵣ.
         chi_texts = [
             format_reduced_chi_squared(runs[run_number].reduced_chi_squared)
@@ -324,3 +339,12 @@ class SeriesFitCanvas(QWidget):
 
 def _runs_by_number(summary: CandidateSummary | None) -> dict[int, RunFit]:
     return {} if summary is None else {run.run_number: run for run in summary.runs}
+
+
+def _curves_by_number(summary: CandidateSummary | None) -> dict[int, RunCurves]:
+    """The runs whose dense curves are built, by run number."""
+    return {
+        run.run_number: run.curves
+        for run in _runs_by_number(summary).values()
+        if run.curves is not None
+    }

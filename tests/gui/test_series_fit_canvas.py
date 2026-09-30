@@ -19,6 +19,7 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.fit_wizard import SelectionMetric
 from asymmetry.core.fitting.model_comparison import (
     CandidateSummary,
+    RunCurves,
     RunFit,
     summarise_candidates,
 )
@@ -143,8 +144,13 @@ def test_strips_label_the_run_and_both_chi_squared(qapp: QApplication) -> None:
 def test_residuals_are_clipped_to_the_strip(qapp: QApplication) -> None:
     a, _b = _pair()
     run = a.runs[0]
-    time, residual = run.residuals
-    wild = replace(run, residuals=(time, np.where(np.arange(time.size) % 2, 50.0, -50.0)))
+    time, _residual = run.curves.residuals
+    wild = replace(
+        run,
+        curves=replace(
+            run.curves, residuals=(time, np.where(np.arange(time.size) % 2, 50.0, -50.0))
+        ),
+    )
     canvas = _canvas()
     canvas.set_series(_datasets(), _LABELS, _AXIS)
     canvas.set_curves(replace(a, runs=(wild, *a.runs[1:])), None)
@@ -177,8 +183,7 @@ def _long_series(count: int) -> tuple[list[MuonDataset], CandidateSummary]:
             100 + index,
             str(100 + index),
             float(index),
-            (time, np.exp(-0.1 * index * time)),
-            (time, np.zeros_like(time)),
+            RunCurves((time, np.exp(-0.1 * index * time)), (time, np.zeros_like(time))),
             1.0,
         )
         for index in range(count)
@@ -224,3 +229,40 @@ def test_spread_labels_keeps_order_and_gap_within_range() -> None:
 def test_spread_labels_spaces_evenly_when_the_gap_cannot_fit() -> None:
     placed = spread_labels([0.5] * 5, gap=0.5, low=0.0, high=1.0)
     assert sorted(placed) == pytest.approx([0.0, 0.25, 0.5, 0.75, 1.0])
+
+
+def _pending(summary: CandidateSummary) -> CandidateSummary:
+    """``summary`` as a build leaves a row it does not answer with: no dense curves."""
+    return replace(summary, runs=tuple(replace(run, curves=None) for run in summary.runs))
+
+
+def test_a_pending_candidate_is_drawn_without_its_line_and_asked_for(qapp: QApplication) -> None:
+    a, b = _pair()
+    canvas = _canvas()
+    canvas.set_series(_datasets(), _LABELS, _AXIS)
+    requested: list[str] = []
+    canvas.curves_required.connect(requested.append)
+    canvas.set_curves(_pending(a), b)
+    assert requested == [a.key]
+    assert _curves(_overlay(canvas), "-") == []
+    assert len(_curves(_overlay(canvas), "--")) == len(_RUNS)
+    first_strip = canvas.figure.axes[1]
+    # B's residuals are drawn, A's wait; both χ²ᵣ are known without curves.
+    assert len(_markers(first_strip)) == 1
+    chi_a, chi_b = a.runs[0].reduced_chi_squared, b.runs[0].reduced_chi_squared
+    assert [t.get_text() for t in first_strip.texts][1] == f"{chi_a:.2f} · {chi_b:.2f}"
+
+    canvas.set_curves(a, _pending(b))
+    assert requested == [a.key, b.key]
+    assert len(_curves(_overlay(canvas), "-")) == len(_RUNS)
+
+
+def test_built_candidates_are_never_asked_for(qapp: QApplication) -> None:
+    a, b = _pair()
+    canvas = _canvas()
+    canvas.set_series(_datasets(), _LABELS, _AXIS)
+    requested: list[str] = []
+    canvas.curves_required.connect(requested.append)
+    canvas.set_curves(a, b)
+    canvas.set_curves(a, None)
+    assert requested == []

@@ -17,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 import asymmetry.gui.windows.fit_wizard_window as wizard_window_module
 from asymmetry.core.data.dataset import MuonDataset
@@ -43,6 +43,7 @@ from asymmetry.core.fitting.peak_detection import (
 from asymmetry.core.fitting.wizard_scope import UNTIMED, WizardScope
 from asymmetry.gui.utils import fit_times
 from asymmetry.gui.utils.fit_times import shared_fit_time_store
+from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.windows.fit_wizard_window import (
     _PAGE_RESULT,
     _PAGE_RUNNING,
@@ -366,10 +367,10 @@ def test_fit_wizard_window_selection_updates_apply_page(
     window._compare_table.selectRow(1)
     qapp.processEvents()
 
-    # Selecting a candidate in the compare table swaps the card's selection and
-    # updates the residual-warning panel for that candidate.
-    assert window._selected_key == "gaussian_constant"
-    assert window._answer_card.selected_key() == "gaussian_constant"
+    # Selecting a candidate in the Details table makes it A, which the card
+    # draws, and updates the residual-warning panel for that candidate.
+    assert window._model_compare.a_key() == "gaussian_constant"
+    assert window._answer_card.selected_assessment().template.key == "gaussian_constant"
     assert "Residual gate warning" in window._compare_warning_text.toPlainText()
 
 
@@ -399,7 +400,7 @@ def test_fit_wizard_window_apply_recommended_emits_assessment(
 
     # The answer card's "Apply this fit" applies the selected (default =
     # recommended) assessment; the window relays it with the recommendation.
-    window._answer_card._on_apply_clicked()
+    window._answer_card._apply_btn.click()
 
     assert emitted["assessment"].template.key == "exp_constant"
     assert emitted["recommendation"].recommended_key == "exp_constant"
@@ -489,7 +490,7 @@ def test_fit_wizard_window_accepts_cached_recommendation(
     # Cached reopen goes straight to the Result state.
     assert window._stack.currentIndex() == _PAGE_RESULT
     assert window._compare_table.rowCount() == 2
-    assert window._answer_card.selected_key() == "exp_constant"
+    assert window._model_compare.a_key() == "exp_constant"
     # A signature without scope/user_peaks keeps the default scope and is not stale.
     assert window._picker.scope() == WizardScope()
     assert window._user_peaks == []
@@ -1290,7 +1291,78 @@ def test_fit_wizard_window_running_state_streams_trail(
     assert "novel stage" in window._running_trail._status_label.text()
 
 
-def test_fit_wizard_window_alternatives_swap_changes_applied_key(
+def test_a_failed_fit_as_a_cannot_be_applied(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recommendation = _fake_recommendation(dataset)
+    failed = dataclasses.replace(
+        recommendation.assessments[1],
+        fit_result=dataclasses.replace(recommendation.assessments[1].fit_result, success=False),
+    )
+    recommendation = dataclasses.replace(
+        recommendation, assessments=(recommendation.assessments[0], failed)
+    )
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: recommendation,
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+    assert window._answer_card._apply_btn.isEnabled()
+
+    window._model_compare.set_a(failed.template.key)
+
+    assert not window._answer_card._apply_btn.isEnabled()
+    assert not window._model_compare._continue.isEnabled()
+
+
+def test_picking_a_in_the_compare_panel_is_the_cards_selection(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lives in one place, the Compare panel; the card and the Details table follow it."""
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _fake_recommendation(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    # A starts at the recommendation; B starts empty; the card offers no chips.
+    assert window._model_compare.a_key() == "exp_constant"
+    assert window._model_compare.b_key() is None
+    assert [b.text() for b in window._answer_card.findChildren(QPushButton)] == ["Apply this fit"]
+
+    window._model_compare.set_a("gaussian_constant")
+
+    assert window._answer_card.selected_assessment().template.key == "gaussian_constant"
+    selected = window._compare_table.selectedItems()
+    assert selected[0].data(Qt.ItemDataRole.UserRole) == "gaussian_constant"
+    assert "Residual gate warning" in window._compare_warning_text.toPlainText()
+    emitted: list[object] = []
+    window.apply_assessment_requested.connect(lambda a, r: emitted.append(a))
+    window._answer_card._apply_btn.click()
+    footer = next(
+        b
+        for b in window._model_compare.findChildren(QPushButton)
+        if b.text() == "Apply A to the fit panel"
+    )
+    footer.click()
+    assert [a.template.key for a in emitted] == ["gaussian_constant", "gaussian_constant"]
+
+
+def test_the_compare_section_sits_between_the_card_and_the_trail(
     qapp: QApplication,
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
@@ -1307,18 +1379,40 @@ def test_fit_wizard_window_alternatives_swap_changes_applied_key(
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
-    # gauss is offered as an alternative on the card.
-    assert "gaussian_constant" in window._answer_card._alt_buttons
-    window._answer_card._alt_buttons["gaussian_constant"].click()
-    qapp.processEvents()
+    section = window._model_compare.parentWidget()
+    while not isinstance(section, PanelSection):
+        section = section.parentWidget()
+    assert section.title() == "Compare candidates"
+    assert section.isExpanded()
+    layout = window._result_scroll.widget().layout()
+    order = [layout.indexOf(w) for w in (window._answer_card, section, window._result_trail)]
+    assert order == sorted(order)
+    assert window._model_compare._caption.text() == "Candidates · ΔAICc from best"
 
-    # Selecting the alternative retargets Apply and syncs the compare table.
-    assert window._answer_card.selected_key() == "gaussian_constant"
-    assert window._selected_key == "gaussian_constant"
-    emitted: list[object] = []
-    window.apply_assessment_requested.connect(lambda a, r: emitted.append(a))
-    window._answer_card._apply_btn.click()
-    assert emitted[0].template.key == "gaussian_constant"
+
+def test_a_re_rank_keeps_a_and_re_captions_the_panel(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _fake_recommendation(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    window._model_compare.set_a("gaussian_constant")
+    window._metric_combo.setCurrentText(SelectionMetric.BIC.value)
+
+    assert window._model_compare.a_key() == "gaussian_constant"
+    assert window._answer_card.selected_assessment().template.key == "gaussian_constant"
+    assert window._model_compare._caption.text() == "Candidates · ΔBIC from best"
 
 
 def test_fit_wizard_window_copy_log_uses_render_log_text(
@@ -1698,8 +1792,8 @@ def test_fit_wizard_window_click_seeded_frequency_carries_a_damping_estimate(
 
 # --------------------------------------------------------------------------- #
 # On-demand dense curves. A build materialises curves only for the rows it
-# exposes as its answer; the window builds any other row the user selects on a
-# worker thread and hands it to the card.
+# exposes as its answer; the window builds any other row the user picks as A or
+# B on a worker thread and hands it to the card and the Compare panel.
 # --------------------------------------------------------------------------- #
 
 
@@ -1753,7 +1847,7 @@ def test_recommended_row_draws_without_building_any_curve(
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
-    assert window._answer_card.selected_key() == "exp_constant"
+    assert window._model_compare.a_key() == "exp_constant"
     assert builds == []
     assert window._requested_curve_keys == set()
     assert _fit_line_lengths(window) == [dataset.n_points]
@@ -1766,9 +1860,9 @@ def test_selecting_a_bare_row_materialises_its_curves_off_the_gui_thread(
 ) -> None:
     """A dense multi-component curve is far too expensive to build on a click.
 
-    The card asks for the curves it lacks, the window builds them through its
-    TaskRunner (never on the GUI thread), and the result is folded back into the
-    recommendation and drawn.
+    The card and the panel ask for the curves they lack, the window builds them
+    through its TaskRunner (never on the GUI thread), and the result is folded
+    back into the recommendation and drawn by both.
     """
     monkeypatch.setattr(
         wizard_window_module,
@@ -1791,7 +1885,7 @@ def test_selecting_a_bare_row_materialises_its_curves_off_the_gui_thread(
 
     monkeypatch.setattr(wizard_window_module, "assessment_with_curves", _recorded)
 
-    window._answer_card.set_selected_key("gaussian_constant")
+    window._model_compare.set_a("gaussian_constant")
     # The click itself only queues work — nothing is built on the GUI thread.
     assert window._requested_curve_keys == {"gaussian_constant"}
 
@@ -1804,9 +1898,11 @@ def test_selecting_a_bare_row_materialises_its_curves_off_the_gui_thread(
     assert build_threads and threading.get_ident() not in build_threads
     materialised = window._recommendation.assessment_for_key("gaussian_constant")
     assert _fit_line_lengths(window) == [materialised.fitted_time.size]
+    overlay = window._model_compare._canvas.figure.axes[0]
+    assert [line for line in overlay.lines if line.get_linestyle() == "-"]
     # The rest of the recommendation is untouched: same ranking, same selection.
     assert window._recommendation.recommended_key == "exp_constant"
-    assert window._answer_card.selected_key() == "gaussian_constant"
+    assert window._model_compare.a_key() == "gaussian_constant"
 
 
 def test_one_curve_build_per_row_while_it_is_in_flight(
@@ -1842,7 +1938,7 @@ def test_one_curve_build_per_row_while_it_is_in_flight(
 
     monkeypatch.setattr(wizard_window_module, "assessment_with_curves", _blocking)
 
-    window._answer_card.set_selected_key("gaussian_constant")
+    window._model_compare.set_a("gaussian_constant")
     # Force further redraws of the same still-bare row.
     window._answer_card._residuals_toggle.setChecked(True)
     window._answer_card._residuals_toggle.setChecked(False)
@@ -1882,7 +1978,7 @@ def test_a_curve_result_for_a_replaced_recommendation_is_dropped(
         return real_build(recommendation, key, data)
 
     monkeypatch.setattr(wizard_window_module, "assessment_with_curves", _blocking)
-    window._answer_card.set_selected_key("gaussian_constant")
+    window._model_compare.set_a("gaussian_constant")
 
     replacement = _fake_recommendation(dataset)
     window._recommendation = replacement
@@ -1900,10 +1996,10 @@ def test_dropping_the_recommendation_also_drops_it_from_the_card(
 ) -> None:
     """A card redraw after the window let go of its recommendation asks for nothing.
 
-    ``_on_card_curves_required`` captures the window's recommendation and
-    record for a worker, so it must only ever fire while the card and the
+    ``_build_curves`` captures the window's recommendation and record for a
+    worker, so it must only ever fire while the card, the Compare panel and the
     window hold the same recommendation. The window makes that true by
-    construction: when it drops its result, the card drops it too.
+    construction: when it drops its result, the card and the panel drop it too.
     """
     monkeypatch.setattr(
         wizard_window_module,
@@ -1926,7 +2022,39 @@ def test_dropping_the_recommendation_also_drops_it_from_the_card(
     window._reset_result_state()
 
     assert window._answer_card.selected_assessment() is None
+    assert window._model_compare.a_key() is None
     window._answer_card._residuals_toggle.setChecked(True)
-    window._answer_card.set_selected_key("gaussian_constant")
     assert builds == []
     assert window._requested_curve_keys == set()
+
+
+def test_pinning_a_bare_row_as_b_builds_it_for_the_panel(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B needs its curve too: the panel asks, the window builds it once, B is drawn dashed."""
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _recommendation_with_bare_alternative(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    window._model_compare.set_b("gaussian_constant")
+    assert window._requested_curve_keys == {"gaussian_constant"}
+
+    def _drawn() -> bool:
+        overlay = window._model_compare._canvas.figure.axes[0]
+        return any(line.get_linestyle() == "--" for line in overlay.lines)
+
+    wait_for(_drawn, qapp)
+    assert window._model_compare.a_key() == "exp_constant"
+    assert window._model_compare.b_key() == "gaussian_constant"
+    # The card still draws A, the recommendation, with no request of its own.
+    assert window._requested_curve_keys == {"gaussian_constant"}

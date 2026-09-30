@@ -48,6 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   results →**, and the result decision trail are gone; the raw tables and the
   role diagnostics now sit under each step's collapsed **Details**. See
   `docs/reference/global_fit_wizard.rst` § "The guided journey".
+- **The Fit Wizard's result has a Compare candidates section.** The answer
+  card stays the verdict (headline, confidence, fit and **Apply this fit**)
+  but loses its alternative chips. Below it, the Global Fit Wizard's comparison
+  panel lists every candidate best first ("Candidates · ΔAICc from best"),
+  including the baselines and disqualified candidates, each with a Δ bar, an
+  evidence weight, a Pass/Warn gate and parameter flags. Click a candidate to
+  make it A: the card draws A and **Apply this fit** applies it. **Pin as B**
+  overlays another dashed, with a normalised-residual strip and an A-vs-B
+  parameter table, and **Apply A to the fit panel** applies A from the
+  section. A candidate the analysis did not draw has its curve built in the
+  background the first time you pick it. Selecting a row in the trail's
+  comparison table also makes it A. See `docs/reference/fit_wizard.rst`
+  § "Comparing candidates and applying a fit".
 
 ## [0.22.0] - 2026-09-30
 
