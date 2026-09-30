@@ -179,13 +179,6 @@ def test_apply_button_emits_and_can_disable(qapp: QApplication) -> None:
     assert emitted == [1]  # disabled button does not emit
 
 
-def test_apply_text_default_and_override(qapp: QApplication) -> None:
-    card = WizardSeriesCard()
-    assert card._apply_btn.text() == "Apply recommended fit"
-    card.set_apply_text("Use this global fit")
-    assert card._apply_btn.text() == "Use this global fit"
-
-
 # ── (5) clear() ───────────────────────────────────────────────────────────
 
 

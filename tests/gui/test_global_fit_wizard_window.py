@@ -13,8 +13,9 @@ pytestmark = [pytest.mark.gui, pytest.mark.slow, pytest.mark.integration]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 import asymmetry.gui.windows.global_fit_wizard_window as wizard_window_module
 from asymmetry.core.data.dataset import MuonDataset
@@ -1398,3 +1399,125 @@ def test_global_fit_wizard_window_optimize_button_label_tracks_selection(
 
     assert window._optimize_btn.text() == "Optimize selected"
     assert window._optimize_btn.isEnabled() is False
+
+
+# ── Navigation between Setup and Result ──────────────────────────────────────
+
+
+def _back_to_setup_button(window: GlobalFitWizardWindow) -> QPushButton:
+    (button,) = [
+        button
+        for button in window._result_page.findChildren(QPushButton)
+        if button.text() == "← Back to setup"
+    ]
+    return button
+
+
+def test_global_fit_wizard_window_result_page_returns_to_setup_and_back(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    assert window._view_results_btn.isHidden() is True
+    window.set_cached_recommendation(_fake_recommendation(datasets))
+    assert window._stack.currentIndex() == _PAGE_RESULT
+
+    _back_to_setup_button(window).click()
+    assert window._stack.currentIndex() == _PAGE_SETUP
+    assert window._refresh_btn.isEnabled() is True
+    assert window._view_results_btn.isHidden() is False
+
+    window._view_results_btn.click()
+    assert window._stack.currentIndex() == _PAGE_RESULT
+
+
+def test_global_fit_wizard_window_metric_rerank_on_setup_stays_on_setup(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window.set_cached_recommendation(_fake_recommendation(datasets))
+    _back_to_setup_button(window).click()
+
+    window._metric_combo.setCurrentText(SelectionMetric.BIC.value)
+
+    assert window.current_recommendation().metric is SelectionMetric.BIC
+    assert window._stack.currentIndex() == _PAGE_SETUP
+
+
+def test_global_fit_wizard_window_failed_rescreen_lands_on_setup_with_runs(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fail(*_args, **_kwargs):
+        raise RuntimeError("screening exploded")
+
+    monkeypatch.setattr(
+        wizard_window_module, "build_global_fit_wizard_screening_recommendation", _fail
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window.set_cached_recommendation(_fake_recommendation(datasets))
+    _back_to_setup_button(window).click()
+    # Change the scope so Run screening recomputes instead of serving the cache.
+    window._scope_selector._preset_combo.setCurrentIndex(
+        window._scope_selector._preset_combo.findData("lf-dynamics")
+    )
+    qapp.processEvents()
+
+    window._start_analysis()
+    wait_for(lambda: window._tasks.active_count == 0, qapp)
+
+    assert "screening exploded" in window._status_label.text()
+    assert window.current_recommendation() is None
+    assert window._stack.currentIndex() == _PAGE_SETUP
+    assert window._overview_table.rowCount() == len(datasets)
+    assert window._view_results_btn.isHidden() is True
+
+
+# ── Picking an alternative redraws the answer card ───────────────────────────
+
+
+def test_global_fit_wizard_window_alternative_pick_redraws_card_plots(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+) -> None:
+    recommendation = _fake_multi_variant_recommendation(datasets)
+    best, shared = recommendation.assessments
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window.set_cached_recommendation(recommendation)
+    card = window._series_card
+    # The recommended variant trends its local Lambda.
+    assert card._trend is not None
+
+    applied: list[GlobalCandidateAssessment] = []
+    window.apply_assessment_requested.connect(
+        lambda assessment, _recommendation: applied.append(assessment)
+    )
+
+    # Card chip → the all-global variant: no local parameter left to trend,
+    # and the card's Apply hands back the variant it now draws.
+    card._alt_buttons[shared.selection_key].click()
+    assert window._selected_key == shared.selection_key
+    assert card._trend is None
+    card._apply_btn.click()
+    assert [assessment.selection_key for assessment in applied] == [shared.selection_key]
+    selected_row = window._optimized_table.selectedItems()[0].row()
+    assert (
+        window._optimized_table.item(selected_row, 0).data(Qt.ItemDataRole.UserRole)
+        == shared.selection_key
+    )
+
+    # Optimized-table row → back to the recommended variant.
+    for row in range(window._optimized_table.rowCount()):
+        if window._optimized_table.item(row, 0).data(Qt.ItemDataRole.UserRole) == (
+            best.selection_key
+        ):
+            window._optimized_table.selectRow(row)
+    assert window._selected_key == best.selection_key
+    assert card._trend is not None
+    assert card.selected_key() == best.selection_key
