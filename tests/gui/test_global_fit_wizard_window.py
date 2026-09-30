@@ -26,6 +26,7 @@ from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
     ConfidenceTier,
+    FitTiming,
     FitWizardRecommendation,
     RecommendationVerdict,
     SelectionMetric,
@@ -41,6 +42,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
 from asymmetry.gui.panels.log_panel import LogPanel
+from asymmetry.gui.utils.fit_times import shared_fit_time_store
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.widgets.wizard_stepper import StepState
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
@@ -336,6 +338,7 @@ def _fake_single_fit_recommendation(dataset: MuonDataset) -> FitWizardRecommenda
                 A_bg=0.01,
             )
         ),
+        timing=FitTiming(0.02, dataset.n_points),
     )
     return FitWizardRecommendation(
         fingerprint=SpectrumFingerprint(
@@ -623,6 +626,54 @@ def test_global_fit_wizard_window_emits_generated_single_fit_analyses(
     # was completed against, so it never re-runs phase 1.
     assert captured["single_fit"] == completed
     assert captured["portfolio"] is not None
+
+
+def test_global_fit_wizard_window_records_the_fits_it_ran_and_shows_the_estimates(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the analyses phase 1 generated are timed; a reused one is not recorded again."""
+    sources = {
+        int(dataset.run_number): _fake_single_fit_recommendation(dataset) for dataset in datasets
+    }
+    generated = tuple(sources)[1:]
+    captured: dict[str, object] = {}
+
+    def _fake_phase_one(datasets_arg, **kwargs):
+        captured["phase_one"] = kwargs["fit_times"]
+        return _fake_screening_table(
+            datasets_arg,
+            sources,
+            store=kwargs["existing_recommendations_by_run"],
+            generated=generated,
+        )
+
+    def _fake_build(datasets_arg, **kwargs):
+        captured["screening"] = kwargs["fit_times"]
+        return _fake_screening_recommendation(datasets_arg)
+
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_or_complete_single_fit_wizard_recommendations_for_global_portfolio",
+        _fake_phase_one,
+    )
+    monkeypatch.setattr(
+        wizard_window_module, "build_global_fit_wizard_screening_recommendation", _fake_build
+    )
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    # Each generated run's one Exponential fit took 0.02 s on its points.
+    points = datasets[0].n_points
+    assert shared_fit_time_store().samples == {"Exponential": (pytest.approx(20.0 / points),)}
+    assert captured["phase_one"] == captured["screening"]
+    window._picker._show_details("Exponential")
+    assert window._picker._details.facts["Fitting cost"].text() == (
+        "Quick — ≈ 0.02 s per run on this computer"
+    )
 
 
 def test_global_fit_wizard_window_warning_info_dialog_contains_expected_text(

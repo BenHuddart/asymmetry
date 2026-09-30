@@ -281,11 +281,15 @@ def _apply_determinism_patches() -> None:
     the recorded-series clock a Series section's status tag shows
     (``"Fitted n/n · HH:MM"``, series.py's ``_recorded_status``); without
     this, either one varies on every CI run and bloats Pages deploy diffs.
+    The wizards' slow tags follow this computer's measured fit times, so the
+    wizards see an untimed store and record nothing.
     """
     from datetime import datetime as _real_datetime
 
+    from asymmetry.core.fitting.fit_time_store import FitTimeStore
     from asymmetry.gui import mainwindow as _mainwindow_module
     from asymmetry.gui.panels import log_panel as _log_panel_module
+    from asymmetry.gui.windows import fit_wizard_window, global_fit_wizard_window
 
     class _FrozenDatetime(_real_datetime):
         @classmethod
@@ -294,6 +298,9 @@ def _apply_determinism_patches() -> None:
 
     _log_panel_module.datetime = _FrozenDatetime  # type: ignore[attr-defined]
     _mainwindow_module.datetime = _FrozenDatetime  # type: ignore[attr-defined]
+    for window_module in (fit_wizard_window, global_fit_wizard_window):
+        window_module.shared_fit_time_store = FitTimeStore  # type: ignore[attr-defined]
+        window_module.record_fit_times = lambda _assessments: None  # type: ignore[attr-defined]
 
 
 def _import_scenarios() -> None:

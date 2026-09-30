@@ -249,6 +249,26 @@ def _isolate_qsettings(tmp_path: Path) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_fit_time_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Point the wizards' per-machine fit-time store at a per-test file.
+
+    The store is loaded once per process from the app data folder; without this a
+    wizard test would read and write the real ``fit_times.json``, and one test's
+    timings would change which models the next test's picker tags slow.
+    """
+    try:
+        from asymmetry.gui.utils import fit_times
+    except Exception:
+        yield
+        return
+
+    monkeypatch.setattr(fit_times, "fit_times_path", lambda: tmp_path / "fit_times.json")
+    fit_times.shared_fit_time_store.cache_clear()
+    yield
+    fit_times.shared_fit_time_store.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_ui_font_scale() -> Iterator[None]:
     """Reset the process-wide UI font scale to 1.0 around every test.
 

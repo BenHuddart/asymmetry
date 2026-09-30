@@ -109,7 +109,9 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
 from asymmetry.core.fitting.wizard_scope import (
     DEFAULT_EFFORT_TIER,
+    UNTIMED,
     EffortTier,
+    FitTimeEstimates,
     ScopeResolution,
     WizardScope,
     dataset_field_geometry,
@@ -1236,6 +1238,7 @@ def _preview_series_templates(
     current_model: CompositeModel | None,
     *,
     scope: WizardScope | None = None,
+    fit_times: FitTimeEstimates,
 ) -> tuple[CandidateTemplate, ...]:
     """The candidate list to *quote* for a series before phase 1 has run.
 
@@ -1254,7 +1257,7 @@ def _preview_series_templates(
     """
     resolution: ScopeResolution | None = None
     if scope is not None:
-        resolution = resolve_scope_for_datasets(list(ordered_datasets), scope)
+        resolution = resolve_scope_for_datasets(list(ordered_datasets), scope, fit_times)
     families = build_wizard_families(
         aggregate_fingerprint, current_model, scope_resolution=resolution
     )
@@ -1491,11 +1494,12 @@ def _scope_filtered_templates(
     templates: Sequence[CandidateTemplate],
     ordered_datasets: Sequence[MuonDataset],
     scope: WizardScope | None,
+    fit_times: FitTimeEstimates,
 ) -> tuple[CandidateTemplate, ...]:
     """Drop templates whose components are out of scope for *every* run."""
     if scope is None:
         return tuple(templates)
-    resolution = resolve_scope_for_datasets(list(ordered_datasets), scope)
+    resolution = resolve_scope_for_datasets(list(ordered_datasets), scope, fit_times)
     return tuple(
         template
         for template in templates
@@ -1541,6 +1545,7 @@ def build_global_fit_wizard_candidate_portfolio(
     current_model: CompositeModel | None = None,
     *,
     scope: WizardScope | None = None,
+    fit_times: FitTimeEstimates = UNTIMED,
     single_fit_recommendations_by_run: Mapping[int, FitWizardRecommendation] | None = None,
 ) -> GlobalFitWizardCandidatePortfolio:
     """Return the ordered datasets, fingerprints, and candidate portfolio for one series.
@@ -1567,6 +1572,7 @@ def build_global_fit_wizard_candidate_portfolio(
             series_template_alphabet(single_fit_recommendations_by_run),
             ordered_datasets,
             scope,
+            fit_times,
         )
         pattern_template_keys = _series_pattern_template_keys(
             templates, single_fit_recommendations_by_run
@@ -1580,6 +1586,7 @@ def build_global_fit_wizard_candidate_portfolio(
             aggregate_fingerprint,
             current_model,
             scope=scope,
+            fit_times=fit_times,
         )
         pattern_template_keys = ()
     return GlobalFitWizardCandidatePortfolio(
@@ -1713,6 +1720,7 @@ def _run_single_run_analyses(
     current_model: CompositeModel | None,
     metric: SelectionMetric,
     scope: WizardScope | None,
+    fit_times: FitTimeEstimates,
     user_frequencies_mhz: Sequence[float] | None,
     cancel_callback: Callable[[], bool] | None,
     concurrency: int,
@@ -1780,6 +1788,7 @@ def _run_single_run_analyses(
             current_model,
             metric=metric,
             scope=scope,
+            fit_times=fit_times,
             user_frequencies_mhz=user_frequencies_mhz,
             cancel_callback=cancel_callback,
             executor=executor,
@@ -1848,6 +1857,26 @@ class GlobalFitWizardScreeningTable:
     generated_run_numbers: tuple[int, ...]
     series_rebin_factor: int
 
+    @property
+    def fitted_assessments(self) -> tuple[CandidateAssessment, ...]:
+        """The rows this call fitted: the generated runs' analyses and the completion cells.
+
+        A completed row keeps a run's own assessment as the very same object
+        (:func:`_assemble_completed_run`), so a completion cell is a completed
+        row that is no row of a source analysis.
+        """
+        analyses = self.single_fit_recommendations_by_run
+        source_rows = {id(row) for analysis in analyses.values() for row in analysis.assessments}
+        return (
+            *(row for run in self.generated_run_numbers for row in analyses[run].assessments),
+            *(
+                row
+                for completed in self.recommendations_by_run.values()
+                for row in completed.assessments
+                if id(row) not in source_rows
+            ),
+        )
+
 
 def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     datasets: list[MuonDataset],
@@ -1856,6 +1885,7 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     existing_recommendations_by_run: dict[int, FitWizardRecommendation] | None = None,
     progress_callback: Callable[[str], None] | None = None,
     scope: WizardScope | None = None,
+    fit_times: FitTimeEstimates = UNTIMED,
     user_frequencies_mhz: Sequence[float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
@@ -1927,6 +1957,7 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         datasets,
         current_model=current_model,
         scope=scope,
+        fit_times=fit_times,
     )
     existing = (
         existing_recommendations_by_run if existing_recommendations_by_run is not None else {}
@@ -2006,6 +2037,7 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
                 current_model=current_model,
                 metric=metric,
                 scope=scope,
+                fit_times=fit_times,
                 user_frequencies_mhz=user_frequencies_mhz,
                 cancel_callback=cancel_callback,
                 concurrency=concurrency,
@@ -2038,6 +2070,7 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
             bounded_alphabet,
             preview.ordered_datasets,
             scope,
+            fit_times,
         )
         portfolio = replace(
             preview,
@@ -2219,6 +2252,7 @@ def build_global_fit_wizard_screening_recommendation(
     metric: SelectionMetric = SelectionMetric.AICC,
     progress_callback: Callable[[str], None] | None = None,
     scope: WizardScope | None = None,
+    fit_times: FitTimeEstimates = UNTIMED,
     user_frequencies_mhz: Sequence[float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
@@ -2266,6 +2300,7 @@ def build_global_fit_wizard_screening_recommendation(
             datasets,
             current_model=current_model,
             scope=scope,
+            fit_times=fit_times,
             single_fit_recommendations_by_run=single_fit_recommendations_by_run,
         )
         portfolio = _apply_screening_effort_tier(
@@ -2308,6 +2343,7 @@ def build_global_fit_wizard_screening_recommendation(
             existing_recommendations_by_run=recommendations_by_run,
             progress_callback=progress_callback,
             scope=scope,
+            fit_times=fit_times,
             user_frequencies_mhz=user_frequencies_mhz,
             cancel_callback=cancel_callback,
             effort_tier=effort_tier,
@@ -3022,6 +3058,7 @@ def build_global_fit_wizard_recommendation(
     instrumentation: dict[str, object] | None = None,
     selected_template_keys: tuple[str, ...] | None = None,
     scope: WizardScope | None = None,
+    fit_times: FitTimeEstimates = UNTIMED,
     user_frequencies_mhz: Sequence[float] | None = None,
     search_engine: str | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
@@ -3100,6 +3137,7 @@ def build_global_fit_wizard_recommendation(
         instrumentation=instrumentation,
         selected_template_keys=selected_template_keys,
         scope=scope,
+        fit_times=fit_times,
         user_frequencies_mhz=user_frequencies_mhz,
         search_engine=resolved_engine,
         portfolio=portfolio,
@@ -3122,6 +3160,7 @@ def _build_global_fit_wizard_recommendation_staged(
     instrumentation: dict[str, object] | None = None,
     selected_template_keys: tuple[str, ...] | None = None,
     scope: WizardScope | None = None,
+    fit_times: FitTimeEstimates = UNTIMED,
     user_frequencies_mhz: Sequence[float] | None = None,
     search_engine: str = _DEFAULT_SEARCH_ENGINE,
     portfolio: GlobalFitWizardCandidatePortfolio | None = None,
@@ -3158,6 +3197,7 @@ def _build_global_fit_wizard_recommendation_staged(
             datasets,
             current_model=current_model,
             scope=scope,
+            fit_times=fit_times,
             single_fit_recommendations_by_run=available_single_fit_recommendations,
         )
     ordered_datasets = list(portfolio.ordered_datasets)

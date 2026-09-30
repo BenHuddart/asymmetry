@@ -19,6 +19,21 @@ candidates** section under it picks A (which the card draws and applies),
 pins B, and overlays both with residuals and a parameter table. Rows the
 build left without dense curves are drawn once a worker builds them.
 
+### Measured fit times behind the wizards' slow tag
+
+Status: merged 2026-09-30 (#345).
+It follows up D3 of the model family picker. Decision log (D1–D5), code map
+and phases are in [plans/measured-fit-times.md](plans/measured-fit-times.md).
+
+Both wizards time every template fit where it runs and attach the time to the
+assessment. After each run, a per-machine JSON store in the app data folder
+takes each component's median seconds per 1000 points and keeps the last 9 as
+a rolling median. A component is **slow** when its screening fits are
+expected to take over 5 s per run at the selected runs' typical length. The
+picker's details panel shows the estimate ("≈ 12 s per run on this
+computer"). An untimed model falls back to the registry's `expensive` tier,
+and **Leave out slow models** leaves out exactly the models tagged slow.
+
 ### Global Fit Wizard: a stepper and a Compare workspace
 
 Status: implemented 2026-09-30 on `feat/global-wizard-stepper`, PR to follow.
