@@ -11,8 +11,21 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 22)
+Current schema (version 23)
 ---------------------------
+
+Version 23 rewrites every persisted fit-wizard scope from the version-1 preset
+payload (``{"version": 1, "preset", "include", "exclude"}``, where a preset
+fixed both a geometry and a set of physics classes) to the version-2 physics
+payload (``{"version": 2, "physics", "include", "exclude", "skip_slow"}``;
+docs/plans/model-family-picker.md D2). Scopes live in the fit-panel wizard
+caches, as a cache signature's ``"scope"`` and inside a single-run
+recommendation's ``build_signature`` JSON string. See :func:`_migrate_v22_to_v23`.
+
+A dataset's ``metadata_overrides`` may also carry ``field_direction`` with
+``field_direction_source: "user"``: a direction the user answered for a run
+whose file records none (docs/plans/model-family-picker.md D4). The keys are
+optional, so an older project simply lacks them and needs no migration.
 
 Version 22 adds a top-level ``joint_fits`` list (docs/plans/joint-fit.md D13):
 each entry is a serialized
@@ -136,7 +149,9 @@ Version 11 schema
                 "source_file": "/abs/path/to/file.nxs",
                 "metadata_overrides": {
                     "field": 150.0,
-                    "custom_fields": {"custom:ab12cd34": "annealed"}
+                    "custom_fields": {"custom:ab12cd34": "annealed"},
+                    "field_direction": "Longitudinal",
+                    "field_direction_source": "user"
                 }
             }
         ],
@@ -251,10 +266,10 @@ from pathlib import Path
 
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 22
+CURRENT_SCHEMA_VERSION: int = 23
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22}
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}
 )
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
@@ -383,6 +398,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 21
     if version == 21:
         migrated = _migrate_v21_to_v22(migrated)
+        version = 22
+    if version == 22:
+        migrated = _migrate_v22_to_v23(migrated)
     return migrated
 
 
@@ -1353,6 +1371,99 @@ def _v20_trend_excluded(series: dict, slots: dict[tuple[int, str], dict]) -> lis
         if slot.get("include_in_trend") is False:
             excluded.add(member_key)
     return sorted(excluded)
+
+
+#: Frozen copy of the retired wizard scope presets' physics classes (v22 -> v23).
+#: A preset also fixed a geometry; v23 drops it, since geometry comes from the runs.
+_V23_PRESET_PHYSICS: dict[str, list[str]] = {
+    "auto": [],
+    "all": [],
+    "zf-static-magnetism": ["magnetism"],
+    "tf-knight-precession": ["magnetism"],
+    "tf-superconductor": ["magnetism", "superconductivity"],
+    "lf-dynamics": ["dynamics", "magnetism"],
+    "fluoride-fmuf": ["molecular"],
+    "muonium-radical": ["muonium"],
+}
+
+
+def _v23_scope(scope: dict) -> dict:
+    """The version-2 form of a version-1 scope payload.
+
+    Version-1 reads were tolerant, so an unknown preset meant Auto and a
+    malformed name list meant no names; the rewrite keeps those meanings.
+    """
+
+    def names(key: str) -> list[str]:
+        value = scope.get(key)
+        if isinstance(value, str) or not isinstance(value, list | tuple | set | frozenset):
+            return []
+        return sorted({str(item) for item in value})
+
+    return {
+        "version": 2,
+        "physics": list(_V23_PRESET_PHYSICS.get(scope.get("preset"), [])),
+        "include": names("include"),
+        "exclude": names("exclude"),
+        "skip_slow": False,
+    }
+
+
+def _v23_rewrite_scopes(node: object) -> object:
+    """Return *node* with every version-1 wizard scope rewritten to version 2.
+
+    A scope sits under a ``"scope"`` key (a wizard cache signature), or inside
+    the JSON string under a ``"build_signature"`` key (a single-run
+    recommendation).
+    """
+    if isinstance(node, list):
+        return [_v23_rewrite_scopes(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    rewritten: dict = {}
+    for key, value in node.items():
+        if key == "scope" and isinstance(value, dict) and value.get("version") == 1:
+            rewritten[key] = _v23_scope(value)
+        elif key == "build_signature" and isinstance(value, str) and value:
+            rewritten[key] = _v23_build_signature(value)
+        else:
+            rewritten[key] = _v23_rewrite_scopes(value)
+    return rewritten
+
+
+def _v23_build_signature(signature: str) -> str:
+    """Rewrite the scope inside a ``single_fit_build_signature`` JSON string."""
+    try:
+        decoded = json.loads(signature)
+    except json.JSONDecodeError:
+        return signature
+    if not isinstance(decoded, dict):
+        return signature
+    scope = decoded.get("scope")
+    if not (isinstance(scope, dict) and scope.get("version") == 1):
+        return signature
+    decoded["scope"] = _v23_scope(scope)
+    return json.dumps(decoded, sort_keys=True)
+
+
+def _migrate_v22_to_v23(data: dict) -> dict:
+    """Migrate schema v22 project state to v23.
+
+    Every persisted wizard scope becomes the version-2 physics payload
+    (docs/plans/model-family-picker.md D2), mapped through
+    :data:`_V23_PRESET_PHYSICS`. The scopes live in the fit-panel wizard caches:
+    a single-run cache (``wizard_state``) and each global cache
+    (``wizard_state``, ``wizard_state_by_run_set``), found in fit slots'
+    ``ui_state`` under ``datasets[].representations`` (including
+    ``projection_fits``) and in ``multi_group_fit_state``. Each cache carries the
+    scope in its ``signature``, and a single-run cache also in its
+    recommendation's ``build_signature`` string; the whole tree is walked rather
+    than a list of paths, so no copy of a cache is missed. Tolerant:
+    anything not shaped like a version-1 scope is left untouched.
+    """
+    migrated = _v23_rewrite_scopes(dict(data))
+    migrated["schema_version"] = 23
+    return migrated
 
 
 def _migrate_v21_to_v22(data: dict) -> dict:

@@ -12,8 +12,9 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import PhysicsClass
 from asymmetry.core.workflow.recipe import FitRecipe
-from asymmetry.core.workflow.screen import resolve_geometry, screen_run
+from asymmetry.core.workflow.screen import SCOPE_PRESETS, resolve_geometry, screen_run
 from asymmetry.core.workflow.workdir import WorkDir
 from tests.core.conftest import SCAN_RUNS
 
@@ -73,6 +74,19 @@ def test_an_unknown_geometry_is_rejected() -> None:
         resolve_geometry(_dataset({}), "sideways")
     with pytest.raises(ValueError, match="Unknown geometry"):
         resolve_geometry(_dataset({}), None, "sideways")
+
+
+def test_scope_names_are_physics_shortcuts() -> None:
+    assert SCOPE_PRESETS == {
+        "auto": frozenset(),
+        "zf-static-magnetism": {PhysicsClass.MAGNETISM},
+        "tf-knight-precession": {PhysicsClass.MAGNETISM},
+        "tf-superconductor": {PhysicsClass.SUPERCONDUCTIVITY, PhysicsClass.MAGNETISM},
+        "lf-dynamics": {PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM},
+        "fluoride-fmuf": {PhysicsClass.MOLECULAR},
+        "muonium-radical": {PhysicsClass.MUONIUM},
+        "all": frozenset(),
+    }
 
 
 def test_an_unknown_scope_preset_is_rejected(reduced_workdir: WorkDir) -> None:
@@ -143,11 +157,15 @@ def test_a_geometry_override_changes_the_geometry_source_and_the_resolved_scope(
     run = SCAN_RUNS[0]
     dropped = ["Oscillatory", "OscillatoryField"]
     result = screen_run(
-        reduced_workdir.reduced(run), geometry="TF", exclude=dropped, run_number=run
+        reduced_workdir.reduced(run),
+        geometry="TF",
+        scope_preset="lf-dynamics",
+        exclude=dropped,
+        run_number=run,
     )
 
     # Components the caller excluded never reach the candidate table, and the
-    # exclusion is recorded beside the preset.
+    # exclusion is recorded beside the scope name.
     assert result.scope_exclude == dropped
     assert result.to_dict()["scope_exclude"] == dropped
     assert not any("oscillatory" in c.key for c in result.candidates)
@@ -158,3 +176,6 @@ def test_a_geometry_override_changes_the_geometry_source_and_the_resolved_scope(
     # not to the zero field the run's own metadata implies.
     assert "transverse field" in result.scope_note
     assert "zero field" not in result.scope_note
+    # A scope name chooses the physics looked for, never the geometry.
+    assert result.scope_preset == "lf-dynamics"
+    assert "looking for dynamics, magnetism" in result.scope_note

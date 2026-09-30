@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 import asymmetry.gui.windows.global_fit_wizard_window as wizard_window_module
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import FieldGeometry, PhysicsClass
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -38,12 +39,15 @@ from asymmetry.core.fitting.global_fit_wizard import (
     RunResidualDiagnostic,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.wizard_scope import WizardScope
 from asymmetry.gui.windows.global_fit_wizard_window import (
     _PAGE_RESULT,
     _PAGE_SETUP,
     GlobalFitWizardWindow,
 )
 from tests._qt_helpers import wait_for
+
+LF_DYNAMICS = WizardScope(physics=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}))
 
 
 @pytest.fixture(scope="module")
@@ -725,8 +729,6 @@ def test_global_fit_wizard_window_forwards_scope_to_screening(
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
-
     captured: dict[str, object] = {}
 
     def _fake_build(datasets_arg, **kwargs):
@@ -740,16 +742,13 @@ def test_global_fit_wizard_window_forwards_scope_to_screening(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window._scope_selector.set_scope(
-        {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []}
-    )
+    window._picker.set_scope(LF_DYNAMICS)
 
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
     scope = captured.get("scope")
-    assert isinstance(scope, WizardScope)
-    assert scope.preset is WizardScopePreset.LF_DYNAMICS
+    assert scope == LF_DYNAMICS
 
 
 def test_global_fit_wizard_window_forwards_scope_to_optimize(
@@ -757,8 +756,6 @@ def test_global_fit_wizard_window_forwards_scope_to_optimize(
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
-
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -778,9 +775,7 @@ def test_global_fit_wizard_window_forwards_scope_to_optimize(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
-    window._scope_selector.set_scope(
-        {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []}
-    )
+    window._picker.set_scope(LF_DYNAMICS)
     window._start_analysis()
     wait_for(lambda: _analysis_complete(window), qapp)
 
@@ -790,8 +785,7 @@ def test_global_fit_wizard_window_forwards_scope_to_optimize(
     wait_for(lambda: _analysis_complete(window) and window._optimized_table.rowCount() == 2, qapp)
 
     scope = captured.get("scope")
-    assert isinstance(scope, WizardScope)
-    assert scope.preset is WizardScopePreset.LF_DYNAMICS
+    assert scope == LF_DYNAMICS
 
 
 def test_global_fit_wizard_window_scope_in_analysis_signature(
@@ -803,13 +797,11 @@ def test_global_fit_wizard_window_scope_in_analysis_signature(
     window.set_analysis_context(datasets)
 
     baseline = window._analysis_signature()
-    assert baseline["scope"]["preset"] == "auto"
+    assert baseline["scope"] == WizardScope().to_payload()
 
-    window._scope_selector.set_scope(
-        {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []}
-    )
+    window._picker.set_scope(LF_DYNAMICS)
     changed = window._analysis_signature()
-    assert changed["scope"]["preset"] == "lf-dynamics"
+    assert changed["scope"] == LF_DYNAMICS.to_payload()
     assert changed != baseline
 
 
@@ -840,11 +832,8 @@ def test_global_fit_wizard_window_scope_change_marks_stale_and_clears_selection(
 
     previous = window.current_recommendation()
 
-    # Toggle scope via the selector's scope_changed emission.
-    window._scope_selector._preset_combo.setCurrentIndex(
-        window._scope_selector._preset_combo.findData("lf-dynamics")
-    )
-    qapp.processEvents()
+    # A picker edit: look for spin dynamics.
+    window._picker._chips[PhysicsClass.DYNAMICS].click()
 
     assert window._analysis_stale is True
     assert window._stale_banner.isHidden() is False
@@ -853,6 +842,51 @@ def test_global_fit_wizard_window_scope_change_marks_stale_and_clears_selection(
     assert window._optimize_btn.isEnabled() is False
     # Old recommendation still displayed.
     assert window.current_recommendation() is previous
+
+
+# ── Field-direction answer ───────────────────────────────────────────────────
+
+
+def test_global_fit_wizard_window_direction_answer_saves_on_unrecorded_runs(
+    qapp: QApplication,
+    datasets: list[MuonDataset],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_global_fit_wizard_screening_recommendation",
+        lambda datasets_arg, **_kwargs: _fake_screening_recommendation(datasets_arg),
+    )
+    datasets[0].metadata["field_direction"] = "Zero field"
+    window = GlobalFitWizardWindow()
+    window.set_analysis_context(datasets)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+    answers: list[tuple] = []
+    window.field_direction_answered.connect(lambda runs, geometry: answers.append((runs, geometry)))
+    scopes: list = []
+    window._picker.scope_changed.connect(scopes.append)
+
+    window._picker._direction_group.button(1).click()  # Longitudinal
+
+    assert datasets[0].metadata["field_direction"] == "Zero field"
+    assert "field_direction_source" not in datasets[0].metadata
+    assert [d.metadata["field_direction"] for d in datasets[1:]] == ["Longitudinal"] * 2
+    assert [d.metadata["field_direction_source"] for d in datasets[1:]] == ["user"] * 2
+    assert answers == [(frozenset({701, 702, 703}), FieldGeometry.LF)]
+    assert scopes == []
+    assert window._analysis_stale is True
+    assert window._stale_banner.isHidden() is False
+    assert window._optimize_btn.isEnabled() is False
+    # The picker re-describes the runs: the answer is checked and noted.
+    assert window._picker._direction_group.checkedButton().text() == "Longitudinal"
+    assert window._picker._direction_note.text() == (
+        "Set by you — saved on the 2 runs that record none; the files record the other 1."
+    )
+
+    window._picker._direction_group.button(3).click()  # Not recorded withdraws it
+    assert all("field_direction" not in d.metadata for d in datasets[1:])
+    assert answers[-1] == (frozenset({701, 702, 703}), None)
 
 
 # ── Build Screening disabled when scope is invalid ───────────────────────────
@@ -867,7 +901,7 @@ def test_global_fit_wizard_window_build_disabled_when_scope_invalid(
     window.set_analysis_context(datasets)
     assert window._refresh_btn.isEnabled() is True
 
-    monkeypatch.setattr(window._scope_selector, "is_valid", lambda: False)
+    monkeypatch.setattr(window._picker, "is_valid", lambda: False)
     window._on_scope_validity_changed(False)
 
     assert window._refresh_btn.isEnabled() is False
@@ -889,12 +923,13 @@ def test_global_fit_wizard_window_cached_restore_with_scope(
         signature={
             "run_numbers": [int(dataset.run_number) for dataset in datasets],
             "model": None,
-            "scope": {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []},
+            "scope": LF_DYNAMICS.to_payload(),
         },
         log_text="cached",
     )
 
-    assert window._scope_selector.current_scope()["preset"] == "lf-dynamics"
+    assert window._picker.scope() == LF_DYNAMICS
+    assert window._picker._chips[PhysicsClass.DYNAMICS].isChecked()
     assert window._analysis_stale is False
     assert window._stale_banner.isHidden() is True
 
@@ -906,8 +941,8 @@ def test_global_fit_wizard_window_cached_restore_legacy_signature_is_auto(
     window = GlobalFitWizardWindow()
     window.set_cached_recommendation(_fake_recommendation(datasets))
 
-    # Legacy signature (no scope key) restores Auto and is not stale.
-    assert window._scope_selector.current_scope()["preset"] == "auto"
+    # A signature without a scope keeps the default scope and is not stale.
+    assert window._picker.scope() == WizardScope()
     assert window._analysis_stale is False
     assert window._stale_banner.isHidden() is True
 
@@ -1299,7 +1334,7 @@ def test_global_fit_wizard_window_confidence_survives_cache_restore(
         signature={
             "run_numbers": [int(dataset.run_number) for dataset in datasets],
             "model": None,
-            "scope": {"version": 1, "preset": "auto", "include": [], "exclude": []},
+            "scope": WizardScope().to_payload(),
         },
         log_text="cached",
     )
@@ -1463,10 +1498,7 @@ def test_global_fit_wizard_window_failed_rescreen_lands_on_setup_with_runs(
     window.set_cached_recommendation(_fake_recommendation(datasets))
     _back_to_setup_button(window).click()
     # Change the scope so Run screening recomputes instead of serving the cache.
-    window._scope_selector._preset_combo.setCurrentIndex(
-        window._scope_selector._preset_combo.findData("lf-dynamics")
-    )
-    qapp.processEvents()
+    window._picker._chips[PhysicsClass.DYNAMICS].click()
 
     window._start_analysis()
     wait_for(lambda: window._tasks.active_count == 0, qapp)

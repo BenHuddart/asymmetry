@@ -61,7 +61,6 @@ from asymmetry.core.fitting.fit_wizard import (
     build_fit_wizard_recommendation,
     build_wizard_families,
     compute_information_criteria,
-    dataset_field_geometry,
     fingerprint_spectrum,
     fit_result_is_oscillatory_admissible,
     is_multiplet_template_key,
@@ -113,6 +112,7 @@ from asymmetry.core.fitting.wizard_scope import (
     EffortTier,
     ScopeResolution,
     WizardScope,
+    dataset_field_geometry,
     resolve_scope_for_datasets,
 )
 from asymmetry.core.fitting.wizard_timing import (

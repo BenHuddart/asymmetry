@@ -125,14 +125,17 @@ file can never crash a fit (or the application) later:
 * The name must be a bare identifier usable in builder expressions, and
   must be unique across **all** of Asymmetry's function registries — that
   is why the example is ``KerenUser``, not ``Keren``.
-* Optional physics tags feed the fit wizard's scope selector:
-  ``field_geometries`` (any of ``"ZF"``, ``"TF"``, ``"LF"``; default all
-  three), ``physics_classes`` (e.g. ``"magnetism"``, ``"dynamics"``,
-  ``"muonium"``; default ``"custom"``), and ``cost`` (``"cheap"``,
-  ``"moderate"``, or ``"expensive"``; default ``"moderate"``). Untagged
-  user functions match every wizard scope preset, so they are never
-  hidden; tagging them narrows when the wizard auto-considers them and
-  tells the tiered screener how expensive they are.
+* Optional physics tags feed the fit wizards' model family picker
+  (:ref:`fit-wizard-model-family-picker`): ``field_geometries`` (any of
+  ``"ZF"``, ``"TF"``, ``"LF"``; default all three), ``physics_classes``
+  (e.g. ``"magnetism"``, ``"dynamics"``, ``"muonium"``; default
+  ``"custom"``), and ``cost`` (``"cheap"``, ``"moderate"``, or
+  ``"expensive"``; default ``"moderate"``). The picker lists user functions
+  on a **Your functions** card, under their names. An untagged user function
+  is in every scope, whatever the field direction or the physics chips, so
+  it is never hidden; tagging it narrows when the wizard considers it.
+  ``cost="expensive"`` puts a **slow** tag on its pill, and
+  **Leave out slow models** then drops it like any other slow model.
 * ``domain`` is required; it places the component in the matching picker
   and plots. Optional metadata (``latex_equation``, ``applicability``,
   ``references``, ``category``, ``fixed_params``, ``param_defaults``)

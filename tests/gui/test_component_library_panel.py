@@ -228,6 +228,8 @@ def test_user_badge_shown_for_user_definition(qapp: QApplication) -> None:
     user_component = ComponentDefinition(
         name="MyUserFunc",
         description="A user-registered test function",
+        label="MyUserFunc",
+        use_when="A user-registered test function",
         function=COMPONENTS["Constant"].function,
         param_names=["A"],
         param_defaults={"A": 1.0},
@@ -248,6 +250,8 @@ def test_missing_definition_gets_distinct_foreground(qapp: QApplication) -> None
     normal_component = ComponentDefinition(
         name="NormalFunc",
         description="normal",
+        label="NormalFunc",
+        use_when="normal",
         function=COMPONENTS["Constant"].function,
         param_names=["A"],
         param_defaults={"A": 1.0},
@@ -258,6 +262,8 @@ def test_missing_definition_gets_distinct_foreground(qapp: QApplication) -> None
     missing_component = ComponentDefinition(
         name="MissingFunc",
         description="a placeholder for an unregistered user function",
+        label="MissingFunc",
+        use_when="a placeholder for an unregistered user function",
         function=COMPONENTS["Constant"].function,
         param_names=["A"],
         param_defaults={"A": 1.0},

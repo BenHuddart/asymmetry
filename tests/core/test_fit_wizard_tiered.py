@@ -21,7 +21,7 @@ import pytest
 
 import asymmetry.core.fitting.fit_wizard as fit_wizard_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.fitting.component_tags import ComputationalCost
+from asymmetry.core.fitting.component_tags import ComputationalCost, PhysicsClass
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.fitting.damped_line_scan import DampedLineAnalysis
 from asymmetry.core.fitting.engine import FitCancelledError, FitResult
@@ -78,7 +78,6 @@ from asymmetry.core.fitting.peak_detection import (
 )
 from asymmetry.core.fitting.wizard_scope import (
     WizardScope,
-    WizardScopePreset,
     resolve_scope,
 )
 
@@ -176,10 +175,10 @@ def test_kt_and_oscillatory_hints_raise_their_priority() -> None:
 
 
 def test_fluoride_fmuf_scope_reduces_families() -> None:
-    resolution = resolve_scope(WizardScope(preset=WizardScopePreset.FLUORIDE_FMUF))
+    resolution = resolve_scope(WizardScope(physics=frozenset({PhysicsClass.MOLECULAR})))
     families = build_wizard_families(_plain_fingerprint(), scope_resolution=resolution)
     keys = {f.key for f in families}
-    # No transverse-precession or Kubo-Toyabe families survive the ZF/LF molecular scope.
+    # No transverse-precession or Kubo-Toyabe families survive the molecular scope.
     assert "oscillatory" not in keys
     assert "kt" not in keys
     # The fmuf family survives with its collinear representative.
@@ -193,7 +192,7 @@ def test_scope_rep_fallback_promotes_cheapest_surviving_member() -> None:
     # CHEAP, so the tie breaks alphabetically -> muonium_high_tf_constant.
     resolution = resolve_scope(
         WizardScope(
-            preset=WizardScopePreset.MUONIUM_RADICAL,
+            physics=frozenset({PhysicsClass.MUONIUM}),
             exclude_components=frozenset({"MuoniumLowTF"}),
         )
     )
@@ -206,7 +205,7 @@ def test_scope_rep_fallback_promotes_cheapest_surviving_member() -> None:
 
 
 def test_scope_omits_family_with_nothing_surviving() -> None:
-    resolution = resolve_scope(WizardScope(preset=WizardScopePreset.FLUORIDE_FMUF))
+    resolution = resolve_scope(WizardScope(physics=frozenset({PhysicsClass.MOLECULAR})))
     families = build_wizard_families(_plain_fingerprint(), scope_resolution=resolution)
     # Muonium has no ZF/LF molecular component in scope, so the family is omitted.
     assert "muonium" not in {f.key for f in families}
@@ -217,7 +216,7 @@ def test_baseline_family_is_last_and_never_scope_filtered() -> None:
     # keep the baseline family (a Bessel oscillatory model has no ZF-molecular
     # component, yet the baseline family is exempt from scope filtering).
     current_model = CompositeModel(["Bessel", "Exponential", "Constant"], operators=["*", "+"])
-    resolution = resolve_scope(WizardScope(preset=WizardScopePreset.FLUORIDE_FMUF))
+    resolution = resolve_scope(WizardScope(physics=frozenset({PhysicsClass.MOLECULAR})))
     families = build_wizard_families(
         _plain_fingerprint(), current_model=current_model, scope_resolution=resolution
     )
@@ -1289,7 +1288,7 @@ def test_scope_restricts_screened_families() -> None:
     y = 0.22 * np.exp(-0.8 * t) + 0.03 + rng.normal(0.0, 0.004, t.size)
     dataset = _tiered_dataset(t, y, error=0.004)
 
-    scope = WizardScope(preset=WizardScopePreset.FLUORIDE_FMUF)
+    scope = WizardScope(physics=frozenset({PhysicsClass.MOLECULAR}))
     recommendation = build_fit_wizard_recommendation(dataset, scope=scope, max_workers=1)
 
     report_keys = {report.family_key for report in recommendation.family_reports}
@@ -1322,7 +1321,7 @@ def test_user_frequencies_merge_into_peaks() -> None:
 def test_empty_scope_reports_no_candidates() -> None:
     t = np.linspace(0.02, 10.0, 50)
     dataset = _tiered_dataset(t, np.exp(-t))
-    scope = WizardScope(preset=WizardScopePreset.ALL, exclude_components=frozenset(COMPONENTS))
+    scope = WizardScope(exclude_components=frozenset(COMPONENTS))
     recommendation = build_fit_wizard_recommendation(dataset, scope=scope, max_workers=1)
     assert recommendation.recommended_key is None
     assert recommendation.templates == ()

@@ -63,14 +63,17 @@ Setup: review the series and choose scope
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. image:: /_generated/screenshots/global_fit_wizard_setup.png
-   :alt: Global Fit Wizard Setup page — series overview, scope selector, and Run screening button
+   :alt: Global Fit Wizard Setup page — series overview, the model family picker with a Longitudinal answer, and the Run screening button
    :width: 100%
 
 *The Setup page on a four-field Ag longitudinal-field decoupling series. The*
 *Series table lists each run as soon as the context arrives; the classification*
-*columns stay* ``—`` *until screening runs. Below it, the scope selector, the*
-*collapsed "Guide the search (optional)" section, the search settings, and the*
-*primary "Run screening" button.*
+*columns stay* ``—`` *until screening runs. Below it, the Scope section holds the*
+*model family picker: the files record no field direction, so the series was*
+*answered "Longitudinal", and because run 5201 sits at 0 G the zero-field*
+*models stay in the screen too. Beneath the picker are the collapsed "Guide the*
+*search (optional)" section, the search settings, and the primary "Run*
+*screening" button.*
 
 The **Series** table lists one row per dataset with its **Run**,
 **Field (G)**, and **Temperature (K)** filled immediately — no need to run
@@ -89,20 +92,31 @@ handled exactly like the field series shown here, with **Temperature (K)** as
 the axis. If both field and temperature vary materially, the wizard reports
 that it cannot make an automatic recommendation for that mixed grid.
 
-The **Scope** selector chooses which candidate families the wizard screens
-across the series, resolved over the whole series so that a component is offered
-when it is in scope for *any* run — a temperature series crossing a transition
-keeps both its ordered-state and paramagnetic families. Start from a preset, or
-from ``Auto``, which infers a scope from the recorded field geometry; when the
-geometry is not recorded the wizard falls back to screening every family (as in
-the screenshot above, where the synthetic runs carry no geometry tag). A live
-estimate of the candidate and screening-fit counts beneath the family tree
-indicates the cost of the current selection. Changing the scope after screening
-has run marks the shown results stale — an amber banner says so — and clears
-the screening selection. Press **Run screening** to refresh them; until you do,
-**View results →** returns to the stale results unchanged. Changing the
-**Ranking Metric** re-ranks the existing results in place and needs no new
-screening.
+The **Scope** section holds the model family picker, the same control the
+single-spectrum wizard shows on its welcome page; :ref:`fit-wizard-model-family-picker`
+describes it in full. From top to bottom it asks for the **Field direction**,
+offers the **Looking for (optional)** physics chips, lays out one card per model
+family with a pill per model (and a **slow** tag on the models whose fits
+dominate screening time), and ends with a footer that counts the models to be
+screened ("Will screen *N* of *M* models"), names the slow ones, and offers
+**Leave out slow models**. It is resolved over the whole series, so a model is
+offered when it applies to *any* run — a temperature series crossing a
+transition keeps both its ordered-state and paramagnetic families.
+
+The direction row matters most on a series. When the files record no direction,
+every geometry is screened, which on a long series is the slow path. Answering
+the question saves the answer on every run whose file records none ("Set by
+you — saved on the 4 runs that record none."), keeps it in the project, and
+never overrides a direction a file records; when some files record one, the note
+says how many do not, and when all of them do, the row reads "Recorded: …"
+instead. On an LF decoupling series like the one above, a **Longitudinal**
+answer also lets the wizard hold :math:`B_L` at each run's recorded field rather
+than fitting it (see :ref:`fit-wizard-applied-field`). Changing the picker,
+including the direction, after screening has run marks the shown results stale
+— an amber banner says so — and clears the screening selection. Press **Run
+screening** to refresh them; until you do, **View results →** returns to the
+stale results unchanged. Changing the **Ranking Metric** re-ranks the existing
+results in place and needs no new screening.
 
 The collapsed **Guide the search (optional)** section is where you tell the
 wizard what you already know physically before the expensive search starts.

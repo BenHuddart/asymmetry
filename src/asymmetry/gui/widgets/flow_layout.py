@@ -49,6 +49,10 @@ class FlowLayout(QLayout):
         self._h_space = _style_spacing(Qt.Orientation.Horizontal)
         self._v_space = _style_spacing(Qt.Orientation.Vertical)
 
+    def horizontalSpacing(self) -> int:  # noqa: N802 — Qt naming, as QGridLayout
+        """The gap between neighbouring items on a line."""
+        return self._h_space
+
     # ── QLayout item protocol ───────────────────────────────────────────────
 
     def addItem(self, item: QLayoutItem) -> None:  # noqa: N802 — Qt override

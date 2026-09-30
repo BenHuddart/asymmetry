@@ -149,6 +149,8 @@ class SingleFitTab(FitTabBase):
     )  # (FitResult, fitted_curve, component_curves)
     send_model_to_batch_requested = Signal()
     add_to_series_requested = Signal()
+    #: Forwarded from the Fit Wizard: ``(run numbers, FieldGeometry | None)``.
+    field_direction_answered = Signal(object, object)
 
     def __init__(
         self,
@@ -798,6 +800,9 @@ class SingleFitTab(FitTabBase):
                 self._apply_fit_wizard_assessment
             )
             self._fit_wizard_window.analysis_cached.connect(self._on_fit_wizard_analysis_cached)
+            self._fit_wizard_window.field_direction_answered.connect(
+                self.field_direction_answered.emit
+            )
 
         signature = self._wizard_context_signature()
 
