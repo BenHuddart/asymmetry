@@ -83,16 +83,31 @@ MUONIUM_HIGH_TF_MIN_GAUSS: float = 1500.0
 # because the label may still be correct about which magnet/hardware was live.
 ZERO_FIELD_MAX_GAUSS: float = 2.0
 
-# --- cost ordering ------------------------------------------------------
-#
-# ``ComputationalCost`` is a ``str``-Enum, so a naive ``<=`` compares members
-# alphabetically ("cheap" < "expensive" < "moderate") — wrong. Compare through
-# an explicit rank instead.
-_COST_RANK: dict[ComputationalCost, int] = {
-    ComputationalCost.CHEAP: 0,
-    ComputationalCost.MODERATE: 1,
-    ComputationalCost.EXPENSIVE: 2,
-}
+#: A component whose screening fits are expected to take longer than this per run is slow.
+SLOW_SECONDS_PER_RUN: float = 5.0
+
+
+@dataclass(frozen=True)
+class FitTimeEstimates:
+    """Expected screening-fit seconds per run for the components timed on this computer.
+
+    Built by :meth:`~asymmetry.core.fitting.fit_time_store.FitTimeStore.estimates`;
+    a component absent from ``seconds_per_run`` has never been timed here.
+    Design: ``docs/plans/measured-fit-times.md`` (D4).
+    """
+
+    seconds_per_run: Mapping[str, float]
+
+    def is_slow(self, name: str, definition: ComponentDefinition) -> bool:
+        """Over :data:`SLOW_SECONDS_PER_RUN` once timed; the registry's expensive tier until then."""
+        seconds = self.seconds_per_run.get(name)
+        if seconds is None:
+            return definition.cost is ComputationalCost.EXPENSIVE
+        return seconds > SLOW_SECONDS_PER_RUN
+
+
+#: The judgement before anything is timed: slow means the registry's expensive tier.
+UNTIMED = FitTimeEstimates({})
 
 #: Chemical-formula fluorine token: an uppercase ``F`` that begins an element
 #: (followed by a stoichiometry digit, a non-lowercase char, or end-of-string).
@@ -182,12 +197,10 @@ def effort_tier_from_payload(payload: object) -> EffortTier:
 
 @dataclass(frozen=True)
 class ScopeQuery:
-    """A concrete geometry/physics/cost filter over the component registry."""
+    """A concrete geometry/physics filter over the component registry."""
 
     geometries: frozenset[FieldGeometry]
     physics_classes: frozenset[PhysicsClass]
-    #: Cost cap; ``None`` for no cap. Ordering is CHEAP < MODERATE < EXPENSIVE.
-    max_cost: ComputationalCost | None = None
 
 
 #: Classes every scope keeps, so a composite always has an envelope and a constant.
@@ -214,18 +227,13 @@ class WizardScope:
     physics: frozenset[PhysicsClass] = frozenset()
     include_components: frozenset[str] = frozenset()
     exclude_components: frozenset[str] = frozenset()
-    #: Leave out slow models: caps the screened cost at ``MODERATE``.
+    #: Leave out the models :meth:`FitTimeEstimates.is_slow` judges slow.
     skip_slow: bool = False
 
     @property
     def physics_classes(self) -> frozenset[PhysicsClass]:
         """Every class for an empty ``physics``, else it plus :data:`ALWAYS_IN_SCOPE`."""
         return self.physics | ALWAYS_IN_SCOPE if self.physics else frozenset(PhysicsClass)
-
-    @property
-    def max_cost(self) -> ComputationalCost | None:
-        """The cost cap the slow switch sets."""
-        return ComputationalCost.MODERATE if self.skip_slow else None
 
     def to_payload(self) -> dict:
         """Return a plain, JSON-serialisable representation of this scope."""
@@ -391,14 +399,16 @@ def _joined(values: Iterable[Enum]) -> str:
 
 
 def _component_exclusion_reason(
+    name: str,
     definition: ComponentDefinition,
     query: ScopeQuery,
     scope: WizardScope,
+    fit_times: FitTimeEstimates,
 ) -> str | None:
     """Return why *definition* is out of scope for *query*, or ``None`` if in scope.
 
     Checked in a fixed order so the reason is the most specific applicable one:
-    frequency-domain first, then geometry, physics, and finally cost. An
+    frequency-domain first, then geometry, physics, and finally slowness. An
     untagged user component matches every geometry and physics choice, but the
     slow-model switch still applies to it.
     """
@@ -415,7 +425,7 @@ def _component_exclusion_reason(
                 f"physics class '{_joined(definition.physics_classes)}' is not looked for "
                 f"({_joined(scope.physics)})"
             )
-    if query.max_cost is not None and _COST_RANK[definition.cost] > _COST_RANK[query.max_cost]:
+    if scope.skip_slow and fit_times.is_slow(name, definition):
         return "slow model; slow models are left out"
     return None
 
@@ -427,11 +437,13 @@ def resolve_scope(
     field_gauss: float | None = None,
     sample_text: str = "",
     components: Mapping[str, ComponentDefinition] | None = None,
+    fit_times: FitTimeEstimates = UNTIMED,
 ) -> ScopeResolution:
     """Resolve a :class:`WizardScope` against a run into concrete in/out lists.
 
-    Takes the geometries from the run, the physics classes and cost cap from the
-    scope, walks the component registry in order recording a specific reason for
+    Takes the geometries from the run and the physics classes from the scope,
+    leaves out what *fit_times* judges slow when the scope skips slow models,
+    walks the component registry in order recording a specific reason for
     every drop, applies the muonium regime exclusions, then applies the user's
     include/exclude overrides (exclude wins over include for the same name).
     Unknown override names are ignored for inclusion but named in the notes.
@@ -441,7 +453,7 @@ def resolve_scope(
     geometries, geometry_notes, regime_exclusions = infer_run_geometries(
         field_direction, field_gauss, sample_text
     )
-    query = ScopeQuery(geometries, scope.physics_classes, scope.max_cost)
+    query = ScopeQuery(geometries, scope.physics_classes)
     notes = list(geometry_notes)
     if scope.physics:
         notes.append(f"looking for {', '.join(sorted(c.value for c in scope.physics))}")
@@ -453,7 +465,7 @@ def resolve_scope(
     included: list[str] = []
     excluded: list[ExcludedComponent] = []
     for name, definition in registry.items():
-        reason = _component_exclusion_reason(definition, query, scope)
+        reason = _component_exclusion_reason(name, definition, query, scope, fit_times)
         if reason is None:
             reason = regime_reasons.get(name)
         if reason is None:
@@ -588,18 +600,23 @@ def dataset_suggests_fluorine(dataset: MuonDataset) -> bool:
     return bool(_FLUORINE_TOKEN.search(_dataset_sample_text(dataset) or ""))
 
 
-def resolve_scope_for_dataset(dataset: MuonDataset, scope: WizardScope) -> ScopeResolution:
+def resolve_scope_for_dataset(
+    dataset: MuonDataset, scope: WizardScope, fit_times: FitTimeEstimates = UNTIMED
+) -> ScopeResolution:
     """Resolve *scope* for a single dataset, reading geometry/field/sample from it."""
     return resolve_scope(
         scope,
         field_direction=_dataset_geometry_text(dataset),
         field_gauss=dataset.field,
         sample_text=_dataset_sample_text(dataset),
+        fit_times=fit_times,
     )
 
 
 def resolve_scope_for_datasets(
-    datasets: Iterable[MuonDataset], scope: WizardScope
+    datasets: Iterable[MuonDataset],
+    scope: WizardScope,
+    fit_times: FitTimeEstimates = UNTIMED,
 ) -> ScopeResolution:
     """Resolve *scope* across several datasets, unioning the in-scope set.
 
@@ -611,12 +628,12 @@ def resolve_scope_for_datasets(
     resolve to nothing in scope.
     """
     datasets = list(datasets)
-    resolutions = [resolve_scope_for_dataset(dataset, scope) for dataset in datasets]
+    resolutions = [resolve_scope_for_dataset(dataset, scope, fit_times) for dataset in datasets]
     if not resolutions:
         geometries, notes, _ = infer_run_geometries("", None)
         return ScopeResolution(
             scope=scope,
-            query=ScopeQuery(geometries, scope.physics_classes, scope.max_cost),
+            query=ScopeQuery(geometries, scope.physics_classes),
             notes=notes,
         )
 
@@ -722,8 +739,10 @@ class ScopeComponent:
     use_when: str
     description: str
     geometries: frozenset[FieldGeometry]
-    #: The registry's ``expensive`` cost tier.
+    #: :meth:`FitTimeEstimates.is_slow` for these runs.
     slow: bool
+    #: Expected screening-fit seconds per run on this computer; ``None`` until timed.
+    estimated_seconds: float | None
     #: Its geometry and field regime fit at least one run.
     applies: bool
     included: bool
@@ -776,15 +795,21 @@ class ScopeView:
         )
 
 
-def describe_scope(datasets: Iterable[MuonDataset], scope: WizardScope) -> ScopeView:
+def describe_scope(
+    datasets: Iterable[MuonDataset],
+    scope: WizardScope,
+    fit_times: FitTimeEstimates = UNTIMED,
+) -> ScopeView:
     """Resolve *scope* across *datasets* into the typed view the picker renders.
 
     Inclusion and reasons come from :func:`resolve_scope_for_datasets`;
     ``applies`` is inclusion under the unrestricted scope, so a component that
-    does not fit the runs' geometry is still listed with its reason.
+    does not fit the runs' geometry is still listed with its reason. *fit_times*
+    is the judgement the wizard run must be given too, so the models tagged slow
+    are exactly those **Leave out slow models** leaves out.
     """
     datasets = list(datasets)
-    resolution = resolve_scope_for_datasets(datasets, scope)
+    resolution = resolve_scope_for_datasets(datasets, scope, fit_times)
     applicable = resolve_scope_for_datasets(datasets, WizardScope()).included_set
     reasons = {exc.name: exc.reason for exc in resolution.excluded_components}
 
@@ -816,7 +841,8 @@ def describe_scope(datasets: Iterable[MuonDataset], scope: WizardScope) -> Scope
                 use_when=definition.use_when,
                 description=definition.description,
                 geometries=definition.field_geometries,
-                slow=definition.cost is ComputationalCost.EXPENSIVE,
+                slow=fit_times.is_slow(name, definition),
+                estimated_seconds=fit_times.seconds_per_run.get(name),
                 applies=name in applicable,
                 included=name in resolution.included_set,
                 reason=reasons.get(name, ""),

@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import time
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Executor, ThreadPoolExecutor
@@ -71,6 +72,8 @@ from asymmetry.core.fitting.seeding import (
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.wizard_scope import (
+    UNTIMED,
+    FitTimeEstimates,
     ScopeResolution,
     WizardScope,
     dataset_field_geometry,
@@ -83,8 +86,6 @@ from asymmetry.core.fourier.fft import fft_arrays
 
 # ``ComputationalCost`` is a ``str``-Enum, so ``max()``/``<`` compares members
 # alphabetically ("cheap" < "expensive" < "moderate") — wrong. Rank explicitly.
-# (Mirrors ``wizard_scope._COST_RANK``; kept local so we do not reach into that
-# module's private name.)
 _COST_RANK: dict[ComputationalCost, int] = {
     ComputationalCost.CHEAP: 0,
     ComputationalCost.MODERATE: 1,
@@ -283,6 +284,18 @@ class CandidateTemplate:
 
 
 @dataclass(frozen=True)
+class FitTiming:
+    """Wall time of one template assessment and the number of points it fitted."""
+
+    seconds: float
+    points: int
+
+    @property
+    def seconds_per_kpoint(self) -> float:
+        return 1000.0 * self.seconds / self.points
+
+
+@dataclass(frozen=True)
 class CandidateAssessment:
     """Fit and comparison data for one candidate model.
 
@@ -346,6 +359,10 @@ class CandidateAssessment:
     #: measured statement that this candidate's ranking is search-limited, and
     #: that any family compared against it at the shallower budget was too.
     under_converged: bool = False
+    #: How long the fit that produced this row took (:func:`_execute_assessment_task`).
+    #: ``None`` on a row restored from a cache: it is never persisted, so a past
+    #: run's time is never recorded twice (``docs/plans/measured-fit-times.md``, D1).
+    timing: FitTiming | None = None
 
     @property
     def is_disqualified(self) -> bool:
@@ -2336,9 +2353,11 @@ def _execute_assessment_task(
     Module-level (not a closure) so it can be pickled and sent to a worker
     process. Builds its own :class:`FitEngine` per call — engines carry no
     state worth sharing, and a fresh one keeps each task fully self-contained.
+    The returned row carries the task's wall time and fitted point count.
     """
     migrad_ncall = _SCREENING_MIGRAD_NCALL if task.screening_cap else None
-    return _assess_candidate_template(
+    start = time.perf_counter()
+    assessment = _assess_candidate_template(
         task.dataset,
         task.fingerprint,
         task.template,
@@ -2352,6 +2371,7 @@ def _execute_assessment_task(
         warm_start=task.warm_start,
         dense_curves=task.dense_curves,
     )
+    return replace(assessment, timing=FitTiming(time.perf_counter() - start, task.dataset.n_points))
 
 
 def _run_template_assessments(
@@ -2494,6 +2514,7 @@ def build_fit_wizard_recommendation(
     *,
     metric: SelectionMetric = SelectionMetric.AICC,
     scope: WizardScope | None = None,
+    fit_times: FitTimeEstimates = UNTIMED,
     user_frequencies_mhz: Sequence[float] | None = None,
     max_workers: int | None = None,
     executor: Executor | None = None,
@@ -2511,7 +2532,8 @@ def build_fit_wizard_recommendation(
     exclude); families that pass the residual gates, score within
     ``_STAGE1_PROMOTE_DELTA`` of the best, or are named by a multiplet pattern
     match expand to their full Stage-2 portfolios. ``scope`` restricts the
-    families physically (``None`` screens the default superset);
+    families physically (``None`` screens the default superset), and
+    ``fit_times`` judges which models its slow switch leaves out;
     ``user_frequencies_mhz`` adds trusted peak seeds — blind runs get the same
     seeds from the matched-apodisation damped-line scan when the data carry a
     heavily damped line (see
@@ -2585,7 +2607,7 @@ def build_fit_wizard_recommendation(
         fingerprint = fingerprint_spectrum(dataset, peak_analysis=peak_analysis)
     resolution: ScopeResolution | None = None
     if scope is not None:
-        resolution = resolve_scope_for_dataset(dataset, scope)
+        resolution = resolve_scope_for_dataset(dataset, scope, fit_times)
     # ``inference_note`` is already a single, "; "-joined human-readable string
     # (see ``wizard_scope.ScopeResolution.inference_note``); a scope of ``None`` means no
     # resolution ran at all, so the note stays empty rather than guessing.
@@ -5987,6 +6009,17 @@ def analysis_rebin_factor(
         factor = min(factor, bandwidth_cap)
 
     return max(1, int(factor))
+
+
+def screening_points(dataset: MuonDataset) -> int:
+    """Points the wizard fits this run on at least: its length after the cost rebin.
+
+    :func:`analysis_rebin_factor`'s bandwidth protection needs the peak analysis
+    and can only keep more points, so this is exact unless a fast line blocks
+    the rebin.
+    """
+    n = int(dataset.n_points)
+    return n // max(1, n // _FIT_SAMPLE_BUDGET)
 
 
 def _fit_window_duration(dataset: MuonDataset) -> float:

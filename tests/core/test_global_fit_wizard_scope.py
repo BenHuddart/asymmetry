@@ -25,6 +25,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
 )
 from asymmetry.core.fitting.muon_fluorine.polarization import linear_fmuf_polarization
 from asymmetry.core.fitting.wizard_scope import (
+    FitTimeEstimates,
     WizardScope,
     resolve_scope_for_datasets,
 )
@@ -231,6 +232,40 @@ def test_alphabet_portfolio_drops_templates_out_of_scope_for_every_run() -> None
     resolution = resolve_scope_for_datasets(datasets, scope)
     assert "Oscillatory" not in resolution.included_set
     assert [template.key for template in portfolio.templates] == ["exp_constant"]
+
+
+def test_alphabet_leaves_out_what_the_fit_times_judge_slow() -> None:
+    # Oscillatory is a cheap tier, but timed here at 30 s per run.
+    datasets = _exp_series(2)
+    oscillatory = _template("oscillatory_exp_constant", ("Oscillatory", "Exponential", "Constant"))
+    recommendations = {
+        int(dataset.run_number): replace(
+            _recommendation({"exp_constant": 10.0, "oscillatory_exp_constant": 5.0}),
+            templates=(_template("exp_constant"), oscillatory),
+        )
+        for dataset in datasets
+    }
+    for run_number, recommendation in list(recommendations.items()):
+        recommendations[run_number] = replace(
+            recommendation,
+            assessments=(
+                recommendation.assessments[0],
+                replace(recommendation.assessments[1], template=oscillatory),
+            ),
+        )
+    timed = FitTimeEstimates({"Oscillatory": 30.0})
+
+    def keys(scope: WizardScope) -> list[str]:
+        portfolio = build_global_fit_wizard_candidate_portfolio(
+            datasets,
+            scope=scope,
+            fit_times=timed,
+            single_fit_recommendations_by_run=recommendations,
+        )
+        return [template.key for template in portfolio.templates]
+
+    assert "oscillatory_exp_constant" in keys(WizardScope())
+    assert keys(WizardScope(skip_slow=True)) == ["exp_constant"]
 
 
 def test_multiplet_templates_are_protected_from_effort_tier_trimming() -> None:

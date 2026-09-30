@@ -68,6 +68,7 @@ from asymmetry.core.fitting.wizard_narrative import (
     render_log_text,
 )
 from asymmetry.core.fitting.wizard_scope import (
+    FitTimeEstimates,
     WizardScope,
     describe_scope,
     set_user_field_direction,
@@ -75,6 +76,7 @@ from asymmetry.core.fitting.wizard_scope import (
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_banner
+from asymmetry.gui.utils.fit_times import record_fit_times, shared_fit_time_store
 from asymmetry.gui.utils.plot_decimation import decimate_for_preview
 from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
 from asymmetry.gui.widgets.model_family_picker import ModelFamilyPicker
@@ -242,7 +244,7 @@ class FitWizardWindow(WizardWindowBase):
 
         # --- Deep panels (built once, re-parented between states) ---
         self._picker = ModelFamilyPicker(
-            lambda scope: describe_scope([] if self._dataset is None else [self._dataset], scope)
+            lambda scope: describe_scope(self._runs(), scope, self._fit_times())
         )
         self._picker.setMinimumHeight(metrics.row_height() * _PICKER_MIN_ROWS)
         self._picker.scope_changed.connect(
@@ -620,6 +622,7 @@ class FitWizardWindow(WizardWindowBase):
         dataset = self._dataset
         current_model = self._current_model
         scope = self._picker.scope()
+        fit_times = self._fit_times()
         user_frequencies_mhz = [float(peak["freq_mhz"]) for peak in self._user_peaks] or None
 
         def task(worker):
@@ -632,12 +635,20 @@ class FitWizardWindow(WizardWindowBase):
                 current_model=current_model,
                 metric=SelectionMetric.AICC,
                 scope=scope,
+                fit_times=fit_times,
                 user_frequencies_mhz=user_frequencies_mhz,
                 progress_callback=lambda message: worker.progress.emit(0, 0, message),
                 cancel_callback=worker.is_cancelled,
             )
 
         return task
+
+    def _runs(self) -> list[MuonDataset]:
+        return [] if self._dataset is None else [self._dataset]
+
+    def _fit_times(self) -> FitTimeEstimates:
+        """The slow judgement for this run: the picker's tags are what the analysis leaves out."""
+        return shared_fit_time_store().estimates(self._runs())
 
     def _cancel_exceptions(self) -> tuple[type[BaseException], ...]:
         return (FitCancelledError,)
@@ -753,6 +764,8 @@ class FitWizardWindow(WizardWindowBase):
         # re-assert enablement now it is set.
         self._update_action_enablement(False)
         self._show_result()
+        record_fit_times(recommendation.assessments)
+        self._picker.refresh()
 
     def set_cached_recommendation(
         self,

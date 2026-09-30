@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The fit wizards' slow tag now comes from fit times measured on your
+  computer.** Before, a model was slow when the registry declared it
+  expensive per call, which ranked models badly: dynamic Gaussian KT is cheap
+  to evaluate but slow to fit. Both wizards now time every candidate fit. After
+  each analysis, Asymmetry keeps each model's fit time per 1000 points in
+  `fit_times.json` in its application data folder (the last nine analyses; the
+  estimate is their median). A model is **slow** when its screening fits are
+  expected to take more than 5 s per run at the selected runs' length. The
+  details panel's **Fitting cost** shows the estimate, for example "Slow — ≈ 12
+  s per run on this computer" or "Quick — ≈ 0.4 s per run on this computer".
+  A model not yet timed keeps its declared cost ("Slow (not yet timed on this
+  computer)" or "Quick"). **Leave out slow models** leaves out exactly the
+  models tagged slow. The timings never enter a project file. The command-line
+  screen is unchanged: it never leaves slow models out.
 - **The Global Fit Wizard is a five-step stepper: Scope → Screen → Compare →
   Phases → Apply.** It replaces the Setup, Running and Result pages. Each step
   shows its state (done, current, ready, stale, running or skipped) and a

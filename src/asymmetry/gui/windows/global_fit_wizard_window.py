@@ -54,6 +54,7 @@ from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import (
+    CandidateAssessment,
     CandidateTemplate,
     ConfidenceTier,
     RecommendationVerdict,
@@ -85,6 +86,7 @@ from asymmetry.core.fitting.wizard_scope import (
     EFFORT_TIER_DESCRIPTIONS,
     EFFORT_TIER_LABELS,
     EffortTier,
+    FitTimeEstimates,
     WizardScope,
     describe_scope,
     effort_tier_from_payload,
@@ -96,6 +98,7 @@ from asymmetry.gui.styles.widgets import (
     make_section_header,
     make_warning_banner,
 )
+from asymmetry.gui.utils.fit_times import record_fit_times, shared_fit_time_store
 from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.utils.phase_colors import (
     EXCLUDED_PHASE_HATCH_COLOR,
@@ -279,11 +282,14 @@ class _GlobalAnalysisResult:
     ``mode`` (screening/optimize) and any ``updated_single_fit_recommendations``
     (formerly the one-shot ``single_fit_precomputed`` signal) ride alongside the
     ``recommendation`` so the base's single ``finished`` path can apply them.
+    ``fitted_assessments`` are the screening fits this run made, for the
+    per-machine fit-time store.
     """
 
     mode: str
     recommendation: object
     updated_single_fit_recommendations: dict[int, object]
+    fitted_assessments: tuple[CandidateAssessment, ...]
 
 
 def _run_global_fit_wizard_analysis(
@@ -299,6 +305,7 @@ def _run_global_fit_wizard_analysis(
     metric: SelectionMetric,
     selected_template_keys: tuple[str, ...] = (),
     scope: WizardScope = WizardScope(),
+    fit_times: FitTimeEstimates,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
     partition_path: PartitionPath | None = None,
     partition_k: int | None = None,
@@ -311,7 +318,8 @@ def _run_global_fit_wizard_analysis(
     Cooperative cancel is honoured between builder phases: the base passes a
     ``FitCancelledError`` in ``_cancel_exceptions()`` so ``TaskWorker`` reports
     it as a cancellation rather than a failure. ``scope`` is the picker's
-    frozen :class:`WizardScope`, forwarded to every builder.
+    frozen :class:`WizardScope`, forwarded to every builder with the
+    ``fit_times`` judgement the picker described it by.
     ``effort_tier`` is the user-facing effort slider (PR 5); it only affects the
     coupled-optimisation builder (``mode == "optimize"``) — the independent
     per-run screening pass has no tier concept.
@@ -349,6 +357,7 @@ def _run_global_fit_wizard_analysis(
     )
     _raise_if_cancelled()
     portfolio = None
+    fitted_assessments: tuple[CandidateAssessment, ...] = ()
     if skip_implicit_phase_one:
         single_fit_recommendations_by_run = dict(existing)
     else:
@@ -358,6 +367,7 @@ def _run_global_fit_wizard_analysis(
             existing_recommendations_by_run=existing,
             progress_callback=lambda message: worker.progress.emit(0, 0, message),
             scope=scope,
+            fit_times=fit_times,
             cancel_callback=worker.is_cancelled,
         )
         # ``existing`` now holds the runs' own single-run Fit Wizard analyses
@@ -366,6 +376,7 @@ def _run_global_fit_wizard_analysis(
         # consume, and it travels with the portfolio it was completed against.
         portfolio = screening_table.portfolio
         single_fit_recommendations_by_run = screening_table.recommendations_by_run
+        fitted_assessments = screening_table.fitted_assessments
 
     def progress_callback(message):
         return worker.progress.emit(0, 0, message)
@@ -382,6 +393,7 @@ def _run_global_fit_wizard_analysis(
             metric=metric,
             progress_callback=progress_callback,
             scope=scope,
+            fit_times=fit_times,
             portfolio=portfolio,
             cancel_callback=worker.is_cancelled,
         )
@@ -397,6 +409,7 @@ def _run_global_fit_wizard_analysis(
             progress_callback=progress_callback,
             selected_template_keys=selected_template_keys,
             scope=scope,
+            fit_times=fit_times,
             effort_tier=effort_tier,
             portfolio=portfolio,
             cancel_callback=worker.is_cancelled,
@@ -412,6 +425,7 @@ def _run_global_fit_wizard_analysis(
         mode=mode,
         recommendation=recommendation,
         updated_single_fit_recommendations=updated_single_fit_recommendations,
+        fitted_assessments=fitted_assessments,
     )
 
 
@@ -589,7 +603,9 @@ class GlobalFitWizardWindow(WizardWindowBase):
 
         # --- Scope. ---
         layout.addWidget(make_section_header("Scope"))
-        self._picker = ModelFamilyPicker(lambda scope: describe_scope(self._datasets, scope))
+        self._picker = ModelFamilyPicker(
+            lambda scope: describe_scope(self._datasets, scope, self._fit_times())
+        )
         # A floor keeps the family cards usable inside the scrolling view.
         self._picker.setMinimumHeight(metrics.row_height() * _PICKER_MIN_ROWS)
         self._picker.scope_changed.connect(
@@ -1234,6 +1250,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         metric = SelectionMetric.from_value(self._metric_combo.currentText())
         selected_keys = tuple(sorted(self._running_template_keys)) if mode == "optimize" else ()
         scope = self._picker.scope()
+        fit_times = self._fit_times()
         effort_tier = self.current_effort_tier()
         # The path and the row index travel together — the core refuses one
         # without the other — and only the per-phase mode has either.
@@ -1257,6 +1274,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 metric=metric,
                 selected_template_keys=selected_keys,
                 scope=scope,
+                fit_times=fit_times,
                 effort_tier=effort_tier,
                 partition_path=partition_path,
                 partition_k=partition_k,
@@ -1305,6 +1323,12 @@ class GlobalFitWizardWindow(WizardWindowBase):
             _recommended_optimised_key(recommendation),
         )
         self._show_step(_RUN_MODES[result.mode].step)
+        record_fit_times(result.fitted_assessments)
+        self._picker.refresh()
+
+    def _fit_times(self) -> FitTimeEstimates:
+        """The series' slow judgement: the picker's tags are what the analysis leaves out."""
+        return shared_fit_time_store().estimates(self._datasets)
 
     def _reset_result_state(self) -> None:
         # Screening starts from a clean slate — no recommendation, so a cancel or
@@ -1502,6 +1526,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 self._datasets,
                 current_model=self._current_model,
                 scope=self._picker.scope(),
+                fit_times=self._fit_times(),
             )
         except Exception as exc:
             self._set_expectations_warning(f"Global fit wizard setup failed: {exc}")
