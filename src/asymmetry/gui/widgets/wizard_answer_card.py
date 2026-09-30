@@ -1,21 +1,22 @@
 """Window-agnostic answer card for the fit wizards.
 
-The card is the answer-first surface of the redesigned wizard: a plain-language
-verdict headline and confidence sentence, a data plot with the selected fitted
-curve overlaid (with a residuals toggle), a primary "Apply this fit" button, and
-an alternatives strip that swaps the overlaid/applied candidate.
+The card is the answer-first surface of the wizard: a plain-language verdict
+headline and confidence sentence, a data plot with the selected fitted curve
+overlaid (with a residuals toggle), and a primary "Apply this fit" button.
 
 It is deliberately window- and dataset-agnostic. All prose comes from
 ``asymmetry.core.fitting.wizard_narrative`` (never re-worded here); plot data
-arrives as plain arrays via :meth:`set_plot_data` (no ``MuonDataset`` import),
-so a future multi-dataset wizard can reuse it. It emits :attr:`apply_requested`
-with the selected :class:`CandidateAssessment` and never reaches back into a
-window.
+arrives as plain arrays via :meth:`set_plot_data` (no ``MuonDataset`` import).
+The card owns no selection: it reads the selected key through the callable its
+owner hands it (the Compare panel's candidate A, see
+``docs/plans/fit-wizard-compare.md`` D1), and is told to :meth:`redraw` when
+that moves. It emits :attr:`apply_requested` with the selected key and never
+reaches back into a window.
 """
 
 from __future__ import annotations
 
-import math
+from collections.abc import Callable
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
@@ -41,18 +42,18 @@ from asymmetry.core.fitting.wizard_narrative import (
     template_display_name,
 )
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.metrics import row_height
 from asymmetry.gui.styles.widgets import (
     RESULT_BOX_NEUTRAL_STYLE,
     RESULT_BOX_OBJECT_NAME,
     RESULT_BOX_SUCCESS_STYLE,
     build_primary_button_qss,
-    build_segmented_button_qss,
     make_confidence_chip,
 )
 from asymmetry.gui.utils.plot_decimation import decimate_for_preview
 
-#: Cap on how many alternative candidates the strip offers.
-_MAX_ALTERNATIVES = 3
+#: The overlay plot's height, in table rows.
+_PLOT_ROWS = 11
 
 #: Cap on points drawn in the answer card's data errorbar. Same disease as
 #: the wizard fingerprint plot / grouping preview (see plot_decimation):
@@ -62,31 +63,6 @@ _MAX_ALTERNATIVES = 3
 #: real axis (rebinned by the recommendation's own factor) to pair with
 #: fit-length residuals.
 _MAX_ANSWER_PLOT_POINTS = 2000
-
-
-def _strip_trailing_gloss(title: str) -> str:
-    """Drop a trailing top-level parenthesised gloss from ``title``.
-
-    ``template_display_name`` appends " (<plain name>)" to a title, and
-    ``<plain name>`` can itself contain nested parens (e.g. "static nuclear
-    fields (Kubo-Toyabe)"). This walks back from the end to find the matching
-    top-level "(" for the final ")" and cuts from there, so only the last
-    balanced group is removed. If the string does not end with a balanced
-    parenthesised group, it is returned unchanged.
-    """
-    text = title.rstrip()
-    if not text.endswith(")"):
-        return title
-    depth = 0
-    for index in range(len(text) - 1, -1, -1):
-        char = text[index]
-        if char == ")":
-            depth += 1
-        elif char == "(":
-            depth -= 1
-            if depth == 0:
-                return text[:index].rstrip()
-    return title
 
 
 def _plain_verdict_headline(recommendation: FitWizardRecommendation) -> str:
@@ -127,26 +103,28 @@ def _plain_confidence_line(recommendation: FitWizardRecommendation) -> str:
 
 
 class WizardAnswerCard(QWidget):
-    """Answer-first card: verdict + confidence + overlay plot + apply + alternatives."""
+    """Answer-first card: verdict + confidence + overlay plot of the selection + apply.
 
-    #: Emitted with the currently-selected assessment when Apply is pressed.
-    apply_requested = Signal(object)  # CandidateAssessment
-    #: Emitted with the selected assessment key whenever the selection changes.
-    selection_changed = Signal(str)
+    ``selected_key`` returns the key of the candidate to draw and apply.
+    """
+
+    #: Emitted with the selected key when Apply is pressed.
+    apply_requested = Signal(str)
     #: Emitted with an assessment key the card was asked to draw that carries no
     #: dense curves. The owner is expected to build them (off the GUI thread —
     #: see :func:`asymmetry.core.fitting.fit_wizard.assessment_with_curves`) and
     #: hand the card the updated recommendation via :meth:`refresh_curves`.
     curves_required = Signal(str)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, selected_key: Callable[[], str | None], parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self._recommendation: FitWizardRecommendation | None = None
-        self._selected_key: str | None = None
+        self._selected_key = selected_key
         self._time: np.ndarray | None = None
         self._asymmetry: np.ndarray | None = None
         self._error: np.ndarray | None = None
-        self._alt_buttons: dict[str, QPushButton] = {}
         self._confidence_chip: QLabel | None = None
 
         outer = QVBoxLayout(self)
@@ -182,31 +160,23 @@ class WizardAnswerCard(QWidget):
 
         # Plot + residuals toggle.
         self._plot_widget = self._build_plot_widget()
-        layout.addWidget(self._plot_widget, 1)
+        # A fixed height keeps the verdict compact on a scrolling result page,
+        # so the Compare section below it starts within the first screen.
+        self._plot_widget.setFixedHeight(row_height() * _PLOT_ROWS)
+        layout.addWidget(self._plot_widget)
 
         toggle_row = QHBoxLayout()
         self._residuals_toggle = QCheckBox("Show residuals", self._card_frame)
-        self._residuals_toggle.toggled.connect(self._redraw_plot)
+        self._residuals_toggle.toggled.connect(self.redraw)
         toggle_row.addWidget(self._residuals_toggle)
         toggle_row.addStretch()
         layout.addLayout(toggle_row)
-
-        # Alternatives strip.
-        self._alternatives_row = QHBoxLayout()
-        self._alternatives_label = QLabel("Alternatives:", self._card_frame)
-        self._alternatives_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        self._alternatives_row.addWidget(self._alternatives_label)
-        self._alternatives_row.addStretch()
-        self._alternatives_container = QWidget(self._card_frame)
-        self._alternatives_container.setLayout(self._alternatives_row)
-        self._alternatives_container.setVisible(False)
-        layout.addWidget(self._alternatives_container)
 
         # Apply.
         apply_row = QHBoxLayout()
         self._apply_btn = QPushButton("Apply this fit", self._card_frame)
         self._apply_btn.setStyleSheet(build_primary_button_qss())
-        self._apply_btn.clicked.connect(self._on_apply_clicked)
+        self._apply_btn.clicked.connect(lambda: self.apply_requested.emit(self._selected_key()))
         apply_row.addWidget(self._apply_btn)
         apply_row.addStretch()
         layout.addLayout(apply_row)
@@ -223,29 +193,23 @@ class WizardAnswerCard(QWidget):
         self._time = None if time is None else np.asarray(time, dtype=float)
         self._asymmetry = None if asymmetry is None else np.asarray(asymmetry, dtype=float)
         self._error = None if error is None else np.asarray(error, dtype=float)
-        self._redraw_plot()
+        self.redraw()
 
     def set_recommendation(self, recommendation: FitWizardRecommendation | None) -> None:
-        """Populate the card from a recommendation; select the recommended key."""
+        """Populate the card from a recommendation, drawing the owner's selection."""
         self._recommendation = recommendation
         self._sync_card_style()
         self._rebuild_confidence_chip()
         if recommendation is None:
-            self._selected_key = None
             self._verdict_label.setText("")
             self._confidence_label.setText("")
-            self._clear_alternatives()
-            self._redraw_plot()
+            self.redraw()
             return
-        self._selected_key = recommendation.recommended_key
-        if self._selected_key is None and recommendation.assessments:
-            self._selected_key = recommendation.assessments[0].template.key
         self._verdict_label.setText(_plain_verdict_headline(recommendation))
         confidence_line = _plain_confidence_line(recommendation)
         self._confidence_label.setText(confidence_line)
         self._confidence_label.setVisible(bool(confidence_line))
-        self._rebuild_alternatives()
-        self._redraw_plot()
+        self.redraw()
 
     # ── Card chrome (frame tint + confidence chip) ─────────────────────────
 
@@ -301,162 +265,23 @@ class WizardAnswerCard(QWidget):
         self._confidence_chip = chip
 
     def selected_assessment(self) -> CandidateAssessment | None:
+        """The selected row of the recommendation; ``None`` while the card holds none."""
         if self._recommendation is None:
             return None
-        return (
-            self._recommendation.assessment_for_key(self._selected_key)
-            or self._recommendation.recommended_assessment
-        )
+        return self._recommendation.assessment_for_key(self._selected_key())
 
     def refresh_curves(self, recommendation: FitWizardRecommendation) -> None:
         """Re-point the card at ``recommendation`` and redraw, keeping the selection.
 
         The answer to :attr:`curves_required`: ``recommendation`` is the same
         ranking the card already holds with one row's dense curves filled in, so
-        the headline, the confidence line and the alternatives strip are
-        unchanged by construction and only the plot is rebuilt. Passing a
+        the headline and the confidence line are unchanged by construction and
+        only the plot is rebuilt. Passing a
         *differently ranked* recommendation here is a caller bug — use
         :meth:`set_recommendation` for that.
         """
         self._recommendation = recommendation
-        self._redraw_plot()
-
-    def selected_key(self) -> str | None:
-        return self._selected_key
-
-    def set_selected_key(self, key: str | None) -> None:
-        if key == self._selected_key:
-            return
-        self._selected_key = key
-        self._sync_alternative_styles()
-        self._redraw_plot()
-        if isinstance(key, str):
-            self.selection_changed.emit(key)
-
-    # ── Alternatives strip ─────────────────────────────────────────────────
-
-    def _alternative_keys(self) -> list[str]:
-        """Ordered alternative keys: comparable_keys first, then next-best.
-
-        ``comparable_keys`` (similar-quality peers the core already surfaced)
-        come first, then successful, non-disqualified, non-null candidates in
-        ranked order — excluding the recommended key and duplicates. Capped at
-        ``_MAX_ALTERNATIVES``.
-        """
-        rec = self._recommendation
-        if rec is None:
-            return []
-        recommended = rec.recommended_key
-        ordered: list[str] = []
-        for key in rec.comparable_keys:
-            if key and key != recommended and key not in ordered:
-                ordered.append(key)
-        for assessment in rec.sorted_assessments():
-            key = assessment.template.key
-            if key == recommended or key in ordered:
-                continue
-            if assessment.is_null_baseline or not assessment.is_successful:
-                continue
-            if assessment.is_disqualified:
-                continue
-            ordered.append(key)
-        return ordered[:_MAX_ALTERNATIVES]
-
-    def _alternative_title(self, assessment: CandidateAssessment) -> str:
-        """The plain-physics glossed template title for an alternative."""
-        rec = self._recommendation
-        family_map = _template_family_map(rec.family_reports) if rec is not None else {}
-        return template_display_name(
-            family_map.get(assessment.template.key), assessment.template.title
-        )
-
-    def _metric_delta(self, assessment: CandidateAssessment) -> float | None:
-        """Return ``assessment`` minus the recommended candidate's metric value.
-
-        ``None`` when there is no recommended assessment, or either value is
-        non-finite (so the badge is simply omitted rather than showing NaN/inf).
-        """
-        rec = self._recommendation
-        recommended = rec.recommended_assessment if rec is not None else None
-        if rec is None or recommended is None:
-            return None
-        value = assessment.metric_value(rec.metric)
-        reference = recommended.metric_value(rec.metric)
-        if not math.isfinite(value) or not math.isfinite(reference):
-            return None
-        return value - reference
-
-    def _alternative_label(self, assessment: CandidateAssessment) -> str:
-        """Button text: the plain title (gloss stripped) plus a metric-delta badge.
-
-        The tooltip (:meth:`_alternative_tooltip`) keeps the full glossed name;
-        only the button text is shortened, since the parenthesised family gloss
-        makes the chip far too wide.
-        """
-        title = _strip_trailing_gloss(self._alternative_title(assessment))
-        delta = self._metric_delta(assessment)
-        if delta is None:
-            return title
-        return f"{title}  ·  {delta:+.1f}"
-
-    def _alternative_tooltip(self, assessment: CandidateAssessment) -> str:
-        """Full tooltip: display name, simpler-model note, and badge explanation."""
-        rec = self._recommendation
-        recommended = rec.recommended_assessment if rec is not None else None
-        lines = [self._alternative_title(assessment)]
-        if recommended is not None and assessment.parameter_count < recommended.parameter_count:
-            lines.append("Similar quality with a simpler model (fewer parameters).")
-        delta = self._metric_delta(assessment)
-        if delta is not None and rec is not None:
-            lines.append(
-                f"{rec.metric.value} difference vs the recommendation: "
-                f"{delta:+.2f} (lower is better)."
-            )
-        return "\n".join(lines)
-
-    def _rebuild_alternatives(self) -> None:
-        self._clear_alternatives()
-        rec = self._recommendation
-        if rec is None:
-            return
-        keys = self._alternative_keys()
-        if not keys:
-            return
-        segmented_qss = build_segmented_button_qss(padding_h=8)
-        for key in keys:
-            assessment = rec.assessment_for_key(key)
-            if assessment is None:
-                continue
-            button = QPushButton(self._alternative_label(assessment), self._alternatives_container)
-            button.setCheckable(True)
-            button.setStyleSheet(segmented_qss)
-            button.setToolTip(self._alternative_tooltip(assessment))
-            button.clicked.connect(lambda _checked=False, k=key: self.set_selected_key(k))
-            # Insert before the trailing stretch.
-            self._alternatives_row.insertWidget(self._alternatives_row.count() - 1, button)
-            self._alt_buttons[key] = button
-        self._alternatives_container.setVisible(bool(self._alt_buttons))
-        self._sync_alternative_styles()
-
-    def _clear_alternatives(self) -> None:
-        for button in self._alt_buttons.values():
-            self._alternatives_row.removeWidget(button)
-            button.setParent(None)
-            button.deleteLater()
-        self._alt_buttons.clear()
-        self._alternatives_container.setVisible(False)
-
-    def _sync_alternative_styles(self) -> None:
-        """Make the selected candidate visually explicit across the buttons."""
-        for key, button in self._alt_buttons.items():
-            button.setChecked(key == self._selected_key)
-
-    # ── Apply ──────────────────────────────────────────────────────────────
-
-    def _on_apply_clicked(self) -> None:
-        assessment = self.selected_assessment()
-        if assessment is not None:
-            self.apply_requested.emit(assessment)
+        self.redraw()
 
     # ── Plot ───────────────────────────────────────────────────────────────
 
@@ -479,7 +304,8 @@ class WizardAnswerCard(QWidget):
             inner.addWidget(fallback)
         return container
 
-    def _redraw_plot(self) -> None:
+    def redraw(self) -> None:
+        """Redraw the plot for the owner's current selection."""
         figure = getattr(self._plot_widget, "_figure", None)
         canvas = getattr(self._plot_widget, "_canvas", None)
         if figure is None or canvas is None:
@@ -533,14 +359,12 @@ class WizardAnswerCard(QWidget):
                 # far too expensive for a draw — and draw the data alone until
                 # they arrive via :meth:`refresh_curves`. This is the *only* place
                 # the request is made, so every path that changes what is drawn
-                # (a selection, a re-rank, the residuals toggle) is covered by it.
+                # (a new A, a re-rank, the residuals toggle) is covered by it.
                 self.curves_required.emit(assessment.template.key)
         ax_fit.set_xlabel("Time (µs)")
         ax_fit.set_ylabel("Asymmetry")
-        # Only show the axes title when the user picked an alternative (it then
-        # clarifies what is plotted); when the recommendation itself is
-        # selected, the card headline right above already says as much, and
-        # repeating it here is pure duplication.
+        # Title the axes only for a selection other than the recommendation; the
+        # headline right above already names the recommendation.
         if (
             assessment is not None
             and self._recommendation is not None

@@ -419,7 +419,7 @@ class TestPersistedCacheRestores:
             signature=restored_panel._single_tab._cached_wizard_signature,
             log_text="cached log",
         )
-        assert window._answer_card.selected_key() == "exp_constant"
+        assert window._answer_card.selected_assessment().template.key == "exp_constant"
         assert window.current_recommendation() is cached
         window.close()
         window.deleteLater()

@@ -12,7 +12,7 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
@@ -27,7 +27,7 @@ from asymmetry.core.fitting.fit_wizard import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.widgets.wizard_answer_card import WizardAnswerCard, _strip_trailing_gloss
+from asymmetry.gui.widgets.wizard_answer_card import WizardAnswerCard
 
 
 @pytest.fixture(scope="module")
@@ -109,7 +109,6 @@ def _recommendation(
     confidence=ConfidenceTier.HIGH,
     comparable=(),
     caveat="",
-    gauss_aicc: float = 8.2,
 ) -> FitWizardRecommendation:
     t = np.linspace(0, 8, 60)
     exp_curve = 0.2 * np.exp(-0.4 * t) + 0.01
@@ -120,7 +119,6 @@ def _recommendation(
         "Gaussian + Constant",
         params=2,
         curve=gauss_curve,
-        aicc=gauss_aicc,
     )
     return FitWizardRecommendation(
         fingerprint=_fingerprint(),
@@ -136,6 +134,20 @@ def _recommendation(
     )
 
 
+class _Selection:
+    """The owner's selection, which the card reads and never writes."""
+
+    def __init__(self, key: str | None = "exp_constant") -> None:
+        self.key = key
+
+    def __call__(self) -> str | None:
+        return self.key
+
+
+def _card(selection: _Selection | None = None) -> WizardAnswerCard:
+    return WizardAnswerCard(selection if selection is not None else _Selection())
+
+
 def _plot_arrays():
     t = np.linspace(0, 8, 60)
     y = 0.2 * np.exp(-0.4 * t) + 0.01
@@ -144,7 +156,7 @@ def _plot_arrays():
 
 
 def test_high_confidence_reads_as_confident(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
     card.set_recommendation(_recommendation())
     assert "Exponential + Constant" in card._verdict_label.text()
     assert "High confidence" in card._confidence_label.text()
@@ -153,7 +165,7 @@ def test_high_confidence_reads_as_confident(qapp: QApplication) -> None:
 
 
 def test_medium_confidence_caveat_on_card(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
     card.set_recommendation(
         _recommendation(
             confidence=ConfidenceTier.MEDIUM,
@@ -166,7 +178,7 @@ def test_medium_confidence_caveat_on_card(qapp: QApplication) -> None:
 
 
 def test_no_structure_is_framed_as_result(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
     card.set_recommendation(
         _recommendation(
             verdict=RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE,
@@ -183,40 +195,24 @@ def test_no_structure_is_framed_as_result(qapp: QApplication) -> None:
     assert "simple decay" in confidence
 
 
-def test_apply_emits_selected_assessment(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+def test_apply_emits_the_selected_key(qapp: QApplication) -> None:
+    selection = _Selection()
+    card = _card(selection)
     card.set_recommendation(_recommendation())
-    emitted: list[object] = []
+    emitted: list[str] = []
     card.apply_requested.connect(emitted.append)
-    card._on_apply_clicked()
-    assert emitted and emitted[0].template.key == "exp_constant"
+    card._apply_btn.click()
+    selection.key = "gaussian_constant"
+    card.redraw()
+    card._apply_btn.click()
+    assert emitted == ["exp_constant", "gaussian_constant"]
 
 
-def test_alternatives_swap_changes_applied_key(qapp: QApplication) -> None:
-    # gauss has fewer params (2 < 3) so it is offered as an alternative.
-    card = WizardAnswerCard()
-    card.set_recommendation(_recommendation())
-    assert "gaussian_constant" in card._alt_buttons
-    button = card._alt_buttons["gaussian_constant"]
-    # The simpler-model descriptor moved to the tooltip; the button label is
-    # the plain display name (plus an optional delta badge).
-    assert "simpler model" not in button.text()
-    assert "simpler model" in button.toolTip()
-
-    card.set_selected_key("gaussian_constant")
-    assert card.selected_key() == "gaussian_constant"
-    emitted: list[object] = []
-    card.apply_requested.connect(emitted.append)
-    card._on_apply_clicked()
-    assert emitted[0].template.key == "gaussian_constant"
-    # Selected alternative is visually explicit.
-    assert card._alt_buttons["gaussian_constant"].isChecked() is True
-
-
-def test_comparable_keys_lead_alternatives(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+def test_the_card_offers_no_alternatives_of_its_own(qapp: QApplication) -> None:
+    """Choosing another candidate is the Compare panel's job; the card only draws it."""
+    card = _card()
     card.set_recommendation(_recommendation(comparable=("gaussian_constant",)))
-    assert list(card._alt_buttons.keys())[0] == "gaussian_constant"
+    assert [button.text() for button in card.findChildren(QPushButton)] == ["Apply this fit"]
 
 
 def test_data_errorbar_point_count_is_bounded(qapp: QApplication) -> None:
@@ -226,7 +222,7 @@ def test_data_errorbar_point_count_is_bounded(qapp: QApplication) -> None:
     t = np.linspace(0, 8, n)
     y = 0.2 * np.exp(-0.4 * t) + 0.01
     e = np.full_like(t, 0.01)
-    card = WizardAnswerCard()
+    card = _card()
     card.set_plot_data(t, y, e)
     # Stored arrays stay full-resolution (the residuals panel slices them to
     # pair with fit-length residuals); only the drawn errorbar is decimated.
@@ -240,7 +236,7 @@ def test_data_errorbar_point_count_is_bounded(qapp: QApplication) -> None:
 
 
 def test_residuals_toggle_redraws_without_error(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
     card.set_plot_data(*_plot_arrays())
     card.set_recommendation(_recommendation())
     card._residuals_toggle.setChecked(True)
@@ -251,13 +247,13 @@ def test_residuals_toggle_redraws_without_error(qapp: QApplication) -> None:
 
 
 def test_high_confidence_winner_gets_success_frame(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
     card.set_recommendation(_recommendation(confidence=ConfidenceTier.HIGH))
     assert tokens.SUCCESS_BG in card._card_frame.styleSheet()
 
 
 def test_non_high_confidence_gets_neutral_frame(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
     card.set_recommendation(_recommendation(confidence=ConfidenceTier.MEDIUM))
     style = card._card_frame.styleSheet()
     assert tokens.SUCCESS_BG not in style
@@ -265,7 +261,7 @@ def test_non_high_confidence_gets_neutral_frame(qapp: QApplication) -> None:
 
 
 def test_no_recommendation_gets_neutral_frame(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
     card.set_recommendation(None)
     style = card._card_frame.styleSheet()
     assert tokens.SUCCESS_BG not in style
@@ -273,7 +269,7 @@ def test_no_recommendation_gets_neutral_frame(qapp: QApplication) -> None:
 
 
 def test_confidence_chip_text_per_tier(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
 
     card.set_recommendation(_recommendation(confidence=ConfidenceTier.HIGH))
     assert card._confidence_chip is not None
@@ -294,104 +290,31 @@ def test_confidence_chip_text_per_tier(qapp: QApplication) -> None:
 
 
 def test_confidence_chip_hidden_for_none_tier_with_winner(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
     card.set_recommendation(_recommendation(confidence=ConfidenceTier.NONE))
     assert card._confidence_chip is None
 
 
-def test_alternative_delta_badge_formatting(qapp: QApplication) -> None:
-    # exp (recommended) has aicc=8.2; gauss set to 10.3 -> delta = +2.1.
-    card = WizardAnswerCard()
-    card.set_recommendation(_recommendation(gauss_aicc=10.3))
-    button = card._alt_buttons["gaussian_constant"]
-    assert "+2.1" in button.text()
-    assert "+2.10" in button.toolTip()
-    assert "AICc" in button.toolTip()
-
-
 def test_apply_button_uses_primary_qss(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
     assert tokens.ACCENT_SOFT in card._apply_btn.styleSheet()
-
-
-# ── _strip_trailing_gloss ────────────────────────────────────────────────────
-
-
-def test_strip_trailing_gloss_removes_last_balanced_group() -> None:
-    assert (
-        _strip_trailing_gloss(
-            "Longitudinal-field KT + Constant (static nuclear fields (Kubo-Toyabe))"
-        )
-        == "Longitudinal-field KT + Constant"
-    )
-
-
-def test_strip_trailing_gloss_no_trailing_parens_unchanged() -> None:
-    assert _strip_trailing_gloss("Exponential + Constant") == "Exponential + Constant"
-
-
-def test_strip_trailing_gloss_unbalanced_unchanged() -> None:
-    # A stray ")" with no matching top-level "(" is left alone rather than
-    # mis-truncated.
-    text = "Weird title)"
-    assert _strip_trailing_gloss(text) == text
-
-
-def test_strip_trailing_gloss_simple_single_group() -> None:
-    assert _strip_trailing_gloss("Title (gloss)") == "Title"
-
-
-def test_alternative_chip_text_drops_gloss_tooltip_keeps_it(qapp: QApplication) -> None:
-    # Give the gaussian alternative a glossed title directly (no FAMILY_GLOSSES
-    # wiring needed — template_display_name returns raw titles when no family
-    # report resolves the key, which is exactly this test's fixture shape).
-    t = np.linspace(0, 8, 60)
-    exp_curve = 0.2 * np.exp(-0.4 * t) + 0.01
-    gauss_curve = 0.18 * np.exp(-0.5 * t * t) + 0.02
-    exp = _assessment("exp_constant", "Exponential + Constant", params=3, curve=exp_curve)
-    gauss = _assessment(
-        "gaussian_constant",
-        "Gaussian + Constant (static nuclear fields (Kubo-Toyabe))",
-        params=2,
-        curve=gauss_curve,
-    )
-    rec = FitWizardRecommendation(
-        fingerprint=_fingerprint(),
-        templates=(exp.template, gauss.template),
-        assessments=(exp, gauss),
-        metric=SelectionMetric.AICC,
-        recommended_key="exp_constant",
-        comparable_keys=(),
-        summary="Recommended: Exponential + Constant by AICc.",
-        confidence=ConfidenceTier.HIGH,
-        verdict=RecommendationVerdict.STRUCTURED,
-        caveat="",
-    )
-
-    card = WizardAnswerCard()
-    card.set_recommendation(rec)
-    button = card._alt_buttons["gaussian_constant"]
-    assert "(static nuclear fields" not in button.text()
-    assert button.text().startswith("Gaussian + Constant")
-    assert "(static nuclear fields (Kubo-Toyabe))" in button.toolTip()
 
 
 # ── Overlay plot title (recommended vs alternative selection) ───────────────
 
 
 def test_plot_title_hidden_when_recommended_selected(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+    card = _card()
     card.set_plot_data(*_plot_arrays())
     card.set_recommendation(_recommendation())
     figure = card._plot_widget._figure
     assert figure.axes[0].get_title() == ""
 
 
-def test_plot_title_shown_when_alternative_selected(qapp: QApplication) -> None:
-    card = WizardAnswerCard()
+def test_plot_title_shown_when_another_candidate_is_selected(qapp: QApplication) -> None:
+    card = _card(_Selection("gaussian_constant"))
     card.set_plot_data(*_plot_arrays())
     card.set_recommendation(_recommendation())
-    card.set_selected_key("gaussian_constant")
     figure = card._plot_widget._figure
     assert figure.axes[0].get_title() == "Gaussian + Constant"
 
@@ -419,7 +342,7 @@ def test_residual_panel_says_so_when_a_cached_result_has_no_residuals(
     )
     time = np.linspace(0.0, 8.0, 60)
 
-    card = WizardAnswerCard()
+    card = _card()
     card.set_plot_data(time, 0.2 * np.exp(-0.4 * time), np.full_like(time, 0.01))
     card.set_recommendation(recommendation)
     card._residuals_toggle.setChecked(True)
@@ -462,7 +385,7 @@ def test_residual_axis_follows_the_recommendation_rebin_factor(qapp: QApplicatio
         ),
     )
 
-    card = WizardAnswerCard()
+    card = _card()
     card.set_plot_data(time, 0.2 * np.exp(-0.4 * time), np.full_like(time, 0.01))
     card.set_recommendation(recommendation)
     card._residuals_toggle.setChecked(True)
@@ -501,7 +424,7 @@ def test_recommended_row_draws_its_fit_line_immediately(qapp: QApplication) -> N
     time, asym, error = _plot_arrays()
     requested: list[str] = []
 
-    card = WizardAnswerCard()
+    card = _card()
     card.curves_required.connect(requested.append)
     card.set_plot_data(time, asym, error)
     card.set_recommendation(_recommendation())
@@ -514,7 +437,7 @@ def test_recommended_row_draws_its_fit_line_immediately(qapp: QApplication) -> N
 def test_selecting_a_row_without_curves_asks_the_owner_for_them(qapp: QApplication) -> None:
     """The card never builds a dense curve itself — it is far too expensive to draw.
 
-    Selecting an alternative the build left bare emits ``curves_required`` with
+    Selecting a row the build left bare emits ``curves_required`` with
     that row's key and draws the data alone; the owner is expected to build the
     curves off the GUI thread and hand them back via ``refresh_curves``.
     """
@@ -525,14 +448,16 @@ def test_selecting_a_row_without_curves_asks_the_owner_for_them(qapp: QApplicati
     winner, alternative = recommendation.assessments
     recommendation = replace(recommendation, assessments=(winner, _bare(alternative)))
     requested: list[str] = []
+    selection = _Selection()
 
-    card = WizardAnswerCard()
+    card = _card(selection)
     card.curves_required.connect(requested.append)
     card.set_plot_data(time, asym, error)
     card.set_recommendation(recommendation)
     assert requested == []
 
-    card.set_selected_key("gaussian_constant")
+    selection.key = "gaussian_constant"
+    card.redraw()
 
     assert requested == ["gaussian_constant"]
     labels = [line.get_label() for axes in card._plot_widget._figure.axes for line in axes.lines]
@@ -550,16 +475,15 @@ def test_refresh_curves_draws_the_row_without_disturbing_the_selection(
     winner, alternative = recommendation.assessments
     bare = replace(recommendation, assessments=(winner, _bare(alternative)))
 
-    card = WizardAnswerCard()
+    card = _card(_Selection("gaussian_constant"))
     card.set_plot_data(time, asym, error)
     card.set_recommendation(bare)
-    card.set_selected_key("gaussian_constant")
 
     requested: list[str] = []
     card.curves_required.connect(requested.append)
     card.refresh_curves(recommendation)
 
-    assert card.selected_key() == "gaussian_constant"
+    assert card.selected_assessment().template.key == "gaussian_constant"
     assert requested == [], "a row that now has curves must not be requested again"
     fit_lines = [
         line
