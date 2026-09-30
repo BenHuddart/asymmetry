@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QTableWidget
 from asymmetry.core.fitting.fit_wizard import SelectionMetric
 from asymmetry.core.fitting.model_comparison import (
     CandidateSummary,
+    RunCurves,
     RunFit,
     summarise_candidates,
 )
@@ -222,7 +223,13 @@ def test_many_runs_draw_a_heat_strip_with_values_in_tooltips(qapp: QApplication)
     count = NUMERIC_CHI2_MAX_RUNS + 1
     time = np.linspace(0.0, 1.0, 5)
     runs = tuple(
-        RunFit(800 + index, str(800 + index), float(index), (time, time), (time, time), 1.0 + index)
+        RunFit(
+            800 + index,
+            str(800 + index),
+            float(index),
+            RunCurves((time, time), (time, time)),
+            1.0 + index,
+        )
         for index in range(count)
     )
     summary = replace(_summaries(1)[0], runs=runs)

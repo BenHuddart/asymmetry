@@ -12,7 +12,13 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.experiment_design import aic_weights
-from asymmetry.core.fitting.fit_wizard import CandidateTemplate, SelectionMetric
+from asymmetry.core.fitting.fit_wizard import (
+    CandidateAssessment,
+    CandidateTemplate,
+    FitWizardRecommendation,
+    SelectionMetric,
+    SpectrumFingerprint,
+)
 from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
     RunResidualDiagnostic,
@@ -34,6 +40,7 @@ from asymmetry.core.fitting.model_comparison import (
     score_deltas,
     shortlist,
     summarise_candidates,
+    summarise_single_candidates,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
@@ -276,9 +283,9 @@ def test_summary_runs_follow_series_order_with_residuals_and_chi2() -> None:
     run = summary.runs[1]
     assert run.run_label == "702"
     assert run.reduced_chi_squared == pytest.approx(1.2)
-    t, r = run.residuals
-    assert t[0] >= run.curve[0][0]
-    assert t[-1] <= run.curve[0][-1]
+    t, r = run.curves.residuals
+    assert t[0] >= run.curves.fit[0][0]
+    assert t[-1] <= run.curves.fit[0][-1]
     # The curve is the data's own model, so residuals are interpolation error only.
     assert np.max(np.abs(r)) < 0.1
 
@@ -291,6 +298,9 @@ def test_summary_parameter_rows_share_globals_only_after_a_coupled_fit() -> None
     rows = {row.name: row for row in summary.parameters}
     assert [row.name for row in summary.parameters] == ["A_1", "Lambda", "A_bg"]
     assert rows["A_1"].role is ParameterRole.GLOBAL
+    assert summary.names(ParameterRole.GLOBAL) == ("A_1",)
+    assert summary.names(ParameterRole.LOCAL) == ("Lambda",)
+    assert summary.names(ParameterRole.FIXED) == ("A_bg",)
     assert rows["A_1"].values == Estimate(20.0, 0.3)
     assert rows["A_1"].run_flags == ((), (), ())
     assert rows["Lambda"].role is ParameterRole.LOCAL
@@ -483,3 +493,164 @@ def test_compare_leaves_k_unmeasured_when_errors_vanish() -> None:
 )
 def test_grade_reduced_chi_squared_thresholds(value: float, grade: FitGrade) -> None:
     assert grade_reduced_chi_squared(value) is grade
+
+
+# ---------------------------------------------------------------------------
+# summarise_single_candidates (the single-run wizard, N = 1)
+# ---------------------------------------------------------------------------
+
+
+def _single(
+    key: str,
+    *,
+    aicc: float,
+    bic: float = 0.0,
+    fit: FitResult | None = None,
+    curves: bool = True,
+    gate_reasons: tuple[str, ...] = (),
+    null_baseline: bool = False,
+    disqualified: tuple[str, ...] = (),
+) -> CandidateAssessment:
+    time = np.linspace(0.05, 7.5, 40)
+    empty = np.array([], dtype=float)
+    return CandidateAssessment(
+        template=CandidateTemplate(
+            key=key,
+            title=f"Title {key}",
+            category="General",
+            rationale="synthetic",
+            model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+        ),
+        fit_result=_fit(701) if fit is None else fit,
+        aic=aicc,
+        aicc=aicc,
+        bic=bic,
+        selected_score=aicc,
+        residual_rms=1.0,
+        runs_z_score=0.0,
+        max_abs_autocorrelation=0.0,
+        residual_fft_peak_snr=0.0,
+        residual_gate_passed=not gate_reasons,
+        residual_gate_reasons=gate_reasons,
+        bound_hits=(),
+        fitted_time=time if curves else empty,
+        fitted_curve=20.0 * np.exp(-_LAMBDAS[701] * time) + 1.0 if curves else empty,
+        component_curves=(),
+        disqualification_reasons=disqualified,
+        is_null_baseline=null_baseline,
+    )
+
+
+def _single_recommendation(*assessments: CandidateAssessment) -> FitWizardRecommendation:
+    return FitWizardRecommendation(
+        fingerprint=SpectrumFingerprint(
+            tail_estimate=1.0,
+            initial_amplitude_estimate=20.0,
+            zero_crossings=0,
+            smoothed_zero_crossings=0,
+            smoothed_turning_points=0,
+            dominant_fft_frequency_mhz=0.0,
+            dominant_fft_snr=0.0,
+            dominant_fft_cycles_in_window=0.0,
+            monotonic_decay_fraction=1.0,
+            early_time_curvature=0.0,
+            semilog_slope_ratio=1.0,
+            late_time_dip_recovery_score=0.0,
+            oscillatory_hint=False,
+            kt_like_hint=False,
+            multi_rate_hint=False,
+        ),
+        templates=tuple(assessment.template for assessment in assessments),
+        assessments=assessments,
+        metric=SelectionMetric.AICC,
+        recommended_key=assessments[0].template.key,
+        comparable_keys=(),
+        summary="synthetic",
+    )
+
+
+def test_single_summaries_rank_every_row_with_delta_and_weight_across_all() -> None:
+    recommendation = _single_recommendation(
+        _single("exp", aicc=100.0),
+        _single("flat", aicc=140.0, null_baseline=True),
+        _single("osc", aicc=98.0, disqualified=("oscillation amplitude consistent with zero",)),
+    )
+    summaries = summarise_single_candidates(recommendation, _dataset(701), SelectionMetric.AICC)
+    assert [s.key for s in summaries] == ["osc", "exp", "flat"]
+    assert [s.delta for s in summaries] == [0.0, 2.0, 42.0]
+    assert [s.weight for s in summaries] == pytest.approx(information_weights([98.0, 100.0, 140.0]))
+    assert [s.title for s in summaries] == [
+        "Title osc (disqualified)",
+        "Title exp",
+        "Title flat (baseline)",
+    ]
+
+
+def test_single_summaries_rank_on_the_requested_metric() -> None:
+    recommendation = _single_recommendation(
+        _single("a", aicc=100.0, bic=30.0), _single("b", aicc=104.0, bic=20.0)
+    )
+    summaries = summarise_single_candidates(recommendation, _dataset(701), SelectionMetric.BIC)
+    assert [(s.key, s.delta) for s in summaries] == [("b", 0.0), ("a", 10.0)]
+
+
+def test_single_summary_is_one_run_with_fitted_and_fixed_parameters() -> None:
+    summary = summarise_single_candidates(
+        _single_recommendation(_single("exp", aicc=1.0)), _dataset(701), SelectionMetric.AICC
+    )[0]
+    (run,) = summary.runs
+    assert (run.run_number, run.run_label) == (701, "701")
+    assert math.isnan(run.axis_value)
+    assert run.reduced_chi_squared == pytest.approx(1.1)
+    assert summary.names(ParameterRole.FITTED) == ("A_1", "Lambda")
+    assert summary.names(ParameterRole.FIXED) == ("A_bg",)
+    assert summary.names(ParameterRole.GLOBAL) == ()
+    rows = {row.name: row for row in summary.parameters}
+    assert rows["A_1"].values == (Estimate(20.0, 0.2),)
+    assert rows["A_1"].role is ParameterRole.FITTED
+    assert not summary.prescreen
+
+
+def test_single_summary_leaves_a_bare_row_without_curves() -> None:
+    summaries = summarise_single_candidates(
+        _single_recommendation(_single("drawn", aicc=1.0), _single("bare", aicc=2.0, curves=False)),
+        _dataset(701),
+        SelectionMetric.AICC,
+    )
+    drawn, bare = summaries
+    assert drawn.curves_built
+    t, r = drawn.runs[0].curves.residuals
+    assert t[0] >= drawn.runs[0].curves.fit[0][0]
+    assert np.max(np.abs(r)) < 0.1
+    assert not bare.curves_built
+    assert bare.runs[0].curves is None
+
+
+def test_single_gate_summary_names_no_run_and_leaves_bound_hits_to_the_flags() -> None:
+    summary = summarise_single_candidates(
+        _single_recommendation(
+            _single(
+                "exp",
+                aicc=1.0,
+                fit=_fit(701, a_1=0.0),
+                gate_reasons=("A_1 at lower bound", "runs-test z score suggests structure"),
+            )
+        ),
+        _dataset(701),
+        SelectionMetric.AICC,
+    )[0]
+    assert not summary.gate_passed
+    assert summary.gate_summary == "runs-test z score suggests structure"
+    assert ParameterFlag.AT_LOWER_BOUND in summary.parameters[0].flags
+
+
+def test_compare_places_fitted_parameters_before_fixed_ones() -> None:
+    a, b = summarise_single_candidates(
+        _single_recommendation(_single("a", aicc=1.0), _single("b", aicc=2.0)),
+        _dataset(701),
+        SelectionMetric.AICC,
+    )
+    pairs = compare_parameters(a, b)
+    assert [pair.name for pair in pairs] == ["A_1", "Lambda", "A_bg"]
+    # A single run's values are per run, never a shared global: no kσ judgement.
+    assert pairs[0].sigma_difference is None

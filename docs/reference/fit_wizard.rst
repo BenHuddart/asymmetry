@@ -44,13 +44,14 @@ has already analysed (with nothing changed) skips straight to the result — no
 need to click Analyze again.
 
 .. image:: /_generated/screenshots/fit_wizard_result.png
-   :alt: Fit Wizard result page — answer card with the recommended fit above the decision trail
+   :alt: Fit Wizard result page — answer card with the recommended fit above the Compare candidates section, with the recommendation as A and a second candidate pinned as B
    :width: 100%
 
 *The wizard's result page on a synthetic ZF Ag polycrystal dataset: the answer*
 *card gives the plain-language verdict, a confidence grade, and the data with*
-*the recommended fit overlaid, above a decision trail whose steps expand to*
-*show the reasoning behind the recommendation.*
+*the recommended fit overlaid. Below it, the Compare candidates section ranks*
+*every candidate and sets the recommendation (A) against a pinned alternative*
+*(B), above a decision trail whose steps expand to show the reasoning.*
 
 The two-click path
 -------------------
@@ -82,8 +83,10 @@ check the wizard's working, not because you have to read it first.
    **Apply this fit** button. A "no significant structure" result is shown
    here as a legitimate outcome, not an error.
 5. **Apply, or dig in.** Click **Apply this fit** to hand the candidate to
-   the single-fit tab, or expand any step of the decision trail below the
-   card to see the reasoning behind it before deciding.
+   the single-fit tab. To weigh it against the other candidates first, use
+   the **Compare candidates** section below the card (see
+   `Comparing candidates and applying a fit`_); to see the reasoning, expand
+   any step of the decision trail beneath it.
 
 .. _fit-wizard-model-family-picker:
 
@@ -226,7 +229,7 @@ it again.
 The decision trail
 -------------------
 
-Below the answer card sits the decision trail: six plain-sentence steps
+Below the Compare candidates section sits the decision trail: six plain-sentence steps
 summarising how the wizard reached its recommendation. Each step expands to
 more detail; three of them expand into the same interactive panels you can
 reach from the welcome page, now populated with the finished analysis:
@@ -245,8 +248,9 @@ reach from the welcome page, now populated with the finished analysis:
    were fitted successfully, how many reference baselines were also fitted,
    and, in plain terms, why any candidate was rejected. Expands to the full
    comparison table (score, information-criterion values, residual-gate
-   status, reduced chi-squared, and parameter count for every candidate,
-   selectable to change the plot overlay).
+   status, reduced chi-squared, and parameter count for every candidate;
+   selecting a row makes it candidate A, exactly as clicking it in the
+   Compare candidates section does).
 5. **Winner vs null baseline and checks** — the recommended candidate and
    whether it is decisively better than a plain-relaxation reference.
 6. **Confidence statement** — the same confidence sentence shown on the
@@ -282,20 +286,45 @@ it adds a small-sample correction when :math:`n` is not large compared with
 ``BIC`` applies a stronger penalty to model complexity and therefore usually
 favours simpler descriptions.
 
-Alternatives and applying a fit
----------------------------------
+Comparing candidates and applying a fit
+-----------------------------------------
 
-When another candidate scored close to the recommended one, the answer card
-shows an alternatives strip beneath the plot — a compact chip per candidate,
-each carrying a metric-delta badge (``· +1.0``) that says how much worse it
-scored than the winner, with its component family in a tooltip. Clicking an
-alternative swaps the overlaid curve and becomes the candidate that **Apply
-this fit** would hand off, without leaving the card. A **"Show residuals"**
-toggle next to the plot switches the overlay to a residuals view for the
-currently selected candidate.
+A recommendation is only as good as the alternatives it beat, so the result
+page lets you set any candidate beside it. The **Compare candidates** section
+below the answer card is the same comparison panel the Global Fit Wizard uses
+in its Compare step (see :doc:`global_fit_wizard`), here with a single run.
 
-Applying a candidate (from the card or from a row selected in the comparison
-table) updates the single-fit tab: the composite function is replaced with
+On the left, every candidate the wizard fitted is listed best first (the
+caption names the ranking metric, "Candidates · ΔAICc from best"), including
+the reference baselines and any disqualified candidate, marked "(baseline)"
+and "(disqualified)". Each row carries a bar for its difference from the best
+candidate on the ranking metric, its evidence weight — the Akaike weight
+:math:`w_i \propto \exp(-\Delta_i/2)` normalised over the list, read as a
+percentage — a ``Pass`` or ``Warn`` badge for the residual checks, with any
+failing check spelled out beneath, a "Fixed:" line naming parameters that
+were held fixed, and parameter flags ("at lower bound", "at upper bound",
+"not finite", or "poorly determined").
+
+Click a row to make it candidate **A**. A starts as the recommendation, and A
+is what the answer card draws and what **Apply this fit** hands off: picking
+another candidate here redraws the card's plot with that candidate's fit and
+titles it with the candidate's name. **Pin as B** on any other row overlays it
+as candidate **B**, and **Unpin B** clears it. On the right, the data are
+drawn with A solid and B dashed, above a strip of normalised residuals
+:math:`(y - f)/\sigma` (A in colour over B in grey, clipped at
+:math:`\pm4\sigma`, with each candidate's :math:`\chi^2_\nu` at the end,
+"χ²ᵣ A · B"). Below, a parameter table sets A's fitted values beside B's, with
+a note column for either side's parameter flags. The wizard draws the fitted
+curve only for the candidates it answers with; the first time you pick any
+other candidate as A or B, its curve is built in the background and appears a
+moment later, while the data are shown straight away. **Apply A to the fit
+panel** at the foot of the section applies A, as **Apply this fit** does.
+
+A **"Show residuals"** toggle under the card's plot switches it to a
+residuals view for A.
+
+Applying a candidate (from the card or from the Compare candidates section)
+updates the single-fit tab: the composite function is replaced with
 the chosen candidate, fitted parameter values are written into the parameter
 table, the fit summary is updated with the wizard statistics, and the rest of
 the GUI refreshes normally. Even if you do not apply a candidate immediately,
@@ -510,8 +539,8 @@ default recommendation policy is:
 2. Break ties by preferring fewer free parameters.
 3. Break remaining ties by preferring fewer additive terms.
 4. If the top two candidates are within 2 score units, present them as a
-   comparable pair (surfaced as an alternative on the answer card) and
-   recommend the simpler one.
+   comparable pair (both have near-equal evidence weights in the Compare
+   candidates list) and recommend the simpler one.
 5. Check the winner against a simpler null baseline. If it does not clear
    that bar, recommend the null instead.
 6. Otherwise recommend the winner, with a confidence tier set from the

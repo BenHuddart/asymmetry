@@ -10,10 +10,12 @@ scaffolding is created). The three states live in a ``QStackedWidget``:
   housing the existing scope selector + FFT/user-peak seeding UI.
 * **Running** — the decision trail streams stage headlines as the core reports
   progress; Cancel stays visible (base chrome).
-* **Result** — the answer card (verdict + confidence + overlay plot + apply +
-  alternatives) above the six-step decision trail, whose steps expand inline to
-  the re-parented deep panels (scope view, FFT+peaks, compare table). A
-  *Copy analysis log* and a *Re-analyze* affordance sit alongside.
+* **Result** — the answer card (verdict + confidence + overlay plot + apply),
+  the *Compare candidates* section (the shared ``ModelComparePanel`` with one
+  run: its candidate A is the card's selection), and the six-step decision
+  trail, whose steps expand inline to the re-parented deep panels (scope view,
+  FFT+peaks, compare table). A *Copy analysis log* and a *Re-analyze*
+  affordance sit alongside. Design: ``docs/plans/fit-wizard-compare.md``.
 
 All verdict/confidence/no-structure prose comes from
 ``asymmetry.core.fitting.wizard_narrative`` — never re-worded here. The deep
@@ -30,7 +32,7 @@ import copy
 from dataclasses import replace
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -63,6 +65,10 @@ from asymmetry.core.fitting.fit_wizard import (
     build_fit_wizard_recommendation,
     rerank_fit_wizard_recommendation,
 )
+from asymmetry.core.fitting.model_comparison import (
+    CandidateSummary,
+    summarise_single_candidates,
+)
 from asymmetry.core.fitting.wizard_narrative import (
     build_wizard_trail,
     render_log_text,
@@ -79,6 +85,7 @@ from asymmetry.gui.styles.widgets import build_primary_button_qss, make_warning_
 from asymmetry.gui.utils.fit_times import record_fit_times, shared_fit_time_store
 from asymmetry.gui.utils.plot_decimation import decimate_for_preview
 from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
+from asymmetry.gui.widgets.model_compare_panel import ModelComparePanel
 from asymmetry.gui.widgets.model_family_picker import ModelFamilyPicker
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
@@ -150,6 +157,8 @@ _PAGE_RESULT = 2
 
 #: The model family picker's height floor on the scrolling Welcome page, in table rows.
 _PICKER_MIN_ROWS = 18
+#: The Compare candidates panel's height on the scrolling Result page, in table rows.
+_COMPARE_ROWS = 22
 
 #: Cap on points drawn in the fingerprint plot's time-domain errorbar. This
 #: plot is a small visual fingerprint (not a precision analysis surface, per
@@ -224,10 +233,9 @@ class FitWizardWindow(WizardWindowBase):
         self._fit_range: tuple[float | None, float | None] = (None, None)
         self._current_model: CompositeModel | None = None
         self._recommendation: FitWizardRecommendation | None = None
-        self._selected_key: str | None = None
         #: Assessment keys this window has already asked for dense curves for,
-        #: under the current ``_curve_generation``. The card re-asks on every
-        #: redraw it cannot draw a fit line for, so a key stays here once
+        #: under the current ``_curve_generation``. The card and the Compare panel
+        #: re-ask on every draw of a row without curves, so a key stays here once
         #: requested — in flight, finished, or failed — which makes "one build
         #: per row per recommendation" structural rather than a race to win.
         #: Cleared whenever the recommendation is replaced.
@@ -370,12 +378,28 @@ class FitWizardWindow(WizardWindowBase):
         content = QWidget()
         layout = QVBoxLayout(content)
 
-        # Answer card at the top.
-        self._answer_card = WizardAnswerCard()
-        self._answer_card.apply_requested.connect(self._on_card_apply_requested)
-        self._answer_card.selection_changed.connect(self._on_card_selection_changed)
-        self._answer_card.curves_required.connect(self._on_card_curves_required)
+        # The Compare panel owns the selection: its candidate A is what the
+        # answer card draws and applies (docs/plans/fit-wizard-compare.md D1).
+        self._model_compare = ModelComparePanel(continue_text="Apply A to the fit panel")
+        self._model_compare.setMinimumHeight(metrics.row_height() * _COMPARE_ROWS)
+        self._answer_card = WizardAnswerCard(self._model_compare.a_key)
+        self._model_compare.a_changed.connect(self._answer_card.redraw)
+        self._model_compare.a_changed.connect(self._follow_a)
+        for source in (self._answer_card.apply_requested, self._model_compare.continue_requested):
+            source.connect(self._apply_candidate)
+        for source in (self._answer_card.curves_required, self._model_compare.curves_required):
+            source.connect(self._build_curves)
         layout.addWidget(self._answer_card)
+
+        compare_section = PanelSection(
+            "Compare candidates",
+            collapsible=True,
+            expanded=True,
+            hint="Click a candidate to make it A, the fit above; pin another as B to overlay it.",
+            settings_key="fit_wizard/sections/compare",
+        )
+        compare_section.addWidget(self._model_compare)
+        layout.addWidget(compare_section)
 
         layout.addWidget(TrailSeparator())
 
@@ -566,9 +590,7 @@ class FitWizardWindow(WizardWindowBase):
         self._heading_label.setText("Fit Wizard")
         self._status_label.setToolTip("")
         self.set_context_chips(self._context_chip_labels())
-        self._recommendation = None
-        self._selected_key = None
-        self._invalidate_pending_curves()
+        self._reset_result_state()
         self._picker.set_scope(WizardScope())
         # Render the time/FFT plot and the (user-only) peaks table straight away
         # so peak seeds can be added before the first analysis run.
@@ -655,21 +677,19 @@ class FitWizardWindow(WizardWindowBase):
 
     def _reset_result_state(self) -> None:
         self._recommendation = None
-        self._selected_key = None
         self._invalidate_pending_curves()
-        # The card drops the recommendation with the window, so a redraw it
-        # makes afterwards (the residuals toggle, a resize) has no row to ask
-        # curves for: ``_on_card_curves_required`` is reached only while both
-        # hold the same recommendation, by construction rather than by a guard.
+        # The card and the panel drop their rows with the window, so a redraw
+        # they make afterwards (the residuals toggle, a resize) has no row to ask
+        # curves for: ``_build_curves`` is reached only while all three hold the
+        # same recommendation, by construction rather than by a guard.
         self._answer_card.set_recommendation(None)
+        self._model_compare.set_candidates((), "")
 
     def _on_analysis_failed(self, message: str) -> None:
         # Keep the "Fit wizard analysis failed:" prefix (GlobalFitWizardWindow
         # keeps it too — the two wizards must match) and return to Welcome so the
         # metric combo cannot resurrect a stale success.
-        self._recommendation = None
-        self._invalidate_pending_curves()
-        self._answer_card.set_recommendation(None)
+        self._reset_result_state()
         # First line only in the header status — a multi-line exception message
         # would balloon the header band; the full text goes in the tooltip.
         failure_text = str(message).strip() or "unknown error"
@@ -746,9 +766,6 @@ class FitWizardWindow(WizardWindowBase):
         recommendation = result
         self._recommendation = recommendation
         self._invalidate_pending_curves()
-        self._selected_key = recommendation.recommended_key
-        if self._selected_key is None and recommendation.assessments:
-            self._selected_key = recommendation.assessments[0].template.key
         self._status_label.setText(recommendation.summary)
         self._analysis_stale = False
         self._stale_banner.setVisible(False)
@@ -778,9 +795,6 @@ class FitWizardWindow(WizardWindowBase):
         self._recommendation = recommendation
         self._invalidate_pending_curves()
         self._cached_signature = copy.deepcopy(signature) if isinstance(signature, dict) else None
-        self._selected_key = recommendation.recommended_key
-        if self._selected_key is None and recommendation.assessments:
-            self._selected_key = recommendation.assessments[0].template.key
         self._cached_log_text = str(log_text or "")
         # Restore scope + peak seeds from the signature. A signature without a
         # scope keeps the default; without peaks, none. Cached state is never stale.
@@ -859,14 +873,20 @@ class FitWizardWindow(WizardWindowBase):
     def _populate_result_state(self) -> None:
         if self._recommendation is None or self._dataset is None:
             return
-        # Answer card.
+        # The Compare panel first: the card draws its candidate A, which starts
+        # at the recommendation, else the best row (D4).
+        self._model_compare.set_series([self._dataset], [self._dataset.run_label], [None], "")
+        self._model_compare.set_candidates(
+            self._candidate_summaries(),
+            _metric_label(self._recommendation),
+            a_key=self._recommendation.recommended_key,
+        )
         self._answer_card.set_plot_data(
             np.asarray(self._dataset.time, dtype=float),
             np.asarray(self._dataset.asymmetry, dtype=float),
             np.asarray(self._dataset.error, dtype=float),
         )
         self._answer_card.set_recommendation(self._recommendation)
-        self._answer_card.set_selected_key(self._selected_key)
         self._update_analysis_notes()
 
         # Deep-panel content.
@@ -875,7 +895,7 @@ class FitWizardWindow(WizardWindowBase):
         self._populate_fingerprint_plot()
         self._populate_peaks_table()
         self._populate_compare_table()
-        self._sync_selected_assessment()
+        self._follow_a(self._model_compare.a_key())
 
         # Rebuild the trail from the recommendation (single source of truth), then
         # inject the re-parented deep panels for the steps that have one.
@@ -1411,6 +1431,9 @@ class FitWizardWindow(WizardWindowBase):
         if self._recommendation is None:
             return
         assessments = self._recommendation.sorted_assessments()
+        # Repopulating and re-sorting must not reach _on_compare_selection_changed,
+        # which would make whatever row the selection lands on candidate A.
+        blocker = QSignalBlocker(self._compare_table)
         self._compare_table.setSortingEnabled(False)
         self._compare_table.setRowCount(len(assessments))
         for row, assessment in enumerate(assessments):
@@ -1450,39 +1473,55 @@ class FitWizardWindow(WizardWindowBase):
             self._compare_table.setItem(row, 7, QTableWidgetItem(str(assessment.parameter_count)))
         self._compare_table.setSortingEnabled(True)
         self._compare_table.sortItems(1, Qt.SortOrder.AscendingOrder)
+        blocker.unblock()
 
-    def _sync_selected_assessment(self) -> None:
-        if self._recommendation is None:
-            return
-        target_key = self._selected_key or self._recommendation.recommended_key
-        if target_key is None and self._recommendation.assessments:
-            target_key = self._recommendation.assessments[0].template.key
-        self._selected_key = target_key
+    def _candidate_summaries(self) -> tuple[CandidateSummary, ...]:
+        """The Compare panel's rows: every candidate of the recommendation, on its metric."""
+        return summarise_single_candidates(
+            self._recommendation, self._dataset, self._recommendation.metric
+        )
+
+    def _follow_a(self, key: str) -> None:
+        """Point the Details table and its residual checks at candidate A."""
         for row in range(self._compare_table.rowCount()):
-            item = self._compare_table.item(row, 0)
-            if item is None:
-                continue
-            if item.data(Qt.ItemDataRole.UserRole) == target_key:
-                self._compare_table.selectRow(row)
+            if self._compare_table.item(row, 0).data(Qt.ItemDataRole.UserRole) == key:
+                with QSignalBlocker(self._compare_table):
+                    self._compare_table.selectRow(row)
                 break
-        self._update_compare_warnings()
+        assessment = self._recommendation.assessment_for_key(key)
+        # A failed fit has no parameters worth handing over, from either button.
+        self._answer_card.set_apply_enabled(assessment.is_successful)
+        self._model_compare.set_continue_enabled(assessment.is_successful)
+        messages: list[str] = []
+        if assessment.residual_gate_passed:
+            messages.append("Residual gate passed.")
+        else:
+            messages.append("Residual gate warning(s):")
+            messages.extend(f"• {reason}" for reason in assessment.residual_gate_reasons)
+        messages.append(f"Residual RMS: {assessment.residual_rms:.3f}")
+        messages.append(f"Runs z score: {assessment.runs_z_score:.3f}")
+        messages.append(f"Max |autocorrelation|: {assessment.max_abs_autocorrelation:.3f}")
+        messages.append(f"Residual FFT peak SNR: {assessment.residual_fft_peak_snr:.3f}")
+        self._compare_warning_text.setPlainText("\n".join(messages))
 
     def _on_metric_changed(self, text: str) -> None:
         if self._recommendation is None:
             return
-        selected_key = self._selected_key
+        a_key = self._model_compare.a_key()
         self._recommendation = rerank_fit_wizard_recommendation(
             self._recommendation,
             SelectionMetric.from_value(text),
         )
         self._invalidate_pending_curves()
-        self._selected_key = selected_key or self._recommendation.recommended_key
         self._status_label.setText(self._recommendation.summary)
+        # A re-rank keeps A (D4); the panel first, since the card draws its A.
+        self._model_compare.set_candidates(
+            self._candidate_summaries(), _metric_label(self._recommendation), a_key=a_key
+        )
         self._answer_card.set_recommendation(self._recommendation)
-        self._answer_card.set_selected_key(self._selected_key)
         self._fingerprint_banner.setText(self._fingerprint_banner_text())
         self._populate_compare_table()
-        self._sync_selected_assessment()
+        self._follow_a(a_key)
         # The trail derives from the recommendation, so re-derive it after a re-rank.
         self._result_trail.set_steps(build_wizard_trail(self._recommendation))
         self._reparent_into_trail_slot("conditions", self._picker)
@@ -1496,26 +1535,10 @@ class FitWizardWindow(WizardWindowBase):
             )
 
     def _on_compare_selection_changed(self) -> None:
+        """A row picked in the Details table becomes candidate A."""
         selected_items = self._compare_table.selectedItems()
-        if not selected_items:
-            return
-        key = selected_items[0].data(Qt.ItemDataRole.UserRole)
-        if isinstance(key, str):
-            self._selected_key = key
-            self._answer_card.set_selected_key(key)
-        self._update_compare_warnings()
-
-    def _on_card_selection_changed(self, key: str) -> None:
-        """Keep the compare table + selected key in step with the card's choice."""
-        self._selected_key = key
-        for row in range(self._compare_table.rowCount()):
-            item = self._compare_table.item(row, 0)
-            if item is not None and item.data(Qt.ItemDataRole.UserRole) == key:
-                self._compare_table.blockSignals(True)
-                self._compare_table.selectRow(row)
-                self._compare_table.blockSignals(False)
-                break
-        self._update_compare_warnings()
+        if selected_items:
+            self._model_compare.set_a(selected_items[0].data(Qt.ItemDataRole.UserRole))
 
     # ------------------------------------------------------------------
     # On-demand candidate curves
@@ -1531,28 +1554,28 @@ class FitWizardWindow(WizardWindowBase):
         self._curve_generation += 1
         self._requested_curve_keys.clear()
 
-    def _on_card_curves_required(self, key: str) -> None:
-        """Build one candidate's dense curves on a worker, for the card to draw.
+    def _build_curves(self, key: str) -> None:
+        """Build one candidate's dense curves on a worker, for the card and the panel.
 
         A build materialises curves only for the rows it exposes as its answer
         (the dense-curve contract on
         :class:`~asymmetry.core.fitting.fit_wizard.CandidateAssessment`), while
-        this window lets the user select any of the two-to-three dozen
-        candidates it assessed — from the alternatives strip or the compare
-        table. Rebuilding one is a model evaluation plus one per additive
-        component over a 10⁴–10⁵-sample grid: tens of milliseconds, far past
-        what a selection click may spend on the GUI thread, so it goes through
+        this window lets the user pick any of the two-to-three dozen candidates
+        it assessed as A or B — in the Compare panel or the Details table.
+        Rebuilding one is a model evaluation plus one per additive component
+        over a 10⁴–10⁵-sample grid: tens of milliseconds, far past what a
+        selection click may spend on the GUI thread, so it goes through
         the window's :class:`~asymmetry.gui.tasks.TaskRunner` exactly as the
         analysis itself does. The closure captures the recommendation, the
         record and the key — plain data, no widgets — and the result is merged
         on the GUI thread by :meth:`_on_curves_materialised`.
 
-        The card emits this from its redraw, so it is reached only with a
-        recommendation populated on the card and the record
+        The card and the panel emit this from their draws, so it is reached only
+        with a recommendation populated on both and the record
         ``set_analysis_context`` supplied. One build per row per recommendation:
-        the card re-asks on every redraw it cannot draw a fit line for (the
-        residuals toggle, a re-rank, a row whose rebuilt curve is itself empty
-        because the record is), and a key already in
+        both re-ask on every draw they cannot draw a fit line for (a new A or B,
+        the residuals toggle, a re-rank, a row whose rebuilt curve is itself
+        empty because the record is), and a key already in
         ``_requested_curve_keys`` adds nothing.
         """
         if key in self._requested_curve_keys:
@@ -1583,9 +1606,9 @@ class FitWizardWindow(WizardWindowBase):
                 for row in self._recommendation.assessments
             ),
         )
-        # Same ranking, one row's curves filled in — the card re-points and
-        # redraws without disturbing its selection or its alternatives strip.
+        # Same ranking, one row's curves filled in: both redraw in place, A and B kept.
         self._answer_card.refresh_curves(self._recommendation)
+        self._model_compare.refresh_curves(self._candidate_summaries())
 
     def _on_curve_materialisation_failed(self, message: str) -> None:
         """A row that could not be rebuilt keeps drawing its data alone.
@@ -1596,38 +1619,13 @@ class FitWizardWindow(WizardWindowBase):
         """
         self.statusBar().showMessage(f"Could not draw that candidate: {message}")
 
-    def _update_compare_warnings(self) -> None:
-        assessment = self._selected_assessment()
-        if assessment is None:
-            self._compare_warning_text.setPlainText("")
-            return
-        messages: list[str] = []
-        if assessment.residual_gate_passed:
-            messages.append("Residual gate passed.")
-        else:
-            messages.append("Residual gate warning(s):")
-            messages.extend(f"• {reason}" for reason in assessment.residual_gate_reasons)
-        messages.append(f"Residual RMS: {assessment.residual_rms:.3f}")
-        messages.append(f"Runs z score: {assessment.runs_z_score:.3f}")
-        messages.append(f"Max |autocorrelation|: {assessment.max_abs_autocorrelation:.3f}")
-        messages.append(f"Residual FFT peak SNR: {assessment.residual_fft_peak_snr:.3f}")
-        self._compare_warning_text.setPlainText("\n".join(messages))
-
-    def _selected_assessment(self) -> CandidateAssessment | None:
-        if self._recommendation is None:
-            return None
-        return (
-            self._recommendation.assessment_for_key(self._selected_key)
-            or self._recommendation.recommended_assessment
-        )
-
     # ------------------------------------------------------------------
     # Apply
     # ------------------------------------------------------------------
 
-    def _on_card_apply_requested(self, assessment: object) -> None:
-        if self._recommendation is None or not isinstance(assessment, CandidateAssessment):
-            return
+    def _apply_candidate(self, key: str) -> None:
+        """Hand candidate ``key`` (A, from the card or the panel) to the fit panel."""
+        assessment = self._recommendation.assessment_for_key(key)
         self.apply_assessment_requested.emit(assessment, self._recommendation)
         self.statusBar().showMessage(f"Applied fit: {assessment.template.title}")
 
@@ -1670,6 +1668,11 @@ class FitWizardWindow(WizardWindowBase):
             return
         figure.clear()
         canvas.draw_idle()
+
+
+def _metric_label(recommendation: FitWizardRecommendation) -> str:
+    """The Compare panel's caption for the ranking metric, worded as the global wizard's."""
+    return f"Δ{recommendation.metric.value} from best"
 
 
 def _running_placeholder_steps() -> tuple:
