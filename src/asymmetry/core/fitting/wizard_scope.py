@@ -17,7 +17,9 @@ Design rules honoured here:
   :func:`asymmetry.core.io.base.field_direction_from_text`). The *muonium field
   regime* (low-/high-TF) is a separate, magnitude-based refinement that only
   ever narrows the muonium sub-family within an already-TF run.
-* A scope never carries a geometry: geometry always comes from the runs.
+* A scope never carries a geometry: geometry always comes from the runs. The
+  user may answer the direction only on a run whose file records none
+  (:func:`set_user_field_direction`), and the answer is marked as theirs.
 * User-registered components (``physics_classes == {CUSTOM}``) match every
   scope and are never silently hidden — the wizard must never drop the user's
   own function behind their back.
@@ -507,8 +509,51 @@ def _dataset_geometry_text(dataset: MuonDataset) -> str:
 
 
 def dataset_field_geometry(dataset: MuonDataset) -> FieldGeometry | None:
-    """The run's recorded field geometry, or ``None`` when it does not say."""
+    """The run's field geometry, recorded or answered by the user; ``None`` when unknown."""
     return geometry_from_field_direction(_dataset_geometry_text(dataset))
+
+
+#: ``metadata["field_direction_source"]`` on a direction the user answered.
+_USER_SOURCE = "user"
+
+#: The loader vocabulary (:func:`~asymmetry.core.io.base.field_direction_from_text`).
+_FIELD_DIRECTION_TEXT: dict[FieldGeometry, str] = {
+    FieldGeometry.ZF: "Zero field",
+    FieldGeometry.LF: "Longitudinal",
+    FieldGeometry.TF: "Transverse",
+}
+
+
+def _answered_by_user(metadata: Mapping) -> bool:
+    return metadata.get("field_direction_source") == _USER_SOURCE
+
+
+def set_user_field_direction(
+    datasets: Iterable[MuonDataset], geometry: FieldGeometry | None
+) -> None:
+    """Answer the field direction on every run whose file records none.
+
+    Any earlier user answer is withdrawn first, so ``None`` ("Not recorded")
+    leaves each run as its file had it. A direction the file records
+    (``field_direction`` or ``field_state``) is never touched. The dataset and
+    its run carry the same values, as the project load path applies them.
+    """
+    for dataset in datasets:
+        metadatas = [dataset.metadata] + ([] if dataset.run is None else [dataset.run.metadata])
+        for metadata in metadatas:
+            if _answered_by_user(metadata):
+                del metadata["field_direction"], metadata["field_direction_source"]
+        if geometry is not None and dataset_field_geometry(dataset) is None:
+            for metadata in metadatas:
+                metadata["field_direction"] = _FIELD_DIRECTION_TEXT[geometry]
+                metadata["field_direction_source"] = _USER_SOURCE
+
+
+def user_field_direction_overrides(dataset: MuonDataset) -> dict[str, str]:
+    """The user's direction answer as project ``metadata_overrides``; empty when there is none."""
+    if not _answered_by_user(dataset.metadata):
+        return {}
+    return {key: dataset.metadata[key] for key in ("field_direction", "field_direction_source")}
 
 
 def _dataset_sample_text(dataset: MuonDataset) -> str:
@@ -624,17 +669,34 @@ USER_FAMILY_TITLE = "Your functions"
 
 @dataclass(frozen=True)
 class RecordedGeometry:
-    """How the runs record their applied-field direction."""
+    """How the runs' files record their applied-field direction, and the user's answers."""
 
-    #: ``(geometry, run count)`` for every geometry some run records, in ZF/TF/LF order.
+    #: ``(geometry, run count)`` for every geometry some run's file records, in ZF/TF/LF order.
     counts: tuple[tuple[FieldGeometry, int], ...]
-    #: Runs that record no direction.
+    #: ``(geometry, run count)`` for every direction the user answered, in ZF/TF/LF order.
+    answered: tuple[tuple[FieldGeometry, int], ...]
+    #: Runs whose file records no direction, answered or not.
     unrecorded: int
 
     @property
     def editable(self) -> bool:
-        """The direction can be answered: at least one run records none."""
+        """The direction can be answered: at least one run's file records none."""
         return self.unrecorded > 0
+
+    @property
+    def answer(self) -> FieldGeometry | None:
+        """The user's direction when every run the file leaves open carries it, else ``None``."""
+        return next((geometry for geometry, n in self.answered if n == self.unrecorded), None)
+
+
+def _geometry_counts(
+    geometries: list[FieldGeometry | None],
+) -> tuple[tuple[FieldGeometry, int], ...]:
+    return tuple(
+        (geometry, geometries.count(geometry))
+        for geometry in FieldGeometry
+        if geometry in geometries
+    )
 
 
 @dataclass(frozen=True)
@@ -696,14 +758,20 @@ def describe_scope(datasets: Iterable[MuonDataset], scope: WizardScope) -> Scope
     applicable = resolve_scope_for_datasets(datasets, WizardScope()).included_set
     reasons = {exc.name: exc.reason for exc in resolution.excluded_components}
 
-    recorded = [dataset_field_geometry(dataset) for dataset in datasets]
+    recorded = [
+        dataset_field_geometry(dataset)
+        for dataset in datasets
+        if not _answered_by_user(dataset.metadata)
+    ]
+    answered = [
+        dataset_field_geometry(dataset)
+        for dataset in datasets
+        if _answered_by_user(dataset.metadata)
+    ]
     geometry = RecordedGeometry(
-        counts=tuple(
-            (geometry, recorded.count(geometry))
-            for geometry in FieldGeometry
-            if geometry in recorded
-        ),
-        unrecorded=recorded.count(None),
+        counts=_geometry_counts(recorded),
+        answered=_geometry_counts(answered),
+        unrecorded=recorded.count(None) + len(answered),
     )
 
     members: dict[str, list[ScopeComponent]] = {title: [] for title in FAMILY_ORDER}

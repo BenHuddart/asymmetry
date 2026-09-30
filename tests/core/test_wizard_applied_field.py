@@ -22,6 +22,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _initial_parameters_for_template,
     _pinned_longitudinal_field,
     build_fit_wizard_recommendation,
+    build_fit_wizard_recommendation_for_templates,
     fingerprint_spectrum,
 )
 from asymmetry.core.fitting.models import (
@@ -29,6 +30,7 @@ from asymmetry.core.fitting.models import (
     field_decoupling_threshold_gauss,
 )
 from asymmetry.core.fitting.parameters import split_parameter_name
+from asymmetry.core.fitting.wizard_scope import set_user_field_direction
 
 MUON_LIFETIME_US = 2.197
 
@@ -265,6 +267,31 @@ def test_wizard_recovers_dynamic_lorentzian_kt_on_a_zero_field_record() -> None:
     assert b_l.value == pytest.approx(0.0)
     # A pinned parameter must not be counted against the information criteria.
     assert "B_L" not in {p.name for p in assessment.fit_result.parameters.free_parameters}
+
+
+def test_a_longitudinal_answer_lets_the_wizard_pin_b_l_at_the_recorded_field() -> None:
+    """A recorded setpoint with no direction tag leaves ``B_L`` free; the user's
+    LF answer (D4) confirms the geometry, so the same run pins it."""
+    rng = np.random.default_rng(20260930)
+    t = np.linspace(0.008, 12.0, 1500)
+    sigma = 0.3 * np.exp(t / (2.0 * MUON_LIFETIME_US))
+    y = 20.0 * dynamic_lorentzian_kt(t, 1.0, 0.4, 0.3, 50.0) + 2.0 + rng.normal(0.0, sigma)
+    dataset = MuonDataset(
+        time=t, asymmetry=y, error=sigma, metadata={"run_number": 9, "field": 50.0}
+    )
+
+    def fitted_b_l():
+        recommendation = build_fit_wizard_recommendation_for_templates(dataset, [_lkt_template()])
+        (assessment,) = recommendation.assessments
+        return assessment.fit_result.parameters["B_L"]
+
+    assert fitted_b_l().fixed is False
+
+    set_user_field_direction([dataset], FieldGeometry.LF)
+
+    b_l = fitted_b_l()
+    assert b_l.fixed is True
+    assert b_l.value == pytest.approx(50.0)
 
 
 def test_global_wizard_candidate_sets_follow_the_same_policy() -> None:

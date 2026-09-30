@@ -7,7 +7,7 @@ import json
 import numpy as np
 import pytest
 
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.component_tags import ComputationalCost, FieldGeometry, PhysicsClass
 from asymmetry.core.fitting.composite import COMPONENTS
 from asymmetry.core.fitting.user_functions import register_component
@@ -24,6 +24,7 @@ from asymmetry.core.fitting.wizard_scope import (
     ExcludedComponent,
     ScopeResolution,
     WizardScope,
+    dataset_field_geometry,
     describe_scope,
     effort_tier_from_payload,
     effort_tier_to_payload,
@@ -31,6 +32,8 @@ from asymmetry.core.fitting.wizard_scope import (
     resolve_scope,
     resolve_scope_for_dataset,
     resolve_scope_for_datasets,
+    set_user_field_direction,
+    user_field_direction_overrides,
 )
 
 MAGNETISM = frozenset({PhysicsClass.MAGNETISM})
@@ -509,8 +512,10 @@ def test_describe_scope_summarises_the_recorded_geometry():
         [_fake_dataset("LF"), _fake_dataset("LF"), _fake_dataset("")], WizardScope()
     )
     assert view.geometry.counts == ((FieldGeometry.LF, 2),)
+    assert view.geometry.answered == ()
     assert view.geometry.unrecorded == 1
     assert view.geometry.editable
+    assert view.geometry.answer is None
 
 
 def test_describe_scope_direction_is_read_only_when_every_run_records_one():
@@ -576,6 +581,136 @@ def test_describe_scope_puts_user_functions_last(throwaway_user_component):
     (component,) = view.families[-1].components
     assert component.name == throwaway_user_component
     assert component.included
+
+
+# --- the user's field-direction answer (D4) ---------------------------------
+
+
+def _run_dataset(**metadata: str) -> MuonDataset:
+    """A dataset whose run holds its own copy of the metadata, as a loader builds it."""
+    return MuonDataset(
+        time=np.linspace(0.0, 8.0, 4),
+        asymmetry=np.zeros(4),
+        error=np.ones(4),
+        metadata=dict(metadata),
+        run=Run(run_number=1, metadata=dict(metadata)),
+    )
+
+
+def _direction_keys(metadata: dict) -> dict:
+    return {k: metadata[k] for k in ("field_direction", "field_direction_source") if k in metadata}
+
+
+USER_LF = {"field_direction": "Longitudinal", "field_direction_source": "user"}
+
+
+def test_user_direction_fills_a_run_that_records_none_on_dataset_and_run():
+    dataset = _run_dataset(field_direction="")
+    set_user_field_direction([dataset], FieldGeometry.LF)
+    assert _direction_keys(dataset.metadata) == USER_LF
+    assert _direction_keys(dataset.run.metadata) == USER_LF
+    assert dataset_field_geometry(dataset) is FieldGeometry.LF
+
+
+@pytest.mark.parametrize(
+    "recorded",
+    [
+        {"field_direction": "Transverse"},
+        {"field_state": "TF"},
+        {"field_direction": "Transverse", "field_direction_source": "icp_log"},
+    ],
+)
+def test_user_direction_never_touches_a_direction_the_file_records(recorded):
+    dataset = _run_dataset(**recorded)
+    for geometry in (FieldGeometry.LF, None):
+        set_user_field_direction([dataset], geometry)
+        assert dataset.metadata == recorded
+        assert dataset.run.metadata == recorded
+
+
+def test_user_direction_replaces_its_own_earlier_answer():
+    dataset = _run_dataset()
+    set_user_field_direction([dataset], FieldGeometry.LF)
+    set_user_field_direction([dataset], FieldGeometry.ZF)
+    expected = {"field_direction": "Zero field", "field_direction_source": "user"}
+    assert _direction_keys(dataset.metadata) == expected
+    assert _direction_keys(dataset.run.metadata) == expected
+
+
+def test_not_recorded_withdraws_only_the_user_answer():
+    answered = _run_dataset(field_state="")
+    untouched = _run_dataset(field_direction="")
+    recorded = _run_dataset(field_state="ZF")
+    set_user_field_direction([answered], FieldGeometry.TF)
+    set_user_field_direction([answered, untouched, recorded], None)
+    assert answered.metadata == {"field_state": ""} == answered.run.metadata
+    assert untouched.metadata == {"field_direction": ""} == untouched.run.metadata
+    assert recorded.metadata == {"field_state": "ZF"} == recorded.run.metadata
+    assert dataset_field_geometry(answered) is None
+
+
+def test_user_direction_answers_a_mixed_series_only_where_the_file_is_silent():
+    silent, recorded = _run_dataset(), _run_dataset(field_state="LF")
+    set_user_field_direction([silent, recorded], FieldGeometry.TF)
+    assert dataset_field_geometry(silent) is FieldGeometry.TF
+    assert recorded.metadata == {"field_state": "LF"}
+
+
+def test_user_direction_on_a_dataset_sharing_its_runs_metadata():
+    dataset = _run_dataset()
+    dataset.run.metadata = dataset.metadata
+    set_user_field_direction([dataset], FieldGeometry.LF)
+    assert _direction_keys(dataset.metadata) == USER_LF
+    set_user_field_direction([dataset], None)
+    assert dataset.metadata == {}
+
+
+def test_user_direction_on_a_dataset_without_a_run():
+    dataset = _fake_dataset("")
+    set_user_field_direction([dataset], FieldGeometry.ZF)
+    assert dataset_field_geometry(dataset) is FieldGeometry.ZF
+
+
+def test_user_direction_overrides_carry_only_the_users_answer():
+    answered, recorded = _run_dataset(), _run_dataset(field_direction="Transverse")
+    set_user_field_direction([answered, recorded], FieldGeometry.LF)
+    assert user_field_direction_overrides(answered) == USER_LF
+    assert user_field_direction_overrides(recorded) == {}
+
+
+def test_describe_scope_counts_a_user_answer_apart_from_the_files():
+    runs = [_run_dataset(field_state="LF"), _run_dataset(), _run_dataset()]
+    set_user_field_direction(runs, FieldGeometry.LF)
+    geometry = describe_scope(runs, WizardScope()).geometry
+    assert geometry.counts == ((FieldGeometry.LF, 1),)
+    assert geometry.answered == ((FieldGeometry.LF, 2),)
+    assert geometry.unrecorded == 2
+    assert geometry.editable
+    assert geometry.answer is FieldGeometry.LF
+
+
+def test_describe_scope_has_no_single_answer_while_a_silent_run_is_unanswered():
+    answered = _run_dataset()
+    set_user_field_direction([answered], FieldGeometry.TF)
+    geometry = describe_scope([answered, _run_dataset()], WizardScope()).geometry
+    assert geometry.answered == ((FieldGeometry.TF, 1),)
+    assert geometry.unrecorded == 2
+    assert geometry.answer is None
+
+
+def test_describe_scope_has_no_single_answer_when_answers_differ():
+    first, second = _run_dataset(), _run_dataset()
+    set_user_field_direction([first], FieldGeometry.TF)
+    set_user_field_direction([second], FieldGeometry.ZF)
+    geometry = describe_scope([first, second], WizardScope()).geometry
+    assert geometry.answered == ((FieldGeometry.ZF, 1), (FieldGeometry.TF, 1))
+    assert geometry.answer is None
+
+
+def test_a_user_answer_scopes_the_screen_like_a_recorded_one():
+    answered = _run_dataset()
+    set_user_field_direction([answered], FieldGeometry.LF)
+    assert resolve_scope_for_dataset(answered, WizardScope()).query.geometries == {FieldGeometry.LF}
 
 
 # --- effort tier (PR 5) ---------------------------------------------------

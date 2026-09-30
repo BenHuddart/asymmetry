@@ -1919,6 +1919,88 @@ class TestMainWindowProjectState:
         assert window2._plot_panel._y_min.value() == pytest.approx(20.0)
         assert window2._plot_panel._y_max.value() == pytest.approx(45.0)
 
+    def test_user_field_direction_survives_save_and_reopen(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        """A direction the user answered (D4) round-trips; a recorded one is not written."""
+        from asymmetry.core.data.dataset import Run
+        from asymmetry.core.fitting.component_tags import FieldGeometry
+        from asymmetry.core.fitting.wizard_scope import (
+            dataset_field_geometry,
+            set_user_field_direction,
+        )
+
+        files = {6101: tmp_path / "run6101.nxs", 6102: tmp_path / "run6102.nxs"}
+        file_direction = {6101: "", 6102: "Transverse"}
+        for source_file in files.values():
+            source_file.write_bytes(b"\x00")
+
+        def _loaded(run_number: int) -> MuonDataset:
+            metadata = {"field": 100.0, "field_direction": file_direction[run_number]}
+            run = Run(
+                run_number=run_number,
+                histograms=[
+                    Histogram(counts=np.full(4, 10.0), bin_width=1.0),
+                    Histogram(counts=np.full(4, 5.0), bin_width=1.0),
+                ],
+                source_file=str(files[run_number]),
+                grouping={
+                    "groups": {1: [1], 2: [2]},
+                    "forward_group": 1,
+                    "backward_group": 2,
+                    "alpha": 1.0,
+                    "first_good_bin": 0,
+                    "last_good_bin": 3,
+                    "bunching_factor": 1,
+                    "deadtime_correction": False,
+                },
+                metadata=dict(metadata),
+            )
+            t = np.arange(4, dtype=float)
+            return MuonDataset(
+                time=t,
+                asymmetry=np.zeros_like(t),
+                error=np.ones_like(t),
+                metadata=dict(metadata),
+                run=run,
+            )
+
+        window1 = mw_module.MainWindow()
+        datasets = [_loaded(6101), _loaded(6102)]
+        for dataset in datasets:
+            window1._data_browser.add_dataset(dataset)
+        set_user_field_direction(datasets, FieldGeometry.LF)
+
+        state = window1.collect_project_state()
+        overrides = {e["run_number"]: e["metadata_overrides"] for e in state["datasets"]}
+        assert overrides[6101]["field_direction"] == "Longitudinal"
+        assert overrides[6101]["field_direction_source"] == "user"
+        assert "field_direction" not in overrides[6102]
+        assert "field_direction_source" not in overrides[6102]
+
+        path = tmp_path / "direction.asymp"
+        save_project(state, path)
+        loaded_state = load_project(path)
+
+        runs_by_file = {str(source): rn for rn, source in files.items()}
+        monkeypatch.setattr(
+            mw_module.MainWindow,
+            "_load_file",
+            lambda self_inner, path_str: _loaded(runs_by_file[path_str]),
+        )
+        window2 = mw_module.MainWindow()
+        window2.restore_project_state(loaded_state, str(path))
+
+        answered = window2._data_browser.get_dataset(6101)
+        for metadata in (answered.metadata, answered.run.metadata):
+            assert metadata["field_direction"] == "Longitudinal"
+            assert metadata["field_direction_source"] == "user"
+        assert dataset_field_geometry(answered) is FieldGeometry.LF
+
+        recorded = window2._data_browser.get_dataset(6102)
+        assert recorded.metadata["field_direction"] == "Transverse"
+        assert "field_direction_source" not in recorded.metadata
+
     def test_period_mapped_dataset_survives_reload(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
     ) -> None:

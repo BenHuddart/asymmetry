@@ -161,6 +161,7 @@ from asymmetry.core.fitting.parameter_models import (
     effective_range_bounds,
 )
 from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.wizard_scope import user_field_direction_overrides
 from asymmetry.core.fourier import (
     ApodisationSuggestion,
     GroupSpectrumConfig,
@@ -16554,6 +16555,8 @@ class MainWindow(QMainWindow):
                 metadata_overrides["custom_fields"] = {
                     str(key): str(value) for key, value in custom_fields.items()
                 }
+            # A field direction the user answered for a run whose file records none.
+            metadata_overrides.update(user_field_direction_overrides(dataset))
 
             datasets.append(
                 {

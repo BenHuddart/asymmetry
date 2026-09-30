@@ -22,6 +22,11 @@ docs/plans/model-family-picker.md D2). Scopes live in the fit-panel wizard
 caches, as a cache signature's ``"scope"`` and inside a single-run
 recommendation's ``build_signature`` JSON string. See :func:`_migrate_v22_to_v23`.
 
+A dataset's ``metadata_overrides`` may also carry ``field_direction`` with
+``field_direction_source: "user"``: a direction the user answered for a run
+whose file records none (docs/plans/model-family-picker.md D4). The keys are
+optional, so an older project simply lacks them and needs no migration.
+
 Version 22 adds a top-level ``joint_fits`` list (docs/plans/joint-fit.md D13):
 each entry is a serialized
 :class:`~asymmetry.core.representation.joint_fit.JointFit` — a joint fit's
@@ -144,7 +149,9 @@ Version 11 schema
                 "source_file": "/abs/path/to/file.nxs",
                 "metadata_overrides": {
                     "field": 150.0,
-                    "custom_fields": {"custom:ab12cd34": "annealed"}
+                    "custom_fields": {"custom:ab12cd34": "annealed"},
+                    "field_direction": "Longitudinal",
+                    "field_direction_source": "user"
                 }
             }
         ],
