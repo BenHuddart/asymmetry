@@ -145,11 +145,16 @@ The tier is a poor guide to what the user waits for:
       on this computer" once timed;
     - "Slow (not yet timed on this computer)" or "Quick" until then.
   - Seconds print to two significant figures, or as a whole number from
-    100 s.
-  - The pill's **slow** tag and the footer's "K slow: …" line follow `slow`
-    unchanged.
-  - After a run records its timings, the window re-describes the picker, so
-    new estimates show at once.
+    10 s (so 99.6 s never prints as "1e+02").
+  - The footer's "K slow: …" line follows `slow` unchanged. The pill's
+    **slow** tag used to be built only when a card was created. It is now
+    always built and shown or hidden on every render, because the slow set
+    can change while the cards stay the same.
+  - After a run records its timings, the window calls `refresh()` on the
+    picker, so the new estimates show at once.
+  - The docs screenshot capture (`docs/screenshots/capture.py`) gives both
+    windows a fresh, untimed store and records nothing, so the published
+    pictures do not depend on the machine that builds them.
 
 ## Code map (verified 2026-09-30)
 
