@@ -1,7 +1,7 @@
 # Model family picker for both fit wizards
 
-Status: planned 2026-09-30 on `feat/model-family-picker`. The PR is built in
-phased subagent steps, with a lead review gate after each. Mockup (Design
+Status: implemented 2026-09-30 on `feat/model-family-picker`, PR to follow.
+It was built in phased subagent steps, with a lead review gate after each. Mockup (Design
 canvas; the Scope board and the Model families board):
 <https://claude.ai/artifact/3rz871CWotdJ2nmJcVHwCM>. This is the first piece
 of the wizard UX work that started with

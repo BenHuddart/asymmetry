@@ -318,6 +318,7 @@ def _import_scenarios() -> None:
         fit_asymmetric_errors,
         fit_wizard_gkt,
         fit_wizard_result,
+        fit_wizard_welcome,
         fourier_tf,
         global_fit_lfkt,
         global_fit_wizard_result,

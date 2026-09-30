@@ -613,9 +613,10 @@ engine behind the GUI's single-fit wizard.
 
 .. code-block:: text
 
-   asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope PRESET]
+   asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope NAME]
                     [--include C,D] [--exclude C,D] [--tmin TMIN]
                     [--tmax TMAX] [--plot] [--json] [--workdir WORKDIR]
+                    [--instrument NAME]
                     folder
 
 ``--geometry`` overrides every other source. Without it the geometry comes from
@@ -624,11 +625,34 @@ the folder's ``survey.json`` when one exists — including a geometry the survey
 otherwise from this run's own metadata; the header line names the source
 (``user``, ``survey``, ``field``, ``file`` or ``none``). Pass it whenever the
 reduced spectrum tells you something the survey could not, such as a
-longitudinal decoupling run the file stamps ``TF``. ``--scope`` restricts the
-candidate families to a preset (``auto``, ``zf-static-magnetism``,
-``tf-knight-precession``, ``tf-superconductor``, ``lf-dynamics``,
-``fluoride-fmuf``, ``muonium-radical``, ``all``) when the physics is already
-known. ``--include`` adds time-domain components the preset leaves out (for
+longitudinal decoupling run the file stamps ``TF``. ``--scope`` names the
+physics to look for when it is already known, the command-line counterpart of
+the GUI picker's "Looking for" chips. It chooses physics only, never a
+geometry: the geometry always comes from the run or ``--geometry``, so
+``--scope lf-dynamics`` on a zero-field run screens zero-field dynamics. The
+names and the physics each looks for (generic relaxation and the background
+are always included):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - ``--scope``
+     - Physics looked for
+   * - ``auto`` (default), ``all``
+     - every class
+   * - ``zf-static-magnetism``, ``tf-knight-precession``
+     - static magnetism
+   * - ``tf-superconductor``
+     - superconductivity and static magnetism
+   * - ``lf-dynamics``
+     - spin dynamics and static magnetism
+   * - ``fluoride-fmuf``
+     - F–μ–F and nuclear dipoles
+   * - ``muonium-radical``
+     - muonium
+
+``--include`` adds time-domain components the scope leaves out (for
 example ``Oscillatory`` for a precession line in an LF run, as in a type-I
 superconductor's intermediate state) and ``--exclude`` drops components the
 physics rules out (``VortexLattice,VortexLatticePowder`` for a magnet in TF);

@@ -8,9 +8,9 @@ subsystems or days.
 
 ### Model family picker for both fit wizards
 
-Status: planned 2026-09-30 on `feat/model-family-picker`; one PR in phased
-subagent steps (core scope model and registry labels, run direction, widget,
-wiring, docs), with a lead review gate after each. Decision log (D1–D8), code
+Status: implemented 2026-09-30 on `feat/model-family-picker`, PR to follow;
+built in phased subagent steps (core scope model and registry labels, run
+direction, widget, wiring, docs), with a lead review gate after each. Decision log (D1–D8), code
 map and phases are in
 [plans/model-family-picker.md](plans/model-family-picker.md). Mockup:
 <https://claude.ai/artifact/3rz871CWotdJ2nmJcVHwCM>.
