@@ -80,6 +80,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The same fix applies to older projects, from before grouping profiles, that
   used file deadtime. Their profile is now created with **From file** when they
   are opened.
+- **The Global Fit Wizard recommends Longitudinal-field KT + Constant on a
+  decoupling series again.** Since 0.18.0 it recommended nothing on an LF
+  decoupling series: each run's LF-KT fit gave the decoupled polarisation to the
+  constant instead of the Kubo-Toyabe term, and a background bound then held
+  every fit away from the true one. The wizard now starts the Kubo-Toyabe term at
+  the full initial asymmetry, so each run's fit finds the Δ, B_L and background
+  the data carry, and the series answer can again share Δ with B_L local to each
+  run. The single-run Fit Wizard's LF-KT fit of a run in a field is fixed too.
 
 ## [0.21.0] - 2026-09-28
 
