@@ -2,6 +2,7 @@
 
 A bold header, the streaming :class:`DecisionTrail`, a collapsed "Live log" and
 a Cancel button, packaged so the step that is running can host it (plan D2).
+When the run ends the block collapses to a "Run log" disclosure holding the log.
 The host drives the trail directly through :attr:`RunProgress.trail`.
 """
 
@@ -31,7 +32,9 @@ class RunProgress(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        header_row = QHBoxLayout()
+        self._header_row = QWidget(self)
+        header_row = QHBoxLayout(self._header_row)
+        header_row.setContentsMargins(0, 0, 0, 0)
         self._header = QLabel("", self)
         header_font = self._header.font()
         header_font.setBold(True)
@@ -40,7 +43,7 @@ class RunProgress(QWidget):
         self._cancel = QPushButton("Cancel", self)
         self._cancel.clicked.connect(self.cancel_requested)
         header_row.addWidget(self._cancel)
-        layout.addLayout(header_row)
+        layout.addWidget(self._header_row)
 
         self._trail = DecisionTrail(self)
         layout.addWidget(self._trail)
@@ -50,7 +53,6 @@ class RunProgress(QWidget):
         self._log.setMinimumHeight(row_height() * _LOG_VISIBLE_LINES)
         self._log_section.addWidget(self._log)
         layout.addWidget(self._log_section)
-        layout.addStretch(1)
 
     @property
     def trail(self) -> DecisionTrail:
@@ -61,8 +63,24 @@ class RunProgress(QWidget):
         self._header.setText(header)
         self._trail.stream_placeholders(placeholder_steps)
         self._trail.set_status("")
+        self.restore_log("")
+        self._show_running(True)
+
+    def finish(self) -> None:
+        """Collapse to the "Run log" disclosure: the header, trail and Cancel go, the log stays."""
+        self._show_running(False)
+
+    def restore_log(self, text: str) -> None:
+        """Replace the log with ``text``, one message per line, e.g. a cached run's log."""
         self._log.clear()
         self._messages.clear()
+        for line in text.splitlines():
+            self.append_log(line)
+
+    def _show_running(self, running: bool) -> None:
+        self._header_row.setVisible(running)
+        self._trail.setVisible(running)
+        self._log_section.set_title("Live log" if running else "Run log")
 
     def append_log(self, text: str) -> None:
         self._log.log(text)

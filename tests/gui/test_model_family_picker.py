@@ -424,3 +424,11 @@ def test_the_details_panel_hides_in_a_narrow_picker(qapp):
     qapp.processEvents()
     assert not picker._details.isVisible()
     picker.close()
+
+
+def test_the_summary_names_the_direction_and_the_models_screened(qapp):
+    picker = _picker(_series("Longitudinal", "Longitudinal"))
+    direction, count = picker.summary().split(" · ")
+    assert direction == "Longitudinal"
+    assert count == f"{picker._view.included_count} models"
+    assert _picker(_series("", "")).summary().startswith("Direction not recorded · ")

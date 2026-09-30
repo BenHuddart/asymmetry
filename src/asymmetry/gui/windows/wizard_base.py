@@ -203,6 +203,9 @@ class WizardWindowBase(QMainWindow):
     def _on_analysis_failed(self, message: str) -> None:
         self._status_label.setText(message)
 
+    def _on_analysis_cancelled(self) -> None:
+        pass
+
     def _on_progress(self, current: int, total: int, message: str) -> None:
         self._progress_label.setText(message)
 
@@ -294,6 +297,7 @@ class WizardWindowBase(QMainWindow):
             return
         self._status_label.setText("Analysis cancelled.")
         self._current_worker = None
+        self._on_analysis_cancelled()
 
     # ------------------------------------------------------------------
     # Shared helpers

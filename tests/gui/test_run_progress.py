@@ -68,3 +68,28 @@ def test_live_log_starts_collapsed(qapp: QApplication) -> None:
     section = progress.findChild(PanelSection)
     assert section.title() == "Live log"
     assert not section.isExpanded()
+
+
+def test_finish_collapses_to_a_run_log_that_keeps_the_messages(qapp: QApplication) -> None:
+    progress = RunProgress()
+    progress.start("Screening the series…", _STEPS)
+    progress.append_log("Starting screening for 4 datasets.")
+    progress.finish()
+    section = progress.findChild(PanelSection)
+    assert section.title() == "Run log"
+    assert progress.trail.isHidden()
+    cancel = next(b for b in progress.findChildren(QPushButton) if b.text() == "Cancel")
+    assert not cancel.isVisibleTo(progress)
+    assert progress.log_text() == "Starting screening for 4 datasets."
+
+    progress.start("Optimizing selected candidates…", _STEPS)
+    assert section.title() == "Live log"
+    assert cancel.isVisibleTo(progress)
+
+
+def test_restore_log_replaces_the_messages_line_by_line(qapp: QApplication) -> None:
+    progress = RunProgress()
+    progress.append_log("old message")
+    progress.restore_log("first\nsecond")
+    assert progress.log_text() == "first\nsecond"
+    assert progress.findChild(LogPanel).entry_count() == 2

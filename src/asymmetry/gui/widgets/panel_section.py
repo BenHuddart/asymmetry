@@ -240,6 +240,11 @@ class PanelSection(QWidget):
         """Return the section title (``CollapsibleSection`` API parity)."""
         return self._title
 
+    def set_title(self, title: str) -> None:
+        """Rename the section."""
+        self._title = str(title)
+        self._header_label.setText(self._title.upper())
+
     # ── Expand / collapse ─────────────────────────────────────────────────────
 
     def isExpanded(self) -> bool:  # noqa: N802 — CollapsibleSection parity
