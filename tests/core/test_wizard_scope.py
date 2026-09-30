@@ -18,10 +18,13 @@ from asymmetry.core.fitting.wizard_scope import (
     FAMILY_TEXT,
     MUONIUM_HIGH_TF_MIN_GAUSS,
     MUONIUM_LOW_TF_MAX_GAUSS,
+    SLOW_SECONDS_PER_RUN,
+    UNTIMED,
     USER_FAMILY_TITLE,
     ZERO_FIELD_MAX_GAUSS,
     EffortTier,
     ExcludedComponent,
+    FitTimeEstimates,
     ScopeResolution,
     WizardScope,
     dataset_field_geometry,
@@ -133,17 +136,64 @@ def test_physics_note_names_the_classes_looked_for():
 # --- slow models --------------------------------------------------------
 
 
-def test_skip_slow_caps_the_cost_at_moderate():
+def test_untimed_skip_slow_leaves_out_the_expensive_tier():
     res = resolve_scope(WizardScope(skip_slow=True))
-    assert res.query.max_cost is ComputationalCost.MODERATE
     slow = {n for n, d in COMPONENTS.items() if d.cost is ComputationalCost.EXPENSIVE}
     assert slow and not (slow & res.included_set)
+    moderate = {n for n, d in COMPONENTS.items() if d.cost is ComputationalCost.MODERATE}
+    assert moderate & res.included_set
     reason = next(e.reason for e in res.excluded_components if e.name == "DynamicGaussianKT")
     assert "slow" in reason
 
 
-def test_skip_slow_off_sets_no_cost_cap():
-    assert resolve_scope(WizardScope()).query.max_cost is None
+def test_skip_slow_off_leaves_nothing_out_for_being_slow():
+    timed = FitTimeEstimates({"Oscillatory": 60.0})
+    res = resolve_scope(WizardScope(), fit_times=timed)
+    assert {"DynamicGaussianKT", "Oscillatory"} <= res.included_set
+
+
+def test_a_timed_component_is_slow_by_its_estimate_not_its_tier():
+    # Dynamic Gaussian KT is in the expensive tier but quick here; Oscillatory is
+    # cheap per call but takes 6 s per run. Untimed Keren falls back to its cheap tier.
+    timed = FitTimeEstimates({"DynamicGaussianKT": 0.4, "Oscillatory": 6.0})
+    res = resolve_scope(WizardScope(skip_slow=True), fit_times=timed)
+    assert "DynamicGaussianKT" in res.included_set
+    assert "Oscillatory" not in res.included_set
+    assert "Keren" in res.included_set
+    assert "DynamicLorentzianKT" not in res.included_set  # untimed and expensive
+
+
+def test_the_slow_threshold_is_exclusive():
+    definition = COMPONENTS["Oscillatory"]
+    at = FitTimeEstimates({"Oscillatory": SLOW_SECONDS_PER_RUN})
+    over = FitTimeEstimates({"Oscillatory": SLOW_SECONDS_PER_RUN + 0.01})
+    assert not at.is_slow("Oscillatory", definition)
+    assert over.is_slow("Oscillatory", definition)
+    assert not UNTIMED.is_slow("Oscillatory", definition)
+    assert UNTIMED.is_slow("DynamicGaussianKT", COMPONENTS["DynamicGaussianKT"])
+
+
+def test_describe_scope_tags_exactly_what_skip_slow_leaves_out():
+    datasets = [_fake_dataset("ZF")]
+    timed = FitTimeEstimates({"DynamicGaussianKT": 0.4, "Oscillatory": 12.0, "Keren": 1.0})
+    view = describe_scope(datasets, WizardScope(), timed)
+    components = {c.name: c for family in view.families for c in family.components}
+    assert components["Oscillatory"].slow
+    assert components["Oscillatory"].estimated_seconds == 12.0
+    assert not components["DynamicGaussianKT"].slow
+    assert components["Keren"].estimated_seconds == 1.0
+    assert components["DynamicLorentzianKT"].slow
+    assert components["DynamicLorentzianKT"].estimated_seconds is None
+    tagged = {c.name for c in view.slow_included}
+    skipped = describe_scope(datasets, WizardScope(skip_slow=True), timed)
+    left_out = {
+        c.name
+        for family in skipped.families
+        for c in family.components
+        if c.applies and not c.included
+    }
+    assert tagged == left_out
+    assert skipped.slow_included == ()
 
 
 # --- geometry from the run ----------------------------------------------
