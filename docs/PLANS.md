@@ -6,6 +6,23 @@ subsystems or days.
 
 ## Active
 
+### Model family picker for both fit wizards
+
+Status: planned 2026-09-30 on `feat/model-family-picker`; one PR in phased
+subagent steps (core scope model and registry labels, run direction, widget,
+wiring, docs), with a lead review gate after each. Decision log (D1–D8), code
+map and phases are in
+[plans/model-family-picker.md](plans/model-family-picker.md). Mockup:
+<https://claude.ai/artifact/3rz871CWotdJ2nmJcVHwCM>.
+
+A shared `ModelFamilyPicker` replaces `WizardScopeSelector` in both wizards.
+It asks the field direction first and saves the answer only on runs that
+record none. Optional physics chips can be combined. Family cards show every
+component as a readable, searchable pill with a **slow** tag, and a details
+panel explains each one. A **Leave out slow models** switch completes it.
+The scope becomes a set of physics classes plus overrides (schema v23), and
+geometry always comes from the runs.
+
 ### Grouping preview: legible compares and a Counts view
 
 Status: implemented 2026-09-21 on `feat/grouping-preview`, PR to follow; one
