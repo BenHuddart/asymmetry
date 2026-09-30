@@ -398,23 +398,23 @@ def _component_exclusion_reason(
     """Return why *definition* is out of scope for *query*, or ``None`` if in scope.
 
     Checked in a fixed order so the reason is the most specific applicable one:
-    frequency-domain first, then user-CUSTOM ubiquity, then geometry, physics,
-    and finally cost.
+    frequency-domain first, then geometry, physics, and finally cost. An
+    untagged user component matches every geometry and physics choice, but the
+    slow-model switch still applies to it.
     """
     if definition.domain != "time":
         return "frequency-domain component; the wizard fits time spectra"
-    if definition.physics_classes == frozenset({PhysicsClass.CUSTOM}):
-        return None  # user components match every query
-    if not (definition.field_geometries & query.geometries):
-        return (
-            f"applies in {_joined(definition.field_geometries)}, "
-            f"not the runs' {_joined(query.geometries)} geometry"
-        )
-    if not (definition.physics_classes & query.physics_classes):
-        return (
-            f"physics class '{_joined(definition.physics_classes)}' is not looked for "
-            f"({_joined(scope.physics)})"
-        )
+    if definition.physics_classes != frozenset({PhysicsClass.CUSTOM}):
+        if not (definition.field_geometries & query.geometries):
+            return (
+                f"applies in {_joined(definition.field_geometries)}, "
+                f"not the runs' {_joined(query.geometries)} geometry"
+            )
+        if not (definition.physics_classes & query.physics_classes):
+            return (
+                f"physics class '{_joined(definition.physics_classes)}' is not looked for "
+                f"({_joined(scope.physics)})"
+            )
     if query.max_cost is not None and _COST_RANK[definition.cost] > _COST_RANK[query.max_cost]:
         return "slow model; slow models are left out"
     return None

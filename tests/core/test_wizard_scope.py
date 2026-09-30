@@ -606,6 +606,27 @@ def test_describe_scope_notes_match_the_resolution():
     assert any("muonium" in note for note in view.notes)
 
 
+def test_leaving_out_slow_models_drops_a_slow_user_component():
+    name = "ZZSlowWizardScopeProbe"
+    register_component(
+        name,
+        lambda t, A: np.full_like(np.asarray(t, dtype=float), float(A)),  # noqa: N803
+        ["A"],
+        domain="time",
+        description="slow throwaway probe component",
+        formula_template="A",
+        param_defaults={"A": 1.0},
+        cost="expensive",
+    )
+    try:
+        assert name in _resolve(frozenset(), field_direction="Zero field").included_set
+        res = resolve_scope(WizardScope(skip_slow=True), field_direction="Zero field")
+        reason = next(e.reason for e in res.excluded_components if e.name == name)
+        assert reason == "slow model; slow models are left out"
+    finally:
+        COMPONENTS.pop(name, None)
+
+
 def test_describe_scope_puts_user_functions_last(throwaway_user_component):
     view = describe_scope([_fake_dataset("ZF")], WizardScope())
     assert view.families[-1].title == USER_FAMILY_TITLE

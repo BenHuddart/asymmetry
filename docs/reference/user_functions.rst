@@ -133,8 +133,9 @@ file can never crash a fit (or the application) later:
   ``"expensive"``; default ``"moderate"``). The picker lists user functions
   on a **Your functions** card, under their names. An untagged user function
   is in every scope, whatever the field direction or the physics chips, so
-  it is never hidden; tagging it narrows when the wizard considers it, and
-  ``cost="expensive"`` puts a **slow** tag on its pill.
+  it is never hidden; tagging it narrows when the wizard considers it.
+  ``cost="expensive"`` puts a **slow** tag on its pill, and
+  **Leave out slow models** then drops it like any other slow model.
 * ``domain`` is required; it places the component in the matching picker
   and plots. Optional metadata (``latex_equation``, ``applicability``,
   ``references``, ``category``, ``fixed_params``, ``param_defaults``)
