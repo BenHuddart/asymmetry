@@ -130,7 +130,8 @@ so review can overturn them.
     the dense curve interpolated. Residuals are not persisted
     (`_serialize_fit_result` drops them), so they are always recomputed;
   - parameter flags:
-    - **runs away**: non-finite, or at a bound;
+    - **not finite**, or **at lower/upper bound** (a plain fact, since a rate
+      at 0 is often physical: lead review, 2026-09-30);
     - **poorly determined**: error > |value|;
     - **differs by kσ**: a shared global, A vs B, with k ≥ 2;
   - gate reasons summarised from `run_diagnostics`.

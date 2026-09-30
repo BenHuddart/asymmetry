@@ -212,21 +212,21 @@ def test_normalised_residuals_use_the_dataset_grid_within_the_curve_span() -> No
     ("parameter", "error", "expected"),
     [
         (Parameter("x", value=1.0, min=0.0, max=10.0), 0.1, ()),
-        (Parameter("x", value=0.0, min=0.0, max=10.0), 0.0, (ParameterFlag.RUNS_AWAY,)),
-        (Parameter("x", value=10.0, min=0.0, max=10.0), 0.1, (ParameterFlag.RUNS_AWAY,)),
+        (Parameter("x", value=0.0, min=0.0, max=10.0), 0.0, (ParameterFlag.AT_LOWER_BOUND,)),
+        (Parameter("x", value=10.0, min=0.0, max=10.0), 0.1, (ParameterFlag.AT_UPPER_BOUND,)),
         (
             Parameter("x", value=10.0 * (1 - 0.5 * AT_BOUND_RELATIVE_TOLERANCE), max=10.0),
             0.1,
-            (ParameterFlag.RUNS_AWAY,),
+            (ParameterFlag.AT_UPPER_BOUND,),
         ),
-        (Parameter("x", value=math.nan), 0.1, (ParameterFlag.RUNS_AWAY,)),
+        (Parameter("x", value=math.nan), 0.1, (ParameterFlag.NOT_FINITE,)),
         (Parameter("x", value=1.0), 2.0, (ParameterFlag.POORLY_DETERMINED,)),
         (Parameter("x", value=1.0), math.inf, ()),
         (Parameter("x", value=1.0), math.nan, ()),
         (
             Parameter("x", value=0.0, min=0.0),
             0.5,
-            (ParameterFlag.RUNS_AWAY, ParameterFlag.POORLY_DETERMINED),
+            (ParameterFlag.AT_LOWER_BOUND, ParameterFlag.POORLY_DETERMINED),
         ),
         (Parameter("x", value=0.0, min=0.0, fixed=True), 0.5, ()),
     ],
@@ -239,7 +239,7 @@ def test_bound_side_ignores_infinite_bounds_in_the_tolerance() -> None:
     assert bound_side(Parameter("x", value=5.0, min=0.0)) is None
     assert bound_side(Parameter("x", value=1e-7, min=0.0)) == "lower"
     assert bound_side(Parameter("x", value=3.0, max=3.0)) == "upper"
-    assert ParameterFlag.RUNS_AWAY.value == "runs away"
+    assert ParameterFlag.AT_LOWER_BOUND.value == "at lower bound"
     assert ParameterFlag.POORLY_DETERMINED.value == "poorly determined"
 
 
@@ -312,7 +312,7 @@ def test_summary_row_flags_union_over_runs() -> None:
         SelectionMetric.AICC,
     )[0]
     assert summary.parameters[0].flags == (
-        ParameterFlag.RUNS_AWAY,
+        ParameterFlag.AT_LOWER_BOUND,
         ParameterFlag.POORLY_DETERMINED,
     )
 

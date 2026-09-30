@@ -110,8 +110,13 @@ def bound_side(parameter: Parameter) -> Literal["lower", "upper"] | None:
 class ParameterFlag(Enum):
     """A warning about one fitted parameter; the value is its display text."""
 
-    RUNS_AWAY = "runs away"
+    NOT_FINITE = "not finite"
+    AT_LOWER_BOUND = "at lower bound"
+    AT_UPPER_BOUND = "at upper bound"
     POORLY_DETERMINED = "poorly determined"
+
+
+_BOUND_FLAGS = {"lower": ParameterFlag.AT_LOWER_BOUND, "upper": ParameterFlag.AT_UPPER_BOUND}
 
 
 def parameter_flags(parameter: Parameter, error: float) -> tuple[ParameterFlag, ...]:
@@ -119,8 +124,11 @@ def parameter_flags(parameter: Parameter, error: float) -> tuple[ParameterFlag, 
     if parameter.is_constrained:
         return ()
     flags: list[ParameterFlag] = []
-    if not math.isfinite(parameter.value) or bound_side(parameter) is not None:
-        flags.append(ParameterFlag.RUNS_AWAY)
+    side = bound_side(parameter)
+    if not math.isfinite(parameter.value):
+        flags.append(ParameterFlag.NOT_FINITE)
+    elif side is not None:
+        flags.append(_BOUND_FLAGS[side])
     if math.isfinite(error) and error > abs(parameter.value):
         flags.append(ParameterFlag.POORLY_DETERMINED)
     return tuple(flags)
