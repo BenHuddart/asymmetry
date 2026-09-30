@@ -2834,7 +2834,7 @@ class GlobalFitTab(FitTabBase):
                 log_text=cached_log_text,
                 status_text=(
                     "Showing previously cached Global Fit Wizard results for these runs. "
-                    "Use ← Back to setup and run screening again to refresh them for the current parameter setup."
+                    "Open the Scope step and run screening again to refresh them for the current parameter setup."
                 ),
             )
         self._fit_wizard_window.show()
@@ -4648,14 +4648,7 @@ class GlobalFitTab(FitTabBase):
             )
 
         self._set_composite_model(assessment.template.model)
-        role_by_name = {name: "Global" for name in assessment.global_param_names}
-        role_by_name.update({name: "Local" for name in assessment.local_param_names})
-        role_by_name.update(
-            {
-                parameter.name: parameter.recommended_role
-                for parameter in assessment.parameter_recommendations
-            }
-        )
+        role_by_name = assessment.applied_roles
 
         representative_run = self._datasets[0].run_number if self._datasets else None
         representative_result = (

@@ -226,7 +226,7 @@ Phases within a group
 *A temperature-scan group the Global Fit Wizard has partitioned into two*
 *phases, plus one run at the top end the partition left out of both.*
 
-When you **Apply phases** from the Global Fit Wizard's Transitions card (see
+When you **Apply phases** from the Global Fit Wizard's Phases step (see
 :ref:`global-fit-wizard-transitions` in :doc:`global_fit_wizard`), the series
 group gains one nested sub-group per phase — a contiguous run of the series
 sharing one template and one Global/Local assignment. A phase renders as a

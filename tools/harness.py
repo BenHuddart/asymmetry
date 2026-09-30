@@ -81,12 +81,14 @@ AXIS_LIMIT_POLICY_FUNCTIONS: dict[Path, frozenset[str]] = {
 }
 # Surfaces that are not axis-limit-policy plots at all (a fit-parameter chart,
 # the detector schematic, the suggestion-overlay band, the grouping preview
-# pane, the user-function-authoring preview), so any `set_xlim(`/`set_ylim(`
-# there is exempt outright.
+# pane, the user-function-authoring preview, the fit wizards' series preview
+# with its fixed ±4σ residual strips), so any `set_xlim(`/`set_ylim(` there is
+# exempt outright.
 AXIS_LIMIT_SURFACE_ALLOWLIST = frozenset(
     {
         GUI_ROOT / "panels" / "fit_parameters_panel.py",
         GUI_ROOT / "widgets" / "detector_schematic.py",
+        GUI_ROOT / "widgets" / "series_fit_canvas.py",
         GUI_ROOT / "widgets" / "suggestion_overlay.py",
         GUI_ROOT / "windows" / "grouping" / "preview_pane.py",
         GUI_ROOT / "windows" / "new_user_function_dialog.py",
@@ -187,7 +189,6 @@ PIXEL_GEOMETRY_ALLOWLIST: dict[Path, str] = {
     GUI_ROOT / "panels" / "maxent_panel.py": "group-table min-height floor",
     GUI_ROOT / "panels" / "plot_panel.py": "canvas / details-view min-size floors",
     GUI_ROOT / "widgets" / "loading_overlay.py": "progress-bar fixed width (overlay chrome)",
-    GUI_ROOT / "widgets" / "wizard_series_card.py": "series-card canvas min-height floor",
     GUI_ROOT / "widgets" / "function_builder" / "dialog.py": "library / equation-scroll floors",
     GUI_ROOT / "widgets" / "function_builder" / "library_panel.py": "library-panel min-width floor",
     GUI_ROOT
@@ -196,7 +197,6 @@ PIXEL_GEOMETRY_ALLOWLIST: dict[Path, str] = {
     / "model_rows.py": "icon-sized dash/combo/row swatches",
     GUI_ROOT / "windows" / "detector_layout_dialog.py": "schematic min-width floor",
     GUI_ROOT / "windows" / "fit_wizard_window.py": "compare-warning min-height floor",
-    GUI_ROOT / "windows" / "global_fit_wizard_window.py": "scope/log/rationale min-height floors",
     GUI_ROOT
     / "windows"
     / "global_parameter_fit_window.py": "studies/params/canvas min-size floors",

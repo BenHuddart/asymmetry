@@ -1,31 +1,25 @@
-"""Global Fit Wizard — Result answer card on the Ag LF-KT decoupling series.
+"""Global Fit Wizard — the Compare step on the Ag LF-KT series, A against B.
 
-Drives the rebuilt three-state Global Fit Wizard straight to its **Result**
-state. A real recommendation is built synchronously by
-``build_global_fit_wizard_recommendation`` and handed to the window via
-``set_cached_recommendation`` — the same path the fit-panel cache uses when a
-previously analysed series is reopened. That populates the series answer card
-(verdict headline, overlaid data-and-fit traces colour-graded along the series
-axis, and the local-parameter trend panel).
+A real recommendation is built synchronously by
+``build_global_fit_wizard_recommendation`` and handed to the window through
+``set_cached_recommendation``, the path the fit panel's cache takes when an
+analysed series is reopened. It lands on **Compare**, since the recommendation
+holds optimised role splits.
 
-The window height crops the capture at the bottom of the answer card, just
-above the screening shortlist: on the cached-recommendation path every
-surviving candidate has been through coupled optimisation, so
-``sorted_prescreen_assessments()`` is empty and the shortlist renders with no
-rows — an empty table would read as a broken UI in the docs. The shortlist in
-a populated state is a live-journey artefact (between screening and coupled
-optimisation) and is described in prose instead.
+The scope is restricted to the longitudinal-field Kubo–Toyabe family, so the
+build completes in seconds. Only ``lf_kt_constant`` goes through the coupled
+role search, and it yields eight role splits of the one template. A is the
+recommendation: Δ shared, B_L local, the textbook decoupling model (Hayano
+et al., Phys. Rev. B **20**, 850 (1979)). B is pinned to the runner-up split,
+which frees Δ per run as well. It fits every run as well by eye, but scores
++34 AICc and fails the runs test at 100 G. The trend plot follows Δ: A's
+shared value is one line across the series, while B's per-run Δ falls away at
+100 G, where the decoupled signal no longer constrains it and Δ trades off
+against B_L. The capture shows why sharing a parameter is the better answer
+when the data allow it.
 
-The scope is restricted to the longitudinal-field Kubo–Toyabe family so the
-screening portfolio stays small and the whole build completes in well under a
-minute; the recommendation, its shortlist scores, and the fit overlays are all
-genuinely computed, not fabricated. The wizard recommends
-``Longitudinal-field KT + Constant`` with Δ shared globally and B_L local — the
-textbook decoupling model (Hayano et al., Phys. Rev. B **20**, 850 (1979)).
-
-Marked ``requires_fit = True`` because the coupled optimisation uses the
-``iminuit``-based engine, which trips on numpy ≥ 2.3 in dev environments; CI
-keeps numpy < 2.3.
+Marked ``requires_fit = True`` because the coupled optimisation runs real
+fits.
 """
 
 from __future__ import annotations
@@ -39,8 +33,8 @@ from ._base import Scenario, _process_events_for, register
 class GlobalFitWizardResultScenario(Scenario):
     name = "global_fit_wizard_result"
     description = (
-        "Global Fit Wizard Result answer card on the Ag LF-KT decoupling "
-        "series (verdict + series overlay + local-parameter trend)."
+        "Global Fit Wizard Compare step on the Ag LF-KT decoupling series — "
+        "the shared-Δ split as A against a per-run-Δ split pinned as B."
     )
     size = (1180, 748)
     requires_fit = True
@@ -98,8 +92,18 @@ class GlobalFitWizardResultScenario(Scenario):
         window = GlobalFitWizardWindow()
         window.set_analysis_context(datasets)
         _process_events_for(milliseconds=60)
-        window.set_cached_recommendation(
-            recommendation, signature={"scope": scope.to_payload()}
+        window.set_cached_recommendation(recommendation, signature={"scope": scope.to_payload()})
+        panel = window._compare_panel
+        # B: the same template with Δ free per run, the runner-up split.
+        b_key = next(
+            assessment.selection_key
+            for assessment in recommendation.sorted_optimized_assessments()
+            if set(assessment.local_param_names) == {"Delta", "B_L"}
+        )
+        panel.set_b(b_key)
+        # Plot Δ along the series: A's shared value as a band, B's per-run values.
+        panel._on_table_clicked(
+            next(index for index, pair in enumerate(panel._pairs) if pair.name == "Delta"), 0
         )
         _process_events_for(milliseconds=200)
         return window

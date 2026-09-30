@@ -10,12 +10,11 @@ of the selected row's transitions above it, and the two actions that follow from
 a pick — run the coupled per-phase optimisation, and apply the resulting phases
 to the project.
 
-Like :mod:`asymmetry.gui.widgets.wizard_series_card` it is deliberately window-
-and core-agnostic: it imports nothing from :mod:`asymmetry.core`. The host
-adapts a ``PartitionPath`` into the plain :class:`TransitionRow` records below
-and a set of optimised phase assessments into :class:`PhaseSummary` records, and
-owns what "optimize" and "apply" mean — the card only emits the index of the row
-the user picked.
+It is deliberately window- and core-agnostic: it imports nothing from
+:mod:`asymmetry.core`. The host adapts a ``PartitionPath`` into the plain
+:class:`TransitionRow` records below and a set of optimised phase assessments
+into :class:`PhaseSummary` records, and owns what "optimize" and "apply" mean —
+the card only emits the index of the row the user picked.
 """
 
 from __future__ import annotations
@@ -190,6 +189,7 @@ class TransitionsCard(QWidget):
         button_row.addWidget(self._apply_btn)
         button_row.addStretch()
         layout.addLayout(button_row)
+        layout.addStretch()
 
     # ── Public API ─────────────────────────────────────────────────────────
 

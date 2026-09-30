@@ -7,9 +7,9 @@ import math
 from asymmetry.core.fitting.parameters import get_param_info
 
 
-def format_param_label(name: str) -> str:
-    """Return a display label with Greek symbols and units where applicable."""
-    return get_param_info(name).unicode_label()
+def format_param_label(name: str, *, include_unit: bool = True) -> str:
+    """Return a display label with Greek symbols, and units where applicable."""
+    return get_param_info(name).unicode_label(include_unit=include_unit)
 
 
 def format_value_error(value: float, error: float, *, sig_error_digits: int = 2) -> str:
@@ -48,9 +48,11 @@ def format_value_uncertainty(value: float, error: float | None) -> str:
     digit would throw away a quarter of the uncertainty, while 0.43 → 0.4 costs
     little — and the value is rounded to the error's last decimal place. With
     no usable error (``None``, non-finite, or non-positive) the value alone is
-    rendered to four significant digits.
+    rendered to four significant digits, and a non-finite value as ``—``.
     """
     value = float(value)
+    if not math.isfinite(value):
+        return "—"
     if error is None:
         return f"{value:.4g}"
     error = float(error)
@@ -61,3 +63,10 @@ def format_value_uncertainty(value: float, error: float | None) -> str:
     mantissa, exponent_text = f"{error:e}".split("e")
     decimals = max(0, (2 if mantissa[0] in "12" else 1) - 1 - int(exponent_text))
     return f"{value:.{decimals}f}({round(error, decimals) * 10**decimals:.0f})"
+
+
+def format_reduced_chi_squared(value: float) -> str:
+    """χ²ᵣ to two decimals, whole numbers from 100 up, and "—" when the fit has none."""
+    if not math.isfinite(value):
+        return "—"
+    return f"{value:.0f}" if value >= 100 else f"{value:.2f}"
