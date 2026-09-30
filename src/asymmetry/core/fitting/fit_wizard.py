@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import time
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Executor, ThreadPoolExecutor
@@ -283,6 +284,18 @@ class CandidateTemplate:
 
 
 @dataclass(frozen=True)
+class FitTiming:
+    """Wall time of one template assessment and the number of points it fitted."""
+
+    seconds: float
+    points: int
+
+    @property
+    def seconds_per_kpoint(self) -> float:
+        return 1000.0 * self.seconds / self.points
+
+
+@dataclass(frozen=True)
 class CandidateAssessment:
     """Fit and comparison data for one candidate model.
 
@@ -346,6 +359,10 @@ class CandidateAssessment:
     #: measured statement that this candidate's ranking is search-limited, and
     #: that any family compared against it at the shallower budget was too.
     under_converged: bool = False
+    #: How long the fit that produced this row took (:func:`_execute_assessment_task`).
+    #: ``None`` on a row restored from a cache: it is never persisted, so a past
+    #: run's time is never recorded twice (``docs/plans/measured-fit-times.md``, D1).
+    timing: FitTiming | None = None
 
     @property
     def is_disqualified(self) -> bool:
@@ -2336,9 +2353,11 @@ def _execute_assessment_task(
     Module-level (not a closure) so it can be pickled and sent to a worker
     process. Builds its own :class:`FitEngine` per call — engines carry no
     state worth sharing, and a fresh one keeps each task fully self-contained.
+    The returned row carries the task's wall time and fitted point count.
     """
     migrad_ncall = _SCREENING_MIGRAD_NCALL if task.screening_cap else None
-    return _assess_candidate_template(
+    start = time.perf_counter()
+    assessment = _assess_candidate_template(
         task.dataset,
         task.fingerprint,
         task.template,
@@ -2352,6 +2371,7 @@ def _execute_assessment_task(
         warm_start=task.warm_start,
         dense_curves=task.dense_curves,
     )
+    return replace(assessment, timing=FitTiming(time.perf_counter() - start, task.dataset.n_points))
 
 
 def _run_template_assessments(

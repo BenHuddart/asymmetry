@@ -1848,6 +1848,26 @@ class GlobalFitWizardScreeningTable:
     generated_run_numbers: tuple[int, ...]
     series_rebin_factor: int
 
+    @property
+    def fitted_assessments(self) -> tuple[CandidateAssessment, ...]:
+        """The rows this call fitted: the generated runs' analyses and the completion cells.
+
+        A completed row keeps a run's own assessment as the very same object
+        (:func:`_assemble_completed_run`), so a completion cell is a completed
+        row that is no row of a source analysis.
+        """
+        analyses = self.single_fit_recommendations_by_run
+        source_rows = {id(row) for analysis in analyses.values() for row in analysis.assessments}
+        return (
+            *(row for run in self.generated_run_numbers for row in analyses[run].assessments),
+            *(
+                row
+                for completed in self.recommendations_by_run.values()
+                for row in completed.assessments
+                if id(row) not in source_rows
+            ),
+        )
+
 
 def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     datasets: list[MuonDataset],

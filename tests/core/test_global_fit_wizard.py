@@ -412,6 +412,50 @@ def test_build_or_complete_single_fit_tables_reuses_a_matching_single_run_analys
         assert [t.key for t in completed.templates] == [t.key for t in table.portfolio.templates]
 
 
+def test_screening_table_fitted_assessments_are_the_fits_this_call_ran(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reused analysis is never timed twice; generated rows and completion cells are."""
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = [
+        _dataset_for(
+            run_number=290 + idx,
+            field=40.0 * idx,
+            temperature=8.0,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.2 + (0.1 * idx), "A_bg": 0.01},
+        )
+        for idx in range(1, 3)
+    ]
+    exp_constant = _restrict_to_exp_constant_template(monkeypatch, model)
+    gauss_constant = _template_named(
+        "gauss_constant", model=CompositeModel(["Gaussian", "Constant"], operators=["+"])
+    )
+    _stub_single_run_wizard(monkeypatch, (exp_constant, gauss_constant))
+    _force_serial_phase_one(monkeypatch)
+    reused_run = int(datasets[0].run_number)
+    reused = replace(
+        build_fit_wizard_recommendation_for_templates(datasets[0], (exp_constant,)),
+        build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+    )
+
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        current_model=model,
+        existing_recommendations_by_run={reused_run: reused},
+    )
+
+    fitted = table.fitted_assessments
+    generated_rows = table.single_fit_recommendations_by_run[int(datasets[1].run_number)]
+    assert all(any(row is fit for fit in fitted) for row in generated_rows.assessments)
+    assert not any(row is fit for row in reused.assessments for fit in fitted)
+    # The reused run lacked the Gaussian cell, so completion fitted exactly that one.
+    generated_ids = {id(row) for row in generated_rows.assessments}
+    completion = [fit for fit in fitted if id(fit) not in generated_ids]
+    assert [fit.template.key for fit in completion] == ["gauss_constant"]
+    assert all(fit.timing is not None for fit in fitted)
+
+
 def test_build_or_complete_single_fit_tables_does_not_reuse_another_scopes_analysis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -33,6 +33,7 @@ from asymmetry.core.fitting.fit_wizard import (
     CandidateTemplate,
     ConfidenceTier,
     FamilyScreeningReport,
+    FitTiming,
     FitWizardRecommendation,
     RecommendationVerdict,
     SelectionMetric,
@@ -856,7 +857,7 @@ def test_execute_assessment_task_caps_only_screening_stage(
 
     def _fake_assess(*_args: object, migrad_ncall: int | None = None, **_kwargs: object):
         captured["migrad_ncall"] = migrad_ncall
-        return object()
+        return _dummy_assessment("exp_constant")
 
     monkeypatch.setattr(fit_wizard_module, "_assess_candidate_template", _fake_assess)
 
@@ -869,6 +870,37 @@ def test_execute_assessment_task_caps_only_screening_stage(
     # A Stage-2 task is not.
     fit_wizard_module._execute_assessment_task(replace(task, screening_cap=False))
     assert captured["migrad_ncall"] is None
+
+
+def test_execute_assessment_task_times_the_fit() -> None:
+    # The row carries the task's wall time and the fitted record's length (D1 of
+    # docs/plans/measured-fit-times.md); only its sign is asserted, never a duration.
+    task = _real_spawn_tasks()[1]
+    assessment = fit_wizard_module._execute_assessment_task(task)
+    assert assessment.timing is not None
+    assert assessment.timing.points == task.dataset.n_points == 80
+    assert assessment.timing.seconds > 0.0
+    assert assessment.timing.seconds_per_kpoint == pytest.approx(
+        1000.0 * assessment.timing.seconds / 80
+    )
+
+
+def test_fit_timing_is_never_persisted() -> None:
+    # A restored row's time belongs to a past run and must not be recorded again.
+    timed = replace(_dummy_assessment("exp_constant"), timing=FitTiming(0.5, 1000))
+    recommendation = FitWizardRecommendation(
+        fingerprint=_plain_fingerprint(),
+        templates=(timed.template,),
+        assessments=(timed,),
+        metric=SelectionMetric.AICC,
+        recommended_key=None,
+        comparable_keys=(),
+        summary="",
+    )
+    payload = serialize_fit_wizard_recommendation(recommendation, compact=True)
+    assert "timing" not in payload["assessments"][0]
+    restored = deserialize_fit_wizard_recommendation(json.loads(json.dumps(payload)))
+    assert restored.assessments[0].timing is None
 
 
 def _real_spawn_tasks() -> list[_AssessmentTask]:
