@@ -62,6 +62,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comparison table also makes it A. See `docs/reference/fit_wizard.rst`
   § "Comparing candidates and applying a fit".
 
+### Fixed
+
+- **The Fit Wizard fits the dynamic and Gaussian-broadened Kubo-Toyabe models
+  to a run in a longitudinal field.** Dynamic GKT + Constant,
+  Gaussian-broadened KT + Constant and Dynamic Lorentzian KT + Constant gave
+  the decoupled polarisation to the constant: a decoupling field lifts the
+  Kubo-Toyabe tail toward the full asymmetry, and a background bound then held
+  each fit away from the true split. When the run records a longitudinal
+  field, the wizard now starts the Kubo-Toyabe term at the full initial
+  asymmetry and the constant at zero, as Longitudinal-field KT + Constant has
+  since 0.22.0; in zero field every Kubo-Toyabe model starts from its 1/3
+  tail. On a decoupling series the Global Fit Wizard, which starts from these
+  per-run fits, now recommends Dynamic GKT + Constant with Δ shared and B_L
+  per run, where it recommended nothing before.
+
 ## [0.22.0] - 2026-09-30
 
 ### Added
