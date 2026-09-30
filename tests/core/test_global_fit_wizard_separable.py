@@ -43,7 +43,9 @@ from asymmetry.core.fitting.global_fit_wizard import (
     _SeparableTemplateResult,
     build_global_fit_wizard_recommendation,
 )
+from asymmetry.core.fitting.models import longitudinal_field_kubo_toyabe
 from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
 
 # Every test here drives the real wizard end to end over a synthetic series.
 pytestmark = [pytest.mark.integration]
@@ -248,6 +250,57 @@ def test_separable_engine_localizes_only_the_scanning_rate(
     assert "Lambda" in assessment.local_param_names
     assert "A_1" not in assessment.local_param_names
     assert "A_bg" not in assessment.local_param_names
+
+
+def test_lf_decoupling_series_shares_delta_and_localizes_the_field() -> None:
+    """Static Gaussian KT decoupled by a scanning longitudinal field.
+
+    The textbook answer (Hayano et al., PRB 20, 850 (1979)) is one Delta for the
+    series and a B_L per run. The separable search starts from the per-run fits,
+    so a per-run LF-KT fit that puts the decoupled polarisation in the constant
+    and rails against ``A_bg``'s bound leaves every node failing the residual
+    gate, and the wizard recommends nothing.
+    """
+    rng = np.random.default_rng(0)
+    time = np.linspace(0.0, 8.0, 480)
+    error = 0.15 * np.exp(time / (2.0 * 2.197))
+    datasets = [
+        MuonDataset(
+            time=time,
+            asymmetry=longitudinal_field_kubo_toyabe(time, 24.0, 0.39, field, 0.3)
+            + rng.normal(0.0, error),
+            error=error,
+            metadata={"run_number": 700 + index, "field": field, "temperature": 20.0},
+        )
+        for index, field in enumerate((0.0, 10.0, 25.0, 50.0))
+    ]
+    scope = WizardScope(
+        preset=WizardScopePreset.LF_DYNAMICS,
+        exclude_components=frozenset(
+            {
+                "StaticGKT_ZF",
+                "DynamicGaussianKT",
+                "DynamicLorentzianKT",
+                "GaussianBroadenedKT",
+                "ExponentialRelaxation",
+                "GaussianRelaxation",
+                "StretchedExponential",
+                "RischKehr",
+                "MuoniumLF",
+                "Oscillatory",
+            }
+        ),
+    )
+
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets, scope=scope, selected_template_keys=("lf_kt_constant",)
+    )
+
+    assessment = recommendation.recommended_assessment
+    assert assessment is not None, recommendation.summary
+    assert assessment.template.key == "lf_kt_constant"
+    assert "Delta" in assessment.global_param_names
+    assert "B_L" in assessment.local_param_names
 
 
 # --------------------------------------------------------------------------- #
