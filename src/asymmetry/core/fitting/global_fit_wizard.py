@@ -3548,7 +3548,8 @@ def _screening_no_recommendation_summary(
     if scored:
         return (
             f"Single-fit screening complete: {len(scored)} of {len(assessments)} "
-            f"candidates scored; {scored[0].template.title} leads. These scores come "
+            f"candidates scored; {scored[0].template.title} ({scored[0].template.key}) "
+            "leads. These scores come "
             "from independent per-dataset fits only and have not yet been optimized "
             "for coupled global fitting, so no candidate is recommended yet — tick "
             "families on the Screen step and optimise them to continue."
