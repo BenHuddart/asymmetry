@@ -338,7 +338,7 @@ def test_exclude_beats_include_for_same_name():
     res = resolve_scope(scope)
     assert "Exponential" not in res.included_set
     reason = next(e.reason for e in res.excluded_components if e.name == "Exponential")
-    assert reason == "excluded by user"
+    assert reason == "switched off by you"
 
 
 def test_unknown_override_names_are_noted_not_crashing():
@@ -488,7 +488,7 @@ def test_resolve_for_datasets_unions_geometries():
     assert "FmuF_Linear" in res.included_set
 
 
-def test_resolve_for_datasets_excluded_in_all_keeps_all_runs_reason():
+def test_resolve_for_datasets_excluded_in_all_keeps_a_reason():
     freq_names = _frequency_component_names()
     assert freq_names
     tf = _fake_dataset("TF")
@@ -497,7 +497,7 @@ def test_resolve_for_datasets_excluded_in_all_keeps_all_runs_reason():
     excluded = {e.name: e.reason for e in res.excluded_components}
     for name in freq_names:
         assert name in excluded
-        assert excluded[name].startswith("all runs: ")
+        assert excluded[name] == "frequency-domain component; the wizard fits time spectra"
 
 
 def test_resolve_for_datasets_notes_come_from_a_run_that_records_geometry():

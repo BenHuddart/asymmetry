@@ -220,7 +220,7 @@ def test_a_pill_click_shows_its_details(qapp):
     assert details.category.text() == "KUBO–TOYABE"
     assert details.facts["Geometries"].text() == "Zero field · Longitudinal"
     assert details.facts["Fitting cost"].text() == "Slow — its fits dominate screening time"
-    assert "excluded by user" in details.facts["This scope"].text()
+    assert details.facts["This scope"].text() == "switched off by you"
 
 
 def test_hovering_a_pill_shows_its_details(qapp):

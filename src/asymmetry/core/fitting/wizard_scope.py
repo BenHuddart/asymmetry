@@ -478,7 +478,7 @@ def resolve_scope(
         if drop:
             already = {exc.name for exc in excluded}
             excluded.extend(
-                ExcludedComponent(n, "excluded by user")
+                ExcludedComponent(n, "switched off by you")
                 for n in registry
                 if n in drop and n not in already
             )
@@ -605,7 +605,7 @@ def resolve_scope_for_datasets(
 
     A component is included if it is in scope for **any** dataset; a component is
     excluded only if it is excluded for **every** dataset (one representative
-    reason is kept, prefixed ``"all runs: "``). The notes come from the first
+    reason is kept). The notes come from the first
     dataset with a recorded geometry, else the first dataset. The reported
     ``query`` is the first-resolved one — representative only. No datasets
     resolve to nothing in scope.
@@ -638,9 +638,7 @@ def resolve_scope_for_datasets(
     # Preserve registry order for both lists.
     included = tuple(n for n in COMPONENTS if n in included_any)
     excluded = tuple(
-        ExcludedComponent(n, "all runs: " + exclude_reason[n])
-        for n in COMPONENTS
-        if n in excluded_in_all
+        ExcludedComponent(n, exclude_reason[n]) for n in COMPONENTS if n in excluded_in_all
     )
 
     representative = next(
