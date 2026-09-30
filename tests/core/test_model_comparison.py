@@ -22,10 +22,12 @@ from asymmetry.core.fitting.model_comparison import (
     SHORTLIST_MAX_DELTA,
     SHORTLIST_MAX_SIZE,
     Estimate,
+    FitGrade,
     ParameterFlag,
     ParameterRole,
     bound_side,
     compare_parameters,
+    grade_reduced_chi_squared,
     information_weights,
     normalised_residuals,
     parameter_flags,
@@ -436,3 +438,19 @@ def test_compare_leaves_k_unmeasured_when_errors_vanish() -> None:
     pair = compare_parameters(a, b)[0]
     assert math.isnan(pair.sigma_difference)
     assert pair.difference_text == ""
+
+
+@pytest.mark.parametrize(
+    ("value", "grade"),
+    [
+        (0.9, FitGrade.GOOD),
+        (1.5, FitGrade.GOOD),
+        (1.51, FitGrade.FAIR),
+        (5.0, FitGrade.FAIR),
+        (5.01, FitGrade.POOR),
+        (math.inf, FitGrade.POOR),
+        (math.nan, FitGrade.POOR),
+    ],
+)
+def test_grade_reduced_chi_squared_thresholds(value: float, grade: FitGrade) -> None:
+    assert grade_reduced_chi_squared(value) is grade

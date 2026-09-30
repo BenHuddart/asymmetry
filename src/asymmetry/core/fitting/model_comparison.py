@@ -40,6 +40,9 @@ SHORTLIST_MAX_SIZE = 3
 AT_BOUND_RELATIVE_TOLERANCE = 1e-6
 #: Two estimates of one shared global differ when |a − b| / √(σa² + σb²) ≥ this.
 DIFFERENCE_SIGMA_THRESHOLD = 2.0
+#: A per-run χ²ᵣ at most this is a good fit, and at most ``FAIR_CHI2_MAX`` a fair one.
+GOOD_CHI2_MAX = 1.5
+FAIR_CHI2_MAX = 5.0
 
 
 def score_deltas(scores: Sequence[float]) -> list[float]:
@@ -87,6 +90,23 @@ def normalised_residuals(dataset: MuonDataset, curve: Curve) -> Curve:
         dataset.error, dtype=float
     )[inside]
     return t, residual
+
+
+class FitGrade(Enum):
+    """How well one run's fit reads from its χ²ᵣ."""
+
+    GOOD = "good"
+    FAIR = "fair"
+    POOR = "poor"
+
+
+def grade_reduced_chi_squared(value: float) -> FitGrade:
+    """GOOD ≤ ``GOOD_CHI2_MAX`` < FAIR ≤ ``FAIR_CHI2_MAX`` < POOR; a non-finite χ²ᵣ is POOR."""
+    if value <= GOOD_CHI2_MAX:
+        return FitGrade.GOOD
+    if value <= FAIR_CHI2_MAX:
+        return FitGrade.FAIR
+    return FitGrade.POOR
 
 
 def bound_side(parameter: Parameter) -> Literal["lower", "upper"] | None:

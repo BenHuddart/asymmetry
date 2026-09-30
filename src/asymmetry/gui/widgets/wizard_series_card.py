@@ -42,21 +42,7 @@ from asymmetry.gui.styles.widgets import (
     build_segmented_button_qss,
     make_confidence_chip,
 )
-
-#: Okabe-Ito trace colours cycled when the series axis cannot grade the runs.
-_FALLBACK_TRACE_COLOURS = (
-    tokens.TRACE_BLUE,
-    tokens.TRACE_GREEN,
-    tokens.TRACE_ORANGE,
-    tokens.TRACE_MAGENTA,
-    tokens.TRACE_SKY,
-    tokens.TRACE_VERMILLION,
-)
-
-#: Viridis sample range — the top end is too light on a white surface, so grade
-#: only across the darker/mid band.
-_VIRIDIS_LO = 0.10
-_VIRIDIS_HI = 0.85
+from asymmetry.gui.utils.series_colours import series_colours
 
 #: Legend is only drawn for a series small enough to read at a glance.
 _MAX_LEGEND_RUNS = 8
@@ -305,34 +291,10 @@ class WizardSeriesCard(QWidget):
         return container
 
     def _trace_colours(self) -> list[str]:
-        """One colour per run: host-assigned identity, else viridis-graded, else cycled.
-
-        A host that assigns identity colours (phases) assigns them to every run,
-        so they win outright over the axis gradient. Otherwise grading needs
-        every run to carry an ``axis_value`` and a non-degenerate range; failing
-        that, the six Okabe-Ito trace colours cycle by index.
-        """
+        """One colour per run: host-assigned identity (phases) wins, else graded along the axis."""
         if self._runs and all(run.colour is not None for run in self._runs):
             return [str(run.colour) for run in self._runs]
-        values = [run.axis_value for run in self._runs]
-        if values and all(v is not None for v in values):
-            floats = [float(v) for v in values]  # type: ignore[arg-type]
-            lo, hi = min(floats), max(floats)
-            if hi > lo:
-                from matplotlib import colormaps
-
-                cmap = colormaps["viridis"]
-                span = _VIRIDIS_HI - _VIRIDIS_LO
-                colours = []
-                for value in floats:
-                    frac = _VIRIDIS_LO + span * (value - lo) / (hi - lo)
-                    rgba = cmap(frac)
-                    colours.append((rgba[0], rgba[1], rgba[2]))
-                return colours  # type: ignore[return-value]
-        return [
-            _FALLBACK_TRACE_COLOURS[i % len(_FALLBACK_TRACE_COLOURS)]
-            for i in range(len(self._runs))
-        ]
+        return series_colours([run.axis_value for run in self._runs])
 
     def _redraw(self) -> None:
         figure = getattr(self, "_figure", None)

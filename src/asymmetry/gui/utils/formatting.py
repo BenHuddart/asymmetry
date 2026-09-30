@@ -61,3 +61,10 @@ def format_value_uncertainty(value: float, error: float | None) -> str:
     mantissa, exponent_text = f"{error:e}".split("e")
     decimals = max(0, (2 if mantissa[0] in "12" else 1) - 1 - int(exponent_text))
     return f"{value:.{decimals}f}({round(error, decimals) * 10**decimals:.0f})"
+
+
+def format_reduced_chi_squared(value: float) -> str:
+    """χ²ᵣ to two decimals, whole numbers from 100 up, and "—" when the fit has none."""
+    if not math.isfinite(value):
+        return "—"
+    return f"{value:.0f}" if value >= 100 else f"{value:.2f}"

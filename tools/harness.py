@@ -81,12 +81,14 @@ AXIS_LIMIT_POLICY_FUNCTIONS: dict[Path, frozenset[str]] = {
 }
 # Surfaces that are not axis-limit-policy plots at all (a fit-parameter chart,
 # the detector schematic, the suggestion-overlay band, the grouping preview
-# pane, the user-function-authoring preview), so any `set_xlim(`/`set_ylim(`
-# there is exempt outright.
+# pane, the user-function-authoring preview, the fit wizards' series preview
+# with its fixed ±4σ residual strips), so any `set_xlim(`/`set_ylim(` there is
+# exempt outright.
 AXIS_LIMIT_SURFACE_ALLOWLIST = frozenset(
     {
         GUI_ROOT / "panels" / "fit_parameters_panel.py",
         GUI_ROOT / "widgets" / "detector_schematic.py",
+        GUI_ROOT / "widgets" / "series_fit_canvas.py",
         GUI_ROOT / "widgets" / "suggestion_overlay.py",
         GUI_ROOT / "windows" / "grouping" / "preview_pane.py",
         GUI_ROOT / "windows" / "new_user_function_dialog.py",
