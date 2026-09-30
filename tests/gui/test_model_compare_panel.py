@@ -211,8 +211,8 @@ def test_flag_lines_name_the_runs_that_earned_each_flag(qapp: QApplication) -> N
         titles=("X",),
     )
     row = _rows(_panel(summaries))["x|1"]
+    # The gate's bound-hit reason is the flag's own fact, so it is said once.
     assert [label.text() for label in row.flag_labels] == [
-        "A_1 at lower bound (run 702)",
         "A_1 at lower bound at 200 G",
         "A_1 poorly determined at 200 G",
     ]
@@ -247,7 +247,7 @@ def test_flag_lines_beyond_the_cap_sit_behind_a_more_line(qapp: QApplication) ->
             fits=fits,
             global_names=(),
             local_names=("A_1", "Lambda"),
-            gate_reasons={702: ("A_1 at lower bound",)},
+            gate_reasons={702: ("runs-test z score suggests structure",)},
         ),
         titles=("X",),
     )

@@ -377,6 +377,28 @@ def test_gate_summary_dedupes_reasons_and_names_the_runs() -> None:
     assert clean[0].gate_summary == ""
 
 
+def test_gate_summary_leaves_a_flagged_bound_hit_to_the_parameter_flag() -> None:
+    fits = {run: _fit(run) for run in _RUNS}
+    fits[702] = _fit(702, a_1=0.0)
+    reasons = {702: ("A_1 at lower bound", "runs-test z score suggests structure")}
+    summary = summarise_candidates(
+        [
+            _assessment(
+                "a|1",
+                aicc=1.0,
+                fits=fits,
+                global_names=(),
+                local_names=("A_1", "Lambda"),
+                gate_reasons=reasons,
+            )
+        ],
+        _datasets(),
+        SelectionMetric.AICC,
+    )[0]
+    assert summary.gate_summary == "runs-test z score suggests structure (run 702)"
+    assert ParameterFlag.AT_LOWER_BOUND in summary.parameters[0].flags
+
+
 # ---------------------------------------------------------------------------
 # A vs B
 # ---------------------------------------------------------------------------

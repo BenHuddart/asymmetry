@@ -50,7 +50,7 @@ _RESIDUAL_BUDGET_PX = 4 * _STRIP_MAX_PX  # strips thin past four runs, down to t
 _RESIDUAL_SHARE = 0.4  # nor may the strips take more of the plotting height than this
 _NOTE_PX = 16
 _BOTTOM_PX = 6
-_LABEL_PX = 12  # vertical room one right-edge run label needs
+_LABEL_PX = 15  # vertical room one right-edge run label needs, with a little air
 _LABEL_FONT_SIZE = 8
 _B_DASH = (0, (5, 3))
 

@@ -279,6 +279,15 @@ def _candidate_summary(
         *((name, ParameterRole.LOCAL) for name in assessment.local_param_names),
         *((name, ParameterRole.FIXED) for name in assessment.fixed_param_names),
     )
+    parameters = tuple(
+        _parameter_row(
+            name,
+            role,
+            fits,
+            shared=role is ParameterRole.GLOBAL and not assessment.prescreen_only,
+        )
+        for name, role in roles
+    )
     return CandidateSummary(
         key=assessment.selection_key,
         title=assessment.template.title,
@@ -289,19 +298,11 @@ def _candidate_summary(
         delta=delta,
         weight=weight,
         gate_passed=assessment.residual_gate_passed,
-        gate_summary=_gate_summary(assessment.run_diagnostics),
+        gate_summary=_gate_summary(assessment.run_diagnostics, parameters, runs),
         series_warnings=assessment.series_warnings,
         runs=runs,
         # Only a coupled fit shares a global; a pre-screen fits each run alone.
-        parameters=tuple(
-            _parameter_row(
-                name,
-                role,
-                fits,
-                shared=role is ParameterRole.GLOBAL and not assessment.prescreen_only,
-            )
-            for name, role in roles
-        ),
+        parameters=parameters,
         prescreen=assessment.prescreen_only,
     )
 
@@ -329,11 +330,28 @@ def _parameter_row(
     )
 
 
-def _gate_summary(diagnostics: Sequence[RunResidualDiagnostic]) -> str:
+def _gate_summary(
+    diagnostics: Sequence[RunResidualDiagnostic],
+    parameters: Sequence[ParameterRow],
+    runs: Sequence[RunFit],
+) -> str:
+    """The gate reasons with their runs, minus the bound hits the parameter flags already carry.
+
+    The gate's "X at lower/upper bound" reason and the parameter flag share one
+    definition (:func:`bound_side`), so a flagged bound hit is said once, by the flag.
+    """
+    flagged = {
+        (run.run_number, f"{row.name} {flag.value}")
+        for row in parameters
+        for run, flags in zip(runs, row.run_flags, strict=True)
+        for flag in flags
+        if flag in _BOUND_FLAGS.values()
+    }
     runs_by_reason: dict[str, list[str]] = {}
     for diagnostic in diagnostics:
         for reason in diagnostic.gate_reasons:
-            runs_by_reason.setdefault(reason, []).append(diagnostic.run_label)
+            if (diagnostic.run_number, reason) not in flagged:
+                runs_by_reason.setdefault(reason, []).append(diagnostic.run_label)
     return "; ".join(
         f"{reason} ({'run' if len(labels) == 1 else 'runs'} {', '.join(labels)})"
         for reason, labels in runs_by_reason.items()
