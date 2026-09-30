@@ -247,6 +247,8 @@ class ScreeningLeaderboard(QWidget):
         )
         self._show_all.toggled.connect(self._apply_row_visibility)
         layout.addWidget(self._show_all, 0, Qt.AlignmentFlag.AlignLeft)
+        # The table is fixed-height, so spare height goes below it, not around it.
+        layout.addStretch()
 
     def set_candidates(
         self,

@@ -397,6 +397,17 @@ def test_table_pairs_a_and_b_with_the_sigma_difference(qapp: QApplication) -> No
     assert _column(panel, 3)[0] == "differs by 3.1σ"
 
 
+def test_a_parameter_with_different_roles_names_both(qapp: QApplication) -> None:
+    summaries = _pool(
+        _assessment("x|a", aicc=1.0),
+        _assessment("x|b", aicc=2.0, global_names=(), local_names=("A_1", "Lambda")),
+        titles=("X", "X"),
+    )
+    panel = _panel(summaries)
+    panel.set_b("x|b")
+    assert _column(panel, 0)[0] == "A_1 · shared in A, per run in B"
+
+
 def test_flagged_values_wear_the_warning_or_error_colour(qapp: QApplication) -> None:
     fits = {run: _fit(run) for run in _RUNS}
     fits[702] = _fit(702, a_1=0.0)

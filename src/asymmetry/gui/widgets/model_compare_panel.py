@@ -600,8 +600,12 @@ class ModelComparePanel(QWidget):
         table = self._table
         table.setRowCount(len(self._pairs))
         for index, pair in enumerate(self._pairs):
-            role = (pair.a or pair.b).role
-            name = QTableWidgetItem(f"{_symbol(pair.name)} · {_ROLE_SUFFIX[role]}")
+            sides = [side for side in (pair.a, pair.b) if side is not None]
+            if len({side.role for side in sides}) == 1:
+                suffix = _ROLE_SUFFIX[sides[0].role]
+            else:
+                suffix = f"{_ROLE_SUFFIX[pair.a.role]} in A, {_ROLE_SUFFIX[pair.b.role]} in B"
+            name = QTableWidgetItem(f"{_symbol(pair.name)} · {suffix}")
             name.setToolTip(
                 f"Click to plot {format_param_label(pair.name)} against the series"
                 if pair.name in trend_names

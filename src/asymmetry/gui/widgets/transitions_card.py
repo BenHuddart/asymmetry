@@ -189,6 +189,7 @@ class TransitionsCard(QWidget):
         button_row.addWidget(self._apply_btn)
         button_row.addStretch()
         layout.addLayout(button_row)
+        layout.addStretch()
 
     # ── Public API ─────────────────────────────────────────────────────────
 
