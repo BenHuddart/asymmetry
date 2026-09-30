@@ -1,7 +1,7 @@
 # Global Fit Wizard: a stepper and a Compare workspace
 
-Status: planned 2026-09-30 on `feat/global-wizard-stepper`. The PR is built in
-phased subagent steps, with a lead review gate after each. Mockup (Design
+Status: implemented 2026-09-30 on `feat/global-wizard-stepper`, PR to follow.
+Built in phased subagent steps, with a lead review gate after each. Mockup (Design
 canvas, boards 1–3): <https://claude.ai/artifact/3rz871CWotdJ2nmJcVHwCM>.
 This is the second piece of the wizard UX work, after
 [model-family-picker.md](model-family-picker.md) (#343) and the navigation

@@ -16,31 +16,35 @@ the series — a paramagnetic component appearing through a transition,
 oscillations collapsing into a relaxation — the wizard partitions the series
 into **phases** at the transition and fits each phase under its own template
 and global/local assignment, instead of forcing one model across a break it
-was never going to describe; see `Transitions: phases and the penalty path`_
+was never going to describe; see :ref:`global-fit-wizard-transitions`
 below.
 
-Like the single-spectrum wizard, the global wizard is now an answer-first,
-three-state window: a **Setup** page where you review the series and choose
-scope, a **Running** page that streams its progress, and a **Result** page
-that leads with a plain recommendation and the fitted series before exposing
-the supporting detail. It differs from the single wizard in one important way:
-it drives a two-phase screening-then-optimisation workflow rather than a single
-recommendation, so the Result page carries an explicit screening shortlist from
-which you launch the expensive coupled fits.
+The wizard is a five-step window, **Scope → Screen → Compare → Phases →
+Apply**, laid out as a stepper across the top so that what each stage does,
+and what comes next, is always in view. **Scope** reviews the series and
+chooses which model families to consider; **Screen** fits each family to every
+run independently and ranks the families; **Compare** holds the coupled global
+fits of the families you shortlisted, one row per Global/Local split, and sets
+two of them side by side; **Phases** partitions the series at a transition when
+the model changes along it; and **Apply** reviews exactly what will be handed
+to the global-fit tab before it is handed over. It differs from the
+single-spectrum wizard in one important way: it drives a two-stage
+screening-then-optimisation workflow rather than a single recommendation, and
+you choose on the Screen step which families earn the expensive coupled fits.
 
-The reason for the two phases is cost. Screening builds a ranked table from
+The reason for the two stages is cost. Screening builds a ranked table from
 independent single-dataset fits across the whole series — fast, and enough to
 see at a glance which candidate families look promising. The coupled global
 optimisation, which actually enforces the shared-parameter constraints, then
-runs only for the candidates you select. Keeping the stages separate makes it
-obvious which rows are still only single-fit screening results and which have
+runs only for the families you tick. Keeping the stages on separate steps makes
+it obvious which results are still only single-fit screening and which have
 been optimised under parameter sharing. The coupled step is where the wizard
 pays for itself: sharing a parameter usually tightens the uncertainties on the
 common quantities (typically the field-distribution widths and amplitudes)
 below what any single-run fit can achieve, and it cleans up the per-run trends
 in the local parameters by suppressing the noise that arises when each run
 independently re-optimises an otherwise common quantity. It is also a useful
-cross-check on a series you have already fit by hand — the screening phase
+cross-check on a series you have already fit by hand — the screening stage
 should recover the same model family you converged on.
 
 Once the wizard has applied a model, :doc:`fitting` covers running and
@@ -56,17 +60,52 @@ datasets, bunching, and fit range the tab is using at the time you open it, so
 candidates are compared on exactly the points a manual global fit would use.
 Completed wizard states are cached with the tab context and persisted in
 project files, so reopening the wizard on an unchanged series skips straight to
-the last result rather than rebuilding an unchanged screening table or rerunning
-finished optimisations.
+the last result — the Compare step when role splits have been optimised, the
+Screen step otherwise — rather than rebuilding an unchanged screening table or
+rerunning finished optimisations.
 
-Setup: review the series and choose scope
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Each step in the stepper shows its number, its title, and a one-line summary
+of where it stands, and its disc marks its state:
+
+- **done** — a green ✓: the step's work is finished;
+- **current** — a filled disc on a highlighted tile: the step on screen;
+- **ready** — an outlined disc: the step's inputs exist and it has not run
+  (Compare reads "Next: optimise the shortlist" once screening is done);
+- **stale** — an amber "!": the step's results no longer match the scope
+  (see `Scope: review the series and choose scope`_ below);
+- **running** — a turning arc: an analysis for this step is in progress
+  ("Screening…", "Optimising the shortlist…", or "Optimising phases…");
+- **skipped** — a dashed disc: the step does not apply to this series (Phases
+  reads "No transition found").
+
+Done, stale, ready, and running steps are clickable, so you can move back to
+Scope to widen the search, or leave a long run and read an earlier step while
+it goes; a pending step waits for its inputs. The summaries follow the
+analysis: Scope names the field direction and the number of models ("Longitudinal
+· 31 models"), Screen names the leading family ("*Title* leads"), Compare counts
+the optimised splits ("8 role splits optimised"), Phases states the selected
+partition ("1 transition · 21 ± 3 K"), and Apply names what it holds ("Pick a
+model first", "Ready: *title*", and "Applied: *title*" once it is applied).
+
+An analysis shows its progress inside the step it feeds: screening in Screen,
+the coupled optimisation of the shortlist in Compare, and the per-phase
+optimisation in Phases. The block carries a bold header, a short decision trail
+whose steps light up as the core reports progress, a collapsed **Live log**
+that captures every progress message in full, and **Cancel**, which stops a
+long run cleanly and returns you to the step you started it from. When the run
+finishes, the header, the trail, and **Cancel** go and the block collapses to a
+**Run log** disclosure that keeps the log. You can work in the main window
+while the analysis runs; if it ends up in front of the wizard, the wizard
+returns to the front by itself as soon as the analysis finishes.
+
+Scope: review the series and choose scope
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. image:: /_generated/screenshots/global_fit_wizard_setup.png
-   :alt: Global Fit Wizard Setup page — series overview, the model family picker with a Longitudinal answer, and the Run screening button
+   :alt: Global Fit Wizard Scope step — series overview, the model family picker with a Longitudinal answer, and the Run screening button
    :width: 100%
 
-*The Setup page on a four-field Ag longitudinal-field decoupling series. The*
+*The Scope step on a four-field Ag longitudinal-field decoupling series. The*
 *Series table lists each run as soon as the context arrives; the classification*
 *columns stay* ``—`` *until screening runs. Below it, the Scope section holds the*
 *model family picker: the files record no field direction, so the series was*
@@ -111,12 +150,19 @@ never overrides a direction a file records; when some files record one, the note
 says how many do not, and when all of them do, the row reads "Recorded: …"
 instead. On an LF decoupling series like the one above, a **Longitudinal**
 answer also lets the wizard hold :math:`B_L` at each run's recorded field rather
-than fitting it (see :ref:`fit-wizard-applied-field`). Changing the picker,
-including the direction, after screening has run marks the shown results stale
-— an amber banner says so — and clears the screening selection. Press **Run
-screening** to refresh them; until you do, **View results →** returns to the
-stale results unchanged. Changing the **Ranking Metric** re-ranks the existing
-results in place and needs no new screening.
+than fitting it (see :ref:`fit-wizard-applied-field`).
+
+Changing the picker, including the direction, after screening has run marks the
+results stale. An amber banner reads "Scope changed since the last analysis, so
+these results are stale. Run screening again to refresh them.", and the
+stepper marks Screen, Compare, and Phases with "!". Their results stay
+viewable — click a stale step to read it — but **Optimise N families →** and
+the Transitions actions wait until **Run screening** refreshes them. A change
+made while an analysis is running cancels that run and discards its result.
+Changing the scope back to the one the results were screened under and
+pressing **Run screening** restores them at once, without screening again.
+Changing the **Ranking Metric** re-ranks the existing results in place and
+needs no new screening.
 
 The collapsed **Guide the search (optional)** section is where you tell the
 wizard what you already know physically before the expensive search starts.
@@ -135,124 +181,189 @@ before any fitting starts.
 
 The **Search settings** row carries the ranking metric (``AICc`` by default;
 see :ref:`global-fit-wizard-metrics`) and a single, honest optimisation mode —
-the **separable role search** (see `How the role search works`_ below) —
+the **separable role search** (see :ref:`global-fit-wizard-role-search`) —
 reached by the primary **Run screening** button.
 
-Running: the streaming decision trail
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Screen: rank the families and pick a shortlist
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. image:: /_generated/screenshots/global_fit_wizard_running.png
-   :alt: Global Fit Wizard Running page — a streaming decision trail above the expanded Live log
+   :alt: Global Fit Wizard Screen step mid-screening — the stepper marks Screen running above the decision trail and the Live log
    :width: 100%
 
-*The Running page part-way through a screening pass: the first steps are marked*
-*done, the current step is highlighted, and the Live log is expanded to show*
-*every progress message inline.*
+*Screening in progress on the Screen step: the stepper marks the step*
+*"Screening…", the first steps of the trail are done, per-run screening is*
+*active, and the Live log is expanded to show every progress message inline.*
 
-While the analysis runs, the Running page streams a short decision trail whose
-steps light up as the core reports progress — reading the series conditions,
-choosing candidate families, screening each run independently, and ranking the
-candidates across the series. A coupled optimisation shows a different set of
-steps (preparing the selected candidates, running the coupled optimisation,
-scoring the Global/Local roles, and reranking). The collapsible **Live log**
-below the trail captures every progress message in full, and **Cancel** stays
-visible throughout so a long run can be stopped cleanly. You can work in the
-main window while the analysis runs; if it ends up in front of the wizard, the
-wizard returns to the front by itself as soon as the analysis finishes.
+**Run screening** opens the Screen step and runs the screen there. Its trail
+reads the series conditions, chooses candidate families, screens each run
+independently, and ranks the candidates across the series. When it finishes,
+the step shows the family leaderboard.
 
-Result: the answer card and the screening shortlist
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. image:: /_generated/screenshots/global_fit_wizard_screen.png
+   :alt: Global Fit Wizard Screen step — the family leaderboard with per-run reduced chi-squared cells beside a preview of the leading family's fits
+   :width: 100%
+
+*The Screen step after screening the Ag decoupling series with three*
+*Kubo–Toyabe models and the generic relaxation families in scope. Only three*
+*families survive to be scored. Longitudinal-field KT + Constant leads with every*
+*run's χ²ᵣ graded good, and is the only family within Δ ≤ 10, so it alone is*
+*ticked. The dynamic and broadened KT families trail by several hundred AICc*
+*units, with a fair cell at 15 G. On the right, the leader's per-run fits sit*
+*above their residual strips.*
+
+The leaderboard has one row per screened family, best first. Each row carries:
+
+- a tick box that puts the family on the shortlist for coupled optimisation;
+- the family's title;
+- a bar for its difference from the best row on the ranking metric — the
+  column header names it, "ΔAICc from best" — with the best row reading
+  ``best``;
+- one cell per run holding that run's reduced chi-squared
+  :math:`\chi^2_\nu` from the family's own single-run fit, graded good
+  (:math:`\chi^2_\nu \le 1.5`, green), fair (:math:`\le 5`, amber), or poor
+  (above 5, red);
+- a status badge: ``Not optimised``, ``Running``, ``Optimised``, or
+  ``Failed``.
+
+The per-run cells show at a glance where a family fails — a Kubo–Toyabe dip
+the model cannot follow at low field, say — which a single series-wide score
+hides. Above eight runs the numbers no longer fit legibly, so the cells become
+a heat strip of graded squares, headed "χ²ᵣ per run, *first* → *last*: hover a
+square for its value". A long board shows the ticked rows, the selected row,
+and the next three by rank; **Show all N families** lists the rest.
+
+Click a row to preview that family's per-run fits on the right: every run
+drawn with its fitted curve, colour-graded along the sweep axis, above one
+strip per run of normalised residuals :math:`(y - f(t))/\sigma` clipped at
+:math:`\pm 4\sigma`, labelled with the run's :math:`\chi^2_\nu`. These are
+screening fits: a good row means the family looks promising when each dataset
+is fit on its own, not that it has survived coupled global fitting.
+
+When screening finishes, the wizard pre-ticks the families within
+:math:`\Delta \le 10` of the best on the ranking metric, up to three. The
+threshold follows Burnham and Anderson's rule of thumb that a model more than
+10 information units behind the best has essentially no support; the cap of
+three bounds the cost of the coupled fits that follow. Tick or untick any row,
+then press **Optimise N families →** (the count follows your ticks) to run their
+coupled fits; when several are ticked the wizard optimises them independently
+and, where it is safe to do so, in parallel. The collapsed **Details** section
+holds the raw screening table — **Screening Score**, **AIC**, **AICc**,
+**BIC**, **Status**, and the parameter counts — and the **Candidate
+portfolio**: every candidate family with its category, parameter count, and
+rationale.
+
+Compare: candidate A against candidate B
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. image:: /_generated/screenshots/global_fit_wizard_result.png
-   :alt: Global Fit Wizard Result page — the series answer card
+   :alt: Global Fit Wizard Compare step — optimised role splits of the LF Kubo-Toyabe model, with the shared-Delta split as A and a per-run-Delta split pinned as B
    :width: 100%
 
-*The answer card after a coupled optimisation of the LF Kubo-Toyabe candidate.*
-*Every run is overlaid with its global-fit curve, colour-graded along the*
-*series axis, beside a panel showing the local parameter (here* :math:`B_L`
-*) against the sweep axis. The screening shortlist and the demoted detail*
-*tables continue below the card.*
+*The Compare step after a coupled optimisation of Longitudinal-field KT +*
+*Constant. A is the recommended split, with Δ shared and* :math:`B_L` *per run.*
+*B, pinned dashed, frees Δ per run as well. It fits every run as closely by*
+*eye, but it scores +34 AICc and fails the runs test at 100 G. The trend plot*
+*follows Δ: A's shared value is one line across the series, while B's per-run*
+*Δ falls away at 100 G, where the decoupled signal no longer constrains it.*
 
-**← Back to setup**, at the top of the Result page, returns to the Setup page
-so you can change the scope, the ranking metric, or the parameter expectations
-and screen again; the results stay available behind **View results →** until
-a new screening replaces them. Reopening the wizard on a series it has already
-analysed lands on the Result page with the cached results, so the same button
-is how you rebuild an analysis.
+The optimisation runs in the Compare step and lands there when it finishes;
+until one has run, the step reads "Optimise the shortlist on the Screen step
+first." with a **Go to Screen** button. On the left, the optimised candidates
+are grouped by model, best first, with one row per Global/Local split — a
+single template usually yields several, since the role search scores
+neighbouring assignments exactly. Each row carries:
 
-The answer card leads with the recommendation — a headline naming the
-recommended candidate and a plain summary line — above the series overlay:
-every run drawn with its coupled global-fit curve, colour-graded along the
-sweep axis, beside a **Local parameter trend** panel that plots the leading
-local parameter against that axis. In the LF decoupling example above, the
-0 G run shows the classic Kubo-Toyabe dip and one-third recovery while the
-higher-field runs decouple toward a flat line, and the local :math:`B_L` tracks
-the applied field — exactly the shared-:math:`\Delta`, local-:math:`B_L`
-structure the model expresses.
+- one chip per parameter naming its role (``Global Δ``, ``Local B_L``), and a
+  "Fixed:" line for any fixed parameter;
+- a bar for its difference from the best optimised split on the ranking metric
+  (the caption above the list names the metric, "Role splits · ΔAICc from
+  best");
+- an evidence weight, the Akaike weight on the ranking metric,
+  :math:`w_i \propto \exp(-\Delta_i/2)`, normalised over the optimised
+  splits — the relative support each split has among those fitted, read as a
+  percentage (a sliver of support reads ``<1%``);
+- a gate badge, ``Pass`` when every run's residuals pass the automatic
+  checks and ``Warn`` otherwise, with the failing check and its runs spelled
+  out beneath (for example "runs-test z score suggests structure (-2.32) (run
+  5204)");
+- parameter flags, each naming the runs that earned it: a value "at lower
+  bound" or "at upper bound" (a plain fact — a rate pinned at zero is often
+  physical), "not finite", or "poorly determined" (its uncertainty exceeds its
+  magnitude). A row shows at most three of these lines, the gate's first,
+  and hides the rest behind "+*k* more".
 
-Beneath the plot, an alternatives strip surfaces other optimised candidates
-that scored close to the winner; because several optimised assignments of the
-same template differ only in their Global/Local split, each alternative is
-labelled with its local-parameter signature to keep them distinct. Clicking an
-alternative (or its row in the optimised-fits table) redraws the overlaid curves
-and the trend for that candidate, and **Apply this fit** hands back to the
-global-fit tab whichever candidate the card is drawing. Applying a result
-updates the tab's composite function, parameter values, bounds, and Global or
-Local roles directly, reusing the already-computed fit bundle so the plots and
-parameter views refresh immediately without rerunning the fit.
+Click a row to make it candidate **A**; **Pin as B** on any other row overlays
+that split as candidate **B**, and **Unpin B** clears it. The recommended
+split starts as A. On the right, both are drawn over the data — A solid, B
+dashed, one colour per run along the sweep axis — above one residual strip per
+run, A in the run colour over B in grey, with each run's :math:`\chi^2_\nu`
+for A and B at the strip's end ("χ²ᵣ A · B"); a series longer than twelve runs
+shows twelve strips spread along it. Below, a parameter table sets A beside B:
+a shared parameter as one value with its uncertainty, a local one as its per-run
+values, and a note column that flags a global both candidates share when the
+two values differ by two standard deviations or more ("differs by 3.1σ"),
+together with either side's parameter flags. Click the row of a parameter
+that is local to A or B to plot it against the sweep axis beside the table — A filled, B hollow and
+dashed, and a shared value drawn as one line with its :math:`\pm1\sigma` band.
+In the LF decoupling example, the local :math:`B_L` tracks the applied field —
+exactly the shared-:math:`\Delta`, local-:math:`B_L` structure the model
+expresses.
 
-When the series alphabet's per-run scores suggest a structural change partway
-through the series, a **Transitions** card appears between the answer card and
-the shortlist, offering a second answer — one phase per side of the break
-instead of one model for the whole series. See `Transitions: phases and the
-penalty path`_ below for what it shows and how to use it.
+The collapsed **Details** section holds the raw optimised table (the ranking
+score, **AIC**, **AICc**, **BIC**, the gate, and the Global and Local
+parameters) and the **Parameter roles for A**: for each non-fixed parameter,
+the score with it kept ``Global``, the score with it made ``Local``, the
+difference, and simple trace diagnostics (normalised total variation and
+roughness). These recommendations discourage overfitting: a model with more
+local parameters usually fits better in raw :math:`\chi^2`, so the wizard only
+recommends ``Local`` when the penalised information criterion improves enough
+to overcome the extra flexibility. **Continue with A →** takes A to the Apply
+step.
 
-Below the card sits the **Screening shortlist** — the ranked table of candidate
-families from the single-fit screening pass, with **Screening Score**, the
-**AIC** / **AICc** / **BIC** values, a **Status** column, and the parameter
-counts. This table is deliberately screening-only: a good row means the family
-looks promising across the series when each dataset is fit on its own, not that
-it has survived coupled global fitting. Its status column reads ``Not
-optimized`` for a screening-only row, ``Running`` while a coupled fit is in
-flight, ``Optimized`` once a coupled result is available, and ``Optimization
-failed`` when a coupled fit was attempted but did not complete. Select one or
-more rows and press **Optimize selected (N)** to launch their coupled fits;
-when several are selected the wizard optimises them independently and, where it
-is safe to do so, in parallel.
+Apply: review what the global-fit tab receives
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The finished decision trail beneath the shortlist expands to the supporting
-detail, each step opening the table it summarises:
+.. image:: /_generated/screenshots/global_fit_wizard_apply.png
+   :alt: Global Fit Wizard Apply step — the LF Kubo-Toyabe model, its Global, Local and Fixed parameter roles, and the starting values from run 5201's fit
+   :width: 100%
 
-- **Candidate portfolio** — every candidate family with its model expression,
-  category, and rationale.
-- **Global optimized fits** — only the candidates that have been through
-  coupled optimisation, with their scores and their Global/Local parameter
-  split; these are the only rows that can be recommended or applied. This is
-  where you switch the recommendation to a different optimised candidate.
-- **Parameter sharing diagnostics** — for each non-fixed parameter, the score
-  with it kept ``Global``, the score with it made ``Local``, the difference,
-  and simple trace diagnostics (normalised total variation and roughness).
-  These recommendations discourage overfitting: a model with more local
-  parameters usually fits better in raw :math:`\chi^2`, so the wizard only
-  recommends ``Local`` when the penalised information criterion improves enough
-  to overcome the extra flexibility.
-- **Apply to the fit panel** — a summary of the currently selected optimised
-  candidate, with buttons to apply either the recommended candidate or the one
-  currently selected in the results.
+*The Apply step after* **Continue with A →** *on the recommended split: the*
+*model, the parameter roles the global-fit tab will set, and the starting*
+*values from the first run's fit, above* **Apply to the global fit tab**.
+
+Choosing a model and committing it are separate acts, so Apply reviews exactly
+what will be handed over before anything changes: the model's title, its
+parameter roles (**Global**, **Local**, and **Fixed**, as the global-fit tab
+will set them), the **Starting values** ("From run *N*'s fit; local parameters
+start there on every run."), any series warnings, and a collapsed **Why these
+roles?** section with the role search's rationale for each parameter. **Apply
+to the global fit tab** then updates the tab's composite function, parameter
+values, bounds, and Global or Local roles directly, reusing the
+already-computed fit bundle so the plots and parameter views refresh
+immediately without rerunning the fit. Afterwards the step's summary reads
+"Applied: *title*". To apply a different split, go back to Compare, make it A,
+and continue again.
+
+When the answer is a partition instead (see
+:ref:`global-fit-wizard-transitions`), Apply reviews the phases — the
+partition's summary sentence and one line per phase with its range, template,
+Global/Local split, and confidence — and offers **Apply phases**.
 
 .. _global-fit-wizard-transitions:
 
-Transitions: phases and the penalty path
------------------------------------------
+Phases: transitions and the penalty path
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. image:: /_generated/screenshots/global_fit_wizard_transitions.png
-   :alt: Global Fit Wizard Result page with the Transitions card, penalty path table, and per-phase strip
+   :alt: Global Fit Wizard Phases step — the Transitions card with the penalty path table and per-phase strip beside the series overlay coloured by phase
    :width: 100%
 
-*The Result page after optimising a synthetic two-phase temperature scan: the*
-*Transitions card between the answer card and the shortlist shows the penalty*
-*path (0 and 1 breaks, the elbow pre-selected) and, once optimised, a chip per*
-*phase naming its range, template, Global/Local split, and confidence.*
+*The Phases step after optimising a synthetic two-phase temperature scan: the*
+*Transitions card shows the penalty path (0 and 1 breaks, the elbow*
+*pre-selected and verified) and a chip per phase naming its range, template,*
+*Global/Local split, and confidence. The second phase is picked, so the*
+*overlay, coloured by phase, draws its coupled fit over its four runs.*
 
 A temperature or field series can cross one or more transitions, and the
 model that describes the runs on one side does not describe the runs on the
@@ -279,24 +390,27 @@ describing relaxation, is not offered as an oscillatory phase there, and the
 wizard places a break where the lines stopped rather than carrying one
 oscillatory phase across them.
 
-A **Transitions** card appears on the Result page, between the series answer
-card and the screening shortlist, whenever the series alphabet's per-run
-scores support a partition. It states the whole *penalty path* — the best
-partition of the series with exactly :math:`0, 1, 2, \dots` breaks — as one
-row per solution, in a table with **Breaks**, **Boundaries**, **Gain**, and
-**Status** columns; a solution with nothing to show on a column (no boundary
-at zero breaks, no gain at the top of the path) reads ``—``. **Gain** is the
-drop in total BIC against the solution with one fewer break — its column
-header carries the tooltip "ΔBIC against the solution with one fewer break."
-The path's own recommendation — the *elbow*, the largest number of breaks
-whose marginal gain still clears a fixed penalty floor — is pre-selected and
-marked ``elbow`` in **Status**; once a row's phases have been fitted exactly it
-additionally reads ``verified``, and a phase too short to fit on its own is
-named directly (``excluded: run 706``, or ``excluded: runs 706, 707`` for
-more than one). A short summary above the table states the selected row in
-plain language — ``"2 transitions found: 16.5 ± 0.5 K and 28.5 ± 0.5 K."``, or
-``"No transitions found: one phase describes the whole series."`` when the
-elbow sits at zero breaks — with an excluded phase named in the same sentence:
+The Phases step is active whenever the series alphabet's per-run scores
+support a partition. Before screening it reads "Not screened yet"; when the
+series has no penalty path (fewer than six runs), or the path's own pick has
+no break, the step is skipped and reads "No transition found". Otherwise it
+holds the **Transitions** card beside an overlay of the series coloured by
+phase. The card states the whole *penalty path* — the best partition of the
+series with exactly :math:`0, 1, 2, \dots` breaks — as one row per solution,
+in a table with **Breaks**, **Boundaries**, **Gain**, and **Status** columns;
+a solution with nothing to show on a column (no boundary at zero breaks, no
+gain at the top of the path) reads ``—``. **Gain** is the drop in total BIC
+against the solution with one fewer break — its column header carries the
+tooltip "ΔBIC against the solution with one fewer break." The path's own
+recommendation — the *elbow*, the largest number of breaks whose marginal gain
+still clears a fixed penalty floor — is pre-selected and marked ``elbow`` in
+**Status**; once a row's phases have been fitted exactly it additionally reads
+``verified``, and a phase too short to fit on its own is named directly
+(``excluded: run 706``, or ``excluded: runs 706, 707`` for more than one). A
+short summary above the table states the selected row in plain language —
+``"2 transitions found: 16.5 ± 0.5 K and 28.5 ± 0.5 K."``, or ``"No
+transitions found: one phase describes the whole series."`` when the elbow
+sits at zero breaks — with an excluded phase named in the same sentence:
 ``" Run 706 is excluded from the global fit: it looks like a different
 phase."`` A footnote below the table reads "Transitions are scored with BIC;
 the ranking metric applies within a phase." — the partition is always scored
@@ -304,8 +418,8 @@ with BIC (a structural change between nested model families is nearly free
 under AIC's flatter penalty, so AIC/AICc would frequently see no elbow at all)
 whatever :ref:`ranking metric <global-fit-wizard-metrics>` you have selected;
 that metric still decides which *candidate* wins inside each phase. Selecting
-a row recolours the series overlay above by phase instead of by sweep
-position.
+a row recolours the overlay by phase, and the stepper's summary follows it
+("1 transition · 21 ± 3 K").
 
 A phase must span at least three runs. A shorter run of leftover points is
 admitted only at either end of the series, where it is scored at its own
@@ -321,29 +435,24 @@ Selecting a row with at least one break enables **Optimize phases**, which
 runs the coupled search independently on each phase of that solution (plus
 the neighbouring solutions and shifted breaks the wizard checks to confirm the
 elbow, at no extra cost to you beyond the wait) — the break-free row is the
-ordinary series-wide answer the shortlist's own **Optimize selected** already
-produces, so it carries no separate action here. The Running page shows
-"Optimizing each phase…", stepping from "Preparing the series screening
-table…" through "Optimising each phase…", which becomes "Optimising phase
-*i* of *N*…" once individual phases start; the status line beneath reads
-"Running the coupled global optimisation once per phase. Progress is streamed
-to the live log." Once it finishes, a strip of phase chips appears beneath the
-table, one per phase, each naming its ordinal and range, its template, its
-Global/Local split (``Global: A_1, A_bg · Local: Lambda``), and a confidence
-line ("High confidence", or "Medium confidence — check the warnings"); the
-verified row's **Apply phases** button then creates one nested data group per
-phase under the series group (see :ref:`phases-within-a-group` in
-:doc:`gui_usage`), records one global-fit series per phase (see
+ordinary series-wide answer that **Optimise N families →** on the Screen step
+already produces, so it carries no separate action here. The run shows in the
+Phases step under "Optimizing each phase…", stepping from "Preparing the
+series screening table…" through "Optimising each phase…", which becomes
+"Optimising phase *i* of *N*…" once individual phases start; the status line
+reads "Running the coupled global optimisation once per phase. Progress is
+streamed to the live log." Once it finishes, a strip of phase chips appears
+beneath the table, one per phase, each naming its ordinal and range, its
+template, its Global/Local split (``Global: A_1, A_bg · Local: Lambda``), and a
+confidence line ("High confidence", or "Medium confidence — check the
+warnings"). Click a chip to draw that phase's coupled fit over its runs, with
+residual strips. The verified row's **Apply phases** button opens the Apply
+step to review the phases; its own **Apply phases** then creates one nested
+data group per phase under the series group (see :ref:`phases-within-a-group`
+in :doc:`gui_usage`), records one global-fit series per phase (see
 :ref:`trend-phase-owned-series` in :doc:`parameter_trending`), and binds the
 global-fit tab to the first phase. The main window's status bar confirms what
 was created, e.g. "Applied 2 phases under Runs 901-906 (2 transition(s))."
-
-References
-~~~~~~~~~~
-
-1. R. Killick, P. Fearnhead, and I. A. Eckley, J. Am. Stat. Assoc. **107**,
-   1590 (2012).
-2. N. R. Zhang and D. O. Siegmund, Biometrics **63**, 22 (2007).
 
 .. _global-fit-wizard-role-search:
 
@@ -371,12 +480,12 @@ templates race through this together, so a template that falls behind early
 keeps its free all-local score rather than being fitted further for no
 benefit. Once elimination stops, the winner's single-flip neighbourhood (every
 parameter toggled once from the winning assignment) is fitted too, so the
-per-parameter Global/Local recommendations on the results page are exact
+per-parameter Global/Local recommendations in the Compare step's **Details** are exact
 rather than inferred from the path taken to reach them. Every one of these
 fits runs at the series' own search resolution (the coarsest rebinning any
 run's own analysis chose); in a series-wide search only the winner, and its
 flip-neighbourhood, are refitted once more at full resolution for the numbers
-you actually see. A *phase* (see `Transitions: phases and the penalty path`_)
+you actually see. A *phase* (see :ref:`global-fit-wizard-transitions`)
 is reported at the search resolution instead — every row of the penalty path
 is then scored on the same points, and the fit you apply from a phase seeds
 the Batch tab's own global fit, which runs on the native record. The whole
@@ -450,14 +559,16 @@ gate logic actually checks.
 The recommended candidate is the best-scoring optimised candidate whose
 residuals pass every automatic residual and continuity check across the series.
 When the top two are within a small score margin the wizard presents them as a
-comparable pair and prefers the simpler one, surfaced as an alternative on the
-card. This is the case to trust with least reservation: a clean recommendation
+comparable pair and prefers the simpler one as the starting A on the Compare
+step; the status line then adds "with a similarly scoring alternative to
+inspect", and pinning the runner-up as B sets the two side by side. This is the case to trust with least reservation: a clean recommendation
 means every run's residuals look unstructured under the shared-parameter fit.
 
 Two softer outcomes deserve a closer look. When *no* candidate passes the
 strict series checks but the best coupled fit is nonetheless excellent — every
 run clears its own per-run residual gate — the wizard does not veto to nothing.
-It surfaces that candidate as a **tentative** recommendation and names the
+It surfaces that candidate as a **tentative** recommendation (it starts as A on
+the Compare step) and names the
 series-consistency check that flagged (a fingerprint jump across a transition,
 a rough local-parameter trace), with the caveat "Review before applying." Treat
 a tentative recommendation as a lead: the per-run fits are sound, but something
@@ -467,7 +578,7 @@ the model genuinely does not fit some runs — so a tentative result is
 specifically the "fits every run, but the trend looks odd" case, not "fits
 badly somewhere."
 
-The per-run readouts on the Setup and Result tables carry the same honesty. A
+The per-run readouts in the Scope step's **Series** table carry the same honesty. A
 run whose best single fit shows **no significant structure** — its winner
 cannot beat a flat or plain-exponential baseline by a clear margin — is flagged
 with an unmissable series-level banner naming the affected runs. This is a
@@ -477,10 +588,10 @@ transition, or at the noisy end of a decoupling series, do not. It usually
 means the data there are well described by a plain relaxation, and forcing the
 richer global model onto those runs would be over-fitting.
 
-In all three cases the honest move is the same: before applying, open the
-optimised candidate's fit overlay and residuals, read the parameter-sharing
-diagnostics, and check that the local-parameter trend behaves the way the
-physics leads you to expect.
+In all three cases the honest move is the same: before applying, read A's
+residual strips and flags on the Compare step, pin its nearest rival as B,
+read the parameter-sharing diagnostics in **Details**, and check that the
+local-parameter trend behaves the way the physics leads you to expect.
 
 Programmatic global fitting
 ---------------------------
@@ -570,10 +681,11 @@ entirely.
 Every screening recommendation also carries a ``partition_path`` — the whole
 penalty path over 0, 1, 2, … structural breaks along the series (``None`` on a
 series of fewer than six runs, where a partition is not attempted); see
-`Transitions: phases and the penalty path`_ above for what the path means.
+:ref:`global-fit-wizard-transitions` above for what the path means.
 ``partition_path.selected_k`` is the pre-selected elbow, and
 ``transitions_summary(partition_path.solutions[k], recommendation.series_axis_label)``
-renders the same plain sentence the GUI's Transitions card shows for that row.
+renders the same plain sentence the Phases step's Transitions card shows for
+that row.
 Passing a ``partition_path`` together with a ``partition_k`` into
 ``build_global_fit_wizard_recommendation`` switches it from one series-wide
 answer to one answer per phase of that solution — the two arguments are
@@ -631,7 +743,7 @@ answer always says what it was coarsened by.
 This tier only ever narrows the *screening* candidate list. The coupled
 optimisation that follows — deciding which parameters of the surviving
 candidate are Global versus Local — is a separate stage with its own, single
-engine at every tier; see `How the role search works`_ below.
+engine at every tier; see `How the role search works`_ above.
 
 .. _global-fit-wizard-timing:
 
@@ -672,3 +784,16 @@ process table. Each ``stage_callback`` event carries the stage name, a
 ``start``/``item``/``end`` marker, items done and total, and the elapsed and CPU
 time so far, which is what you want a timeout to watch: absence of *progress*
 rather than total runtime.
+
+References
+----------
+
+* R. Killick, P. Fearnhead, and I. A. Eckley, J. Am. Stat. Assoc. **107**,
+  1590 (2012) — optimal partitioning of a series with a penalised cost, the
+  basis of the penalty path.
+* N. R. Zhang and D. O. Siegmund, Biometrics **63**, 22 (2007) — a
+  BIC-type criterion for choosing the number of change points.
+* K. P. Burnham and D. R. Anderson, *Model Selection and Multimodel
+  Inference: A Practical Information-Theoretic Approach*, 2nd ed. (Springer,
+  New York, 2002) — Akaike weights and the rule of thumb that a model more
+  than 10 information units behind the best has essentially no support.

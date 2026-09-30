@@ -8,8 +8,8 @@ subsystems or days.
 
 ### Global Fit Wizard: a stepper and a Compare workspace
 
-Status: planned 2026-09-30 on `feat/global-wizard-stepper`. One PR in
-phased subagent steps (core comparison, widgets, window restructure, docs),
+Status: implemented 2026-09-30 on `feat/global-wizard-stepper`, PR to follow.
+One PR in phased subagent steps (core comparison, widgets, window restructure, docs),
 with a lead review gate after each. Decision log (D1–D11), code map and
 phases are in [plans/global-wizard-stepper.md](plans/global-wizard-stepper.md).
 Mockup: <https://claude.ai/artifact/3rz871CWotdJ2nmJcVHwCM>.

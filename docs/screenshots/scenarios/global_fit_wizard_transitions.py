@@ -1,7 +1,7 @@
-"""Global Fit Wizard — Result page with the Transitions card, optimised.
+"""Global Fit Wizard — the Phases step with a phase picked, optimised.
 
-Drives the Result page to a **partitioned** recommendation over the synthetic
-two-phase ZF scan (:func:`make_two_phase_zf_tscan`): a damped-oscillation
+Drives the wizard's **Phases** step to a **partitioned** recommendation over
+the synthetic two-phase ZF scan (:func:`make_two_phase_zf_tscan`): a damped-oscillation
 phase below a planted 20 K transition and a plain-relaxation phase above it.
 Unlike ``global_fit_wizard_result`` this does not run any real search or fit —
 the screening table, the penalty path, and the per-phase coupled-fit results
@@ -12,6 +12,10 @@ reopened, already-optimised wizard state uses. That keeps the capture fast and
 fully deterministic while still exercising the real ``TransitionsCard`` and
 ``GlobalFitWizardWindow`` rendering code — nothing about the *display* is
 faked, only the (expensive) search that would normally produce its input.
+
+The cached state lands on Screen, so the scenario opens Phases and clicks the
+second phase in the per-phase strip: the overlay is coloured by phase and draws
+that phase's coupled fit over its runs.
 
 ``requires_fit = False``: no iminuit call happens at capture time.
 """
@@ -91,7 +95,10 @@ def _assessment(
             reduced_chi_squared=1.03,
             dof=47,
             parameters=ParameterSet(
-                [Parameter(name, value=value, min=-50.0, max=50.0) for name, value in params.items()]
+                [
+                    Parameter(name, value=value, min=-50.0, max=50.0)
+                    for name, value in params.items()
+                ]
             ),
             uncertainties={name: abs(value) * 0.03 + 1e-3 for name, value in params.items()},
             residuals=np.zeros_like(dataset.time),
@@ -139,10 +146,10 @@ def _assessment(
 class GlobalFitWizardTransitionsScenario(Scenario):
     name = "global_fit_wizard_transitions"
     description = (
-        "Global Fit Wizard Result page with the Transitions card and per-phase "
-        "strip on a synthetic two-phase temperature scan."
+        "Global Fit Wizard Phases step — the Transitions card, per-phase strip "
+        "and phase-coloured overlay on a synthetic two-phase temperature scan."
     )
-    size = (1180, 965)
+    size = (1180, 800)
     requires_fit = False
 
     def build(self) -> QWidget:
@@ -264,6 +271,10 @@ class GlobalFitWizardTransitionsScenario(Scenario):
         window.set_analysis_context(datasets)
         _process_events_for(milliseconds=60)
         window.set_cached_recommendation(recommendation)
+        window._show_step("phases")
+        # Pick the paramagnetic phase in the strip, as a click would: its relaxation
+        # curves read clearly, where the 5 MHz precession fills the overlay.
+        window._transitions_card._phase_buttons[1].click()
         _process_events_for(milliseconds=200)
         return window
 
