@@ -174,13 +174,19 @@ class ParameterRow:
 
     ``values`` is a single :class:`Estimate` for a global shared by a coupled
     fit, and otherwise one estimate per run in the candidate's run order.
-    ``flags`` is the union of the flags earned in any run.
+    ``run_flags`` holds the flags each run's fit earned, in that run order,
+    whether or not the value is shared.
     """
 
     name: str
     role: ParameterRole
     values: Estimate | tuple[Estimate, ...]
-    flags: tuple[ParameterFlag, ...]
+    run_flags: tuple[tuple[ParameterFlag, ...], ...]
+
+    @property
+    def flags(self) -> tuple[ParameterFlag, ...]:
+        """The union of the flags earned in any run, in first-seen order."""
+        return tuple(dict.fromkeys(flag for flags in self.run_flags for flag in flags))
 
 
 @dataclass(frozen=True)
@@ -304,21 +310,22 @@ def _parameter_row(
     name: str, role: ParameterRole, fits: Sequence[FitResult], *, shared: bool
 ) -> ParameterRow:
     estimates: list[Estimate] = []
-    flags: dict[ParameterFlag, None] = {}
+    run_flags: list[tuple[ParameterFlag, ...]] = []
     for fit in fits:
         # A failed fit carries no parameters; its value is unknown, not a runaway.
         if name not in fit.parameters:
             estimates.append(Estimate(math.nan, math.nan))
+            run_flags.append(())
             continue
         error = float(fit.uncertainties.get(name, math.nan))
         parameter = fit.parameters[name]
         estimates.append(Estimate(float(parameter.value), error))
-        flags.update(dict.fromkeys(parameter_flags(parameter, error)))
+        run_flags.append(parameter_flags(parameter, error))
     return ParameterRow(
         name=name,
         role=role,
         values=estimates[0] if shared else tuple(estimates),
-        flags=tuple(flags),
+        run_flags=tuple(run_flags),
     )
 
 

@@ -144,7 +144,8 @@ structural harness.)
 - **Wizard stepper and comparison surfaces** — `WizardStepper` (step
   navigation), `RunProgress` (header, trail, live log and Cancel for a running
   step), `SeriesFitCanvas` (series overlay with A/B fits and residual strips),
-  `ScreeningLeaderboard` (`widgets/`). Per-run series colours come from
+  `ScreeningLeaderboard`, `ModelComparePanel` (pick A, pin B, overlay,
+  parameter table and trend) (`widgets/`). Per-run series colours come from
   `series_colours` (`utils/series_colours.py`).
 - **`WizardWindowBase`** (`windows/wizard_base.py`) — subclass this for a new
   guided-wizard window; it owns the `TaskRunner`, progress UI, staleness,

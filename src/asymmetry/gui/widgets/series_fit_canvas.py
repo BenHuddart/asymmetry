@@ -41,12 +41,13 @@ _LEFT_PX = 58
 _RIGHT_PX = 84
 _TOP_PX = 8
 _OVERLAY_BOTTOM_PX = 40  # time tick labels and the axis label
-_OVERLAY_MIN_PX = 220
+_OVERLAY_MIN_PX = 150
 _RESIDUAL_HEADER_PX = 20
 _STRIP_GAP_PX = 3
 _STRIP_MAX_PX = 44
 _STRIP_MIN_PX = 20
 _RESIDUAL_BUDGET_PX = 4 * _STRIP_MAX_PX  # strips thin past four runs, down to the floor
+_RESIDUAL_SHARE = 0.4  # nor may the strips take more of the plotting height than this
 _NOTE_PX = 16
 _BOTTOM_PX = 6
 _LABEL_PX = 12  # vertical room one right-edge run label needs
@@ -54,8 +55,10 @@ _LABEL_FONT_SIZE = 8
 _B_DASH = (0, (5, 3))
 
 
-def _strip_height(strip_count: int) -> float:
-    return min(_STRIP_MAX_PX, max(_STRIP_MIN_PX, _RESIDUAL_BUDGET_PX / strip_count))
+def _strip_height(strip_count: int, plot_px: float) -> float:
+    """Strips share the smaller of the budget and their share of ``plot_px``, within the floor and max."""
+    budget = min(_RESIDUAL_BUDGET_PX, _RESIDUAL_SHARE * plot_px)
+    return min(_STRIP_MAX_PX, max(_STRIP_MIN_PX, budget / strip_count))
 
 
 def spread_labels(targets: Sequence[float], gap: float, low: float, high: float) -> list[float]:
@@ -142,18 +145,21 @@ class SeriesFitCanvas(QWidget):
 
     def _redraw(self, _event: object = None) -> None:
         strips = self._strip_runs()
-        residual_px = 0.0
+        residual_chrome_px = 0.0
         if strips:
-            residual_px = (
+            residual_chrome_px = (
                 _RESIDUAL_HEADER_PX
-                + len(strips) * (_strip_height(len(strips)) + _STRIP_GAP_PX)
+                + len(strips) * _STRIP_GAP_PX
                 + (_NOTE_PX if len(strips) < len(self._datasets) else 0)
             )
+        chrome_px = _TOP_PX + _OVERLAY_BOTTOM_PX + _BOTTOM_PX + residual_chrome_px
         self._canvas.setMinimumHeight(
-            round(_TOP_PX + _OVERLAY_MIN_PX + _OVERLAY_BOTTOM_PX + residual_px + _BOTTOM_PX)
+            round(chrome_px + _OVERLAY_MIN_PX + len(strips) * _STRIP_MIN_PX)
         )
         width = max(self._canvas.width(), _LEFT_PX + _RIGHT_PX + 1)
         height = max(self._canvas.height(), 1)
+        strip_height = _strip_height(len(strips), height - chrome_px) if strips else 0.0
+        residual_px = residual_chrome_px + len(strips) * strip_height
         self._figure.clear()
 
         def rect(bottom_px: float, height_px: float) -> list[float]:
@@ -224,7 +230,6 @@ class SeriesFitCanvas(QWidget):
                 )
 
         if strips:
-            strip_height = _strip_height(len(strips))
             top = _BOTTOM_PX + residual_px
             self._figure.text(
                 _LEFT_PX / width,

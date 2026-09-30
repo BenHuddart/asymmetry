@@ -7,9 +7,9 @@ import math
 from asymmetry.core.fitting.parameters import get_param_info
 
 
-def format_param_label(name: str) -> str:
-    """Return a display label with Greek symbols and units where applicable."""
-    return get_param_info(name).unicode_label()
+def format_param_label(name: str, *, include_unit: bool = True) -> str:
+    """Return a display label with Greek symbols, and units where applicable."""
+    return get_param_info(name).unicode_label(include_unit=include_unit)
 
 
 def format_value_error(value: float, error: float, *, sig_error_digits: int = 2) -> str:
@@ -48,9 +48,11 @@ def format_value_uncertainty(value: float, error: float | None) -> str:
     digit would throw away a quarter of the uncertainty, while 0.43 → 0.4 costs
     little — and the value is rounded to the error's last decimal place. With
     no usable error (``None``, non-finite, or non-positive) the value alone is
-    rendered to four significant digits.
+    rendered to four significant digits, and a non-finite value as ``—``.
     """
     value = float(value)
+    if not math.isfinite(value):
+        return "—"
     if error is None:
         return f"{value:.4g}"
     error = float(error)

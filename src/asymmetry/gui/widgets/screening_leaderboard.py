@@ -152,6 +152,29 @@ class _ChipDelegate(_RowDelegate):
         painter.restore()
 
 
+def paint_delta_bar(painter: QPainter, area: QRectF, delta: float, metrics: QFontMetrics) -> None:
+    """A track filling with Δ up to ``DELTA_BAR_FULL``, :func:`format_delta` right of it."""
+    text_width = metrics.horizontalAdvance(format_delta(1e5))
+    track = QRectF(area.left(), area.center().y() - 3, area.width() - text_width - 6, 6)
+    fraction = min(delta, DELTA_BAR_FULL) / DELTA_BAR_FULL if math.isfinite(delta) else 0.0
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(tokens.SURFACE_HI))
+    painter.drawRoundedRect(track, 3, 3)
+    painter.setBrush(QColor(tokens.BORDER_STRONG))
+    painter.drawRoundedRect(
+        QRectF(track.topLeft(), track.size()).adjusted(0, 0, -(1 - fraction) * track.width(), 0),
+        3,
+        3,
+    )
+    painter.setPen(QColor(tokens.OK if delta == 0 else tokens.TEXT_MUTED))
+    painter.drawText(
+        area, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, format_delta(delta)
+    )
+    painter.restore()
+
+
 class _DeltaBarDelegate(_RowDelegate):
     """A bar growing with Δ up to ``DELTA_BAR_FULL``, with the formatted Δ beside it."""
 
@@ -164,29 +187,12 @@ class _DeltaBarDelegate(_RowDelegate):
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         _draw_item_frame(opt, painter)
-        delta = float(index.data(_DELTA_ROLE))
-        area = QRectF(opt.rect).adjusted(_CHIP_PADDING, 0, -_CHIP_PADDING, 0)
-        text_width = opt.fontMetrics.horizontalAdvance(format_delta(1e5))
-        track = QRectF(area.left(), area.center().y() - 3, area.width() - text_width - 6, 6)
-        fraction = min(delta, DELTA_BAR_FULL) / DELTA_BAR_FULL if math.isfinite(delta) else 0.0
-        painter.save()
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(tokens.SURFACE_HI))
-        painter.drawRoundedRect(track, 3, 3)
-        painter.setBrush(QColor(tokens.BORDER_STRONG))
-        painter.drawRoundedRect(
-            QRectF(track.topLeft(), track.size()).adjusted(
-                0, 0, -(1 - fraction) * track.width(), 0
-            ),
-            3,
-            3,
+        paint_delta_bar(
+            painter,
+            QRectF(opt.rect).adjusted(_CHIP_PADDING, 0, -_CHIP_PADDING, 0),
+            float(index.data(_DELTA_ROLE)),
+            opt.fontMetrics,
         )
-        painter.setPen(QColor(tokens.OK if delta == 0 else tokens.TEXT_MUTED))
-        painter.drawText(
-            area, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, opt.text
-        )
-        painter.restore()
 
 
 def _chip_item(text: str, colours: tuple[str, str], tooltip: str) -> QTableWidgetItem:

@@ -292,6 +292,7 @@ def test_summary_parameter_rows_share_globals_only_after_a_coupled_fit() -> None
     assert [row.name for row in summary.parameters] == ["A_1", "Lambda", "A_bg"]
     assert rows["A_1"].role is ParameterRole.GLOBAL
     assert rows["A_1"].values == Estimate(20.0, 0.3)
+    assert rows["A_1"].run_flags == ((), (), ())
     assert rows["Lambda"].role is ParameterRole.LOCAL
     assert rows["Lambda"].values == tuple(Estimate(_LAMBDAS[run], 0.01) for run in _RUNS)
     assert rows["A_bg"].role is ParameterRole.FIXED
@@ -305,7 +306,7 @@ def test_summary_parameter_rows_share_globals_only_after_a_coupled_fit() -> None
     assert prescreen.parameters[0].values == (Estimate(20.0, 0.3),) * 3
 
 
-def test_summary_row_flags_union_over_runs() -> None:
+def test_summary_row_flags_are_kept_per_run_with_their_union() -> None:
     fits = {run: _fit(run) for run in _RUNS}
     fits[702] = _fit(702, a_1=0.0)
     summary = summarise_candidates(
@@ -316,6 +317,11 @@ def test_summary_row_flags_union_over_runs() -> None:
     assert summary.parameters[0].flags == (
         ParameterFlag.AT_LOWER_BOUND,
         ParameterFlag.POORLY_DETERMINED,
+    )
+    assert summary.parameters[0].run_flags == (
+        (),
+        (ParameterFlag.AT_LOWER_BOUND, ParameterFlag.POORLY_DETERMINED),
+        (),
     )
 
 
@@ -350,6 +356,7 @@ def test_summary_failed_run_has_unknown_values_without_flags() -> None:
     assert isinstance(lam, tuple)
     assert math.isnan(lam[1].value) and math.isnan(lam[1].error)
     assert summary.parameters[1].flags == ()
+    assert summary.parameters[1].run_flags == ((), (), ())
 
 
 def test_gate_summary_dedupes_reasons_and_names_the_runs() -> None:
