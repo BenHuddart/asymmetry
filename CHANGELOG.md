@@ -52,6 +52,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Global Fit Wizard no longer strands you on its results.** A **← Back to setup**
+  button on the Result page returns to Setup to change the scope, ranking metric or
+  parameter expectations and screen again, with **View results →** to go back; a
+  cancelled or failed re-screen lands on Setup instead of on emptied result tables, and
+  re-ranking by a new metric on Setup stays there.
+- **Picking an alternative in the Global Fit Wizard redraws the answer card.** Choosing
+  another optimised candidate (a card chip or an optimised-table row) now redraws the
+  overlaid fits and the local-parameter trend, and the card's button — now **Apply this
+  fit** — applies the candidate it is drawing rather than always the recommended one.
 - **`fit-series` and `fit-global` skip run numbers the folder does not hold**, as
   `reduce` does, instead of asking for them to be reduced.
 - **`--alpha-from` a single-period calibration run works with `--period`** — the
