@@ -72,6 +72,8 @@ from asymmetry.core.fitting.seeding import (
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.wizard_scope import (
+    UNTIMED,
+    FitTimeEstimates,
     ScopeResolution,
     WizardScope,
     dataset_field_geometry,
@@ -84,8 +86,6 @@ from asymmetry.core.fourier.fft import fft_arrays
 
 # ``ComputationalCost`` is a ``str``-Enum, so ``max()``/``<`` compares members
 # alphabetically ("cheap" < "expensive" < "moderate") — wrong. Rank explicitly.
-# (Mirrors ``wizard_scope._COST_RANK``; kept local so we do not reach into that
-# module's private name.)
 _COST_RANK: dict[ComputationalCost, int] = {
     ComputationalCost.CHEAP: 0,
     ComputationalCost.MODERATE: 1,
@@ -2514,6 +2514,7 @@ def build_fit_wizard_recommendation(
     *,
     metric: SelectionMetric = SelectionMetric.AICC,
     scope: WizardScope | None = None,
+    fit_times: FitTimeEstimates = UNTIMED,
     user_frequencies_mhz: Sequence[float] | None = None,
     max_workers: int | None = None,
     executor: Executor | None = None,
@@ -2531,7 +2532,8 @@ def build_fit_wizard_recommendation(
     exclude); families that pass the residual gates, score within
     ``_STAGE1_PROMOTE_DELTA`` of the best, or are named by a multiplet pattern
     match expand to their full Stage-2 portfolios. ``scope`` restricts the
-    families physically (``None`` screens the default superset);
+    families physically (``None`` screens the default superset), and
+    ``fit_times`` judges which models its slow switch leaves out;
     ``user_frequencies_mhz`` adds trusted peak seeds — blind runs get the same
     seeds from the matched-apodisation damped-line scan when the data carry a
     heavily damped line (see
@@ -2605,7 +2607,7 @@ def build_fit_wizard_recommendation(
         fingerprint = fingerprint_spectrum(dataset, peak_analysis=peak_analysis)
     resolution: ScopeResolution | None = None
     if scope is not None:
-        resolution = resolve_scope_for_dataset(dataset, scope)
+        resolution = resolve_scope_for_dataset(dataset, scope, fit_times)
     # ``inference_note`` is already a single, "; "-joined human-readable string
     # (see ``wizard_scope.ScopeResolution.inference_note``); a scope of ``None`` means no
     # resolution ran at all, so the note stays empty rather than guessing.
@@ -6007,6 +6009,17 @@ def analysis_rebin_factor(
         factor = min(factor, bandwidth_cap)
 
     return max(1, int(factor))
+
+
+def screening_points(dataset: MuonDataset) -> int:
+    """Points the wizard fits this run on at least: its length after the cost rebin.
+
+    :func:`analysis_rebin_factor`'s bandwidth protection needs the peak analysis
+    and can only keep more points, so this is exact unless a fast line blocks
+    the rebin.
+    """
+    n = int(dataset.n_points)
+    return n // max(1, n // _FIT_SAMPLE_BUDGET)
 
 
 def _fit_window_duration(dataset: MuonDataset) -> float:

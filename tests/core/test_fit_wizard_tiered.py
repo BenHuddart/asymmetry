@@ -78,6 +78,7 @@ from asymmetry.core.fitting.peak_detection import (
     effective_analysis_window,
 )
 from asymmetry.core.fitting.wizard_scope import (
+    FitTimeEstimates,
     WizardScope,
     resolve_scope,
 )
@@ -1328,6 +1329,30 @@ def test_scope_restricts_screened_families() -> None:
     assert "kt" not in report_keys
     assert "oscillatory" not in report_keys
     assert "muonium" not in report_keys
+
+
+def test_skip_slow_resolves_with_the_fit_times_it_is_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The window hands the picker and the run the same judgement; the run must use it.
+    resolutions = []
+
+    def _capture(fingerprint, current_model, *, scope_resolution=None):
+        resolutions.append(scope_resolution)
+        return []
+
+    monkeypatch.setattr(fit_wizard_module, "build_wizard_families", _capture)
+    t = np.linspace(0.02, 10.0, 50)
+    timed = FitTimeEstimates({"Exponential": 9.0, "DynamicGaussianKT": 0.3})
+    build_fit_wizard_recommendation(
+        _tiered_dataset(t, np.exp(-t)),
+        scope=WizardScope(skip_slow=True),
+        fit_times=timed,
+        max_workers=1,
+    )
+    included = resolutions[0].included_set
+    assert "Exponential" not in included
+    assert "DynamicGaussianKT" in included
 
 
 @pytest.mark.integration
