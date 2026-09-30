@@ -4955,6 +4955,17 @@ def _initial_parameters_for_template(
         }
         if kt_match:
             bounds_overrides["Delta"] = (0.5 * delta_seed, 2.0 * delta_seed)
+    elif template.key == "lf_kt_constant":
+        # G_LF(0) = 1 at every B_L, and a decoupling field lifts G_LF's tail from
+        # 1/3 toward 1, so the KT term carries the whole early asymmetry and most
+        # of the tail. Seeding A_bg at the tail instead would make the constant
+        # own the decoupled polarisation, and A_bg's data-derived bounds would
+        # then exclude the physical split.
+        overrides = {
+            "A": fingerprint.initial_amplitude_estimate + fingerprint.tail_estimate,
+            "Delta": gaussian_width,
+            "A_bg": 0.0,
+        }
     elif template.key == "static_gkt_exp_constant":
         amplitude = max(1.5 * abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
         overrides = {

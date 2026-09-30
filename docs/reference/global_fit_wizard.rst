@@ -113,7 +113,10 @@ instead. On an LF decoupling series like the one above, a **Longitudinal**
 answer also lets the wizard hold :math:`B_L` at each run's recorded field rather
 than fitting it (see :ref:`fit-wizard-applied-field`). Changing the picker,
 including the direction, after screening has run marks the shown results stale
-— an amber banner says so — and clears the screening selection.
+— an amber banner says so — and clears the screening selection. Press **Run
+screening** to refresh them; until you do, **View results →** returns to the
+stale results unchanged. Changing the **Ranking Metric** re-ranks the existing
+results in place and needs no new screening.
 
 The collapsed **Guide the search (optional)** section is where you tell the
 wizard what you already know physically before the expensive search starts.
@@ -170,6 +173,13 @@ Result: the answer card and the screening shortlist
 *) against the sweep axis. The screening shortlist and the demoted detail*
 *tables continue below the card.*
 
+**← Back to setup**, at the top of the Result page, returns to the Setup page
+so you can change the scope, the ranking metric, or the parameter expectations
+and screen again; the results stay available behind **View results →** until
+a new screening replaces them. Reopening the wizard on a series it has already
+analysed lands on the Result page with the cached results, so the same button
+is how you rebuild an analysis.
+
 The answer card leads with the recommendation — a headline naming the
 recommended candidate and a plain summary line — above the series overlay:
 every run drawn with its coupled global-fit curve, colour-graded along the
@@ -184,8 +194,9 @@ Beneath the plot, an alternatives strip surfaces other optimised candidates
 that scored close to the winner; because several optimised assignments of the
 same template differ only in their Global/Local split, each alternative is
 labelled with its local-parameter signature to keep them distinct. Clicking an
-alternative swaps the overlaid curves and becomes the candidate that **Apply
-recommended fit** would hand back to the global-fit tab. Applying a result
+alternative (or its row in the optimised-fits table) redraws the overlaid curves
+and the trend for that candidate, and **Apply this fit** hands back to the
+global-fit tab whichever candidate the card is drawing. Applying a result
 updates the tab's composite function, parameter values, bounds, and Global or
 Local roles directly, reusing the already-computed fit bundle so the plots and
 parameter views refresh immediately without rerunning the fit.

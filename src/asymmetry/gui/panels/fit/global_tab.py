@@ -2834,7 +2834,7 @@ class GlobalFitTab(FitTabBase):
                 log_text=cached_log_text,
                 status_text=(
                     "Showing previously cached Global Fit Wizard results for these runs. "
-                    "Rebuild screening to refresh them for the current parameter setup."
+                    "Use ← Back to setup and run screening again to refresh them for the current parameter setup."
                 ),
             )
         self._fit_wizard_window.show()
