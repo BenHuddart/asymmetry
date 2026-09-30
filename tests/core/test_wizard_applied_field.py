@@ -16,6 +16,7 @@ import pytest
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.fit_wizard import (
     CandidateTemplate,
     TemplateSeedContext,
@@ -27,6 +28,7 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.models import (
     dynamic_lorentzian_kt,
     field_decoupling_threshold_gauss,
+    longitudinal_field_kubo_toyabe,
 )
 from asymmetry.core.fitting.parameters import split_parameter_name
 
@@ -231,6 +233,45 @@ def test_unrecorded_field_leaves_field_free() -> None:
     template = _template(["MuoniumLowTF", "Constant"], ["+"], "muonium_low_tf_constant")
     seeded = _seeded(template, field_gauss=None, geometry=None)
     assert seeded["field"].fixed is False
+
+
+# --- the LF-KT amplitude split under a decoupling field ---------------------
+
+
+def test_partly_decoupled_lf_kt_fit_recovers_the_kt_background_split() -> None:
+    """The decoupled polarisation belongs to the KT term, not the constant.
+
+    With Delta = 0.39 us^-1, 15 G lifts the LF-KT tail to ~0.83, so most of the
+    record's tail is KT polarisation and the true background is 0.3. The
+    generic seed put the whole tail in ``A_bg``, whose data-derived lower bound
+    (data minimum minus span) then sat near 9: every per-run LF-KT fit of a
+    decoupling series railed on it, and the separable global search, which
+    starts from those per-run fits, recommended nothing.
+    """
+    rng = np.random.default_rng(7)
+    t = np.linspace(0.0, 8.0, 480)
+    error = np.full_like(t, 0.15)
+    clean = longitudinal_field_kubo_toyabe(t, 24.0, 0.39, 15.0, 0.3)
+    dataset = MuonDataset(
+        time=t,
+        asymmetry=clean + rng.normal(0.0, error),
+        error=error,
+        metadata={"run_number": 1, "field": 15.0},
+    )
+    template = _template(["LongitudinalFieldKT", "Constant"], ["+"], "lf_kt_constant")
+    seeded = _initial_parameters_for_template(
+        dataset,
+        fingerprint_spectrum(dataset),
+        template,
+        seed_context=TemplateSeedContext(field_gauss=15.0, geometry=None),
+    )
+
+    result = FitEngine().fit(dataset, template.model.function, seeded)
+
+    assert result.success is True
+    assert result.parameters["A_1"].value == pytest.approx(24.0, abs=1.0)
+    assert result.parameters["A_bg"].value == pytest.approx(0.3, abs=1.0)
+    assert result.parameters["Delta"].value == pytest.approx(0.39, rel=0.1)
 
 
 # --- end to end -------------------------------------------------------------

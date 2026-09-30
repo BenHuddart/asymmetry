@@ -52,13 +52,10 @@ class GlobalFitWizardResultScenario(Scenario):
         from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
         from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
-        # seed=1 rather than the archetype's default 41: fitting one Kubo-Toyabe
-        # width against four widely spaced fields is nearly degenerate, and on
-        # seed 41 the 100 G run's runs-test z-score sits just over the +/-2
-        # residual gate (|z| ~ 2.14), so the wizard recommends nothing. Seed 1
-        # keeps every run comfortably inside the gate (max |z| ~ 1.3) and the
-        # documented answer card renders deterministically.
-        datasets = make_ag_lf_decoupling(seed=1, fields_g=(0.0, 15.0, 50.0, 100.0))
+        # Default noise seed. At 100 G, with B_L free (field recorded, geometry
+        # not), Delta and B_L trade off, so on some seeds a per-run Delta scores
+        # better; on this one the shared Delta wins (AICc 1964 against 1998).
+        datasets = make_ag_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
 
         # Keep the screening portfolio small so the build is fast: the
         # longitudinal-field dynamics preset with the competing relaxation
