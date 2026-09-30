@@ -3,8 +3,9 @@
 This widget lets the user pick a *scope preset* (or "Auto (from run metadata)")
 for the fit-wizard's screening pass, then optionally include/exclude individual
 component families or components on top of that preset. It renders exactly what
-an injected *resolver* returns — it holds **no** physics logic. Phase 6b will
-adapt the core ``ScopeResolution`` object to the plain-dict contract below.
+an injected *resolver* returns — it holds **no** physics logic;
+:func:`resolver_payload` adapts the core ``ScopeView`` to the plain-dict
+contract below.
 
 Resolver contract
 -----------------
@@ -21,7 +22,6 @@ and ``overrides`` is::
 resolver returns a plain ``dict``::
 
     {
-      "effective_preset": str,   # concrete preset id ("auto" resolves to one)
       "note": str,               # metadata read-back shown under the combo,
                                  #   e.g. "TF, 20 G, 5 K — Auto selected precession families"
       "families": [
@@ -40,7 +40,7 @@ resolver returns a plain ``dict``::
         },
         ...
       ],
-      "estimate": [int, int],    # (candidate count, approx screening-fit count)
+      "estimate": int,           # number of components that will be screened
     }
 
 ``reason`` is non-empty only for *excluded* components and becomes that row's
@@ -76,6 +76,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.fitting.wizard_scope import ScopeView, WizardScope
+from asymmetry.core.workflow.screen import SCOPE_PRESETS
 from asymmetry.gui.styles import tokens
 
 #: A resolver as documented in this module's docstring.
@@ -93,47 +95,71 @@ PRESET_CHOICES: tuple[tuple[str, str], ...] = (
     ("all", "All components"),
 )
 
-#: Set of valid preset ids, for set_scope's unknown-id fallback.
-_VALID_PRESET_IDS = frozenset(pid for pid, _ in PRESET_CHOICES)
+#: Preset id for each physics set a preset offers; the first preset in combo order wins.
+_PRESET_FOR_PHYSICS = {SCOPE_PRESETS[pid]: pid for pid, _ in reversed(PRESET_CHOICES)}
 
 #: Transient combo entry shown only while user overrides exist.
 _CUSTOM_LABEL = "Custom"
-
-#: Payload schema version.
-_PAYLOAD_VERSION = 1
 
 #: Role storing a leaf row's component name (parents leave it unset).
 _COMPONENT_NAME_ROLE = Qt.ItemDataRole.UserRole
 
 
+# Phase 4 replaces this with ModelFamilyPicker.
+def scope_for_preset(preset: str, include: set[str], exclude: set[str]) -> WizardScope:
+    """The scope a preset id stands for: the CLI's physics shortcut plus overrides."""
+    return WizardScope(
+        physics=SCOPE_PRESETS[preset],
+        include_components=frozenset(include),
+        exclude_components=frozenset(exclude),
+    )
+
+
 def build_scope_payload(preset: str, include: set[str], exclude: set[str]) -> dict:
-    """Return the serialised scope payload for the given state.
-
-    ``include``/``exclude`` are stored as sorted lists so the payload is stable
-    (round-trips and caches compare equal regardless of set iteration order).
-    """
-    return {
-        "version": _PAYLOAD_VERSION,
-        "preset": str(preset),
-        "include": sorted(include),
-        "exclude": sorted(exclude),
-    }
+    """Return the serialised :class:`WizardScope` payload for the given state."""
+    return scope_for_preset(preset, include, exclude).to_payload()
 
 
+# Phase 4 replaces this with ModelFamilyPicker.
 def parse_scope_payload(scope: dict | None) -> tuple[str, set[str], set[str]]:
     """Parse a scope payload into ``(preset_id, include, exclude)``.
 
-    ``None`` (or a payload with no/unknown preset id) resolves to ``"auto"``
-    with no overrides. Robust to missing keys — a partial dict never raises.
+    ``None`` resolves to ``"auto"`` with no overrides; a payload's physics maps
+    back to the first preset offering it.
     """
-    if not isinstance(scope, dict):
+    if scope is None:
         return "auto", set(), set()
-    preset = scope.get("preset", "auto")
-    if preset not in _VALID_PRESET_IDS:
-        preset = "auto"
-    include = {str(name) for name in scope.get("include", []) or []}
-    exclude = {str(name) for name in scope.get("exclude", []) or []}
-    return preset, include, exclude
+    parsed = WizardScope.from_payload(scope)
+    return (
+        _PRESET_FOR_PHYSICS[parsed.physics],
+        set(parsed.include_components),
+        set(parsed.exclude_components),
+    )
+
+
+# Phase 4 replaces this with ModelFamilyPicker.
+def resolver_payload(view: ScopeView) -> dict:
+    """Adapt a core :class:`ScopeView` to the resolver dict contract above."""
+    return {
+        "note": "; ".join(view.notes),
+        "families": [
+            {
+                "key": family.title,
+                "title": family.title,
+                "components": [
+                    {
+                        "name": component.name,
+                        "included": component.included,
+                        "reason": component.reason,
+                        "cost": "slow" if component.slow else "",
+                    }
+                    for component in family.components
+                ],
+            }
+            for family in view.families
+        ],
+        "estimate": view.included_count,
+    }
 
 
 class WizardScopeSelector(QWidget):
@@ -232,8 +258,8 @@ class WizardScopeSelector(QWidget):
     def set_scope(self, scope: dict | None) -> None:
         """Restore state from a cached payload. Emits no signals.
 
-        ``None`` (or an unknown preset id) resets to ``"auto"`` with no
-        overrides. If a resolver is set, the tree/labels are refreshed to match.
+        ``None`` resets to ``"auto"`` with no overrides. If a resolver is set,
+        the tree/labels are refreshed to match.
         """
         preset, include, exclude = parse_scope_payload(scope)
         self._preset_id = preset
@@ -423,13 +449,11 @@ class WizardScopeSelector(QWidget):
             self._preset_combo.setCurrentIndex(idx)
 
     def _update_estimate_label(self, estimate: object) -> None:
-        """Show the candidate/fit estimate, or a red warning when nothing is included."""
+        """Show the screened-component count, or a red warning when nothing is included."""
         if not self.is_valid():
             self._estimate_label.setText("No components included — select at least one to screen.")
             self._estimate_label.setStyleSheet(f"color: {tokens.ERROR}; font-weight: 600;")
             return
-        candidates, fits = 0, 0
-        if isinstance(estimate, (list, tuple)) and len(estimate) >= 2:
-            candidates, fits = int(estimate[0]), int(estimate[1])
-        self._estimate_label.setText(f"≈ {candidates} candidates / {fits} screening fits")
+        candidates = int(estimate) if isinstance(estimate, int) else 0
+        self._estimate_label.setText(f"{candidates} candidates")
         self._estimate_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")

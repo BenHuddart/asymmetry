@@ -20,7 +20,6 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import (
     ComputationalCost,
     FieldGeometry,
-    geometry_from_field_direction,
 )
 from asymmetry.core.fitting.composite import (
     COMPONENTS,
@@ -73,6 +72,7 @@ from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.wizard_scope import (
     ScopeResolution,
     WizardScope,
+    dataset_field_geometry,
     dataset_suggests_fluorine,
     resolve_scope_for_dataset,
 )
@@ -1583,13 +1583,6 @@ class TemplateSeedContext:
         return max(candidates, key=lambda m: m.quality)
 
 
-def dataset_field_geometry(dataset: MuonDataset) -> FieldGeometry | None:
-    """The run's recorded field geometry, or ``None`` when it does not say."""
-    return geometry_from_field_direction(
-        str(dataset.metadata.get("field_direction") or dataset.metadata.get("field_state") or "")
-    )
-
-
 def _field_seed_context(dataset: MuonDataset) -> TemplateSeedContext:
     """A seed context carrying only the run's applied-field metadata.
 
@@ -2593,7 +2586,7 @@ def build_fit_wizard_recommendation(
     if scope is not None:
         resolution = resolve_scope_for_dataset(dataset, scope)
     # ``inference_note`` is already a single, "; "-joined human-readable string
-    # (see ``wizard_scope.infer_auto_query``); a scope of ``None`` means no
+    # (see ``wizard_scope.ScopeResolution.inference_note``); a scope of ``None`` means no
     # resolution ran at all, so the note stays empty rather than guessing.
     scope_note = resolution.inference_note if resolution is not None else ""
     build_signature = single_fit_build_signature(scope, user_frequencies_mhz)

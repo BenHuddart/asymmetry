@@ -32,23 +32,26 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
             "(ISIS stamps TF on zero-field runs and some files record nothing)"
         ),
     )
-    # Not an argparse ``choices`` list: reading the wizard's preset vocabulary
+    # Not an argparse ``choices`` list: reading the wizard's scope vocabulary
     # means importing the fitting package, and the parser is built on *every*
     # invocation — including ``--help`` and the commands that never fit
-    # anything. The value is checked in :func:`run`, which names every preset.
+    # anything. The value is checked in :func:`run`, which names every scope.
     parser.add_argument(
         "--scope",
         default="auto",
-        metavar="PRESET",
-        help="Candidate-family scope preset (default: auto, from the run's geometry)",
+        metavar="NAME",
+        help=(
+            "Physics to look for, e.g. lf-dynamics or muonium-radical (default: auto, "
+            "every class). The name chooses physics, not geometry: the geometry comes "
+            "from the run or --geometry"
+        ),
     )
     parser.add_argument(
         "--include",
         default="",
         metavar="C,D",
         help=(
-            "Time-domain components to add to the scope's families, e.g. "
-            "'Oscillatory' for a line in an LF run"
+            "Time-domain components to add to the scope, e.g. 'Oscillatory' for a line in an LF run"
         ),
     )
     parser.add_argument(
@@ -79,7 +82,7 @@ def run(args: argparse.Namespace) -> None:
 
     if args.scope not in SCOPE_PRESETS:
         raise UserError(
-            f"Unknown scope preset {args.scope!r}; expected one of {', '.join(SCOPE_PRESETS)}."
+            f"Unknown scope {args.scope!r}; expected one of {', '.join(SCOPE_PRESETS)}."
         )
     if args.plot:
         plots.require_matplotlib()

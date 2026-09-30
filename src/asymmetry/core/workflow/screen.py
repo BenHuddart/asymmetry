@@ -29,6 +29,13 @@ dataset copy whose ``field_direction`` says so, in this order:
 
 The survey and the wizard can then never disagree about what a run is, and the
 result records which source decided.
+
+Scope names
+-----------
+
+A scope name (:data:`SCOPE_PRESETS`) chooses only the physics classes the wizard
+looks for; it never chooses a geometry. ``--scope lf-dynamics`` on a zero-field
+run screens zero-field dynamics.
 """
 
 from __future__ import annotations
@@ -38,22 +45,32 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.component_tags import geometry_from_field_direction
+from asymmetry.core.fitting.component_tags import PhysicsClass, geometry_from_field_direction
 from asymmetry.core.fitting.composite import COMPONENTS
 from asymmetry.core.fitting.fit_wizard import (
     build_fit_wizard_recommendation,
     serialize_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.wizard_narrative import render_log_text
-from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
+from asymmetry.core.fitting.wizard_scope import WizardScope
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.survey import run_geometry
 
 #: Where a run's geometry came from, in the order the resolution tries them.
 GEOMETRY_SOURCES = ("user", "survey", "field", "file", "none")
 
-#: Scope presets a caller may name (the fit wizard's own vocabulary).
-SCOPE_PRESETS = tuple(preset.value for preset in WizardScopePreset)
+#: Scope names a caller may give, each a shortcut for the physics classes looked
+#: for (empty: every class). Geometry always comes from the run.
+SCOPE_PRESETS: dict[str, frozenset[PhysicsClass]] = {
+    "auto": frozenset(),
+    "zf-static-magnetism": frozenset({PhysicsClass.MAGNETISM}),
+    "tf-knight-precession": frozenset({PhysicsClass.MAGNETISM}),
+    "tf-superconductor": frozenset({PhysicsClass.SUPERCONDUCTIVITY, PhysicsClass.MAGNETISM}),
+    "lf-dynamics": frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}),
+    "fluoride-fmuf": frozenset({PhysicsClass.MOLECULAR}),
+    "muonium-radical": frozenset({PhysicsClass.MUONIUM}),
+    "all": frozenset(),
+}
 
 
 def _named_geometry(value: str) -> str:
@@ -123,7 +140,7 @@ class ScreenResult:
     geometry: str | None
     geometry_source: str
     scope_preset: str
-    #: Components added to and dropped from the preset's families.
+    #: Components added to and dropped from the scope.
     scope_include: list[str]
     scope_exclude: list[str]
     scope_note: str
@@ -167,7 +184,7 @@ def screen_run(
     *,
     geometry: str | None = None,
     survey_geometry: str | None = None,
-    scope_preset: str = WizardScopePreset.AUTO.value,
+    scope_preset: str = "auto",
     include: Iterable[str] = (),
     exclude: Iterable[str] = (),
     run_number: int,
@@ -177,12 +194,15 @@ def screen_run(
     *geometry* overrides the file's recorded field direction (``"ZF"``,
     ``"TF"`` or ``"LF"``); *survey_geometry* is what the folder's survey
     resolved for this run, used when the caller gives no override;
-    *scope_preset* is one of :data:`SCOPE_PRESETS`. *include* and *exclude*
-    name time-domain components to add to or drop from the preset's families
-    (exclude wins). Raises :class:`ValueError` for a value outside any of these
+    *scope_preset* is one of :data:`SCOPE_PRESETS`, naming the physics looked
+    for. *include* and *exclude* name time-domain components to add to or drop
+    from the scope (exclude wins). Raises :class:`ValueError` for a value outside any of these
     vocabularies — this is the boundary where they are checked.
     """
-    preset = WizardScopePreset(scope_preset)
+    if scope_preset not in SCOPE_PRESETS:
+        raise ValueError(
+            f"Unknown scope {scope_preset!r}; expected one of {', '.join(SCOPE_PRESETS)}."
+        )
     include = frozenset(include)
     exclude = frozenset(exclude)
     unknown = sorted((include | exclude) - set(COMPONENTS))
@@ -202,7 +222,11 @@ def screen_run(
 
     recommendation = build_fit_wizard_recommendation(
         scoped,
-        scope=WizardScope(preset=preset, include_components=include, exclude_components=exclude),
+        scope=WizardScope(
+            physics=SCOPE_PRESETS[scope_preset],
+            include_components=include,
+            exclude_components=exclude,
+        ),
     )
 
     comparable = set(recommendation.comparable_keys)
@@ -231,7 +255,7 @@ def screen_run(
         run_number=int(run_number),
         geometry=resolved_geometry,
         geometry_source=geometry_source,
-        scope_preset=preset.value,
+        scope_preset=scope_preset,
         scope_include=sorted(include),
         scope_exclude=sorted(exclude),
         scope_note=recommendation.scope_note,

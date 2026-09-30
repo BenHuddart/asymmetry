@@ -53,7 +53,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import (
     CandidateTemplate,
@@ -87,9 +87,8 @@ from asymmetry.core.fitting.wizard_scope import (
     EFFORT_TIER_LABELS,
     EffortTier,
     WizardScope,
+    describe_scope,
     effort_tier_from_payload,
-    estimate_screening_cost,
-    resolve_scope_for_datasets,
 )
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.styles import tokens
@@ -111,7 +110,11 @@ from asymmetry.gui.widgets.transitions_card import (
     TransitionRow,
     TransitionsCard,
 )
-from asymmetry.gui.widgets.wizard_scope_selector import WizardScopeSelector
+from asymmetry.gui.widgets.wizard_scope_selector import (
+    WizardScopeSelector,
+    resolver_payload,
+    scope_for_preset,
+)
 from asymmetry.gui.widgets.wizard_series_card import (
     SeriesRunTrace,
     SeriesTrend,
@@ -860,58 +863,15 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 "Run screening to classify each run (Osc. / KT-like / Multi-rate)."
             )
 
+    # Phase 4 replaces this with ModelFamilyPicker.
     def _resolve_scope(self, preset_id: str, overrides: dict) -> dict:
-        """Adapt the core scope resolver to the WizardScopeSelector dict contract.
-
-        Groups in-registry-order TIME-domain components by their display
-        ``category``; frequency-domain components are skipped entirely. The scope
-        is resolved across the whole selected series (union of in-scope sets).
-        """
+        """Adapt the core scope view to the WizardScopeSelector dict contract."""
         if not self._datasets:
-            return {
-                "effective_preset": preset_id,
-                "note": "Load a series first",
-                "families": [],
-                "estimate": [0, 0],
-            }
-        scope = WizardScope.from_payload(
-            {
-                "version": 1,
-                "preset": preset_id,
-                "include": overrides.get("include", []),
-                "exclude": overrides.get("exclude", []),
-            }
+            return {"note": "Load a series first", "families": [], "estimate": 0}
+        scope = scope_for_preset(
+            preset_id, set(overrides.get("include", [])), set(overrides.get("exclude", []))
         )
-        resolution = resolve_scope_for_datasets(list(self._datasets), scope)
-        included = resolution.included_set
-        reasons = {exc.name: exc.reason for exc in resolution.excluded_components}
-
-        families: list[dict] = []
-        by_category: dict[str, dict] = {}
-        for name, definition in COMPONENTS.items():
-            if definition.domain != "time":
-                continue
-            category = definition.category
-            family = by_category.get(category)
-            if family is None:
-                family = {"key": category, "title": category, "components": []}
-                by_category[category] = family
-                families.append(family)
-            family["components"].append(
-                {
-                    "name": name,
-                    "included": name in included,
-                    "reason": reasons.get(name, ""),
-                    "cost": definition.cost.value,
-                }
-            )
-
-        return {
-            "effective_preset": resolution.effective_preset.value,
-            "note": resolution.inference_note,
-            "families": families,
-            "estimate": list(estimate_screening_cost(resolution)),
-        }
+        return resolver_payload(describe_scope(self._datasets, scope))
 
     def _on_scope_changed(self, _scope: object) -> None:
         # A stale screening table's selection no longer corresponds to the new

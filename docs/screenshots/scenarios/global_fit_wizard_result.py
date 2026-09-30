@@ -46,10 +46,12 @@ class GlobalFitWizardResultScenario(Scenario):
     requires_fit = True
 
     def build(self) -> QWidget:
+        from asymmetry.core.fitting.component_tags import FieldGeometry, PhysicsClass
+        from asymmetry.core.fitting.composite import COMPONENTS
         from asymmetry.core.fitting.global_fit_wizard import (
             build_global_fit_wizard_recommendation,
         )
-        from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
+        from asymmetry.core.fitting.wizard_scope import WizardScope
         from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
         # seed=1 rather than the archetype's default 41: fitting one Kubo-Toyabe
@@ -60,10 +62,16 @@ class GlobalFitWizardResultScenario(Scenario):
         # documented answer card renders deterministically.
         datasets = make_ag_lf_decoupling(seed=1, fields_g=(0.0, 15.0, 50.0, 100.0))
 
-        # Keep the screening portfolio small so the build is fast: the
-        # longitudinal-field dynamics preset with the competing relaxation
-        # leaves excluded leaves the LF-KT family (plus the always-on baselines).
-        exclude = frozenset(
+        # Keep the screening portfolio small so the build is fast: LF dynamics
+        # and magnetism with the competing relaxation leaves excluded leaves the
+        # LF-KT family (plus the always-on baselines). The runs record no field
+        # direction, so the components that cannot apply in LF are excluded too.
+        not_lf = {
+            name
+            for name, definition in COMPONENTS.items()
+            if FieldGeometry.LF not in definition.field_geometries
+        }
+        exclude = frozenset(not_lf) | frozenset(
             {
                 "StaticGKT_ZF",
                 "DynamicGaussianKT",
@@ -78,7 +86,8 @@ class GlobalFitWizardResultScenario(Scenario):
             }
         )
         scope = WizardScope(
-            preset=WizardScopePreset.LF_DYNAMICS, exclude_components=exclude
+            physics=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}),
+            exclude_components=exclude,
         )
 
         # Only the LF-KT candidate goes through coupled optimisation, which keeps

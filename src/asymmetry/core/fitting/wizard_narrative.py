@@ -149,7 +149,7 @@ def _conditions_step(recommendation: FitWizardRecommendation) -> TrailStep:
     if note:
         # ``note`` is already a complete, self-describing sentence fragment
         # (e.g. "run geometry: transverse field — screening TF families";
-        # see ``wizard_scope.infer_auto_query``) — prefixing it with "Run
+        # see ``wizard_scope.infer_run_geometries``) — prefixing it with "Run
         # conditions:" would double up on "run" and read awkwardly, so it is
         # only capitalised and punctuated here, not re-framed.
         sentence = note[0].upper() + note[1:] + "."

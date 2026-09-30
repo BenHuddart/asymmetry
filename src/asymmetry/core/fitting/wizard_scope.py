@@ -4,9 +4,11 @@ The fit wizard trials fits against many built-in components. On a given run most
 of them are physically irrelevant — a vortex-lattice component makes no sense in
 zero field, a muonium four-frequency form is meaningless in a longitudinal run.
 This module turns a run's *applied-field geometry* (and, for muonium, the field
-*regime*) plus an optional physics-class preset into a concrete list of
-in-scope components, with a specific human-readable reason recorded for every
-component that is dropped.
+*regime*) plus a :class:`WizardScope` — the physics classes looked for, the
+user's include/exclude overrides and the slow-model switch — into a concrete
+list of in-scope components, with a specific human-readable reason recorded for
+every component that is dropped. :func:`describe_scope` renders the same
+resolution as a typed :class:`ScopeView` for the model family picker.
 
 Design rules honoured here:
 
@@ -15,11 +17,12 @@ Design rules honoured here:
   :func:`asymmetry.core.io.base.field_direction_from_text`). The *muonium field
   regime* (low-/high-TF) is a separate, magnitude-based refinement that only
   ever narrows the muonium sub-family within an already-TF run.
+* A scope never carries a geometry: geometry always comes from the runs.
 * User-registered components (``physics_classes == {CUSTOM}``) match every
   scope and are never silently hidden — the wizard must never drop the user's
   own function behind their back.
-* Envelopes (``GENERIC_RELAXATION``) and ``BACKGROUND`` survive every named
-  preset, so a composite always has a relaxation envelope and a constant to
+* Envelopes (``GENERIC_RELAXATION``) and ``BACKGROUND`` survive every physics
+  choice, so a composite always has a relaxation envelope and a constant to
   reach for.
 
 This module is Qt-free: it imports only the standard library, the scoping tags,
@@ -40,6 +43,7 @@ from asymmetry.core.fitting.component_tags import (
     ComputationalCost,
     FieldGeometry,
     PhysicsClass,
+    coerce_physics_classes,
     geometry_from_field_direction,
 )
 from asymmetry.core.fitting.composite import COMPONENTS, ComponentDefinition
@@ -88,14 +92,6 @@ _COST_RANK: dict[ComputationalCost, int] = {
     ComputationalCost.EXPENSIVE: 2,
 }
 
-#: Rough per-component fit-count weighting for the GUI screening estimate. These
-#: are display-only Stage-1/Stage-2 hints, not an exact schedule.
-_COST_FIT_WEIGHT: dict[ComputationalCost, int] = {
-    ComputationalCost.CHEAP: 3,
-    ComputationalCost.MODERATE: 5,
-    ComputationalCost.EXPENSIVE: 8,
-}
-
 #: Chemical-formula fluorine token: an uppercase ``F`` that begins an element
 #: (followed by a stoichiometry digit, a non-lowercase char, or end-of-string).
 #: Matches ``PbF2``/``CaF2``/``LiF``/``NaF``; rejects ``Fe``/``FeSe``/``Fer``.
@@ -106,19 +102,6 @@ _COST_FIT_WEIGHT: dict[ComputationalCost, int] = {
 #: ``LF100``, ``ZF`` — and no element symbol is one of those letters, so no
 #: formula loses its fluorine to the rule.
 _FLUORINE_TOKEN = re.compile(r"(?<![TLZ])F(?=[0-9]|[^a-z=]|$)")
-
-
-class WizardScopePreset(str, Enum):
-    """Named physics-class scope for the fit wizard."""
-
-    AUTO = "auto"
-    ZF_STATIC_MAGNETISM = "zf-static-magnetism"
-    TF_KNIGHT_PRECESSION = "tf-knight-precession"
-    TF_SUPERCONDUCTOR = "tf-superconductor"
-    LF_DYNAMICS = "lf-dynamics"
-    FLUORIDE_FMUF = "fluoride-fmuf"
-    MUONIUM_RADICAL = "muonium-radical"
-    ALL = "all"
 
 
 class EffortTier(str, Enum):
@@ -184,8 +167,8 @@ def effort_tier_to_payload(tier: EffortTier) -> str:
 def effort_tier_from_payload(payload: object) -> EffortTier:
     """Rebuild an :class:`EffortTier` from a payload, tolerant of garbage.
 
-    Mirrors :meth:`WizardScope.from_payload`'s tolerance: an unrecognised or
-    missing value degrades to :data:`DEFAULT_EFFORT_TIER` rather than raising.
+    An unrecognised or missing value degrades to :data:`DEFAULT_EFFORT_TIER`
+    rather than raising.
     """
     if isinstance(payload, EffortTier):
         return payload
@@ -205,133 +188,83 @@ class ScopeQuery:
     max_cost: ComputationalCost | None = None
 
 
-#: Short human-readable descriptions of the static presets, used as the
-#: inference note when the wizard is run on a named (non-Auto) preset.
-_PRESET_NOTES: dict[WizardScopePreset, str] = {
-    WizardScopePreset.ZF_STATIC_MAGNETISM: (
-        "zero-field static-magnetism preset — ZF magnetism, envelopes, background"
-    ),
-    WizardScopePreset.TF_KNIGHT_PRECESSION: (
-        "transverse-field precession preset — TF magnetism, envelopes, background"
-    ),
-    WizardScopePreset.TF_SUPERCONDUCTOR: (
-        "transverse-field superconductor preset — TF vortex/magnetism, envelopes, background"
-    ),
-    WizardScopePreset.LF_DYNAMICS: (
-        "longitudinal-field dynamics preset — LF dynamics/magnetism, envelopes, background"
-    ),
-    WizardScopePreset.FLUORIDE_FMUF: (
-        "fluoride F-mu-F preset — ZF/LF molecular, envelopes, background"
-    ),
-    WizardScopePreset.MUONIUM_RADICAL: (
-        "muonium/radical preset — muonium families across all geometries, envelopes, background"
-    ),
-    WizardScopePreset.ALL: "all component families (no scope restriction)",
-}
+#: Classes every scope keeps, so a composite always has an envelope and a constant.
+ALWAYS_IN_SCOPE: frozenset[PhysicsClass] = frozenset(
+    {PhysicsClass.GENERIC_RELAXATION, PhysicsClass.BACKGROUND}
+)
 
+#: The version :meth:`WizardScope.to_payload` writes and :meth:`WizardScope.from_payload` reads.
+SCOPE_PAYLOAD_VERSION: int = 2
 
-#: Static physics-class scopes for every non-Auto preset. ``GENERIC_RELAXATION``
-#: and ``BACKGROUND`` appear in each so envelopes and ``Constant`` always survive.
-#: ``AUTO`` deliberately has no entry — it is resolved by :func:`infer_auto_query`.
-PRESET_QUERIES: dict[WizardScopePreset, ScopeQuery] = {
-    WizardScopePreset.ZF_STATIC_MAGNETISM: ScopeQuery(
-        geometries=frozenset({FieldGeometry.ZF}),
-        physics_classes=frozenset(
-            {PhysicsClass.MAGNETISM, PhysicsClass.GENERIC_RELAXATION, PhysicsClass.BACKGROUND}
-        ),
-    ),
-    WizardScopePreset.TF_KNIGHT_PRECESSION: ScopeQuery(
-        geometries=frozenset({FieldGeometry.TF}),
-        physics_classes=frozenset(
-            {PhysicsClass.MAGNETISM, PhysicsClass.GENERIC_RELAXATION, PhysicsClass.BACKGROUND}
-        ),
-    ),
-    WizardScopePreset.TF_SUPERCONDUCTOR: ScopeQuery(
-        geometries=frozenset({FieldGeometry.TF}),
-        physics_classes=frozenset(
-            {
-                PhysicsClass.SUPERCONDUCTIVITY,
-                PhysicsClass.MAGNETISM,
-                PhysicsClass.GENERIC_RELAXATION,
-                PhysicsClass.BACKGROUND,
-            }
-        ),
-    ),
-    WizardScopePreset.LF_DYNAMICS: ScopeQuery(
-        geometries=frozenset({FieldGeometry.LF}),
-        physics_classes=frozenset(
-            {
-                PhysicsClass.DYNAMICS,
-                PhysicsClass.MAGNETISM,
-                PhysicsClass.GENERIC_RELAXATION,
-                PhysicsClass.BACKGROUND,
-            }
-        ),
-    ),
-    WizardScopePreset.FLUORIDE_FMUF: ScopeQuery(
-        geometries=frozenset({FieldGeometry.ZF, FieldGeometry.LF}),
-        physics_classes=frozenset(
-            {PhysicsClass.MOLECULAR, PhysicsClass.GENERIC_RELAXATION, PhysicsClass.BACKGROUND}
-        ),
-    ),
-    WizardScopePreset.MUONIUM_RADICAL: ScopeQuery(
-        geometries=ALL_GEOMETRIES,
-        physics_classes=frozenset(
-            {PhysicsClass.MUONIUM, PhysicsClass.GENERIC_RELAXATION, PhysicsClass.BACKGROUND}
-        ),
-    ),
-    WizardScopePreset.ALL: ScopeQuery(
-        geometries=ALL_GEOMETRIES,
-        physics_classes=frozenset(PhysicsClass),
-    ),
-}
+_SCOPE_PAYLOAD_KEYS: frozenset[str] = frozenset(
+    {"version", "physics", "include", "exclude", "skip_slow"}
+)
 
 
 @dataclass(frozen=True)
 class WizardScope:
-    """A user-facing wizard scope: a preset plus explicit include/exclude overrides."""
+    """What the wizard screens: the physics looked for, overrides and the slow switch.
 
-    preset: WizardScopePreset = WizardScopePreset.AUTO
+    An empty ``physics`` means every class. The scope carries no geometry — that
+    always comes from the runs' recorded field direction.
+    """
+
+    physics: frozenset[PhysicsClass] = frozenset()
     include_components: frozenset[str] = frozenset()
     exclude_components: frozenset[str] = frozenset()
+    #: Leave out slow models: caps the screened cost at ``MODERATE``.
+    skip_slow: bool = False
+
+    @property
+    def physics_classes(self) -> frozenset[PhysicsClass]:
+        """Every class for an empty ``physics``, else it plus :data:`ALWAYS_IN_SCOPE`."""
+        return self.physics | ALWAYS_IN_SCOPE if self.physics else frozenset(PhysicsClass)
+
+    @property
+    def max_cost(self) -> ComputationalCost | None:
+        """The cost cap the slow switch sets."""
+        return ComputationalCost.MODERATE if self.skip_slow else None
 
     def to_payload(self) -> dict:
         """Return a plain, JSON-serialisable representation of this scope."""
         return {
-            "version": 1,
-            "preset": self.preset.value,
+            "version": SCOPE_PAYLOAD_VERSION,
+            "physics": sorted(physics_class.value for physics_class in self.physics),
             "include": sorted(self.include_components),
             "exclude": sorted(self.exclude_components),
+            "skip_slow": self.skip_slow,
         }
 
     @classmethod
     def from_payload(cls, payload: object) -> WizardScope:
-        """Rebuild a scope from :meth:`to_payload` output, tolerant of garbage.
-
-        A non-mapping payload, or one with an unknown preset, degrades to the
-        default (``AUTO``) scope rather than raising. Include/exclude entries are
-        coerced element-wise to ``str``; missing keys become empty sets.
-        """
+        """Parse :meth:`to_payload` output; raise :class:`ValueError` on anything else."""
         if not isinstance(payload, Mapping):
-            return cls()
-        raw_preset = payload.get("preset", WizardScopePreset.AUTO.value)
-        try:
-            preset = WizardScopePreset(raw_preset)
-        except ValueError:
-            preset = WizardScopePreset.AUTO
-        include = _coerce_name_set(payload.get("include"))
-        exclude = _coerce_name_set(payload.get("exclude"))
-        return cls(preset=preset, include_components=include, exclude_components=exclude)
+            raise ValueError(f"a scope payload must be a mapping, got {payload!r}")
+        if set(payload) != _SCOPE_PAYLOAD_KEYS:
+            raise ValueError(
+                f"a scope payload has exactly the keys {sorted(_SCOPE_PAYLOAD_KEYS)}, "
+                f"got {sorted(payload)}"
+            )
+        if payload["version"] != SCOPE_PAYLOAD_VERSION:
+            raise ValueError(
+                f"a scope payload is version {SCOPE_PAYLOAD_VERSION}, got {payload['version']!r}"
+            )
+        if not isinstance(payload["skip_slow"], bool):
+            raise ValueError(f"a scope's skip_slow is a bool, got {payload['skip_slow']!r}")
+        return cls(
+            physics=coerce_physics_classes(_payload_names(payload, "physics")),
+            include_components=frozenset(_payload_names(payload, "include")),
+            exclude_components=frozenset(_payload_names(payload, "exclude")),
+            skip_slow=payload["skip_slow"],
+        )
 
 
-def _coerce_name_set(value: object) -> frozenset[str]:
-    """Coerce an arbitrary payload entry into a ``frozenset[str]`` of names."""
-    if value is None or isinstance(value, (str, bytes)):
-        # A bare string is not a name list here; treat scalars as "no names".
-        return frozenset()
-    if isinstance(value, Iterable):
-        return frozenset(str(item) for item in value)
-    return frozenset()
+def _payload_names(payload: Mapping, key: str) -> list[str]:
+    """The list of strings under *key*, or :class:`ValueError`."""
+    value = payload[key]
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"a scope's {key!r} is a list of strings, got {value!r}")
+    return value
 
 
 @dataclass(frozen=True)
@@ -348,8 +281,9 @@ class ScopeResolution:
 
     scope: WizardScope
     query: ScopeQuery
-    effective_preset: WizardScopePreset
-    inference_note: str
+    #: Human-readable notes: the geometry source, then any fluorine, muonium
+    #: regime, physics, slow-model and unknown-override notes.
+    notes: tuple[str, ...]
     #: Included component names, in registry order.
     included_components: tuple[str, ...] = ()
     #: Excluded components with reasons. Query/regime drops come first in
@@ -360,64 +294,67 @@ class ScopeResolution:
     def included_set(self) -> frozenset[str]:
         return frozenset(self.included_components)
 
+    @property
+    def inference_note(self) -> str:
+        """The notes as one ``"; "``-joined line."""
+        return "; ".join(self.notes)
 
-def infer_auto_query(
+
+_GEOMETRY_NOTES: dict[FieldGeometry, str] = {
+    FieldGeometry.ZF: "run geometry: zero field — screening ZF families",
+    FieldGeometry.LF: "run geometry: longitudinal field — screening LF families",
+    FieldGeometry.TF: "run geometry: transverse field — screening TF families",
+}
+
+_UNRECORDED_NOTE = "field geometry not recorded — screening all component families"
+
+
+def infer_run_geometries(
     field_direction: str,
     field_gauss: float | None,
     sample_text: str = "",
-) -> tuple[ScopeQuery, WizardScopePreset, str, tuple[ExcludedComponent, ...]]:
-    """Infer a scope query from a run's recorded geometry (never its magnitude).
+) -> tuple[frozenset[FieldGeometry], tuple[str, ...], tuple[ExcludedComponent, ...]]:
+    """Infer the geometries to screen from a run's recorded geometry (never its magnitude).
 
-    Returns the query, the effective preset the outcome most resembles, a
-    human-readable note naming the geometry source, and any muonium
-    field-regime exclusions (TF only, and only when ``field_gauss`` is known).
-
-    Geometry is taken solely from ``field_direction`` via
-    :func:`geometry_from_field_direction`. When the geometry is unrecorded the
-    query is a superset of every other outcome (all geometries × all classes),
-    so the wizard never regresses on metadata-poor data.
+    Returns the geometries, human-readable notes (the geometry source first),
+    and any muonium field-regime exclusions (TF only, and only when
+    ``field_gauss`` is known). Geometry is taken solely from ``field_direction``
+    via :func:`geometry_from_field_direction`; an unrecorded geometry screens
+    all three, so the wizard never regresses on metadata-poor data. A TF/LF
+    label at a setpoint within :data:`ZERO_FIELD_MAX_GAUSS` of zero also
+    screens ZF.
     """
     geometry = geometry_from_field_direction(field_direction)
     exclusions: tuple[ExcludedComponent, ...] = ()
-    near_zero = field_gauss is not None and abs(field_gauss) <= ZERO_FIELD_MAX_GAUSS
-
-    if geometry is FieldGeometry.ZF:
-        # All classes: molecular / muonium ZF physics can't be ruled out here.
-        query = ScopeQuery(frozenset({FieldGeometry.ZF}), frozenset(PhysicsClass))
-        effective = WizardScopePreset.ZF_STATIC_MAGNETISM
-        note = "run geometry: zero field — screening ZF families"
-    elif geometry is FieldGeometry.LF:
-        geometries = {FieldGeometry.LF}
-        note = "run geometry: longitudinal field — screening LF families"
-        if near_zero:
-            geometries.add(FieldGeometry.ZF)
-            note += (
-                f"; applied-field setpoint {field_gauss:g} G is within "
-                f"{ZERO_FIELD_MAX_GAUSS:g} G of zero — widening to include ZF families"
-            )
-        query = ScopeQuery(frozenset(geometries), frozenset(PhysicsClass))
-        effective = WizardScopePreset.LF_DYNAMICS
-    elif geometry is FieldGeometry.TF:
-        geometries = {FieldGeometry.TF}
-        note = "run geometry: transverse field — screening TF families"
-        if near_zero:
-            geometries.add(FieldGeometry.ZF)
-            note += (
-                f"; applied-field setpoint {field_gauss:g} G is within "
-                f"{ZERO_FIELD_MAX_GAUSS:g} G of zero — widening to include ZF families"
-            )
-        query = ScopeQuery(frozenset(geometries), frozenset(PhysicsClass))
-        effective = WizardScopePreset.TF_KNIGHT_PRECESSION
-        exclusions = _muonium_regime_exclusions(field_gauss)
+    if geometry is None:
+        geometries = ALL_GEOMETRIES
+        notes = [_UNRECORDED_NOTE]
     else:
-        query = ScopeQuery(ALL_GEOMETRIES, frozenset(PhysicsClass))
-        effective = WizardScopePreset.ALL
-        note = "field geometry not recorded — screening all component families"
+        widened = (
+            geometry is not FieldGeometry.ZF
+            and field_gauss is not None
+            and abs(field_gauss) <= ZERO_FIELD_MAX_GAUSS
+        )
+        geometries = frozenset({geometry, FieldGeometry.ZF}) if widened else frozenset({geometry})
+        note = _GEOMETRY_NOTES[geometry]
+        if widened:
+            note += (
+                f"; applied-field setpoint {field_gauss:g} G is within "
+                f"{ZERO_FIELD_MAX_GAUSS:g} G of zero — widening to include ZF families"
+            )
+        notes = [note]
+        if geometry is FieldGeometry.TF:
+            exclusions = _muonium_regime_exclusions(field_gauss)
+            if exclusions:
+                notes.append(
+                    f"transverse field {field_gauss:g} G — muonium forms outside "
+                    "their field regime are left out"
+                )
 
     if _FLUORINE_TOKEN.search(sample_text or ""):
-        note += "; sample name suggests fluorine — F-mu-F candidates will be prioritised"
+        notes.append("sample name suggests fluorine — F-mu-F candidates will be prioritised")
 
-    return query, effective, note, exclusions
+    return geometries, tuple(notes), exclusions
 
 
 def _muonium_regime_exclusions(field_gauss: float | None) -> tuple[ExcludedComponent, ...]:
@@ -447,10 +384,14 @@ def _muonium_regime_exclusions(field_gauss: float | None) -> tuple[ExcludedCompo
     return tuple(excluded)
 
 
+def _joined(values: Iterable[Enum]) -> str:
+    return "/".join(sorted(value.value for value in values))
+
+
 def _component_exclusion_reason(
     definition: ComponentDefinition,
     query: ScopeQuery,
-    preset: WizardScopePreset,
+    scope: WizardScope,
 ) -> str | None:
     """Return why *definition* is out of scope for *query*, or ``None`` if in scope.
 
@@ -463,13 +404,17 @@ def _component_exclusion_reason(
     if definition.physics_classes == frozenset({PhysicsClass.CUSTOM}):
         return None  # user components match every query
     if not (definition.field_geometries & query.geometries):
-        geoms = "/".join(sorted(g.value for g in query.geometries))
-        return f"geometry '{geoms}' outside the component's applicable geometries"
+        return (
+            f"applies in {_joined(definition.field_geometries)}, "
+            f"not the runs' {_joined(query.geometries)} geometry"
+        )
     if not (definition.physics_classes & query.physics_classes):
-        classes = "/".join(sorted(c.value for c in definition.physics_classes))
-        return f"physics class '{classes}' outside the '{preset.value}' preset"
+        return (
+            f"physics class '{_joined(definition.physics_classes)}' is not looked for "
+            f"({_joined(scope.physics)})"
+        )
     if query.max_cost is not None and _COST_RANK[definition.cost] > _COST_RANK[query.max_cost]:
-        return f"cost '{definition.cost.value}' above the '{query.max_cost.value}' cap"
+        return "slow model; slow models are left out"
     return None
 
 
@@ -483,32 +428,32 @@ def resolve_scope(
 ) -> ScopeResolution:
     """Resolve a :class:`WizardScope` against a run into concrete in/out lists.
 
-    Picks the query (a static preset's, or Auto-inferred from the run), walks
-    the component registry in order recording a specific reason for every drop,
-    applies Auto's muonium regime exclusions, then applies the user's
+    Takes the geometries from the run, the physics classes and cost cap from the
+    scope, walks the component registry in order recording a specific reason for
+    every drop, applies the muonium regime exclusions, then applies the user's
     include/exclude overrides (exclude wins over include for the same name).
-    Unknown override names are ignored for inclusion but appended to the note.
+    Unknown override names are ignored for inclusion but named in the notes.
     """
     registry = COMPONENTS if components is None else components
 
-    if scope.preset is WizardScopePreset.AUTO:
-        query, effective, note, auto_exclusions = infer_auto_query(
-            field_direction, field_gauss, sample_text
-        )
-    else:
-        query = PRESET_QUERIES[scope.preset]
-        effective = scope.preset
-        note = _PRESET_NOTES[scope.preset]
-        auto_exclusions = ()
+    geometries, geometry_notes, regime_exclusions = infer_run_geometries(
+        field_direction, field_gauss, sample_text
+    )
+    query = ScopeQuery(geometries, scope.physics_classes, scope.max_cost)
+    notes = list(geometry_notes)
+    if scope.physics:
+        notes.append(f"looking for {', '.join(sorted(c.value for c in scope.physics))}")
+    if scope.skip_slow:
+        notes.append("slow models left out")
 
-    auto_excluded_names = {exc.name: exc for exc in auto_exclusions}
+    regime_reasons = {exc.name: exc.reason for exc in regime_exclusions}
 
     included: list[str] = []
     excluded: list[ExcludedComponent] = []
     for name, definition in registry.items():
-        reason = _component_exclusion_reason(definition, query, effective)
-        if reason is None and name in auto_excluded_names:
-            reason = auto_excluded_names[name].reason
+        reason = _component_exclusion_reason(definition, query, scope)
+        if reason is None:
+            reason = regime_reasons.get(name)
         if reason is None:
             included.append(name)
         else:
@@ -540,15 +485,12 @@ def resolve_scope(
 
     if unknown:
         # Preserve order, drop duplicates.
-        seen: set[str] = set()
-        ordered = [n for n in unknown if not (n in seen or seen.add(n))]
-        note += "; unknown component in overrides: " + ", ".join(ordered)
+        notes.append("unknown component in overrides: " + ", ".join(dict.fromkeys(unknown)))
 
     return ScopeResolution(
         scope=scope,
         query=query,
-        effective_preset=effective,
-        inference_note=note,
+        notes=tuple(notes),
         included_components=tuple(included),
         excluded_components=tuple(excluded),
     )
@@ -564,6 +506,11 @@ def _dataset_geometry_text(dataset: MuonDataset) -> str:
     return ""
 
 
+def dataset_field_geometry(dataset: MuonDataset) -> FieldGeometry | None:
+    """The run's recorded field geometry, or ``None`` when it does not say."""
+    return geometry_from_field_direction(_dataset_geometry_text(dataset))
+
+
 def _dataset_sample_text(dataset: MuonDataset) -> str:
     """Best sample/title text for a dataset (first non-empty of title/sample)."""
     metadata = dataset.metadata or {}
@@ -577,7 +524,7 @@ def _dataset_sample_text(dataset: MuonDataset) -> str:
 def dataset_suggests_fluorine(dataset: MuonDataset) -> bool:
     """Whether the run's sample/title text carries a chemical-formula fluorine.
 
-    The same case-sensitive ``F``-element token the Auto scope uses to prioritise
+    The same case-sensitive ``F``-element token the scope notes use to prioritise
     F-mu-F candidates (:data:`_FLUORINE_TOKEN`); surfaced as a boolean so the fit
     wizard can *promote* the fmuf family on a fluorine sniff, not merely annotate
     the scope note.  Matches ``CaF2``/``NaF``/``LiF``; rejects ``Fe``/``FeSe``.
@@ -602,18 +549,19 @@ def resolve_scope_for_datasets(
 
     A component is included if it is in scope for **any** dataset; a component is
     excluded only if it is excluded for **every** dataset (one representative
-    reason is kept, prefixed ``"all runs: "``). The effective preset and note
-    come from the first dataset with a recorded geometry, else the ALL fallback.
-    The reported ``query`` is the first-resolved one — representative only.
+    reason is kept, prefixed ``"all runs: "``). The notes come from the first
+    dataset with a recorded geometry, else the first dataset. The reported
+    ``query`` is the first-resolved one — representative only. No datasets
+    resolve to nothing in scope.
     """
+    datasets = list(datasets)
     resolutions = [resolve_scope_for_dataset(dataset, scope) for dataset in datasets]
     if not resolutions:
-        query, effective, note, _ = infer_auto_query("", None, "")
+        geometries, notes, _ = infer_run_geometries("", None)
         return ScopeResolution(
             scope=scope,
-            query=query,
-            effective_preset=effective,
-            inference_note=note,
+            query=ScopeQuery(geometries, scope.physics_classes, scope.max_cost),
+            notes=notes,
         )
 
     included_any: set[str] = set()
@@ -639,39 +587,152 @@ def resolve_scope_for_datasets(
         if n in excluded_in_all
     )
 
-    # Effective preset/note from the first dataset with a known geometry.
-    effective = WizardScopePreset.ALL
-    note = "field geometry not recorded — screening all component families"
-    for dataset_res in resolutions:
-        if dataset_res.effective_preset is not WizardScopePreset.ALL:
-            effective = dataset_res.effective_preset
-            note = dataset_res.inference_note
-            break
+    representative = next(
+        (
+            resolution
+            for dataset, resolution in zip(datasets, resolutions, strict=True)
+            if dataset_field_geometry(dataset) is not None
+        ),
+        resolutions[0],
+    )
 
     return ScopeResolution(
         scope=scope,
         query=resolutions[0].query,
-        effective_preset=effective,
-        inference_note=note,
+        notes=representative.notes,
         included_components=included,
         excluded_components=excluded,
     )
 
 
-def estimate_screening_cost(resolution: ScopeResolution) -> tuple[int, int]:
-    """Rough ``(candidates, fits)`` estimate for a resolved scope.
+# --- the typed view the model family picker renders -----------------------
 
-    ``candidates`` is the count of included time-domain components. ``fits`` is a
-    display-only weighted sum (cheap:3, moderate:5, expensive:8) approximating
-    the Stage-1/Stage-2 screening load — the exact numbers are for a GUI label,
-    not a schedule.
+
+#: Built-in family titles (registry ``category``) in picker display order.
+FAMILY_ORDER: tuple[str, ...] = (
+    "Relaxation",
+    "Kubo-Toyabe",
+    "Oscillation",
+    "Muonium",
+    "Nuclear dipolar",
+    "Background",
+)
+
+#: The family every user-registered time component is listed under, after the built-ins.
+USER_FAMILY_TITLE = "Your functions"
+
+
+@dataclass(frozen=True)
+class RecordedGeometry:
+    """How the runs record their applied-field direction."""
+
+    #: ``(geometry, run count)`` for every geometry some run records, in ZF/TF/LF order.
+    counts: tuple[tuple[FieldGeometry, int], ...]
+    #: Runs that record no direction.
+    unrecorded: int
+
+    @property
+    def editable(self) -> bool:
+        """The direction can be answered: at least one run records none."""
+        return self.unrecorded > 0
+
+
+@dataclass(frozen=True)
+class ScopeComponent:
+    """One time-domain component as the picker shows it."""
+
+    name: str
+    label: str
+    use_when: str
+    description: str
+    geometries: frozenset[FieldGeometry]
+    #: The registry's ``expensive`` cost tier.
+    slow: bool
+    #: Its geometry and field regime fit at least one run.
+    applies: bool
+    included: bool
+    #: Why it is out of scope; empty when included.
+    reason: str
+
+
+@dataclass(frozen=True)
+class ScopeFamily:
+    """One family card: a title and its components in registry order."""
+
+    title: str
+    components: tuple[ScopeComponent, ...]
+
+
+@dataclass(frozen=True)
+class ScopeView:
+    """Everything the model family picker renders for one scope and set of runs."""
+
+    scope: WizardScope
+    geometry: RecordedGeometry
+    families: tuple[ScopeFamily, ...]
+    notes: tuple[str, ...]
+
+    @property
+    def included_count(self) -> int:
+        return sum(c.included for family in self.families for c in family.components)
+
+    @property
+    def slow_included(self) -> tuple[ScopeComponent, ...]:
+        """The included slow components, in display order."""
+        return tuple(
+            c for family in self.families for c in family.components if c.included and c.slow
+        )
+
+
+def describe_scope(datasets: Iterable[MuonDataset], scope: WizardScope) -> ScopeView:
+    """Resolve *scope* across *datasets* into the typed view the picker renders.
+
+    Inclusion and reasons come from :func:`resolve_scope_for_datasets`;
+    ``applies`` is inclusion under the unrestricted scope, so a component that
+    does not fit the runs' geometry is still listed with its reason.
     """
-    candidates = 0
-    fits = 0
-    for name in resolution.included_components:
-        definition = COMPONENTS.get(name)
-        if definition is None or definition.domain != "time":
+    datasets = list(datasets)
+    resolution = resolve_scope_for_datasets(datasets, scope)
+    applicable = resolve_scope_for_datasets(datasets, WizardScope()).included_set
+    reasons = {exc.name: exc.reason for exc in resolution.excluded_components}
+
+    recorded = [dataset_field_geometry(dataset) for dataset in datasets]
+    geometry = RecordedGeometry(
+        counts=tuple(
+            (geometry, recorded.count(geometry))
+            for geometry in FieldGeometry
+            if geometry in recorded
+        ),
+        unrecorded=recorded.count(None),
+    )
+
+    members: dict[str, list[ScopeComponent]] = {title: [] for title in FAMILY_ORDER}
+    members[USER_FAMILY_TITLE] = []
+    for name, definition in COMPONENTS.items():
+        if definition.domain != "time":
             continue
-        candidates += 1
-        fits += _COST_FIT_WEIGHT[definition.cost]
-    return candidates, fits
+        title = USER_FAMILY_TITLE if definition.user else definition.category
+        members[title].append(
+            ScopeComponent(
+                name=name,
+                label=definition.label,
+                use_when=definition.use_when,
+                description=definition.description,
+                geometries=definition.field_geometries,
+                slow=definition.cost is ComputationalCost.EXPENSIVE,
+                applies=name in applicable,
+                included=name in resolution.included_set,
+                reason=reasons.get(name, ""),
+            )
+        )
+
+    return ScopeView(
+        scope=scope,
+        geometry=geometry,
+        families=tuple(
+            ScopeFamily(title, tuple(components))
+            for title, components in members.items()
+            if components
+        ),
+        notes=resolution.notes,
+    )

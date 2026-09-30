@@ -75,10 +75,9 @@ class FakeResolver:
             f"Custom scope (from {preset_id})" if has_overrides else f"{preset_id} — baseline note"
         )
         return {
-            "effective_preset": "tf-knight-precession" if preset_id == "auto" else preset_id,
             "note": note,
             "families": self._families(preset_id),
-            "estimate": [max(included, 0), max(included, 0) * 2],
+            "estimate": max(included, 0),
         }
 
 
@@ -101,14 +100,24 @@ def _leaf(widget: WizardScopeSelector, name: str):
 
 
 def test_build_and_parse_payload_round_trip() -> None:
-    payload = build_scope_payload("auto", {"b", "a"}, {"z"})
-    assert payload == {"version": 1, "preset": "auto", "include": ["a", "b"], "exclude": ["z"]}
-    assert parse_scope_payload(payload) == ("auto", {"a", "b"}, {"z"})
+    payload = build_scope_payload("lf-dynamics", {"b", "a"}, {"z"})
+    assert payload == {
+        "version": 2,
+        "physics": ["dynamics", "magnetism"],
+        "include": ["a", "b"],
+        "exclude": ["z"],
+        "skip_slow": False,
+    }
+    assert parse_scope_payload(payload) == ("lf-dynamics", {"a", "b"}, {"z"})
 
 
-def test_parse_payload_none_and_unknown_fall_back_to_auto() -> None:
+def test_parse_payload_maps_physics_to_the_first_preset_offering_it() -> None:
     assert parse_scope_payload(None) == ("auto", set(), set())
-    assert parse_scope_payload({"preset": "nonsense"}) == ("auto", set(), set())
+    # tf-knight-precession offers the same physics as zf-static-magnetism.
+    payload = build_scope_payload("tf-knight-precession", set(), set())
+    assert parse_scope_payload(payload) == ("zf-static-magnetism", set(), set())
+    with pytest.raises(ValueError):
+        parse_scope_payload({"preset": "nonsense"})
 
 
 # ── Initial refresh ──────────────────────────────────────────────────────────
@@ -123,7 +132,7 @@ def test_initial_refresh_populates_combo_tree_and_labels(qapp: QApplication) -> 
     assert widget._family_tree.topLevelItemCount() == 2
     assert widget._included_leaf_count() == 3
     assert "baseline note" in widget._metadata_label.text()
-    assert "3 candidates / 6 screening fits" in widget._estimate_label.text()
+    assert "3 candidates" in widget._estimate_label.text()
     assert widget.is_valid() is True
 
 
@@ -139,7 +148,7 @@ def test_preset_change_repopulates_and_emits_scope_changed_once(qapp: QApplicati
     widget._preset_combo.setCurrentIndex(idx)
 
     assert len(emitted) == 1
-    assert emitted[0]["preset"] == "lf-dynamics"
+    assert emitted[0]["physics"] == ["dynamics", "magnetism"]
     assert emitted[0]["include"] == []
     assert emitted[0]["exclude"] == []
     assert widget._preset_id == "lf-dynamics"
@@ -238,15 +247,15 @@ def test_set_scope_none_resets_to_auto_without_signals(qapp: QApplication) -> No
     assert validity_events == []
 
 
-def test_set_scope_unknown_preset_falls_back_to_auto(qapp: QApplication) -> None:
+def test_set_scope_restores_the_preset_offering_the_physics(qapp: QApplication) -> None:
     widget, resolver = _make(qapp)
     scope_events: list[object] = []
     widget.scope_changed.connect(scope_events.append)
 
-    widget.set_scope({"version": 1, "preset": "does-not-exist", "include": [], "exclude": []})
+    widget.set_scope(build_scope_payload("muonium-radical", set(), set()))
 
-    assert widget._preset_id == "auto"
-    assert widget._preset_combo.currentData() == "auto"
+    assert widget._preset_id == "muonium-radical"
+    assert widget._preset_combo.currentData() == "muonium-radical"
     assert scope_events == []
 
 

@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.damped_line_scan import measure_line_at_frequency
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import (
@@ -68,8 +68,7 @@ from asymmetry.core.fitting.wizard_narrative import (
 )
 from asymmetry.core.fitting.wizard_scope import (
     WizardScope,
-    estimate_screening_cost,
-    resolve_scope_for_dataset,
+    describe_scope,
 )
 from asymmetry.core.fourier.fft import fft_asymmetry
 from asymmetry.gui.styles import tokens
@@ -79,7 +78,11 @@ from asymmetry.gui.widgets.decision_trail import DecisionTrail, TrailSeparator
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.wizard_answer_card import WizardAnswerCard
-from asymmetry.gui.widgets.wizard_scope_selector import WizardScopeSelector
+from asymmetry.gui.widgets.wizard_scope_selector import (
+    WizardScopeSelector,
+    resolver_payload,
+    scope_for_preset,
+)
 from asymmetry.gui.windows.wizard_base import WizardWindowBase
 
 #: Short human-readable labels for multiplet-match kinds shown in the peaks table.
@@ -842,53 +845,15 @@ class FitWizardWindow(WizardWindowBase):
     # Scope resolver (unchanged)
     # ------------------------------------------------------------------
 
+    # Phase 4 replaces this with ModelFamilyPicker.
     def _resolve_scope(self, preset_id: str, overrides: dict) -> dict:
-        """Adapt the core scope resolver to the WizardScopeSelector dict contract."""
+        """Adapt the core scope view to the WizardScopeSelector dict contract."""
         if self._dataset is None:
-            return {
-                "effective_preset": preset_id,
-                "note": "Load a dataset first",
-                "families": [],
-                "estimate": [0, 0],
-            }
-        scope = WizardScope.from_payload(
-            {
-                "version": 1,
-                "preset": preset_id,
-                "include": overrides.get("include", []),
-                "exclude": overrides.get("exclude", []),
-            }
+            return {"note": "Load a dataset first", "families": [], "estimate": 0}
+        scope = scope_for_preset(
+            preset_id, set(overrides.get("include", [])), set(overrides.get("exclude", []))
         )
-        resolution = resolve_scope_for_dataset(self._dataset, scope)
-        included = resolution.included_set
-        reasons = {exc.name: exc.reason for exc in resolution.excluded_components}
-
-        families: list[dict] = []
-        by_category: dict[str, dict] = {}
-        for name, definition in COMPONENTS.items():
-            if definition.domain != "time":
-                continue
-            category = definition.category
-            family = by_category.get(category)
-            if family is None:
-                family = {"key": category, "title": category, "components": []}
-                by_category[category] = family
-                families.append(family)
-            family["components"].append(
-                {
-                    "name": name,
-                    "included": name in included,
-                    "reason": reasons.get(name, ""),
-                    "cost": definition.cost.value,
-                }
-            )
-
-        return {
-            "effective_preset": resolution.effective_preset.value,
-            "note": resolution.inference_note,
-            "families": families,
-            "estimate": list(estimate_screening_cost(resolution)),
-        }
+        return resolver_payload(describe_scope([self._dataset], scope))
 
     # ------------------------------------------------------------------
     # Result-state population

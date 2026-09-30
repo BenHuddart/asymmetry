@@ -8,28 +8,35 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import ComputationalCost, FieldGeometry, PhysicsClass
 from asymmetry.core.fitting.composite import COMPONENTS
 from asymmetry.core.fitting.user_functions import register_component
 from asymmetry.core.fitting.wizard_scope import (
     DEFAULT_EFFORT_TIER,
     EFFORT_TIER_DESCRIPTIONS,
     EFFORT_TIER_LABELS,
+    FAMILY_ORDER,
     MUONIUM_HIGH_TF_MIN_GAUSS,
     MUONIUM_LOW_TF_MAX_GAUSS,
+    USER_FAMILY_TITLE,
     ZERO_FIELD_MAX_GAUSS,
     EffortTier,
     ExcludedComponent,
     ScopeResolution,
     WizardScope,
-    WizardScopePreset,
+    describe_scope,
     effort_tier_from_payload,
     effort_tier_to_payload,
-    estimate_screening_cost,
-    infer_auto_query,
+    infer_run_geometries,
     resolve_scope,
     resolve_scope_for_dataset,
     resolve_scope_for_datasets,
 )
+
+MAGNETISM = frozenset({PhysicsClass.MAGNETISM})
+MOLECULAR = frozenset({PhysicsClass.MOLECULAR})
+LF_DYNAMICS = frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM})
+SUPERCONDUCTOR = frozenset({PhysicsClass.SUPERCONDUCTIVITY, PhysicsClass.MAGNETISM})
 
 
 def _time_component_names() -> set[str]:
@@ -40,52 +47,66 @@ def _frequency_component_names() -> set[str]:
     return {n for n, d in COMPONENTS.items() if d.domain == "frequency"}
 
 
-def _resolve(preset: WizardScopePreset, **kw) -> ScopeResolution:
-    return resolve_scope(WizardScope(preset=preset), **kw)
+def _resolve(physics: frozenset[PhysicsClass], **kw) -> ScopeResolution:
+    return resolve_scope(WizardScope(physics=physics), **kw)
 
 
-# --- named presets ------------------------------------------------------
+# --- registry labels ----------------------------------------------------
 
 
-def test_zf_static_magnetism_preset_membership():
-    res = _resolve(WizardScopePreset.ZF_STATIC_MAGNETISM)
-    assert "Exponential" in res.included_set
-    assert "Constant" in res.included_set
+def test_every_component_has_a_label_and_a_use_when_line():
+    for name, definition in COMPONENTS.items():
+        assert definition.label.strip(), name
+        assert definition.use_when.strip(), name
+
+
+def test_time_component_labels_are_distinct():
+    labels = [d.label for d in COMPONENTS.values() if d.domain == "time"]
+    assert len(labels) == len(set(labels))
+
+
+# --- physics classes ----------------------------------------------------
+
+
+def test_magnetism_in_zero_field_keeps_zf_magnetism_and_envelopes():
+    res = _resolve(MAGNETISM, field_direction="ZF")
+    assert {"Exponential", "Constant", "StaticGKT_ZF", "Oscillatory"} <= res.included_set
     # A TF-only muonium form is excluded with a geometry reason.
     assert "MuoniumTF" not in res.included_set
     reason = next(e.reason for e in res.excluded_components if e.name == "MuoniumTF")
-    assert "geometr" in reason.lower()
-    # A TF superconductivity component is excluded.
-    assert "VortexLattice" not in res.included_set
+    assert "geometry" in reason
+    # A molecular component is excluded with a physics reason.
+    reason = next(e.reason for e in res.excluded_components if e.name == "FmuF_Linear")
+    assert "molecular" in reason and "magnetism" in reason
 
 
-def test_tf_superconductor_includes_vortex_lattice():
-    res = _resolve(WizardScopePreset.TF_SUPERCONDUCTOR)
-    assert "VortexLattice" in res.included_set
-    assert "Exponential" in res.included_set
-    assert "Constant" in res.included_set
+def test_physics_classes_combine():
+    res = _resolve(frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MUONIUM}), field_direction="LF")
+    assert {"MuoniumLFRelax", "DynamicGaussianKT", "Keren"} <= res.included_set
+    # LongitudinalFieldKT is static magnetism only.
+    assert "LongitudinalFieldKT" not in res.included_set
 
 
-def test_fluoride_fmuf_preset_membership():
-    res = _resolve(WizardScopePreset.FLUORIDE_FMUF)
-    assert "FmuF_Linear" in res.included_set
-    assert "Exponential" in res.included_set
-    assert "Constant" in res.included_set
-    # Oscillatory is MAGNETISM, outside the molecular preset.
+def test_superconductor_in_tf_includes_vortex_lattice():
+    res = _resolve(SUPERCONDUCTOR, field_direction="TF", field_gauss=100.0)
+    assert {"VortexLattice", "Exponential", "Constant"} <= res.included_set
+
+
+def test_molecular_membership():
+    res = _resolve(MOLECULAR)
+    assert {"FmuF_Linear", "Exponential", "Constant"} <= res.included_set
+    # Oscillatory is MAGNETISM, not looked for.
     assert "Oscillatory" not in res.included_set
 
 
-def test_all_preset_includes_every_time_domain_component():
-    res = _resolve(WizardScopePreset.ALL)
+def test_empty_physics_with_no_geometry_includes_every_time_domain_component():
+    res = resolve_scope(WizardScope())
     assert res.included_set == _time_component_names()
 
 
-@pytest.mark.parametrize(
-    "preset",
-    [p for p in WizardScopePreset if p is not WizardScopePreset.AUTO],
-)
-def test_every_preset_includes_exponential_and_constant(preset):
-    res = _resolve(preset)
+@pytest.mark.parametrize("physics", [MAGNETISM, MOLECULAR, LF_DYNAMICS, SUPERCONDUCTOR])
+def test_every_physics_choice_keeps_exponential_and_constant(physics):
+    res = _resolve(physics, field_direction="ZF")
     assert "Exponential" in res.included_set
     assert "Constant" in res.included_set
 
@@ -93,42 +114,60 @@ def test_every_preset_includes_exponential_and_constant(preset):
 def test_frequency_domain_components_excluded_everywhere():
     freq = _frequency_component_names()
     assert freq  # sanity: there are frequency-domain components
-    for preset in WizardScopePreset:
-        if preset is WizardScopePreset.AUTO:
-            res = resolve_scope(WizardScope(preset=preset))
-        else:
-            res = _resolve(preset)
-        assert not (res.included_set & freq), preset
+    for physics in (frozenset(), MAGNETISM, MOLECULAR):
+        res = _resolve(physics)
+        assert not (res.included_set & freq), physics
         excluded_names = {e.name for e in res.excluded_components}
-        assert freq <= excluded_names, preset
+        assert freq <= excluded_names, physics
 
 
-# --- Auto inference -----------------------------------------------------
+def test_physics_note_names_the_classes_looked_for():
+    res = _resolve(LF_DYNAMICS, field_direction="ZF")
+    assert "looking for dynamics, magnetism" in res.notes
+
+
+# --- slow models --------------------------------------------------------
+
+
+def test_skip_slow_caps_the_cost_at_moderate():
+    res = resolve_scope(WizardScope(skip_slow=True))
+    assert res.query.max_cost is ComputationalCost.MODERATE
+    slow = {n for n, d in COMPONENTS.items() if d.cost is ComputationalCost.EXPENSIVE}
+    assert slow and not (slow & res.included_set)
+    reason = next(e.reason for e in res.excluded_components if e.name == "DynamicGaussianKT")
+    assert "slow" in reason
+
+
+def test_skip_slow_off_sets_no_cost_cap():
+    assert resolve_scope(WizardScope()).query.max_cost is None
+
+
+# --- geometry from the run ----------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("field_direction", "expected"),
     [
-        ("Transverse", WizardScopePreset.TF_KNIGHT_PRECESSION),
-        ("Longitudinal", WizardScopePreset.LF_DYNAMICS),
-        ("Zero field", WizardScopePreset.ZF_STATIC_MAGNETISM),
-        ("TF", WizardScopePreset.TF_KNIGHT_PRECESSION),
-        ("LF", WizardScopePreset.LF_DYNAMICS),
-        ("ZF", WizardScopePreset.ZF_STATIC_MAGNETISM),
-        ("", WizardScopePreset.ALL),
+        ("Transverse", {FieldGeometry.TF}),
+        ("Longitudinal", {FieldGeometry.LF}),
+        ("Zero field", {FieldGeometry.ZF}),
+        ("TF", {FieldGeometry.TF}),
+        ("LF", {FieldGeometry.LF}),
+        ("ZF", {FieldGeometry.ZF}),
+        ("", set(FieldGeometry)),
     ],
 )
-def test_auto_effective_preset(field_direction, expected):
-    res = resolve_scope(WizardScope(), field_direction=field_direction)
-    assert res.effective_preset is expected
+def test_geometries_come_from_the_recorded_direction(field_direction, expected):
+    res = resolve_scope(WizardScope(physics=MAGNETISM), field_direction=field_direction)
+    assert res.query.geometries == expected
 
 
-def test_auto_note_names_geometry_source():
+def test_note_names_geometry_source():
     res = resolve_scope(WizardScope(), field_direction="Zero field")
     assert "zero field" in res.inference_note.lower()
 
 
-def test_auto_tf_low_field_regime():
+def test_tf_low_field_regime():
     res = resolve_scope(WizardScope(), field_direction="TF", field_gauss=20.0)
     assert "MuoniumLowTF" in res.included_set
     assert "MuoniumHighTF" not in res.included_set
@@ -137,9 +176,10 @@ def test_auto_tf_low_field_regime():
     assert "MuoniumTF" in res.included_set
     high_reason = next(e.reason for e in res.excluded_components if e.name == "MuoniumHighTF")
     assert str(int(MUONIUM_HIGH_TF_MIN_GAUSS)) in high_reason or "20" in high_reason
+    assert any("muonium" in note for note in res.notes)
 
 
-def test_auto_tf_high_field_regime():
+def test_tf_high_field_regime():
     res = resolve_scope(WizardScope(), field_direction="TF", field_gauss=3000.0)
     assert "MuoniumHighTF" in res.included_set
     assert "MuoniumHighTFAniso" in res.included_set
@@ -149,18 +189,18 @@ def test_auto_tf_high_field_regime():
     assert str(int(MUONIUM_LOW_TF_MAX_GAUSS)) in low_reason or "3000" in low_reason
 
 
-def test_auto_tf_unknown_field_excludes_no_muonium_regime():
+def test_tf_unknown_field_excludes_no_muonium_regime():
     res = resolve_scope(WizardScope(), field_direction="TF", field_gauss=None)
     assert "MuoniumLowTF" in res.included_set
     assert "MuoniumHighTF" in res.included_set
     assert "MuoniumHighTFAniso" in res.included_set
+    assert not any("muonium" in note for note in res.notes)
 
 
-def test_auto_unknown_geometry_is_superset_of_zf_preset():
+def test_unknown_geometry_is_superset_of_zero_field():
     unknown = resolve_scope(WizardScope(), field_direction="")
-    zf = _resolve(WizardScopePreset.ZF_STATIC_MAGNETISM)
+    zf = resolve_scope(WizardScope(), field_direction="ZF")
     assert zf.included_set <= unknown.included_set
-    # And it equals the ALL query set (every time-domain component).
     assert unknown.included_set == _time_component_names()
 
 
@@ -169,8 +209,9 @@ def test_auto_unknown_geometry_is_superset_of_zf_preset():
 # Real ISIS runs are sometimes recorded "TF" with the applied-field setpoint
 # at (or near) zero — a ZF measurement on a TF-capable beamline (see
 # docs/porting/field-geometry/: "MUSR00044991.nxs: magnetic_field_state='TF'
-# at magnetic_field=0 G"). Auto must widen to include ZF families in that case
-# without dropping the labelled TF family, which may still be hardware-correct.
+# at magnetic_field=0 G"). The scope must widen to include ZF families in that
+# case without dropping the labelled TF family, which may still be
+# hardware-correct.
 
 
 def test_tf_label_zero_field_widens_to_include_zf_families():
@@ -208,8 +249,8 @@ def test_lf_label_zero_field_widens_to_include_zf_families():
     res = resolve_scope(WizardScope(), field_direction="LF", field_gauss=0.5)
     assert "FmuF_Linear" in res.included_set
     # LF-only dynamics family (labelled geometry) is preserved.
-    zf_only = _resolve(WizardScopePreset.ZF_STATIC_MAGNETISM)
-    lf_only = _resolve(WizardScopePreset.LF_DYNAMICS)
+    zf_only = resolve_scope(WizardScope(), field_direction="ZF")
+    lf_only = resolve_scope(WizardScope(), field_direction="LF")
     assert lf_only.included_set <= res.included_set
     assert zf_only.included_set <= res.included_set
 
@@ -227,18 +268,18 @@ def test_tf_label_unknown_field_does_not_widen():
 
 def test_zf_label_unaffected_by_override():
     # ZF geometry is already the override's target; a field_gauss value must
-    # not further change Auto's ZF behaviour one way or the other.
+    # not further change the ZF behaviour one way or the other.
     with_field = resolve_scope(WizardScope(), field_direction="ZF", field_gauss=0.0)
     without_field = resolve_scope(WizardScope(), field_direction="ZF", field_gauss=None)
     assert with_field.included_set == without_field.included_set
-    assert with_field.effective_preset is WizardScopePreset.ZF_STATIC_MAGNETISM
+    assert with_field.query.geometries == {FieldGeometry.ZF}
 
 
 def test_zero_field_override_via_dataset_wrapper():
     dataset = _fake_dataset("TF", field=0.0)
     res = resolve_scope_for_dataset(dataset, WizardScope())
     assert "FmuF_Linear" in res.included_set
-    assert res.effective_preset is WizardScopePreset.TF_KNIGHT_PRECESSION
+    assert res.query.geometries == {FieldGeometry.TF, FieldGeometry.ZF}
 
 
 # --- fluorine sniff -----------------------------------------------------
@@ -248,8 +289,8 @@ def test_zero_field_override_via_dataset_wrapper():
     "sample", ["PbF2", "CaF2", "LiF", "NaF", "KTCNQF4 T=300.0 F=100.0", "CaF2 TF20"]
 )
 def test_fluorine_sniff_positive(sample):
-    _, _, note, _ = infer_auto_query("Zero field", None, sample)
-    assert "fluorine" in note.lower()
+    _, notes, _ = infer_run_geometries("Zero field", None, sample)
+    assert any("fluorine" in note for note in notes)
 
 
 @pytest.mark.parametrize(
@@ -271,26 +312,22 @@ def test_fluorine_sniff_positive(sample):
     ],
 )
 def test_fluorine_sniff_negative(sample):
-    _, _, note, _ = infer_auto_query("Zero field", None, sample)
-    assert "fluorine" not in note.lower()
+    _, notes, _ = infer_run_geometries("Zero field", None, sample)
+    assert not any("fluorine" in note for note in notes)
 
 
 # --- overrides ----------------------------------------------------------
 
 
 def test_include_resurrects_query_excluded_component():
-    scope = WizardScope(
-        preset=WizardScopePreset.ZF_STATIC_MAGNETISM,
-        include_components=frozenset({"VortexLattice"}),
-    )
-    res = resolve_scope(scope)
+    scope = WizardScope(physics=MAGNETISM, include_components=frozenset({"VortexLattice"}))
+    res = resolve_scope(scope, field_direction="ZF")
     assert "VortexLattice" in res.included_set
     assert "VortexLattice" not in {e.name for e in res.excluded_components}
 
 
 def test_exclude_beats_include_for_same_name():
     scope = WizardScope(
-        preset=WizardScopePreset.ALL,
         include_components=frozenset({"Exponential"}),
         exclude_components=frozenset({"Exponential"}),
     )
@@ -302,7 +339,6 @@ def test_exclude_beats_include_for_same_name():
 
 def test_unknown_override_names_are_noted_not_crashing():
     scope = WizardScope(
-        preset=WizardScopePreset.ALL,
         include_components=frozenset({"NoSuchComponent"}),
         exclude_components=frozenset({"AlsoMissing"}),
     )
@@ -314,12 +350,9 @@ def test_unknown_override_names_are_noted_not_crashing():
 # --- exclusion reason quality -------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "preset",
-    [WizardScopePreset.ZF_STATIC_MAGNETISM, WizardScopePreset.TF_SUPERCONDUCTOR],
-)
-def test_every_exclusion_has_a_specific_nonempty_reason(preset):
-    res = _resolve(preset)
+@pytest.mark.parametrize(("physics", "direction"), [(MAGNETISM, "ZF"), (SUPERCONDUCTOR, "TF")])
+def test_every_exclusion_has_a_specific_nonempty_reason(physics, direction):
+    res = _resolve(physics, field_direction=direction)
     assert res.excluded_components
     for exc in res.excluded_components:
         assert isinstance(exc, ExcludedComponent)
@@ -331,19 +364,42 @@ def test_every_exclusion_has_a_specific_nonempty_reason(preset):
 
 def test_payload_round_trip_and_json_safe():
     scope = WizardScope(
-        preset=WizardScopePreset.LF_DYNAMICS,
+        physics=LF_DYNAMICS,
         include_components=frozenset({"VortexLattice"}),
         exclude_components=frozenset({"Exponential"}),
+        skip_slow=True,
     )
     payload = scope.to_payload()
+    assert payload == {
+        "version": 2,
+        "physics": ["dynamics", "magnetism"],
+        "include": ["VortexLattice"],
+        "exclude": ["Exponential"],
+        "skip_slow": True,
+    }
     json.dumps(payload)  # must not raise
-    restored = WizardScope.from_payload(payload)
-    assert restored == scope
+    assert WizardScope.from_payload(payload) == scope
 
 
-@pytest.mark.parametrize("garbage", [None, 42, "nonsense", [], {"preset": "made-up"}])
-def test_from_payload_tolerates_garbage(garbage):
-    assert WizardScope.from_payload(garbage).preset is WizardScopePreset.AUTO
+_V2 = {"version": 2, "physics": [], "include": [], "exclude": [], "skip_slow": False}
+
+
+@pytest.mark.parametrize(
+    ("payload", "invariant"),
+    [
+        (None, "mapping"),
+        ([], "mapping"),
+        ({"version": 1, "preset": "auto", "include": [], "exclude": []}, "exactly the keys"),
+        ({**_V2, "version": 1}, "version 2"),
+        ({**_V2, "physics": ["made-up"]}, "unknown physics class"),
+        ({**_V2, "include": "Exponential"}, "list of strings"),
+        ({**_V2, "exclude": [1]}, "list of strings"),
+        ({**_V2, "skip_slow": "yes"}, "bool"),
+    ],
+)
+def test_from_payload_rejects_anything_but_version_2(payload, invariant):
+    with pytest.raises(ValueError, match=invariant):
+        WizardScope.from_payload(payload)
 
 
 # --- user component ubiquity --------------------------------------------
@@ -371,24 +427,26 @@ def throwaway_user_component():
         COMPONENTS.pop(name, None)
 
 
-def test_user_component_appears_in_every_preset(throwaway_user_component):
+def test_user_component_appears_in_every_scope(throwaway_user_component):
     name = throwaway_user_component
-    for preset in WizardScopePreset:
-        if preset is WizardScopePreset.AUTO:
-            res = resolve_scope(WizardScope(preset=preset), field_direction="Zero field")
-        else:
-            res = _resolve(preset)
-        assert name in res.included_set, preset
+    for physics in (frozenset(), MAGNETISM, MOLECULAR, LF_DYNAMICS):
+        res = _resolve(physics, field_direction="Zero field")
+        assert name in res.included_set, physics
 
 
 def test_user_component_can_still_be_excluded(throwaway_user_component):
     name = throwaway_user_component
-    scope = WizardScope(
-        preset=WizardScopePreset.ZF_STATIC_MAGNETISM,
-        exclude_components=frozenset({name}),
-    )
+    scope = WizardScope(physics=MAGNETISM, exclude_components=frozenset({name}))
     res = resolve_scope(scope)
     assert name not in res.included_set
+
+
+def test_user_component_label_is_its_name_and_use_when_its_description(
+    throwaway_user_component,
+):
+    definition = COMPONENTS[throwaway_user_component]
+    assert definition.label == throwaway_user_component
+    assert definition.use_when == "throwaway probe component"
 
 
 # --- dataset wrappers ---------------------------------------------------
@@ -411,7 +469,7 @@ def _fake_dataset(field_state: str, field: float | None = None, title: str = "")
 def test_resolve_for_dataset_reads_geometry_and_field():
     dataset = _fake_dataset("TF", field=20.0)
     res = resolve_scope_for_dataset(dataset, WizardScope())
-    assert res.effective_preset is WizardScopePreset.TF_KNIGHT_PRECESSION
+    assert res.query.geometries == {FieldGeometry.TF}
     assert "MuoniumLowTF" in res.included_set
     assert "MuoniumHighTF" not in res.included_set
 
@@ -438,18 +496,86 @@ def test_resolve_for_datasets_excluded_in_all_keeps_all_runs_reason():
         assert excluded[name].startswith("all runs: ")
 
 
-# --- screening cost estimate --------------------------------------------
+def test_resolve_for_datasets_notes_come_from_a_run_that_records_geometry():
+    res = resolve_scope_for_datasets([_fake_dataset(""), _fake_dataset("LF")], WizardScope())
+    assert "longitudinal field" in res.inference_note
 
 
-def test_estimate_screening_cost_positive_and_ordered():
-    all_res = _resolve(WizardScopePreset.ALL)
-    zf_res = _resolve(WizardScopePreset.ZF_STATIC_MAGNETISM)
-    all_candidates, all_fits = estimate_screening_cost(all_res)
-    zf_candidates, zf_fits = estimate_screening_cost(zf_res)
-    assert all_candidates > 0 and all_fits > 0
-    assert zf_candidates > 0 and zf_fits > 0
-    assert all_candidates > zf_candidates
-    assert all_fits > zf_fits
+# --- describe_scope -------------------------------------------------------
+
+
+def test_describe_scope_summarises_the_recorded_geometry():
+    view = describe_scope(
+        [_fake_dataset("LF"), _fake_dataset("LF"), _fake_dataset("")], WizardScope()
+    )
+    assert view.geometry.counts == ((FieldGeometry.LF, 2),)
+    assert view.geometry.unrecorded == 1
+    assert view.geometry.editable
+
+
+def test_describe_scope_direction_is_read_only_when_every_run_records_one():
+    view = describe_scope([_fake_dataset("ZF"), _fake_dataset("TF")], WizardScope())
+    assert view.geometry.counts == ((FieldGeometry.ZF, 1), (FieldGeometry.TF, 1))
+    assert not view.geometry.editable
+
+
+def test_describe_scope_lists_families_in_display_order_with_every_time_component():
+    view = describe_scope([_fake_dataset("ZF")], WizardScope())
+    assert tuple(family.title for family in view.families) == FAMILY_ORDER
+    names = [c.name for family in view.families for c in family.components]
+    assert sorted(names) == sorted(_time_component_names())
+
+
+def test_describe_scope_lists_a_component_outside_the_geometry_with_its_reason():
+    view = describe_scope([_fake_dataset("LF", field=100.0)], WizardScope())
+    components = {c.name: c for family in view.families for c in family.components}
+    static = components["StaticGKT_ZF"]
+    assert not static.applies
+    assert not static.included
+    assert "geometry" in static.reason
+    dynamic = components["DynamicGaussianKT"]
+    assert dynamic.applies and dynamic.included and dynamic.reason == ""
+    assert dynamic.label == "Dynamic Gaussian KT"
+    assert dynamic.use_when == "Fluctuating Gaussian fields (strong collision)"
+    assert dynamic.slow
+    assert dynamic.geometries == {FieldGeometry.LF, FieldGeometry.ZF}
+
+
+def test_describe_scope_physics_exclusion_still_applies():
+    view = describe_scope([_fake_dataset("ZF")], WizardScope(physics=MOLECULAR))
+    components = {c.name: c for family in view.families for c in family.components}
+    oscillatory = components["Oscillatory"]
+    assert oscillatory.applies and not oscillatory.included
+    assert "magnetism" in oscillatory.reason
+
+
+def test_describe_scope_counts_follow_inclusion():
+    datasets = [_fake_dataset("ZF")]
+    everything = describe_scope(datasets, WizardScope())
+    fast = describe_scope(datasets, WizardScope(skip_slow=True))
+    assert everything.slow_included
+    assert all(c.slow and c.included for c in everything.slow_included)
+    assert fast.slow_included == ()
+    assert fast.included_count == everything.included_count - len(everything.slow_included)
+    assert everything.included_count == len(
+        resolve_scope_for_datasets(datasets, WizardScope()).included_components
+    )
+
+
+def test_describe_scope_notes_match_the_resolution():
+    datasets = [_fake_dataset("TF", field=20.0, title="CaF2")]
+    view = describe_scope(datasets, WizardScope())
+    assert view.notes == resolve_scope_for_datasets(datasets, WizardScope()).notes
+    assert any("fluorine" in note for note in view.notes)
+    assert any("muonium" in note for note in view.notes)
+
+
+def test_describe_scope_puts_user_functions_last(throwaway_user_component):
+    view = describe_scope([_fake_dataset("ZF")], WizardScope())
+    assert view.families[-1].title == USER_FAMILY_TITLE
+    (component,) = view.families[-1].components
+    assert component.name == throwaway_user_component
+    assert component.included
 
 
 # --- effort tier (PR 5) ---------------------------------------------------

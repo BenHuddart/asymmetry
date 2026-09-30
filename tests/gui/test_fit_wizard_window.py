@@ -38,6 +38,7 @@ from asymmetry.core.fitting.peak_detection import (
     MultipletMatch,
     PeakAnalysis,
 )
+from asymmetry.gui.widgets.wizard_scope_selector import build_scope_payload
 from asymmetry.gui.windows.fit_wizard_window import (
     _PAGE_RESULT,
     _PAGE_RUNNING,
@@ -456,7 +457,7 @@ def test_fit_wizard_window_emits_cached_analysis_payload(
     assert payload.get("signature") == {
         "run_number": int(dataset.run_number),
         "model": None,
-        "scope": {"version": 1, "preset": "auto", "include": [], "exclude": []},
+        "scope": build_scope_payload("auto", set(), set()),
         "user_peaks": [],
     }
 
@@ -482,7 +483,7 @@ def test_fit_wizard_window_accepts_cached_recommendation(
     assert window._compare_table.rowCount() == 2
     assert window._answer_card.selected_key() == "exp_constant"
     # Legacy signature (no scope/user_peaks keys) restores Auto and is not stale.
-    assert window._scope_selector.current_scope()["preset"] == "auto"
+    assert window._scope_selector.current_scope() == build_scope_payload("auto", set(), set())
     assert window._user_peaks == []
     # The result page is a scroll area (see test_fit_wizard_window_result_page_is_scrollable)
     # so an expanded trail step can never push content past the window unreachably.
@@ -542,8 +543,8 @@ def test_fit_wizard_window_resolver_groups_time_domain_by_category(
         first = family["components"][0]["name"]
         assert family["title"] == COMPONENTS[first].category
         assert all(COMPONENTS[c["name"]].category == family["title"] for c in family["components"])
-    # Estimate is a two-element (candidates, fits) pair.
-    assert len(result["estimate"]) == 2
+    # Estimate is the number of included components.
+    assert result["estimate"] == sum(c["included"] for f in families for c in f["components"])
 
 
 def test_fit_wizard_window_resolver_guards_without_dataset(qapp: QApplication) -> None:
@@ -608,7 +609,8 @@ def test_fit_wizard_window_forwards_scope_and_user_peaks(
     dataset: MuonDataset,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
+    from asymmetry.core.fitting.component_tags import PhysicsClass
+    from asymmetry.core.fitting.wizard_scope import WizardScope
 
     captured: dict[str, object] = {}
 
@@ -620,9 +622,7 @@ def test_fit_wizard_window_forwards_scope_and_user_peaks(
     window = FitWizardWindow()
     window.set_analysis_context(dataset)
 
-    window._scope_selector.set_scope(
-        {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []}
-    )
+    window._scope_selector.set_scope(build_scope_payload("lf-dynamics", set(), set()))
     window._user_peaks = [{"freq_mhz": 3.5}, {"freq_mhz": 12.0}]
 
     window._start_analysis()
@@ -630,7 +630,7 @@ def test_fit_wizard_window_forwards_scope_and_user_peaks(
 
     scope = captured.get("scope")
     assert isinstance(scope, WizardScope)
-    assert scope.preset is WizardScopePreset.LF_DYNAMICS
+    assert scope.physics == {PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}
     assert captured.get("user_frequencies_mhz") == [3.5, 12.0]
     # The cooperative cancel_callback is threaded through to the engine.
     assert callable(captured.get("cancel_callback"))
@@ -742,13 +742,15 @@ def test_fit_wizard_window_cached_restore_with_scope_and_peaks(
         signature={
             "run_number": int(dataset.run_number),
             "model": None,
-            "scope": {"version": 1, "preset": "lf-dynamics", "include": [], "exclude": []},
+            "scope": build_scope_payload("lf-dynamics", set(), set()),
             "user_peaks": [{"freq_mhz": 4.0}],
         },
         log_text="cached",
     )
 
-    assert window._scope_selector.current_scope()["preset"] == "lf-dynamics"
+    assert window._scope_selector.current_scope() == build_scope_payload(
+        "lf-dynamics", set(), set()
+    )
     assert window._user_peaks == [{"freq_mhz": 4.0}]
     assert window._analysis_stale is False
     assert window._stale_banner.isHidden() is True
