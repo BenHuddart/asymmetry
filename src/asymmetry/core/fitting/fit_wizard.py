@@ -2002,6 +2002,16 @@ OVERHAUSER_TEMPLATE_KEYS = frozenset(
         "overhauser_cutoff_powder_exp_constant",
     }
 )
+#: One Kubo-Toyabe term plus a constant: the A/A_bg split follows the KT tail.
+_KT_CONSTANT_TEMPLATE_KEYS = frozenset(
+    {
+        "static_gkt_constant",
+        "dynamic_gkt_constant",
+        "gbkt_constant",
+        "dynamic_lkt_constant",
+        "lf_kt_constant",
+    }
+)
 #: Muonium TF templates whose ``field``/``A_hf`` seeding shares one rule.
 _MUONIUM_TF_TEMPLATE_KEYS = frozenset(
     {"muonium_low_tf_constant", "muonium_tf_constant", "muonium_high_tf_constant"}
@@ -4771,6 +4781,23 @@ def _pinned_longitudinal_field(
     return None
 
 
+def _recorded_longitudinal_field(
+    field_gauss: float | None, geometry: FieldGeometry | None
+) -> float | None:
+    """``B_L`` as the run's metadata records it, pinned or not; ``None`` if unrecorded.
+
+    Beyond the pin, a setpoint recorded without a geometry tag counts (seeded,
+    free to move): such runs — LF decoupling series with no
+    ``field_direction``/``field_state`` — are not known to be transverse, so the
+    recorded magnitude is the best evidence for ``B_L``. A confirmed TF run's
+    setpoint says only that its longitudinal component is small, so it does not.
+    """
+    pinned = _pinned_longitudinal_field(field_gauss, geometry)
+    if pinned is None and field_gauss is not None and geometry is not FieldGeometry.TF:
+        return abs(float(field_gauss))
+    return pinned
+
+
 def _free_longitudinal_field_seed(default: float, width_per_us: float) -> float:
     """A free-``B_L`` seed that is strictly inside its bounds and not flat.
 
@@ -4843,6 +4870,9 @@ def _initial_parameters_for_template(
         if 0.0 < larmor < nyquist:
             frequency_guess = larmor
 
+    model_bases = {split_parameter_name(name)[0] for name in template.model.param_names}
+    field_gauss = seed_context.field_gauss if seed_context is not None else None
+    geometry = seed_context.geometry if seed_context is not None else None
     overrides: dict[str, float] = {}
     bounds_overrides: dict[str, tuple[float, float]] = {}
     fixed_names: set[str] = set()
@@ -4933,40 +4963,33 @@ def _initial_parameters_for_template(
             "beta": 1.5,
             "A_bg": fingerprint.tail_estimate,
         }
-    elif template.key in {"static_gkt_constant", "dynamic_gkt_constant"}:
-        # Static and dynamic GKT share the same A/Delta/A_bg seed: the 1/3-tail
-        # KT baseline and Delta from the early-time curvature. For the dynamic
-        # variant, nu is left at the component default (FOLLOW-UP, KT hop-rate
-        # seeding): a single static seed cannot span the static -> fast-
-        # fluctuation range (~0.1 to >10 us^-1) and any fixed guess measurably
-        # regresses one end (verified by an A/B sweep across regimes), so robust
-        # multi-decade nu seeding (e.g. regime detection + a coarse nu variant
-        # ladder) is deferred to a focused follow-up. The wizard still offers the
-        # dynamic model and recovers weak/moderate dynamics from the Delta seed.
-        amplitude = max(1.5 * abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
+    elif template.key in _KT_CONSTANT_TEMPLATE_KEYS:
+        # G(0) = 1 for every KT shape at every field; the tail is what the field
+        # moves. In zero field it recovers to 1/3, so early - tail = 2A/3 fixes
+        # the split. A longitudinal field lifts the tail toward 1 (decoupling), so
+        # the tail is then mostly KT polarisation: A takes the whole early
+        # asymmetry and A_bg starts at 0. Seeding the zero-field split in a field
+        # hands the decoupled polarisation to the constant, and A_bg's
+        # data-derived bounds then exclude the physical split.
+        if "B_L" in model_bases and _recorded_longitudinal_field(field_gauss, geometry):
+            amplitude = fingerprint.initial_amplitude_estimate + fingerprint.tail_estimate
+            background = 0.0
+        else:
+            amplitude = max(
+                1.5 * abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS
+            )
+            background = fingerprint.tail_estimate - amplitude / 3.0
         # A time-domain KT envelope match (dip + 1/3 tail) supplies a Delta seed
         # directly; it supersedes the early-time curvature guess and narrows the
         # bounds around the recognised width.
         kt_match = seed_context.best_match(("kt_envelope",)) if seed_context else None
         delta_seed = (kt_match.derived("Delta") if kt_match else None) or gaussian_width
-        overrides = {
-            "A": amplitude,
-            "Delta": delta_seed,
-            "A_bg": fingerprint.tail_estimate - amplitude / 3.0,
-        }
+        overrides = {"A": amplitude, "Delta": delta_seed, "A_bg": background}
         if kt_match:
             bounds_overrides["Delta"] = (0.5 * delta_seed, 2.0 * delta_seed)
-    elif template.key == "lf_kt_constant":
-        # G_LF(0) = 1 at every B_L, and a decoupling field lifts G_LF's tail from
-        # 1/3 toward 1, so the KT term carries the whole early asymmetry and most
-        # of the tail. Seeding A_bg at the tail instead would make the constant
-        # own the decoupled polarisation, and A_bg's data-derived bounds would
-        # then exclude the physical split.
-        overrides = {
-            "A": fingerprint.initial_amplitude_estimate + fingerprint.tail_estimate,
-            "Delta": gaussian_width,
-            "A_bg": 0.0,
-        }
+        # nu keeps the component default: no single seed spans the static to
+        # fast-fluctuation range (~0.1 to >10 us^-1) without regressing one end
+        # (A/B sweep). FOLLOW-UP: multi-decade nu seeding.
     elif template.key == "static_gkt_exp_constant":
         amplitude = max(1.5 * abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
         overrides = {
@@ -5229,9 +5252,6 @@ def _initial_parameters_for_template(
     # wizard recommended a shape that merely fitted. See
     # ``_pinned_longitudinal_field`` for the policy and
     # ``_free_longitudinal_field_seed`` for the case that stays free.
-    model_bases = {split_parameter_name(name)[0] for name in template.model.param_names}
-    field_gauss = seed_context.field_gauss if seed_context is not None else None
-    geometry = seed_context.geometry if seed_context is not None else None
     if field_gauss is not None and "field" in model_bases:
         # Recorded is recorded: a 0 G setpoint pins ``field`` at 0 too. Every
         # ``field`` carrier the wizard screens is a transverse applied-field
@@ -5240,26 +5260,14 @@ def _initial_parameters_for_template(
         overrides.setdefault("field", field_gauss)
         fixed_names.add("field")
     if "B_L" in model_bases:
-        pinned_b_l = _pinned_longitudinal_field(field_gauss, geometry)
-        if pinned_b_l is not None:
+        recorded_b_l = _recorded_longitudinal_field(field_gauss, geometry)
+        if recorded_b_l is not None:
             # One applied field, so one value for every carrier: a base-name
             # override reaches 'B_L', 'B_L_1', 'B_L_2', ... alike, and
             # ``fixed_names`` is matched on the base name in the loop below.
-            overrides.setdefault("B_L", pinned_b_l)
-            fixed_names.add("B_L")
-        elif field_gauss is not None and geometry is not FieldGeometry.TF:
-            # A real setpoint was recorded but the geometry tag that would let
-            # ``_pinned_longitudinal_field`` pin it is missing (unconfirmed —
-            # neither ZF, LF, nor TF) — the exact shape of this Ag LF-KT
-            # decoupling series, whose runs carry a numeric field but no
-            # ``field_direction``/``field_state`` metadata. It is still our
-            # best evidence for ``B_L``: a confirmed TF run is excluded above
-            # because its longitudinal component is "small" by construction,
-            # but an unconfirmed one is not known to be transverse, so seeding
-            # at the recorded magnitude (free to move) beats guessing from the
-            # local-field width alone. One value for every carrier, as with
-            # the pinned branch above.
-            overrides.setdefault("B_L", abs(float(field_gauss)))
+            overrides.setdefault("B_L", recorded_b_l)
+            if _pinned_longitudinal_field(field_gauss, geometry) is not None:
+                fixed_names.add("B_L")
         else:
             # Free, but per *name*: carriers disagree on the default (0 for the
             # Kubo-Toyabe shapes, 10 G for MuoniumLFRelax), and a base-name
