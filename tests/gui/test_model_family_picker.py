@@ -431,4 +431,4 @@ def test_the_summary_names_the_direction_and_the_models_screened(qapp):
     direction, count = picker.summary().split(" · ")
     assert direction == "Longitudinal"
     assert count == f"{picker._view.included_count} models"
-    assert _picker(_series("", "")).summary().startswith("Direction not recorded · ")
+    assert _picker(_series("", "")).summary().startswith("No direction · ")

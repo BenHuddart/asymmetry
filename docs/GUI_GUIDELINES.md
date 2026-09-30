@@ -140,7 +140,7 @@ structural harness.)
 - **`DockHeader`** (`widgets/dock_header.py`) — BENCH dock title bar
   (`setTitleBarWidget`).
 - **Wizard cards / decision trail** — `WizardAnswerCard`, `DecisionTrail`,
-  `ModelFamilyPicker`, `WizardSeriesCard` (`widgets/`).
+  `ModelFamilyPicker` (`widgets/`).
 - **Wizard stepper and comparison surfaces** — `WizardStepper` (step
   navigation), `RunProgress` (header, trail, live log and Cancel for a running
   step), `SeriesFitCanvas` (series overlay with A/B fits and residual strips),
