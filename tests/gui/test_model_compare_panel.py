@@ -25,6 +25,7 @@ from asymmetry.core.fitting.model_comparison import (
     ParameterRole,
     ParameterRow,
     summarise_candidates,
+    summarise_single_candidates,
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.elided_label import ElidedLabel
@@ -37,7 +38,16 @@ from asymmetry.gui.widgets.model_compare_panel import (
     ModelComparePanel,
     format_weight,
 )
-from tests.core.test_model_comparison import _FIELDS, _RUNS, _assessment, _datasets, _fit
+from tests.core.test_model_comparison import (
+    _FIELDS,
+    _RUNS,
+    _assessment,
+    _dataset,
+    _datasets,
+    _fit,
+    _single,
+    _single_recommendation,
+)
 
 _LABELS = [f"{_FIELDS[run]:g} G" for run in _RUNS]
 _METRIC = "ΔAICc from best"
@@ -537,3 +547,92 @@ def test_panel_paints(qapp: QApplication) -> None:
     panel = _panel()
     panel.set_b("lf|local")
     assert not panel.grab().isNull()
+
+
+def test_the_host_names_the_footer_action(qapp: QApplication) -> None:
+    panel = ModelComparePanel(continue_text="Apply A to the fit panel")
+    events = _signals(panel)
+    panel.set_series(_datasets(), _LABELS, [_FIELDS[run] for run in _RUNS], "Field (G)")
+    panel.set_candidates(_default_pool(), _METRIC)
+    button = next(b for b in panel.findChildren(QPushButton) if b.text().startswith("Apply A"))
+    button.click()
+    assert events == [("continue", "lf|shared")]
+
+
+# ---------------------------------------------------------------------------
+# One run (the single-run Fit Wizard)
+# ---------------------------------------------------------------------------
+
+
+def _single_pool(*assessments) -> tuple[CandidateSummary, ...]:
+    return summarise_single_candidates(
+        _single_recommendation(*assessments), _dataset(701), SelectionMetric.AICC
+    )
+
+
+def _single_panel(summaries: tuple[CandidateSummary, ...]) -> ModelComparePanel:
+    panel = ModelComparePanel()
+    panel.set_series([_dataset(701)], ["701"], [None], "")
+    panel.set_candidates(summaries, _METRIC)
+    panel.resize(1180, 600)
+    return panel
+
+
+def test_one_run_lists_candidates_without_role_chips_or_trend(qapp: QApplication) -> None:
+    panel = _single_panel(_single_pool(_single("exp", aicc=1.0), _single("gkt", aicc=3.0)))
+    assert panel._caption.text() == f"Candidates · {_METRIC}"
+    rows = _rows(panel)
+    assert list(rows) == ["exp", "gkt"]
+    assert all(row.chips == [] for row in rows.values())
+    assert panel._trend_canvas.isHidden()
+    assert _legend(panel) == ["— A: Title exp", NO_B_LEGEND]
+    panel.set_b("gkt")
+    assert _legend(panel) == ["— A: Title exp", "- - B: Title gkt"]
+
+
+def test_one_run_table_shows_bare_symbols_and_one_value_per_side(qapp: QApplication) -> None:
+    panel = _single_panel(_single_pool(_single("exp", aicc=1.0), _single("gkt", aicc=3.0)))
+    assert _column(panel, 0) == ["A_1", "λ", "A_bg · fixed"]
+    assert _column(panel, 1)[0] == "20.00(20)"
+    panel.set_b("gkt")
+    assert _column(panel, 2)[0] == "20.00(20)"
+
+
+def test_one_run_flag_lines_and_gate_name_no_run(qapp: QApplication) -> None:
+    flagged = _single(
+        "exp",
+        aicc=1.0,
+        fit=_fit(701, a_1=0.0),
+        gate_reasons=("runs-test z score suggests structure",),
+    )
+    panel = _single_panel(_single_pool(flagged))
+    lines = [label.text() for label in _rows(panel)["exp"].flag_labels]
+    assert lines == [
+        "runs-test z score suggests structure",
+        "A_1 at lower bound",
+        "A_1 poorly determined",
+    ]
+
+
+def test_a_pending_a_is_asked_for_and_refreshed_in_place(qapp: QApplication) -> None:
+    built = _single_pool(_single("exp", aicc=1.0), _single("gkt", aicc=3.0))
+    bare = _single_pool(_single("exp", aicc=1.0), _single("gkt", aicc=3.0, curves=False))
+    panel = _single_panel(bare)
+    requested: list[str] = []
+    panel.curves_required.connect(requested.append)
+    board_rows = panel.findChildren(CompareRow)
+    panel.set_a("gkt")
+    assert requested == ["gkt"]
+
+    panel.refresh_curves(built)
+    assert panel.a_key() == "gkt"
+    assert panel.findChildren(CompareRow) == board_rows, "the board is not rebuilt"
+    overlay = panel._canvas.figure.axes[0]
+    assert [line for line in overlay.lines if line.get_linestyle() == "-"]
+    assert requested == ["gkt"]
+
+
+def test_refresh_curves_rejects_a_different_ranking(qapp: QApplication) -> None:
+    panel = _single_panel(_single_pool(_single("exp", aicc=1.0), _single("gkt", aicc=3.0)))
+    with pytest.raises(ValueError, match="ranking"):
+        panel.refresh_curves(_single_pool(_single("gkt", aicc=0.5), _single("exp", aicc=1.0)))
