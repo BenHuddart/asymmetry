@@ -304,6 +304,9 @@ class WizardAnswerCard(QWidget):
             inner.addWidget(fallback)
         return container
 
+    def set_apply_enabled(self, enabled: bool) -> None:
+        self._apply_btn.setEnabled(enabled)
+
     def redraw(self) -> None:
         """Redraw the plot for the owner's current selection."""
         figure = getattr(self._plot_widget, "_figure", None)

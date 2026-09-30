@@ -1476,6 +1476,9 @@ class FitWizardWindow(WizardWindowBase):
                     self._compare_table.selectRow(row)
                 break
         assessment = self._recommendation.assessment_for_key(key)
+        # A failed fit has no parameters worth handing over, from either button.
+        self._answer_card.set_apply_enabled(assessment.is_successful)
+        self._model_compare.set_continue_enabled(assessment.is_successful)
         messages: list[str] = []
         if assessment.residual_gate_passed:
             messages.append("Residual gate passed.")

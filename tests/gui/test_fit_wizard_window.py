@@ -1251,6 +1251,36 @@ def test_fit_wizard_window_running_state_streams_trail(
     assert "novel stage" in window._running_trail._status_label.text()
 
 
+def test_a_failed_fit_as_a_cannot_be_applied(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recommendation = _fake_recommendation(dataset)
+    failed = dataclasses.replace(
+        recommendation.assessments[1],
+        fit_result=dataclasses.replace(recommendation.assessments[1].fit_result, success=False),
+    )
+    recommendation = dataclasses.replace(
+        recommendation, assessments=(recommendation.assessments[0], failed)
+    )
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: recommendation,
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+    assert window._answer_card._apply_btn.isEnabled()
+
+    window._model_compare.set_a(failed.template.key)
+
+    assert not window._answer_card._apply_btn.isEnabled()
+    assert not window._model_compare._continue.isEnabled()
+
+
 def test_picking_a_in_the_compare_panel_is_the_cards_selection(
     qapp: QApplication,
     dataset: MuonDataset,
