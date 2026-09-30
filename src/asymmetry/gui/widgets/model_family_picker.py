@@ -452,7 +452,7 @@ class ModelFamilyPicker(QWidget):
         directions = {g for g, _ in geometry.counts + geometry.answered}
         direction = " / ".join(text for g, text in FIELD_DIRECTION_TEXT.items() if g in directions)
         count = self._view.included_count
-        return f"{direction or 'Direction not recorded'} · {count} model{'' if count == 1 else 's'}"
+        return f"{direction or 'No direction'} · {count} model{'' if count == 1 else 's'}"
 
     # ── Edits ────────────────────────────────────────────────────────────────
 
