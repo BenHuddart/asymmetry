@@ -28,6 +28,7 @@ from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
     ConfidenceTier,
+    FitTiming,
     FitWizardRecommendation,
     RecommendationVerdict,
     SelectionMetric,
@@ -39,7 +40,9 @@ from asymmetry.core.fitting.peak_detection import (
     MultipletMatch,
     PeakAnalysis,
 )
-from asymmetry.core.fitting.wizard_scope import WizardScope
+from asymmetry.core.fitting.wizard_scope import UNTIMED, WizardScope
+from asymmetry.gui.utils import fit_times
+from asymmetry.gui.utils.fit_times import shared_fit_time_store
 from asymmetry.gui.windows.fit_wizard_window import (
     _PAGE_RESULT,
     _PAGE_RUNNING,
@@ -207,6 +210,7 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
                 dataset.time, additive_only=True, A_1=0.2, Lambda=0.4, A_bg=0.01
             )
         ),
+        timing=FitTiming(0.06, dataset.n_points),
     )
     gauss_assessment = CandidateAssessment(
         template=gauss_template,
@@ -229,6 +233,7 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
                 dataset.time, additive_only=True, A_1=0.18, sigma=0.6, A_bg=0.02
             )
         ),
+        timing=FitTiming(6.0, dataset.n_points),
     )
     return FitWizardRecommendation(
         fingerprint=fingerprint,
@@ -606,9 +611,44 @@ def test_fit_wizard_window_forwards_scope_and_user_peaks(
 
     scope = captured.get("scope")
     assert scope == LF_DYNAMICS
+    assert captured.get("fit_times") == UNTIMED
     assert captured.get("user_frequencies_mhz") == [3.5, 12.0]
     # The cooperative cancel_callback is threaded through to the engine.
     assert callable(captured.get("cancel_callback"))
+
+
+def test_fit_wizard_window_records_fit_times_and_shows_the_estimates(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _capture(dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs):
+        captured.update(kwargs)
+        return _fake_recommendation(dataset)
+
+    monkeypatch.setattr(wizard_window_module, "build_fit_wizard_recommendation", _capture)
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    # 0.06 s and 6 s on 120 points: 0.5 and 50 s per 1000 points.
+    assert shared_fit_time_store().samples == {"Exponential": (0.5,), "Gaussian": (50.0,)}
+    assert "Exponential" in fit_times.fit_times_path().read_text(encoding="utf-8")
+    cost = window._picker._details.facts["Fitting cost"]
+    for name, text in (
+        ("Exponential", "Quick — ≈ 0.06 s per run on this computer"),
+        ("Gaussian", "Slow — ≈ 6 s per run on this computer"),
+    ):
+        pill = next(c.pills[name] for c in window._picker._cards.values() if name in c.pills)
+        pill.hovered.emit(name)
+        assert cost.text() == text
+    # The next analysis is handed the judgement the picker now shows.
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+    assert captured["fit_times"].seconds_per_run == {"Exponential": 0.06, "Gaussian": 6.0}
 
 
 # ── Staleness after a completed analysis ─────────────────────────────────────
