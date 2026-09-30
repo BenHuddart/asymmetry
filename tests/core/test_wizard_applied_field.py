@@ -27,8 +27,10 @@ from asymmetry.core.fitting.fit_wizard import (
     fingerprint_spectrum,
 )
 from asymmetry.core.fitting.models import (
+    dynamic_gaussian_kt,
     dynamic_lorentzian_kt,
     field_decoupling_threshold_gauss,
+    gaussian_broadened_kt,
     longitudinal_field_kubo_toyabe,
 )
 from asymmetry.core.fitting.parameters import split_parameter_name
@@ -237,35 +239,76 @@ def test_unrecorded_field_leaves_field_free() -> None:
     assert seeded["field"].fixed is False
 
 
-# --- the LF-KT amplitude split under a decoupling field ---------------------
+# --- the Kubo-Toyabe amplitude split under a decoupling field ---------------
 
 
-def test_partly_decoupled_lf_kt_fit_recovers_the_kt_background_split() -> None:
+@pytest.mark.parametrize(
+    ("components", "key", "polarisation", "field", "width"),
+    [
+        pytest.param(
+            ["LongitudinalFieldKT", "Constant"],
+            "lf_kt_constant",
+            lambda t, field: longitudinal_field_kubo_toyabe(t, 1.0, 0.39, field),
+            15.0,
+            "Delta",
+            id="lf_kt",
+        ),
+        pytest.param(
+            ["DynamicGaussianKT", "Constant"],
+            "dynamic_gkt_constant",
+            lambda t, field: dynamic_gaussian_kt(t, 1.0, 0.39, 0.3, field),
+            20.0,
+            "Delta",
+            id="dynamic_gkt",
+        ),
+        pytest.param(
+            ["GaussianBroadenedKT", "Constant"],
+            "gbkt_constant",
+            lambda t, field: gaussian_broadened_kt(t, 0.39, field, 0.2),
+            15.0,
+            "Delta",
+            id="gbkt",
+        ),
+        # The Lorentzian tail decouples more slowly, so its split needs a
+        # stronger field.
+        pytest.param(
+            ["DynamicLorentzianKT", "Constant"],
+            "dynamic_lkt_constant",
+            lambda t, field: dynamic_lorentzian_kt(t, 1.0, 0.39, 0.3, field),
+            35.0,
+            "a_L",
+            id="dynamic_lkt",
+        ),
+    ],
+)
+def test_partly_decoupled_kt_fit_recovers_the_kt_background_split(
+    components, key, polarisation, field, width
+) -> None:
     """The decoupled polarisation belongs to the KT term, not the constant.
 
-    With Delta = 0.39 us^-1, 15 G lifts the LF-KT tail to ~0.83, so most of the
-    record's tail is KT polarisation and the true background is 0.3. The
-    generic seed put the whole tail in ``A_bg``, whose data-derived lower bound
-    (data minimum minus span) then sat near 9: every per-run LF-KT fit of a
-    decoupling series railed on it, and the separable global search, which
+    A decoupling field lifts every KT tail from 1/3 toward 1, so most of the
+    record's tail is KT polarisation and the true background is 0.3. Seeding
+    ``A_bg`` at the tail (the generic seed) or at the zero-field ``tail - A/3``
+    gave that polarisation to the constant, whose data-derived lower bound (data
+    minimum minus span) then excluded the true background: every per-run fit of
+    a decoupling series railed on it, and the separable global search, which
     starts from those per-run fits, recommended nothing.
     """
     rng = np.random.default_rng(7)
     t = np.linspace(0.0, 8.0, 480)
-    error = np.full_like(t, 0.15)
-    clean = longitudinal_field_kubo_toyabe(t, 24.0, 0.39, 15.0, 0.3)
+    error = np.full_like(t, 0.05)
     dataset = MuonDataset(
         time=t,
-        asymmetry=clean + rng.normal(0.0, error),
+        asymmetry=24.0 * polarisation(t, field) + 0.3 + rng.normal(0.0, error),
         error=error,
-        metadata={"run_number": 1, "field": 15.0},
+        metadata={"run_number": 1, "field": field},
     )
-    template = _template(["LongitudinalFieldKT", "Constant"], ["+"], "lf_kt_constant")
+    template = _template(components, ["+"], key)
     seeded = _initial_parameters_for_template(
         dataset,
         fingerprint_spectrum(dataset),
         template,
-        seed_context=TemplateSeedContext(field_gauss=15.0, geometry=None),
+        seed_context=TemplateSeedContext(field_gauss=field, geometry=None),
     )
 
     result = FitEngine().fit(dataset, template.model.function, seeded)
@@ -273,7 +316,41 @@ def test_partly_decoupled_lf_kt_fit_recovers_the_kt_background_split() -> None:
     assert result.success is True
     assert result.parameters["A_1"].value == pytest.approx(24.0, abs=1.0)
     assert result.parameters["A_bg"].value == pytest.approx(0.3, abs=1.0)
-    assert result.parameters["Delta"].value == pytest.approx(0.39, rel=0.1)
+    assert result.parameters[width].value == pytest.approx(0.39, rel=0.1)
+
+
+@pytest.mark.parametrize(
+    ("component", "key", "field_gauss", "geometry", "zero_field_split"),
+    [
+        ("DynamicGaussianKT", "dynamic_gkt_constant", 0.0, FieldGeometry.ZF, True),
+        ("DynamicGaussianKT", "dynamic_gkt_constant", 50.0, FieldGeometry.ZF, True),
+        ("DynamicGaussianKT", "dynamic_gkt_constant", None, None, True),
+        ("DynamicGaussianKT", "dynamic_gkt_constant", 50.0, FieldGeometry.TF, True),
+        ("DynamicGaussianKT", "dynamic_gkt_constant", 50.0, FieldGeometry.LF, False),
+        ("DynamicGaussianKT", "dynamic_gkt_constant", 50.0, None, False),
+        # A zero-field-only shape keeps its 1/3 tail whatever the run records.
+        ("StaticGKT_ZF", "static_gkt_constant", 50.0, FieldGeometry.LF, True),
+    ],
+)
+def test_kt_amplitude_seed_follows_the_recorded_longitudinal_field(
+    component, key, field_gauss, geometry, zero_field_split
+) -> None:
+    dataset = _record()
+    fingerprint = fingerprint_spectrum(dataset)
+    seeded = _initial_parameters_for_template(
+        dataset,
+        fingerprint,
+        _template([component, "Constant"], ["+"], key),
+        seed_context=TemplateSeedContext(field_gauss=field_gauss, geometry=geometry),
+    )
+
+    amplitude, background = seeded["A_1"].value, seeded["A_bg"].value
+    if zero_field_split:
+        assert background == pytest.approx(fingerprint.tail_estimate - amplitude / 3.0)
+    else:
+        early = fingerprint.initial_amplitude_estimate + fingerprint.tail_estimate
+        assert amplitude == pytest.approx(early)
+        assert background == 0.0
 
 
 # --- end to end -------------------------------------------------------------

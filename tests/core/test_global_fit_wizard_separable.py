@@ -44,7 +44,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     _SeparableTemplateResult,
     build_global_fit_wizard_recommendation,
 )
-from asymmetry.core.fitting.models import longitudinal_field_kubo_toyabe
+from asymmetry.core.fitting.models import dynamic_gaussian_kt, longitudinal_field_kubo_toyabe
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
 
@@ -253,14 +253,35 @@ def test_separable_engine_localizes_only_the_scanning_rate(
     assert "A_bg" not in assessment.local_param_names
 
 
-def test_lf_decoupling_series_shares_delta_and_localizes_the_field() -> None:
-    """Static Gaussian KT decoupled by a scanning longitudinal field.
+@pytest.mark.parametrize(
+    ("component", "key", "asymmetry", "fields"),
+    [
+        pytest.param(
+            "LongitudinalFieldKT",
+            "lf_kt_constant",
+            lambda t, field: longitudinal_field_kubo_toyabe(t, 24.0, 0.39, field, 0.3),
+            (0.0, 10.0, 25.0, 50.0),
+            id="lf_kt",
+        ),
+        pytest.param(
+            "DynamicGaussianKT",
+            "dynamic_gkt_constant",
+            lambda t, field: dynamic_gaussian_kt(t, 24.0, 0.39, 0.3, field, 0.3),
+            (0.0, 15.0, 50.0, 100.0),
+            id="dynamic_gkt",
+        ),
+    ],
+)
+def test_lf_decoupling_series_shares_delta_and_localizes_the_field(
+    component, key, asymmetry, fields
+) -> None:
+    """Gaussian KT decoupled by a scanning longitudinal field.
 
     The textbook answer (Hayano et al., PRB 20, 850 (1979)) is one Delta for the
     series and a B_L per run. The separable search starts from the per-run fits,
-    so a per-run LF-KT fit that puts the decoupled polarisation in the constant
-    and rails against ``A_bg``'s bound leaves every node failing the residual
-    gate, and the wizard recommends nothing.
+    so a per-run KT fit that puts the decoupled polarisation in the constant and
+    rails against ``A_bg``'s bound leaves every node failing the residual gate,
+    and the wizard recommends nothing.
     """
     rng = np.random.default_rng(0)
     time = np.linspace(0.0, 8.0, 480)
@@ -268,38 +289,36 @@ def test_lf_decoupling_series_shares_delta_and_localizes_the_field() -> None:
     datasets = [
         MuonDataset(
             time=time,
-            asymmetry=longitudinal_field_kubo_toyabe(time, 24.0, 0.39, field, 0.3)
-            + rng.normal(0.0, error),
+            asymmetry=asymmetry(time, field) + rng.normal(0.0, error),
             error=error,
             metadata={"run_number": 700 + index, "field": field, "temperature": 20.0},
         )
-        for index, field in enumerate((0.0, 10.0, 25.0, 50.0))
+        for index, field in enumerate(fields)
     ]
     # The runs record no direction, so every geometry is screened; leave out the
     # models that cannot apply in LF, and the competing KT and relaxation shapes.
     not_lf = {name for name, d in COMPONENTS.items() if FieldGeometry.LF not in d.field_geometries}
+    kubo_toyabe = {
+        "StaticGKT_ZF",
+        "LongitudinalFieldKT",
+        "DynamicGaussianKT",
+        "DynamicLorentzianKT",
+        "GaussianBroadenedKT",
+    }
     scope = WizardScope(
         physics=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}),
         exclude_components=frozenset(
-            not_lf
-            | {
-                "StaticGKT_ZF",
-                "DynamicGaussianKT",
-                "DynamicLorentzianKT",
-                "GaussianBroadenedKT",
-                "StretchedExponential",
-                "RischKehr",
-            }
+            not_lf | (kubo_toyabe - {component}) | {"StretchedExponential", "RischKehr"}
         ),
     )
 
     recommendation = build_global_fit_wizard_recommendation(
-        datasets, scope=scope, selected_template_keys=("lf_kt_constant",)
+        datasets, scope=scope, selected_template_keys=(key,)
     )
 
     assessment = recommendation.recommended_assessment
     assert assessment is not None, recommendation.summary
-    assert assessment.template.key == "lf_kt_constant"
+    assert assessment.template.key == key
     assert "Delta" in assessment.global_param_names
     assert "B_L" in assessment.local_param_names
 
