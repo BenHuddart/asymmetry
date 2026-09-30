@@ -133,6 +133,9 @@ class FitPanel(QWidget):
     # does not itself change what is fittable, but nothing else re-runs that
     # check on a tab switch.
     tab_changed = Signal(int)
+    # Forwarded from either fit wizard: the user answered the field direction
+    # ``(run numbers, FieldGeometry | None)`` for runs whose files record none.
+    field_direction_answered = Signal(object, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -199,6 +202,7 @@ class FitPanel(QWidget):
             self.add_single_fit_to_series_requested.emit
         )
         self._single_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
+        self._single_tab.field_direction_answered.connect(self.field_direction_answered.emit)
         self._tabs.addTab(self._single_tab, "Single")
 
         # Batch fit tab (a global fit is the special case with shared parameters)
@@ -223,6 +227,7 @@ class FitPanel(QWidget):
         )
         self._global_tab.series_rename_requested.connect(self.series_rename_requested.emit)
         self._global_tab.series_delete_requested.connect(self.series_delete_requested.emit)
+        self._global_tab.field_direction_answered.connect(self.field_direction_answered.emit)
         self._tabs.addTab(self._global_tab, "Batch")
 
         # Preserve the single-fit form across a Single↔Batch view switch (see #3

@@ -277,11 +277,20 @@ def _recorded_text(geometry: RecordedGeometry) -> str:
     return "Recorded: " + ", ".join(f"{FIELD_DIRECTION_TEXT[g]} ({n})" for g, n in geometry.counts)
 
 
-def _unrecorded_note(geometry: RecordedGeometry) -> str:
-    total = geometry.unrecorded + sum(n for _, n in geometry.counts)
-    if geometry.counts:
-        return f"{geometry.unrecorded} of {total} runs record no field direction."
-    return f"The run{'s' if total > 1 else ''} record{'' if total > 1 else 's'} no field direction."
+def _direction_note(geometry: RecordedGeometry) -> str:
+    """Which runs record no direction, or where the user's answer was saved."""
+    recorded = sum(n for _, n in geometry.counts)
+    total = geometry.unrecorded + recorded
+    answered = sum(n for _, n in geometry.answered)
+    if not answered:
+        if recorded:
+            return f"{geometry.unrecorded} of {total} runs record no field direction."
+        return f"The run{'s' if total > 1 else ''} record{'' if total > 1 else 's'} no field direction."
+    if total == 1:
+        return "Set by you — saved on the run, which records none."
+    runs = "the run that records" if answered == 1 else f"the {answered} runs that record"
+    others = f"; the files record the other {recorded}" if recorded else ""
+    return f"Set by you — saved on {runs} none{others}."
 
 
 class ModelFamilyPicker(QWidget):
@@ -385,12 +394,29 @@ class ModelFamilyPicker(QWidget):
         self._slow_line.setWordWrap(True)
         self._skip_slow = QCheckBox("Leave out slow models")
         self._skip_slow.clicked.connect(lambda on: self._edit(replace(self.scope(), skip_slow=on)))
+        self._reset = QPushButton("Reset to suggestions")
+        self._reset.setStyleSheet(  # a text-only button that reads as a link
+            f"QPushButton {{ border: none; background: transparent; padding: 0;"
+            f" color: {tokens.ACCENT}; }}"
+            " QPushButton:hover { text-decoration: underline; }"
+        )
+        self._reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._reset.setToolTip("Drop your own model choices; keep what you are looking for.")
+        self._reset.clicked.connect(
+            lambda: self._edit(
+                replace(
+                    self.scope(), include_components=frozenset(), exclude_components=frozenset()
+                )
+            )
+        )
         counts = QVBoxLayout()
         counts.setSpacing(2)
         counts.addWidget(self._screen_count)
         counts.addWidget(self._slow_line)
         footer = QHBoxLayout()
+        footer.setSpacing(16)
         footer.addLayout(counts, 1)
+        footer.addWidget(self._reset, 0, Qt.AlignmentFlag.AlignTop)
         footer.addWidget(self._skip_slow, 0, Qt.AlignmentFlag.AlignTop)
 
         layout = QVBoxLayout(self)
@@ -492,7 +518,7 @@ class ModelFamilyPicker(QWidget):
         self._direction_note.setVisible(geometry.editable)
         self._recorded.setVisible(not geometry.editable)
         self._direction_group.button(_DIRECTIONS.index(geometry.answer)).setChecked(True)
-        self._direction_note.setText(_unrecorded_note(geometry))
+        self._direction_note.setText(_direction_note(geometry))
         self._recorded.setText(_recorded_text(geometry))
 
         for physics, chip in self._chips.items():
@@ -564,6 +590,7 @@ class ModelFamilyPicker(QWidget):
         )
         self._slow_line.setStyleSheet(f"color: {tokens.WARN if slow else tokens.TEXT_MUTED};")
         self._skip_slow.setChecked(view.scope.skip_slow)
+        self._reset.setVisible(bool(view.scope.include_components or view.scope.exclude_components))
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 — Qt override
         super().resizeEvent(event)

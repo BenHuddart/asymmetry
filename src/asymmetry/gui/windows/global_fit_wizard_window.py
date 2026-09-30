@@ -6,7 +6,7 @@ The window is a three-state, answer-first shell built on
 scaffolding is created). The three states live in a ``QStackedWidget``:
 
 * **Setup** — the series overview (one row per run, populated as soon as the
-  context arrives), the scope selector, a collapsed *Guide the search
+  context arrives), the model family picker, a collapsed *Guide the search
   (optional)* section housing the embedded parameter-expectations editor
   (formerly a blocking modal dialog), the search settings, and a prominent
   *Run screening* button.
@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import (
@@ -89,9 +90,10 @@ from asymmetry.core.fitting.wizard_scope import (
     WizardScope,
     describe_scope,
     effort_tier_from_payload,
+    set_user_field_direction,
 )
 from asymmetry.gui.panels.log_panel import LogPanel
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
     build_primary_button_qss,
     make_section_header,
@@ -103,17 +105,13 @@ from asymmetry.gui.utils.phase_colors import (
     phase_color,
 )
 from asymmetry.gui.widgets.decision_trail import DecisionTrail
+from asymmetry.gui.widgets.model_family_picker import ModelFamilyPicker
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.transitions_card import (
     PhaseSummary,
     TransitionRow,
     TransitionsCard,
-)
-from asymmetry.gui.widgets.wizard_scope_selector import (
-    WizardScopeSelector,
-    resolver_payload,
-    scope_for_preset,
 )
 from asymmetry.gui.widgets.wizard_series_card import (
     SeriesRunTrace,
@@ -132,6 +130,9 @@ _DEFAULT_GLOBAL_FIT_BUILDER = build_global_fit_wizard_recommendation
 _PAGE_SETUP = 0
 _PAGE_RUNNING = 1
 _PAGE_RESULT = 2
+
+#: The model family picker's height floor on the scrolling Setup page, in table rows.
+_PICKER_MIN_ROWS = 18
 
 #: Analysis modes whose result *adds to* the standing screening recommendation
 #: rather than replacing it (so the shortlist and the path survive the run).
@@ -222,7 +223,7 @@ def _run_global_fit_wizard_analysis(
     existing_single_fit_recommendations_by_run: dict[int, object] | None,
     metric: SelectionMetric,
     selected_template_keys: tuple[str, ...] = (),
-    scope: dict | None = None,
+    scope: WizardScope = WizardScope(),
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
     partition_path: PartitionPath | None = None,
     partition_k: int | None = None,
@@ -234,9 +235,8 @@ def _run_global_fit_wizard_analysis(
     caught and re-emitted, and progress goes through ``worker.progress.emit``.
     Cooperative cancel is honoured between builder phases: the base passes a
     ``FitCancelledError`` in ``_cancel_exceptions()`` so ``TaskWorker`` reports
-    it as a cancellation rather than a failure. ``scope`` is the serialised
-    ``WizardScope`` payload from the Scope tab (``None`` → whole time domain);
-    it is converted here (worker thread) and forwarded to every builder.
+    it as a cancellation rather than a failure. ``scope`` is the picker's
+    frozen :class:`WizardScope`, forwarded to every builder.
     ``effort_tier`` is the user-facing effort slider (PR 5); it only affects the
     coupled-optimisation builder (``mode == "optimize"``) — the independent
     per-run screening pass has no tier concept.
@@ -248,7 +248,6 @@ def _run_global_fit_wizard_analysis(
     together — the core refuses one without the other — and both stay ``None``
     for every other mode.
     """
-    resolved_scope = WizardScope.from_payload(scope) if scope is not None else None
 
     def _raise_if_cancelled() -> None:
         if worker.is_cancelled():
@@ -283,7 +282,7 @@ def _run_global_fit_wizard_analysis(
             current_model=current_model,
             existing_recommendations_by_run=existing,
             progress_callback=lambda message: worker.progress.emit(0, 0, message),
-            scope=resolved_scope,
+            scope=scope,
             cancel_callback=worker.is_cancelled,
         )
         # ``existing`` now holds the runs' own single-run Fit Wizard analyses
@@ -307,7 +306,7 @@ def _run_global_fit_wizard_analysis(
             single_fit_recommendations_by_run=single_fit_recommendations_by_run,
             metric=metric,
             progress_callback=progress_callback,
-            scope=resolved_scope,
+            scope=scope,
             portfolio=portfolio,
             cancel_callback=worker.is_cancelled,
         )
@@ -322,7 +321,7 @@ def _run_global_fit_wizard_analysis(
             metric=metric,
             progress_callback=progress_callback,
             selected_template_keys=selected_template_keys,
-            scope=resolved_scope,
+            scope=scope,
             effort_tier=effort_tier,
             portfolio=portfolio,
             cancel_callback=worker.is_cancelled,
@@ -351,6 +350,9 @@ class GlobalFitWizardWindow(WizardWindowBase):
     analysis_cached = Signal(object, str, object)
     parameter_setup_applied = Signal(object)
     single_fit_recommendations_generated = Signal(object)
+    #: ``(run numbers, FieldGeometry | None)`` — the user answered the field
+    #: direction for the runs whose files record none.
+    field_direction_answered = Signal(object, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         # WizardWindowBase.__init__ builds the shared frame and calls
@@ -492,19 +494,15 @@ class GlobalFitWizardWindow(WizardWindowBase):
 
         # --- Scope. ---
         layout.addWidget(make_section_header("Scope"))
-        scope_intro = QLabel(
-            "Choose which candidate families the wizard screens across the series. Start "
-            "from a preset (or Auto, inferred from run metadata) and include/exclude "
-            "individual components as needed."
+        self._picker = ModelFamilyPicker(lambda scope: describe_scope(self._datasets, scope))
+        # A floor keeps the family cards usable inside the scrolling page.
+        self._picker.setMinimumHeight(metrics.row_height() * _PICKER_MIN_ROWS)
+        self._picker.scope_changed.connect(
+            lambda _scope: self._mark_analysis_stale("Scope changed")
         )
-        scope_intro.setWordWrap(True)
-        layout.addWidget(scope_intro)
-        self._scope_selector = WizardScopeSelector()
-        # A floor keeps the family tree usable inside the scrolling page.
-        self._scope_selector.setMinimumHeight(260)
-        self._scope_selector.scope_changed.connect(self._on_scope_changed)
-        self._scope_selector.validity_changed.connect(self._on_scope_validity_changed)
-        layout.addWidget(self._scope_selector)
+        self._picker.validity_changed.connect(self._on_scope_validity_changed)
+        self._picker.direction_answered.connect(self._answer_field_direction)
+        layout.addWidget(self._picker)
 
         # --- Optional parameter expectations (embedded ex-dialog). ---
         layout.addWidget(self._build_expectations_section())
@@ -820,12 +818,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._reset_log()
         self._cached_signature = None
         self._analysis_request_id += 1
-        # Install the scope resolver and reset the selector to Auto (signal-silent),
-        # then refresh so is_valid() sees a populated tree before the final
-        # _set_busy(False) below evaluates the button states.
-        self._scope_selector.set_resolver(self._resolve_scope)
-        self._scope_selector.set_scope(None)
-        self._scope_selector.refresh_from_context()
+        # Signal-silent, so the final _set_busy(False) evaluates the new runs' validity.
+        self._picker.set_scope(WizardScope())
         self._populate_expectations_from_context()
         self._stack.setCurrentIndex(_PAGE_SETUP)
         run_label_chips = [dataset.run_label for dataset in self._datasets[:4]]
@@ -863,21 +857,14 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 "Run screening to classify each run (Osc. / KT-like / Multi-rate)."
             )
 
-    # Phase 4 replaces this with ModelFamilyPicker.
-    def _resolve_scope(self, preset_id: str, overrides: dict) -> dict:
-        """Adapt the core scope view to the WizardScopeSelector dict contract."""
-        if not self._datasets:
-            return {"note": "Load a series first", "families": [], "estimate": 0}
-        scope = scope_for_preset(
-            preset_id, set(overrides.get("include", [])), set(overrides.get("exclude", []))
+    def _answer_field_direction(self, geometry: FieldGeometry | None) -> None:
+        """Save the answer on the runs whose files record no direction."""
+        set_user_field_direction(self._datasets, geometry)
+        self._picker.refresh()
+        self._mark_analysis_stale("Field direction changed")
+        self.field_direction_answered.emit(
+            frozenset(dataset.run_number for dataset in self._datasets), geometry
         )
-        return resolver_payload(describe_scope(self._datasets, scope))
-
-    def _on_scope_changed(self, _scope: object) -> None:
-        # A stale screening table's selection no longer corresponds to the new
-        # scope, so clear it before disabling "Optimize selected" via _set_busy.
-        self._screening_selected_keys = set()
-        self._mark_analysis_stale("Scope changed")
 
     def _on_scope_validity_changed(self, is_valid: bool) -> None:
         if not is_valid and not self._analysis_in_progress:
@@ -887,13 +874,16 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._set_busy(self._analysis_in_progress)
 
     def _mark_analysis_stale(self, reason: str) -> None:
-        """Flag the displayed results as stale after a scope edit.
+        """Flag the displayed results as stale after a scope or field-direction edit.
 
         Follows the ignore-stale convention: an in-flight analysis is orphaned by
         bumping the request id (its terminal signal is discarded by the base's
         staleness guard on arrival). We also cancel the live worker cooperatively
-        so it stops wasting cycles, then clear busy.
+        so it stops wasting cycles, then clear busy. The screening selection no
+        longer matches the scope, so it is cleared before _set_busy disables
+        "Optimize selected".
         """
+        self._screening_selected_keys = set()
         if self._analysis_in_progress:
             self._cancel_current_analysis()
             self._analysis_request_id += 1
@@ -933,9 +923,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
     def _update_action_enablement(self, busy: bool) -> None:
         self._progress_label.setText("Working..." if busy else "")
         self._cancel_btn.setVisible(busy)
-        self._refresh_btn.setEnabled(
-            bool(self._datasets) and not busy and self._scope_selector.is_valid()
-        )
+        self._refresh_btn.setEnabled(bool(self._datasets) and not busy and self._picker.is_valid())
         self._metric_combo.setEnabled(self._recommendation is not None and not busy)
         selected_count = len(self._screening_selected_keys)
         self._optimize_btn.setText(
@@ -1001,7 +989,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         if self._analysis_in_progress:
             return
 
-        if not self._scope_selector.is_valid():
+        if not self._picker.is_valid():
             self._status_label.setText(
                 "Select at least one candidate family in the Scope section to enable screening."
             )
@@ -1116,7 +1104,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         existing = dict(self._single_fit_recommendations_by_run)
         metric = SelectionMetric.from_value(self._metric_combo.currentText())
         selected_keys = tuple(sorted(self._screening_selected_keys)) if mode == "optimize" else ()
-        scope_payload = copy.deepcopy(self._scope_selector.current_scope())
+        scope = self._picker.scope()
         effort_tier = self.current_effort_tier()
         # The path and the row index travel together — the core refuses one
         # without the other — and only the per-phase mode has either.
@@ -1139,7 +1127,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 existing_single_fit_recommendations_by_run=existing,
                 metric=metric,
                 selected_template_keys=selected_keys,
-                scope=scope_payload,
+                scope=scope,
                 effort_tier=effort_tier,
                 partition_path=partition_path,
                 partition_k=partition_k,
@@ -1284,12 +1272,11 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._selected_phase_segment = None
         self._partition_k = self._default_partition_k(recommendation)
         self._cached_log_text = str(log_text or "")
-        # Restore scope from the signature. Legacy signatures without a scope key
-        # restore as Auto. Cached state is never stale. set_scope is a no-op on
-        # the tree when no resolver is installed (no prior set_analysis_context).
+        # Restore the scope the cached result was screened under; a signature
+        # without one keeps the default. Cached state is never stale.
         signature_dict = signature if isinstance(signature, dict) else {}
-        cached_scope = signature_dict.get("scope")
-        self._scope_selector.set_scope(cached_scope if isinstance(cached_scope, dict) else None)
+        if "scope" in signature_dict:
+            self._picker.set_scope(WizardScope.from_payload(signature_dict["scope"]))
         # The effort tier is retained in the payload for forward-compatibility,
         # but every tier now runs the exact engine and the visible control is a
         # single "Optimize" mode. Restoring a legacy Low/Balanced payload is a
@@ -1336,7 +1323,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 str(key): [float(bounds[0]), float(bounds[1])]
                 for key, bounds in self._parameter_bounds.items()
             },
-            "scope": self._scope_selector.current_scope(),
+            "scope": self._picker.scope().to_payload(),
             "effort_tier": self.current_effort_tier().value,
         }
 
@@ -1368,7 +1355,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
             portfolio = build_global_fit_wizard_candidate_portfolio(
                 self._datasets,
                 current_model=self._current_model,
-                scope=WizardScope.from_payload(copy.deepcopy(self._scope_selector.current_scope())),
+                scope=self._picker.scope(),
             )
         except Exception as exc:
             self._set_expectations_warning(f"Global fit wizard setup failed: {exc}")

@@ -500,6 +500,8 @@ class GlobalFitTab(FitTabBase):
     #: The Batch tab's fit window changed — the plot's range guides follow it
     #: while this tab is visible (D8). It never moves the project's own range.
     batch_fit_range_changed = Signal(float, float)
+    #: Forwarded from the Global Fit Wizard: ``(run numbers, FieldGeometry | None)``.
+    field_direction_answered = Signal(object, object)
 
     def __init__(
         self,
@@ -2789,6 +2791,9 @@ class GlobalFitTab(FitTabBase):
             )
             self._fit_wizard_window.parameter_setup_applied.connect(
                 self._on_fit_wizard_parameter_setup_applied
+            )
+            self._fit_wizard_window.field_direction_answered.connect(
+                self.field_direction_answered.emit
             )
         signature = self._wizard_context_signature(parsed)
 

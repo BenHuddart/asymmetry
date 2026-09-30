@@ -151,6 +151,7 @@ from asymmetry.core.fitting import (
     fit_scan_model,
     grouped_time_domain_available,
 )
+from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.knight_analysis import (
     migrate_legacy_state as migrate_legacy_knight_state,
@@ -163,6 +164,7 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fitting.wizard_scope import (
     restore_user_field_direction,
+    set_user_field_direction,
     user_field_direction_overrides,
 )
 from asymmetry.core.fourier import (
@@ -2133,6 +2135,7 @@ class MainWindow(QMainWindow):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
         self._fit_panel.apply_wizard_phases_requested.connect(self._on_apply_wizard_phases)
+        self._fit_panel.field_direction_answered.connect(self._save_field_direction_answer)
         if hasattr(self._fit_panel, "batch_seeding_mode_changed"):
             self._fit_panel.batch_seeding_mode_changed.connect(self._sync_batch_seeding_menu)
         self._fit_panel.trends_requested.connect(
@@ -12999,6 +13002,22 @@ class MainWindow(QMainWindow):
             if gid is not None:
                 return gid
         return None
+
+    def _save_field_direction_answer(
+        self, run_numbers: frozenset[int], geometry: FieldGeometry | None
+    ) -> None:
+        """Save a fit wizard's field-direction answer on the project's own runs.
+
+        The wizard answered on the datasets it holds, which may be fit-range crops
+        or rebinned copies carrying their own metadata; the project saves the
+        browser's datasets, which the crops re-copy on their next build.
+        """
+        set_user_field_direction(
+            [d for d in self._data_browser.get_all_datasets() if d.run_number in run_numbers],
+            geometry,
+        )
+        self._mark_dirty()
+        self._data_browser._rebuild_table()
 
     # ── Global Fit Wizard: transitions → phase groups (D3) ───────────────────
 

@@ -111,6 +111,35 @@ def test_the_applied_answer_is_checked_after_refresh(qapp):
     assert _pill(picker, "VortexLattice").isHidden()
 
 
+def test_the_note_says_where_an_answer_was_saved(qapp):
+    datasets = _series("", "", "", "")
+    picker = _picker(datasets)
+    set_user_field_direction(datasets, FieldGeometry.LF)
+    picker.refresh()
+    assert picker._direction_note.text() == "Set by you — saved on the 4 runs that record none."
+    set_user_field_direction(datasets, None)
+    picker.refresh()
+    assert picker._direction_note.text() == "The runs record no field direction."
+
+
+def test_the_answer_note_names_the_runs_the_files_record(qapp):
+    datasets = _series("Longitudinal", "Longitudinal", "")
+    picker = _picker(datasets)
+    set_user_field_direction(datasets, FieldGeometry.LF)
+    picker.refresh()
+    assert picker._direction_note.text() == (
+        "Set by you — saved on the run that records none; the files record the other 2."
+    )
+
+
+def test_the_answer_note_on_a_single_run(qapp):
+    datasets = _series("")
+    picker = _picker(datasets)
+    set_user_field_direction(datasets, FieldGeometry.ZF)
+    picker.refresh()
+    assert picker._direction_note.text() == "Set by you — saved on the run, which records none."
+
+
 def test_a_fully_recorded_series_shows_its_direction_read_only(qapp):
     picker = _picker(_series("Transverse", "Transverse"))
     assert picker._direction_frame.isHidden()
@@ -331,6 +360,35 @@ def test_leaving_out_slow_models_sets_skip_slow(qapp):
     )
     assert picker._slow_line.text() == "No slow models included."
     assert tokens.TEXT_MUTED in picker._slow_line.styleSheet()
+
+
+def test_reset_to_suggestions_shows_only_with_overrides(qapp):
+    picker = _picker(_series("Longitudinal"))
+    assert picker._reset.isHidden()
+    _pill(picker, "Keren").click()
+    assert not picker._reset.isHidden()
+    _pill(picker, "Keren").click()  # back on: an include override is still an override
+    assert picker.scope().include_components == {"Keren"}
+    assert not picker._reset.isHidden()
+
+
+def test_reset_to_suggestions_drops_overrides_and_keeps_the_rest(qapp):
+    looking_for = frozenset({PhysicsClass.DYNAMICS})
+    picker = _picker(
+        _series("Longitudinal"),
+        WizardScope(
+            physics=looking_for,
+            include_components=frozenset({"Oscillatory"}),
+            exclude_components=frozenset({"Keren"}),
+            skip_slow=True,
+        ),
+    )
+    scopes = _record(picker.scope_changed)
+    picker._reset.click()
+    assert scopes == [WizardScope(physics=looking_for, skip_slow=True)]
+    assert picker.scope() == WizardScope(physics=looking_for, skip_slow=True)
+    assert picker._reset.isHidden()
+    assert _pill(picker, "Keren").isChecked()
 
 
 # --- validity ------------------------------------------------------------------------
