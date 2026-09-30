@@ -34,6 +34,7 @@ from asymmetry.core.fitting.composite import (
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.envelope_match import match_envelope_banks
 from asymmetry.core.fitting.legacy_product_amplitudes import fold_legacy_product_amplitude_set
+from asymmetry.core.fitting.model_comparison import bound_side
 from asymmetry.core.fitting.models import field_decoupling_threshold_gauss
 from asymmetry.core.fitting.muonium import VACUUM_MUONIUM_A_HF_MHZ
 from asymmetry.core.fitting.parameters import (
@@ -6375,21 +6376,9 @@ def _bound_hit_names(parameters: ParameterSet) -> list[str]:
         # policy rather than on the fit. Only free parameters can hit a bound.
         if parameter.is_constrained:
             continue
-        # The tolerance scale must ignore infinite bounds: an infinite |max|
-        # would make ``tol`` infinite and flag every value as "at lower bound"
-        # (any finite offset is <= inf). Components with one-sided bounds — e.g.
-        # Risch-Kehr's Gamma in [0, inf) — would otherwise be spuriously gated.
-        scale = max(
-            abs(parameter.value),
-            abs(parameter.min) if np.isfinite(parameter.min) else 0.0,
-            abs(parameter.max) if np.isfinite(parameter.max) else 0.0,
-            1.0,
-        )
-        tol = 1e-6 * scale
-        if np.isfinite(parameter.min) and abs(parameter.value - parameter.min) <= tol:
-            hits.append(f"{parameter.name} at lower bound")
-        elif np.isfinite(parameter.max) and abs(parameter.value - parameter.max) <= tol:
-            hits.append(f"{parameter.name} at upper bound")
+        side = bound_side(parameter)
+        if side is not None:
+            hits.append(f"{parameter.name} at {side} bound")
     return hits
 
 

@@ -1,12 +1,13 @@
-"""The Global Fit Wizard's Transitions card (transitions plan, D3).
+"""The Global Fit Wizard's Phases step and its Transitions card (transitions plan, D3).
 
 A partitioned recommendation gives the wizard a second answer beside the
 series-wide one: the penalty path, one row per "exactly k breaks" solution, with
 the elbow pre-selected. These tests pin what the card says (rows, boundary
-text, gains, status words, the summary line and the footnote), what selecting a
-row does (recolours the series overlay by phase, re-offers the actions), what
-"Optimize phases" asks the core for (the selected row's ``partition_k``), and
-what the per-phase strip shows once the phases have been fitted.
+text, gains, status words, the summary line and the footnote), when the Phases
+step is skipped or active (stepper plan, D6), what selecting a row does
+(recolours the overlay by phase, re-offers the actions), what "Optimize phases"
+asks the core for (the selected row's ``partition_k``), what the per-phase strip
+shows once the phases have been fitted, and how Apply hands the phases over.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.windows.global_fit_wizard_window as wizard_window_module
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import PhysicsClass
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -45,6 +47,8 @@ from asymmetry.core.fitting.global_search.partition import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.utils.phase_colors import EXCLUDED_PHASE_HATCH_COLOR, phase_color
+from asymmetry.gui.utils.series_colours import series_colours
+from asymmetry.gui.widgets.wizard_stepper import StepState
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 from tests._qt_helpers import wait_for
 
@@ -289,12 +293,17 @@ def _column(window: GlobalFitWizardWindow, column: int) -> list[str]:
     return [table.item(row, column).text() for row in range(table.rowCount())]
 
 
+def _step(window: GlobalFitWizardWindow, key: str) -> tuple[StepState, str]:
+    """A step's state and its one-line summary (the button's tooltip)."""
+    return window._stepper.state(key), window._stepper._buttons[key].toolTip()
+
+
 # ── the path table ───────────────────────────────────────────────────────────
 
 
 def test_the_card_shows_one_row_per_path_solution(qapp, datasets) -> None:
     window = _window(datasets, _partitioned_recommendation(datasets))
-    assert window._transitions_card.isVisibleTo(window)
+    assert window._transitions_card.isVisibleTo(window._views["phases"])
     assert _column(window, 0) == ["0", "1", "2"]
 
 
@@ -349,7 +358,7 @@ def test_the_footnote_says_the_partition_is_scored_with_bic(qapp, datasets) -> N
     )
 
 
-def test_a_recommendation_without_a_path_hides_the_card(qapp, datasets) -> None:
+def test_a_recommendation_without_a_path_skips_the_phases_step(qapp, datasets) -> None:
     window = _window(
         datasets,
         replace(
@@ -359,7 +368,9 @@ def test_a_recommendation_without_a_path_hides_the_card(qapp, datasets) -> None:
             recommended_partition_k=None,
         ),
     )
-    assert not window._transitions_card.isVisibleTo(window)
+    assert _step(window, "phases") == (StepState.SKIPPED, "No transition found")
+    assert window._stepper._buttons["phases"].isEnabled() is False
+    assert window._transitions_card._table.rowCount() == 0
     assert window._partition_k is None
 
 
@@ -378,9 +389,9 @@ def test_optimize_phases_is_refused_on_the_break_free_row(qapp, datasets) -> Non
 
 def test_apply_phases_appears_only_once_the_row_is_verified(qapp, datasets) -> None:
     plain = _window(datasets, _partitioned_recommendation(datasets))
-    assert not plain._transitions_card._apply_btn.isVisibleTo(plain)
+    assert not plain._transitions_card._apply_btn.isVisibleTo(plain._transitions_card)
     optimised = _window(datasets, _partitioned_recommendation(datasets, optimised_k=1))
-    assert optimised._transitions_card._apply_btn.isVisibleTo(optimised)
+    assert optimised._transitions_card._apply_btn.isVisibleTo(optimised._transitions_card)
 
 
 def test_optimize_phases_asks_the_core_for_the_selected_row(qapp, datasets, monkeypatch) -> None:
@@ -396,13 +407,19 @@ def test_optimize_phases_asks_the_core_for_the_selected_row(qapp, datasets, monk
 
     monkeypatch.setattr(wizard_window_module, "build_global_fit_wizard_recommendation", _fake_build)
     window = _window(datasets, _partitioned_recommendation(datasets))
+    window._stepper._buttons["phases"].click()
     window._transitions_card._table.selectRow(2)
     window._transitions_card._optimize_btn.click()
+    # The run shows its progress in the Phases step.
+    assert _step(window, "phases") == (StepState.RUNNING, "Optimising phases…")
+    assert window._run_progress.parentWidget() is window._progress_hosts["phases"]
     wait_for(lambda: window._tasks.active_count == 0, qapp)
 
     assert captured["partition_k"] == 2
     assert captured["partition_path"] is not None
     assert window._recommendation.recommended_partition_k == 2
+    assert window._stepper.current_key() == "phases"
+    assert _step(window, "phases")[0] is StepState.DONE
 
 
 def test_apply_phases_emits_the_recommendation_and_the_selected_row(qapp, datasets) -> None:
@@ -411,17 +428,29 @@ def test_apply_phases_emits_the_recommendation_and_the_selected_row(qapp, datase
     window.apply_phases_requested.connect(
         lambda recommendation, k: emitted.append((recommendation, k))
     )
+    # The card's Apply phases continues to the Apply step in phases mode.
     window._transitions_card._apply_btn.click()
+    assert emitted == []
+    assert window._stepper.current_key() == "apply"
+    assert _step(window, "apply") == (StepState.READY, "Ready: 2 phases")
+    assert window._apply_roles_section.title() == "Phases"
+    assert window._apply_values_section.isHidden()
+    assert window._apply_btn.text() == "Apply phases"
+
+    window._apply_btn.click()
     assert len(emitted) == 1
     assert emitted[0][1] == 1
     assert emitted[0][0] is window._recommendation
+    assert _step(window, "apply") == (StepState.DONE, "Applied: 2 phases")
 
 
 def test_the_running_trail_counts_the_phases(qapp, datasets) -> None:
     window = _window(datasets, _partitioned_recommendation(datasets))
+    run = wizard_window_module._RUN_MODES["optimize_phases"]
     window._analysis_mode = "optimize_phases"
-    window._show_running()
-    assert window._running_trail.step_keys() == ("prepare", "phases")
+    window._run_progress.start(run.header, run.placeholders)
+    trail = window._run_progress.trail
+    assert trail.step_keys() == ("prepare", "phases")
 
     window._on_progress(
         0,
@@ -429,10 +458,10 @@ def test_the_running_trail_counts_the_phases(qapp, datasets) -> None:
         "Optimising 4 distinct phase(s) across the 2-break solution and its verified neighbours.",
     )
     window._on_progress(0, 0, "Phase 701–703: separable role search over 2 candidate(s).")
-    assert window._running_trail._rows["phases"]._header.text() == "Optimising phase 1 of 4…"
+    assert trail._rows["phases"]._header.text() == "Optimising phase 1 of 4…"
 
     window._on_progress(0, 0, "Phase 704–706: separable role search over 2 candidate(s).")
-    assert window._running_trail._rows["phases"]._header.text() == "Optimising phase 2 of 4…"
+    assert trail._rows["phases"]._header.text() == "Optimising phase 2 of 4…"
 
 
 # ── the series overlay ───────────────────────────────────────────────────────
@@ -441,18 +470,17 @@ def test_the_running_trail_counts_the_phases(qapp, datasets) -> None:
 def test_selecting_a_partition_row_colours_the_overlay_by_phase(qapp, datasets) -> None:
     window = _window(datasets, _partitioned_recommendation(datasets))
     window._transitions_card._table.selectRow(2)
-    colours = [run.colour for run in window._series_card._runs]
-    assert colours == [
+    assert window._phases_canvas._colours == (
         *[phase_color(1)] * 3,
         *[phase_color(2)] * 2,
         EXCLUDED_PHASE_HATCH_COLOR,
-    ]
+    )
 
 
 def test_the_break_free_row_leaves_the_axis_gradient_alone(qapp, datasets) -> None:
     window = _window(datasets, _partitioned_recommendation(datasets))
     window._transitions_card._table.selectRow(0)
-    assert [run.colour for run in window._series_card._runs] == [None] * len(_RUNS)
+    assert window._phases_canvas._colours == tuple(series_colours(_TEMPERATURES))
 
 
 # ── the per-phase strip ──────────────────────────────────────────────────────
@@ -482,12 +510,14 @@ def test_each_phase_states_its_range_model_roles_and_confidence(qapp, datasets) 
 
 def test_clicking_a_phase_shows_that_phase_s_fit(qapp, datasets) -> None:
     window = _window(datasets, _partitioned_recommendation(datasets, optimised_k=1))
+    # No phase picked: the overlay shows the row's phases, without fits.
+    assert window._phases_canvas._a is None
     window._transitions_card._phase_buttons[1].click()
     assert window._selected_phase_segment == 1
-    assert window._selected_assessment().template.title == "Warm phase model"
+    a = window._phases_canvas._a
+    assert a.title == "Warm phase model"
     # Only the picked phase's runs carry a fit overlay.
-    with_fits = [run.run_label for run in window._series_card._runs if run.fitted_curve is not None]
-    assert with_fits == [str(run) for run in _PHASE_II + (_STUB,)]
+    assert [run.run_label for run in a.runs] == [str(run) for run in _PHASE_II + (_STUB,)]
 
 
 # ── cache round-trip ─────────────────────────────────────────────────────────
@@ -500,3 +530,34 @@ def test_a_partitioned_recommendation_survives_the_cache_restore(qapp, datasets)
     assert window._partition_k == 1
     assert _column(window, 3)[1] == "elbow · verified"
     assert len(window._transitions_card._phase_buttons) == 2
+
+
+def test_a_break_free_elbow_skips_the_phases_step(qapp, datasets) -> None:
+    window = _window(
+        datasets,
+        replace(
+            _partitioned_recommendation(datasets),
+            partition_path=replace(_partition_path(), selected_k=0),
+        ),
+    )
+    assert _step(window, "phases") == (StepState.SKIPPED, "No transition found")
+
+
+def test_a_path_with_a_break_makes_the_phases_step_active(qapp, datasets) -> None:
+    window = _window(datasets, _partitioned_recommendation(datasets))
+    assert _step(window, "phases") == (StepState.READY, "1 transition · 19 ± 3 K")
+    window._stepper._buttons["phases"].click()
+    assert window._stepper.current_key() == "phases"
+
+    window._transitions_card._table.selectRow(2)
+    assert _step(window, "phases") == (StepState.READY, "2 transitions · 19 ± 3 K and 34 ± 6 K")
+
+    optimised = _window(datasets, _partitioned_recommendation(datasets, optimised_k=1))
+    assert _step(optimised, "phases") == (StepState.DONE, "1 transition · 19 ± 3 K")
+
+
+def test_a_scope_edit_marks_the_phases_step_stale(qapp, datasets) -> None:
+    window = _window(datasets, _partitioned_recommendation(datasets))
+    window._picker._chips[PhysicsClass.DYNAMICS].click()
+    assert _step(window, "phases")[0] is StepState.STALE
+    assert not window._transitions_card._optimize_btn.isEnabled()

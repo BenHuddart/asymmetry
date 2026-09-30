@@ -446,6 +446,14 @@ class ModelFamilyPicker(QWidget):
     def is_valid(self) -> bool:
         return self._view.screens_a_model
 
+    def summary(self) -> str:
+        """``"Longitudinal · 7 models"``: the runs' field direction and the models screened."""
+        geometry = self._view.geometry
+        directions = {g for g, _ in geometry.counts + geometry.answered}
+        direction = " / ".join(text for g, text in FIELD_DIRECTION_TEXT.items() if g in directions)
+        count = self._view.included_count
+        return f"{direction or 'No direction'} · {count} model{'' if count == 1 else 's'}"
+
     # ── Edits ────────────────────────────────────────────────────────────────
 
     def _edit(self, scope: WizardScope) -> None:

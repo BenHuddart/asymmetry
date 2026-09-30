@@ -293,10 +293,10 @@ def test_screening_summary_distinguishes_a_ranked_table_from_a_failed_screen(
 
     # Screening never recommends: prescreen assessments are not evidence about a
     # coupled global fit. That is by design — and the summary now says so, and
-    # names the candidate a caller should select.
+    # names the leading candidate by title and by the key a script selects it with.
     assert recommendation.recommended_key is None
     assert "candidates scored" in recommendation.summary
-    assert "select one or more" in recommendation.summary.lower()
+    assert "tick families on the screen step" in recommendation.summary.lower()
 
     scored = [
         assessment

@@ -543,6 +543,24 @@ class GlobalCandidateAssessment:
             and not self.series_warnings
         )
 
+    @property
+    def applied_roles(self) -> dict[str, str]:
+        """The Global/Local/Fixed role each parameter gets when this candidate is applied.
+
+        The role search's recommendations override the assignment's names; a fixed
+        parameter stays Fixed whatever was recommended.
+        """
+        roles = {name: "Global" for name in self.global_param_names}
+        roles.update({name: "Local" for name in self.local_param_names})
+        roles.update(
+            {
+                parameter.name: parameter.recommended_role
+                for parameter in self.parameter_recommendations
+            }
+        )
+        roles.update({name: "Fixed" for name in self.fixed_param_names})
+        return roles
+
 
 @dataclass(frozen=True)
 class GlobalFitWizardRecommendation:
@@ -3530,11 +3548,11 @@ def _screening_no_recommendation_summary(
     if scored:
         return (
             f"Single-fit screening complete: {len(scored)} of {len(assessments)} "
-            "candidates scored, best-ranked "
-            f"'{scored[0].template.key}'. These scores come from independent "
-            "per-dataset fits only and have not yet been optimized for coupled "
-            "global fitting, so no candidate is recommended yet — select one or "
-            "more from the ranked screening table to continue."
+            f"candidates scored; {scored[0].template.title} ({scored[0].template.key}) "
+            "leads. These scores come "
+            "from independent per-dataset fits only and have not yet been optimized "
+            "for coupled global fitting, so no candidate is recommended yet — tick "
+            "families on the Screen step and optimise them to continue."
         )
     reasons: list[str] = []
     for assessment in assessments:

@@ -31,6 +31,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import linear_sum_assignment
 
+from asymmetry.core.fitting.model_comparison import information_weights
 from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     fit_parameter_model,
@@ -953,40 +954,22 @@ def set_matching_divergence(
 def aic_weights(chi_squareds: Sequence[float], n_free_params: Sequence[int]) -> list[float]:
     """Akaike-weight a set of candidate models from their fit chi-squareds.
 
-    ``AIC_i = chi2_i + 2 p_i``; weights are ``exp(-(AIC_i - min AIC)/2)``
-    normalised to sum to 1 (the minimum is subtracted before exponentiating
-    for numerical safety, per Burnham & Anderson). BIC is deliberately not
-    used here — its ``p * ln(n)`` penalty drifts under the sequential-n
-    growth of an in-progress trend series (§4 of the study).
-
-    A model with non-finite chi-squared gets weight ``0.0`` and is excluded
-    from the normalisation; if every model is non-finite, returns a list of
-    ``0.0`` (there is nothing to rank). Raises ``ValueError`` if the two
-    input lists differ in length — a mismatch here is a programming error,
-    not a user-data problem.
+    ``AIC_i = chi2_i + 2 p_i``, weighted by
+    :func:`~asymmetry.core.fitting.model_comparison.information_weights` (a
+    non-finite AIC gets weight ``0.0``). BIC is deliberately not used here — its
+    ``p * ln(n)`` penalty drifts under the sequential-n growth of an in-progress
+    trend series (§4 of the study). Raises ``ValueError`` if the two input lists
+    differ in length — a mismatch here is a programming error, not a user-data
+    problem.
     """
     if len(chi_squareds) != len(n_free_params):
         raise ValueError(
             f"chi_squareds and n_free_params must have the same length "
             f"({len(chi_squareds)} != {len(n_free_params)})."
         )
-    if not chi_squareds:
-        return []
-
-    aic = np.array(
-        [c + 2.0 * p for c, p in zip(chi_squareds, n_free_params, strict=True)], dtype=float
+    return information_weights(
+        [c + 2.0 * p for c, p in zip(chi_squareds, n_free_params, strict=True)]
     )
-    finite = np.isfinite(aic)
-    if not np.any(finite):
-        return [0.0] * len(aic)
-
-    min_aic = float(np.min(aic[finite]))
-    raw_weights = np.zeros_like(aic)
-    raw_weights[finite] = np.exp(-(aic[finite] - min_aic) / 2.0)
-    total = float(np.sum(raw_weights))
-    if total <= 0.0:
-        return [0.0] * len(aic)
-    return (raw_weights / total).tolist()
 
 
 def cost_weighted_utility(

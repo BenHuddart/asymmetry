@@ -33,6 +33,9 @@ from asymmetry.gui.utils.formatting import (
         (35.8123, None, "35.81"),
         (35.8123, 0.0, "35.81"),
         (35.8123, float("nan"), "35.81"),
+        # A value the fit never produced has no digits to show.
+        (float("nan"), float("nan"), "—"),
+        (float("inf"), 0.5, "—"),
     ],
 )
 def test_format_value_uncertainty(value: float, error: float | None, expected: str) -> None:
@@ -55,3 +58,4 @@ def test_format_value_error_matches_the_value_precision_to_the_error() -> None:
 def test_format_param_label_uses_the_registry_symbol_and_unit() -> None:
     assert format_param_label("Lambda") == "λ (µs⁻¹)"
     assert format_param_label("not_a_parameter") == "not_a_parameter"
+    assert format_param_label("Lambda", include_unit=False) == "λ"

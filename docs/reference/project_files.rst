@@ -361,12 +361,15 @@ the file instead is:
 * no residual *series* — the numbers derived from it (residual RMS, runs
   z-score, autocorrelation, FFT peak SNR and the gate reasons) are stored on
   the assessment itself, so only the residual panel of a *cached* redisplay
-  is affected: it is blank until the wizard is re-run for that run.
+  is affected: in the Fit Wizard it is blank until the wizard is re-run for
+  that run, and the Global Fit Wizard recomputes its residual strips from the
+  data and the stored curve, interpolated between the curve's samples.
 
 Everything else — the ranking, scores, fitted parameters, uncertainties,
 diagnostics, peak analysis and narrative — is stored in full, so a reopened
-project still shows the cached recommendation, its comparison table and its
-answer card without re-running the analysis. Re-running the wizard always
+project still shows the cached recommendation without re-running the
+analysis: the Fit Wizard's comparison table and answer card, or the Global Fit
+Wizard's Screen and Compare steps. Re-running the wizard always
 restores full-resolution curves and residuals.
 
 Payloads written before this change (full-resolution curves, residuals

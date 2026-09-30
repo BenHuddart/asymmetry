@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Global Fit Wizard is a five-step stepper: Scope → Screen → Compare →
+  Phases → Apply.** It replaces the Setup, Running and Result pages. Each step
+  shows its state (done, current, ready, stale, running or skipped) and a
+  one-line summary, and done, stale, ready and running steps are clickable.
+  An analysis shows its progress inside the step it feeds, with **Cancel**,
+  and collapses to a **Run log** when it finishes. A scope edit marks Screen,
+  Compare and Phases stale but keeps their results viewable. **Screen** is a
+  family leaderboard: a Δ bar from the best family, one χ²ᵣ cell per run
+  graded good (≤ 1.5), fair (≤ 5) or poor, a preview of the selected family's
+  fits with residual strips, and a shortlist pre-ticked with the families
+  within Δ ≤ 10 of the best (at most three) for **Optimise N families →**.
+  **Compare** groups the optimised Global/Local splits by model, each with an
+  evidence weight, a Pass/Warn gate, and flags naming the runs where a
+  parameter is "at lower bound", "at upper bound", "not finite" or "poorly
+  determined". Click a split to make it A and **Pin as B** to overlay another
+  dashed, with per-run residual strips, an A-vs-B parameter table that marks a
+  shared global which "differs by kσ", and a trend of the parameter you pick.
+  **Phases** holds the Transitions card and is skipped when no transition is
+  found. **Apply** reviews the model, the parameter roles, the starting values
+  and the warnings before **Apply to the global fit tab** (or **Apply
+  phases**). The answer card and its alternative chips, the screening
+  shortlist and optimised-fits tables, **← Back to setup** / **View
+  results →**, and the result decision trail are gone; the raw tables and the
+  role diagnostics now sit under each step's collapsed **Details**. See
+  `docs/reference/global_fit_wizard.rst` § "The guided journey".
+
 ## [0.22.0] - 2026-09-30
 
 ### Added

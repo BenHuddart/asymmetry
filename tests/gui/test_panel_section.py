@@ -130,6 +130,13 @@ def test_hint_constructor_shows_it(qapp) -> None:
     assert section._hint_label.text() == "Inline hint"
 
 
+def test_set_title_renames_the_header(qapp) -> None:
+    section = PanelSection("Live log", collapsible=True)
+    section.set_title("Run log")
+    assert section.title() == "Run log"
+    assert section._header_label.text() == "RUN LOG"
+
+
 def test_title_suffix_toggles_visibility(qapp) -> None:
     section = PanelSection("Exclusions", collapsible=True)
     assert section._suffix_label.isHidden()

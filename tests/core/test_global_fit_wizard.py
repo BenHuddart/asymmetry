@@ -4174,3 +4174,38 @@ def test_phase_one_serial_fallback_when_no_pool_can_open(
     # One attempt to open one pool for the whole phase, at the host's width.
     assert opened == [6]
     assert set(table.recommendations_by_run) == {int(d.run_number) for d in datasets}
+
+
+def test_applied_roles_let_recommendations_override_and_keep_fixed_fixed() -> None:
+    from asymmetry.core.fitting.global_fit_wizard import GlobalParameterRecommendation
+
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = [
+        _dataset_for(
+            run,
+            field=0.0,
+            temperature=5.0,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.3, "A_bg": 0.01},
+        )
+        for run in (1, 2)
+    ]
+    assessment = replace(
+        _assessment_with_diagnostics(datasets, []),
+        global_param_names=("A_1",),
+        local_param_names=("Lambda",),
+        fixed_param_names=("A_bg",),
+        parameter_recommendations=(
+            GlobalParameterRecommendation(
+                name="Lambda",
+                recommended_role="Global",
+                global_score=1.0,
+                local_score=2.0,
+                score_delta=1.0,
+                total_variation=0.0,
+                roughness=0.0,
+                rationale="shared",
+            ),
+        ),
+    )
+    assert assessment.applied_roles == {"A_1": "Global", "Lambda": "Global", "A_bg": "Fixed"}

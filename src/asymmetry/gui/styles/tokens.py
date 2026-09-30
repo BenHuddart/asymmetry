@@ -152,6 +152,13 @@ SUCCESS_BORDER = "#cbe1cf"
 # Failure tint — the ERROR-red counterpart of SUCCESS_BG, for a chip whose
 # verdict is bad (a "poor" χ² on a trend card) rather than merely cautionary.
 ERROR_BG = "#fdf3f2"
+# Soft fills for a graded cell or state disc (good / fair / poor χ²ᵣ, done /
+# stale wizard steps): saturated enough to tell apart in a dense grid, where
+# SUCCESS_BG and ERROR_BG read as white. Text on them uses OK / WARN_BANNER_TEXT
+# / ERROR.
+SUCCESS_SOFT = "#e3f0e7"
+WARN_SOFT = "#fbecd0"
+ERROR_SOFT = "#f3d3cd"
 
 # ── Data-trace palette ────────────────────────────────────────────────────────
 # Okabe-Ito colour-blind-safe qualitative set, used for multi-run overlays and
