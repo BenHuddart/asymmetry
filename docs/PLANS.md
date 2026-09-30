@@ -6,6 +6,23 @@ subsystems or days.
 
 ## Active
 
+### Global Fit Wizard: a stepper and a Compare workspace
+
+Status: planned 2026-09-30 on `feat/global-wizard-stepper`. One PR in
+phased subagent steps (core comparison, widgets, window restructure, docs),
+with a lead review gate after each. Decision log (D1–D11), code map and
+phases are in [plans/global-wizard-stepper.md](plans/global-wizard-stepper.md).
+Mockup: <https://claude.ai/artifact/3rz871CWotdJ2nmJcVHwCM>.
+
+A Scope → Screen → Compare → Phases → Apply stepper replaces the Setup,
+Running and Result pages, and progress streams inside the running step.
+Screen becomes a family leaderboard: Δ bars, per-run χ²ᵣ cells and a
+pre-ticked shortlist. Compare replaces the shortlist, the optimised table and
+the alternative chips. It has a leaderboard with evidence weights and flags,
+a pick-A / pin-B overlay, per-run residual strips and an A-vs-B parameter
+table, all built on a Qt-free `model_comparison` core that the single-run
+wizard will reuse.
+
 ### Model family picker for both fit wizards
 
 Status: implemented 2026-09-30 on `feat/model-family-picker`, PR to follow;
