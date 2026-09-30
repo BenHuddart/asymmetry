@@ -135,12 +135,16 @@ The **Scope** section holds the model family picker, the same control the
 single-spectrum wizard shows on its welcome page; :ref:`fit-wizard-model-family-picker`
 describes it in full. From top to bottom it asks for the **Field direction**,
 offers the **Looking for (optional)** physics chips, lays out one card per model
-family with a pill per model (and a **slow** tag on the models whose fits
-dominate screening time), and ends with a footer that counts the models to be
-screened ("Will screen *N* of *M* models"), names the slow ones, and offers
+family with a pill per model, and ends with a footer that counts the models to
+be screened ("Will screen *N* of *M* models"), names the slow ones, and offers
 **Leave out slow models**. It is resolved over the whole series, so a model is
 offered when it applies to *any* run — a temperature series crossing a
-transition keeps both its ordered-state and paramagnetic families.
+transition keeps both its ordered-state and paramagnetic families. A **slow**
+tag marks the models whose screening fits are expected to take more than 5 s
+per run on this computer at the series' median run length (see
+:ref:`which models are slow <fit-wizard-slow-models>`). Screening a series
+times its fits as well, so a series analysis refines the estimates for both
+wizards.
 
 The direction row matters most on a series. When the files record no direction,
 every geometry is screened, which on a long series is the slow path. Answering

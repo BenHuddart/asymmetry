@@ -134,8 +134,11 @@ file can never crash a fit (or the application) later:
   on a **Your functions** card, under their names. An untagged user function
   is in every scope, whatever the field direction or the physics chips, so
   it is never hidden; tagging it narrows when the wizard considers it.
+  Until the wizard has timed the function on this computer,
   ``cost="expensive"`` puts a **slow** tag on its pill, and
-  **Leave out slow models** then drops it like any other slow model.
+  **Leave out slow models** then drops it like any other slow model. Once
+  timed, its measured fit time decides (see
+  :ref:`which models are slow <fit-wizard-slow-models>`).
 * ``domain`` is required; it places the component in the matching picker
   and plots. Optional metadata (``latex_equation``, ``applicability``,
   ``references``, ``category``, ``fixed_params``, ``param_defaults``)

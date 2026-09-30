@@ -141,7 +141,9 @@ From top to bottom, the picker holds:
   has a checkbox that switches the whole family on or off, a count of its
   models in the screen ("5 of 5"), a one-line description of the family, and
   one pill per model that applies, which you click to switch that model on or
-  off. A **slow** tag marks the models whose fits dominate screening time.
+  off. A **slow** tag marks the models whose screening fits are expected to
+  take more than 5 s per run on this computer (see
+  :ref:`which models are slow <fit-wizard-slow-models>`).
   Models that do not apply to the run are listed under the card rather than
   hidden — "Not ZF models: …", or, at a known transverse field, "Outside these
   runs' field range: …".
@@ -150,9 +152,9 @@ From top to bottom, the picker holds:
   one-line use; matching pills are outlined and the rest dimmed.
 - **Details panel.** Hovering or clicking a pill shows what that model is for:
   its name and one-line use, the component description, the **Geometries** it
-  applies in, its **Fitting cost** ("Quick", or "Slow — its fits dominate
-  screening time"), and under **This scope** either "Included" or why it is
-  out (for example "switched off by you"). A narrow window hides the panel;
+  applies in, its **Fitting cost** on this computer (below), and under
+  **This scope** either "Included" or why it is out (for example "switched off
+  by you"). A narrow window hides the panel;
   each pill's tooltip still says what the model is for.
 - **Footer.** "Will screen *N* of *M* models" counts the included models out
   of those that apply to the run, and the line beneath names the slow ones
@@ -162,6 +164,33 @@ From top to bottom, the picker holds:
   the chips and the slow switch. With nothing but the background left, the
   footer reads "Only the background is included — switch on a model to
   screen." and **Analyze** stays disabled.
+
+.. _fit-wizard-slow-models:
+
+**Which models are slow.** How long a model takes to screen depends on its
+fits, not on the cost of one evaluation: dynamic Gaussian KT is cheap to
+evaluate but slow to fit. The wizard therefore times every candidate fit it
+runs. After each analysis it records, for each model, the fit time per 1000
+fitted points, taking the median over the candidates that contain the model.
+Asymmetry keeps each model's last nine records in ``fit_times.json`` in its
+application data folder, and takes their median as the model's rate. A model
+is slow when that rate, scaled to the length of the runs in front of the
+picker, comes to more than 5 s per run. The length is the record as the
+wizard fits it: a record of more than 8192 points is rebinned first, and a
+series uses its median run length. The details panel shows the estimate
+("Slow — ≈ 12 s per run on this computer" or "Quick — ≈ 0.4 s per run on
+this computer"), and the picker updates as soon as an analysis finishes.
+
+Until a model has been timed on this computer, its declared cost decides and
+the panel reads "Slow (not yet timed on this computer)" or "Quick". Nine
+built-in models start as slow: the two vortex-lattice models, anisotropic
+high-TF muonium, dynamic Gaussian and Lorentzian KT, Gaussian-broadened KT,
+and the dynamic, general-geometry and third-F F–μ–F models. The constant
+background is never timed and never slow. **Leave out slow models** leaves
+out exactly the models tagged slow. The timings belong to the computer, not
+to the project. They never enter a project file, and every project on the
+computer shares them. If the file is damaged, Asymmetry logs a warning and
+starts it again.
 
 After an analysis the picker moves into the first step of the decision trail
 (below), where it shows the scope the result was screened under.
