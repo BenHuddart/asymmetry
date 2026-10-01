@@ -1140,7 +1140,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
         recommendation = self._recommendation
         done = StepState.STALE if self._analysis_stale else StepState.DONE
         ready = StepState.STALE if self._analysis_stale else StepState.READY
-        objective_stale = self._objective_stale()
+        # The optimised fits answer another objective than the one now chosen.
+        objective_stale = (
+            recommendation is not None and recommendation.objective is not self.current_objective()
+        )
         self._objective_banner.setVisible(objective_stale)
         if objective_stale:
             self._objective_banner.setText(
@@ -1594,13 +1597,6 @@ class GlobalFitWizardWindow(WizardWindowBase):
                     copy.deepcopy(self._cached_signature),
                 )
         self._set_busy(self._analysis_in_progress)
-
-    def _objective_stale(self) -> bool:
-        """Whether the optimised fits answer another objective than the one now chosen."""
-        recommendation = self._recommendation
-        return (
-            recommendation is not None and recommendation.objective is not self.current_objective()
-        )
 
     def current_effort_tier(self) -> EffortTier:
         """The effort tier the wizard will run.

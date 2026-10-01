@@ -830,14 +830,6 @@ class ModelComparePanel(QWidget):
     def _remember_fold(self, title: str, opened: bool) -> None:
         (self._unfolded.add if opened else self._unfolded.discard)(title)
 
-    def _make_row(self, summary: CandidateSummary) -> CompareRow:
-        parent = self._board.parentWidget()
-        if self._ladders:
-            return RungRow(
-                summary, self._run_labels, parent, recommended=summary.key == self._recommended
-            )
-        return CandidateRow(summary, self._metric_label, self._run_labels, parent)
-
     def _rebuild_board(self) -> None:
         """Rebuild the leaderboard rows: one bold title line per template group."""
         noun = "Candidates" if len(self._run_labels) == 1 else "Role splits"
@@ -857,7 +849,15 @@ class ModelComparePanel(QWidget):
             heading = QLabel(title)
             heading.setStyleSheet(f"color: {tokens.TEXT}; font-weight: 600; padding-top: 4px;")
             self._board.addWidget(heading)
-            rows = [self._make_row(summary) for summary in group]
+            parent = self._board.parentWidget()
+            rows: list[CompareRow] = [
+                RungRow(
+                    summary, self._run_labels, parent, recommended=summary.key == self._recommended
+                )
+                if self._ladders
+                else CandidateRow(summary, self._metric_label, self._run_labels, parent)
+                for summary in group
+            ]
             for row in rows:
                 row.picked.connect(self.set_a)
                 row.pin_button.clicked.connect(partial(self._toggle_pin, row.key))

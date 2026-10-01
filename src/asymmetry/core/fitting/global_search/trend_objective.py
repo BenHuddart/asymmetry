@@ -335,29 +335,26 @@ def summarise_rungs(
     recommendation of the trend objective holds.
     """
     limit = band_limit(assessments)
-    return tuple(
-        _rung_summary(assessment, summary, in_band=assessment.rung.all_local_chi2r <= limit)
-        for assessment, summary in zip(
-            assessments, summarise_candidates(assessments, datasets, metric), strict=True
+    rungs = []
+    for assessment, summary in zip(
+        assessments, summarise_candidates(assessments, datasets, metric), strict=True
+    ):
+        fits = assessment.fit_results_by_run.values()
+        free_names = len(assessment.global_param_names) + len(assessment.local_param_names)
+        # ν of a coupled fit: the runs' own, plus one per column the sharing saves.
+        dof = sum(fit.dof for fit in fits) + free_names * len(fits) - assessment.parameter_count
+        in_band = assessment.rung.all_local_chi2r <= limit
+        rungs.append(
+            RungSummary(
+                **{item.name: getattr(summary, item.name) for item in fields(CandidateSummary)},
+                rung=assessment.rung,
+                converged=assessment.is_successful,
+                chi2r=sum(fit.chi_squared for fit in fits) / dof,
+                in_band=in_band,
+                findings=rung_findings(assessment, in_band=in_band),
+            )
         )
-    )
-
-
-def _rung_summary(
-    assessment: GlobalCandidateAssessment, summary: CandidateSummary, *, in_band: bool
-) -> RungSummary:
-    fits = assessment.fit_results_by_run.values()
-    free_names = len(assessment.global_param_names) + len(assessment.local_param_names)
-    # ν of a coupled fit: the runs' own, plus one per column the sharing saves.
-    dof = sum(fit.dof for fit in fits) + free_names * len(fits) - assessment.parameter_count
-    return RungSummary(
-        **{item.name: getattr(summary, item.name) for item in fields(CandidateSummary)},
-        rung=assessment.rung,
-        converged=assessment.is_successful,
-        chi2r=sum(fit.chi_squared for fit in fits) / dof,
-        in_band=in_band,
-        findings=rung_findings(assessment, in_band=in_band),
-    )
+    return tuple(rungs)
 
 
 def trend_contenders(
