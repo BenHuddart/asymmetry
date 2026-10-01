@@ -1,7 +1,7 @@
 # Global Fit Wizard: recommend the fit that trends best
 
 Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Not yet
-implemented. Decisions D1–D5 were taken with Ben; D6–D14 are lead proposals
+implemented. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are lead proposals
 recorded here so review can overturn them. Follows
 [global-wizard-transitions.md](global-wizard-transitions.md) (phases) and
 [global-wizard-stepper.md](global-wizard-stepper.md) (the Compare step).
@@ -245,17 +245,16 @@ these are run by the lead before the PR and recorded in it:
 
 A recommendation, not "no candidate passed", on all seven.
 
-## Open questions for Ben
+## Settled after the plan (Ben, 2026-10-01)
 
-1. **Does the shared total include the background?** In ZF/LF the full
-   asymmetry (signal + constant) is what is conserved; in TF the constant is
-   a different thing. Proposal: signal amplitudes only, with the background
-   shared separately.
-2. **Applying exemptions.** The Batch tab's global fit has Global and Local
-   roles only. Proposal: on apply, exempt runs are listed and left out of the
-   coupled series (kept in the group), not given a third role.
-3. **Are 2σ and 3 % settings or constants?** Proposal: constants; the ladder
-   in Compare is the control.
+- **D16: the shared total covers signal amplitudes only.** The background is
+  shared separately (ladder rung 1). In transverse field the constant is a
+  different quantity from the precessing signal.
+- **D17: exempt runs are left out of the coupled series on apply.** The Batch
+  tab keeps its Global and Local roles; exempt runs are listed, stay in the
+  group, and are not given a third role.
+- **D18: 2σ and the 3 % template band are constants.** The ladder in Compare
+  is the control.
 
 ## Follow-ups (not this PR)
 
