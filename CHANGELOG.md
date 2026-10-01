@@ -17,8 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deviations, √(2/ν), for the series and for every run. Isolated runs whose
   asymmetry stands apart keep their own amplitude and are listed, and a block
   of runs at one end of the series through which the amplitude cannot be shared
-  is reported as possible missing asymmetry. A run with structured residuals no
-  longer leaves the wizard with nothing to recommend; the summary names it.
+  is reported as possible missing asymmetry, or an amplitude that really
+  changes. A run with structured residuals no longer leaves the wizard with
+  nothing to recommend; the summary names it, in one sentence per finding with
+  run lists given as ranges.
   The previous ranking, the best information criterion over the Global/Local
   role search, remains as the statistical objective:
   `build_global_fit_wizard_recommendation(..., objective=SelectionObjective.STATISTICAL)`.
@@ -26,6 +28,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and **Roughness** columns, and a parameter that "changes abruptly" along the
   series is no longer a warning. Project files move to schema version 24;
   recommendations stored by an earlier version load as statistical ones.
+- **The Global Fit Wizard's Scope step chooses what to recommend, and its
+  Compare step shows the sharing ladders.** A **Recommend** switch offers
+  **Best for trending** (the default) and **Best statistical fit**. Changing
+  it keeps the screening; fits optimised for the other objective read stale
+  until the shortlist, or the phases, are optimised again. Under **Best for
+  trending** Compare lists each model's sharing ladder: one rung in view per
+  model, the others behind a toggle ("▸ 4 other rungs"). Each rung shows its
+  **Cost** in standard deviations of χ²ᵣ against the 2σ tolerance, the
+  **Trend** quality of its worst local parameter, a mark (``Recommended``,
+  ``Pre-selected``, ``Costs too much``, ``Fit failed``) and the ladder's
+  findings, each with a sentence on hover: exempt runs, an end block the
+  amplitude could not be shared through, a pattern that is hard to justify,
+  passes that disagree, and a model outside the 3 % band. A rung that costs
+  too much can still be picked. Under the list, a strip plots every local
+  parameter of A (and B) against the series axis with its trend quality; hover
+  a plot for the three factors behind the number. **Details** gives the rung's
+  χ²ᵣ against the all-local fits and every run's own cost. The **Phases**
+  step shows each phase's rung the same way and traces the local parameters
+  across the boundaries. **Best statistical fit** keeps the role splits, the
+  evidence weights and the role tables as they were.
+- **Applying a rung that exempts runs leaves those runs out of the coupled
+  series.** They stay in the data group and appear unticked in the Batch
+  tab's member list; the Apply step and the tab's results card say which runs
+  were left out and why. A rung that shares one total amplitude is applied as
+  the grouped model, with the total Global and the fractions Local. Applying
+  phases now seeds each phase's series from that phase's own first run.
 - **The fit wizards' slow tag now comes from fit times measured on your
   computer.** Before, a model was slow when the registry declared it
   expensive per call, which ranked models badly: dynamic Gaussian KT is cheap

@@ -8,9 +8,9 @@ subsystems or days.
 
 ### Global Fit Wizard: recommend the fit that trends best
 
-Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Decision
-log (D1–D15), prototype evidence on seven muon school series, code map and
-phases are in
+Status: implemented 2026-10-01 on `feat/global-wizard-trend-objective`, PR to
+follow. Decision log (D1–D27), prototype evidence on seven muon school series,
+code map and phases are in
 [plans/global-wizard-trend-objective.md](plans/global-wizard-trend-objective.md).
 
 The wizard's default objective becomes the most trendable candidate among

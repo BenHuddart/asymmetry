@@ -1,8 +1,8 @@
 # Global Fit Wizard: recommend the fit that trends best
 
-Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Phases 1–4
-implemented; phase 5 not yet. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are lead proposals
-recorded here so review can overturn them. Follows
+Status: implemented 2026-10-01 on `feat/global-wizard-trend-objective` (phases
+1–5), PR to follow. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are
+lead proposals recorded here so review can overturn them. Follows
 [global-wizard-transitions.md](global-wizard-transitions.md) (phases) and
 [global-wizard-stepper.md](global-wizard-stepper.md) (the Compare step).
 
@@ -438,6 +438,78 @@ checkout, in order.
    parameter with error bars; flags for exemptions, missing asymmetry,
    hard-to-justify and pass disagreement; apply carries the pattern and the
    exemptions to the Batch tab. Sphinx page, screenshot scenarios, CHANGELOG.
+   *Landed.*
+   - **Two kinds of row, typed where they are built.** Core's
+     `summarise_rungs` (`trend_objective.py`) turns ladder rungs into
+     `RungSummary`, a `CandidateSummary` that also carries the rung, its
+     series χ²ᵣ, whether its template is in the band, and its findings. The
+     window picks the adapter by `recommendation.objective`:
+     `ModelComparePanel.set_ladders(RungSummary…)` or
+     `set_candidates(CandidateSummary…)`. `CompareRow` is the shared shell
+     (slot disc, role chips, pin, flag lines); `CandidateRow` adds Δ, weight
+     and gate, `RungRow` adds the mark, the cost and trend meters and the
+     findings. Nothing in the widgets asks whether a rung is `None`.
+   - **One wording for a finding.** `rung_findings` gives each finding a short
+     label and one sentence; the rows show the label with the sentence on
+     hover, and `trend_recommendation` joins the same sentences into the
+     summary. Run lists are ranges where the run numbers follow on. Clustered
+     residual failures are named once (the series warning that repeated them
+     is left out of the trend summary).
+   - **Objective switch.** *Recommend* on the Scope step's Search settings
+     row, beside the ranking metric: "Best for trending" (default) and "Best
+     statistical fit", each with a one-line hint. Decided here: changing it
+     does **not** start a run. Screening is the same under both, so it stays;
+     optimised fits keep the objective they were searched for, Compare and
+     Phases read stale under a banner, and *Optimise N families →* or
+     *Optimize phases* re-runs them (core's merge then replaces the other
+     objective's fits). A recommendation with no optimised fit takes the
+     choice at once, which is how the choice is persisted — on the
+     recommendation, as the metric is; the analysis signature is unchanged
+     and there is no schema change.
+   - **Folded ladders.** Each model shows the first rung of its display order
+     (its pre-selected one) and folds the rest behind "▸ N other rungs". The
+     pre-selected rung is the model's answer and the rest are its evidence,
+     so the default view is one row per model however long the ladder; a fold
+     stays open once opened and opens itself when A or B is inside it. A model
+     outside the band is listed the same way with an "Outside the 3 % band"
+     finding. Only models that were climbed can be listed: those inside the
+     band, those the data identified, and those the user ticked.
+   - **Marks.** Recommended, else Fit failed, else Costs too much, else
+     Pre-selected, else none. A costly rung stays pickable and can be taken
+     to Apply (D9).
+   - **Trace strip.** `ParameterTraceStrip`: one small plot per parameter A
+     or B leaves local, value ± error against the axis, titled with the trend
+     quality, the three factors on hover, exempt runs as hollow diamonds, B
+     hollow and dashed. It sits **under the ladder list**, not beside the
+     overlay: the overlay column's height floor grows with the run count
+     (twelve runs already need more than the default window), so a strip
+     there either raised the window's minimum height by ~190 px or was
+     squeezed to an unreadable 100 px. Under the list it gets the list's
+     spare height and 40 % of the width.
+   - **Details.** The rungs' IC table stays; in place of the role table, the
+     rung's χ²ᵣ against all-local, its cost and trend qualities, and a
+     per-run table of χ²ᵣ and cost with exempt and offending runs marked.
+   - **Phases.** Each optimised phase's answer is a `RungRow` (no slot disc,
+     no pin) under the Transitions card; the strip under the overlay traces
+     every phase's local parameters in the phase colours with the boundaries
+     dashed. Under the statistical objective the chips are as before.
+   - **Apply (D17).** Exempt runs become unticked members of the Batch tab's
+     pool, so the fit runs over the rest and the recorded series lists them as
+     excluded through the existing "group members that were not fitted" rule.
+     For that the series' group must own every run before the fit is
+     recorded: the tab emits `series_group_requested` and the main window
+     binds the group the ordinary batch-group policy resolves (or mints).
+     Each phase is applied on its own runs and seeded from its own first
+     coupled run (before, every phase after the first kept the first phase's
+     values in its recipe). The wizard result is cached under the series it
+     analysed; after an apply with exemptions the tab is on fewer runs, so
+     the Wizard button there starts a new analysis of those runs — tick the
+     exempt runs again to return to the cached one.
+   - **Docs.** The reference page describes both objectives, with a new
+     section on what "trends best" and "fits adequately" mean; scenarios
+     `global_fit_wizard_ladder` (new, a synthetic hopping scan),
+     `global_fit_wizard_apply` (now the rung with its exempt run) and
+     `global_fit_wizard_transitions` (now rungs and the strip).
 
 ## Acceptance
 
@@ -468,6 +540,19 @@ A recommendation, not "no candidate passed", on all seven.
 
 ## Follow-ups (not this PR)
 
+- A phase keeps only its answer rung, so the Phases step cannot unfold a
+  phase's ladder; listing sibling rungs per phase needs core to keep them.
+- A rung far cheaper than all-local (a large negative cost) means the
+  all-local fits were not at their minimum; the ladder does not act on it and
+  the GUI shows the negative cost as an empty bar.
+- A field pinned from metadata (`B_L` in zero field) is listed as Local, not
+  Fixed, on a wizard candidate and in the Batch tab after apply, under both
+  objectives.
+- On synthetic ten-run series simulated from the fitted model itself, a run
+  trips the residual gate (runs test) on about half of the noise seeds; under
+  the trend objective that adds a caveat sentence to the summary.
+- The Batch tab has no one-click way back to the series-wide wizard result
+  after an apply that left runs out.
 - The CLI's `fit-global` choosing a pattern with the same ladder.
 - A wizard-harness case on a real dynamic KT decoupling series, to re-check
   the #347 changelog claim now that #348 has landed.

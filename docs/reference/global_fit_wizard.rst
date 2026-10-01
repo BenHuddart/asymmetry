@@ -24,7 +24,7 @@ Apply**, laid out as a stepper across the top so that what each stage does,
 and what comes next, is always in view. **Scope** reviews the series and
 chooses which model families to consider; **Screen** fits each family to every
 run independently and ranks the families; **Compare** holds the coupled global
-fits of the families you shortlisted, one row per Global/Local split, and sets
+fits of the families you shortlisted, one row per sharing pattern, and sets
 two of them side by side; **Phases** partitions the series at a transition when
 the model changes along it; and **Apply** reviews exactly what will be handed
 to the global-fit tab before it is handed over. It differs from the
@@ -47,6 +47,18 @@ independently re-optimises an otherwise common quantity. It is also a useful
 cross-check on a series you have already fit by hand — the screening stage
 should recover the same model family you converged on.
 
+What a series fit is for is usually the trend: parameters that can be followed
+along the temperature or field axis, with error bars small against their
+variation. The best fit in the statistical sense is often not that fit. With
+thousands of points per run, freeing a parameter on every run almost always
+lowers an information criterion, and the parameters then trade against each
+other run by run — an amplitude against a background, an amplitude against a
+rate — and stop being trackable. By default the wizard therefore recommends
+the sharing pattern whose per-run parameters **trend best among the patterns
+that fit adequately** (see :ref:`global-fit-wizard-trend-objective`). The
+information-criterion ranking remains available as the other objective; the
+**Recommend** switch on the Scope step chooses between them.
+
 Once the wizard has applied a model, :doc:`fitting` covers running and
 refining the coupled fit and :doc:`assessing_a_fit` covers judging the result.
 For the single-spectrum version of the same guided approach, see
@@ -60,7 +72,7 @@ datasets, bunching, and fit range the tab is using at the time you open it, so
 candidates are compared on exactly the points a manual global fit would use.
 Completed wizard states are cached with the tab context and persisted in
 project files, so reopening the wizard on an unchanged series skips straight to
-the last result — the Compare step when role splits have been optimised, the
+the last result — the Compare step when coupled fits have been optimised, the
 Screen step otherwise — rather than rebuilding an unchanged screening table or
 rerunning finished optimisations.
 
@@ -71,8 +83,9 @@ of where it stands, and its disc marks its state:
 - **current** — a filled disc on a highlighted tile: the step on screen;
 - **ready** — an outlined disc: the step's inputs exist and it has not run
   (Compare reads "Next: optimise the shortlist" once screening is done);
-- **stale** — an amber "!": the step's results no longer match the scope
-  (see `Scope: review the series and choose scope`_ below);
+- **stale** — an amber "!": the step's results no longer match the scope, or
+  were optimised for the other objective (see `Scope: review the series and
+  choose scope`_ below);
 - **running** — a turning arc: an analysis for this step is in progress
   ("Screening…", "Optimising the shortlist…", or "Optimising phases…");
 - **skipped** — a dashed disc: the step does not apply to this series (Phases
@@ -83,7 +96,8 @@ Scope to widen the search, or leave a long run and read an earlier step while
 it goes; a pending step waits for its inputs. The summaries follow the
 analysis: Scope names the field direction and the number of models ("Longitudinal
 · 31 models"), Screen names the leading family ("*Title* leads"), Compare counts
-the optimised splits ("8 role splits optimised"), Phases states the selected
+what was optimised ("2 sharing ladders climbed", or "8 role splits optimised"
+under the statistical objective), Phases states the selected
 partition ("1 transition · 21 ± 3 K"), and Apply names what it holds ("Pick a
 model first", "Ready: *title*", and "Applied: *title*" once it is applied).
 
@@ -183,10 +197,30 @@ recommendation unless you mark a parameter ``Fixed``; a fixed parameter is left
 untouched throughout. Invalid bounds are reported inline and stop the run
 before any fitting starts.
 
-The **Search settings** row carries the ranking metric (``AICc`` by default;
-see :ref:`global-fit-wizard-metrics`) and a single, honest optimisation mode —
-the **separable role search** (see :ref:`global-fit-wizard-role-search`) —
-reached by the primary **Run screening** button.
+The **Search settings** row starts with **Recommend**, which sets what the
+coupled optimisation is for:
+
+- **Best for trending** (the default) — "Recommends the sharing pattern whose
+  per-run parameters vary most cleanly along the series, among the models that
+  fit adequately." The Compare step then lists each model's *sharing ladder*
+  (see :ref:`global-fit-wizard-trend-objective`).
+- **Best statistical fit** — "Recommends the model and sharing pattern with
+  the best information criterion." The Compare step then lists the role
+  splits of the **separable role search** (see
+  :ref:`global-fit-wizard-role-search`).
+
+Screening is the same under either, so changing **Recommend** never asks for a
+new screening. Fits that were already optimised keep saying what they were
+optimised for: a banner reads, for example, "These fits were optimised as
+“Best for trending”. Optimise the shortlist on the Screen step again, and the
+phases on the Phases step, to rank them as “Best statistical fit”.", and the
+stepper marks Compare and Phases with "!" until you do. Their results stay
+viewable and can still be applied. Switching back restores them at once. The
+choice is stored with the result, as the metric is.
+
+Beside it are the ranking metric (``AICc`` by default; see
+:ref:`global-fit-wizard-metrics`) and the single optimisation mode, reached by
+the primary **Run screening** button.
 
 Screen: rank the families and pick a shortlist
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -260,26 +294,146 @@ rationale.
 Compare: candidate A against candidate B
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. image:: /_generated/screenshots/global_fit_wizard_result.png
-   :alt: Global Fit Wizard Compare step — optimised role splits of the LF Kubo-Toyabe model, with the shared-Delta split as A and a per-run-Delta split pinned as B
-   :width: 100%
-
-*The Compare step after a coupled optimisation of Longitudinal-field KT +*
-*Constant. A is the recommended split, with Δ shared and* :math:`B_L` *per run.*
-*B, pinned dashed, frees Δ per run as well. It fits every run as closely by*
-*eye, but it scores +34 AICc and fails the runs test at 100 G. The trend plot*
-*follows Δ: A's shared value is one line across the series, while B's per-run*
-*Δ falls away at 100 G, where the decoupled signal no longer constrains it.*
-
 The optimisation runs in the Compare step and lands there when it finishes;
 until one has run, the step reads "Optimise the shortlist on the Screen step
-first." with a **Go to Screen** button. On the left, the optimised candidates
-are grouped by model, best first, with one row per Global/Local split — a
-single template usually yields several, since the role search scores
-neighbouring assignments exactly. Each row carries:
+first." with a **Go to Screen** button. What the step lists depends on
+**Recommend**: sharing ladders under **Best for trending**, role splits under
+**Best statistical fit**. The comparison itself — pick A, pin B, read them side
+by side — is the same under both, and is described first.
 
-- one chip per parameter naming its role (``Global Δ``, ``Local B_L``), and a
+Click a row to make it candidate **A**; **Pin as B** on any other row overlays
+it as candidate **B**, and **Unpin B** clears it. The recommended row starts
+as A. On the right, both are drawn over the data — A solid, B dashed, one
+colour per run along the sweep axis — above one residual strip per run, A in
+the run colour over B in grey, with each run's :math:`\chi^2_\nu` for A and B
+at the strip's end ("χ²ᵣ A · B"); a series longer than twelve runs shows twelve
+strips spread along it. Below, a parameter table sets A beside B: a shared
+parameter as one value with its uncertainty, a local one as its per-run values,
+and a note column that flags a global both candidates share when the two
+values differ by two standard deviations or more ("differs by 3.1σ"), together
+with either side's parameter flags. **Continue with A →** takes A to the Apply
+step.
+
+Every row also carries the warnings the fit earned: the residual gate's
+failing check with its runs spelled out (for example "runs-test z score
+suggests structure (-2.32) (run 5204)"), and parameter flags, each naming the
+runs that earned it — a value "at lower bound" or "at upper bound" (a plain
+fact — a rate pinned at zero is often physical), "not finite", or "poorly
+determined" (its uncertainty exceeds its magnitude). A row shows at most three
+warning lines and hides the rest behind "+*k* more".
+
+Best for trending: the sharing ladders
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. image:: /_generated/screenshots/global_fit_wizard_ladder.png
+   :alt: Global Fit Wizard Compare step under Best for trending — the sharing ladder of a dynamic Kubo-Toyabe model with its recommended rung as A, the other rungs unfolded beneath it, and the trace of the hop rate against temperature
+   :width: 100%
+
+*The Compare step on a synthetic zero-field temperature scan: a dynamic*
+*Gaussian Kubo–Toyabe signal with one static width and a hop rate that rises*
+*with temperature, and one run that carries 10 % more asymmetry. The*
+*recommended rung shares the background, the amplitude, and Δ, leaves ν local,*
+*and exempts run 6104. The model's ladder is unfolded beneath it: with Δ or the*
+*amplitude still fitted run by run the worst trend falls to 0.58 and below, and*
+*sharing ν as well costs far more than the tolerance allows. The strip under*
+*the list traces ν against temperature, the exempt run drawn as a hollow*
+*diamond.*
+
+Under **Best for trending** the wizard fits, for each shortlisted model, a
+*sharing ladder*: the same model with nothing shared, then with the background
+shared, then the amplitudes, then one further parameter at a time, each rung a
+real coupled fit (:ref:`global-fit-wizard-trend-objective` gives the order and
+the rules). The left of the step lists the ladders model by model, under the
+caption "Sharing ladders · cost against every parameter local · trend of the
+worst one". The models that fit about as well as the best one come first, in
+the order of their trends, so the recommended rung leads the list; models that
+fit worse follow, by how well they fit.
+
+Each model shows one rung — the one its ladder pre-selects — and folds its
+others behind a toggle ("▸ 4 other rungs"). The pre-selected rung is a model's
+answer and the rest are the evidence for it, so the default view is one answer
+per model and stays short however many parameters a model has; unfolding a
+ladder shows what each further act of sharing bought or cost. A ladder stays
+unfolded once you open it, and opens by itself when one of its folded rungs is
+A or B. A rung's row carries:
+
+- a mark, when it has one: ``Recommended`` for the rung the wizard recommends,
+  ``Pre-selected`` for another model's best adequate rung, ``Costs too much``
+  for a rung over the cost tolerance, and ``Fit failed`` when the coupled fit
+  did not converge on every run;
+- one chip per parameter naming its role (``Global Δ``, ``Local ν``), and a
   "Fixed:" line for any fixed parameter;
+- **Cost**: how far sharing raised the series :math:`\chi^2_\nu` above the
+  same model with every parameter local, in standard deviations of
+  :math:`\chi^2_\nu` ("+0.1σ"). The bar is full at twice the tolerance, with
+  the 2σ tolerance marked half-way, and turns amber past it;
+- **Trend**: the trend quality of the worst parameter the rung leaves local,
+  from 0 to 1 ("0.99"); hover it for every local parameter's quality. A rung
+  that shares everything has nothing left to trend and reads "—";
+- the ladder's findings about the rung, each with a sentence on hover:
+
+  - "Run 6104 exempt" — "Run 6104 keeps its own amplitude: the asymmetry there
+    stands apart from the series.";
+  - "Amplitude not shared through runs 1–3" — "Amplitude could not be shared
+    through runs 1–3: possible missing asymmetry there, or an amplitude that
+    really changes.";
+  - "Hard to justify: shares λ" — "Shares λ while the same component's
+    amplitude varies.";
+  - "Passes disagree on λ" — "Runs taken in separate passes disagree on
+    λ.";
+  - "Outside the 3 % band" — "Fits worse than the best model by more than
+    3 %; listed for comparison."
+
+A rung that costs too much says so and stays pickable. The tolerance is a
+statement about noise, and a model that only reaches :math:`\chi^2_\nu
+\approx 1.5` everywhere is already imperfect by more than the tolerance
+measures; when the pattern you know to be physical costs a little more than
+2σ on such a model, pick it, read its residual strips against the
+pre-selected rung pinned as B, and continue with it. Likewise a model outside
+the 3 % band is never recommended, but it is listed with its trend quality
+and can be picked.
+
+Beneath the list, a strip plots every parameter that A leaves local against
+the sweep axis, with its error bars, each plot titled with the parameter and
+its trend quality ("ν (MHz) — trend 0.99"). Hover a plot for the three factors
+behind the number. B's values are overlaid hollow and dashed, and a parameter
+only B leaves local gets a plot of its own, so pinning the rung below A shows
+directly what sharing one more parameter did to the others. Runs that keep
+their own amplitude are drawn as hollow diamonds ("◇ run that keeps its own
+amplitude"). This strip is what the recommendation should be judged by: a
+parameter that rises smoothly through a dozen runs is worth more than a few
+units of information criterion. When A shares everything the strip reads
+"Every parameter is shared: nothing varies from run to run".
+
+The collapsed **Details** section holds the rungs' scores (the ranking score,
+**AIC**, **AICc**, **BIC**, the gate, and the Global and Local parameters)
+and the **Cost of A**: the series :math:`\chi^2_\nu` with every parameter
+local and for this rung, the cost with its tolerance, each local parameter's
+trend quality, and a table with every run's own :math:`\chi^2_\nu` and
+**Cost (σ)**. The **Note** column marks a run that is "exempt: keeps its own
+amplitude" and one that is "over the 2σ tolerance" on its own.
+
+Best statistical fit: the role splits
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. image:: /_generated/screenshots/global_fit_wizard_result.png
+   :alt: Global Fit Wizard Compare step under Best statistical fit — optimised role splits of the LF Kubo-Toyabe model, with the shared-Delta split as A and a per-run-Delta split pinned as B
+   :width: 100%
+
+*The Compare step under* **Best statistical fit** *after a coupled optimisation*
+*of Longitudinal-field KT + Constant. A is the recommended split, with Δ shared*
+*and* :math:`B_L` *per run. B, pinned dashed, frees Δ per run as well. It fits*
+*every run as closely by eye, but it scores +34 AICc and fails the runs test at*
+*100 G. The trend plot follows Δ: A's shared value is one line across the*
+*series, while B's per-run Δ falls away at 100 G, where the decoupled signal no*
+*longer constrains it.*
+
+Under **Best statistical fit** the optimised candidates are grouped by model,
+best first, with one row per Global/Local split — a single template usually
+yields several, since the role search scores neighbouring assignments
+exactly — and every row is in view. In place of a cost and a trend, each row
+carries:
+
 - a bar for its difference from the best optimised split on the ranking metric
   (the caption above the list names the metric, "Role splits · ΔAICc from
   best");
@@ -288,70 +442,70 @@ neighbouring assignments exactly. Each row carries:
   splits — the relative support each split has among those fitted, read as a
   percentage (a sliver of support reads ``<1%``);
 - a gate badge, ``Pass`` when every run's residuals pass the automatic
-  checks and ``Warn`` otherwise, with the failing check and its runs spelled
-  out beneath (for example "runs-test z score suggests structure (-2.32) (run
-  5204)");
-- parameter flags, each naming the runs that earned it: a value "at lower
-  bound" or "at upper bound" (a plain fact — a rate pinned at zero is often
-  physical), "not finite", or "poorly determined" (its uncertainty exceeds its
-  magnitude). A row shows at most three of these lines, the gate's first,
-  and hides the rest behind "+*k* more".
+  checks and ``Warn`` otherwise.
 
-Click a row to make it candidate **A**; **Pin as B** on any other row overlays
-that split as candidate **B**, and **Unpin B** clears it. The recommended
-split starts as A. On the right, both are drawn over the data — A solid, B
-dashed, one colour per run along the sweep axis — above one residual strip per
-run, A in the run colour over B in grey, with each run's :math:`\chi^2_\nu`
-for A and B at the strip's end ("χ²ᵣ A · B"); a series longer than twelve runs
-shows twelve strips spread along it. Below, a parameter table sets A beside B:
-a shared parameter as one value with its uncertainty, a local one as its per-run
-values, and a note column that flags a global both candidates share when the
-two values differ by two standard deviations or more ("differs by 3.1σ"),
-together with either side's parameter flags. Click the row of a parameter
-that is local to A or B to plot it against the sweep axis beside the table — A filled, B hollow and
+Click the row of a parameter that is local to A or B in the parameter table to
+plot it against the sweep axis beside the table — A filled, B hollow and
 dashed, and a shared value drawn as one line with its :math:`\pm1\sigma` band.
 In the LF decoupling example, the local :math:`B_L` tracks the applied field —
 exactly the shared-:math:`\Delta`, local-:math:`B_L` structure the model
 expresses.
 
-The collapsed **Details** section holds the raw optimised table (the ranking
-score, **AIC**, **AICc**, **BIC**, the gate, and the Global and Local
-parameters) and the **Parameter roles for A**: for each non-fixed parameter,
-the score with it kept ``Global``, the score with it made ``Local``, and the
-difference. These recommendations discourage overfitting: a model with more
-local parameters usually fits better in raw :math:`\chi^2`, so the wizard only
-recommends ``Local`` when the penalised information criterion improves enough
-to overcome the extra flexibility. **Continue with A →** takes A to the Apply
-step.
+Here the collapsed **Details** section holds the raw optimised table and the
+**Parameter roles for A**: for each non-fixed parameter, the score with it
+kept ``Global``, the score with it made ``Local``, and the difference. These
+recommendations discourage overfitting: a model with more local parameters
+usually fits better in raw :math:`\chi^2`, so the wizard only recommends
+``Local`` when the penalised information criterion improves enough to overcome
+the extra flexibility.
 
 Apply: review what the global-fit tab receives
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. image:: /_generated/screenshots/global_fit_wizard_apply.png
-   :alt: Global Fit Wizard Apply step — the LF Kubo-Toyabe model, its Global, Local and Fixed parameter roles, and the starting values from run 5201's fit
+   :alt: Global Fit Wizard Apply step — the dynamic Kubo-Toyabe model, its Global, Local and Fixed parameter roles, the exempt run left out of the coupled fit, and the starting values from run 6101's fit
    :width: 100%
 
-*The Apply step after* **Continue with A →** *on the recommended split: the*
-*model, the parameter roles the global-fit tab will set, and the starting*
-*values from the first run's fit, above* **Apply to the global fit tab**.
+*The Apply step after* **Continue with A →** *on the recommended rung of the*
+*hopping scan: the model, the parameter roles the global-fit tab will set, the*
+*run left out of the coupled fit, and the starting values from the first*
+*coupled run's fit, above* **Apply to the global fit tab**.
 
 Choosing a model and committing it are separate acts, so Apply reviews exactly
 what will be handed over before anything changes: the model's title, its
 parameter roles (**Global**, **Local**, and **Fixed**, as the global-fit tab
 will set them), the **Starting values** ("From run *N*'s fit; local parameters
 start there on every run."), any series warnings, and a collapsed **Why these
-roles?** section with the role search's rationale for each parameter. **Apply
-to the global fit tab** then updates the tab's composite function, parameter
-values, bounds, and Global or Local roles directly, reusing the
+roles?** section — the cost, the trend qualities, and the findings of a ladder
+rung, or the role search's rationale for each parameter of a role split.
+**Apply to the global fit tab** then updates the tab's composite function,
+parameter values, bounds, and Global or Local roles directly, reusing the
 already-computed fit bundle so the plots and parameter views refresh
 immediately without rerunning the fit. Afterwards the step's summary reads
-"Applied: *title*". To apply a different split, go back to Compare, make it A,
+"Applied: *title*". To apply a different row, go back to Compare, make it A,
 and continue again.
+
+A rung is applied as it was fitted. When it shares one total amplitude and
+leaves the fractions local (see :ref:`global-fit-wizard-trend-objective`), the
+tab receives the model written that way — its signal terms in a fraction
+group — with the total ``Global`` and the fraction ``Local``. When it exempts
+runs, those runs are **left out of the coupled series**: a parameter of the
+global-fit tab is Global, Local, or Fixed, and "shared, except on these runs"
+is none of the three. Apply says so before you commit — "Run 6104 is left out
+of the coupled fit: it keeps its own amplitude, which the series does not
+share. It stays in the data group, unticked." — and the tab's results card
+repeats it afterwards. The exempt runs remain members of the series' data
+group and appear unticked in the tab's member list, so the recorded series
+lists them as excluded and the tab's own fit over the remaining runs starts
+from the rung's pattern and values. Tick a run again to bring it back; the
+shared amplitude then has to describe it too.
 
 When the answer is a partition instead (see
 :ref:`global-fit-wizard-transitions`), Apply reviews the phases — the
 partition's summary sentence and one line per phase with its range, template,
-Global/Local split, and confidence — and offers **Apply phases**.
+Global/Local split, and its cost and trend quality (or its confidence, under
+the statistical objective), with the runs each phase leaves out — and offers
+**Apply phases**.
 
 .. _global-fit-wizard-transitions:
 
@@ -359,14 +513,16 @@ Phases: transitions and the penalty path
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. image:: /_generated/screenshots/global_fit_wizard_transitions.png
-   :alt: Global Fit Wizard Phases step — the Transitions card with the penalty path table and per-phase strip beside the series overlay coloured by phase
+   :alt: Global Fit Wizard Phases step — the Transitions card with the penalty path table and one rung row per phase, beside the series overlay coloured by phase and the trace strip with the boundary marked
    :width: 100%
 
 *The Phases step after optimising a synthetic two-phase temperature scan: the*
 *Transitions card shows the penalty path (0 and 1 breaks, the elbow*
-*pre-selected and verified) and a chip per phase naming its range, template,*
-*Global/Local split, and confidence. The second phase is picked, so the*
-*overlay, coloured by phase, draws its coupled fit over its four runs.*
+*pre-selected and verified) above one row per phase with its sharing pattern,*
+*cost, and trend quality. The second phase is picked, so the overlay, coloured*
+*by phase, draws its coupled fit over its four runs. The strip beneath traces*
+*the precession frequency through the ordered phase and the relaxation rate*
+*above it, with the boundary dashed.*
 
 A temperature or field series can cross one or more transitions, and the
 model that describes the runs on one side does not describe the runs on the
@@ -444,25 +600,176 @@ Phases step under "Optimizing each phase…", stepping from "Preparing the
 series screening table…" through "Optimising each phase…", which becomes
 "Optimising phase *i* of *N*…" once individual phases start; the status line
 reads "Running the coupled global optimisation once per phase. Progress is
-streamed to the live log." Once it finishes, a strip of phase chips appears
-beneath the table, one per phase, each naming its ordinal and range, its
+streamed to the live log."
+
+What each phase's answer is follows **Recommend**. Under **Best for
+trending** the sharing ladders are climbed on each phase's own runs, and a
+phase's answer is its best pre-selected rung among the models that fit that
+phase about as well as its best one. Once the run finishes, one row per phase
+appears beneath the card, headed by the phase's ordinal, range, and template,
+and built like a rung row of the Compare step: the role chips, the **Cost**
+and **Trend** bars, and the ladder's findings. Only the answer is kept for a
+phase, not its whole ladder, so there is nothing to unfold here; to see a
+phase's other rungs, select its runs and run the wizard on them as a series.
+Click a row to draw that phase's coupled fit over its runs, with residual
+strips. Beneath the overlay, a strip traces every parameter a phase leaves
+local, each phase in its own colour, with the boundaries dashed — the
+piecewise trend across the transition. The breaks themselves are still placed
+by BIC on the phases' best fits: a rung may cost up to 2σ and a model up to
+3 %, which on real point counts is more than a break is worth, so scoring
+breaks by the answer would let the objective move them.
+
+Under **Best statistical fit** a strip of phase chips appears beneath the
+table instead, one per phase, each naming its ordinal and range, its
 template, its Global/Local split (``Global: A_1, A_bg · Local: Lambda``), and a
 confidence line ("High confidence", or "Medium confidence — check the
-warnings"). Click a chip to draw that phase's coupled fit over its runs, with
-residual strips. The verified row's **Apply phases** button opens the Apply
+warnings"). Click a chip to draw that phase's coupled fit.
+
+The verified row's **Apply phases** button opens the Apply
 step to review the phases; its own **Apply phases** then creates one nested
 data group per phase under the series group (see :ref:`phases-within-a-group`
 in :doc:`gui_usage`), records one global-fit series per phase (see
 :ref:`trend-phase-owned-series` in :doc:`parameter_trending`), and binds the
-global-fit tab to the first phase. The main window's status bar confirms what
-was created, e.g. "Applied 2 phases under Runs 901-906 (2 transition(s))."
+global-fit tab to the first phase. A run that a phase's rung exempts stays in
+that phase's group and is left out of its series, as for a series-wide rung.
+The main window's status bar confirms what was created, e.g. "Applied 2
+phases under Runs 901-906 (2 transition(s)).", and names any runs left out.
+
+.. _global-fit-wizard-trend-objective:
+
+What "trends best" and "fits adequately" mean
+----------------------------------------------
+
+The trend objective answers two questions in turn: which sharing patterns the
+data allow, and which of those leaves parameters that can be followed along
+the series. Both are measured in units that do not depend on how many points
+a run holds.
+
+**Fits adequately.** A sharing pattern is judged against the *same model with
+every parameter local* — the best that model can do on these runs — never
+against a fixed value of :math:`\chi^2_\nu`. Sharing can only raise
+:math:`\chi^2_\nu`, and for :math:`\nu` degrees of freedom
+:math:`\chi^2_\nu` scatters about one with standard deviation
+:math:`\sqrt{2/\nu}`, so the rise is counted in that unit:
+
+.. math::
+
+   \text{cost} = \frac{\chi^2_\nu(\text{shared}) -
+   \chi^2_\nu(\text{all local})}{\sqrt{2/\nu}} .
+
+A pattern is adequate while the cost is at most **2σ for the series and for
+every run** taken on its own. The second condition matters: a parameter that
+is wrong for two runs out of twenty barely moves the series total. Between
+models the wizard applies a wider band: a model competes on its trends when
+its all-local :math:`\chi^2_\nu` is within **3 %** of the best model's. An
+information criterion is not used for either judgement. On a run of tens of
+thousands of points a systematic difference no eye can see is worth tens of
+information units, which is how the statistical ranking comes to prefer
+everything local. Both tolerances are fixed; the ladder in the Compare step is
+the control, since it shows what every pattern costs and lets you pick a
+costlier one.
+
+**Trends best.** Each parameter a pattern leaves local has a trace: its
+fitted value and uncertainty at every run, in sweep-axis order. Its *trend
+quality* is the product of three factors, each between 0 and 1:
+
+- the **determined share** — the fraction of runs whose value the data pin
+  down. A run does not count when its uncertainty exceeds half its value *and*
+  a quarter of the trace's span; the second test keeps an order parameter
+  that falls to zero from being called undetermined there;
+- the **signal**, :math:`s = r/(r + 3)` with :math:`r` the trace's span (its
+  10–90 % range) over its median uncertainty. A parameter flat within its
+  errors scores low — it has nothing to show, and should be shared;
+- one minus the **zigzag share** — the fraction of interior points that lie
+  outside the interval their two neighbours span by more than two combined
+  standard deviations. The test compares a point only with its neighbours, so
+  it does not depend on scale: a rate rising smoothly over three decades has
+  no zigzag, and a genuine peak or step costs a single point.
+
+A pattern is as good as its *worst* local parameter (ties go to the mean, and
+last of all to the ranking metric). Each model's ladder pre-selects its adequate rung that trends
+best, and the recommendation is the best pre-selected rung among the models
+inside the band. Trend qualities within 0.05 of the leader's count as a tie,
+which goes to a rung that is not hard to justify (below) and then to the model
+that fits better. A pattern with nothing left local is not a trend, and is
+offered only when no other is adequate.
+
+**The sharing ladder.** For each model the wizard climbs from the all-local
+fits, which screening has already made, sharing a little more at each rung:
+
+1. the background;
+2. the amplitudes — first as one *shared total* when the model has two or more
+   signal amplitudes (below), then every amplitude;
+3. one further parameter at a time, in the order phases, shape parameters,
+   static widths, field and geometry parameters, then rates and frequencies
+   last.
+
+Amplitudes and the background come first because they are what a series is
+least expected to change and what trades most freely against everything else
+when left local. Each rung is one coupled fit, started from the series median
+of every shared parameter and each run's own value of the rest. A parameter
+whose sharing is not adequate is put back to local and the climb goes on to
+the next one, so a ladder costs at most a handful of coupled fits per model.
+A model with many parameters on a long series stops trying further parameters
+once the search has used its time allowance; the background and amplitude
+rungs are always fitted.
+
+**A shared total.** Through a transition the volume fractions of two signals
+often change while the total asymmetry does not. For a model with two or more
+signal terms side by side the ladder therefore also fits the model written
+with those terms under one total and :math:`n - 1` fractions — the same
+parameter count — and shares the total while the fractions stay local. The
+background is not part of the total: in a transverse field the constant is a
+different quantity from the precessing signal. The form is used only where
+the series can be written in it (every run's total of one sign, no line whose
+sign its amplitude carries).
+
+**Exempt runs.** A few runs with slightly more or less asymmetry than their
+neighbours — a change of slits, a sample that moved — would otherwise veto
+sharing the amplitude for the whole series, or be absorbed by a rate. Isolated
+runs whose amplitude stands apart (never three in a row, and at most the
+larger of two runs and 10 % of the series) keep their own amplitude while
+every other run shares one; the rungs above inherit the exemption, and the
+runs are listed on every such rung.
+
+**The end block.** When the runs that cannot share the amplitude form a
+block at one end of the series, they are not exempted. The amplitude stays
+local, where its trace shows what happens, and the ladder reports the block.
+It reads "possible missing asymmetry there, or an amplitude that really
+changes" deliberately: asymmetry lost to a fast-relaxing or wide-field
+fraction outside the time window and an amplitude that steps for another
+reason look the same to the ladder, and telling them apart is a question for
+the physics of the sample. A block in the middle of the series, or a drift
+along all of it, simply leaves the amplitude local.
+
+**Hard to justify.** Sharing a relaxation rate or a frequency while the
+amplitude of the same component varies from run to run says that the amount
+of a signal changes but its dynamics do not. That can be true, so the pattern
+is never forbidden; it is flagged, and ranks behind an unflagged pattern that
+trends equally well.
+
+**Passes disagree.** A scan taken in two passes — a coarse one, then infill —
+can give parameters that zigzag in temperature order and are smooth within
+each pass, because something changed between the passes. No sharing pattern
+repairs that. When a local parameter's zigzag share is at least 0.3 along the
+axis and at most 0.1 inside the passes, the rung carries the caveat and the
+summary names the parameter. It takes two passes of three or more runs to
+say so.
+
+Two further rules keep the list honest. A rung of a multi-line or Overhauser
+model is left out when its lines are consistent with zero on some run, as in
+a phase where the oscillation has vanished, and a model whose pre-selected
+rung goes this way does not compete. And a run that fails its residual gate
+does not veto a rung: adequacy against the model's own all-local fits and the
+band are what admit it, and the summary names the runs to look at.
 
 .. _global-fit-wizard-role-search:
 
 How the role search works
 --------------------------
 
-Once a template is selected for coupled optimisation — for the whole series,
+This section describes the search behind **Best statistical fit**. Once a
+template is selected for coupled optimisation — for the whole series,
 or for one phase of a partition — the wizard still has to decide, for every
 promotable parameter, whether it is shared (``Global``) or free per run
 (``Local``). This is the **role search**, and it is now **separable**: every
@@ -552,6 +859,12 @@ the metric reranks the already-computed rows without rerunning the analysis —
 rebuilding the screening table is only required if the selected datasets, model,
 bounds, or expected roles change.
 
+The metric ranks the Screen step under either objective, and with it the
+shortlist. Under **Best statistical fit** it also ranks the Compare step.
+Under **Best for trending** the Compare step is ordered by trend quality and
+the metric only breaks ties between rungs that trend equally well; a rung's
+exempt runs each count one extra fitted parameter per shared amplitude.
+
 When to trust the recommendation
 --------------------------------
 
@@ -559,21 +872,39 @@ The wizard states its recommendation plainly, but it is a decision aid, not a
 verdict to accept unread. Its confidence is worth calibrating against what the
 gate logic actually checks.
 
-The recommended candidate is the best-scoring optimised candidate whose
-residuals pass every automatic residual check on every run.
-When the top two are within a small score margin the wizard presents them as a
-comparable pair and prefers the simpler one as the starting A on the Compare
-step; the status line then adds "with a similarly scoring alternative to
-inspect", and pinning the runner-up as B sets the two side by side. This is the case to trust with least reservation: a clean recommendation
-means every run's residuals look unstructured under the shared-parameter fit.
+Under **Best for trending** the status line states the recommendation in one
+sentence — "Recommended for its trends: *model*, with *these* shared across
+the series and *those* varying from run to run." — and then one sentence for
+each thing to know about it: the runs that keep their own amplitude, an end
+block the amplitude could not be shared through, a pattern that is hard to
+justify, passes that disagree, the runs on which the model leaves structured
+residuals ("review them before applying"), and a model that fits about as
+well and is listed to compare. A recommendation with only its first sentence
+is the one to trust with least reservation. Each further sentence is a
+caveat, not a veto: the wizard recommends a pattern whenever some model could
+be fitted on every run, because an imperfect model with its faults named is a
+better starting point than no recommendation. Read the trace strip first. If a
+parameter there does something the physics does not lead you to expect, unfold
+the ladder and pin the rung below as B: the two traces side by side show
+whether the feature belongs to the data or to the sharing.
+
+Under **Best statistical fit** the recommended candidate is the best-scoring
+optimised candidate whose residuals pass every automatic residual check on
+every run. When the top two are within a small score margin the wizard
+presents them as a comparable pair and prefers the simpler one as the starting
+A on the Compare step; the status line then adds "with a similarly scoring
+alternative to inspect", and pinning the runner-up as B sets the two side by
+side. A clean recommendation means every run's residuals look unstructured
+under the shared-parameter fit.
 
 Two softer outcomes deserve a closer look. A recommendation can carry a
 series-level caveat: every run clears its own residual gate, but the spectra
-change abruptly somewhere along the series, and the status line names where and
-ends "Review before applying." Treat it as a lead: the per-run fits are sound,
-but the series may hold a transition that one model should not be fitted
-through. A per-run gate failure is different and still blocks under the
-statistical ranking — it means the model genuinely does not fit some runs.
+change abruptly somewhere along the series, and the status line names where.
+Treat it as a lead: the per-run fits are sound, but the series may hold a
+transition that one model should not be fitted through. A per-run gate failure
+is different, and under the statistical ranking it still blocks — it means the
+model does not fit some runs — where the trend objective names the runs and
+recommends anyway.
 
 The per-run readouts in the Scope step's **Series** table carry the same honesty. A
 run whose best single fit shows **no significant structure** — its winner
@@ -585,10 +916,11 @@ transition, or at the noisy end of a decoupling series, do not. It usually
 means the data there are well described by a plain relaxation, and forcing the
 richer global model onto those runs would be over-fitting.
 
-In all three cases the honest move is the same: before applying, read A's
+In every case the honest move is the same: before applying, read A's
 residual strips and flags on the Compare step, pin its nearest rival as B,
-read the parameter-sharing diagnostics in **Details**, and check that the
-local-parameter trend behaves the way the physics leads you to expect.
+read the cost or the parameter-sharing diagnostics in **Details**, and check
+that the local-parameter trends behave the way the physics leads you to
+expect.
 
 Programmatic global fitting
 ---------------------------
