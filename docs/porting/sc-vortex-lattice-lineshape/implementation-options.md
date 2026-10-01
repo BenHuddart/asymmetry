@@ -46,9 +46,11 @@
   converges by `n_g≈8` (the width is calibrated, so raw-moment accuracy is moot).
   Defaults `n_g=10, n_grid=96` (~40 ms per field-distribution build), exposed as
   kwargs.
-- `_centered_field_offsets` is `lru_cache`d on rounded `(λ_eff, B0, B_c2, n_g,
+- `_centered_field_offsets` is `lru_cache`d on the exact `(λ_eff, B0, B_c2, n_g,
   n_grid)`, so repeated minimiser evaluations at unchanged shape params are free;
-  `R(t)` is a cheap matrix reduction over the grid.
+  `R(t)` is a cheap matrix reduction over the grid. The float arguments are not
+  rounded: a rounded key returns the same map for a finite-difference step, and
+  the fit then sees a wrong (or zero) derivative.
 - Degenerate guard (`B0≥B_c2`, `λ≤0`, `B_c2≤0`) returns `R=1` before any grid
   work.
 
