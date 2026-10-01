@@ -778,7 +778,12 @@ def test_a_phase_is_ranked_by_the_partition_score_not_the_search_metric():
 
     lean = _gated_assessment(key="one_line", aicc=100.0, gate_passed=True)
     rich = _gated_assessment(key="two_line", aicc=90.0, gate_passed=True)
-    rich = dc_replace(rich, local_param_names=("A_1", "A_2", "A_3", "A_4"), global_param_names=())
+    rich = dc_replace(
+        rich,
+        template=dc_replace(rich.template, model=CompositeModel(["Exponential"] * 4)),
+        local_param_names=("A_1", "A_2", "A_3", "A_4"),
+        global_param_names=(),
+    )
     lean = dc_replace(lean, local_param_names=("A_1",), global_param_names=())
     points = {1: 20000}
     assert global_fit_wizard_module._partition_bic(rich, points) > (

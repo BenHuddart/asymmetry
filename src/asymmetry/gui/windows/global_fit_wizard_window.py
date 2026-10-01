@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.component_tags import FieldGeometry
+from asymmetry.core.fitting.component_tags import FieldGeometry, ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import (
@@ -71,11 +71,6 @@ from asymmetry.core.fitting.global_fit_wizard import (
     merge_global_fit_wizard_recommendations,
     rerank_global_fit_wizard_recommendation,
     transitions_summary,
-)
-from asymmetry.core.fitting.global_search.heuristics import (
-    is_amplitude_parameter,
-    is_background_parameter,
-    is_rate_like_parameter,
 )
 from asymmetry.core.fitting.global_search.partition import PartitionPath
 from asymmetry.core.fitting.model_comparison import shortlist, summarise_candidates
@@ -1540,6 +1535,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._set_expectations_warning("")
 
         names, usage_by_name = _portfolio_parameter_usage(portfolio.templates)
+        # A name shared by several templates takes the kind the first one declares.
+        kinds: dict[str, ParameterKind] = {}
+        for template in reversed(portfolio.templates):
+            kinds.update(template.model.parameter_kinds())
         self._expectation_parameter_names = names
         self._expectations_table.setRowCount(len(names))
         for row, name in enumerate(names):
@@ -1550,13 +1549,17 @@ class GlobalFitWizardWindow(WizardWindowBase):
             role_combo = QComboBox()
             role_combo.addItems(["Global", "Local", "Fixed"])
             role_combo.setCurrentText(
-                _default_parameter_role(name, current_parameter_types=self._current_parameter_types)
+                _default_parameter_role(
+                    name, kinds[name], current_parameter_types=self._current_parameter_types
+                )
             )
             self._expectations_table.setCellWidget(row, 1, role_combo)
 
             bounds_item = QTableWidgetItem(
                 _format_bounds_text(
-                    _default_parameter_bounds(name, current_parameter_bounds=self._parameter_bounds)
+                    _default_parameter_bounds(
+                        name, kinds[name], current_parameter_bounds=self._parameter_bounds
+                    )
                 )
             )
             self._expectations_table.setItem(row, 2, bounds_item)
@@ -2432,19 +2435,33 @@ def _portfolio_parameter_usage(
     return ordered_names, usage_by_name
 
 
+#: Kinds a series is expected to hold steady, and kinds it is expected to move.
+_GLOBAL_BY_DEFAULT = frozenset({ParameterKind.BACKGROUND, ParameterKind.AMPLITUDE})
+_LOCAL_BY_DEFAULT = frozenset(
+    {
+        ParameterKind.RATE,
+        ParameterKind.FREQUENCY,
+        ParameterKind.STATIC_WIDTH,
+        ParameterKind.SHAPE,
+        ParameterKind.PHASE,
+    }
+)
+#: Kinds that start bounded below at zero, whatever bounds the Fit tab holds.
+_NON_NEGATIVE = (_LOCAL_BY_DEFAULT - {ParameterKind.PHASE}) | {ParameterKind.AMPLITUDE}
+
+
 def _default_parameter_role(
     name: str,
+    kind: ParameterKind,
     *,
     current_parameter_types: dict[str, str],
 ) -> str:
     current = str(current_parameter_types.get(name, "")).strip()
     if current == "Fixed":
         return "Fixed"
-    if is_background_parameter(name):
+    if kind in _GLOBAL_BY_DEFAULT:
         return "Global"
-    if is_amplitude_parameter(name):
-        return "Global"
-    if _is_positive_rate_parameter(name) or _is_phase_parameter(name):
+    if kind in _LOCAL_BY_DEFAULT:
         return "Local"
     if current in {"Global", "Local"}:
         return current
@@ -2453,12 +2470,13 @@ def _default_parameter_role(
 
 def _default_parameter_bounds(
     name: str,
+    kind: ParameterKind,
     *,
     current_parameter_bounds: dict[str, tuple[float, float]],
 ) -> tuple[float, float]:
-    if is_background_parameter(name):
+    if kind is ParameterKind.BACKGROUND:
         return -float("inf"), float("inf")
-    if is_amplitude_parameter(name) or _is_positive_rate_parameter(name):
+    if kind in _NON_NEGATIVE:
         return 0.0, float("inf")
     if name in current_parameter_bounds:
         return current_parameter_bounds[name]
@@ -2468,17 +2486,6 @@ def _default_parameter_bounds(
         if default_min is not None
         else (-float("inf"), float("inf"))
     )
-
-
-def _is_positive_rate_parameter(name: str) -> bool:
-    lower_name = name.lower()
-    if "phase" in lower_name:
-        return False
-    return is_rate_like_parameter(name)
-
-
-def _is_phase_parameter(name: str) -> bool:
-    return "phase" in name.lower()
 
 
 def _format_bounds_text(bounds: tuple[float, float]) -> str:

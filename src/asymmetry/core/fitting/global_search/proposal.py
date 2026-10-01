@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.global_search.adapters import (
     subset_additive_structure,
     with_parameter_roles,
 )
-from asymmetry.core.fitting.global_search.heuristics import (
+from asymmetry.core.fitting.global_search.role_policy import (
     allows_rate_first_localization,
-    is_background_parameter,
     localisation_threshold_scale,
 )
 from asymmetry.core.fitting.global_search.types import (
@@ -29,6 +29,7 @@ def extract_discrete_candidates(
 ) -> tuple[DiscreteCandidate, ...]:
     """Convert a relaxed solution into one or more discrete candidate structures."""
     spec_map = structure.parameter_spec_map
+    kinds = structure.model.parameter_kinds()
     shared_names: list[str] = []
     local_names: list[str] = []
     ambiguous_names: list[str] = []
@@ -44,11 +45,12 @@ def extract_discrete_candidates(
             shared_names.append(tie.parameter_name)
             notes.append(f"Kept {tie.parameter_name} shared by active-set freezing.")
             continue
-        if is_background_parameter(tie.parameter_name):
+        kind = kinds[tie.parameter_name]
+        if kind is ParameterKind.BACKGROUND:
             shared_names.append(tie.parameter_name)
             notes.append(f"Kept {tie.parameter_name} shared by staged background prior.")
             continue
-        if not allows_rate_first_localization(tie.parameter_name):
+        if not allows_rate_first_localization(kind):
             shared_names.append(tie.parameter_name)
             notes.append(f"Kept {tie.parameter_name} shared during rate-first staged search.")
             continue
@@ -59,8 +61,8 @@ def extract_discrete_candidates(
             for run_values in result.deviations_by_run.values()
         ]
         magnitude = float(max(deviations)) if deviations else 0.0
-        scaled_threshold = deviation_threshold * localisation_threshold_scale(tie.parameter_name)
-        scaled_band = ambiguity_band * localisation_threshold_scale(tie.parameter_name)
+        scaled_threshold = deviation_threshold * localisation_threshold_scale(kind)
+        scaled_band = ambiguity_band * localisation_threshold_scale(kind)
         if magnitude <= scaled_threshold:
             shared_names.append(tie.parameter_name)
         else:

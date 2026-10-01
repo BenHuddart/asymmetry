@@ -1,4 +1,4 @@
-"""Scoping tags for fit components: field geometry, physics class, and cost.
+"""Tags for fit components: field geometry, physics class, cost, parameter kinds.
 
 These enums annotate every built-in :class:`~asymmetry.core.fitting.composite.ComponentDefinition`
 with the experimental context in which it is physically meaningful (applied-field
@@ -50,6 +50,26 @@ class ComputationalCost(str, Enum):
     CHEAP = "cheap"
     MODERATE = "moderate"
     EXPENSIVE = "expensive"
+
+
+class ParameterKind(str, Enum):
+    """What a component's parameter measures, declared per parameter (never guessed).
+
+    The kinds are the classes the series tools treat differently: which
+    parameters carry the record's scale, and which are expected to vary from
+    run to run.
+    """
+
+    AMPLITUDE = "amplitude"  # asymmetry (or spectral height) carried by a term
+    FRACTION = "fraction"  # a fraction group's share of its total amplitude
+    BACKGROUND = "background"  # additive baseline
+    PHASE = "phase"
+    SHAPE = "shape"  # dimensionless form parameter (exponent, ratio)
+    STATIC_WIDTH = "static-width"  # width of a static field distribution
+    RATE = "rate"  # relaxation or fluctuation rate, or its inverse time
+    FREQUENCY = "frequency"  # precession frequency
+    FIELD = "field"  # applied or local magnetic field
+    GEOMETRY = "geometry"  # distance, angle, spin or coupling fixed by the muon site
 
 
 def _one_or_many(values: object) -> Iterable[object]:
@@ -105,6 +125,17 @@ def coerce_cost(value: object) -> ComputationalCost:
         return ComputationalCost(value)
     except ValueError as exc:
         raise ValueError(f"unknown computational cost {value!r}") from exc
+
+
+def coerce_parameter_kind(value: object) -> ParameterKind:
+    """Coerce a string/enum member into a :class:`ParameterKind`.
+
+    Raises :class:`ValueError` naming the offending token on a bad value.
+    """
+    try:
+        return ParameterKind(value)
+    except ValueError as exc:
+        raise ValueError(f"unknown parameter kind {value!r}") from exc
 
 
 #: Case-insensitive lookup from the loader field-direction vocabulary (see

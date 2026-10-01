@@ -1,7 +1,7 @@
 # Global Fit Wizard: recommend the fit that trends best
 
-Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Not yet
-implemented. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are lead proposals
+Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Phase 1
+implemented; phases 2–5 not yet. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are lead proposals
 recorded here so review can overturn them. Follows
 [global-wizard-transitions.md](global-wizard-transitions.md) (phases) and
 [global-wizard-stepper.md](global-wizard-stepper.md) (the Compare step).
@@ -212,6 +212,13 @@ checkout, in order.
    moved, `heuristics.py` deleted. Tests on synthetic traces: steep smooth
    rise, single peak, step, noise within errors, noise beyond errors, an
    order parameter going to zero, tied axis values.
+   *Landed.* Kinds live on `ComponentDefinition.param_kinds` and are read
+   through `CompositeModel.parameter_kinds()`; the role-search classes are in
+   `global_search/role_policy.py`. Decided here: a `FRACTION` kind for
+   fraction weights (a group total is an `AMPLITUDE` with a `GroupAmplitude`
+   identity); runs without an uncertainty are left out of span, median error
+   and zigzag; user-function parameters default to `shape` at
+   `register_component`.
 2. **Sharing ladder (core).** D7–D9 and D12: the ladder, adequacy in σ
    units, exemptions, the "hard to justify" flag (D3). Synthetic harness
    cases modelled on YMnAl (amplitude/background degenerate at slow

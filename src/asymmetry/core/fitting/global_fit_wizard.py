@@ -73,10 +73,6 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.global_search import (
     GlobalSearchConfig,
 )
-from asymmetry.core.fitting.global_search.heuristics import (
-    localisation_threshold_scale,
-    parameter_localisation_priority,
-)
 from asymmetry.core.fitting.global_search.homogeneity import (
     ParameterHomogeneity,
     classify_parameter_homogeneity,
@@ -89,6 +85,10 @@ from asymmetry.core.fitting.global_search.partition import (
     Segment,
     partition_series,
     tier2_segment_cost,
+)
+from asymmetry.core.fitting.global_search.role_policy import (
+    localisation_priorities,
+    localisation_threshold_scale,
 )
 from asymmetry.core.fitting.global_search.surrogate import (
     CollapseResult,
@@ -5148,7 +5148,8 @@ def _forward_role_change_candidates(
     ]
     | None = None,
 ) -> tuple[GlobalCandidateAssessment, ...]:
-    for tier in _tiered_role_candidates(remaining, incumbent.local_param_names):
+    priorities = localisation_priorities(template.model.parameter_kinds())
+    for tier in _tiered_role_candidates(remaining, incumbent.local_param_names, priorities):
         candidate_specs: list[
             tuple[
                 float,
@@ -5203,7 +5204,7 @@ def _forward_role_change_candidates(
             candidate_specs.sort(
                 key=lambda item: (
                     item[0],
-                    parameter_localisation_priority(item[1]),
+                    priorities[item[1]],
                     item[1],
                 )
             )
@@ -5651,6 +5652,8 @@ def _globalization_candidate_order(
     *,
     remaining: tuple[str, ...],
 ) -> tuple[str, ...]:
+    kinds = assessment.template.model.parameter_kinds()
+    priorities = localisation_priorities(kinds)
     scored_names: list[tuple[float, float, float, float, str]] = []
     for name in remaining:
         total_variation, roughness = _parameter_trace_roughness(
@@ -5658,16 +5661,13 @@ def _globalization_candidate_order(
             assessment,
             name,
         )
-        effective_variation = (total_variation + roughness) / max(
-            localisation_threshold_scale(name),
-            1e-9,
-        )
+        threshold_scale = localisation_threshold_scale(kinds[name])
         scored_names.append(
             (
-                effective_variation,
+                (total_variation + roughness) / threshold_scale,
                 total_variation + roughness,
-                -float(_parameter_localisation_priority(name)),
-                -localisation_threshold_scale(name),
+                -float(priorities[name]),
+                -threshold_scale,
                 name,
             )
         )
@@ -8200,10 +8200,11 @@ def _assessment_sort_key(
     assessment: GlobalCandidateAssessment,
     metric: SelectionMetric,
 ) -> tuple[float, int, int, int, int, int, str]:
+    priorities = localisation_priorities(assessment.template.model.parameter_kinds())
     return (
         float(assessment.metric_value(metric)),
         int(_persistent_lower_bound_penalty(assessment)),
-        int(_localisation_penalty(assessment.local_param_names)),
+        sum(priorities[name] for name in assessment.local_param_names),
         int(assessment.parameter_count),
         int(len(assessment.local_param_names)),
         int(assessment.additive_terms),
@@ -11734,7 +11735,9 @@ def _role_delta_threshold(
     ]
     if len(newly_localized) != 1:
         return threshold
-    priority = _parameter_localisation_priority(newly_localized[0])
+    priority = localisation_priorities(candidate.template.model.parameter_kinds())[
+        newly_localized[0]
+    ]
     if priority >= 3:
         return threshold + 2.0
     if priority == 2:
@@ -11746,22 +11749,15 @@ def _role_delta_threshold(
     return threshold
 
 
-def _localisation_penalty(local_param_names: tuple[str, ...]) -> int:
-    return sum(_parameter_localisation_priority(name) for name in local_param_names)
-
-
-def _parameter_localisation_priority(name: str) -> int:
-    return parameter_localisation_priority(name)
-
-
 def _tiered_role_candidates(
     remaining: tuple[str, ...],
     current_local_names: tuple[str, ...],
+    priorities: dict[str, int],
 ) -> tuple[tuple[str, ...], ...]:
     remaining_sorted = sorted(
         remaining,
         key=lambda name: (
-            _parameter_localisation_priority(name),
+            priorities[name],
             _paired_local_count(name, current_local_names),
             name,
         ),
@@ -11770,7 +11766,7 @@ def _tiered_role_candidates(
     current_priority: int | None = None
     bucket: list[str] = []
     for name in remaining_sorted:
-        priority = _parameter_localisation_priority(name)
+        priority = priorities[name]
         if current_priority is None or priority == current_priority:
             bucket.append(name)
             current_priority = priority

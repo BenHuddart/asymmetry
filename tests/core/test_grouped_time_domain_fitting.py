@@ -702,7 +702,7 @@ def test_grouped_count_model_applies_relative_phase_to_numbered_phase_parameters
 
 def test_validate_grouped_model_contract_accepts_unit_amplitude_and_zero_background() -> None:
     validate_grouped_model_contract(
-        ["A_1", "Lambda", "A_bg"],
+        CompositeModel.from_expression("Exponential + Constant"),
         model_values={"A_1": 1.0, "Lambda": 0.5, "A_bg": 0.0},
         fixed_params={"A_1", "A_bg"},
     )
@@ -711,10 +711,19 @@ def test_validate_grouped_model_contract_accepts_unit_amplitude_and_zero_backgro
 def test_validate_grouped_model_contract_rejects_free_amplitude_and_background() -> None:
     with pytest.raises(ValueError, match="Fixed = 0: A_bg"):
         validate_grouped_model_contract(
-            ["A_1", "Lambda", "A_bg"],
+            CompositeModel.from_expression("Exponential + Constant"),
             model_values={"A_1": 0.4, "Lambda": 0.5, "A_bg": 0.02},
             fixed_params=set(),
         )
+
+
+def test_validate_grouped_model_contract_leaves_look_alike_names_free() -> None:
+    # ``A_hf`` and ``a_L`` are a hyperfine coupling and a static width: neither is
+    # the model's scale, so neither has to be pinned at 1.
+    model = CompositeModel.from_expression("MuoniumTF + DynamicLorentzianKT")
+    values = dict(model.param_defaults) | {"A_1": 1.0, "A_2": 1.0}
+
+    validate_grouped_model_contract(model, model_values=values, fixed_params={"A_1", "A_2"})
 
 
 def test_fit_grouped_time_domain_rejects_non_group_local_parameters() -> None:

@@ -64,6 +64,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A parameter's role no longer depends on how its name is spelled.** Each
+  fit component now declares what its parameters measure, and seeding, the
+  individual-groups fit and the Global Fit Wizard read that declaration.
+  Before, any name starting with `A_` counted as an amplitude: the
+  individual-groups fit hid the muonium hyperfine coupling `A_hf` and the
+  Lorentzian Kubo-Toyabe width `a_L` and held them fixed at 1. Both are now
+  shown and fitted. In the Global Fit Wizard, static widths (`Delta`, `a_L`),
+  shape parameters (`beta`) and phases are no longer treated as rates when
+  the role search decides which parameter to make Local first. User functions
+  can declare `param_kinds` in `register_component`.
+
 - **The Fit Wizard fits the dynamic and Gaussian-broadened Kubo-Toyabe models
   to a run in a longitudinal field.** Dynamic GKT + Constant,
   Gaussian-broadened KT + Constant and Dynamic Lorentzian KT + Constant gave

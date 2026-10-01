@@ -7,6 +7,7 @@ import pytest
 
 import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_wizard import CandidateTemplate, SelectionMetric
 from asymmetry.core.fitting.global_fit_wizard import build_global_fit_wizard_recommendation
@@ -17,13 +18,13 @@ from asymmetry.core.fitting.global_search import (
     compile_legacy_structure,
     compile_structure_to_legacy_roles,
 )
-from asymmetry.core.fitting.global_search.heuristics import (
-    allows_rate_first_localization,
-    is_background_parameter,
-    localisation_threshold_scale,
-)
 from asymmetry.core.fitting.global_search.moves import generate_search_moves
 from asymmetry.core.fitting.global_search.proposal import extract_discrete_candidates
+from asymmetry.core.fitting.global_search.role_policy import (
+    allows_rate_first_localization,
+    localisation_priorities,
+    localisation_threshold_scale,
+)
 from asymmetry.core.fitting.global_search.types import DiscreteCandidate, SearchMoveType
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
@@ -331,16 +332,36 @@ def test_extract_discrete_candidates_preserves_relaxed_role_metadata() -> None:
     assert "Lambda" in candidate.relaxed_local_names
 
 
-def test_staged_heuristics_bias_amplitudes_toward_shared_roles() -> None:
-    assert localisation_threshold_scale("Lambda") == 1.0
-    assert localisation_threshold_scale("sigma") == 1.0
-    assert localisation_threshold_scale("A_1") > localisation_threshold_scale("Lambda")
-    assert localisation_threshold_scale("A_bg") > localisation_threshold_scale("A_1")
-    assert allows_rate_first_localization("Lambda") is True
-    assert allows_rate_first_localization("sigma") is True
-    assert allows_rate_first_localization("A_1") is False
-    assert allows_rate_first_localization("A_bg") is False
-    assert is_background_parameter("A_bg") is True
+def test_role_policy_biases_amplitudes_toward_shared_roles() -> None:
+    kind = ParameterKind
+    assert localisation_threshold_scale(kind.RATE) == 1.0
+    assert localisation_threshold_scale(kind.FREQUENCY) == 1.0
+    assert localisation_threshold_scale(kind.STATIC_WIDTH) == 1.25
+    assert localisation_threshold_scale(kind.AMPLITUDE) == 2.0
+    assert localisation_threshold_scale(kind.BACKGROUND) == 3.0
+    assert {k for k in kind if allows_rate_first_localization(k)} == {kind.RATE, kind.FREQUENCY}
+
+
+def test_localisation_priority_reads_the_declared_kind_not_the_name() -> None:
+    model = CompositeModel.from_expression(
+        "DynamicLorentzianKT + StretchedExponential * MuoniumTF + Constant"
+    )
+
+    priorities = localisation_priorities(model.parameter_kinds())
+
+    assert priorities == {
+        "A_1": 3,
+        "a_L": 1,  # a static width, though it is spelled like an amplitude
+        "nu": 0,
+        "B_L": 1,
+        "A_2": 3,
+        "Lambda": 0,
+        "beta": 1,  # a shape, not a rate
+        "field": 1,
+        "A_hf": 1,  # a hyperfine coupling, not an amplitude
+        "phase": 1,
+        "A_bg": 4,
+    }
 
 
 def test_move_generation_does_not_split_ambiguous_amplitudes_by_default() -> None:

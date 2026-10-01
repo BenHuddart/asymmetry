@@ -32,7 +32,8 @@ import math
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from asymmetry.core.fitting.global_search.heuristics import is_amplitude_parameter
+from asymmetry.core.fitting.component_tags import ParameterKind
+from asymmetry.core.fitting.composite import CompositeModel
 
 #: A frequency-continuity residual is only treated as an outlier when it exceeds
 #: ``threshold * robust_spread`` *and* this fraction of the typical frequency, so a
@@ -67,7 +68,7 @@ def is_frequency_parameter(name: str) -> bool:
     return "frequency" in lower or "freq" in lower or lower.startswith("field")
 
 
-def resolve_series_params(param_names: Iterable[str]) -> tuple[str | None, str | None]:
+def resolve_series_params(model: CompositeModel) -> tuple[str | None, str | None]:
     """Pick the leading amplitude and frequency parameter names from a model.
 
     Returns ``(amplitude_name, frequency_name)``; either may be ``None`` when the
@@ -77,8 +78,8 @@ def resolve_series_params(param_names: Iterable[str]) -> tuple[str | None, str |
     """
     amplitude_name: str | None = None
     frequency_name: str | None = None
-    for name in param_names:
-        if amplitude_name is None and is_amplitude_parameter(name):
+    for name, kind in model.parameter_kinds().items():
+        if amplitude_name is None and kind is ParameterKind.AMPLITUDE:
             amplitude_name = name
         if frequency_name is None and is_frequency_parameter(name):
             frequency_name = name

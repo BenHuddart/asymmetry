@@ -42,7 +42,6 @@ from asymmetry.core.fitting.global_fit_wizard import (
     _fit_exact_assignment,
     _globalization_candidate_order,
     _layer_parameter_count,
-    _localisation_penalty,
     _metric_penalty,
     _single_run_prefit_parameter_sets,
     _staged_assignment_seed,
@@ -2395,11 +2394,6 @@ def test_deserialize_global_candidate_assessment_migrates_legacy_fraction_params
     assert not any(name.startswith("fraction_") for name in assessment.global_param_names)
     assert not any(name.startswith("fraction_") for name in assessment.local_param_names)
     assert not any(name.startswith("fraction_") for name in assessment.fixed_param_names)
-
-
-def test_localisation_penalty_prefers_rate_parameters_over_amplitudes() -> None:
-    assert _localisation_penalty(("Lambda",)) < _localisation_penalty(("A_1",))
-    assert _localisation_penalty(("A_1",)) < _localisation_penalty(("A_bg",))
 
 
 def test_component_canonicalization_orders_biexponential_components_by_rate() -> None:

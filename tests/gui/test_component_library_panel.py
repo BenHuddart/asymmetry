@@ -16,6 +16,7 @@ from PySide6.QtGui import QFontMetrics
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import COMPONENTS, ComponentDefinition
 from asymmetry.gui.widgets.function_builder.library_panel import (
     _CATEGORY_ITEM_TYPE,
@@ -234,6 +235,7 @@ def test_user_badge_shown_for_user_definition(qapp: QApplication) -> None:
         param_names=["A"],
         param_defaults={"A": 1.0},
         param_info={},
+        param_kinds={"A": ParameterKind.AMPLITUDE},
         formula_template="{A}",
         category="General",
         user=True,
@@ -256,6 +258,7 @@ def test_missing_definition_gets_distinct_foreground(qapp: QApplication) -> None
         param_names=["A"],
         param_defaults={"A": 1.0},
         param_info={},
+        param_kinds={"A": ParameterKind.AMPLITUDE},
         formula_template="{A}",
         category="General",
     )
@@ -268,6 +271,7 @@ def test_missing_definition_gets_distinct_foreground(qapp: QApplication) -> None
         param_names=["A"],
         param_defaults={"A": 1.0},
         param_info={},
+        param_kinds={"A": ParameterKind.AMPLITUDE},
         formula_template="{A}",
         category="General",
         missing=True,
