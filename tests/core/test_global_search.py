@@ -336,10 +336,17 @@ def test_role_policy_biases_amplitudes_toward_shared_roles() -> None:
     kind = ParameterKind
     assert localisation_threshold_scale(kind.RATE) == 1.0
     assert localisation_threshold_scale(kind.FREQUENCY) == 1.0
-    assert localisation_threshold_scale(kind.STATIC_WIDTH) == 1.25
+    assert localisation_threshold_scale(kind.STATIC_WIDTH) == 1.0
+    assert localisation_threshold_scale(kind.GEOMETRY) == 1.25
     assert localisation_threshold_scale(kind.AMPLITUDE) == 2.0
     assert localisation_threshold_scale(kind.BACKGROUND) == 3.0
-    assert {k for k in kind if allows_rate_first_localization(k)} == {kind.RATE, kind.FREQUENCY}
+    assert {k for k in kind if allows_rate_first_localization(k)} == {
+        kind.RATE,
+        kind.FREQUENCY,
+        kind.PHASE,
+        kind.SHAPE,
+        kind.STATIC_WIDTH,
+    }
 
 
 def test_localisation_priority_reads_the_declared_kind_not_the_name() -> None:
@@ -351,15 +358,15 @@ def test_localisation_priority_reads_the_declared_kind_not_the_name() -> None:
 
     assert priorities == {
         "A_1": 3,
-        "a_L": 1,  # a static width, though it is spelled like an amplitude
+        "a_L": 0,  # a static width, though it is spelled like an amplitude
         "nu": 0,
         "B_L": 1,
         "A_2": 3,
         "Lambda": 0,
-        "beta": 1,  # a shape, not a rate
+        "beta": 0,
         "field": 1,
         "A_hf": 1,  # a hyperfine coupling, not an amplitude
-        "phase": 1,
+        "phase": 0,
         "A_bg": 4,
     }
 

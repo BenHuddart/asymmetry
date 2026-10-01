@@ -5,14 +5,14 @@ from __future__ import annotations
 from asymmetry.core.fitting.component_tags import ParameterKind
 
 #: Penalty class for making a parameter Local: the higher, the stronger the
-#: evidence needed. Rates and frequencies are what a series is expected to
-#: move; the record's scale and baseline are expected to stay put.
+#: evidence needed. Rates, widths, shapes and phases are what a series is
+#: expected to move; the record's scale and baseline are expected to stay put.
 _LOCALISATION_PRIORITY: dict[ParameterKind, int] = {
     ParameterKind.RATE: 0,
     ParameterKind.FREQUENCY: 0,
-    ParameterKind.PHASE: 1,
-    ParameterKind.SHAPE: 1,
-    ParameterKind.STATIC_WIDTH: 1,
+    ParameterKind.PHASE: 0,
+    ParameterKind.SHAPE: 0,
+    ParameterKind.STATIC_WIDTH: 0,
     ParameterKind.FIELD: 1,
     ParameterKind.GEOMETRY: 1,
     ParameterKind.FRACTION: 1,

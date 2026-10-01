@@ -172,6 +172,20 @@ Lead proposals:
   "runs taken in separate passes disagree" and names the passes. It is a
   caveat on the recommendation, not a veto.
 
+## Settled in Phase 1 review (lead, 2026-10-01)
+
+- **D19: widths, shapes and phases keep the role search's rate-first class.**
+  The old name matching listed "delta", "beta" and "phase" as rate-like on
+  purpose, so `role_policy` puts STATIC_WIDTH, SHAPE and PHASE in class 0 with
+  RATE and FREQUENCY. The statistical objective's role decisions for `Delta`,
+  `beta` and `phase` are then unchanged by the move to declared kinds; the
+  ladder (D8) has its own order and does not read this table.
+- **D20: the pass diagnostic needs about 22 runs as specified.** In run order
+  the join between two passes costs up to two extrema, so `z ≤ 0.1` cannot be
+  met by a shorter interleaved series. Phase 2 computes the run-order zigzag
+  per pass (a pass is a maximal stretch of runs monotone in the axis) and
+  names the passes.
+
 ## Code map (verify before editing)
 
 - **Core.** `core/fitting/global_fit_wizard.py`:
