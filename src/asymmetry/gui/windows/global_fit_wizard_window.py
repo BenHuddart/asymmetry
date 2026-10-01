@@ -985,7 +985,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._apply_rationale.setWordWrap(True)
         self._apply_why.addWidget(self._apply_rationale)
         layout.addWidget(self._apply_why)
-        layout.addStretch()
+        # The stretch takes every spare pixel, or the fixed-height table is centred in its section.
+        layout.addStretch(1)
 
         view = QWidget()
         view_layout = QVBoxLayout(view)
@@ -1971,7 +1972,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 return self._recommendation.assessment_for_key(key).template.title
             case _PhasesTarget(partition_k=partition_k):
                 solution = self._recommendation.partition_path.solutions[partition_k]
-                return f"{sum(not segment.excluded for segment in solution.segments)} phases"
+                phases = sum(not segment.excluded for segment in solution.segments)
+                return f"{phases} phase{'' if phases == 1 else 's'}"
 
     def _populate_apply(self) -> None:
         """Review what the chosen target will hand over (D5)."""
@@ -2054,9 +2056,15 @@ class GlobalFitWizardWindow(WizardWindowBase):
                     [
                         (
                             f"Phase {phase.ordinal} · {phase.range_text}",
-                            html.escape(
-                                f"{phase.template_title} · {phase.roles_text} · "
-                                f"{phase.confidence_text}"
+                            # One line each for the model, the shared and the local
+                            # parameters and the verdict: a phase can leave a dozen local.
+                            "<br>".join(
+                                html.escape(line)
+                                for line in (
+                                    phase.template_title,
+                                    *phase.roles_text.split(" · "),
+                                    phase.confidence_text,
+                                )
                             ),
                         )
                         for phase in self._phase_summaries(recommendation, partition_k)

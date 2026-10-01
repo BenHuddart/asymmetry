@@ -502,10 +502,10 @@ shared amplitude then has to describe it too.
 
 When the answer is a partition instead (see
 :ref:`global-fit-wizard-transitions`), Apply reviews the phases — the
-partition's summary sentence and one line per phase with its range, template,
-Global/Local split, and its cost and trend quality (or its confidence, under
-the statistical objective), with the runs each phase leaves out — and offers
-**Apply phases**.
+partition's summary sentence and one entry per phase with its range, template,
+Global and Local parameters, and its cost and trend quality (or its
+confidence, under the statistical objective), with the runs each phase leaves
+out — and offers **Apply phases**.
 
 .. _global-fit-wizard-transitions:
 

@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 NO_LOCAL_PARAMETER = "Every parameter is shared: nothing varies from run to run"
 EXEMPT_LEGEND = "◇ run that keeps its own amplitude"
 #: Plots per row of the strip, and each row's height in table rows.
-_COLUMNS = 2
+_COLUMNS = 3
 _ROW_HEIGHT_ROWS = 7
 #: Rows of plots the strip asks for before it scrolls.
 _PREFERRED_PLOT_ROWS = 2
