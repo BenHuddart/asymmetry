@@ -5,7 +5,8 @@ amplitudes, then one further parameter at a time, and keeps a parameter shared
 only while the fit stays adequate. Every rung is returned with its cost and the
 trend quality of what it leaves local, so a caller can show the whole climb and
 pre-select the rung that trends best. Design, evidence and the rejected
-alternatives: ``docs/plans/global-wizard-trend-objective.md`` (D3, D7–D9, D12).
+alternatives: ``docs/plans/global-wizard-trend-objective.md`` (D3, D7–D9,
+D11–D12, D16).
 """
 
 from __future__ import annotations
@@ -18,10 +19,21 @@ import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ParameterKind
-from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.composite import (
+    CompositeModel,
+    ExprLeaf,
+    ExprProduct,
+    iter_nodes,
+    leaf_indices,
+)
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
-from asymmetry.core.fitting.parameter_carry import ComponentParameter
-from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.fraction_form import signal_fraction_form
+from asymmetry.core.fitting.parameter_carry import (
+    FractionWeight,
+    GroupAmplitude,
+    carry_parameter_set,
+)
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.trend_quality import (
     CandidateTrend,
     PassDiagnostic,
@@ -46,14 +58,17 @@ _BLOCK_LENGTH = 3
 #: At most max(this many, this share of the series) runs may be exempted.
 _EXEMPT_MIN_RUNS = 2
 _EXEMPT_SERIES_SHARE = 0.1
+#: A signal amplitude this many of its errors on the far side of zero from its
+#: run's total is a real sign, and the series then has no fractions.
+_OPPOSING_AMPLITUDE_SIGMA = 2.0
 #: Residual evaluations one rung's solve may spend. A pattern the data reject
 #: (a rate shared across decades) crawls for thousands; one they accept is
 #: there in a few hundred.
 RUNG_MAX_CALLS = 1000
 
-#: The order in which rung 3 tries one further parameter (plan D8): what a
-#: series is least expected to move first, rates and frequencies last. A
-#: fraction weight is absent: it is shared only through its group total.
+#: The order in which the last stage tries one further parameter (plan D8):
+#: what a series is least expected to move first, rates and frequencies last.
+#: A fraction weight is absent: it is shared only when every amplitude is.
 _FURTHER_KIND_ORDER: dict[ParameterKind, int] = {
     ParameterKind.PHASE: 0,
     ParameterKind.SHAPE: 1,
@@ -65,7 +80,9 @@ _FURTHER_KIND_ORDER: dict[ParameterKind, int] = {
 }
 #: The record's scale and baseline: degenerate with each other when the
 #: relaxation is slow, so their all-local values are not a seed worth keeping.
-_SCALE_KINDS = frozenset({ParameterKind.AMPLITUDE, ParameterKind.BACKGROUND})
+_SCALE_KINDS = frozenset(
+    {ParameterKind.AMPLITUDE, ParameterKind.FRACTION, ParameterKind.BACKGROUND}
+)
 _TRENDING_KINDS = frozenset({ParameterKind.RATE, ParameterKind.FREQUENCY})
 #: Group key of the runs that share an amplitude other runs are exempt from.
 _SHARING_RUNS = "sharing"
@@ -75,6 +92,9 @@ _SHARING_RUNS = "sharing"
 class LadderRung:
     """One sharing pattern of one template, fitted over the series."""
 
+    #: The template in the form this rung was fitted in: as given, or with its
+    #: signal terms under one total (plan D11). Every name below is this model's.
+    model: CompositeModel
     #: Parameters with one value for the series, in the order they were shared.
     shared: tuple[str, ...]
     #: Runs that keep their own value of the shared amplitudes (plan D12).
@@ -138,80 +158,196 @@ class SharingLadder:
         )
 
 
-def climb_sharing_ladder(
-    datasets: Sequence[MuonDataset],
+@dataclass(frozen=True)
+class _Form:
+    """One way of writing the template, with the series' all-local fits expressed in it."""
+
+    model: CompositeModel
+    #: Name in the template as given → the parameter here that shares it. In the
+    #: shared-total form every signal amplitude maps to the total.
+    names: Mapping[str, str]
+    #: Each run's limits and fixed flags.
+    base_by_run: Mapping[int, ParameterSet]
+    #: Each run's all-local values.
+    local_values: Mapping[int, Mapping[str, float]]
+
+
+@dataclass(frozen=True)
+class _Step:
+    """Parameters to share next, named as in the template as given."""
+
+    addition: tuple[str, ...]
+    #: The form to fit in; ``None`` is the form of the rung the step continues from.
+    form: _Form | None = None
+
+
+@dataclass(frozen=True)
+class _Foothold:
+    """An adequate rung, with what it shares named as in the template as given."""
+
+    rung: LadderRung
+    form: _Form
+    shared: tuple[str, ...]
+
+
+def _shared_total_forms(
     model: CompositeModel,
-    *,
+    runs: Sequence[int],
     all_local_results: Mapping[int, FitResult],
     base_by_run: Mapping[int, ParameterSet],
-    axis_values: Sequence[float],
-    cancel_callback: Callable[[], bool],
-    max_further_parameters: int | None = None,
-    max_calls: int = RUNG_MAX_CALLS,
-) -> SharingLadder:
-    """Climb the sharing ladder for one template over one series (or one phase of it).
+) -> tuple[_Form, ...]:
+    """The template with its signal terms under one total, when the series has fractions.
 
-    ``axis_values`` pairs with ``datasets``; the series is taken in axis order,
-    ties by run number. ``all_local_results`` are the converged independent
-    per-run fits and ``base_by_run`` each run's limits and fixed flags. Only a
-    parameter free on every run can be shared; one fixed on some runs stays
-    local.
+    Empty when the model has no such form (:func:`signal_fraction_form`), or when
+    this series cannot be written in it. A fraction weight lives in [0, 1] and a
+    shared total has one sign, so every run's total must have the same sign and
+    no signal amplitude may oppose its run's total by more than
+    ``_OPPOSING_AMPLITUDE_SIGMA`` of its own error: a line whose sign the
+    amplitude carries has no fraction. An amplitude that opposes by less is a
+    term that has vanished, and starts at fraction zero. The signal amplitudes
+    must be free on every run, so both forms fit the same number of parameters.
 
-    The rungs, each continuing from the last adequate one: every background
-    parameter; every amplitude; then one further parameter at a time in kind
-    order, at most ``max_further_parameters`` of them (``None``: all). A rung
-    that is not adequate, or whose fit does not converge within ``max_calls``
-    residual evaluations, is returned and its parameters are released again.
-
-    Seeds. A shared parameter starts at the series median of its all-local
-    values and a local one at its run's own all-local value, except that once
-    any amplitude or background is shared every amplitude and background starts
-    at its median: their all-local values sit in the degenerate basin the
-    sharing is there to leave.
-
-    Cost. ``FitResult.dof`` of a coupled fit's run is that run's points minus
-    every free parameter of the model, shared or not — the same ν_r as the
-    all-local fit, so the per-run cost is ``(χ²_r − χ²_r,local) / √(2 ν_r)``.
-    Those ν_r do not sum to the series': ν = Σ ν_r,local + Σ over shared
-    parameters of (runs sharing it − 1), each χ²ᵣ is taken over its own ν, and
-    the difference is measured in √(2/ν) of the rung.
-
-    Exemptions apply on the rung that shares the amplitudes. Isolated offending
-    runs keep their own amplitudes and the rung is refitted once; later rungs
-    inherit them. Offenders that are not isolated fail the rung, and a block of
-    them reaching one end of the series (not both: then no run is left to share
-    with) is recorded as the runs the amplitude cannot be shared through. A
-    shared amplitude is not a local parameter, exempt runs or not, so it has no
-    trace and no trend quality.
-
-    Raises :class:`FitCancelledError` when ``cancel_callback`` returns true
-    before a rung, or inside its fit.
+    The all-local fits are not repeated in this form: their values are mapped
+    into it. A total is limited to the sum of its amplitudes' limits.
     """
-    ordered = sorted(
-        zip(axis_values, datasets, strict=True),
-        key=lambda pair: (pair[0], pair[1].run_number),
-    )
-    series = [dataset for _x, dataset in ordered]
-    axis = {int(dataset.run_number): float(x) for x, dataset in ordered}
-    runs = tuple(axis)
-    failed = [run for run in runs if not all_local_results[run].success]
-    if failed:
-        raise ValueError(f"the ladder starts from converged all-local fits; runs {failed} are not")
+    form = signal_fraction_form(model)
+    if form is None:
+        return ()
+    signs: set[float] = set()
+    for run in runs:
+        result = all_local_results[run]
+        total = sum(result.parameters[name].value for name in form.amplitudes)
+        signs.add(float(np.sign(total)))
+        if any(
+            base_by_run[run][name].fixed
+            or (
+                result.parameters[name].value * total < 0.0
+                and abs(result.parameters[name].value)
+                > _OPPOSING_AMPLITUDE_SIGMA * result.uncertainties.get(name, 0.0)
+            )
+            for name in form.amplitudes
+        ):
+            return ()
+    if signs not in ({1.0}, {-1.0}):
+        return ()
 
-    names = model.param_names
-    kinds = model.parameter_kinds()
-    identities = model.parameter_identities()
-    free_runs = {name: sum(not base_by_run[run][name].fixed for run in runs) for name in names}
-    medians = {
-        name: float(np.median([all_local_results[run].parameters[name].value for run in runs]))
-        for name in names
+    local_values = {
+        run: form.grouped.normalized_parameter_values(
+            form.grouped_values(
+                {name: all_local_results[run].parameters[name].value for name in model.param_names}
+            )
+        )
+        for run in runs
     }
-    local_chi2 = sum(all_local_results[run].chi_squared for run in runs)
-    local_dof = sum(all_local_results[run].dof for run in runs)
+    base: dict[int, ParameterSet] = {}
+    for run in runs:
+        limits = [base_by_run[run][name] for name in form.amplitudes]
+        parameters = {
+            form.total: Parameter(
+                form.total,
+                local_values[run][form.total],
+                min=sum(limit.min for limit in limits),
+                max=sum(limit.max for limit in limits),
+            ),
+            **{
+                name: Parameter(name, local_values[run][name], min=0.0, max=1.0)
+                for name in form.fractions
+            },
+            **{
+                parameter.name: parameter
+                for parameter in carry_parameter_set(
+                    model, form.grouped, range(len(model.component_names)), base_by_run[run]
+                )
+            },
+        }
+        base[run] = ParameterSet([parameters[name] for name in form.grouped.param_names])
+    return (
+        _Form(
+            model=form.grouped,
+            names={
+                **{given: grouped for grouped, given in form.carried.items()},
+                **dict.fromkeys(form.amplitudes, form.total),
+            },
+            base_by_run=base,
+            local_values=local_values,
+        ),
+    )
+
+
+def _components_with_local_amplitude(model: CompositeModel, local: Sequence[str]) -> set[int]:
+    """Components whose asymmetry a local amplitude, total or fraction sets (plan D3).
+
+    An amplitude scales its own component and the components multiplied onto
+    it; a group's total and each of its fractions scale every term of the group.
+    """
+    identities = model.parameter_identities()
+    # Per product: every component under it, and the ones that are its own factors.
+    products = [
+        (
+            set(leaf_indices(node)),
+            {factor.index for factor in node.factors if isinstance(factor, ExprLeaf)},
+        )
+        for node in iter_nodes(model.expression_tree())
+        if isinstance(node, ExprProduct)
+    ]
+    groups = [
+        identity.components
+        for identity in identities.values()
+        if isinstance(identity, GroupAmplitude)
+    ]
+    kinds = model.parameter_kinds()
+    scaled: set[int] = set()
+    for name in local:
+        identity = identities[name]
+        if isinstance(identity, GroupAmplitude):
+            scaled |= identity.components
+        elif isinstance(identity, FractionWeight):
+            scaled |= next(group for group in groups if identity.term_start in group)
+        elif kinds[name] is ParameterKind.AMPLITUDE:
+            scaled.add(identity.component)
+    return scaled.union(*(factors for leaves, factors in products if leaves & scaled))
+
+
+def _blocks(positions: Sequence[int]) -> list[np.ndarray]:
+    """Split ascending positions in the series wherever they stop being neighbours."""
+    return np.split(np.asarray(positions, dtype=int), np.flatnonzero(np.diff(positions) != 1) + 1)
+
+
+def _isolated(positions: Sequence[int], series_length: int) -> bool:
+    """Whether runs at these positions may all be exempted (plan D12): few, and no block."""
+    return max(map(len, _blocks(positions))) < _BLOCK_LENGTH and len(positions) <= max(
+        _EXEMPT_MIN_RUNS, int(_EXEMPT_SERIES_SHARE * series_length)
+    )
+
+
+@dataclass(frozen=True)
+class _Series:
+    """The series in axis order with its all-local fits: what every rung is fitted and scored on."""
+
+    datasets: Sequence[MuonDataset]
+    #: Axis position by run number, in axis order.
+    axis: Mapping[int, float]
+    all_local_results: Mapping[int, FitResult]
+    cancel_callback: Callable[[], bool]
+    max_calls: int
 
     def rung(
-        shared: tuple[str, ...], exempt: tuple[int, ...], results: Mapping[int, FitResult]
+        self,
+        form: _Form,
+        shared: tuple[str, ...],
+        exempt: tuple[int, ...],
+        results: Mapping[int, FitResult],
     ) -> LadderRung:
+        """Score one pattern's results against the all-local fits."""
+        runs = tuple(self.axis)
+        names = form.model.param_names
+        kinds = form.model.parameter_kinds()
+        identities = form.model.parameter_identities()
+        free_runs = {
+            name: sum(not form.base_by_run[run][name].fixed for run in runs) for name in names
+        }
+        local_chi2 = sum(self.all_local_results[run].chi_squared for run in runs)
+        local_dof = sum(self.all_local_results[run].dof for run in runs)
         columns_saved = sum(
             len(runs) - 1 - (len(exempt) if kinds[name] is ParameterKind.AMPLITUDE else 0)
             for name in shared
@@ -222,7 +358,7 @@ def climb_sharing_ladder(
         traces = {
             name: [
                 TracePoint(
-                    x=axis[run],
+                    x=self.axis[run],
                     run=run,
                     value=results[run].parameters[name].value,
                     error=results[run].uncertainties.get(name),
@@ -232,13 +368,9 @@ def climb_sharing_ladder(
             for name in local_names
         }
         diagnostics = {name: pass_diagnostic(points) for name, points in traces.items()}
-        local_amplitude_components = {
-            identities[name].component
-            for name in local_names
-            if kinds[name] is ParameterKind.AMPLITUDE
-            and isinstance(identities[name], ComponentParameter)
-        }
+        local_amplitude_components = _components_with_local_amplitude(form.model, local_names)
         return LadderRung(
+            model=form.model,
             shared=shared,
             exempt_runs=exempt,
             results_by_run={run: results[run] for run in runs},
@@ -247,7 +379,7 @@ def climb_sharing_ladder(
             run_costs={
                 run: (
                     results[run].chi_squared / results[run].dof
-                    - all_local_results[run].chi_squared / all_local_results[run].dof
+                    - self.all_local_results[run].chi_squared / self.all_local_results[run].dof
                 )
                 / math.sqrt(2.0 / results[run].dof)
                 for run in runs
@@ -267,12 +399,20 @@ def climb_sharing_ladder(
             },
         )
 
-    def fit(shared: tuple[str, ...], exempt: tuple[int, ...]) -> LadderRung:
-        if cancel_callback():
+    def fit(self, form: _Form, shared: tuple[str, ...], exempt: tuple[int, ...]) -> LadderRung:
+        """Fit one pattern over the series, seeded as the ladder's docstring says."""
+        if self.cancel_callback():
             raise FitCancelledError("Sharing ladder cancelled.")
+        runs = tuple(self.axis)
+        names = form.model.param_names
+        kinds = form.model.parameter_kinds()
         at_median = set(shared)
         if any(kinds[name] in _SCALE_KINDS for name in shared):
             at_median.update(name for name in names if kinds[name] in _SCALE_KINDS)
+        medians = {
+            name: float(np.median([form.local_values[run][name] for run in runs]))
+            for name in at_median
+        }
         initial = {
             run: ParameterSet(
                 [
@@ -282,9 +422,9 @@ def climb_sharing_ladder(
                         parameter,
                         value=medians[parameter.name]
                         if parameter.name in at_median
-                        else all_local_results[run].parameters[parameter.name].value,
+                        else form.local_values[run][parameter.name],
                     )
-                    for parameter in base_by_run[run]
+                    for parameter in form.base_by_run[run]
                 ]
             )
             for run in runs
@@ -293,57 +433,164 @@ def climb_sharing_ladder(
         # the remaining runs hold in common.
         grouped = [name for name in shared if exempt and kinds[name] is ParameterKind.AMPLITUDE]
         results, _shared_values = FitEngine().global_fit(
-            series,
-            model.function,
+            list(self.datasets),
+            form.model.function,
             [name for name in shared if name not in grouped],
             [name for name in names if name not in shared or name in grouped],
             initial,
             strategy="least_squares",
-            max_calls=max_calls,
-            cancel_callback=cancel_callback,
+            max_calls=self.max_calls,
+            cancel_callback=self.cancel_callback,
             local_param_groups={
                 name: {run: _SHARING_RUNS for run in runs if run not in exempt} for name in grouped
             },
         )
-        return rung(shared, exempt, results)
+        return self.rung(form, shared, exempt, results)
 
-    shareable = [name for name in names if free_runs[name] == len(runs)]
+    def share_amplitudes(self, form: _Form, shared: tuple[str, ...]) -> LadderRung:
+        """Fit the rung that shares the amplitudes, exempting isolated offenders (plan D12).
+
+        Isolated offending runs keep their own amplitudes and the rung is
+        refitted once. Offenders that are not isolated fail the rung, and a
+        block of them reaching one end of the series (not both: then no run is
+        left to share with) is recorded as the runs the amplitude cannot be
+        shared through.
+        """
+        runs = tuple(self.axis)
+        rung = self.fit(form, shared, ())
+        positions = [runs.index(run) for run in rung.offending_runs]
+        if not rung.converged or not positions:
+            return rung
+        if _isolated(positions, len(runs)):
+            return self.fit(form, shared, rung.offending_runs)
+        return replace(
+            rung,
+            amplitude_unshareable_runs=tuple(
+                runs[position]
+                for block in _blocks(positions)
+                if len(block) >= _BLOCK_LENGTH and (block[0] == 0) != (block[-1] == len(runs) - 1)
+                for position in block
+            ),
+        )
+
+
+def climb_sharing_ladder(
+    datasets: Sequence[MuonDataset],
+    model: CompositeModel,
+    *,
+    all_local_results: Mapping[int, FitResult],
+    base_by_run: Mapping[int, ParameterSet],
+    axis_values: Sequence[float],
+    cancel_callback: Callable[[], bool],
+    max_further_parameters: int | None = None,
+    max_calls: int = RUNG_MAX_CALLS,
+) -> SharingLadder:
+    """Climb the sharing ladder for one template over one series (or one phase of it).
+
+    ``axis_values`` pairs with ``datasets``; the series is taken in axis order,
+    ties by run number. ``all_local_results`` are the converged independent
+    per-run fits and ``base_by_run`` each run's limits and fixed flags. Only a
+    parameter free on every run can be shared; one fixed on some runs stays
+    local.
+
+    The rungs, in three stages. Each stage continues from the last adequate
+    rung of the stage before, and a rung that is not adequate, or whose fit
+    does not converge within ``max_calls`` residual evaluations, is returned
+    and its parameters are released again.
+
+    1. Every background parameter.
+    2. The amplitudes. When the series can be written with its signal terms
+       under one total (:func:`_shared_total_forms`), first the total alone,
+       each term's fraction staying local; then every amplitude, in the
+       template as given. Both continue from stage 1 and the later adequate
+       one is the foothold, so the rungs above a shared total are fitted in the
+       fraction form (see :attr:`LadderRung.model`).
+    3. One further parameter at a time in kind order, at most
+       ``max_further_parameters`` of them (``None``: all). A fraction is never
+       one of them.
+
+    Seeds. A shared parameter starts at the series median of its all-local
+    values and a local one at its run's own all-local value, except that once
+    any amplitude or background is shared every amplitude, fraction and
+    background starts at its median: their all-local values sit in the
+    degenerate basin the sharing is there to leave.
+
+    Cost. ``FitResult.dof`` of a coupled fit's run is that run's points minus
+    every free parameter of the model, shared or not — the same ν_r as the
+    all-local fit in either form, a total and n − 1 fractions standing for n
+    amplitudes — so the per-run cost is ``(χ²_r − χ²_r,local) / √(2 ν_r)``.
+    Those ν_r do not sum to the series': ν = Σ ν_r,local + Σ over shared
+    parameters of (runs sharing it − 1), each χ²ᵣ is taken over its own ν, and
+    the difference is measured in √(2/ν) of the rung.
+
+    Exemptions apply on the stage-2 rungs (:meth:`_Series.share_amplitudes`) and
+    stage 3 inherits its foothold's. A shared amplitude or total is not a local
+    parameter, exempt runs or not, so it has no trace and no trend quality.
+
+    Raises :class:`FitCancelledError` when ``cancel_callback`` returns true
+    before a rung, or inside its fit.
+    """
+    ordered = sorted(
+        zip(axis_values, datasets, strict=True),
+        key=lambda pair: (pair[0], pair[1].run_number),
+    )
+    axis = {int(dataset.run_number): float(x) for x, dataset in ordered}
+    runs = tuple(axis)
+    failed = [run for run in runs if not all_local_results[run].success]
+    if failed:
+        raise ValueError(f"the ladder starts from converged all-local fits; runs {failed} are not")
+    series = _Series(
+        datasets=[dataset for _x, dataset in ordered],
+        axis=axis,
+        all_local_results=all_local_results,
+        cancel_callback=cancel_callback,
+        max_calls=max_calls,
+    )
+
+    names = model.param_names
+    kinds = model.parameter_kinds()
+    as_given = _Form(
+        model=model,
+        names={name: name for name in names},
+        base_by_run=base_by_run,
+        local_values={
+            run: {name: all_local_results[run].parameters[name].value for name in names}
+            for run in runs
+        },
+    )
+    shareable = [name for name in names if not any(base_by_run[run][name].fixed for run in runs)]
+    amplitudes = tuple(name for name in shareable if kinds[name] is ParameterKind.AMPLITUDE)
     further = sorted(
         (name for name in shareable if kinds[name] in _FURTHER_KIND_ORDER),
         key=lambda name: _FURTHER_KIND_ORDER[kinds[name]],
     )
-    additions = [
-        tuple(name for name in shareable if kinds[name] is ParameterKind.BACKGROUND),
-        tuple(name for name in shareable if kinds[name] is ParameterKind.AMPLITUDE),
-        *((name,) for name in further[:max_further_parameters]),
+    stages: list[list[_Step]] = [
+        [_Step(tuple(name for name in shareable if kinds[name] is ParameterKind.BACKGROUND))],
+        [
+            _Step(amplitudes, form)
+            for form in (
+                *_shared_total_forms(model, runs, all_local_results, base_by_run),
+                as_given,
+            )
+        ],
+        *([_Step((name,))] for name in further[:max_further_parameters]),
     ]
 
-    climbed = [rung((), (), all_local_results)]
-    foothold = climbed[0]
-    for addition in filter(None, additions):
-        shared = foothold.shared + addition
-        step = fit(shared, foothold.exempt_runs)
-        offenders = step.offending_runs
-        if kinds[addition[0]] is ParameterKind.AMPLITUDE and step.converged and offenders:
-            # Offenders' positions in axis order, split wherever they stop being neighbours.
-            positions = [runs.index(run) for run in offenders]
-            blocks = np.split(positions, np.flatnonzero(np.diff(positions) != 1) + 1)
-            if max(map(len, blocks)) < _BLOCK_LENGTH and len(offenders) <= max(
-                _EXEMPT_MIN_RUNS, int(_EXEMPT_SERIES_SHARE * len(runs))
-            ):
-                step = fit(shared, offenders)
+    climbed = [series.rung(as_given, (), (), all_local_results)]
+    foothold = _Foothold(climbed[0], as_given, ())
+    for stage in stages:
+        below = foothold
+        for step in stage:
+            if not step.addition:
+                continue
+            form = step.form or below.form
+            given = below.shared + step.addition
+            shared = tuple(dict.fromkeys(form.names[name] for name in given))
+            if step.addition is amplitudes:
+                rung = series.share_amplitudes(form, shared)
             else:
-                step = replace(
-                    step,
-                    amplitude_unshareable_runs=tuple(
-                        runs[position]
-                        for block in blocks
-                        if len(block) >= _BLOCK_LENGTH
-                        and (block[0] == 0) != (block[-1] == len(runs) - 1)
-                        for position in block
-                    ),
-                )
-        climbed.append(step)
-        if step.adequate:
-            foothold = step
+                rung = series.fit(form, shared, below.rung.exempt_runs)
+            climbed.append(rung)
+            if rung.adequate:
+                foothold = _Foothold(rung, form, given)
     return SharingLadder(rungs=tuple(climbed))

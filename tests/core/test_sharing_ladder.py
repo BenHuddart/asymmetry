@@ -1,10 +1,13 @@
-"""The sharing ladder (plan D3, D7–D9, D12) on synthetic series.
+"""The sharing ladder (plan D3, D7–D9, D11–D12) on synthetic series.
 
 Each series is simulated from the repo's own components with muon-decay noise
 and modelled on a case in ``docs/plans/global-wizard-trend-objective.md``.
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from types import MappingProxyType
 
 import numpy as np
 import pytest
@@ -110,18 +113,22 @@ def _glassy_series(*, runs_with_lost_asymmetry: int) -> _Series:
 
 
 def _hopping_series(
-    *, runs: int = 10, sigma: float = 0.15, extra_amplitude: tuple[int, ...] = ()
+    *,
+    runs: int = 10,
+    sigma: float = 0.15,
+    amplitude_scale: Mapping[int, float] = MappingProxyType({}),
 ) -> _Series:
     """Dynamic Gaussian KT + constant: one static width, a hop rate rising (copper).
 
-    The runs in ``extra_amplitude`` carry 2.5 % more asymmetry (Re₆Zr).
+    ``amplitude_scale`` multiplies the asymmetry of the runs it names (Re₆Zr:
+    three runs with 2 % more).
     """
     hop_rates = np.logspace(-1.5, 0.4, runs)
     return _Series(
         "DynamicGaussianKT + Constant",
         [
             {
-                "A_1": 18.0 * (1.025 if run in extra_amplitude else 1.0),
+                "A_1": 18.0 * amplitude_scale.get(run, 1.0),
                 "Delta": 0.39,
                 "nu": hop_rates[run - 1],
                 "B_L": 0.0,
@@ -136,11 +143,50 @@ def _hopping_series(
     )
 
 
+def _two_line_series(
+    fractions: Sequence[float],
+    *,
+    second_line_sign: float = 1.0,
+    fixed: tuple[str, ...] = ("phase_1", "phase_3"),
+) -> _Series:
+    """Two Gaussian-damped precession lines sharing 20 units of asymmetry, + constant.
+
+    ``fractions`` is the first line's share run by run; both widths rise along
+    the series. The amplitudes are not limited, so either may be fitted negative.
+    """
+    return _Series(
+        "Oscillatory * Gaussian + Oscillatory * Gaussian + Constant",
+        [
+            {
+                "A_1": 20.0 * fraction,
+                "frequency_1": 2.0,
+                "phase_1": 0.0,
+                "sigma_2": 0.5 + 0.03 * index,
+                "A_3": second_line_sign * 20.0 * (1.0 - fraction),
+                "frequency_3": 2.4,
+                "phase_3": 0.0,
+                "sigma_4": 0.12 + 0.01 * index,
+                "A_bg": 2.0,
+            }
+            for index, fraction in enumerate(fractions)
+        ],
+        sigma=0.12,
+        n_points=300,
+        t_max=8.0,
+        fixed=fixed,
+    )
+
+
+#: The first line's share rising through a transition at the middle of twelve runs.
+_TRANSITION = 0.15 + 0.7 / (1.0 + np.exp(-(np.arange(12) - 5.5) / 1.2))
+
+
 def test_first_rung_is_the_all_local_fits_at_no_cost() -> None:
     series = _hopping_series()
     first = series.climb(max_further_parameters=0).rungs[0]
 
     assert first.shared == ()
+    assert first.model is series.model
     assert first.results_by_run == series.all_local
     assert first.series_cost == 0.0
     assert set(first.run_costs.values()) == {0.0}
@@ -210,6 +256,7 @@ def test_shared_static_width_leaves_a_smooth_local_hop_rate() -> None:
 
     assert width.shared == ("A_bg", "A_1", "Delta")
     assert width.adequate
+    assert width.exempt_runs == ()
     assert ladder.preselected is width
     assert set(width.trend.parameters) == {"nu"}
     assert width.trend.parameters["nu"].quality > 0.95
@@ -222,7 +269,7 @@ def test_shared_static_width_leaves_a_smooth_local_hop_rate() -> None:
 
 
 def test_two_isolated_anomalous_runs_are_exempt_from_the_shared_amplitude() -> None:
-    ladder = _hopping_series(runs=14, sigma=0.09, extra_amplitude=(4, 10)).climb()
+    ladder = _hopping_series(runs=14, sigma=0.09, amplitude_scale={4: 1.025, 10: 1.025}).climb()
     amplitude, width, hop_rate = ladder.rungs[2:]
 
     assert amplitude.shared == ("A_bg", "A_1")
@@ -247,9 +294,9 @@ def test_two_isolated_anomalous_runs_are_exempt_from_the_shared_amplitude() -> N
 
 
 def test_three_contiguous_interior_anomalous_runs_are_not_exempted() -> None:
-    ladder = _hopping_series(runs=14, sigma=0.09, extra_amplitude=(6, 7, 8)).climb(
-        max_further_parameters=1
-    )
+    ladder = _hopping_series(
+        runs=14, sigma=0.09, amplitude_scale=dict.fromkeys((6, 7, 8), 1.025)
+    ).climb(max_further_parameters=1)
     amplitude, width = ladder.rungs[2:]
 
     assert amplitude.shared == ("A_bg", "A_1")
@@ -261,7 +308,115 @@ def test_three_contiguous_interior_anomalous_runs_are_not_exempted() -> None:
     assert ladder.preselected is width
 
 
-def test_shared_rate_under_a_local_amplitude_is_flagged_hard_to_justify() -> None:
+def test_total_is_shared_and_the_fraction_trends_through_a_transition() -> None:
+    series = _two_line_series(_TRANSITION)
+    ladder = series.climb()
+    _all_local, background, total, amplitudes, *further = ladder.rungs
+
+    assert background.model is series.model
+    assert total.model.component_expression_string() == (
+        "(Oscillatory * Gaussian + Oscillatory * Gaussian){frac} + Constant"
+    )
+    assert total.shared == ("A_bg", "A_1")
+    assert total.adequate and abs(total.series_cost) < 0.5
+    # A total and a fraction stand for two amplitudes: 7 on each of 12 runs, less 11 + 11.
+    assert total.free_parameter_count == 62
+    assert set(total.results_by_run[1].parameters.names) == set(total.model.param_names)
+    assert total.results_by_run[1].parameters["A_1"].value == pytest.approx(20.0, abs=0.1)
+    fractions = [
+        result.parameters["f_Oscillatory"].value for result in total.results_by_run.values()
+    ]
+    assert fractions == pytest.approx(list(_TRANSITION), abs=0.01)
+    assert total.trend.parameters["f_Oscillatory"].quality > 0.95
+    # The shared total has no trace; the widths keep theirs under their grouped names.
+    assert set(total.trend.parameters) == {
+        "frequency_1",
+        "f_Oscillatory",
+        "sigma_1",
+        "frequency_2",
+        "sigma_2",
+    }
+
+    assert amplitudes.model is series.model
+    assert amplitudes.shared == ("A_bg", "A_1", "A_3")
+    assert amplitudes.series_cost > 100.0 and not amplitudes.adequate
+    assert amplitudes.exempt_runs == () and amplitudes.amplitude_unshareable_runs == ()
+
+    # Every further parameter is tried on top of the total, in its form.
+    assert [rung.shared for rung in further] == [
+        ("A_bg", "A_1", "frequency_1"),
+        ("A_bg", "A_1", "frequency_1", "sigma_1"),
+        ("A_bg", "A_1", "frequency_1", "frequency_2"),
+        ("A_bg", "A_1", "frequency_1", "frequency_2", "sigma_2"),
+    ]
+    assert all(rung.model is total.model for rung in further)
+    assert [rung.adequate for rung in further] == [True, False, True, False]
+    # Each line's amplitude is local through its fraction, so its shared
+    # frequency and width are flagged, the Gaussian factor's included.
+    assert further[1].hard_to_justify == ("frequency_1", "sigma_1")
+    assert ladder.preselected is further[2]
+
+
+def test_constant_amplitudes_are_shared_outright_and_the_ladder_goes_on_from_there() -> None:
+    series = _two_line_series(
+        [0.6] * 12, fixed=("phase_1", "phase_3", "frequency_1", "frequency_3")
+    )
+    ladder = series.climb(max_further_parameters=1)
+    _all_local, _background, total, amplitudes, width = ladder.rungs
+
+    # The total can be shared too, and leaves a fraction that does not move.
+    assert total.model.fraction_groups and total.adequate
+    assert total.trend.parameters["f_Oscillatory"].quality < 0.5
+    assert amplitudes.model is series.model
+    assert amplitudes.shared == ("A_bg", "A_1", "A_3")
+    assert amplitudes.adequate
+    assert ladder.preselected is amplitudes
+    # The later adequate rung is the foothold, in the template as given.
+    assert width.model is series.model
+    assert width.shared == ("A_bg", "A_1", "A_3", "sigma_2")
+    assert width.hard_to_justify == ()
+    assert not width.adequate
+
+
+def test_lines_of_opposite_sign_have_no_shared_total_rung() -> None:
+    series = _two_line_series(_TRANSITION, second_line_sign=-1.0)
+    ladder = series.climb(max_further_parameters=2)
+    _all_local, _background, amplitudes, frequency, width = ladder.rungs
+
+    assert all(rung.model is series.model for rung in ladder.rungs)
+    assert amplitudes.shared == ("A_bg", "A_1", "A_3")
+    assert not amplitudes.adequate
+    # In the template as given a shared width is flagged under the local
+    # amplitude of the line it multiplies.
+    assert frequency.shared == ("A_bg", "frequency_1")
+    assert frequency.hard_to_justify == ("frequency_1",)
+    assert width.shared == ("A_bg", "frequency_1", "sigma_2")
+    assert width.hard_to_justify == ("frequency_1", "sigma_2")
+
+
+def test_line_that_vanishes_is_a_fraction_at_its_limit_not_a_sign() -> None:
+    # The second line is absent from the first three runs, where its fitted
+    # amplitude falls either side of zero by less than its error.
+    series = _two_line_series(
+        np.clip(1.25 - 0.1 * np.arange(12), 0.0, 1.0),
+        fixed=("phase_1", "phase_3", "frequency_1", "frequency_3", "sigma_4"),
+    )
+    absent = [series.all_local[run].parameters["A_3"].value for run in (1, 2, 3)]
+    assert min(absent) < 0.0 and max(np.abs(absent)) < 0.1
+
+    total = series.climb(max_further_parameters=0).rungs[2]
+
+    assert total.model.fraction_groups
+    assert total.shared == ("A_bg", "A_1")
+    assert total.adequate
+    fractions = [
+        result.parameters["f_Oscillatory"].value for result in total.results_by_run.values()
+    ]
+    assert fractions[:3] == pytest.approx([1.0, 1.0, 1.0], abs=0.005)
+    assert fractions[-1] == pytest.approx(0.15, abs=0.01)
+
+
+def test_shared_rate_under_a_local_fraction_is_flagged_hard_to_justify() -> None:
     # Two components trading volume fraction; the exponential's rate is constant.
     fraction = np.linspace(0.2, 0.8, 10)
     series = _Series(
@@ -279,19 +434,21 @@ def test_shared_rate_under_a_local_amplitude_is_flagged_hard_to_justify() -> Non
         sigma=0.15,
     )
     ladder = series.climb()
-    _all_local, background, amplitudes, rate, width = ladder.rungs
+    _all_local, background, total, amplitudes, rate, width = ladder.rungs
 
+    assert total.shared == ("A_bg", "A_1") and total.model.fraction_groups
+    assert total.adequate
     assert amplitudes.shared == ("A_bg", "A_1", "A_2")
     assert not amplitudes.adequate
-    assert background.hard_to_justify == amplitudes.hard_to_justify == ()
+    assert background.hard_to_justify == total.hard_to_justify == amplitudes.hard_to_justify == ()
 
-    assert rate.shared == ("A_bg", "Lambda")
+    assert rate.shared == ("A_bg", "A_1", "Lambda")
     assert rate.adequate
     assert rate.hard_to_justify == ("Lambda",)
     # A flag, not a veto.
     assert ladder.preselected is rate
 
-    assert width.shared == ("A_bg", "Lambda", "sigma")
+    assert width.shared == ("A_bg", "A_1", "Lambda", "sigma")
     assert width.hard_to_justify == ("Lambda", "sigma")
     assert not width.adequate
 
