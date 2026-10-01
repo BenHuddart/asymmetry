@@ -368,12 +368,16 @@ checkout, in order.
      warning (fingerprint jump, clustered failures) is a caveat under both.
      The staged-globalisation search that used the roughness was dead code
      (tests only) and is deleted.
-   - **Lines that vanish.** A series with no break is one phase, so the
-     series-wide search drops a multiplet or Overhauser rung whose lines are
-     consistent with zero on a run, as the per-phase search already did. On
-     YMnAl the two-cut-off Overhauser template otherwise won (worst trend
-     0.83 against the stretched exponential's 0.78) while describing two runs
-     as plain relaxation.
+   - **Lines that vanish.** A series with no break is one phase, so the trend
+     search leaves out a multiplet or Overhauser rung whose lines are
+     consistent with zero on a run, series-wide as well as per phase — the
+     rule the per-phase role search already applied. A template whose
+     pre-selected rung goes this way does not contend. The rule is read in the
+     template as given: a fraction-form rung has no amplitude per line, so its
+     total and fractions are turned back into amplitudes, with errors that
+     leave out the covariance between the two. On YMnAl the two-cut-off
+     Overhauser template otherwise won (worst trend 0.83 against the stretched
+     exponential's 0.78) while describing two runs as plain relaxation.
    - **Phases (D13).** A phase's answer is the best pre-selected rung among
      the templates in the band on that phase's runs. The break is still scored
      by the best partition BIC among the phase's fits: a rung may cost 2σ and
@@ -397,9 +401,10 @@ checkout, in order.
      recommendation migrates as statistical. Merging a result of one objective
      into a recommendation of the other replaces its optimised candidates.
    - **Corpus.** Copper: dynamic Gaussian KT + constant, amplitude, background
-     and Δ shared, ν local (43 s). YMnAl: stretched exponential + constant,
+     and Δ shared, ν local (44 s). YMnAl: stretched exponential + constant,
      background shared, amplitude not shareable through the three coldest runs
-     (about 200 s).
+     (about 200 s). Molecular AFM, per phase: one transition, and in each
+     phase the two-line template with nothing shared (250 s).
    - **Open for Phase 5.** Parameter recommendations are empty on a rung, so
      the Compare step's role table is; apply must leave exempt runs out of the
      coupled series (D17) and takes the fraction-form model from the

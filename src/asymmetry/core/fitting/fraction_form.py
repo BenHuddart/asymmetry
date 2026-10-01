@@ -9,6 +9,7 @@ total can be shared (``docs/plans/global-wizard-trend-objective.md``, D11, D16).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -71,6 +72,39 @@ class SignalFractionForm:
                 )
             },
             **{plain_name: grouped[name] for name, plain_name in self.carried.items()},
+        }
+
+    def plain_uncertainties(
+        self, grouped: Mapping[str, float], uncertainties: Mapping[str, float]
+    ) -> dict[str, float]:
+        """1σ of the plain model's parameters, from the grouped model's.
+
+        ``σ²(Aᵢ) = shareᵢ² σ²(total) + total² σ²(shareᵢ)``, the last share being
+        one minus the others. The covariance between the total and a share is
+        left out, so these are for judging whether a term is there at all, not
+        for quoting. An amplitude has no entry when the total or one of the
+        fractions its share is built from has none.
+        """
+        total = grouped[self.total]
+        shares = [grouped[name] for name in self.fractions]
+        variances = [uncertainties.get(name, math.nan) ** 2 for name in self.fractions]
+        total_variance = uncertainties.get(self.total, math.nan) ** 2
+        amplitudes = {
+            amplitude: math.sqrt(share**2 * total_variance + total**2 * variance)
+            for amplitude, share, variance in zip(
+                self.amplitudes,
+                [*shares, 1.0 - sum(shares)],
+                [*variances, sum(variances)],
+                strict=True,
+            )
+        }
+        return {
+            **{name: sigma for name, sigma in amplitudes.items() if math.isfinite(sigma)},
+            **{
+                plain_name: uncertainties[name]
+                for name, plain_name in self.carried.items()
+                if name in uncertainties
+            },
         }
 
 

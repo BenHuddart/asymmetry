@@ -97,6 +97,38 @@ def test_values_map_between_the_two_forms_and_back() -> None:
     assert np.allclose(model.function(time, **plain), form.grouped.function(time, **grouped))
 
 
+def test_uncertainties_of_the_amplitudes_follow_the_total_and_the_shares() -> None:
+    form = signal_fraction_form(
+        CompositeModel.from_expression("Exponential + Gaussian + Gaussian + Constant")
+    )
+    first, second = form.fractions
+    grouped = form.grouped_values(
+        {
+            "A_1": 6.0,
+            "Lambda": 1.0,
+            "A_2": 3.0,
+            "sigma_2": 0.5,
+            "A_3": 1.0,
+            "sigma_3": 0.2,
+            "A_bg": 2.0,
+        }
+    )
+    errors = {form.total: 0.2, first: 0.03, second: 0.04, "A_bg": 0.1}
+
+    plain = form.plain_uncertainties(grouped, errors)
+
+    # A = total × share, the last share being one minus the others.
+    assert plain["A_1"] == pytest.approx(np.hypot(0.6 * 0.2, 10.0 * 0.03))
+    assert plain["A_2"] == pytest.approx(np.hypot(0.3 * 0.2, 10.0 * 0.04))
+    assert plain["A_3"] == pytest.approx(np.hypot(0.1 * 0.2, 10.0 * np.hypot(0.03, 0.04)))
+    assert plain["A_bg"] == 0.1
+    # A parameter the fit put no error on has none here, and neither has an
+    # amplitude built from one.
+    assert "Lambda" not in plain
+    partial = form.plain_uncertainties(grouped, {form.total: 0.2, first: 0.03})
+    assert set(partial) == {"A_1"}
+
+
 def test_amplitudes_summing_to_zero_have_no_fractions() -> None:
     form = signal_fraction_form(CompositeModel.from_expression("Exponential + Gaussian"))
 

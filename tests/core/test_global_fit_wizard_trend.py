@@ -13,7 +13,7 @@ from dataclasses import replace
 
 import pytest
 
-from asymmetry.core.fitting.fit_wizard import SelectionMetric
+from asymmetry.core.fitting.fit_wizard import CandidateTemplate, SelectionMetric
 from asymmetry.core.fitting.global_fit_wizard import (
     GlobalFitWizardRecommendation,
     build_global_fit_wizard_recommendation,
@@ -30,6 +30,7 @@ from asymmetry.core.fitting.global_search.trend_objective import (
 )
 from asymmetry.core.fitting.global_search.trend_search import (
     _LadderTask,
+    _lines_vanish,
     _prescreen_fits_for_ladder,
     _run_ladder_task,
 )
@@ -300,3 +301,35 @@ def test_shared_total_rung_carries_the_model_it_was_fitted_in() -> None:
     )
     assert restored.recommended_assessment.template.model.param_names == grouped.param_names
     assert restored.recommended_assessment.rung == recommended.rung
+
+
+def test_rung_whose_lines_have_vanished_on_a_run_is_recognised_in_either_form() -> None:
+    """The oscillatory rule reads a fraction-form rung through its amplitudes."""
+    template = CandidateTemplate(
+        key="oscillatory2_gaussian_constant",
+        title="Two lines",
+        category="Oscillatory",
+        rationale="test",
+        model=two_line_series(TRANSITION).model,
+    )
+    present = two_line_series(TRANSITION).climb(further=0)
+    shared_total = next(rung for rung in present.rungs if rung.model.fraction_groups)
+
+    assert shared_total.adequate
+    assert not _lines_vanish(template, present.rungs[0])
+    assert not _lines_vanish(template, shared_total)
+
+    # The same rungs with every line's amplitude left without an error on one
+    # run: nothing there is a measured line.
+    def unmeasured(rung, names):
+        results = dict(rung.results_by_run)
+        results[1] = replace(
+            results[1],
+            uncertainties={
+                name: error for name, error in results[1].uncertainties.items() if name not in names
+            },
+        )
+        return replace(rung, results_by_run=results)
+
+    assert _lines_vanish(template, unmeasured(present.rungs[0], {"A_1", "A_3"}))
+    assert _lines_vanish(template, unmeasured(shared_total, {"f_Oscillatory"}))

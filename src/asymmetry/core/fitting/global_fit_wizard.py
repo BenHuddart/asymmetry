@@ -3537,30 +3537,25 @@ def _build_global_fit_wizard_recommendation_staged(
             if use_single_fit_prescreen
             else _separable_search_rebin_factor(ordered_datasets)
         )
-        # A series with no break is one phase, so a template whose lines have
-        # vanished on one of its runs is no more an answer here than in a phase.
-        optimized_assessments = _oscillatory_admissible_phase_candidates(
-            run_trend_search(
-                ordered_datasets,
-                templates=[template for template in templates if template.key in template_contexts],
-                # The user's ticks override the band; otherwise it is the shortlist,
-                # with whatever the data identified.
-                always_competing=normalized_selected_template_keys or forced_keys,
-                template_contexts=template_contexts,
-                prescreen_assessments=initial_assessments,
-                axis_key=axis_key,
-                metric=metric,
-                progress_callback=progress_callback,
-                search_strategy=search_strategy,
-                instrumentation=instrumentation,
-                cancel_callback=cancel_callback,
-                search_rebin_factor=search_rebin_factor,
-                prescreen_rebin_factor=search_rebin_factor if use_single_fit_prescreen else 1,
-                time_budget_seconds=_WAVEFRONT_TIME_BUDGET_SECONDS,
-                backstop_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
-                materialise_curves=True,
-            ),
-            instrumentation,
+        optimized_assessments = run_trend_search(
+            ordered_datasets,
+            templates=[template for template in templates if template.key in template_contexts],
+            # The user's ticks override the band; otherwise it is the shortlist,
+            # with whatever the data identified.
+            always_competing=normalized_selected_template_keys or forced_keys,
+            template_contexts=template_contexts,
+            prescreen_assessments=initial_assessments,
+            axis_key=axis_key,
+            metric=metric,
+            progress_callback=progress_callback,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+            cancel_callback=cancel_callback,
+            search_rebin_factor=search_rebin_factor,
+            prescreen_rebin_factor=search_rebin_factor if use_single_fit_prescreen else 1,
+            time_budget_seconds=_WAVEFRONT_TIME_BUDGET_SECONDS,
+            backstop_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
+            materialise_curves=True,
         )
     else:
         if normalized_selected_template_keys:
@@ -10917,29 +10912,31 @@ def _optimise_partition_phases(
                     materialise_curves=False,
                 )
             else:
-                searched = _run_separable_search(
-                    segment_datasets,
-                    shortlisted_templates=list(templates),
-                    template_contexts=segment_contexts,
-                    prescreen_assessments=restricted_prescreen,
-                    axis_key=axis_key,
-                    metric=metric,
-                    progress_callback=progress_callback,
-                    search_strategy=search_strategy,
-                    instrumentation=instrumentation,
-                    single_run_prefit_cache_for=single_run_prefit_cache_for,
-                    cancel_callback=cancel_callback,
-                    search_rebin_factor=search_rebin_factor,
-                    prescreen_rebin_factor=search_rebin_factor,
-                    full_resolution_refit=False,
-                    materialise_curves=False,
-                    time_budget_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
+                # The phase's candidate list, with any template whose oscillation
+                # has vanished on one of its runs removed before anything ranks it
+                # (the trend search leaves those out itself).
+                searched = _oscillatory_admissible_phase_candidates(
+                    _run_separable_search(
+                        segment_datasets,
+                        shortlisted_templates=list(templates),
+                        template_contexts=segment_contexts,
+                        prescreen_assessments=restricted_prescreen,
+                        axis_key=axis_key,
+                        metric=metric,
+                        progress_callback=progress_callback,
+                        search_strategy=search_strategy,
+                        instrumentation=instrumentation,
+                        single_run_prefit_cache_for=single_run_prefit_cache_for,
+                        cancel_callback=cancel_callback,
+                        search_rebin_factor=search_rebin_factor,
+                        prescreen_rebin_factor=search_rebin_factor,
+                        full_resolution_refit=False,
+                        materialise_curves=False,
+                        time_budget_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
+                    ),
+                    instrumentation,
                 )
-            # The phase's candidate list, with any template whose oscillation
-            # has vanished on one of its runs removed before anything ranks it.
-            searched_by_window[(start, stop)] = _oscillatory_admissible_phase_candidates(
-                searched, instrumentation
-            )
+            searched_by_window[(start, stop)] = searched
     except FitCancelledError:
         raise
 

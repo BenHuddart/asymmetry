@@ -17,7 +17,13 @@ from dataclasses import dataclass, replace
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
-from asymmetry.core.fitting.fit_wizard import CandidateTemplate, SelectionMetric
+from asymmetry.core.fitting.fit_wizard import (
+    OVERHAUSER_TEMPLATE_KEYS,
+    CandidateTemplate,
+    SelectionMetric,
+    fit_result_is_oscillatory_admissible,
+    is_multiplet_template_key,
+)
 from asymmetry.core.fitting.fraction_form import signal_fraction_form
 from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
@@ -41,7 +47,7 @@ from asymmetry.core.fitting.global_search.trend_objective import (
     CandidateRung,
     templates_within_band,
 )
-from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 __all__ = ["run_trend_search"]
 
@@ -84,6 +90,34 @@ def _names_in_form(
     form = signal_fraction_form(template_model)
     grouped_name = {given: grouped for grouped, given in form.carried.items()}
     return tuple(grouped_name[name] for name in names)
+
+
+def _lines_vanish(template: CandidateTemplate, rung: LadderRung) -> bool:
+    """Whether a rung leaves the template's lines consistent with zero on some run.
+
+    The rule the per-phase role search applies to its nodes
+    (:func:`~asymmetry.core.fitting.fit_wizard.is_oscillatory_admissible`), read
+    in the template as given: a rung in the fraction form has no amplitude per
+    line, so its total and fractions are turned back into amplitudes first.
+    """
+    results = list(rung.results_by_run.values())
+    if rung.model.param_names != template.model.param_names:
+        form = signal_fraction_form(template.model)
+        grouped = [
+            {parameter.name: parameter.value for parameter in result.parameters}
+            for result in results
+        ]
+        results = [
+            replace(
+                result,
+                parameters=ParameterSet(
+                    [Parameter(name, value) for name, value in form.plain_values(values).items()]
+                ),
+                uncertainties=form.plain_uncertainties(values, result.uncertainties),
+            )
+            for result, values in zip(results, grouped, strict=True)
+        ]
+    return not all(fit_result_is_oscillatory_admissible(template, result) for result in results)
 
 
 def _rung_assessment(
@@ -150,12 +184,24 @@ def _run_ladder_task(task: _LadderTask) -> _LadderResult:
         )
         for rung in ladder.rungs
     ]
+    # A template that carries lines is no answer where they have vanished, on a
+    # series as in a phase of one: such a rung is left out, the pre-selected one
+    # included, and its template then does not contend.
+    carries_lines = (
+        is_multiplet_template_key(task.template_key)
+        or task.template_key in OVERHAUSER_TEMPLATE_KEYS
+    )
+    kept = [
+        (rung, verdict)
+        for rung, verdict in zip(ladder.rungs, verdicts, strict=True)
+        if not (carries_lines and _lines_vanish(task.template, rung))
+    ]
+    _record_counter(instrumentation, "oscillation_vanished_phases", len(verdicts) - len(kept))
     climbed = [
-        replace(task.anchor, rung=verdicts[0]),
-        *(
-            _rung_assessment(task, rung, verdict)
-            for rung, verdict in zip(ladder.rungs[1:], verdicts[1:], strict=True)
-        ),
+        replace(task.anchor, rung=verdict)
+        if rung is ladder.rungs[0]
+        else _rung_assessment(task, rung, verdict)
+        for rung, verdict in kept
     ]
     return _LadderResult(
         template_key=task.template_key,
@@ -228,7 +274,9 @@ def run_trend_search(
     (:func:`templates_within_band`), with those named in ``always_competing``
     — the ones the data identified, or the ones the user ticked — and each
     competitor's ladder is one pool task. A template whose all-local node did
-    not converge on every run has no ladder and returns nothing.
+    not converge on every run has no ladder and returns nothing, and a rung of
+    a template that carries lines is left out where those have vanished
+    (:func:`_lines_vanish`).
 
     ``time_budget_seconds`` is the budget of plan D8: once it has run out, a
     ladder climbs its background and amplitude rungs and no further, and the
@@ -334,16 +382,10 @@ def run_trend_search(
     for ladder in ladders:
         if ladder.restricted:
             _append_metric(instrumentation, "trend_restricted_templates", ladder.template_key)
-        chosen = next(rung for rung in ladder.assessments if rung.rung.preselected)
-        _progress_log(
-            progress_callback,
-            f"{chosen.template.title}: {len(ladder.assessments) - 1} sharing pattern(s) fitted; "
-            f"pre-selected Global[{', '.join(chosen.global_param_names) or 'none'}]"
-            + (
-                " (further parameters left untried: over the time budget)." * ladder.restricted
-                or "."
-            ),
-        )
+            _progress_log(
+                progress_callback,
+                f"{ladder.template_key}: further parameters left untried, over the time budget.",
+            )
     by_key = {ladder.template_key: ladder.assessments for ladder in ladders}
     climbed = tuple(
         assessment
