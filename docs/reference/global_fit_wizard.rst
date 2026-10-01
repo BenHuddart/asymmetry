@@ -691,10 +691,33 @@ result's ``phase_assessments`` then maps ``(partition_k, segment_index)`` to a
 ``GlobalCandidateAssessment``, and ``recommended_partition_k`` records which
 solution was optimised.
 
+``build_global_fit_wizard_recommendation`` takes an ``objective``, a
+``SelectionObjective``, and the recommendation it returns records which one it
+was ranked for. ``TREND`` is the default. It asks which fit lets the parameters
+be followed along the series: for every candidate whose independent per-run
+fits come within 3 % in :math:`\chi^2_r` of the best candidate's, the wizard
+fits a ladder of sharing patterns — the background shared, then the amplitudes,
+then one further parameter at a time — and keeps a parameter shared only while
+the fit stays adequate, which means that :math:`\chi^2_r` rises by no more than
+two of its own standard deviations, :math:`\sqrt{2/\nu}`, for the series and
+for every run. The recommended candidate is the adequate pattern whose
+remaining local parameters trend best. Each candidate of such a recommendation
+carries a ``rung``: its cost in those standard deviations, the trend quality of
+each local parameter, the runs that keep their own value of a shared amplitude
+(also given by ``exemptions``), and the block of runs at one end of the series
+through which the amplitude could not be shared. A run that fails its residual
+gate does not veto a recommendation under this objective; the summary names it.
+``STATISTICAL`` is the role search and information-criterion ranking described
+on the rest of this page, and is what the ``search_engine`` and ``effort_tier``
+arguments apply to. One call computes one objective, and merging a result of
+one objective into a recommendation of the other replaces its optimised
+candidates.
+
 ``tools/global_wizard_harness.py --engine {separable,exhaustive}`` is the
 regression check for the role search itself; see `How the role search
 works`_ above for what the two engines are and the acceptance bar between
-them.
+them. ``--objective trend`` runs the trend objective on its own planted cases
+instead.
 
 Screening never sets ``recommended_key``. That is deliberate — a pre-screen score
 comes from independent per-dataset fits, which are not evidence about a *coupled*

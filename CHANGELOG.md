@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Global Fit Wizard now recommends the fit whose parameters trend best
+  among those that fit adequately.** For every candidate model that fits about
+  as well as the best one, it shares the background, then the amplitudes, then
+  one further parameter at a time, and keeps a parameter shared only while the
+  fit stays adequate: χ²ᵣ may rise by no more than two of its own standard
+  deviations, √(2/ν), for the series and for every run. Isolated runs whose
+  asymmetry stands apart keep their own amplitude and are listed, and a block
+  of runs at one end of the series through which the amplitude cannot be shared
+  is reported as possible missing asymmetry. A run with structured residuals no
+  longer leaves the wizard with nothing to recommend; the summary names it.
+  The previous ranking, the best information criterion over the Global/Local
+  role search, remains as the statistical objective:
+  `build_global_fit_wizard_recommendation(..., objective=SelectionObjective.STATISTICAL)`.
+  The Compare step's **Parameter roles for A** table no longer shows the **TV**
+  and **Roughness** columns, and a parameter that "changes abruptly" along the
+  series is no longer a warning. Project files move to schema version 24;
+  recommendations stored by an earlier version load as statistical ones.
 - **The fit wizards' slow tag now comes from fit times measured on your
   computer.** Before, a model was slow when the registry declared it
   expensive per call, which ranked models badly: dynamic Gaussian KT is cheap

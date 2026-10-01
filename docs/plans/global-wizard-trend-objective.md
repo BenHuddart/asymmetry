@@ -1,7 +1,7 @@
 # Global Fit Wizard: recommend the fit that trends best
 
-Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Phases 1–3
-implemented; phases 4–5 not yet. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are lead proposals
+Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Phases 1–4
+implemented; phase 5 not yet. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are lead proposals
 recorded here so review can overturn them. Follows
 [global-wizard-transitions.md](global-wizard-transitions.md) (phases) and
 [global-wizard-stepper.md](global-wizard-stepper.md) (the Compare step).
@@ -330,6 +330,85 @@ checkout, in order.
 4. **Verdict and persistence (core).** D1, D13, D14: the objective on
    `GlobalFitWizardRecommendation`, re-rank under either objective, phases
    path, deletions, schema bump with migration for stored recommendations.
+   *Landed.* The wizard's default objective is the trend one.
+   - **Where it lives.** `global_search/trend_objective.py` holds what the
+     wizard's types need (`SelectionObjective`, `CandidateRung`, the band, the
+     ranking and the summary); `global_search/trend_search.py` is the search,
+     built from the wizard's own anchor task, pool drain and assembly, so the
+     wizard imports it where it calls it.
+   - **A candidate.** Every rung is a `GlobalCandidateAssessment` built by
+     `_assemble_assignment_assessment`, with a `rung` (`CandidateRung`): cost
+     in σ for the series and per run, the trend quality of each local
+     parameter, exempt runs, hard-to-justify names, pass disagreements,
+     whether it is its ladder's pre-selected rung, the ladder's end block and
+     the template's all-local χ²ᵣ. A rung in the fraction form carries a
+     `template` with the same key and title and the grouped model, so every
+     name on the assessment is that model's and there is no second model field
+     to remember. A shared amplitude with exempt runs stays in
+     `global_param_names`; `exemptions` maps it to the runs that keep their
+     own value, and the IC counts those columns.
+   - **The search.** All-local nodes for every candidate (free when the
+     pre-screen table is at the search resolution and carries its degrees of
+     freedom; fits restored from a project carry neither those nor a
+     covariance and are fitted again), then the band, then one pool task per
+     competing template. Everything is fitted and reported at the series
+     search resolution, where costs are against all-local fits of the same
+     records.
+   - **Who climbs, who contends.** A ladder is climbed for the templates
+     inside the band, for those the data identified (the pattern and
+     oscillatory keys the statistical shortlist forces) and, when the user
+     ticked templates, for exactly those. Only templates inside the band of
+     the climbed ones contend for the recommendation: on the hopping test
+     series a forced template 25 % worse in χ²ᵣ had every parameter trending
+     at 0.94, and trend quality must not buy back a fit the band rejected.
+   - **Residual gates under the trend objective are a caveat.** Adequacy
+     against the template's own all-local fits and the band are what admit a
+     rung; the summary names the runs whose residual gate fails. Under the
+     statistical objective a per-run gate failure still blocks, and a series
+     warning (fingerprint jump, clustered failures) is a caveat under both.
+     The staged-globalisation search that used the roughness was dead code
+     (tests only) and is deleted.
+   - **Lines that vanish.** A series with no break is one phase, so the
+     series-wide search drops a multiplet or Overhauser rung whose lines are
+     consistent with zero on a run, as the per-phase search already did. On
+     YMnAl the two-cut-off Overhauser template otherwise won (worst trend
+     0.83 against the stretched exponential's 0.78) while describing two runs
+     as plain relaxation.
+   - **Phases (D13).** A phase's answer is the best pre-selected rung among
+     the templates in the band on that phase's runs. The break is still scored
+     by the best partition BIC among the phase's fits: a rung may cost 2σ and
+     a template 3 %, which on real point counts is more than a break is worth.
+   - **Budget (D8), changed.** The measured screening times are not a forecast
+     of a rung: the store on the development machine holds 40 s per 1000
+     points for dynamic Gaussian KT, which puts copper's coupled fit at over
+     twenty minutes, and the whole copper ladder runs in under a second. The
+     budget is a stopwatch instead: a ladder tries a further parameter only
+     while a rung as long as its last would end inside the series budget
+     (180 s; 1800 s per phase), and always climbs the background and amplitude
+     rungs. `climb_sharing_ladder` takes that as `climb_further`. A template is
+     lost only to the pool's 1800 s backstop. On YMnAl three of eleven
+     templates were restricted and the search took about 200 s.
+   - **Display order.** Template by template: contending templates in rank
+     order, so the recommended rung is first, then the others by fit; within a
+     template the pre-selected rung, the other adequate rungs by trend, then
+     the costly ones by cost.
+   - **Persistence.** Schema v24: `objective` on the recommendation, `rung` on
+     each assessment, `total_variation`/`roughness` dropped; a stored
+     recommendation migrates as statistical. Merging a result of one objective
+     into a recommendation of the other replaces its optimised candidates.
+   - **Corpus.** Copper: dynamic Gaussian KT + constant, amplitude, background
+     and Δ shared, ν local (43 s). YMnAl: stretched exponential + constant,
+     background shared, amplitude not shareable through the three coldest runs
+     (about 200 s).
+   - **Open for Phase 5.** Parameter recommendations are empty on a rung, so
+     the Compare step's role table is; apply must leave exempt runs out of the
+     coupled series (D17) and takes the fraction-form model from the
+     assessment's template; the end-block finding also fires on an amplitude
+     that genuinely steps at one end; a rung far cheaper than all-local (a
+     large negative cost) means the all-local fits were not at their minimum,
+     which the ladder does not act on; the reference page still describes the
+     statistical Compare step, and its result screenshot is pinned to that
+     objective.
 5. **Compare ladder (GUI) and docs.** Objective switch; one row per rung
    with a cost bar (σ units) and trend quality; a trace strip per local
    parameter with error bars; flags for exemptions, missing asymmetry,
