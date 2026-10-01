@@ -212,11 +212,12 @@ Lead proposals:
   least-squares fit by orders of magnitude.
 - **D26: a rung whose oscillation has vanished on a run does not contend**
   under the trend objective, series-wide as well as per phase.
-- **Open: the template band on BiSCCO.** The three-line templates fit at
-  χ²ᵣ 1.04–1.05 and the two-line ones at 1.20, so the band admits only the
-  three-line models, whose pre-selected rung has worst trend quality 0.46
-  against 0.59 for the two-line model. Whether a much simpler, better
-  trending model should be able to win from outside a 3 % band is Ben's call.
+- **D27 (Ben, 2026-10-01): the 3 % band stays.** On BiSCCO the three-line
+  templates fit at χ²ᵣ 1.04–1.05 and the two-line ones at 1.20, so only the
+  three-line models contend (worst trend quality 0.46 against 0.59 for the
+  two-line model). The recommendation stays statistically defensible; the
+  simpler templates are listed in Compare with their trend quality, where
+  the user can pick one.
 
 ## Code map (verify before editing)
 
@@ -447,7 +448,7 @@ these are run by the lead before the PR and recorded in it:
 |---|---|
 | YMnAl | stretched exponential, background shared; amplitude reported as not shareable through the three coldest runs (24573–24575) |
 | Copper | dynamic Gaussian KT with amplitude, background and Δ shared |
-| BiSCCO | two Gaussian lines with both amplitudes, both phases and one frequency shared, both widths local; the shared-total rung listed at no cost |
+| BiSCCO | a three-line template from inside the band with its amplitudes shared; the two-line templates listed in Compare with their trend quality (D27) |
 | Re₆Zr | amplitude shared with runs 38223, 38230, 38231 exempt; static KT × exponential offered within the band |
 | PTFE | a recommendation carrying the pass-disagreement caveat |
 | Nickel, molecular AFM | per-phase patterns; no series-wide claim |
