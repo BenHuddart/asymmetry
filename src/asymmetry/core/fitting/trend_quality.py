@@ -5,7 +5,7 @@ errors, are pinned by the data in most runs, and do not zigzag from one run to
 the next. :func:`trace_quality` scores one parameter's trace on those three
 counts; :class:`CandidateTrend` orders candidates by their worst parameter.
 The design and the rejected alternatives are in
-``docs/plans/global-wizard-trend-objective.md`` (D6, D15).
+``docs/plans/global-wizard-trend-objective.md`` (D6, D15, D20).
 """
 
 from __future__ import annotations
@@ -92,16 +92,24 @@ class CandidateTrend:
 
 @dataclass(frozen=True)
 class PassDiagnostic:
-    """One trace's zigzag along the scan axis and in the order the runs were taken."""
+    """One trace's zigzag along the scan axis and within each acquisition pass."""
 
     zigzag_axis_order: float
+    #: Extrema over interior points, both counted inside each pass and summed.
     zigzag_run_order: float
+    #: Run numbers of each pass, in the order the passes were taken.
+    passes: tuple[tuple[int, ...], ...]
 
     @property
     def passes_disagree(self) -> bool:
-        """Rough along the axis but smooth in time: separate passes do not agree."""
+        """Rough along the axis, smooth inside each pass: the passes do not agree.
+
+        It takes two passes of three or more runs to say so: a shorter pass has
+        no interior point, so nothing shows that it is smooth.
+        """
         return (
-            self.zigzag_axis_order >= PASS_AXIS_ZIGZAG_MIN
+            sum(len(runs) >= 3 for runs in self.passes) >= 2
+            and self.zigzag_axis_order >= PASS_AXIS_ZIGZAG_MIN
             and self.zigzag_run_order <= PASS_RUN_ZIGZAG_MAX
         )
 
@@ -114,18 +122,19 @@ def _run_order(point: TracePoint) -> int:
     return point.run
 
 
-def _zigzag(points: Sequence[TracePoint], order: Callable[[TracePoint], object]) -> float:
-    """Share of interior points lying outside their two neighbours' interval by > 2σ.
+def _extrema(
+    points: Sequence[TracePoint], order: Callable[[TracePoint], object]
+) -> tuple[int, int]:
+    """Count interior points lying outside their two neighbours' interval by > 2σ.
 
-    σ combines the point's error with that of the neighbour it overshoots. The
-    test compares values only with their neighbours' values, so it is scale-free
-    and a monotone trace of any steepness scores zero. Runs without an
-    uncertainty are left out of the sequence: their values fix nothing, so they
-    are neither extrema nor neighbours.
+    Returns ``(extrema, interior points)``. σ combines the point's error with
+    that of the neighbour it overshoots. The test compares values only with
+    their neighbours' values, so it is scale-free and a monotone trace of any
+    steepness has no extremum. Runs without an uncertainty are left out of the
+    sequence: their values fix nothing, so they are neither extrema nor
+    neighbours.
     """
     ordered = sorted((point for point in points if point.error is not None), key=order)
-    if len(ordered) < 3:
-        return 0.0
     extrema = 0
     for before, point, after in zip(ordered, ordered[1:], ordered[2:], strict=False):
         low, high = sorted((before, after), key=lambda neighbour: neighbour.value)
@@ -137,7 +146,31 @@ def _zigzag(points: Sequence[TracePoint], order: Callable[[TracePoint], object])
             continue
         if excess > _EXTREMUM_SIGMA * math.hypot(point.error, overshot.error):
             extrema += 1
-    return extrema / (len(ordered) - 2)
+    return extrema, max(len(ordered) - 2, 0)
+
+
+def _zigzag(extrema: int, interior: int) -> float:
+    """Share of interior points that are extrema; zero when there is no interior point."""
+    return extrema / interior if interior else 0.0
+
+
+def acquisition_passes(points: Sequence[TracePoint]) -> tuple[tuple[TracePoint, ...], ...]:
+    """Split a series into passes: maximal stretches, in run order, monotone in the axis.
+
+    A run at the same axis position as the one before it continues the pass, and
+    the run that reverses the direction starts the next one.
+    """
+    passes: list[list[TracePoint]] = []
+    direction = 0.0
+    for point in sorted(points, key=_run_order):
+        step = point.x - passes[-1][-1].x if passes else 0.0
+        if passes and step * direction >= 0.0:
+            passes[-1].append(point)
+            direction = direction or step
+        else:
+            passes.append([point])
+            direction = 0.0
+    return tuple(tuple(members) for members in passes)
 
 
 def trace_quality(points: Sequence[TracePoint]) -> TraceQuality:
@@ -170,13 +203,23 @@ def trace_quality(points: Sequence[TracePoint]) -> TraceQuality:
     return TraceQuality(
         determined=determined / len(points),
         signal=snr / (snr + _SIGNAL_HALF_SNR),
-        zigzag=_zigzag(points, _axis_order),
+        zigzag=_zigzag(*_extrema(points, _axis_order)),
     )
 
 
 def pass_diagnostic(points: Sequence[TracePoint]) -> PassDiagnostic:
-    """Compare one trace's zigzag in axis order and in acquisition order (plan D15)."""
+    """Compare one trace's zigzag along the axis and inside each pass (plan D15, D20).
+
+    The run-order zigzag is counted pass by pass, so the join between two
+    passes is never an extremum and a short interleaved series can be judged.
+    """
+    passes = acquisition_passes(points)
+    counts = [_extrema(members, _run_order) for members in passes]
     return PassDiagnostic(
-        zigzag_axis_order=_zigzag(points, _axis_order),
-        zigzag_run_order=_zigzag(points, _run_order),
+        zigzag_axis_order=_zigzag(*_extrema(points, _axis_order)),
+        zigzag_run_order=_zigzag(
+            sum(extrema for extrema, _interior in counts),
+            sum(interior for _extrema_count, interior in counts),
+        ),
+        passes=tuple(tuple(point.run for point in members) for members in passes),
     )

@@ -7,7 +7,6 @@ import pytest
 
 from asymmetry.core.fitting.trend_quality import (
     PASS_AXIS_ZIGZAG_MIN,
-    PASS_RUN_ZIGZAG_MAX,
     CandidateTrend,
     PassDiagnostic,
     TracePoint,
@@ -215,9 +214,9 @@ def test_candidate_with_no_local_parameters_is_not_a_trend() -> None:
     assert all_shared.ordering_key < poor.ordering_key
 
 
-def _two_pass_trace(offset: float) -> list[TracePoint]:
+def _two_pass_trace(offset: float, runs_per_pass: int = 6) -> list[TracePoint]:
     """A coarse pass at x = 10, 20, … then an infill pass at x = 15, 25, …"""
-    coarse_x = [10.0 * k for k in range(1, 14)]
+    coarse_x = [10.0 * k for k in range(1, runs_per_pass + 1)]
     infill_x = [position + 5.0 for position in coarse_x]
     x = coarse_x + infill_x
     values = [0.01 * position for position in coarse_x] + [
@@ -227,12 +226,13 @@ def _two_pass_trace(offset: float) -> list[TracePoint]:
 
 
 def test_interleaved_passes_offset_from_each_other_disagree() -> None:
+    # Twelve runs: counted across the join, the run-order zigzag of so short a
+    # series could not fall to PASS_RUN_ZIGZAG_MAX. Counted per pass it is zero.
     diagnostic = pass_diagnostic(_two_pass_trace(offset=0.3))
 
+    assert diagnostic.passes == ((1, 2, 3, 4, 5, 6), (7, 8, 9, 10, 11, 12))
     assert diagnostic.zigzag_axis_order >= PASS_AXIS_ZIGZAG_MIN
-    # In acquisition order each pass is smooth; only the join between them costs.
-    assert diagnostic.zigzag_run_order == pytest.approx(2 / 24)
-    assert diagnostic.zigzag_run_order <= PASS_RUN_ZIGZAG_MAX
+    assert diagnostic.zigzag_run_order == 0.0
     assert diagnostic.passes_disagree
 
 
@@ -243,15 +243,44 @@ def test_interleaved_passes_that_agree_do_not_disagree() -> None:
     assert not diagnostic.passes_disagree
 
 
-def test_trace_rough_in_both_orders_is_not_a_pass_disagreement() -> None:
-    diagnostic = pass_diagnostic(_trace(2.0 + _noise(40, 1.0), 0.01))
+def test_single_monotone_pass_is_never_a_pass_disagreement() -> None:
+    # Rough in axis order, and run order is axis order: one pass, nothing to disagree with.
+    diagnostic = pass_diagnostic(_trace(2.0 + _noise(12, 1.0), 0.01))
 
+    assert diagnostic.passes == (tuple(range(1, 13)),)
     assert diagnostic.zigzag_axis_order >= PASS_AXIS_ZIGZAG_MIN
-    assert diagnostic.zigzag_run_order > PASS_RUN_ZIGZAG_MAX
+    assert diagnostic.zigzag_run_order == diagnostic.zigzag_axis_order
+    assert not diagnostic.passes_disagree
+
+
+def test_pass_taken_downwards_and_a_repeated_position_stay_one_pass() -> None:
+    # Up 10 → 30, a repeat at 30, then down 25 → 5: the reversal starts pass two.
+    diagnostic = pass_diagnostic(
+        _trace([1.0] * 8, 0.1, x=[10.0, 20.0, 30.0, 30.0, 25.0, 15.0, 5.0, 5.0])
+    )
+
+    assert diagnostic.passes == ((1, 2, 3, 4), (5, 6, 7, 8))
+
+
+def test_passes_too_short_to_judge_do_not_disagree() -> None:
+    # Runs taken in shuffled order: every pass is one or two runs, with no
+    # interior point, so there is no evidence that any pass is smooth.
+    x = [10.0, 60.0, 20.0, 50.0, 30.0, 40.0, 25.0, 55.0, 15.0, 45.0]
+    diagnostic = pass_diagnostic(_trace(2.0 + _noise(10, 1.0), 0.01, x=x))
+
+    assert max(len(runs) for runs in diagnostic.passes) < 3
+    assert diagnostic.zigzag_axis_order >= PASS_AXIS_ZIGZAG_MIN
+    assert diagnostic.zigzag_run_order == 0.0
     assert not diagnostic.passes_disagree
 
 
 def test_pass_diagnostic_thresholds() -> None:
-    assert PassDiagnostic(zigzag_axis_order=0.3, zigzag_run_order=0.1).passes_disagree
-    assert not PassDiagnostic(zigzag_axis_order=0.29, zigzag_run_order=0.0).passes_disagree
-    assert not PassDiagnostic(zigzag_axis_order=0.9, zigzag_run_order=0.11).passes_disagree
+    two = ((1, 2, 3), (4, 5, 6))
+
+    def diagnostic(axis: float, run: float, passes=two) -> PassDiagnostic:
+        return PassDiagnostic(zigzag_axis_order=axis, zigzag_run_order=run, passes=passes)
+
+    assert diagnostic(0.3, 0.1).passes_disagree
+    assert not diagnostic(0.29, 0.0).passes_disagree
+    assert not diagnostic(0.9, 0.11).passes_disagree
+    assert not diagnostic(0.9, 0.0, passes=((1, 2, 3, 4), (5, 6))).passes_disagree
