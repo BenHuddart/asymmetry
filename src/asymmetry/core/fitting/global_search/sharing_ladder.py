@@ -59,6 +59,8 @@ _BLOCK_LENGTH = 3
 #: At most max(this many, this share of the series) runs may be exempted.
 _EXEMPT_MIN_RUNS = 2
 _EXEMPT_SERIES_SHARE = 0.1
+#: Runs that must remain to share an amplitude after the exemptions.
+_SHARING_MIN_RUNS = 2
 #: A run's amplitude is anomalous this many scatters from the series median,
 #: the scatter being the series' robust one combined with the run's own error.
 _ANOMALY_SIGMA = 4.0
@@ -348,9 +350,15 @@ def _blocks(positions: Sequence[int]) -> list[np.ndarray]:
 
 
 def _isolated(positions: Sequence[int], series_length: int) -> bool:
-    """Whether runs at these positions may all be exempted (plan D12): few, and no block."""
-    return max(map(len, _blocks(positions))) < _BLOCK_LENGTH and len(positions) <= max(
-        _EXEMPT_MIN_RUNS, int(_EXEMPT_SERIES_SHARE * series_length)
+    """Whether runs at these positions may all be exempted (plan D12).
+
+    Few, no block, and at least two runs left to share the amplitude: with
+    fewer there is no coupled fit to exempt anything from.
+    """
+    return (
+        max(map(len, _blocks(positions))) < _BLOCK_LENGTH
+        and len(positions) <= max(_EXEMPT_MIN_RUNS, int(_EXEMPT_SERIES_SHARE * series_length))
+        and series_length - len(positions) >= _SHARING_MIN_RUNS
     )
 
 

@@ -193,7 +193,8 @@ class ParameterTraceStrip(QWidget):
             for boundary in boundaries:
                 axes.axvline(boundary, color=tokens.PLOT_ZERO_LINE, linestyle="--", linewidth=0.8)
             for series in trace.series:
-                order = np.argsort(series.x)
+                # Stable: runs at one axis value keep the run order the trend was scored in.
+                order = np.argsort(series.x, kind="stable")
                 axes.plot(
                     series.x[order],
                     series.value[order],

@@ -134,6 +134,17 @@ def test_two_isolated_anomalous_runs_are_exempt_from_the_shared_amplitude() -> N
     assert ladder.preselected is width
 
 
+@pytest.mark.parametrize("runs", [2, 3])
+def test_exemptions_always_leave_two_runs_to_share_the_amplitude(runs: int) -> None:
+    # The amplitudes disagree far beyond the tolerance and nothing is a block of three.
+    series = hopping_series(runs=runs, sigma=0.05, amplitude_scale={1: 1.3, 2: 0.8})
+    amplitude = series.climb(further=0).rungs[2]
+
+    assert amplitude.shared == ("A_bg", "A_1")
+    assert len(amplitude.results_by_run) - len(amplitude.exempt_runs) >= 2
+    assert not amplitude.adequate
+
+
 @pytest.mark.parametrize("excess", [0.025, 0.04, 0.10, 0.30])
 def test_isolated_anomalous_runs_are_exempt_however_strong_the_anomaly(excess: float) -> None:
     # At this noise even 2.5 % drags a plainly shared amplitude until other runs offend.
