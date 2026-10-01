@@ -226,6 +226,13 @@ def _probe_function(
         )
 
 
+#: Kinds given at this boundary to parameters a plugin does not declare.
+_UNDECLARED_PARAMETER_KINDS: dict[str, ParameterKind] = {
+    **SCALING_PARAMETER_KINDS,
+    "phase": ParameterKind.PHASE,
+}
+
+
 def register_component(
     name: str,
     function: Callable[..., np.ndarray],
@@ -263,9 +270,9 @@ def register_component(
     ``param_kinds`` says what each parameter measures (see
     :class:`~asymmetry.core.fitting.component_tags.ParameterKind` values, e.g.
     ``{"lam": "rate", "phi": "phase"}``); series seeding and the global-fit
-    wizard read it. A parameter left out is a ``"shape"``, except the two
-    names the amplitude policy already gives a meaning: ``A`` is an
-    ``"amplitude"`` and ``A_bg`` a ``"background"``.
+    wizard read it. A parameter left out is a ``"shape"``, except three names
+    with a settled meaning: ``A`` is an ``"amplitude"``, ``A_bg`` a
+    ``"background"`` and ``phase`` a ``"phase"``.
 
     Returns the registered :class:`ComponentDefinition` (flagged ``user=True``).
     Raises :class:`UserFunctionError` on any validation failure, in which case
@@ -301,7 +308,7 @@ def register_component(
             p: (
                 coerce_parameter_kind(declared_kinds[p])
                 if p in declared_kinds
-                else SCALING_PARAMETER_KINDS.get(p, ParameterKind.SHAPE)
+                else _UNDECLARED_PARAMETER_KINDS.get(p, ParameterKind.SHAPE)
             )
             for p in params
         }

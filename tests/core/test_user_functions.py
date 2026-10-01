@@ -142,6 +142,19 @@ def test_register_component_declared_parameter_kinds_land_on_definition():
     }
 
 
+def test_register_component_undeclared_phase_is_a_phase():
+    definition = register_component(
+        "UserPrecession",
+        lambda t, A, nu, phase: A * np.cos(2 * np.pi * nu * t + phase),
+        ["A", "nu", "phase"],
+        domain="time",
+        description="A precession signal.",
+        formula_template="{A}*cos(2*pi*{nu}*t + {phase})",
+        param_defaults={"A": 20.0, "nu": 1.0, "phase": 0.0},
+    )
+    assert definition.param_kinds["phase"] is ParameterKind.PHASE
+
+
 def test_register_component_bad_parameter_kind_rejected():
     with pytest.raises(UserFunctionError, match="'speed'"):
         _register_stretched(param_kinds={"tau": "speed"})

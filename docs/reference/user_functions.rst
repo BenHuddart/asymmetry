@@ -146,8 +146,8 @@ file can never crash a fit (or the application) later:
   and ``"geometry"``. Seeding and the Global Fit Wizard read them: amplitudes
   and backgrounds start from the record's scale and are preferred shared,
   rates and frequencies are expected to vary from run to run. A parameter you
-  leave out is a ``"shape"``, except ``A`` (an ``"amplitude"``) and ``A_bg``
-  (a ``"background"``).
+  leave out is a ``"shape"``, except ``A`` (an ``"amplitude"``), ``A_bg``
+  (a ``"background"``) and ``phase`` (a ``"phase"``).
 * ``domain`` is required; it places the component in the matching picker
   and plots. Optional metadata (``latex_equation``, ``applicability``,
   ``references``, ``category``, ``fixed_params``, ``param_defaults``)
