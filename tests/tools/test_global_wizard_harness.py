@@ -635,3 +635,111 @@ def test_exhaustive_reproduces_frozen_baseline_at_full_agreement() -> None:
             case["disagreements"],
         )
     assert report["rollup"]["min_agree_vs_frozen"] == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------------------- #
+# The trend objective's cases
+# --------------------------------------------------------------------------- #
+
+
+def test_trend_cases_plant_a_pattern_over_the_recommended_models_parameters() -> None:
+    """Every trend case plants roles for the model its recommended rung is fitted in."""
+
+    from asymmetry.core.fitting.composite import CompositeModel
+    from asymmetry.core.fitting.fraction_form import signal_fraction_form
+
+    cases = harness.trend_cases()
+    assert len({case.case_id for case in cases}) == len(cases) == 4
+    statistical_ids = {case.case_id for case in harness.synthetic_cases()}
+    for case in cases:
+        assert case.objective == "trend"
+        assert case.case_id not in statistical_ids
+        assert set(case.planted_roles.values()) <= {"global", "local", "fixed"}
+        assert all(len(scan) == case.n_groups for scan in case.local_scans.values())
+        assert all(0 <= group < case.n_groups for group in case.planted_exempt)
+        model = CompositeModel(list(case.components), operators=list(case.operators))
+        assert set(case.param_names()) == set(model.param_names)
+        names = set(model.param_names)
+        if set(case.planted_roles) != names:
+            # The shared-total case: its roles are the fraction form's.
+            names = set(signal_fraction_form(model).grouped.param_names)
+        assert set(case.planted_roles) == names, case.case_id
+
+
+def test_trend_case_data_is_a_zero_field_temperature_scan_with_decaying_statistics() -> None:
+    case = harness.trend_cases()[0]
+    datasets = harness._build_case_datasets(case)
+
+    assert len(datasets) == case.n_groups
+    assert {dataset.metadata["field"] for dataset in datasets} == {0.0}
+    temperatures = [dataset.metadata["temperature"] for dataset in datasets]
+    assert temperatures == sorted(set(temperatures))
+    assert len({int(dataset.run_number) for dataset in datasets}) == case.n_groups
+    assert datasets[0].error[-1] > datasets[0].error[0] == pytest.approx(case.noise_level)
+    assert (harness._build_case_datasets(case)[3].asymmetry == datasets[3].asymmetry).all()
+
+
+def test_trend_verdict_fields_count_in_the_comparison() -> None:
+    verdict = {
+        "template_key": "dynamic_gkt_constant",
+        "roles": {"A_1": "global", "nu": "local"},
+        "exempt_groups": [2, 7],
+        "unshareable_groups": [],
+    }
+    assert harness.compare_verdicts(verdict, dict(verdict)) == (pytest.approx(1.0), [])
+
+    agree, disagreements = harness.compare_verdicts({**verdict, "exempt_groups": [2]}, verdict)
+    assert agree == pytest.approx(3 / 4)
+    assert disagreements == ["<exempt_groups>"]
+
+    case = next(c for c in harness.trend_cases() if c.planted_exempt)
+    planted = {
+        "roles": dict(case.planted_roles),
+        "exempt_groups": list(case.planted_exempt),
+        "unshareable_groups": [],
+    }
+    assert harness._agreement_vs_planted(planted, case) == pytest.approx(1.0)
+    assert harness._agreement_vs_planted({**planted, "exempt_groups": []}, case) < 1.0
+
+
+def test_trend_baseline_is_frozen_and_recovers_every_planted_pattern() -> None:
+    """The frozen trend verdicts are the planted patterns, exemptions included."""
+
+    payload = harness.load_baseline(harness._BASELINE_PATHS["trend"])
+    cases = {case.case_id: case for case in harness.trend_cases()}
+
+    assert payload["schema_version"] == harness.BASELINE_SCHEMA_VERSION
+    assert payload["objective"] == "trend"
+    assert set(payload["cases"]) == set(cases)
+    for case_id, entry in payload["cases"].items():
+        assert entry["status"] == "OK", case_id
+        assert harness._agreement_vs_planted(entry["verdict"], cases[case_id]) == pytest.approx(
+            1.0
+        ), (case_id, entry["verdict"])
+
+
+def test_objective_option_picks_the_case_set_and_defaults_to_statistical() -> None:
+    assert harness._parse_args([]).objective == "statistical"
+    assert harness._parse_args(["--objective", "trend"]).objective == "trend"
+    assert set(harness._BASELINE_PATHS) == set(harness.OBJECTIVES)
+    assert harness._BASELINE_PATHS["statistical"] == harness._BASELINE_PATH
+
+
+@pytest.mark.slow
+def test_trend_objective_reproduces_its_frozen_baseline() -> None:
+    """The sharing ladders recommend today what they were frozen recommending."""
+
+    report = harness.run_harness(
+        harness.trend_cases(),
+        "exhaustive",
+        baseline=harness.load_baseline(harness._BASELINE_PATHS["trend"]),
+        per_case_timeout_s=180.0,
+        overall_wall_s=540.0,
+    )
+    for case in report["cases"]:
+        assert case["status"] == "OK", (case["case_id"], case.get("error"))
+        assert case["agree_pct_vs_frozen"] == pytest.approx(1.0), (
+            case["case_id"],
+            case["disagreements"],
+        )
+        assert case["agree_pct_vs_planted_truth"] == pytest.approx(1.0), case["case_id"]

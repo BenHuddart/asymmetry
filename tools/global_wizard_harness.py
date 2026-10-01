@@ -38,6 +38,12 @@ Design notes (see ``docs/porting/global-fit-wizard-efficiency/test-data.md``):
   never be re-frozen against a candidate engine. Acceptance for a candidate is
   >= 95% verdict agreement with the frozen baseline, with every disagreement
   inside ``DEFAULT_IC_GAP_TOLERANCE``.
+* **Objective.** ``--objective {statistical,trend}`` picks the case set. The
+  tiers, the engines and the referee above belong to the statistical objective
+  (the default here). ``trend`` runs the wizard's default objective on its own
+  planted cases (:func:`trend_cases`): a shared pattern, the runs exempt from a
+  shared amplitude and the end block it cannot be shared through. Its baseline,
+  ``baseline/trend_baseline.json``, is the sharing ladders' own verdicts.
 
 macOS uses the ``spawn`` start method, which re-imports this module in every
 child, so everything heavy lives behind ``if __name__ == "__main__"`` and the
@@ -67,6 +73,16 @@ import numpy as np
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BASELINE_DIR = _REPO_ROOT / "docs" / "porting" / "global-fit-wizard-efficiency" / "baseline"
 _BASELINE_PATH = _BASELINE_DIR / "exhaustive_baseline.json"
+#: Each objective's frozen verdicts. The statistical ones are the exhaustive
+#: referee's; the trend ones are the sharing ladders' own, frozen as a
+#: regression record of what the trend objective recommends on its cases.
+OBJECTIVES = ("statistical", "trend")
+_BASELINE_PATHS = {
+    "statistical": _BASELINE_PATH,
+    "trend": _BASELINE_DIR / "trend_baseline.json",
+}
+#: Muon lifetime (µs): counting errors grow as ``exp(t / 2τ)``.
+_MUON_LIFETIME_US = 2.197
 
 #: Schema version for the frozen baseline artifact. Bump on breaking changes.
 BASELINE_SCHEMA_VERSION = 1
@@ -122,6 +138,22 @@ class SyntheticCase:
     n_points: int = 120
     seed: int = 12345
     description: str = ""
+    #: Which objective the case is run and scored under.
+    objective: str = "statistical"
+    #: Last time point (µs).
+    t_max: float = 8.0
+    #: Errors that grow as the muons decay, from ``noise_level`` at ``t = 0``.
+    decaying_statistics: bool = False
+    #: The scanned quantity: ``"field"`` (50 G steps) or ``"temperature"`` in zero field.
+    scan_axis: str = "field"
+    #: Offer the generating model itself as the one candidate, starting from the
+    #: first group's values, as a user who had fitted one run would: for a model
+    #: the built-in portfolio has no template for.
+    as_current_model: bool = False
+    #: Trend objective: groups that keep their own value of the shared amplitudes.
+    planted_exempt: tuple[int, ...] = ()
+    #: Trend objective: the end block the amplitude cannot be shared through.
+    planted_unshareable: tuple[int, ...] = ()
 
     @property
     def n_params(self) -> int:
@@ -250,6 +282,145 @@ def synthetic_cases() -> tuple[SyntheticCase, ...]:
     )
 
 
+def trend_cases() -> tuple[SyntheticCase, ...]:
+    """The trend objective's planted cases (docs/plans/global-wizard-trend-objective.md).
+
+    Asymmetry in percent with errors that grow as the muons decay, on a
+    zero-field temperature scan. ``planted_roles`` names the parameters of the
+    model the recommended rung is fitted in, so the shared-total case plants a
+    total and a fraction.
+    """
+
+    hop_rates = tuple(float(rate) for rate in np.logspace(-1.5, 0.4, 12))
+    glassy_rates = tuple(float(rate) for rate in np.logspace(0.5, -2.5, 12))
+    glassy_exponents = tuple(float(beta) for beta in np.linspace(0.5, 1.0, 12))
+    transition = tuple(
+        float(share) for share in 0.15 + 0.7 / (1.0 + np.exp(-(np.arange(12) - 5.5) / 1.2))
+    )
+    return (
+        # --- YMnAl: amplitude and background trade when the relaxation is slow
+        SyntheticCase(
+            case_id="trend_degenerate_amplitude_background_g12",
+            components=("StretchedExponential", "Constant"),
+            operators=("+",),
+            template_keys=("stretched_constant",),
+            n_groups=12,
+            global_values={"A_1": 20.0, "A_bg": 5.0},
+            local_scans={"Lambda": glassy_rates, "beta": glassy_exponents},
+            planted_roles={"A_1": "global", "Lambda": "local", "beta": "local", "A_bg": "global"},
+            noise_level=0.15,
+            n_points=400,
+            t_max=10.0,
+            seed=2001,
+            objective="trend",
+            decaying_statistics=True,
+            scan_axis="temperature",
+            description=(
+                "Stretched exponential whose rate falls by three decades: the slow "
+                "runs cannot tell amplitude from background until both are shared."
+            ),
+        ),
+        # --- copper: one static width, a hop rate rising along the scan -------
+        SyntheticCase(
+            case_id="trend_shared_width_local_hop_rate_g12",
+            components=("DynamicGaussianKT", "Constant"),
+            operators=("+",),
+            template_keys=("dynamic_gkt_constant",),
+            n_groups=12,
+            global_values={"A_1": 18.0, "Delta": 0.39, "B_L": 0.0, "A_bg": 4.0},
+            local_scans={"nu": hop_rates},
+            planted_roles={
+                "A_1": "global",
+                "Delta": "global",
+                "nu": "local",
+                "B_L": "fixed",
+                "A_bg": "global",
+            },
+            noise_level=0.15,
+            n_points=300,
+            t_max=12.0,
+            seed=2002,
+            objective="trend",
+            decaying_statistics=True,
+            scan_axis="temperature",
+            description="Dynamic Gaussian KT: shared static width, local hop rate.",
+        ),
+        # --- Re6Zr: two runs carry 10 % more asymmetry than their neighbours --
+        SyntheticCase(
+            case_id="trend_two_anomalous_amplitude_runs_g12",
+            components=("DynamicGaussianKT", "Constant"),
+            operators=("+",),
+            template_keys=("dynamic_gkt_constant",),
+            n_groups=12,
+            global_values={"Delta": 0.39, "B_L": 0.0, "A_bg": 4.0},
+            local_scans={
+                "A_1": tuple(18.0 * (1.1 if group in (2, 7) else 1.0) for group in range(12)),
+                "nu": hop_rates,
+            },
+            planted_roles={
+                "A_1": "global",
+                "Delta": "global",
+                "nu": "local",
+                "B_L": "fixed",
+                "A_bg": "global",
+            },
+            noise_level=0.15,
+            n_points=300,
+            t_max=12.0,
+            seed=2003,
+            objective="trend",
+            decaying_statistics=True,
+            scan_axis="temperature",
+            planted_exempt=(2, 7),
+            description="Shared amplitude with two isolated anomalous runs exempt.",
+        ),
+        # --- BiSCCO-like: two lines whose share of one total changes ----------
+        SyntheticCase(
+            case_id="trend_two_line_fraction_transition_g12",
+            components=("Oscillatory", "Gaussian", "Oscillatory", "Gaussian", "Constant"),
+            operators=("*", "+", "*", "+"),
+            template_keys=("current_model",),
+            n_groups=12,
+            global_values={
+                "frequency_1": 2.0,
+                "phase_1": 0.0,
+                "frequency_3": 2.4,
+                "phase_3": 0.0,
+                "A_bg": 2.0,
+            },
+            local_scans={
+                "A_1": tuple(20.0 * share for share in transition),
+                "sigma_2": tuple(0.5 + 0.03 * group for group in range(12)),
+                "A_3": tuple(20.0 * (1.0 - share) for share in transition),
+                "sigma_4": tuple(0.12 + 0.01 * group for group in range(12)),
+            },
+            planted_roles={
+                # The fraction form's names: A_1 is the total of both lines.
+                "A_1": "global",
+                "frequency_1": "global",
+                "phase_1": "global",
+                "f_Oscillatory": "local",
+                "sigma_1": "local",
+                "frequency_2": "global",
+                "phase_2": "global",
+                "sigma_2": "local",
+                "A_bg": "global",
+            },
+            noise_level=0.12,
+            n_points=300,
+            seed=2004,
+            objective="trend",
+            decaying_statistics=True,
+            scan_axis="temperature",
+            as_current_model=True,
+            description=(
+                "Two Gaussian-damped lines sharing 20 % of asymmetry; the first "
+                "line's share rises through a transition while the total stays put."
+            ),
+        ),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Synthetic data generation (runs in the case subprocess)
 # --------------------------------------------------------------------------- #
@@ -266,7 +437,10 @@ def _build_case_datasets(case: SyntheticCase) -> list[Any]:
     from asymmetry.core.fitting.composite import CompositeModel
 
     model = CompositeModel(list(case.components), operators=list(case.operators))
-    time_axis = np.linspace(0.0, 8.0, case.n_points)
+    time_axis = np.linspace(0.0, case.t_max, case.n_points)
+    error = np.full_like(time_axis, case.noise_level)
+    if case.decaying_statistics:
+        error = error * np.exp(time_axis / (2.0 * _MUON_LIFETIME_US))
     datasets: list[Any] = []
     for group_index in range(case.n_groups):
         params: dict[str, float] = dict(case.global_values)
@@ -275,19 +449,19 @@ def _build_case_datasets(case: SyntheticCase) -> list[Any]:
         clean = model.function(time_axis, **params)
         # Deterministic per-group noise, pinned to the case seed.
         rng = np.random.default_rng(case.seed * 1000 + group_index)
-        noisy = clean + rng.normal(0.0, case.noise_level, size=time_axis.shape)
-        run_number = case.seed * 10 + group_index
+        noisy = clean + rng.normal(0.0, error)
+        run_number = case.seed * 100 + group_index
+        scan = (
+            {"field": 0.0, "temperature": 5.0 * (group_index + 1)}
+            if case.scan_axis == "temperature"
+            else {"field": 50.0 * (group_index + 1), "temperature": 5.0}
+        )
         datasets.append(
             MuonDataset(
                 time=time_axis,
                 asymmetry=noisy,
-                error=np.full_like(time_axis, case.noise_level),
-                metadata={
-                    "run_number": run_number,
-                    "field": 50.0 * (group_index + 1),
-                    "temperature": 5.0,
-                    "run_label": str(run_number),
-                },
+                error=error,
+                metadata={"run_number": run_number, **scan, "run_label": str(run_number)},
             )
         )
     return datasets
@@ -318,6 +492,7 @@ def _run_wizard_with_tier(
     from asymmetry.core.fitting.global_fit_wizard import (
         build_global_fit_wizard_recommendation,
     )
+    from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
     from asymmetry.core.fitting.wizard_scope import EffortTier
 
     instrumentation: dict[str, object] = {}
@@ -327,6 +502,34 @@ def _run_wizard_with_tier(
         selected_template_keys=template_keys or None,
         effort_tier=EffortTier(effort_tier_value),
         search_engine=engine,
+        objective=SelectionObjective.STATISTICAL,
+    )
+    return recommendation, instrumentation
+
+
+def _run_wizard_trend(datasets: list[Any], case: SyntheticCase) -> tuple[Any, dict[str, object]]:
+    """Run the wizard under the trend objective: no engine, no effort tier."""
+
+    from asymmetry.core.fitting.composite import CompositeModel
+    from asymmetry.core.fitting.global_fit_wizard import (
+        build_global_fit_wizard_recommendation,
+    )
+
+    instrumentation: dict[str, object] = {}
+    current: dict[str, Any] = {}
+    if case.as_current_model:
+        current = {
+            "current_model": CompositeModel(list(case.components), operators=list(case.operators)),
+            "current_values": {
+                **case.global_values,
+                **{name: scan[0] for name, scan in case.local_scans.items()},
+            },
+        }
+    recommendation = build_global_fit_wizard_recommendation(
+        datasets,
+        instrumentation=instrumentation,
+        selected_template_keys=case.template_keys or None,
+        **current,
     )
     return recommendation, instrumentation
 
@@ -431,6 +634,8 @@ def _extract_verdict(recommendation: Any, case: SyntheticCase) -> dict[str, obje
             "n_params": None,
         }
 
+    if assessment.rung is not None:
+        return _trend_verdict(recommendation, assessment)
     global_names = set(assessment.global_param_names)
     local_names = set(assessment.local_param_names)
     roles: dict[str, str] = {}
@@ -456,6 +661,41 @@ def _extract_verdict(recommendation: Any, case: SyntheticCase) -> dict[str, obje
         "bic": _finite_or_none(assessment.bic),
         "n_params": assessment.parameter_count,
     }
+
+
+def _trend_verdict(recommendation: Any, assessment: Any) -> dict[str, object]:
+    """The verdict of a recommended ladder rung.
+
+    Roles are over the parameters of the model the rung was fitted in (its
+    fraction form renames them), with a parameter pinned on every run reported
+    as ``"fixed"``. Exempt runs and the unshareable end block are given as
+    group positions along the scan, so they do not depend on run numbers.
+    """
+
+    runs = sorted(assessment.fit_results_by_run)
+    first = assessment.fit_results_by_run[runs[0]].parameters
+    global_names = set(assessment.global_param_names)
+    return {
+        "recommended_key": recommendation.recommended_key,
+        "template_key": assessment.template.key,
+        "roles": {
+            name: "fixed" if first[name].fixed else "global" if name in global_names else "local"
+            for name in assessment.template.model.param_names
+        },
+        "exempt_groups": [runs.index(run) for run in assessment.rung.exempt_runs],
+        "unshareable_groups": [
+            runs.index(run) for run in assessment.rung.amplitude_unshareable_runs
+        ],
+        "aic": _finite_or_none(assessment.aic),
+        "aicc": _finite_or_none(assessment.aicc),
+        "bic": _finite_or_none(assessment.bic),
+        "n_params": assessment.parameter_count,
+    }
+
+
+#: Verdict fields beside the role map that a trend verdict carries and a
+#: comparison counts as one item each.
+_TREND_VERDICT_FIELDS = ("exempt_groups", "unshareable_groups")
 
 
 def _finite_or_none(value: float | None) -> float | None:
@@ -491,11 +731,13 @@ def _case_worker(
     _become_group_leader()
     try:
         datasets = _build_case_datasets(case)
-        config = TIER_CONFIGS[tier]
         start = time.perf_counter()
-        recommendation, instrumentation = config(
-            datasets, template_keys=case.template_keys, engine=engine
-        )
+        if case.objective == "trend" and tier != "_timeout_probe":
+            recommendation, instrumentation = _run_wizard_trend(datasets, case)
+        else:
+            recommendation, instrumentation = TIER_CONFIGS[tier](
+                datasets, template_keys=case.template_keys, engine=engine
+            )
         wall_s = time.perf_counter() - start
         verdict = _extract_verdict(recommendation, case)
         counters = instrumentation.get("counters", {})
@@ -682,8 +924,13 @@ def freeze_baseline(
     *,
     timeout_s: float,
     generation_date: str,
+    objective: str = "statistical",
 ) -> dict[str, object]:
-    """Run full Exhaustive across *cases* once and return the baseline payload."""
+    """Run *cases* once and return the baseline payload.
+
+    The statistical cases are frozen with the exhaustive referee. The trend
+    cases have no engine: their baseline is the sharing ladders' own verdicts.
+    """
 
     entries: dict[str, object] = {}
     for case in cases:
@@ -702,7 +949,8 @@ def freeze_baseline(
         "git_sha": _git_sha(),
         "generation_date": generation_date,
         "tier": "exhaustive",
-        "engine": BASELINE_ENGINE,
+        "engine": BASELINE_ENGINE if objective == "statistical" else "sharing_ladder",
+        "objective": objective,
         "cases": entries,
     }
 
@@ -752,20 +1000,34 @@ def compare_verdicts(
             disagreements.append(name)
         else:
             matches += 1
+    trend_fields = [
+        name for name in _TREND_VERDICT_FIELDS if name in candidate or name in baseline_verdict
+    ]
+    for name in trend_fields:
+        if template_flip or candidate.get(name) != baseline_verdict.get(name):
+            disagreements.append(f"<{name}>")
+        else:
+            matches += 1
     if template_flip:
         disagreements.insert(0, "<template-flip>")
-    return matches / len(param_names), disagreements
+    return matches / (len(param_names) + len(trend_fields)), disagreements
 
 
 def _agreement_vs_planted(verdict: dict[str, object] | None, case: SyntheticCase) -> float | None:
     if verdict is None:
         return None
     roles = dict(verdict.get("roles", {}) or {})
-    names = case.param_names()
-    if not names:
+    if not case.planted_roles:
         return None
-    matches = sum(1 for name in names if roles.get(name) == case.planted_roles.get(name))
-    return matches / len(names)
+    matches = sum(roles.get(name) == role for name, role in case.planted_roles.items())
+    if case.objective != "trend":
+        return matches / len(case.planted_roles)
+    planted = {
+        "exempt_groups": list(case.planted_exempt),
+        "unshareable_groups": list(case.planted_unshareable),
+    }
+    matches += sum(verdict.get(name) == groups for name, groups in planted.items())
+    return matches / (len(case.planted_roles) + len(planted))
 
 
 def _ic_gap(
@@ -985,7 +1247,12 @@ def corpus_enabled() -> bool:
 
 def _print_report(report: dict[str, object]) -> None:
     rollup = report.get("rollup", {})
-    print(f"\nGlobal-fit wizard harness — engine={report.get('engine')} tier={report.get('tier')}")
+    configuration = (
+        "objective=trend (sharing ladders)"
+        if report.get("objective") == "trend"
+        else f"engine={report.get('engine')} tier={report.get('tier')}"
+    )
+    print(f"\nGlobal-fit wizard harness — {configuration}")
     print("-" * 72)
     header = (
         f"{'case_id':<28} {'status':<8} {'frozen%':>8} {'planted%':>9} "
@@ -1077,9 +1344,20 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--objective",
+        choices=OBJECTIVES,
+        default="statistical",
+        help=(
+            "Which objective's cases to run. 'statistical' (default) scores the "
+            "role search against the exhaustive referee; 'trend' scores the "
+            "sharing ladders on their own planted cases, where --tier and "
+            "--engine do not apply."
+        ),
+    )
+    parser.add_argument(
         "--compare-baseline",
         action="store_true",
-        help="Diff the candidate run against the frozen baseline.",
+        help="Diff the candidate run against the objective's frozen baseline.",
     )
     parser.add_argument(
         "--freeze",
@@ -1108,7 +1386,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    cases = list(synthetic_cases())
+    cases = list(synthetic_cases() if args.objective == "statistical" else trend_cases())
+    baseline_path = _BASELINE_PATHS[args.objective]
 
     if corpus_enabled():
         print(
@@ -1120,20 +1399,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.freeze:
         generation_date = time.strftime("%Y-%m-%d", time.gmtime())
         print(
-            f"Freezing Exhaustive baseline over {len(cases)} cases "
+            f"Freezing the {args.objective} baseline over {len(cases)} cases "
             f"(this is the once-offline cost)..."
         )
         payload = freeze_baseline(
             cases,
             timeout_s=args.per_case_timeout,
             generation_date=generation_date,
+            objective=args.objective,
         )
-        write_baseline(payload)
+        write_baseline(payload, baseline_path)
         case_entries = [entry for entry in payload["cases"].values() if isinstance(entry, dict)]
         non_ok = [entry for entry in case_entries if entry.get("status") != "OK"]
         n_ok = len(case_entries) - len(non_ok)
         print(
-            f"Wrote baseline to {_BASELINE_PATH} "
+            f"Wrote baseline to {baseline_path} "
             f"({n_ok}/{len(cases)} cases OK, git {payload['git_sha'][:8]})."
         )
         if non_ok:
@@ -1154,13 +1434,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     baseline: dict[str, object] | None = None
     if args.compare_baseline:
-        if not _BASELINE_PATH.exists():
+        if not baseline_path.exists():
             print(
-                f"error: no frozen baseline at {_BASELINE_PATH}; run --freeze first.",
+                f"error: no frozen baseline at {baseline_path}; run --freeze first.",
                 file=sys.stderr,
             )
             return 2
-        baseline = load_baseline()
+        baseline = load_baseline(baseline_path)
         version = baseline.get("schema_version")
         if version != BASELINE_SCHEMA_VERSION:
             print(
@@ -1179,6 +1459,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         per_case_timeout_s=args.per_case_timeout,
         overall_wall_s=args.overall_wall,
     )
+    report["objective"] = args.objective
 
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
