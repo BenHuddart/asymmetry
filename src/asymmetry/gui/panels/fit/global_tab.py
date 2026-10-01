@@ -100,6 +100,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
     GlobalFitWizardRecommendation,
 )
+from asymmetry.core.fitting.global_search.trend_objective import left_out_note
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
     _group_dataset_run_number,
@@ -463,6 +464,9 @@ class GlobalFitTab(FitTabBase):
     # window's policy (``_resolve_batch_group``), so the request travels up and
     # the window drives the per-phase applies back through this tab.
     apply_wizard_phases_requested = Signal(object, int)
+    #: ``(run numbers)`` — bind this tab to the data group that owns these runs,
+    #: minting one if need be, before a fit that leaves some of them out is recorded.
+    series_group_requested = Signal(object)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     # (run_number, model, physics_values_by_name) — a converged single grouped
     # fit's shared physics, so the batch grouped surface can chain-seed per run.
@@ -4637,11 +4641,32 @@ class GlobalFitTab(FitTabBase):
                 if self._fit_wizard_window is not None
                 else self._cached_wizard_log_text
             )
+            # Cached under the series the wizard analysed: an earlier apply may
+            # have left this tab on fewer runs (a phase, or a rung's coupled runs).
             self._cache_wizard_analysis(
                 recommendation,
-                signature=self._wizard_context_signature(parsed),
+                signature=self._wizard_context_signature(parsed)
+                | {"run_numbers": [int(run) for run in recommendation.dataset_order]},
                 log_text=log_text,
             )
+
+        # A rung's exempt runs are left out of the coupled series and stay in its
+        # group, unticked (plan D17 of the trend objective). The group is the
+        # series' record of them, so it has to own every run before the fit is
+        # recorded; minting it rebuilds the browser, which republishes the
+        # selection, so the pool is put back afterwards.
+        pool = list(self._member_pool)
+        if assessment.exempt_runs and self._bound_group_id is None:
+            self.series_group_requested.emit(sorted(assessment.fit_results_by_run))
+        coupled_runs = set(assessment.fit_results_by_run) - set(assessment.exempt_runs)
+        self._set_member_pool(
+            pool,
+            [
+                int(dataset.run_number)
+                for dataset in pool
+                if int(dataset.run_number) not in coupled_runs
+            ],
+        )
 
         self._set_composite_model(assessment.template.model)
         role_by_name = assessment.applied_roles
@@ -4708,6 +4733,7 @@ class GlobalFitTab(FitTabBase):
                     assessment.component_curves_by_run[run_number],
                 )
                 for run_number, result in assessment.fit_results_by_run.items()
+                if run_number in coupled_runs
             },
             assessment.global_parameters,
         )
@@ -4762,6 +4788,8 @@ class GlobalFitTab(FitTabBase):
             f"<b>Global:</b> {', '.join(assessment.global_param_names) or 'None'}",
             f"<b>Local:</b> {', '.join(assessment.local_param_names) or 'None'}",
         ]
+        if assessment.exempt_runs:
+            lines.append(left_out_note(assessment))
         if assessment.series_warnings:
             lines.append("<br><b>Warnings:</b>")
             lines.extend(f"  {warning}" for warning in assessment.series_warnings)

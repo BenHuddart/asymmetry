@@ -43,6 +43,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalParameterRecommendation,
     RunResidualDiagnostic,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.parameters import AffineTie, Parameter, ParameterSet
 from asymmetry.core.fitting.seeding import record_scale_estimate
 from asymmetry.core.utils.constants import (
@@ -289,6 +290,7 @@ def _global_wizard_recommendation_for_dataset(
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        objective=SelectionObjective.STATISTICAL,
     )
 
 
@@ -3290,6 +3292,7 @@ def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        objective=SelectionObjective.STATISTICAL,
     )
 
     emitted: dict[str, object] = {}

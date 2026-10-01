@@ -50,6 +50,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalParameterRecommendation,
     RunResidualDiagnostic,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit import global_tab as global_tab_module
 from asymmetry.gui.panels.fit import single_tab as single_tab_module
@@ -517,4 +518,5 @@ def _global_wizard_recommendation_for_dataset(
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        objective=SelectionObjective.STATISTICAL,
     )
