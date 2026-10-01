@@ -60,6 +60,13 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
 
 
+def build_statistical_recommendation(*args, **kwargs):
+    """The wizard under the statistical objective, whose role search this file pins."""
+    return build_global_fit_wizard_recommendation(
+        *args, objective=SelectionObjective.STATISTICAL, **kwargs
+    )
+
+
 def _dataset_for(
     run_number: int,
     *,
@@ -216,7 +223,7 @@ def test_global_fit_wizard_prefers_shared_exponential_for_uniform_series(
         for idx in range(1, 5)
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
 
     assert recommendation.recommended_assessment is not None
     assert recommendation.recommended_assessment.template.key == "exp_constant"
@@ -240,7 +247,7 @@ def test_global_fit_wizard_localizes_lambda_when_series_rate_varies(
         for idx in range(1, 5)
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
     assessment = recommendation.recommended_assessment
 
     assert assessment is not None
@@ -267,7 +274,7 @@ def test_global_fit_wizard_records_consolidated_search_instrumentation(
     ]
     instrumentation: dict[str, object] = {}
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         metric=SelectionMetric.BIC,
         instrumentation=instrumentation,
@@ -1423,7 +1430,7 @@ def test_global_fit_wizard_uses_single_fit_prescreen_when_available(
         _wrapped,
     )
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         current_model=model,
         single_fit_recommendations_by_run=single_fit_recommendations_by_run,
@@ -1460,7 +1467,7 @@ def test_global_fit_wizard_selected_candidate_optimisation_merges_into_screening
         current_model=model,
         single_fit_recommendations_by_run=single_fit_recommendations_by_run,
     )
-    optimized = build_global_fit_wizard_recommendation(
+    optimized = build_statistical_recommendation(
         datasets,
         current_model=model,
         single_fit_recommendations_by_run=single_fit_recommendations_by_run,
@@ -1796,7 +1803,7 @@ def test_selected_candidate_optimisation_skips_prescreen_repair(
         _wrapped,
     )
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         current_model=model,
         single_fit_recommendations_by_run=single_fit_recommendations_by_run,
@@ -2214,10 +2221,9 @@ def test_global_fit_wizard_threads_selected_template_keys(monkeypatch) -> None:
         _fake_staged,
     )
 
-    assert build_global_fit_wizard_recommendation([]) is sentinel
+    assert build_statistical_recommendation([]) is sentinel
     assert (
-        build_global_fit_wizard_recommendation([], selected_template_keys=("exp_constant",))
-        is sentinel
+        build_statistical_recommendation([], selected_template_keys=("exp_constant",)) is sentinel
     )
     assert captured == [None, ("exp_constant",)]
 
@@ -2235,7 +2241,7 @@ def test_global_fit_wizard_warns_for_mixed_field_temperature_grid() -> None:
         for idx in range(1, 5)
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
 
     assert recommendation.mixed_axes_warning is not None
     assert recommendation.recommended_key is None
@@ -2278,7 +2284,7 @@ def test_global_fit_wizard_flags_abrupt_regime_changes(
         ),
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
 
     assert any(
         "Fingerprint features change abruptly" in warning
@@ -2303,7 +2309,7 @@ def test_global_fit_wizard_reranks_existing_assessments(
         for idx in range(1, 5)
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(datasets, metric=SelectionMetric.AICC)
+    recommendation = build_statistical_recommendation(datasets, metric=SelectionMetric.AICC)
     reranked = rerank_global_fit_wizard_recommendation(recommendation, SelectionMetric.BIC)
 
     assert reranked.metric == SelectionMetric.BIC
@@ -3011,7 +3017,7 @@ def test_heuristic_engines_share_uniform_series(
     _restrict_to_exp_constant_template(monkeypatch, model)
     datasets = _uniform_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(datasets, search_engine=engine)
+    recommendation = build_statistical_recommendation(datasets, search_engine=engine)
 
     assessment = recommendation.recommended_assessment
     assert assessment is not None
@@ -3027,7 +3033,7 @@ def test_heuristic_engines_localize_varying_lambda(
     _restrict_to_exp_constant_template(monkeypatch, model)
     datasets = _varying_lambda_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(datasets, search_engine=engine)
+    recommendation = build_statistical_recommendation(datasets, search_engine=engine)
 
     assessment = recommendation.recommended_assessment
     assert assessment is not None
@@ -3046,7 +3052,7 @@ def test_heuristic_winner_flip_neighbourhood_is_fitted(
     # has a non-trivial flip-neighbourhood spanning all three free params.
     datasets = _varying_lambda_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(datasets, search_engine=engine)
+    recommendation = build_statistical_recommendation(datasets, search_engine=engine)
 
     assert _winner_flip_neighbours_present(recommendation), (
         "sparse search left the winner's flip-neighbourhood incomplete; the "
@@ -3062,7 +3068,7 @@ def test_heuristic_engine_records_q_pretest_instrumentation(
     datasets = _varying_lambda_series(model)
     instrumentation: dict[str, object] = {}
 
-    build_global_fit_wizard_recommendation(
+    build_statistical_recommendation(
         datasets, search_engine="balanced", instrumentation=instrumentation
     )
 
@@ -3092,10 +3098,8 @@ def test_separable_engine_is_the_default_and_agrees_with_the_referee(
     datasets = _varying_lambda_series(model)
     default_instrumentation: dict[str, object] = {}
 
-    default = build_global_fit_wizard_recommendation(
-        datasets, instrumentation=default_instrumentation
-    )
-    explicit = build_global_fit_wizard_recommendation(datasets, search_engine="exhaustive")
+    default = build_statistical_recommendation(datasets, instrumentation=default_instrumentation)
+    explicit = build_statistical_recommendation(datasets, search_engine="exhaustive")
 
     assert default_instrumentation.get("search_engine") == "separable"
     assert default.recommended_assessment is not None
@@ -3133,7 +3137,7 @@ def test_wavefront_assignment_tasks_carry_fit_records_not_raw_counts(
         global_fit_wizard_module, "_run_wavefront_assignment_task", _recording_runner
     )
 
-    build_global_fit_wizard_recommendation(datasets, search_engine="exhaustive")
+    build_statistical_recommendation(datasets, search_engine="exhaustive")
 
     assert submitted
     for task in submitted:
@@ -3152,7 +3156,7 @@ def test_unknown_search_engine_raises_value_error(
     datasets = _uniform_series(model)
 
     with pytest.raises(ValueError, match="Unknown search_engine"):
-        build_global_fit_wizard_recommendation(datasets, search_engine="turbo")
+        build_statistical_recommendation(datasets, search_engine="turbo")
 
 
 # --------------------------------------------------------------------------- #
@@ -3189,7 +3193,7 @@ def test_effort_tier_always_resolves_to_the_separable_engine(
     datasets = _uniform_series(model)
     instrumentation: dict[str, object] = {}
 
-    build_global_fit_wizard_recommendation(
+    build_statistical_recommendation(
         datasets, instrumentation=instrumentation, effort_tier=EffortTier(tier_value)
     )
 
@@ -3221,7 +3225,7 @@ def test_explicit_search_engine_overrides_effort_tier_engine_selection(
 
     # effort_tier says Balanced, but an explicit search_engine="low" must win for
     # *engine selection* (backward compatibility with PR 4 callers/tests).
-    build_global_fit_wizard_recommendation(
+    build_statistical_recommendation(
         datasets,
         instrumentation=instrumentation,
         effort_tier=EffortTier.BALANCED,
@@ -3287,7 +3291,7 @@ def test_low_portfolio_cap_skips_over_budget_templates_via_search_engine_seam(
     _restrict_to_templates(monkeypatch, (small_template, big_template))
     datasets = _uniform_series(small_model)
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         search_engine="low",
         selected_template_keys=(small_template.key, big_template.key),
@@ -3320,7 +3324,7 @@ def test_low_portfolio_cap_is_inert_via_effort_tier(
     _restrict_to_templates(monkeypatch, (small_template, big_template))
     datasets = _uniform_series(small_model)
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         effort_tier=EffortTier.LOW,
         selected_template_keys=(small_template.key, big_template.key),
@@ -3453,7 +3457,7 @@ def test_screening_decimation_fires_and_leaves_full_resolution_leaderboard(
     full_n_points = datasets[0].n_points
     instrumentation: dict[str, object] = {}
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets, search_engine=engine, instrumentation=instrumentation
     )
 
@@ -3558,7 +3562,7 @@ def test_cancel_callback_aborts_before_running_full_search(
     instrumentation: dict[str, object] = {}
 
     with pytest.raises(FitCancelledError):
-        build_global_fit_wizard_recommendation(
+        build_statistical_recommendation(
             datasets,
             instrumentation=instrumentation,
             cancel_callback=lambda: True,
@@ -3597,7 +3601,7 @@ def test_cancel_callback_aborts_mid_search_past_the_top_guard(
         return state["calls"] > 1
 
     with pytest.raises(FitCancelledError):
-        build_global_fit_wizard_recommendation(
+        build_statistical_recommendation(
             datasets,
             cancel_callback=_cancel_after_first_poll,
         )
@@ -3613,7 +3617,7 @@ def test_cancel_callback_false_completes_normally(
     _restrict_to_exp_constant_template(monkeypatch, model)
     datasets = _uniform_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         cancel_callback=lambda: False,
     )

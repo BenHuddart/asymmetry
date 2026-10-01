@@ -17,7 +17,7 @@ from concurrent.futures import (
 )
 from dataclasses import dataclass, field, replace
 from itertools import combinations
-from typing import TypeVar
+from typing import Protocol, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -104,6 +104,7 @@ from asymmetry.core.fitting.global_search.surrogate import (
 from asymmetry.core.fitting.global_search.trend_objective import (
     CandidateRung,
     SelectionObjective,
+    trend_contenders,
     trend_recommendation,
     trend_sort_key,
 )
@@ -635,15 +636,17 @@ class GlobalFitWizardRecommendation:
     ) -> Callable[[GlobalCandidateAssessment], tuple[int, tuple]]:
         """Display order, smaller first: ladder rungs by trend, anything else by ``metric``.
 
-        Under the trend objective the recommended rung leads, then the adequate
-        rungs by trend quality, then the rungs that cost too much; screening
-        rows follow by the criterion. Under the statistical one every row is
-        ordered by the criterion.
+        Under the trend objective the rungs lead in :func:`trend_sort_key`'s
+        order — the recommended one first — and screening rows follow by the
+        criterion. Under the statistical one every row is ordered by the
+        criterion.
         """
+        rungs = [assessment for assessment in self.assessments if assessment.rung is not None]
+        by_trend = trend_sort_key(rungs, metric)
 
         def key(assessment: GlobalCandidateAssessment) -> tuple[int, tuple]:
             if self.objective is SelectionObjective.TREND and assessment.rung is not None:
-                return (0, trend_sort_key(assessment, metric, self.recommended_key))
+                return (0, by_trend(assessment))
             return (1, _assessment_sort_key(assessment, metric))
 
         return key
@@ -3128,8 +3131,17 @@ def build_global_fit_wizard_recommendation(
     cancel_callback: Callable[[], bool] | None = None,
     partition_path: PartitionPath | None = None,
     partition_k: int | None = None,
+    objective: SelectionObjective = SelectionObjective.TREND,
 ) -> GlobalFitWizardRecommendation:
     """Analyze one ordered dataset series and recommend a global-fit candidate.
+
+    ``objective`` is what the recommendation is for (plan D1). ``TREND``, the
+    default, climbs a sharing ladder for every template that fits about as well
+    as the best one and recommends the rung whose local parameters trend best
+    among those that fit adequately (:mod:`.global_search.trend_search`); the
+    engine and effort arguments below do not apply to it. ``STATISTICAL`` runs
+    the role search they describe and recommends the best ``metric``. One call
+    computes one objective.
 
     ``portfolio`` is the candidate set to search, normally the series alphabet a
     phase-1 call returned together with the ``single_fit_recommendations_by_run``
@@ -3184,6 +3196,10 @@ def build_global_fit_wizard_recommendation(
         instrumentation.setdefault("relaxed_penalties", [])
         instrumentation.setdefault("curvature_hint_sizes", [])
         instrumentation.setdefault("minuit_edm", [])
+    if objective is SelectionObjective.TREND and search_engine is not None:
+        raise ValueError(
+            "search_engine selects a role search, which only the statistical objective runs."
+        )
     resolved_engine = (
         search_engine if search_engine is not None else _EFFORT_TIER_SEARCH_ENGINE[effort_tier]
     )
@@ -3206,6 +3222,7 @@ def build_global_fit_wizard_recommendation(
         cancel_callback=cancel_callback,
         partition_path=partition_path,
         partition_k=partition_k,
+        objective=objective,
     )
 
 
@@ -3229,6 +3246,7 @@ def _build_global_fit_wizard_recommendation_staged(
     cancel_callback: Callable[[], bool] | None = None,
     partition_path: PartitionPath | None = None,
     partition_k: int | None = None,
+    objective: SelectionObjective = SelectionObjective.TREND,
 ) -> GlobalFitWizardRecommendation:
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
@@ -3460,6 +3478,7 @@ def _build_global_fit_wizard_recommendation_staged(
             instrumentation=instrumentation,
             single_run_prefit_cache_for=_single_run_prefit_cache_for,
             cancel_callback=cancel_callback,
+            objective=objective,
         )
         return rerank_global_fit_wizard_recommendation(
             GlobalFitWizardRecommendation(
@@ -3481,113 +3500,158 @@ def _build_global_fit_wizard_recommendation_staged(
                 partition_path=updated_path,
                 phase_assessments=phase_assessments,
                 recommended_partition_k=recommended_partition_k,
-                objective=SelectionObjective.STATISTICAL,
+                objective=objective,
             ),
             metric,
         )
 
-    if normalized_selected_template_keys:
-        if search_engine == SEARCH_ENGINE_LOW:
-            # Technique I/J still apply within an explicit user selection on the
-            # retained Low heuristic engine: "screening-grade" means the
-            # cap/complexity-prior/demotion narrow *what gets the expensive
-            # coupled search*, not just the auto-shortlist path. Every exact
-            # engine (which is what every user-facing tier now resolves to)
-            # honours the user's selection verbatim.
-            selected_templates = tuple(
-                template_by_key[key] for key in normalized_selected_template_keys
+    forced_keys: tuple[str, ...] = ()
+    if not normalized_selected_template_keys:
+        forced_keys = (
+            *_maybe_expand_oscillatory_shortlist(
+                ordered_datasets,
+                templates=templates,
+                aggregate_fingerprint=aggregate_fingerprint,
+                current_model=current_model,
+                fit_engine=FitEngine(),
+                initial_assessments=initial_assessments,
+                template_contexts=template_contexts,
+                fingerprints_by_run=fingerprints_by_run,
+                current_parameter_types=current_parameter_types,
+                current_values=current_values,
+                parameter_bounds=parameter_bounds,
+                axis_key=axis_key,
+                metric=metric,
+                progress_callback=progress_callback,
+            ),
+            *pattern_template_keys,
+        )
+        forced_keys = tuple(dict.fromkeys(forced_keys))
+    if objective is SelectionObjective.TREND:
+        # The cycle is real: the trend search is built from this module's pool
+        # and assembly machinery, and this module is its only caller.
+        from asymmetry.core.fitting.global_search.trend_search import run_trend_search
+
+        search_rebin_factor = (
+            series_rebin_factor(ordered_datasets, available_single_fit_recommendations)
+            if use_single_fit_prescreen
+            else _separable_search_rebin_factor(ordered_datasets)
+        )
+        # A series with no break is one phase, so a template whose lines have
+        # vanished on one of its runs is no more an answer here than in a phase.
+        optimized_assessments = _oscillatory_admissible_phase_candidates(
+            run_trend_search(
+                ordered_datasets,
+                templates=[template for template in templates if template.key in template_contexts],
+                # The user's ticks override the band; otherwise it is the shortlist,
+                # with whatever the data identified.
+                always_competing=normalized_selected_template_keys or forced_keys,
+                template_contexts=template_contexts,
+                prescreen_assessments=initial_assessments,
+                axis_key=axis_key,
+                metric=metric,
+                progress_callback=progress_callback,
+                search_strategy=search_strategy,
+                instrumentation=instrumentation,
+                cancel_callback=cancel_callback,
+                search_rebin_factor=search_rebin_factor,
+                prescreen_rebin_factor=search_rebin_factor if use_single_fit_prescreen else 1,
+                time_budget_seconds=_WAVEFRONT_TIME_BUDGET_SECONDS,
+                backstop_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
+                materialise_curves=True,
+            ),
+            instrumentation,
+        )
+    else:
+        if normalized_selected_template_keys:
+            if search_engine == SEARCH_ENGINE_LOW:
+                # Technique I/J still apply within an explicit user selection on the
+                # retained Low heuristic engine: "screening-grade" means the
+                # cap/complexity-prior/demotion narrow *what gets the expensive
+                # coupled search*, not just the auto-shortlist path. Every exact
+                # engine (which is what every user-facing tier now resolves to)
+                # honours the user's selection verbatim.
+                selected_templates = tuple(
+                    template_by_key[key] for key in normalized_selected_template_keys
+                )
+                shortlist_keys = _shortlist_template_keys(
+                    selected_templates,
+                    initial_assessments=initial_assessments,
+                    metric=metric,
+                    search_engine=search_engine,
+                    progress_callback=progress_callback,
+                )
+            else:
+                shortlist_keys = set(normalized_selected_template_keys)
+            _progress_log(
+                progress_callback,
+                "Running coupled global optimisation for the selected candidates: "
+                + ", ".join(
+                    template.title for template in templates if template.key in shortlist_keys
+                )
+                + ".",
             )
+        else:
             shortlist_keys = _shortlist_template_keys(
-                selected_templates,
+                tuple(templates),
                 initial_assessments=initial_assessments,
                 metric=metric,
+                forced_keys=forced_keys,
                 search_engine=search_engine,
                 progress_callback=progress_callback,
             )
+        shortlisted_templates = [
+            template for template in templates if template.key in shortlist_keys
+        ]
+        if shortlisted_templates:
+            _progress_log(
+                progress_callback,
+                "Coupled global optimisation will evaluate "
+                f"{len(shortlisted_templates)} candidate(s) "
+                f"via the {search_engine} global/local role search.",
+            )
+        _set_metric(instrumentation, "search_engine", search_engine)
+        if search_engine == SEARCH_ENGINE_SEPARABLE:
+            optimized_assessments = _run_separable_search(
+                ordered_datasets,
+                shortlisted_templates=shortlisted_templates,
+                template_contexts=template_contexts,
+                prescreen_assessments=initial_assessments,
+                axis_key=axis_key,
+                metric=metric,
+                progress_callback=progress_callback,
+                search_strategy=search_strategy,
+                instrumentation=instrumentation,
+                single_run_prefit_cache_for=_single_run_prefit_cache_for,
+                cancel_callback=cancel_callback,
+            )
+        elif search_engine in _EXACT_SEARCH_ENGINES:
+            optimized_assessments = _run_exhaustive_wavefront_search(
+                ordered_datasets,
+                shortlisted_templates=shortlisted_templates,
+                template_contexts=template_contexts,
+                axis_key=axis_key,
+                metric=metric,
+                progress_callback=progress_callback,
+                search_strategy=search_strategy,
+                instrumentation=instrumentation,
+                single_run_prefit_cache_for=_single_run_prefit_cache_for,
+                cancel_callback=cancel_callback,
+            )
         else:
-            shortlist_keys = set(normalized_selected_template_keys)
-        _progress_log(
-            progress_callback,
-            "Running coupled global optimisation for the selected candidates: "
-            + ", ".join(template.title for template in templates if template.key in shortlist_keys)
-            + ".",
-        )
-    else:
-        forced_shortlist_keys = _maybe_expand_oscillatory_shortlist(
-            ordered_datasets,
-            templates=templates,
-            aggregate_fingerprint=aggregate_fingerprint,
-            current_model=current_model,
-            fit_engine=FitEngine(),
-            initial_assessments=initial_assessments,
-            template_contexts=template_contexts,
-            fingerprints_by_run=fingerprints_by_run,
-            current_parameter_types=current_parameter_types,
-            current_values=current_values,
-            parameter_bounds=parameter_bounds,
-            axis_key=axis_key,
-            metric=metric,
-            progress_callback=progress_callback,
-        )
-
-        shortlist_keys = _shortlist_template_keys(
-            tuple(templates),
-            initial_assessments=initial_assessments,
-            metric=metric,
-            forced_keys=tuple(dict.fromkeys((*forced_shortlist_keys, *pattern_template_keys))),
-            search_engine=search_engine,
-            progress_callback=progress_callback,
-        )
-    shortlisted_templates = [template for template in templates if template.key in shortlist_keys]
-    if shortlisted_templates:
-        _progress_log(
-            progress_callback,
-            "Coupled global optimisation will evaluate "
-            f"{len(shortlisted_templates)} candidate(s) "
-            f"via the {search_engine} global/local role search.",
-        )
-    _set_metric(instrumentation, "search_engine", search_engine)
-    if search_engine == SEARCH_ENGINE_SEPARABLE:
-        optimized_assessments = _run_separable_search(
-            ordered_datasets,
-            shortlisted_templates=shortlisted_templates,
-            template_contexts=template_contexts,
-            prescreen_assessments=initial_assessments,
-            axis_key=axis_key,
-            metric=metric,
-            progress_callback=progress_callback,
-            search_strategy=search_strategy,
-            instrumentation=instrumentation,
-            single_run_prefit_cache_for=_single_run_prefit_cache_for,
-            cancel_callback=cancel_callback,
-        )
-    elif search_engine in _EXACT_SEARCH_ENGINES:
-        optimized_assessments = _run_exhaustive_wavefront_search(
-            ordered_datasets,
-            shortlisted_templates=shortlisted_templates,
-            template_contexts=template_contexts,
-            axis_key=axis_key,
-            metric=metric,
-            progress_callback=progress_callback,
-            search_strategy=search_strategy,
-            instrumentation=instrumentation,
-            single_run_prefit_cache_for=_single_run_prefit_cache_for,
-            cancel_callback=cancel_callback,
-        )
-    else:
-        optimized_assessments = _run_heuristic_search(
-            ordered_datasets,
-            shortlisted_templates=shortlisted_templates,
-            template_contexts=template_contexts,
-            axis_key=axis_key,
-            metric=metric,
-            progress_callback=progress_callback,
-            search_strategy=search_strategy,
-            instrumentation=instrumentation,
-            single_run_prefit_cache_for=_single_run_prefit_cache_for,
-            engine=search_engine,
-            aggregate_fingerprint=aggregate_fingerprint,
-        )
+            optimized_assessments = _run_heuristic_search(
+                ordered_datasets,
+                shortlisted_templates=shortlisted_templates,
+                template_contexts=template_contexts,
+                axis_key=axis_key,
+                metric=metric,
+                progress_callback=progress_callback,
+                search_strategy=search_strategy,
+                instrumentation=instrumentation,
+                single_run_prefit_cache_for=_single_run_prefit_cache_for,
+                engine=search_engine,
+                aggregate_fingerprint=aggregate_fingerprint,
+            )
 
     prescreen_assessments = tuple(
         initial_assessments[template.key]
@@ -3608,7 +3672,7 @@ def _build_global_fit_wizard_recommendation_staged(
             recommended_key=None,
             comparable_keys=(),
             summary="",
-            objective=SelectionObjective.STATISTICAL,
+            objective=objective,
         ),
         metric,
     )
@@ -5661,6 +5725,7 @@ def _assemble_assignment_assessment(
     metric: SelectionMetric,
     fit_success: bool,
     dense_curves: bool,
+    rung: CandidateRung | None = None,
 ) -> GlobalCandidateAssessment:
     """Score one role assignment's per-run results into a candidate assessment.
 
@@ -5680,7 +5745,9 @@ def _assemble_assignment_assessment(
     """
 
     sample_count = int(sum(dataset.n_points for dataset in datasets))
-    parameter_count = len(global_param_names) + len(local_param_names) * len(datasets)
+    parameter_count = _assignment_parameter_count(
+        template.model, global_param_names, local_param_names, run_count=len(datasets), rung=rung
+    )
     if fit_success:
         total_chi2 = float(sum(result.chi_squared for result in results_by_run.values()))
         aic, aicc, bic = compute_information_criteria(
@@ -5766,6 +5833,7 @@ def _assemble_assignment_assessment(
         selected_score=_metric_value(metric, aic, aicc, bic),
         fitted_curves_by_run=fitted_curves_by_run,
         component_curves_by_run=component_curves_by_run,
+        rung=rung,
     )
 
 
@@ -9204,11 +9272,15 @@ class _SeparableFlipResult:
     instrumentation: dict[str, object]
 
 
+class _PoolTaskResult(Protocol):
+    """What :func:`_drain_separable_tasks` needs of a task's result."""
+
+    instrumentation: dict[str, object]
+
+
 #: What :func:`_drain_separable_tasks` hands back — one result per task, whatever
 #: kind of task the caller submitted.
-_SeparableTaskResultT = TypeVar(
-    "_SeparableTaskResultT", _SeparableTemplateResult, _SeparableFlipResult
-)
+_SeparableTaskResultT = TypeVar("_SeparableTaskResultT", bound=_PoolTaskResult)
 
 
 def _fresh_task_instrumentation() -> dict[str, object]:
@@ -9948,9 +10020,7 @@ def _run_separable_elimination_task(
 
 
 def _drain_separable_tasks(
-    tasks: Sequence[_SeparableAnchorTask]
-    | Sequence[_SeparableEliminationTask]
-    | Sequence[_SeparableFlipTask],
+    tasks: Sequence[object],
     runner: Callable[..., _SeparableTaskResultT],
     *,
     activity: str,
@@ -10698,6 +10768,7 @@ def _optimise_partition_phases(
         [CandidateTemplate], dict[object, dict[int, ParameterSet]]
     ],
     cancel_callback: Callable[[], bool] | None,
+    objective: SelectionObjective,
     config: PartitionConfig = PartitionConfig(),
 ) -> tuple[PartitionPath, dict[tuple[int, int], GlobalCandidateAssessment], int]:
     """Tier 3: fit each phase of the selected partition, and verify the elbow.
@@ -10719,6 +10790,14 @@ def _optimise_partition_phases(
     means. Rows outside the verified window keep their surrogate totals; a gain
     that straddles the edge therefore compares an exact total against a surrogate
     one, which is honest — the search measured what it could afford to measure.
+
+    Under the trend objective each phase's search is the sharing ladders of the
+    templates inside the band on that phase's runs, and the phase's answer is
+    the pre-selected rung that trends best (plan D13). The break is still judged
+    by the best partition BIC among the phase's fits, whichever of them is the
+    answer: a rung is allowed to cost 2σ, and a template 3 %, which is more than
+    a break is worth, so scoring breaks by the answer would let the objective
+    move them.
 
     Segments run serially here and each one's templates fan out over the existing
     spawn pool. Pools must not nest, so the choice is which level gets the
@@ -10802,22 +10881,47 @@ def _optimise_partition_phases(
             seeds_by_window[(start, stop)] = {
                 key: base_by_run for key, (base_by_run, _fixed) in segment_contexts.items()
             }
-            # The phase's candidate list, with any template whose oscillation
-            # has vanished on one of its runs removed before anything ranks it.
-            searched_by_window[(start, stop)] = _oscillatory_admissible_phase_candidates(
-                _run_separable_search(
+            restricted_prescreen = {
+                key: _restrict_prescreen_assessment(
+                    assessment,
+                    segment_datasets,
+                    metric=metric,
+                    analysed_points_by_run=analysed_points_by_run,
+                )
+                for key, assessment in prescreen_assessments.items()
+            }
+            # Every phase is fitted and kept at the series search resolution, and
+            # only one assessment per phase is kept, so the curves are built for
+            # those and not for every node of every template.
+            if objective is SelectionObjective.TREND:
+                from asymmetry.core.fitting.global_search.trend_search import run_trend_search
+
+                searched = run_trend_search(
+                    segment_datasets,
+                    templates=[
+                        template for template in templates if template.key in segment_contexts
+                    ],
+                    always_competing=(),
+                    template_contexts=segment_contexts,
+                    prescreen_assessments=restricted_prescreen,
+                    axis_key=axis_key,
+                    metric=metric,
+                    progress_callback=progress_callback,
+                    search_strategy=search_strategy,
+                    instrumentation=instrumentation,
+                    cancel_callback=cancel_callback,
+                    search_rebin_factor=search_rebin_factor,
+                    prescreen_rebin_factor=search_rebin_factor,
+                    time_budget_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
+                    backstop_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
+                    materialise_curves=False,
+                )
+            else:
+                searched = _run_separable_search(
                     segment_datasets,
                     shortlisted_templates=list(templates),
                     template_contexts=segment_contexts,
-                    prescreen_assessments={
-                        key: _restrict_prescreen_assessment(
-                            assessment,
-                            segment_datasets,
-                            metric=metric,
-                            analysed_points_by_run=analysed_points_by_run,
-                        )
-                        for key, assessment in prescreen_assessments.items()
-                    },
+                    prescreen_assessments=restricted_prescreen,
                     axis_key=axis_key,
                     metric=metric,
                     progress_callback=progress_callback,
@@ -10828,13 +10932,13 @@ def _optimise_partition_phases(
                     search_rebin_factor=search_rebin_factor,
                     prescreen_rebin_factor=search_rebin_factor,
                     full_resolution_refit=False,
-                    # Only one assessment per phase is kept, so the curves are
-                    # built for those and not for every converged node of every
-                    # template.
                     materialise_curves=False,
                     time_budget_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
-                ),
-                instrumentation,
+                )
+            # The phase's candidate list, with any template whose oscillation
+            # has vanished on one of its runs removed before anything ranks it.
+            searched_by_window[(start, stop)] = _oscillatory_admissible_phase_candidates(
+                searched, instrumentation
             )
     except FitCancelledError:
         raise
@@ -10846,22 +10950,25 @@ def _optimise_partition_phases(
 
     def _score(
         windows: tuple[_PhaseWindow, ...],
-    ) -> tuple[float, tuple[GlobalCandidateAssessment | None, ...]]:
-        total = 0.0
-        chosen: list[GlobalCandidateAssessment | None] = []
+    ) -> tuple[float, tuple[tuple[GlobalCandidateAssessment | None, float], ...]]:
+        """The partition's total, and each window's answer with the IC it is scored at."""
+        chosen: list[tuple[GlobalCandidateAssessment | None, float]] = []
         for window in windows:
             if window.excluded:
-                total += stub_ic[(window.start, window.stop)]
-                chosen.append(None)
+                chosen.append((None, stub_ic[(window.start, window.stop)]))
                 continue
-            assessment = _recommended_segment_assessment(
-                searched_by_window[(window.start, window.stop)], scored_points_by_run
+            searched = searched_by_window[(window.start, window.stop)]
+            best_fit = _recommended_segment_assessment(searched, scored_points_by_run)
+            answers = (
+                trend_contenders(searched, metric)
+                if objective is SelectionObjective.TREND
+                else [best_fit]
             )
-            if assessment is None:
+            # No fit converged on this phase, or no ladder kept its pre-selected rung.
+            if best_fit is None or not answers:
                 return math.inf, ()
-            total += _partition_bic(assessment, scored_points_by_run)
-            chosen.append(assessment)
-        return total, tuple(chosen)
+            chosen.append((answers[0], _partition_bic(best_fit, scored_points_by_run)))
+        return math.fsum(ic for _answer, ic in chosen), tuple(chosen)
 
     phase_assessments: dict[tuple[int, int], GlobalCandidateAssessment] = {}
     # Neighbouring partition solutions share most of their segments, and a shared
@@ -10889,7 +10996,7 @@ def _optimise_partition_phases(
         if not math.isfinite(total):
             continue
         segments: list[Segment] = []
-        for index, (window, assessment) in enumerate(zip(windows, chosen, strict=True)):
+        for index, (window, (assessment, ic)) in enumerate(zip(windows, chosen, strict=True)):
             run_numbers = tuple(
                 int(dataset.run_number) for dataset in ordered_datasets[window.start : window.stop]
             )
@@ -10900,7 +11007,7 @@ def _optimise_partition_phases(
                         stop=window.stop,
                         run_numbers=run_numbers,
                         structure=stub_structure[(window.start, window.stop)],
-                        ic=stub_ic[(window.start, window.stop)],
+                        ic=ic,
                         excluded=True,
                     )
                 )
@@ -10912,7 +11019,7 @@ def _optimise_partition_phases(
                     stop=window.stop,
                     run_numbers=run_numbers,
                     structure=assessment.selection_key,
-                    ic=_partition_bic(assessment, scored_points_by_run),
+                    ic=ic,
                     excluded=False,
                 )
             )

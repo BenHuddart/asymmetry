@@ -44,6 +44,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     _SeparableTemplateResult,
     build_global_fit_wizard_recommendation,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.models import dynamic_gaussian_kt, longitudinal_field_kubo_toyabe
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
@@ -53,6 +54,13 @@ pytestmark = [pytest.mark.integration]
 
 _TEMPLATE_KEY = "exp_constant"
 _BIEXP_TEMPLATE_KEY = "biexp_constant"
+
+
+def build_statistical_recommendation(*args, **kwargs):
+    """The wizard under the statistical objective, whose role search this file pins."""
+    return build_global_fit_wizard_recommendation(
+        *args, objective=SelectionObjective.STATISTICAL, **kwargs
+    )
 
 
 def _dataset(
@@ -230,7 +238,7 @@ def test_separable_engine_shares_every_parameter_on_a_uniform_series(
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     _restrict_to_exp_constant(monkeypatch, model)
 
-    recommendation = build_global_fit_wizard_recommendation(_all_global_series(model))
+    recommendation = build_statistical_recommendation(_all_global_series(model))
 
     assessment = recommendation.recommended_assessment
     assert assessment is not None
@@ -244,7 +252,7 @@ def test_separable_engine_localizes_only_the_scanning_rate(
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     _restrict_to_exp_constant(monkeypatch, model)
 
-    recommendation = build_global_fit_wizard_recommendation(_local_lambda_series(model))
+    recommendation = build_statistical_recommendation(_local_lambda_series(model))
 
     assessment = recommendation.recommended_assessment
     assert assessment is not None
@@ -312,7 +320,7 @@ def test_lf_decoupling_series_shares_delta_and_localizes_the_field(
         ),
     )
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets, scope=scope, selected_template_keys=(key,)
     )
 
@@ -354,9 +362,7 @@ def test_all_local_node_is_assembled_from_per_run_fits_never_fitted_jointly(
     monkeypatch.setattr(global_fit_wizard_module, "_fit_exact_assignment", _recording_fit)
 
     instrumentation: dict[str, object] = {}
-    recommendation = build_global_fit_wizard_recommendation(
-        datasets, instrumentation=instrumentation
-    )
+    recommendation = build_statistical_recommendation(datasets, instrumentation=instrumentation)
 
     assert ((), all_local) not in fitted_splits
     counters = _counters(instrumentation)
@@ -379,8 +385,8 @@ def test_separable_search_costs_far_fewer_coupled_fits_than_exhaustive(
 
     separable: dict[str, object] = {}
     exhaustive: dict[str, object] = {}
-    build_global_fit_wizard_recommendation(datasets, instrumentation=separable)
-    build_global_fit_wizard_recommendation(
+    build_statistical_recommendation(datasets, instrumentation=separable)
+    build_statistical_recommendation(
         datasets, instrumentation=exhaustive, search_engine="exhaustive"
     )
 
@@ -399,7 +405,7 @@ def test_winner_flip_neighbourhood_is_fitted_and_justifies_every_role(
     _restrict_to_exp_constant(monkeypatch, model)
     datasets = _local_lambda_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
     winner = recommendation.recommended_assessment
     assert winner is not None
 
@@ -455,7 +461,7 @@ def _capture_search_caches(
     patcher.setattr(
         global_fit_wizard_module, "_finalise_heuristic_assessments", _recording_finalise
     )
-    build_global_fit_wizard_recommendation(datasets)
+    build_statistical_recommendation(datasets)
     return captured, flip_task_counts
 
 
@@ -513,7 +519,7 @@ def test_every_flip_is_counted_exactly_once(
     monkeypatch.setattr(global_fit_wizard_module, "_run_separable_flip_task", _recording_runner)
 
     instrumentation: dict[str, object] = {}
-    build_global_fit_wizard_recommendation(datasets, instrumentation=instrumentation)
+    build_statistical_recommendation(datasets, instrumentation=instrumentation)
 
     counters = _counters(instrumentation)
     assert submitted
@@ -679,9 +685,7 @@ def test_a_failed_warm_fit_escalates_to_the_multi_start_battery(
     monkeypatch.setattr(global_fit_wizard_module, "_warm_certificate_fit", _first_warm_fit_fails)
 
     instrumentation: dict[str, object] = {}
-    recommendation = build_global_fit_wizard_recommendation(
-        datasets, instrumentation=instrumentation
-    )
+    recommendation = build_statistical_recommendation(datasets, instrumentation=instrumentation)
 
     counters = _counters(instrumentation)
     assert counters["warm_only_escalations"] >= 1
@@ -714,9 +718,7 @@ def test_search_resolution_never_reaches_the_leaderboard(
     monkeypatch.setattr(fit_wizard_module, "_FIT_SAMPLE_BUDGET", full_n_points // 3)
 
     instrumentation: dict[str, object] = {}
-    recommendation = build_global_fit_wizard_recommendation(
-        datasets, instrumentation=instrumentation
-    )
+    recommendation = build_statistical_recommendation(datasets, instrumentation=instrumentation)
 
     counters = _counters(instrumentation)
     assert instrumentation["separable_search_rebin_factor"] > 1
@@ -755,7 +757,7 @@ def test_coupled_nodes_are_counted_as_least_squares_fits() -> None:
     datasets = _all_global_series(model)
 
     instrumentation: dict[str, object] = {}
-    build_global_fit_wizard_recommendation(datasets, instrumentation=instrumentation)
+    build_statistical_recommendation(datasets, instrumentation=instrumentation)
 
     counters = _counters(instrumentation)
     assert counters["separable_least_squares_fits"] >= 1
@@ -783,7 +785,7 @@ def test_cancel_mid_search_raises_and_leaves_no_pool_orphans(
         return polls["calls"] > 1
 
     with pytest.raises(FitCancelledError):
-        build_global_fit_wizard_recommendation(datasets, cancel_callback=_cancel_after_first_poll)
+        build_statistical_recommendation(datasets, cancel_callback=_cancel_after_first_poll)
 
     assert polls["calls"] > 1
     assert multiprocessing.active_children() == []
@@ -867,7 +869,7 @@ def test_every_assessment_a_recommendation_exposes_carries_curves(
     _restrict_to_exp_constant(monkeypatch, model)
     datasets = _local_lambda_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
 
     assert recommendation.assessments
     assert all(_fully_curved(assessment) for assessment in recommendation.assessments)
@@ -896,7 +898,7 @@ def test_a_displayed_assessment_carries_its_residual_series(
     _restrict_to_exp_constant(monkeypatch, model)
     datasets = _local_lambda_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
 
     assessment = recommendation.recommended_assessment
     assert assessment is not None
@@ -954,7 +956,7 @@ def test_every_search_task_carries_fit_records_not_raw_counts(
 
     monkeypatch.setattr(global_fit_wizard_module, "_drain_separable_tasks", _recording_drain)
 
-    build_global_fit_wizard_recommendation(datasets)
+    build_statistical_recommendation(datasets)
 
     # All three fan-outs of the search were seen, not just the first.
     assert any("anchor" in activity for activity in activities)

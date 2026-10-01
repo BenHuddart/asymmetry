@@ -2360,10 +2360,7 @@ def _recommended_optimised_key(recommendation: GlobalFitWizardRecommendation) ->
 def _role_rationale(assessment: GlobalCandidateAssessment) -> str:
     """One line per parameter: why the role search gave it its role."""
     if not assessment.parameter_recommendations:
-        return (
-            "This assignment comes straight from the exhaustive wavefront search, "
-            "which recorded no per-parameter rationale."
-        )
+        return "No per-parameter rationale was recorded for this candidate."
     return "\n".join(
         f"{parameter.name}: {parameter.rationale}"
         for parameter in assessment.parameter_recommendations

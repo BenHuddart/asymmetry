@@ -183,6 +183,7 @@ def test_trend_recommendation_round_trips_with_its_rungs():
         },
         preselected=True,
         amplitude_unshareable_runs=(11,),
+        all_local_chi2r=1.02,
     )
     candidate = _assessment(grouped, (total,), rung=rung)
     stored = _recommendation(candidate, objective=SelectionObjective.TREND)

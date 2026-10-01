@@ -390,7 +390,7 @@ def _departing(
         scatter = _MAD_TO_SIGMA * float(np.median(np.abs(values - centre)))
         for position, run in enumerate(runs):
             covered = results[run].covariance_parameters
-            if not set(names) <= set(covered):
+            if results[run].covariance is None or not set(names) <= set(covered):
                 continue
             columns = [covered.index(name) for name in names]
             # Rounding can take the variance of a sum just below zero.
@@ -575,7 +575,7 @@ def climb_sharing_ladder(
     base_by_run: Mapping[int, ParameterSet],
     axis_values: Sequence[float],
     cancel_callback: Callable[[], bool],
-    max_further_parameters: int | None = None,
+    climb_further: Callable[[], bool] = lambda: True,
     max_calls: int = RUNG_MAX_CALLS,
 ) -> SharingLadder:
     """Climb the sharing ladder for one template over one series (or one phase of it).
@@ -598,9 +598,9 @@ def climb_sharing_ladder(
        template as given. Both continue from stage 1 and the later adequate
        one is the foothold, so the rungs above a shared total are fitted in the
        fraction form (see :attr:`LadderRung.model`).
-    3. One further parameter at a time in kind order, at most
-       ``max_further_parameters`` of them (``None``: all). A fraction is never
-       one of them.
+    3. One further parameter at a time in kind order, for as long as
+       ``climb_further`` — asked before each of these rungs — returns true
+       (the caller's budget, plan D8). A fraction is never one of them.
 
     Seeds. A shared parameter starts at the series median of its all-local
     values and a local one at its run's own all-local value, except that once
@@ -629,9 +629,14 @@ def climb_sharing_ladder(
     )
     axis = {int(dataset.run_number): float(x) for x, dataset in ordered}
     runs = tuple(axis)
-    failed = [run for run in runs if not all_local_results[run].success]
+    failed = [
+        run for run in runs if not (all_local_results[run].success and all_local_results[run].dof)
+    ]
     if failed:
-        raise ValueError(f"the ladder starts from converged all-local fits; runs {failed} are not")
+        raise ValueError(
+            "the ladder starts from converged all-local fits that carry their degrees of "
+            f"freedom; runs {failed} do not"
+        )
     series = _Series(
         datasets=[dataset for _x, dataset in ordered],
         axis=axis,
@@ -666,12 +671,14 @@ def climb_sharing_ladder(
                 as_given,
             )
         ],
-        *([_Step((name,))] for name in further[:max_further_parameters]),
+        *([_Step((name,))] for name in further),
     ]
 
     climbed = [series.rung(as_given, (), (), all_local_results)]
     foothold = _Foothold(climbed[0], as_given, ())
-    for stage in stages:
+    for index, stage in enumerate(stages):
+        if index >= 2 and not climb_further():
+            break
         below = foothold
         for step in stage:
             if not step.addition:

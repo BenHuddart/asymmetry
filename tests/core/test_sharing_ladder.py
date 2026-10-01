@@ -6,186 +6,25 @@ and modelled on a case in ``docs/plans/global-wizard-trend-objective.md``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from types import MappingProxyType
 
 import numpy as np
 import pytest
 
-from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
-from asymmetry.core.fitting.global_search.sharing_ladder import (
-    ADEQUACY_SIGMA,
-    SharingLadder,
-    climb_sharing_ladder,
+from asymmetry.core.fitting.engine import FitCancelledError, FitResult
+from asymmetry.core.fitting.global_search.sharing_ladder import ADEQUACY_SIGMA
+from tests.core.sharing_series import (
+    TRANSITION,
+    SimulatedSeries,
+    glassy_series,
+    hopping_series,
+    two_line_series,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-
-_MUON_LIFETIME_US = 2.197
-_LIMITS = {"A_1": 100.0, "A_2": 100.0, "Lambda": 50.0, "sigma": 50.0, "Delta": 10.0, "nu": 100.0}
-
-
-class _Series:
-    """A simulated series and its independent per-run fits, runs numbered 1, 2, 3…"""
-
-    def __init__(
-        self,
-        expression: str,
-        truths: list[dict[str, float]],
-        *,
-        sigma: float,
-        n_points: int = 400,
-        t_max: float = 10.0,
-        fixed: tuple[str, ...] = (),
-        axis: list[float] | None = None,
-        starts: list[dict[str, float]] | None = None,
-    ) -> None:
-        """``starts`` are where each run's independent fit begins: the truth by default."""
-        self.model = CompositeModel.from_expression(expression)
-        self.axis = axis or [float(run) for run in range(1, len(truths) + 1)]
-        rng = np.random.default_rng(11)
-        time = np.linspace(0.02, t_max, n_points)
-        # Counting errors grow as the muons decay.
-        error = sigma * np.exp(time / (2.0 * _MUON_LIFETIME_US))
-        self.datasets: list[MuonDataset] = []
-        self.base_by_run: dict[int, ParameterSet] = {}
-        self.all_local: dict[int, FitResult] = {}
-        for run, (truth, start) in enumerate(zip(truths, starts or truths, strict=True), start=1):
-            dataset = MuonDataset(
-                time=time,
-                asymmetry=self.model.function(time, **truth) + rng.normal(0.0, error),
-                error=error,
-                metadata={"run_number": run},
-            )
-            base = ParameterSet(
-                [
-                    Parameter(
-                        name,
-                        start[name],
-                        min=0.1 if name == "beta" else 0.0 if name in _LIMITS else -np.inf,
-                        max=3.0 if name == "beta" else _LIMITS.get(name, np.inf),
-                        fixed=name in fixed,
-                    )
-                    for name in self.model.param_names
-                ]
-            )
-            self.datasets.append(dataset)
-            self.base_by_run[run] = base
-            self.all_local[run] = FitEngine().fit(dataset, self.model.function, base)
-
-    def climb(self, **options) -> SharingLadder:
-        return climb_sharing_ladder(
-            self.datasets,
-            self.model,
-            all_local_results=self.all_local,
-            base_by_run=self.base_by_run,
-            axis_values=self.axis,
-            **{"cancel_callback": lambda: False, **options},
-        )
-
-
-def _glassy_series(*, runs_with_lost_asymmetry: int) -> _Series:
-    """Stretched exponential + constant, the rate falling by three decades (YMnAl).
-
-    The five slowest runs cannot tell amplitude from background: their
-    independent fits start ten units of asymmetry along that valley and stay
-    there. The exponent truly varies. The first ``runs_with_lost_asymmetry``
-    runs carry less amplitude.
-    """
-    rates = np.logspace(0.5, -2.5, 12)
-    exponents = np.linspace(0.5, 1.0, 12)
-    truths = [
-        {
-            "A_1": 13.0 if index < runs_with_lost_asymmetry else 20.0,
-            "Lambda": rates[index],
-            "beta": exponents[index],
-            "A_bg": 5.0,
-        }
-        for index in range(12)
-    ]
-    valley = [
-        {**truth, "A_1": truth["A_1"] + 10.0, "A_bg": truth["A_bg"] - 10.0} for truth in truths
-    ]
-    return _Series(
-        "StretchedExponential + Constant", truths, sigma=0.15, starts=truths[:7] + valley[7:]
-    )
-
-
-def _hopping_series(
-    *,
-    runs: int = 10,
-    sigma: float = 0.15,
-    amplitude_scale: Mapping[int, float] = MappingProxyType({}),
-    background: bool = True,
-) -> _Series:
-    """Dynamic Gaussian KT + constant: one static width, a hop rate rising (copper).
-
-    ``amplitude_scale`` multiplies the asymmetry of the runs it names (Re₆Zr:
-    three runs with 2 % more).
-    """
-    hop_rates = np.logspace(-1.5, 0.4, runs)
-    return _Series(
-        "DynamicGaussianKT" + " + Constant" * background,
-        [
-            {
-                "A_1": 18.0 * amplitude_scale.get(run, 1.0),
-                "Delta": 0.39,
-                "nu": hop_rates[run - 1],
-                "B_L": 0.0,
-                **({"A_bg": 4.0} if background else {}),
-            }
-            for run in range(1, runs + 1)
-        ],
-        sigma=sigma,
-        n_points=300,
-        t_max=12.0,
-        fixed=("B_L",),
-    )
-
-
-def _two_line_series(
-    fractions: Sequence[float],
-    *,
-    second_line_sign: float = 1.0,
-    fixed: tuple[str, ...] = ("phase_1", "phase_3"),
-) -> _Series:
-    """Two Gaussian-damped precession lines sharing 20 units of asymmetry, + constant.
-
-    ``fractions`` is the first line's share run by run; both widths rise along
-    the series. The amplitudes are not limited, so either may be fitted negative.
-    """
-    return _Series(
-        "Oscillatory * Gaussian + Oscillatory * Gaussian + Constant",
-        [
-            {
-                "A_1": 20.0 * fraction,
-                "frequency_1": 2.0,
-                "phase_1": 0.0,
-                "sigma_2": 0.5 + 0.03 * index,
-                "A_3": second_line_sign * 20.0 * (1.0 - fraction),
-                "frequency_3": 2.4,
-                "phase_3": 0.0,
-                "sigma_4": 0.12 + 0.01 * index,
-                "A_bg": 2.0,
-            }
-            for index, fraction in enumerate(fractions)
-        ],
-        sigma=0.12,
-        n_points=300,
-        t_max=8.0,
-        fixed=fixed,
-    )
-
-
-#: The first line's share rising through a transition at the middle of twelve runs.
-_TRANSITION = 0.15 + 0.7 / (1.0 + np.exp(-(np.arange(12) - 5.5) / 1.2))
 
 
 def test_first_rung_is_the_all_local_fits_at_no_cost() -> None:
-    series = _hopping_series()
-    first = series.climb(max_further_parameters=0).rungs[0]
+    series = hopping_series()
+    first = series.climb(further=0).rungs[0]
 
     assert first.shared == ()
     assert first.model is series.model
@@ -199,7 +38,7 @@ def test_first_rung_is_the_all_local_fits_at_no_cost() -> None:
 
 
 def test_degenerate_amplitude_and_background_are_shared_and_the_rate_trends_better() -> None:
-    series = _glassy_series(runs_with_lost_asymmetry=0)
+    series = glassy_series(runs_with_lost_asymmetry=0)
     # The slow runs' independent fits sit in an unphysical basin, with small errors.
     for run in range(8, 13):
         slow = series.all_local[run]
@@ -238,7 +77,7 @@ def test_degenerate_amplitude_and_background_are_shared_and_the_rate_trends_bett
 
 
 def test_amplitude_lost_in_an_end_block_is_reported_and_only_the_background_is_shared() -> None:
-    ladder = _glassy_series(runs_with_lost_asymmetry=3).climb(max_further_parameters=1)
+    ladder = glassy_series(runs_with_lost_asymmetry=3).climb(further=1)
     _all_local, background, amplitude, exponent = ladder.rungs
 
     assert amplitude.shared == ("A_bg", "A_1")
@@ -253,7 +92,7 @@ def test_amplitude_lost_in_an_end_block_is_reported_and_only_the_background_is_s
 
 
 def test_shared_static_width_leaves_a_smooth_local_hop_rate() -> None:
-    ladder = _hopping_series().climb()
+    ladder = hopping_series().climb()
     width, hop_rate = ladder.rungs[-2:]
 
     assert width.shared == ("A_bg", "A_1", "Delta")
@@ -271,7 +110,7 @@ def test_shared_static_width_leaves_a_smooth_local_hop_rate() -> None:
 
 
 def test_two_isolated_anomalous_runs_are_exempt_from_the_shared_amplitude() -> None:
-    ladder = _hopping_series(runs=14, sigma=0.09, amplitude_scale={4: 1.025, 10: 1.025}).climb()
+    ladder = hopping_series(runs=14, sigma=0.09, amplitude_scale={4: 1.025, 10: 1.025}).climb()
     amplitude, width, hop_rate = ladder.rungs[2:]
 
     assert amplitude.shared == ("A_bg", "A_1")
@@ -298,10 +137,10 @@ def test_two_isolated_anomalous_runs_are_exempt_from_the_shared_amplitude() -> N
 @pytest.mark.parametrize("excess", [0.025, 0.04, 0.10, 0.30])
 def test_isolated_anomalous_runs_are_exempt_however_strong_the_anomaly(excess: float) -> None:
     # At this noise even 2.5 % drags a plainly shared amplitude until other runs offend.
-    series = _hopping_series(
+    series = hopping_series(
         runs=12, sigma=0.05, amplitude_scale={4: 1.0 + excess, 10: 1.0 + excess}
     )
-    amplitude = series.climb(max_further_parameters=0).rungs[2]
+    amplitude = series.climb(further=0).rungs[2]
 
     assert amplitude.exempt_runs == (4, 10)
     assert amplitude.adequate
@@ -310,8 +149,8 @@ def test_isolated_anomalous_runs_are_exempt_however_strong_the_anomaly(excess: f
 
 
 def test_three_isolated_anomalous_runs_of_a_long_series_are_exempt() -> None:
-    series = _hopping_series(runs=38, sigma=0.09, amplitude_scale={5: 1.02, 17: 1.02, 30: 1.02})
-    amplitude = series.climb(max_further_parameters=0).rungs[2]
+    series = hopping_series(runs=38, sigma=0.09, amplitude_scale={5: 1.02, 17: 1.02, 30: 1.02})
+    amplitude = series.climb(further=0).rungs[2]
 
     assert amplitude.exempt_runs == (5, 17, 30)
     assert amplitude.adequate
@@ -322,14 +161,14 @@ def test_three_isolated_anomalous_runs_of_a_long_series_are_exempt() -> None:
 def test_anomalous_runs_the_rung_below_cannot_place_are_found_by_their_cost() -> None:
     # No background, so the amplitude rung climbs from the all-local fits, and
     # these gave no covariance to judge an amplitude by.
-    series = _hopping_series(
+    series = hopping_series(
         runs=14, sigma=0.09, amplitude_scale={4: 1.025, 10: 1.025}, background=False
     )
     series.all_local = {
         run: replace(result, covariance=None, covariance_parameters=[])
         for run, result in series.all_local.items()
     }
-    amplitude = series.climb(max_further_parameters=0).rungs[1]
+    amplitude = series.climb(further=0).rungs[1]
 
     assert amplitude.shared == ("A_1",)
     assert amplitude.exempt_runs == (4, 10)
@@ -341,10 +180,10 @@ def test_anomalous_runs_the_rung_below_cannot_place_are_found_by_their_cost() ->
 def test_end_block_with_less_amplitude_is_named_exactly(
     block: tuple[int, ...], reduction: float
 ) -> None:
-    series = _hopping_series(
+    series = hopping_series(
         runs=14, sigma=0.09, amplitude_scale=dict.fromkeys(block, 1.0 - reduction)
     )
-    amplitude = series.climb(max_further_parameters=0).rungs[2]
+    amplitude = series.climb(further=0).rungs[2]
 
     assert amplitude.amplitude_unshareable_runs == block
     assert amplitude.exempt_runs == ()
@@ -353,9 +192,9 @@ def test_end_block_with_less_amplitude_is_named_exactly(
 
 @pytest.mark.parametrize("excess", [0.025, 0.10])
 def test_three_contiguous_interior_anomalous_runs_are_not_exempted(excess: float) -> None:
-    ladder = _hopping_series(
+    ladder = hopping_series(
         runs=14, sigma=0.09, amplitude_scale=dict.fromkeys((6, 7, 8), 1.0 + excess)
-    ).climb(max_further_parameters=1)
+    ).climb(further=1)
     amplitude, width = ladder.rungs[2:]
 
     assert amplitude.shared == ("A_bg", "A_1")
@@ -379,8 +218,8 @@ def test_three_contiguous_interior_anomalous_runs_are_not_exempted(excess: float
 def test_amplitude_that_varies_across_the_series_is_neither_exempted_nor_an_end_block(
     amplitude_scale: dict[int, float],
 ) -> None:
-    series = _hopping_series(runs=14, sigma=0.09, amplitude_scale=amplitude_scale)
-    background, amplitude = series.climb(max_further_parameters=0).rungs[1:]
+    series = hopping_series(runs=14, sigma=0.09, amplitude_scale=amplitude_scale)
+    background, amplitude = series.climb(further=0).rungs[1:]
 
     assert amplitude.exempt_runs == ()
     assert amplitude.amplitude_unshareable_runs == ()
@@ -390,7 +229,7 @@ def test_amplitude_that_varies_across_the_series_is_neither_exempted_nor_an_end_
 
 
 def test_total_is_shared_and_the_fraction_trends_through_a_transition() -> None:
-    series = _two_line_series(_TRANSITION)
+    series = two_line_series(TRANSITION)
     ladder = series.climb()
     _all_local, background, total, amplitudes, *further = ladder.rungs
 
@@ -407,7 +246,7 @@ def test_total_is_shared_and_the_fraction_trends_through_a_transition() -> None:
     fractions = [
         result.parameters["f_Oscillatory"].value for result in total.results_by_run.values()
     ]
-    assert fractions == pytest.approx(list(_TRANSITION), abs=0.01)
+    assert fractions == pytest.approx(list(TRANSITION), abs=0.01)
     assert total.trend.parameters["f_Oscillatory"].quality > 0.95
     # The shared total has no trace; the widths keep theirs under their grouped names.
     assert set(total.trend.parameters) == {
@@ -439,10 +278,8 @@ def test_total_is_shared_and_the_fraction_trends_through_a_transition() -> None:
 
 
 def test_constant_amplitudes_are_shared_outright_and_the_ladder_goes_on_from_there() -> None:
-    series = _two_line_series(
-        [0.6] * 12, fixed=("phase_1", "phase_3", "frequency_1", "frequency_3")
-    )
-    ladder = series.climb(max_further_parameters=1)
+    series = two_line_series([0.6] * 12, fixed=("phase_1", "phase_3", "frequency_1", "frequency_3"))
+    ladder = series.climb(further=1)
     _all_local, _background, total, amplitudes, width = ladder.rungs
 
     # The total can be shared too, and leaves a fraction that does not move.
@@ -460,8 +297,8 @@ def test_constant_amplitudes_are_shared_outright_and_the_ladder_goes_on_from_the
 
 
 def test_lines_of_opposite_sign_have_no_shared_total_rung() -> None:
-    series = _two_line_series(_TRANSITION, second_line_sign=-1.0)
-    ladder = series.climb(max_further_parameters=2)
+    series = two_line_series(TRANSITION, second_line_sign=-1.0)
+    ladder = series.climb(further=2)
     _all_local, _background, amplitudes, frequency, width = ladder.rungs
 
     assert all(rung.model is series.model for rung in ladder.rungs)
@@ -478,14 +315,14 @@ def test_lines_of_opposite_sign_have_no_shared_total_rung() -> None:
 def test_line_that_vanishes_is_a_fraction_at_its_limit_not_a_sign() -> None:
     # The second line is absent from the first three runs, where its fitted
     # amplitude falls either side of zero by less than its error.
-    series = _two_line_series(
+    series = two_line_series(
         np.clip(1.25 - 0.1 * np.arange(12), 0.0, 1.0),
         fixed=("phase_1", "phase_3", "frequency_1", "frequency_3", "sigma_4"),
     )
     absent = [series.all_local[run].parameters["A_3"].value for run in (1, 2, 3)]
     assert min(absent) < 0.0 and max(np.abs(absent)) < 0.1
 
-    total = series.climb(max_further_parameters=0).rungs[2]
+    total = series.climb(further=0).rungs[2]
 
     assert total.model.fraction_groups
     assert total.shared == ("A_bg", "A_1")
@@ -500,7 +337,7 @@ def test_line_that_vanishes_is_a_fraction_at_its_limit_not_a_sign() -> None:
 def test_shared_rate_under_a_local_fraction_is_flagged_hard_to_justify() -> None:
     # Two components trading volume fraction; the exponential's rate is constant.
     fraction = np.linspace(0.2, 0.8, 10)
-    series = _Series(
+    series = SimulatedSeries(
         "Exponential + Gaussian + Constant",
         [
             {
@@ -537,7 +374,7 @@ def test_shared_rate_under_a_local_fraction_is_flagged_hard_to_justify() -> None
 def test_passes_that_disagree_are_named_on_the_rungs_that_keep_the_rate_local() -> None:
     # A coarse pass, then an infill pass whose rates sit 25 % higher.
     axis = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 15.0, 25.0, 35.0, 45.0, 55.0, 65.0]
-    series = _Series(
+    series = SimulatedSeries(
         "Exponential + Constant",
         [
             {"A_1": 20.0, "Lambda": 0.01 * x * (1.0 if index < 6 else 1.25), "A_bg": 3.0}
@@ -559,21 +396,21 @@ def test_passes_that_disagree_are_named_on_the_rungs_that_keep_the_rate_local() 
     assert ladder.rungs[3].pass_disagreements == {}
 
 
-def test_budget_limits_the_further_parameters() -> None:
-    series = _hopping_series()
+def test_budget_ends_the_climb_before_a_further_parameter() -> None:
+    series = hopping_series()
 
-    assert [rung.shared for rung in series.climb(max_further_parameters=0).rungs] == [
+    assert [rung.shared for rung in series.climb(further=0).rungs] == [
         (),
         ("A_bg",),
         ("A_bg", "A_1"),
     ]
-    assert series.climb(max_further_parameters=1).rungs[-1].shared == ("A_bg", "A_1", "Delta")
+    assert series.climb(further=1).rungs[-1].shared == ("A_bg", "A_1", "Delta")
 
 
 def test_rung_that_does_not_converge_is_reported_and_the_ladder_goes_on_without_it() -> None:
     # Ten evaluations are too few for the background and amplitude rungs here,
     # and enough for the width's.
-    ladder = _hopping_series().climb(max_calls=10)
+    ladder = hopping_series().climb(max_calls=10)
     _all_local, background, amplitude, width, hop_rate = ladder.rungs
 
     assert not background.converged and not background.adequate
@@ -586,7 +423,7 @@ def test_rung_that_does_not_converge_is_reported_and_the_ladder_goes_on_without_
 
 
 def test_cancel_is_polled_before_each_rung() -> None:
-    series = _hopping_series()
+    series = hopping_series()
     polls = iter([False, True])
 
     with pytest.raises(FitCancelledError):
@@ -594,7 +431,7 @@ def test_cancel_is_polled_before_each_rung() -> None:
 
 
 def test_ladder_refuses_an_all_local_fit_that_did_not_converge() -> None:
-    series = _hopping_series()
+    series = hopping_series()
     series.all_local[3] = FitResult(success=False)
 
     with pytest.raises(ValueError, match=r"runs \[3\]"):

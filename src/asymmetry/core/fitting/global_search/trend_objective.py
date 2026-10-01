@@ -9,7 +9,7 @@ pre-selected rungs the one whose local parameters trend best wins. Design:
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -25,8 +25,8 @@ __all__ = [
     "TEMPLATE_BAND",
     "CandidateRung",
     "SelectionObjective",
-    "ladder_fits",
     "templates_within_band",
+    "trend_contenders",
     "trend_recommendation",
     "trend_sort_key",
 ]
@@ -55,15 +55,24 @@ class CandidateRung(RungVerdict):
     #: through (plan D12). A finding of the whole climb, so every rung of one
     #: ladder carries the same runs; empty when the climb found none.
     amplitude_unshareable_runs: tuple[int, ...]
+    #: The template's all-local series χ²ᵣ: what the band compares (plan D9).
+    #: The same on every rung of one ladder.
+    all_local_chi2r: float
 
     @classmethod
     def from_ladder_rung(
-        cls, rung: LadderRung, *, preselected: bool, amplitude_unshareable_runs: tuple[int, ...]
+        cls,
+        rung: LadderRung,
+        *,
+        preselected: bool,
+        amplitude_unshareable_runs: tuple[int, ...],
+        all_local_chi2r: float,
     ) -> CandidateRung:
         return cls(
             **{item.name: getattr(rung, item.name) for item in fields(RungVerdict)},
             preselected=preselected,
             amplitude_unshareable_runs=amplitude_unshareable_runs,
+            all_local_chi2r=all_local_chi2r,
         )
 
     def to_payload(self) -> dict[str, object]:
@@ -86,6 +95,7 @@ class CandidateRung(RungVerdict):
             },
             "preselected": self.preselected,
             "amplitude_unshareable_runs": list(self.amplitude_unshareable_runs),
+            "all_local_chi2r": self.all_local_chi2r,
         }
 
     @classmethod
@@ -113,6 +123,7 @@ class CandidateRung(RungVerdict):
             amplitude_unshareable_runs=tuple(
                 int(run) for run in payload["amplitude_unshareable_runs"]
             ),
+            all_local_chi2r=float(payload["all_local_chi2r"]),
         )
 
 
@@ -124,11 +135,6 @@ def templates_within_band(chi2r_by_key: Mapping[str, float]) -> set[str]:
     return {key for key, chi2r in chi2r_by_key.items() if chi2r <= limit}
 
 
-def ladder_fits(shareable_parameters: int) -> int:
-    """Coupled fits a full ladder costs at most: the plan's P + 2 (D8)."""
-    return shareable_parameters + 2
-
-
 def _ranked(
     assessment: GlobalCandidateAssessment, metric: SelectionMetric
 ) -> tuple[tuple[bool, float, float], bool, float]:
@@ -137,25 +143,68 @@ def _ranked(
     return (rung.trend.ordering_key, not rung.hard_to_justify, -assessment.metric_value(metric))
 
 
-def trend_sort_key(
-    assessment: GlobalCandidateAssessment, metric: SelectionMetric, recommended_key: str | None
-) -> tuple:
-    """Order ladder rungs for display, smaller first.
-
-    The recommended rung, then every adequate rung by trend quality, then the
-    rungs that cost too much by their cost.
-    """
-    rung = assessment.rung
-    if assessment.selection_key == recommended_key:
-        return (0,)
-    if assessment.is_successful and rung.within_tolerance:
-        (is_trend, worst, mean), justified, score = _ranked(assessment, metric)
-        return (1, not is_trend, -worst, -mean, not justified, -score)
-    return (2, rung.series_cost)
-
-
 def _run_list(runs: Sequence[int], labels: Mapping[int, str]) -> str:
     return ", ".join(labels[run] for run in runs)
+
+
+def trend_contenders(
+    assessments: Sequence[GlobalCandidateAssessment], metric: SelectionMetric
+) -> list[GlobalCandidateAssessment]:
+    """The pre-selected rung of each template inside the band, the best trend first.
+
+    The band is taken over the templates that have a ladder among
+    ``assessments``: a template climbed because the data identified it, or
+    because the user ticked it, is listed with its rungs but contends only when
+    it fits about as well as the best of them. Ties go to the rung that is not
+    hard to justify, then to ``metric``. A rung with no local parameter orders
+    below every rung that has one, so it leads only when nothing else is
+    adequate.
+    """
+    preselected = [
+        assessment
+        for assessment in assessments
+        if assessment.rung is not None and assessment.rung.preselected and assessment.is_successful
+    ]
+    band = templates_within_band(
+        {assessment.template.key: assessment.rung.all_local_chi2r for assessment in preselected}
+    )
+    return sorted(
+        (assessment for assessment in preselected if assessment.template.key in band),
+        key=lambda assessment: _ranked(assessment, metric),
+        reverse=True,
+    )
+
+
+def trend_sort_key(
+    assessments: Sequence[GlobalCandidateAssessment], metric: SelectionMetric
+) -> Callable[[GlobalCandidateAssessment], tuple]:
+    """A key that orders ladder rungs for display, smaller first.
+
+    Template by template: the contending templates in the order of
+    :func:`trend_contenders`, so the recommended rung leads, then the templates
+    outside the band by how well they fit. Within a template the pre-selected
+    rung, then the other adequate rungs by trend quality, then the rungs that
+    cost too much by their cost.
+    """
+    contending = {
+        assessment.template.key: (0, float(index))
+        for index, assessment in enumerate(trend_contenders(assessments, metric))
+    }
+
+    def key(assessment: GlobalCandidateAssessment) -> tuple:
+        rung = assessment.rung
+        adequate = assessment.is_successful and rung.within_tolerance
+        (is_trend, worst, mean), justified, score = _ranked(assessment, metric)
+        return (
+            contending.get(assessment.template.key, (1, rung.all_local_chi2r)),
+            not rung.preselected,
+            not adequate,
+            (not is_trend, -worst, -mean, not justified, -score)
+            if adequate
+            else (rung.series_cost,),
+        )
+
+    return key
 
 
 def trend_recommendation(
@@ -163,29 +212,16 @@ def trend_recommendation(
 ) -> tuple[str | None, tuple[str, ...], str]:
     """``(recommended_key, comparable_keys, summary)`` under the trend objective.
 
-    Each template's pre-selected rung competes; the best trend quality wins,
-    ties going to the rung that is not hard to justify and then to ``metric``.
-    A rung with no local parameter orders below every rung that has one, so it
-    is recommended only when nothing else is adequate. The best pre-selected
-    rung of another template, when there is one, is the comparable alternative:
-    it is inside the band, so it fits about as well.
+    The first of :func:`trend_contenders` is recommended. The second, the best
+    pre-selected rung of another template, is the comparable alternative: its
+    template is inside the band, so it fits about as well.
 
     A run that fails its residual gate does not disqualify a rung. Adequacy is
     measured against the same template's all-local fits and the band admits the
     template, so a model that fits imperfectly is still recommended, with the
     runs named in the summary.
     """
-    contenders = sorted(
-        (
-            assessment
-            for assessment in assessments
-            if assessment.rung is not None
-            and assessment.rung.preselected
-            and assessment.is_successful
-        ),
-        key=lambda assessment: _ranked(assessment, metric),
-        reverse=True,
-    )
+    contenders = trend_contenders(assessments, metric)
     if not contenders:
         return (
             None,
@@ -218,8 +254,8 @@ def trend_recommendation(
         )
     if rung.hard_to_justify:
         sentences.append(
-            f"{', '.join(rung.hard_to_justify)} shared while its own amplitude varies is "
-            "hard to justify."
+            f"Sharing {', '.join(rung.hard_to_justify)} while the amplitude of the same "
+            "component varies is hard to justify."
         )
     if rung.pass_disagreements:
         sentences.append(
