@@ -102,6 +102,7 @@ from asymmetry.core.fitting.global_search.surrogate import (
     metric_penalty as surrogate_metric_penalty,
 )
 from asymmetry.core.fitting.global_search.trend_objective import (
+    RESIDUAL_CLUSTER_WARNING,
     CandidateRung,
     SelectionObjective,
     trend_contenders,
@@ -730,6 +731,16 @@ class GlobalFitWizardRecommendation:
         metric: SelectionMetric | None = None,
     ) -> list[GlobalCandidateAssessment]:
         return sorted(self.optimized_assessments(), key=self.ranking_key(metric or self.metric))
+
+    def sorted_rungs(
+        self, metric: SelectionMetric | None = None
+    ) -> list[GlobalCandidateAssessment]:
+        """The sharing ladders' rungs in display order: what Compare lists under the trend objective."""
+        return [
+            assessment
+            for assessment in self.sorted_optimized_assessments(metric)
+            if assessment.rung is not None
+        ]
 
     def optimization_status_for_key(self, key: str | None) -> str:
         if not isinstance(key, str):
@@ -7885,7 +7896,7 @@ def _series_warnings(
         stop = residual_failures[-1]
         if stop > start:
             warnings.append(
-                "Residual warnings cluster across runs "
+                f"{RESIDUAL_CLUSTER_WARNING} "
                 f"{datasets[start].run_label}-{datasets[stop].run_label}."
             )
 

@@ -23,11 +23,16 @@ from asymmetry.core.fitting.global_fit_wizard import (
     serialize_global_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.global_search.trend_objective import (
+    RESIDUAL_CLUSTER_WARNING,
     TEMPLATE_BAND,
     TREND_TIE,
+    RungFinding,
     SelectionObjective,
+    cost_text,
+    summarise_rungs,
     templates_within_band,
     trend_contenders,
+    trend_recommendation,
 )
 from asymmetry.core.fitting.global_search.trend_search import (
     _LadderTask,
@@ -35,6 +40,7 @@ from asymmetry.core.fitting.global_search.trend_search import (
     _prescreen_fits_for_ladder,
     _run_ladder_task,
 )
+from asymmetry.core.fitting.model_comparison import ParameterRole
 from asymmetry.core.fitting.trend_quality import CandidateTrend, TraceQuality
 from tests.core.sharing_series import (
     TRANSITION,
@@ -68,8 +74,10 @@ def test_trend_is_the_default_and_recommends_the_rung_that_trends_best(hopping) 
     assert set(recommended.rung.trend.parameters) == {"nu"}
     assert recommended.rung.preselected
     assert recommended.rung.within_tolerance
-    assert "A_bg, A_1, Delta shared" in recommendation.summary
-    assert "nu varying from run to run" in recommendation.summary
+    assert recommendation.summary == (
+        "Recommended for its trends: Dynamic GKT + Constant, with A_bg, A_1, Δ shared across "
+        "the series and ν varying from run to run."
+    )
     assert recommendation.sorted_optimized_assessments()[0] is recommended
 
 
@@ -188,9 +196,33 @@ def test_failed_residual_gate_is_a_caveat_on_the_recommendation(hopping) -> None
 
     assert not failing.residual_gate_passed
     assert reranked.recommended_key == recommended.selection_key
-    assert f"structured residuals on runs {failing.run_diagnostics[0].run_label};" in (
+    assert f"structured residuals on run {failing.run_diagnostics[0].run_label};" in (
         reranked.summary
     )
+
+
+def test_summary_names_clustered_residual_failures_once(hopping) -> None:
+    _series, recommendation = hopping
+    recommended = recommendation.recommended_assessment
+    failing = replace(
+        recommended,
+        run_diagnostics=tuple(
+            replace(diagnostic, gate_passed=index > 2)
+            for index, diagnostic in enumerate(recommended.run_diagnostics)
+        ),
+        series_warnings=(
+            f"{RESIDUAL_CLUSTER_WARNING} 1-3.",
+            "Fingerprint features change abruptly between 4 and 5.",
+        ),
+    )
+
+    _key, _comparable, summary = trend_recommendation([failing], SelectionMetric.AICC)
+
+    assert summary.endswith(
+        "The model leaves structured residuals on runs 1–3; review them before applying. "
+        "Fingerprint features change abruptly between 4 and 5."
+    )
+    assert RESIDUAL_CLUSTER_WARNING not in summary
 
 
 def test_trend_recommendation_survives_a_project_round_trip(hopping) -> None:
@@ -286,7 +318,9 @@ def test_isolated_anomalous_runs_are_exempt_and_counted() -> None:
     # ``A_1`` is Global, and the candidate says which runs it does not hold for.
     assert recommended.exemptions == {"A_1": (3, 8)}
     assert recommended.parameter_count == 3 + 2 + len(recommended.local_param_names) * 12
-    assert "Runs 3, 8 keep their own A_1" in recommendation.summary
+    assert recommendation.summary.endswith(
+        "Runs 3, 8 keep their own amplitude: the asymmetry there stands apart from the series."
+    )
 
 
 def test_end_block_the_amplitude_cannot_be_shared_through_is_reported() -> None:
@@ -301,7 +335,67 @@ def test_end_block_the_amplitude_cannot_be_shared_through_is_reported() -> None:
         for assessment in recommendation.assessments
         if assessment.rung
     } == {(1, 2, 3)}
-    assert "could not be shared through runs 1, 2, 3" in recommendation.summary
+    # Never an assertion of missing asymmetry: a real step at one end reads the same.
+    assert recommendation.summary.endswith(
+        "Amplitude could not be shared through runs 1–3: possible missing asymmetry there, "
+        "or an amplitude that really changes."
+    )
+
+
+def test_a_rung_is_summarised_with_its_cost_trend_and_findings() -> None:
+    series = hopping_series(runs=12, amplitude_scale={3: 1.1, 8: 1.1})
+    recommendation = _recommend(series, "dynamic_gkt_constant", "exp_constant")
+    rungs = recommendation.sorted_rungs()
+
+    summaries = summarise_rungs(rungs, series.datasets, recommendation.metric)
+    by_key = {summary.key: summary for summary in summaries}
+    recommended = by_key[recommendation.recommended_key]
+    all_local = next(
+        summary
+        for summary in summaries
+        if summary.title == recommended.title and not summary.names(ParameterRole.GLOBAL)
+    )
+    rival = next(summary for summary in summaries if summary.title != recommended.title)
+
+    assert [summary.key for summary in summaries] == [rung.selection_key for rung in rungs]
+    assert recommended.adequate and recommended.in_band and recommended.rung.preselected
+    assert [finding.label for finding in recommended.findings] == ["Runs 3, 8 exempt"]
+    # Against the fit with everything local, whose own χ²ᵣ every rung of the ladder carries.
+    assert all_local.chi2r == pytest.approx(all_local.rung.all_local_chi2r)
+    assert all_local.rung.series_cost == 0.0
+    assert recommended.chi2r == pytest.approx(
+        recommended.rung.all_local_chi2r
+        + recommended.rung.series_cost * math.sqrt(2.0 / _series_dof(rungs, recommended.key)),
+    )
+    assert not rival.in_band
+    assert rival.findings[-1] == RungFinding(
+        "Outside the 3 % band",
+        "Fits worse than the best model by more than 3 %; listed for comparison.",
+    )
+
+
+def _series_dof(rungs, key: str) -> int:
+    rung = next(assessment for assessment in rungs if assessment.selection_key == key)
+    local = sum(result.dof for result in rung.fit_results_by_run.values())
+    all_columns = (len(rung.global_param_names) + len(rung.local_param_names)) * len(
+        rung.fit_results_by_run
+    )
+    return local + all_columns - rung.parameter_count
+
+
+def test_cost_text_names_the_runs_over_the_tolerance(hopping) -> None:
+    _series, recommendation = hopping
+    rung = replace(
+        recommendation.recommended_assessment.rung,
+        series_cost=3.14,
+        run_costs={1: 0.2, 2: 2.5, 3: 4.0, 5: 2.2},
+        exempt_runs=(5,),
+    )
+
+    assert cost_text(rung, {1: "1", 2: "2", 3: "3", 5: "5"}) == (
+        "Sharing raises the series χ²ᵣ by +3.1σ over the fit with every parameter local; "
+        "the tolerance is 2σ. Runs 2–3 are over it on their own."
+    )
 
 
 def test_shared_total_rung_carries_the_model_it_was_fitted_in() -> None:
