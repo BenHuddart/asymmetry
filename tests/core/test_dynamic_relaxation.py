@@ -283,6 +283,29 @@ def test_dynamic_kt_grid_resolves_larmor_oscillation() -> None:
         assert np.all(np.isfinite(gd)) and abs(gd[0] - 1.0) < 1e-9
 
 
+@pytest.mark.parametrize(
+    ("kernel", "values"),
+    [
+        (dynamic_gaussian_kt, {"Delta": 0.37, "nu": 0.2}),
+        (dynamic_gaussian_kt, {"Delta": 0.37, "nu": 0.2, "B_L": 20.0}),
+        (dynamic_gaussian_kt, {"Delta": 0.37, "nu": 15.0, "B_L": 20.0}),  # Keren branch
+        (dynamic_lorentzian_kt, {"a_L": 0.37, "nu": 0.2, "B_L": 20.0}),
+        (static_lorentzian_kt_lf, {"a_L": 0.37, "B_L": 20.0}),
+    ],
+)
+def test_cached_kernels_respond_to_a_finite_difference_step(kernel, values) -> None:
+    # A finite-difference Jacobian steps each parameter by ~1e-8 relative; the
+    # cached grid must move with it, giving the same slope as a wide step.
+    base = kernel(T, 1.0, **values)
+    for name, value in values.items():
+        slopes = [
+            (kernel(T, 1.0, **{**values, name: value * (1.0 + rel)}) - base) / (value * rel)
+            for rel in (1e-7, 1e-4)
+        ]
+        assert np.max(np.abs(slopes[1])) > 0.0, name
+        assert np.max(np.abs(slopes[0] - slopes[1])) < 1e-2 * np.max(np.abs(slopes[1])), name
+
+
 # --- Zero-field dynamic Lorentzian KT: exact closed form ----------------------
 def _volterra_residual(t: np.ndarray, gd: np.ndarray, gs: np.ndarray, nu: float) -> float:
     # max |G_d - f - nu * (f * G_d)| on a uniform grid, trapezoidal convolution.

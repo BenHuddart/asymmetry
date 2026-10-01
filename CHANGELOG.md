@@ -76,6 +76,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tail. On a decoupling series the Global Fit Wizard, which starts from these
   per-run fits, now recommends Dynamic GKT + Constant with Δ shared and B_L
   per run, where it recommended nothing before.
+- **Global and joint fits now optimise the dynamic Kubo-Toyabe parameters.**
+  The Global Fit Wizard's role search and the joint fit left Δ (or a_L), ν and
+  B_L of Dynamic GKT and Dynamic Lorentzian KT, and a_L and B_L of the static
+  Lorentzian KT in a longitudinal field, at their starting values with no
+  uncertainty, and still reported a successful fit. These models are solved on
+  a cached grid whose key rounded the parameters to six decimal places, so the
+  solver's finite-difference steps (about 10⁻⁸ of the value) returned the same
+  curve. The caches are now keyed on the exact values, as are those of the
+  F–μ–F geometries and the vortex-lattice line shape, whose derivatives the
+  same rounding made up to a few percent wrong. Minuit fits of these models
+  reach the same minimum as before; their uncertainties can change slightly.
+  Wizard recommendations for series fitted with these models can change,
+  because their candidates are now scored at fitted values.
 
 ## [0.22.0] - 2026-09-30
 
