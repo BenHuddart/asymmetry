@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import (
     POISSON_COST,
     FitEngine,
@@ -101,6 +102,62 @@ def test_least_squares_matches_joint_on_a_shared_parameter_series() -> None:
         # Well-conditioned case: the Gauss-Newton errors match HESSE within 10 %.
         assert sparse[run].uncertainties["Lambda"] == pytest.approx(lambda_sigma, rel=0.10)
         assert sparse[run].uncertainties["A0"] == pytest.approx(a0_sigma, rel=0.10)
+
+
+def test_least_squares_optimises_grid_cached_dynamic_kubo_toyabe() -> None:
+    """Three dynamic Gaussian KT runs, started off the truth: Δ and ν are fitted.
+
+    The kernel is solved on a cached grid, so this pins that the cache answers
+    the solver's finite-difference steps (a shared Δ, a per-run ν) rather than
+    returning the unperturbed curve and leaving both at their start values.
+    """
+    model = CompositeModel.from_expression("DynamicGaussianKT + Constant")
+    rng = np.random.default_rng(1)
+    time = np.linspace(0.05, 12.0, 400)
+    sigma = 0.15
+    nus = {1: 0.2, 2: 0.6, 3: 1.5}
+    datasets: list[MuonDataset] = []
+    inits: dict[int, ParameterSet] = {}
+    for run, nu in nus.items():
+        clean = model.function(time, A_1=23.0, Delta=0.37, nu=nu, B_L=0.0, A_bg=0.8)
+        datasets.append(
+            MuonDataset(
+                time=time,
+                asymmetry=clean + rng.normal(0.0, sigma, time.size),
+                error=np.full_like(time, sigma),
+                metadata={"run_number": run},
+            )
+        )
+        params = ParameterSet()
+        params.add(Parameter("A_1", 20.0, min=0.0))
+        params.add(Parameter("Delta", 0.52, min=0.0))
+        params.add(Parameter("nu", 0.5 * nu + 0.05, min=0.0))
+        params.add(Parameter("B_L", 0.0, fixed=True))
+        params.add(Parameter("A_bg", 0.5))
+        inits[run] = params
+    engine = FitEngine()
+    local = ["A_1", "nu", "A_bg"]
+
+    joint, joint_global = engine.global_fit(
+        datasets, model.function, ["Delta"], local, inits, strategy="joint"
+    )
+    sparse, sparse_global = engine.global_fit(
+        datasets, model.function, ["Delta"], local, inits, strategy="least_squares"
+    )
+
+    assert _total_chi2(sparse) == pytest.approx(_total_chi2(joint), abs=0.1)
+    delta_sigma = joint[1].uncertainties["Delta"]
+    assert sparse_global["Delta"].value == pytest.approx(0.37, abs=5.0 * delta_sigma)
+    assert abs(sparse_global["Delta"].value - joint_global["Delta"].value) < delta_sigma
+    for run, nu in nus.items():
+        assert sparse[run].success
+        nu_sigma = joint[run].uncertainties["nu"]
+        assert sparse[run].parameters["nu"].value == pytest.approx(nu, abs=5.0 * nu_sigma)
+        assert abs(sparse[run].parameters["nu"].value - joint[run].parameters["nu"].value) < (
+            nu_sigma
+        )
+        assert sparse[run].uncertainties["nu"] == pytest.approx(nu_sigma, rel=0.10)
+        assert sparse[run].uncertainties["Delta"] == pytest.approx(delta_sigma, rel=0.10)
 
 
 def test_least_squares_reports_solver_status_calls_and_covariance_block() -> None:

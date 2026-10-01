@@ -123,6 +123,24 @@ def _general_spectral_terms_loop(
     return unique_freq, binned_amps
 
 
+def test_numerical_geometries_respond_to_a_finite_difference_step() -> None:
+    # A distance step at the solver's finite-difference scale (~1e-8 relative)
+    # must give the same slope as a wide one; a quantised geometry would not.
+    t = np.linspace(0.0, 10.0, 200)
+    for function, geometry in (
+        (general_fmuf_polarization, [1.17, 1.25, 160.0]),
+        (polarization.fmuf_triangle_polarization, [1.17, 2.4, 70.0]),
+    ):
+        base = function(t, *geometry)
+        for index in (0, 1):
+            slopes = []
+            for rel in (1.5e-8, 1e-5):
+                stepped = list(geometry)
+                stepped[index] *= 1.0 + rel
+                slopes.append((function(t, *stepped) - base) / (geometry[index] * rel))
+            assert np.max(np.abs(slopes[0] - slopes[1])) < 5e-3 * np.max(np.abs(slopes[1]))
+
+
 def test_general_spectral_terms_match_orientation_loop() -> None:
     """The batched spectral build must equal the per-orientation loop reference."""
     vectorized = polarization._general_spectral_terms_cached.__wrapped__

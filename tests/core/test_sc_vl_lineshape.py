@@ -84,6 +84,20 @@ def test_uncalibrated_modified_london_width_is_near_brandt() -> None:
     assert raw_rate == pytest.approx(brandt, rel=0.05)
 
 
+@pytest.mark.parametrize(("index", "rel"), [(0, 1e-7), (2, 1e-8)])
+def test_lineshape_responds_to_a_finite_difference_step(index: int, rel: float) -> None:
+    # The width is calibrated analytically, so the cached field map itself must
+    # move with λ and B_c2: compare the unit-variance shape, not the offsets.
+    def shape(*params: float) -> np.ndarray:
+        offsets = _field_offsets_calibrated(*params, powder=True, n_g=10, n_grid=96)
+        return offsets / np.sqrt(np.mean(offsets**2))
+
+    base = [195.0, 400.0, 25.0]
+    stepped = list(base)
+    stepped[index] *= 1.0 + rel
+    assert np.max(np.abs(shape(*stepped) - shape(*base))) > 1e-3 * rel
+
+
 def test_powder_line_is_narrower_than_single_crystal() -> None:
     """Powder average (3^{1/4} lambda) gives a narrower line than single crystal."""
     sc = _field_offsets_calibrated(195.0, 400.0, 25.0, powder=False, n_g=10, n_grid=96)
