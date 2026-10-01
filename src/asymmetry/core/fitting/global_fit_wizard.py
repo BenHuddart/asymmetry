@@ -527,6 +527,14 @@ class GlobalCandidateAssessment:
         return self.assessment_key or self.template.key
 
     @property
+    def exempt_runs(self) -> tuple[int, ...]:
+        """Runs that keep their own amplitude: left out of the coupled series on apply (plan D17).
+
+        Empty for a role-search node and a screening row, which exempt nothing.
+        """
+        return () if self.rung is None else self.rung.exempt_runs
+
+    @property
     def exemptions(self) -> dict[str, tuple[int, ...]]:
         """Shared parameter → the runs that keep a value of their own for it (plan D12, D17)."""
         return {

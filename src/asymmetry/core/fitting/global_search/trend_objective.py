@@ -39,6 +39,7 @@ __all__ = [
     "SelectionObjective",
     "band_limit",
     "cost_text",
+    "left_out_note",
     "rung_findings",
     "summarise_rungs",
     "templates_within_band",
@@ -267,6 +268,20 @@ def rung_findings(
             )
         )
     return tuple(findings)
+
+
+def left_out_note(assessment: GlobalCandidateAssessment) -> str:
+    """What applying a rung says about its exempt runs (plan D17)."""
+    labels = {
+        diagnostic.run_number: diagnostic.run_label for diagnostic in assessment.run_diagnostics
+    }
+    runs = _runs_phrase(assessment.exempt_runs, labels).capitalize()
+    one = len(assessment.exempt_runs) == 1
+    return (
+        f"{runs} {'is' if one else 'are'} left out of the coupled fit: "
+        f"{'it keeps its' if one else 'they keep their'} own amplitude, which the series "
+        f"does not share. {'It stays' if one else 'They stay'} in the data group, unticked."
+    )
 
 
 def cost_text(rung: RungVerdict, labels: Mapping[int, str]) -> str:

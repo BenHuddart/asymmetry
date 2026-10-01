@@ -8,6 +8,13 @@ judgement shown comes from ``core/fitting/model_comparison.py``. The global
 wizard's series has N runs; the single-run wizard's has one, with no role chips
 and no trend. Design: ``docs/plans/global-wizard-stepper.md`` (D4, D8, D9) and
 ``docs/plans/fit-wizard-compare.md`` (D1–D3).
+
+Under the Global Fit Wizard's trend objective the candidates are rungs of
+sharing ladders (:meth:`ModelComparePanel.set_ladders`): each row shows its cost
+and trend quality in place of Δ and weight, each model folds to its
+pre-selected rung, and the trend plot becomes a strip of every local
+parameter's trace. Design: ``docs/plans/global-wizard-trend-objective.md``
+(D9, Phase 5).
 """
 
 from __future__ import annotations
@@ -18,7 +25,7 @@ from itertools import groupby
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QKeyEvent, QMouseEvent, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -34,6 +41,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.fitting.global_search.sharing_ladder import ADEQUACY_SIGMA
+from asymmetry.core.fitting.global_search.trend_objective import RungSummary, cost_text
 from asymmetry.core.fitting.model_comparison import (
     CandidateSummary,
     Estimate,
@@ -59,6 +68,11 @@ from asymmetry.gui.utils.formatting import format_param_label, format_value_unce
 from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
+from asymmetry.gui.widgets.parameter_trace_strip import (
+    ParameterTraceStrip,
+    TracedRung,
+    rung_traces,
+)
 from asymmetry.gui.widgets.screening_leaderboard import format_delta, paint_delta_bar
 from asymmetry.gui.widgets.series_fit_canvas import SeriesFitCanvas
 
@@ -73,6 +87,15 @@ NO_B_LEGEND = "Pin another row as B to overlay it dashed"
 NO_LOCAL_TREND = "A shares every parameter across the series"
 EMPTY_BOARD = "No optimised candidates yet"
 CONTINUE_WITH_A = "Continue with A →"
+LADDER_CAPTION = "Sharing ladders · cost against every parameter local · trend of the worst one"
+RECOMMENDED = "Recommended"
+PRESELECTED = "Pre-selected"
+COSTS_TOO_MUCH = "Costs too much"
+FIT_FAILED = "Fit failed"
+#: The trace strip's height floor, in table rows.
+_STRIP_MIN_ROWS = 9
+#: The cost meter is full at this many tolerances, so the tolerance mark sits mid-track.
+_COST_METER_TOLERANCES = 2.0
 
 _ROLE_SUFFIX = {
     ParameterRole.GLOBAL: "shared",
@@ -105,6 +128,11 @@ def _symbol(name: str) -> str:
 def format_weight(weight: float) -> str:
     """An evidence weight as a whole percentage; a sliver of support reads ``"<1%"``."""
     return "<1%" if 0.0 < weight < 0.005 else f"{weight:.0%}"
+
+
+def format_cost(cost: float) -> str:
+    """A rung's cost in standard deviations of χ²ᵣ; whole numbers once it is far over."""
+    return f"{cost:+.1f}σ" if abs(cost) < 100.0 else f"{cost:+.0f}σ"
 
 
 def split_text(summary: CandidateSummary) -> str:
@@ -198,20 +226,72 @@ class _DeltaBar(QWidget):
         paint_delta_bar(painter, QRectF(self.rect()), self._delta, self.fontMetrics())
 
 
+class Meter(QWidget):
+    """A track filled to ``fraction``, its value in words beside it, an optional mark across it."""
+
+    def __init__(
+        self,
+        fraction: float,
+        text: str,
+        colour: str,
+        parent: QWidget,
+        *,
+        mark: float | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.fraction = min(max(fraction, 0.0), 1.0)
+        self.text = text
+        self.colour = colour
+        self._mark = mark
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(char_width(14), row_height())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+        return QSize(char_width(10), row_height())
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        area = QRectF(self.rect())
+        text_width = self.fontMetrics().horizontalAdvance("+000.0σ")
+        track = QRectF(area.left(), area.center().y() - 3, area.width() - text_width - 6, 6)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(tokens.SURFACE_HI))
+        painter.drawRoundedRect(track, 3, 3)
+        painter.setBrush(QColor(self.colour))
+        painter.drawRoundedRect(track.adjusted(0, 0, -(1 - self.fraction) * track.width(), 0), 3, 3)
+        if self._mark is not None:
+            x = track.left() + self._mark * track.width()
+            painter.setPen(QPen(QColor(tokens.TEXT_MUTED), 1.2))
+            painter.drawLine(QPointF(x, track.top() - 3), QPointF(x, track.bottom() + 3))
+        painter.setPen(QColor(tokens.TEXT_MUTED))
+        painter.drawText(
+            area, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self.text
+        )
+
+
 class CompareRow(QFrame):
-    """One optimised role split. A click, Enter or Space picks it as A."""
+    """One candidate: its slot disc, role chips and pin. A click, Enter or Space picks it as A.
+
+    A subclass adds its scores with :meth:`_add_scores` and its warnings with
+    :meth:`_add_flag_lines`. ``slots=False`` is a row outside an A/B comparison:
+    it has no disc and no pin, and :meth:`set_slot` only frames it as picked.
+    """
 
     picked = Signal(str)
 
     def __init__(
         self,
         summary: CandidateSummary,
-        metric_label: str,
-        run_labels: Mapping[int, str],
         parent: QWidget,
+        *,
+        leading_chips: Sequence[QLabel] = (),
+        slots: bool = True,
     ) -> None:
         super().__init__(parent)
         self.key = summary.key
+        self._slots = slots
         self.setObjectName("compareRow")
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName(headline(summary))
@@ -219,10 +299,11 @@ class CompareRow(QFrame):
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(8)
         self.disc = _TagDisc(self)
+        self.disc.setVisible(slots)
         layout.addWidget(self.disc, 0, Qt.AlignmentFlag.AlignTop)
-        body = QVBoxLayout()
-        body.setSpacing(4)
-        layout.addLayout(body, 1)
+        self._body = QVBoxLayout()
+        self._body.setSpacing(4)
+        layout.addLayout(self._body, 1)
 
         top = QHBoxLayout()
         chips = QWidget(self)
@@ -236,7 +317,7 @@ class CompareRow(QFrame):
             )
             for name in names
         ]
-        for chip in self.chips:
+        for chip in (*leading_chips, *self.chips):
             flow.addWidget(chip)
         top.addWidget(chips, 1)
         self.pin_button = QPushButton(self)
@@ -246,53 +327,45 @@ class CompareRow(QFrame):
             f"QPushButton {{ color: {tokens.ACCENT}; border: none; padding: 0 2px; }}"
         )
         top.addWidget(self.pin_button, 0, Qt.AlignmentFlag.AlignTop)
-        body.addLayout(top)
+        self._body.addLayout(top)
 
         fixed_names = summary.names(ParameterRole.FIXED)
         if fixed_names:
             fixed = QLabel("Fixed: " + ", ".join(_symbol(name) for name in fixed_names), self)
             fixed.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-            body.addWidget(fixed)
+            self._body.addWidget(fixed)
+        self.flag_labels: list[ElidedLabel] = []
+        self.set_slot("")
 
+    def _add_scores(self, widgets: Sequence[tuple[QWidget, int]]) -> None:
+        """A line of ``(widget, stretch)`` scores under the chips."""
         scores = QHBoxLayout()
         scores.setSpacing(8)
-        self.delta_bar = _DeltaBar(summary.delta, metric_label, self)
-        scores.addWidget(self.delta_bar, 1)
-        self.weight = QLabel(format_weight(summary.weight), self)
-        self.weight.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        self.weight.setToolTip("Evidence weight: w ∝ exp(−Δ/2) across the candidates listed")
-        scores.addWidget(self.weight)
-        text, background, foreground = _GATE_BADGES[summary.gate_passed]
-        self.gate = _chip(text, background, foreground)
-        self.gate.setToolTip(summary.gate_summary or "Every run passes the residual gate")
-        scores.addWidget(self.gate)
-        body.addLayout(scores)
+        for widget, stretch in widgets:
+            scores.addWidget(widget, stretch)
+        self._body.addLayout(scores)
 
-        lines = [
-            *([summary.gate_summary] if summary.gate_summary else []),
-            *flag_lines(summary, run_labels),
-        ]
-        self.flag_labels: list[ElidedLabel] = []
-        for line in lines[:MAX_FLAG_LINES]:
+    def _add_flag_lines(self, lines: Sequence[tuple[str, str]]) -> None:
+        """``(line, hover text)`` warnings; past ``MAX_FLAG_LINES`` they fold into "+k more"."""
+        for line, hover in lines[:MAX_FLAG_LINES]:
             label = ElidedLabel(line, self)
-            label.set_hover_text(line)
+            label.set_hover_text(hover)
             label.set_pen_color(tokens.WARN)
             self.flag_labels.append(label)
         if len(lines) > MAX_FLAG_LINES:
             rest = lines[MAX_FLAG_LINES:]
             more = ElidedLabel(f"+{len(rest)} more", self)
-            more.set_hover_text("\n".join(rest))
+            more.set_hover_text("\n".join(hover for _line, hover in rest))
             more.set_pen_color(tokens.TEXT_MUTED)
             self.flag_labels.append(more)
         for label in self.flag_labels:
-            body.addWidget(label)
-        self.set_slot("")
+            self._body.addWidget(label)
 
     def set_slot(self, letter: str) -> None:
         """Show the row as candidate ``"A"``, ``"B"`` or neither (``""``)."""
         self.disc.letter = letter
         self.disc.update()
-        self.pin_button.setVisible(letter != "A")
+        self.pin_button.setVisible(self._slots and letter != "A")
         self.pin_button.setText("Unpin B" if letter == "B" else "Pin as B")
         background, border, style = _ROW_LOOKS[letter]
         self.setStyleSheet(
@@ -313,6 +386,164 @@ class CompareRow(QFrame):
             self.picked.emit(self.key)
             return
         super().keyPressEvent(event)
+
+
+class CandidateRow(CompareRow):
+    """A candidate ranked by an information criterion: Δ, evidence weight and gate."""
+
+    def __init__(
+        self,
+        summary: CandidateSummary,
+        metric_label: str,
+        run_labels: Mapping[int, str],
+        parent: QWidget,
+    ) -> None:
+        super().__init__(summary, parent)
+        self.delta_bar = _DeltaBar(summary.delta, metric_label, self)
+        self.weight = QLabel(format_weight(summary.weight), self)
+        self.weight.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self.weight.setToolTip("Evidence weight: w ∝ exp(−Δ/2) across the candidates listed")
+        text, background, foreground = _GATE_BADGES[summary.gate_passed]
+        self.gate = _chip(text, background, foreground)
+        self.gate.setToolTip(summary.gate_summary or "Every run passes the residual gate")
+        self._add_scores([(self.delta_bar, 1), (self.weight, 0), (self.gate, 0)])
+        self._add_flag_lines(_warning_lines(summary, run_labels))
+
+
+class RungRow(CompareRow):
+    """A rung of a sharing ladder: what it costs, how what it leaves local trends, what was found.
+
+    A rung that costs too much says so and stays pickable (plan D9).
+    """
+
+    def __init__(
+        self,
+        summary: RungSummary,
+        run_labels: Mapping[int, str],
+        parent: QWidget,
+        *,
+        recommended: bool,
+        slots: bool = True,
+    ) -> None:
+        rung = summary.rung
+        cost_sentence = cost_text(rung, run_labels)
+        if recommended:
+            mark = _chip(RECOMMENDED, tokens.SUCCESS_SOFT, tokens.OK)
+            mark.setToolTip(
+                "The rung the wizard recommends: the best trend among the models that fit."
+            )
+        elif not summary.converged:
+            mark = _chip(FIT_FAILED, tokens.ERROR_SOFT, tokens.ERROR)
+            mark.setToolTip("The coupled fit did not converge on every run.")
+        elif not rung.within_tolerance:
+            mark = _chip(COSTS_TOO_MUCH, tokens.WARN_SOFT, tokens.WARN_BANNER_TEXT)
+            mark.setToolTip(cost_sentence)
+        elif rung.preselected:
+            mark = _chip(PRESELECTED, tokens.ACCENT_SOFT, tokens.ACCENT)
+            mark.setToolTip("This model's rung that trends best among those that fit adequately.")
+        else:
+            mark = None
+        super().__init__(
+            summary, parent, leading_chips=() if mark is None else (mark,), slots=slots
+        )
+        #: The chip that says where the rung stands, or ``None`` for an adequate also-ran.
+        self.mark = mark
+
+        self.cost = Meter(
+            rung.series_cost / (_COST_METER_TOLERANCES * ADEQUACY_SIGMA),
+            format_cost(rung.series_cost),
+            tokens.BORDER_STRONG if rung.within_tolerance else tokens.WARN,
+            self,
+            mark=1.0 / _COST_METER_TOLERANCES,
+        )
+        self.cost.setToolTip(cost_sentence)
+        is_trend, worst, mean = rung.trend.ordering_key
+        self.trend = Meter(worst, f"{worst:.2f}" if is_trend else "—", tokens.ACCENT, self)
+        self.trend.setToolTip(
+            "\n".join(
+                [
+                    f"Trend quality of the worst local parameter (mean {mean:.2f}); 1 is best.",
+                    *(
+                        f"{_symbol(name)}: {quality.quality:.2f}"
+                        for name, quality in rung.trend.parameters.items()
+                    ),
+                ]
+            )
+            if is_trend
+            else "Every parameter is shared: nothing is left to trend."
+        )
+        self._add_scores(
+            [
+                (_muted("Cost", self), 0),
+                (self.cost, 1),
+                (_muted("Trend", self), 0),
+                (self.trend, 1),
+            ]
+        )
+        self._add_flag_lines(
+            [
+                *((finding.label, finding.detail) for finding in summary.findings),
+                *_warning_lines(summary, run_labels),
+            ]
+        )
+
+
+def _muted(text: str, parent: QWidget) -> QLabel:
+    label = QLabel(text, parent)
+    label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+    return label
+
+
+def _warning_lines(
+    summary: CandidateSummary, run_labels: Mapping[int, str]
+) -> list[tuple[str, str]]:
+    """The gate reasons, then the parameter flags; each line is its own hover text."""
+    lines = [
+        *([summary.gate_summary] if summary.gate_summary else []),
+        *flag_lines(summary, run_labels),
+    ]
+    return [(line, line) for line in lines]
+
+
+class _Fold(QWidget):
+    """A ladder's rungs other than the one its model leads with, behind a toggle."""
+
+    opened = Signal(bool)
+
+    def __init__(self, rows: Sequence[CompareRow], parent: QWidget) -> None:
+        super().__init__(parent)
+        self._keys = {row.key for row in rows}
+        self._noun = f"{len(rows)} other rung{'' if len(rows) == 1 else 's'}"
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self.toggle = QPushButton(self)
+        self.toggle.setFlat(True)
+        self.toggle.setCheckable(True)
+        self.toggle.setStyleSheet(
+            f"QPushButton {{ color: {tokens.ACCENT}; border: none; padding: 0 2px;"
+            " text-align: left; }"
+        )
+        layout.addWidget(self.toggle)
+        self._rows = QWidget(self)
+        rows_layout = QVBoxLayout(self._rows)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
+        rows_layout.setSpacing(6)
+        for row in rows:
+            rows_layout.addWidget(row)
+        layout.addWidget(self._rows)
+        self.toggle.toggled.connect(self._show_rows)
+        self._show_rows(False)
+
+    def _show_rows(self, opened: bool) -> None:
+        self._rows.setVisible(opened)
+        self.toggle.setText(f"{'▾' if opened else '▸'} {self._noun}")
+        self.opened.emit(opened)
+
+    def open_for(self, keys: Sequence[str | None]) -> None:
+        """Open when one of ``keys`` is a row in here, so a picked rung is never hidden."""
+        if self._keys.intersection(keys):
+            self.toggle.setChecked(True)
 
 
 def _value_cell(
@@ -346,8 +577,10 @@ def _value_cell(
 class ModelComparePanel(QWidget):
     """Candidates on the left; A against B on the right; the host's A action below.
 
-    Call :meth:`set_series` before :meth:`set_candidates`: every candidate run
-    must be one of the series' runs, which name the runs in flag lines and tooltips.
+    Call :meth:`set_series` before :meth:`set_candidates` or :meth:`set_ladders`:
+    every candidate run must be one of the series' runs, which name the runs in
+    flag lines and tooltips. ``set_candidates`` lists candidates ranked by an
+    information criterion; ``set_ladders`` lists rungs of sharing ladders.
     ``continue_text`` labels the footer button that emits :attr:`continue_requested`.
     :attr:`curves_required` names an A or B whose dense curves are not built yet;
     the host builds them off the GUI thread and answers with :meth:`refresh_curves`.
@@ -372,6 +605,12 @@ class ModelComparePanel(QWidget):
         self._pairs: tuple[ParameterPair, ...] = ()
         self._rows: dict[str, CompareRow] = {}
         self._continue_allowed = True
+        # Whether the candidates are ladder rungs (set_ladders) or ranked rows (set_candidates).
+        self._ladders = False
+        self._recommended: str | None = None
+        # Titles of the ladders the user unfolded, kept across rebuilds.
+        self._unfolded: set[str] = set()
+        self._folds: list[_Fold] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -398,6 +637,11 @@ class ModelComparePanel(QWidget):
         self._board.setSpacing(6)
         self._scroll.setWidget(board)
         left.addWidget(self._scroll, 1)
+        # Under the ladders, where the board has height to spare: beside the
+        # overlay, the traces would add to the tallest column's floor.
+        self._strip = ParameterTraceStrip(self)
+        self._strip.setMinimumHeight(_STRIP_MIN_ROWS * row_height())
+        left.addWidget(self._strip)
         body.addLayout(left, 2)
 
         right = QVBoxLayout()
@@ -455,6 +699,10 @@ class ModelComparePanel(QWidget):
     def trend_figure(self) -> Figure:
         return self._trend_figure
 
+    @property
+    def trace_strip(self) -> ParameterTraceStrip:
+        return self._strip
+
     def set_series(
         self,
         datasets: Sequence[MuonDataset],
@@ -470,8 +718,6 @@ class ModelComparePanel(QWidget):
             for dataset, label in zip(datasets, run_labels, strict=True)
         }
         self._axis_label = axis_label
-        # A lone run has nothing to trend along.
-        self._trend_canvas.setVisible(len(datasets) > 1)
         self._rebuild_board()
         self._show_pair()
 
@@ -487,10 +733,34 @@ class ModelComparePanel(QWidget):
         A is ``a_key``, or the first summary; B is kept while it is still listed
         and is not the new A.
         """
+        self._metric_label = metric_label
+        self._ladders = False
+        self._list(summaries, a_key)
+
+    def set_ladders(
+        self,
+        summaries: Sequence[RungSummary],
+        *,
+        recommended_key: str | None,
+        a_key: str | None = None,
+    ) -> None:
+        """Show sharing-ladder rungs model by model, without emitting a signal.
+
+        Each model leads with its first rung (its pre-selected one, in the
+        wizard's order) and folds the others behind a toggle, so the default
+        view is one answer per model and a ladder is read only when it is
+        opened. ``recommended_key`` marks the rung the wizard recommends, or
+        ``None`` when it recommends none. A and B are as for
+        :meth:`set_candidates`.
+        """
+        self._ladders = True
+        self._recommended = recommended_key
+        self._list(summaries, a_key)
+
+    def _list(self, summaries: Sequence[CandidateSummary], a_key: str | None) -> None:
         self._summaries = {summary.key: summary for summary in summaries}
         if a_key is not None and a_key not in self._summaries:
             raise KeyError(f"candidate A {a_key!r} is not among the summaries")
-        self._metric_label = metric_label
         self._a = a_key if a_key is not None else next(iter(self._summaries), None)
         if self._b not in self._summaries or self._b == self._a:
             self._b = None
@@ -557,13 +827,28 @@ class ModelComparePanel(QWidget):
     def _toggle_pin(self, key: str) -> None:
         self.set_b(None if key == self._b else key)
 
+    def _remember_fold(self, title: str, opened: bool) -> None:
+        (self._unfolded.add if opened else self._unfolded.discard)(title)
+
+    def _make_row(self, summary: CandidateSummary) -> CompareRow:
+        parent = self._board.parentWidget()
+        if self._ladders:
+            return RungRow(
+                summary, self._run_labels, parent, recommended=summary.key == self._recommended
+            )
+        return CandidateRow(summary, self._metric_label, self._run_labels, parent)
+
     def _rebuild_board(self) -> None:
         """Rebuild the leaderboard rows: one bold title line per template group."""
         noun = "Candidates" if len(self._run_labels) == 1 else "Role splits"
-        self._caption.setText(f"{noun} · {self._metric_label}")
+        self._caption.setText(LADDER_CAPTION if self._ladders else f"{noun} · {self._metric_label}")
         self._caption.setVisible(bool(self._summaries))
+        # A lone run has nothing to trend along; ladders trace every local parameter.
+        self._trend_canvas.setVisible(len(self._run_labels) > 1 and not self._ladders)
+        self._strip.setVisible(self._ladders)
         clear_layout(self._board)
         self._rows = {}
+        self._folds = []
         if not self._summaries:
             empty = QLabel(EMPTY_BOARD)
             empty.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
@@ -572,14 +857,21 @@ class ModelComparePanel(QWidget):
             heading = QLabel(title)
             heading.setStyleSheet(f"color: {tokens.TEXT}; font-weight: 600; padding-top: 4px;")
             self._board.addWidget(heading)
-            for summary in group:
-                row = CompareRow(
-                    summary, self._metric_label, self._run_labels, self._board.parentWidget()
-                )
+            rows = [self._make_row(summary) for summary in group]
+            for row in rows:
                 row.picked.connect(self.set_a)
-                row.pin_button.clicked.connect(partial(self._toggle_pin, summary.key))
-                self._rows[summary.key] = row
+                row.pin_button.clicked.connect(partial(self._toggle_pin, row.key))
+                self._rows[row.key] = row
+            # A ladder leads with one rung and folds the rest (see set_ladders).
+            shown = rows[:1] if self._ladders else rows
+            for row in shown:
                 self._board.addWidget(row)
+            if len(shown) < len(rows):
+                fold = _Fold(rows[len(shown) :], self._board.parentWidget())
+                fold.toggle.setChecked(title in self._unfolded)
+                fold.opened.connect(partial(self._remember_fold, title))
+                self._folds.append(fold)
+                self._board.addWidget(fold)
         self._board.addStretch(1)
 
     def _show_pair(self) -> None:
@@ -587,6 +879,8 @@ class ModelComparePanel(QWidget):
         a, b = self._a_and_b()
         for key, row in self._rows.items():
             row.set_slot("A" if key == self._a else "B" if key == self._b else "")
+        for fold in self._folds:
+            fold.open_for((self._a, self._b))
         self._legend_a.setVisible(a is not None)
         self._legend_b.setVisible(a is not None)
         if a is not None:
@@ -606,7 +900,8 @@ class ModelComparePanel(QWidget):
         else:
             self._pairs = compare_parameters(a, b)
         if self._trend not in self._trend_names():
-            local_names = a.names(ParameterRole.LOCAL) if a is not None else ()
+            # Ladders trace every local parameter, so none is the picked one.
+            local_names = () if a is None or self._ladders else a.names(ParameterRole.LOCAL)
             self._trend = local_names[0] if local_names else None
         self._table.setColumnHidden(_B_COLUMN, b is None)
         self._fill_table()
@@ -614,7 +909,9 @@ class ModelComparePanel(QWidget):
         self._sync_continue()
 
     def _trend_names(self) -> set[str]:
-        """Parameters local to A or B, the ones the trend plot can show."""
+        """Parameters local to A or B, the ones the single trend plot can show."""
+        if self._ladders:
+            return set()
         return {
             pair.name
             for pair in self._pairs
@@ -679,7 +976,22 @@ class ModelComparePanel(QWidget):
             self._draw_trend()
 
     def _draw_trend(self) -> None:
-        """Plot the trend parameter along the series: A filled with a line, B hollow."""
+        """Plot the trend parameter along the series: A filled with a line, B hollow.
+
+        Ladders draw the strip instead: every parameter A or B leaves local.
+        """
+        if self._ladders:
+            self._strip.set_traces(
+                rung_traces(
+                    [
+                        TracedRung(summary, letter, _TREND_COLOUR, filled=letter == "A")
+                        for letter, summary in zip("AB", self._a_and_b(), strict=True)
+                        if summary is not None
+                    ]
+                ),
+                self._axis_label,
+            )
+            return
         if self._trend_canvas.isHidden():
             return
         figure = self._trend_figure

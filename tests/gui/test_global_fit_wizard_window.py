@@ -39,6 +39,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalParameterRecommendation,
     RunResidualDiagnostic,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
 from asymmetry.gui.panels.log_panel import LogPanel
@@ -221,6 +222,7 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        objective=SelectionObjective.STATISTICAL,
     )
 
 
@@ -1696,6 +1698,10 @@ def test_the_stepper_follows_screening_optimise_and_apply(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
+    # The planted fits are role splits, which is what "Best statistical fit" optimises.
+    window._objective_combo.setCurrentIndex(
+        window._objective_combo.findData(SelectionObjective.STATISTICAL)
+    )
     _screen(window, qapp)
 
     assert _step(window, "scope")[0] is StepState.DONE
