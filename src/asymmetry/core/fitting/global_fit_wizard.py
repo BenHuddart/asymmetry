@@ -23,6 +23,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import (
     CompositeModel,
     _legacy_fraction_rename_map,
@@ -99,6 +100,12 @@ from asymmetry.core.fitting.global_search.surrogate import (
 )
 from asymmetry.core.fitting.global_search.surrogate import (
     metric_penalty as surrogate_metric_penalty,
+)
+from asymmetry.core.fitting.global_search.trend_objective import (
+    CandidateRung,
+    SelectionObjective,
+    trend_recommendation,
+    trend_sort_key,
 )
 from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_names,
@@ -483,6 +490,14 @@ class GlobalCandidateAssessment:
     :func:`_with_dense_curves` is the one crossing between the two, and
     :func:`_assemble_assignment_assessment`'s ``dense_curves`` flag is what
     decides which one an assembly produces.
+
+    **A rung of a sharing ladder** (the trend objective) carries ``rung``.
+    ``template`` is then the template *in the form the rung was fitted in*: the
+    same key and title, and a model with its signal terms under one total when
+    the rung shares that total. Every parameter name on the assessment is that
+    model's, so curves, apply and serialisation read one model. A shared
+    amplitude is in ``global_param_names`` even when some runs are exempt from
+    it; ``exemptions`` says which runs keep a value of their own.
     """
 
     template: CandidateTemplate
@@ -502,15 +517,29 @@ class GlobalCandidateAssessment:
     component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]]
     prescreen_only: bool = False
     assessment_key: str | None = None
+    #: Set on a rung of a sharing ladder; ``None`` on a role-search node and a screening row.
+    rung: CandidateRung | None = None
 
     @property
     def selection_key(self) -> str:
         return self.assessment_key or self.template.key
 
     @property
+    def exemptions(self) -> dict[str, tuple[int, ...]]:
+        """Shared parameter → the runs that keep a value of their own for it (plan D12, D17)."""
+        return {
+            name: self.rung.exempt_runs
+            for name in _exempt_param_names(self.template.model, self.global_param_names, self.rung)
+        }
+
+    @property
     def parameter_count(self) -> int:
-        return len(self.global_param_names) + (
-            len(self.local_param_names) * len(self.fit_results_by_run)
+        return _assignment_parameter_count(
+            self.template.model,
+            self.global_param_names,
+            self.local_param_names,
+            run_count=len(self.fit_results_by_run),
+            rung=self.rung,
         )
 
     @property
@@ -576,6 +605,11 @@ class GlobalFitWizardRecommendation:
     ``phase_assessments`` is keyed ``(k, segment_index)`` so the assessments of
     the neighbouring solutions tier 3 verified stay addressable next to the
     selected one; ``recommended_partition_k`` names which ``k`` was optimised.
+
+    ``objective`` is what the optimised assessments were searched and ranked
+    for. Under :attr:`SelectionObjective.TREND` they are rungs of sharing
+    ladders; under ``STATISTICAL`` nodes of the role search. One recommendation
+    holds one objective's assessments; changing it is a new optimisation.
     """
 
     series_axis_key: str
@@ -594,6 +628,25 @@ class GlobalFitWizardRecommendation:
         default_factory=dict
     )
     recommended_partition_k: int | None = None
+    objective: SelectionObjective = SelectionObjective.TREND
+
+    def ranking_key(
+        self, metric: SelectionMetric
+    ) -> Callable[[GlobalCandidateAssessment], tuple[int, tuple]]:
+        """Display order, smaller first: ladder rungs by trend, anything else by ``metric``.
+
+        Under the trend objective the recommended rung leads, then the adequate
+        rungs by trend quality, then the rungs that cost too much; screening
+        rows follow by the criterion. Under the statistical one every row is
+        ordered by the criterion.
+        """
+
+        def key(assessment: GlobalCandidateAssessment) -> tuple[int, tuple]:
+            if self.objective is SelectionObjective.TREND and assessment.rung is not None:
+                return (0, trend_sort_key(assessment, metric, self.recommended_key))
+            return (1, _assessment_sort_key(assessment, metric))
+
+        return key
 
     @property
     def recommended_assessment(self) -> GlobalCandidateAssessment | None:
@@ -638,10 +691,7 @@ class GlobalFitWizardRecommendation:
         if len(optimized_matches) == 1:
             return optimized_matches[0]
         if optimized_matches:
-            return min(
-                optimized_matches,
-                key=lambda assessment: _assessment_sort_key(assessment, self.metric),
-            )
+            return min(optimized_matches, key=self.ranking_key(self.metric))
         for assessment in self.assessments:
             if assessment.template.key == key:
                 return assessment
@@ -658,20 +708,15 @@ class GlobalFitWizardRecommendation:
         self,
         metric: SelectionMetric | None = None,
     ) -> list[GlobalCandidateAssessment]:
-        active_metric = metric or self.metric
-        return sorted(
-            self.assessments,
-            key=lambda assessment: _assessment_sort_key(assessment, active_metric),
-        )
+        return sorted(self.assessments, key=self.ranking_key(metric or self.metric))
 
     def sorted_prescreen_assessments(
         self,
         metric: SelectionMetric | None = None,
     ) -> list[GlobalCandidateAssessment]:
-        active_metric = metric or self.metric
         return sorted(
             (assessment for assessment in self.assessments if assessment.prescreen_only),
-            key=lambda assessment: _assessment_sort_key(assessment, active_metric),
+            key=self.ranking_key(metric or self.metric),
         )
 
     def optimized_assessments(self) -> tuple[GlobalCandidateAssessment, ...]:
@@ -681,11 +726,7 @@ class GlobalFitWizardRecommendation:
         self,
         metric: SelectionMetric | None = None,
     ) -> list[GlobalCandidateAssessment]:
-        active_metric = metric or self.metric
-        return sorted(
-            self.optimized_assessments(),
-            key=lambda assessment: _assessment_sort_key(assessment, active_metric),
-        )
+        return sorted(self.optimized_assessments(), key=self.ranking_key(metric or self.metric))
 
     def optimization_status_for_key(self, key: str | None) -> str:
         if not isinstance(key, str):
@@ -701,6 +742,33 @@ class GlobalFitWizardRecommendation:
         if any(assessment.is_successful for assessment in optimized):
             return "Optimized"
         return "Optimization failed"
+
+
+def _exempt_param_names(
+    model: CompositeModel, global_param_names: Sequence[str], rung: CandidateRung | None
+) -> tuple[str, ...]:
+    """The shared amplitudes a rung's exempt runs keep their own value of (plan D12)."""
+    if rung is None or not rung.exempt_runs:
+        return ()
+    kinds = model.parameter_kinds()
+    return tuple(name for name in global_param_names if kinds[name] is ParameterKind.AMPLITUDE)
+
+
+def _assignment_parameter_count(
+    model: CompositeModel,
+    global_param_names: Sequence[str],
+    local_param_names: Sequence[str],
+    *,
+    run_count: int,
+    rung: CandidateRung | None,
+) -> int:
+    """Fitted columns of one assignment: a shared parameter once, plus once per exempt run."""
+    exempt = _exempt_param_names(model, global_param_names, rung)
+    return (
+        len(global_param_names)
+        + len(local_param_names) * run_count
+        + (len(exempt) * len(rung.exempt_runs) if exempt else 0)
+    )
 
 
 def _global_candidate_assessment_key(
@@ -3413,6 +3481,7 @@ def _build_global_fit_wizard_recommendation_staged(
                 partition_path=updated_path,
                 phase_assessments=phase_assessments,
                 recommended_partition_k=recommended_partition_k,
+                objective=SelectionObjective.STATISTICAL,
             ),
             metric,
         )
@@ -3539,6 +3608,7 @@ def _build_global_fit_wizard_recommendation_staged(
             recommended_key=None,
             comparable_keys=(),
             summary="",
+            objective=SelectionObjective.STATISTICAL,
         ),
         metric,
     )
@@ -3684,6 +3754,10 @@ def rerank_global_fit_wizard_recommendation(
 ) -> GlobalFitWizardRecommendation:
     """Reuse existing global-fit assessments and recompute the recommendation.
 
+    The recommendation's own ``objective`` decides how: the best trend among the
+    pre-selected ladder rungs, ``metric`` breaking ties, or the best ``metric``
+    among the role-search nodes that pass every run's residual gate.
+
     A **partitioned** recommendation — one whose ``recommended_partition_k`` names
     an optimised solution — keeps that partition and summarises its transitions
     instead of the series-wide winner. The partition itself is not re-selected:
@@ -3717,6 +3791,17 @@ def rerank_global_fit_wizard_recommendation(
             recommended_key=None,
             comparable_keys=(),
             summary=_screening_no_recommendation_summary(recommendation),
+        )
+    if recommendation.objective is SelectionObjective.TREND:
+        recommended_key, comparable_keys, summary = trend_recommendation(
+            optimized_assessments, metric
+        )
+        return replace(
+            recommendation,
+            metric=metric,
+            recommended_key=recommended_key,
+            comparable_keys=comparable_keys,
+            summary=summary,
         )
     passing = [
         assessment
@@ -3800,7 +3885,9 @@ def merge_global_fit_wizard_recommendations(
 
     Phase assessments merge by ``(k, segment_index)`` — a later optimisation of a
     different ``k`` adds its phases beside the ones already there rather than
-    replacing them. The **path** is not merged: it is replaced whole whenever the
+    replacing them. Optimised assessments of the *other* objective are dropped, so
+    one recommendation never ranks rungs beside role-search nodes. The **path** is
+    not merged: it is replaced whole whenever the
     update carries one, because an optimisation pass re-scores its rows with exact
     per-segment ICs and a half-exact, half-surrogate path is not a path anybody can
     read a gain off.
@@ -3810,19 +3897,22 @@ def merge_global_fit_wizard_recommendations(
         for assessment in updates.assessments
         if not assessment.prescreen_only
     }
+    same_objective = base.objective is updates.objective
     merged_assessments = [
         assessment
         for assessment in base.assessments
-        if assessment.prescreen_only or assessment.template.key not in updated_template_keys
+        if assessment.prescreen_only
+        or (same_objective and assessment.template.key not in updated_template_keys)
     ]
     merged_assessments.extend(
         assessment for assessment in updates.assessments if not assessment.prescreen_only
     )
-    merged_phase_assessments = dict(base.phase_assessments)
+    merged_phase_assessments = dict(base.phase_assessments) if same_objective else {}
     merged_phase_assessments.update(updates.phase_assessments)
     merged = replace(
         base,
         metric=updates.metric,
+        objective=updates.objective,
         assessments=tuple(merged_assessments),
         partition_path=(
             updates.partition_path if updates.partition_path is not None else base.partition_path
@@ -3908,6 +3998,7 @@ def serialize_global_fit_wizard_recommendation(
             for (k, segment_index), assessment in sorted(recommendation.phase_assessments.items())
         ],
         "recommended_partition_k": recommendation.recommended_partition_k,
+        "objective": recommendation.objective.value,
         # Marks the payload as curve-decimated (read by nothing —
         # deserialisation tolerates both shapes).
         "compact": bool(compact),
@@ -3980,6 +4071,7 @@ def deserialize_global_fit_wizard_recommendation(
         recommended_partition_k=(
             int(recommended_partition_k) if recommended_partition_k is not None else None
         ),
+        objective=SelectionObjective(payload["objective"]),
     )
 
 
@@ -4322,6 +4414,7 @@ def _serialize_global_candidate_assessment(
         },
         "prescreen_only": bool(assessment.prescreen_only),
         "assessment_key": assessment.assessment_key,
+        "rung": None if assessment.rung is None else assessment.rung.to_payload(),
     }
 
 
@@ -4437,6 +4530,7 @@ def _deserialize_global_candidate_assessment(
                 if payload.get("assessment_key") is not None
                 else None
             ),
+            rung=None if payload["rung"] is None else CandidateRung.from_payload(payload["rung"]),
         )
     except (TypeError, ValueError):
         return None

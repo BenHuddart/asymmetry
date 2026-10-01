@@ -55,6 +55,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     rerank_global_fit_wizard_recommendation,
     single_fit_table_covers_portfolio,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
 
@@ -1559,6 +1560,7 @@ def test_rerank_recommends_with_a_caveat_when_only_a_series_warning_stands() -> 
             recommended_key=None,
             comparable_keys=(),
             summary="",
+            objective=SelectionObjective.STATISTICAL,
         )
 
     reranked = rerank_global_fit_wizard_recommendation(
@@ -1653,6 +1655,7 @@ def test_merge_global_fit_wizard_recommendations_keeps_all_optimized_variants() 
         recommended_key=local_variant.selection_key,
         comparable_keys=(local_variant.selection_key, shared_variant.selection_key),
         summary="optimized",
+        objective=SelectionObjective.STATISTICAL,
     )
 
     merged = merge_global_fit_wizard_recommendations(screening, optimized)
@@ -1741,6 +1744,7 @@ def test_merge_global_fit_wizard_recommendations_prefers_simpler_comparable_vari
         recommended_key=local_variant.selection_key,
         comparable_keys=(local_variant.selection_key, shared_variant.selection_key),
         summary="optimized",
+        objective=SelectionObjective.STATISTICAL,
     )
 
     merged = merge_global_fit_wizard_recommendations(screening, optimized)
@@ -2360,6 +2364,7 @@ def test_deserialize_global_candidate_assessment_migrates_legacy_fraction_params
         "aic": 1.0,
         "bic": 1.0,
         "selected_score": 1.0,
+        "rung": None,
     }
 
     assessment = _deserialize_global_candidate_assessment(payload)

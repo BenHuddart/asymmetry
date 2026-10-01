@@ -46,6 +46,7 @@ __all__ = [
     "ADEQUACY_SIGMA",
     "RUNG_MAX_CALLS",
     "LadderRung",
+    "RungVerdict",
     "SharingLadder",
     "climb_sharing_ladder",
 ]
@@ -94,20 +95,11 @@ _SHARING_RUNS = "sharing"
 
 
 @dataclass(frozen=True)
-class LadderRung:
-    """One sharing pattern of one template, fitted over the series."""
+class RungVerdict:
+    """What one sharing pattern costs and how what it leaves local trends."""
 
-    #: The template in the form this rung was fitted in: as given, or with its
-    #: signal terms under one total (plan D11). Every name below is this model's.
-    model: CompositeModel
-    #: Parameters with one value for the series, in the order they were shared.
-    shared: tuple[str, ...]
     #: Runs that keep their own value of the shared amplitudes (plan D12).
     exempt_runs: tuple[int, ...]
-    #: Per-run results in axis order; the all-local fits on the first rung.
-    results_by_run: Mapping[int, FitResult]
-    #: Fitted columns over the whole series: a shared parameter counts once.
-    free_parameter_count: int
     #: Rise of the series χ²ᵣ over the all-local fits, in units of √(2/ν).
     series_cost: float
     #: The same for each run, exempt runs included.
@@ -116,16 +108,8 @@ class LadderRung:
     trend: CandidateTrend
     #: Shared rates and frequencies whose own component's amplitude is local (plan D3).
     hard_to_justify: tuple[str, ...]
-    #: A block of runs at one end of the series whose amplitude departs from the
-    #: rest — possible missing asymmetry. Empty when the rung is adequate, and
-    #: when the amplitude departs at both ends or only inside the series.
-    amplitude_unshareable_runs: tuple[int, ...]
     #: Local parameters whose acquisition passes disagree, with the passes (plan D15).
     pass_disagreements: Mapping[str, PassDiagnostic]
-
-    @property
-    def converged(self) -> bool:
-        return all(result.success for result in self.results_by_run.values())
 
     @property
     def offending_runs(self) -> tuple[int, ...]:
@@ -137,8 +121,36 @@ class LadderRung:
         )
 
     @property
+    def within_tolerance(self) -> bool:
+        """The series and every non-exempt run cost no more than the tolerance (plan D9)."""
+        return self.series_cost <= ADEQUACY_SIGMA and not self.offending_runs
+
+
+@dataclass(frozen=True)
+class LadderRung(RungVerdict):
+    """One sharing pattern of one template, fitted over the series."""
+
+    #: The template in the form this rung was fitted in: as given, or with its
+    #: signal terms under one total (plan D11). Every name below is this model's.
+    model: CompositeModel
+    #: Parameters with one value for the series, in the order they were shared.
+    shared: tuple[str, ...]
+    #: Per-run results in axis order; the all-local fits on the first rung.
+    results_by_run: Mapping[int, FitResult]
+    #: Fitted columns over the whole series: a shared parameter counts once.
+    free_parameter_count: int
+    #: A block of runs at one end of the series whose amplitude departs from the
+    #: rest — possible missing asymmetry. Empty when the rung is adequate, and
+    #: when the amplitude departs at both ends or only inside the series.
+    amplitude_unshareable_runs: tuple[int, ...]
+
+    @property
+    def converged(self) -> bool:
+        return all(result.success for result in self.results_by_run.values())
+
+    @property
     def adequate(self) -> bool:
-        return self.converged and self.series_cost <= ADEQUACY_SIGMA and not self.offending_runs
+        return self.converged and self.within_tolerance
 
 
 @dataclass(frozen=True)
@@ -161,6 +173,22 @@ class SharingLadder:
                 not rung.hard_to_justify,
                 -rung.free_parameter_count,
             ),
+        )
+
+    @property
+    def amplitude_unshareable_runs(self) -> tuple[int, ...]:
+        """The end block the climb could not share the amplitudes through, or empty.
+
+        Only the rungs that share the amplitudes can name one; when the shared
+        total and the amplitudes as given both do, it is the first one's.
+        """
+        return next(
+            (
+                rung.amplitude_unshareable_runs
+                for rung in self.rungs
+                if rung.amplitude_unshareable_runs
+            ),
+            (),
         )
 
 

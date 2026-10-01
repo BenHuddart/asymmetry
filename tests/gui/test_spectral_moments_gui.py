@@ -244,9 +244,9 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 23 for the wizard scope payload (v22->v23).
+    # Baseline guard: bumped to 24 for the global wizard's objective and rungs (v23->v24).
     # A future accidental bump must consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 23
+    assert CURRENT_SCHEMA_VERSION == 24
 
 
 def test_restore_state_tolerates_absent_moments():

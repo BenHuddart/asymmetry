@@ -77,6 +77,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     series_rebin_factor,
     series_template_alphabet,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
     GROUPED_SERIES_RELATIONSHIPS,
@@ -195,6 +196,7 @@ __all__ = [
     "rrf_frequency_offsets",
     "rrf_offset_model",
     "SelectionMetric",
+    "SelectionObjective",
     "SpectrumFingerprint",
     "CandidateTemplate",
     "CandidateAssessment",
