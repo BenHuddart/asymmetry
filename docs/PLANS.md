@@ -6,6 +6,21 @@ subsystems or days.
 
 ## Active
 
+### Global Fit Wizard: recommend the fit that trends best
+
+Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Decision
+log (D1–D15), prototype evidence on seven muon school series, code map and
+phases are in
+[plans/global-wizard-trend-objective.md](plans/global-wizard-trend-objective.md).
+
+The wizard's default objective becomes the most trendable candidate among
+those that fit adequately, not the best information criterion. Candidates are
+real coupled fits along a physics-first sharing ladder (background, then
+amplitudes or a shared total, then one more parameter), each shown in Compare
+with its cost in standard deviations of χ²ᵣ and a trend-quality score.
+Isolated anomalous runs are exempted from a shared amplitude; a contiguous
+block is reported as possible missing asymmetry.
+
 ### Fit Wizard: a Compare section under the answer card
 
 Status: implemented 2026-09-30 on `feat/fit-wizard-compare`, PR to follow.
