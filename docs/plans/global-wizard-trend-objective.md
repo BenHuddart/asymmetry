@@ -1,7 +1,7 @@
 # Global Fit Wizard: recommend the fit that trends best
 
-Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Phase 1
-implemented; phases 2–5 not yet. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are lead proposals
+Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Phases 1–2
+implemented; phases 3–5 not yet. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are lead proposals
 recorded here so review can overturn them. Follows
 [global-wizard-transitions.md](global-wizard-transitions.md) (phases) and
 [global-wizard-stepper.md](global-wizard-stepper.md) (the Compare step).
@@ -239,6 +239,21 @@ checkout, in order.
    relaxation, amplitude lost in an end block) and copper (shared static
    width, local hop rate), plus one series with two anomalous-amplitude
    runs.
+   *Landed.* `global_search/sharing_ladder.py`: `climb_sharing_ladder`
+   returns every rung (`LadderRung`) and the pre-selection
+   (`SharingLadder.preselected`); it is not yet called by the wizard. The pass
+   diagnostic counts zigzag per pass (D20). Decided here: exemptions and the
+   end-block finding are judged only on the rung that shares the amplitudes,
+   and later rungs inherit the exempt runs; a block spanning the whole series
+   is not an end block; only a parameter free on every run can be shared; a
+   rung's solve is capped at 1000 residual evaluations (`RUNG_MAX_CALLS`) and
+   reported as failed beyond it, because a pattern the data reject crawls for
+   thousands; pass disagreement needs two passes of three or more runs. The
+   tests are in `tests/core/test_sharing_ladder.py`; the wizard harness scores
+   a recommendation against planted roles, so its cases wait for Phase 4.
+   Open for review: offenders are read from one plain least-squares fit, so
+   when the anomaly is strong against the noise the shared amplitude is pulled
+   far enough that every run offends and none is isolated.
 3. **Shared total (core).** D11, with a synthetic two-line series whose
    fraction changes through a transition.
 4. **Verdict and persistence (core).** D1, D13, D14: the objective on
