@@ -94,7 +94,7 @@ def _centered_field_offsets(
 ) -> ArrayLikeFloat:
     r"""Sample ``B(r) - B0`` (tesla) of the modified-London triangular FLL.
 
-    Cached on rounded float keys; returns the flat array of centered field
+    Cached on the exact float keys; returns the flat array of centered field
     offsets sampled at the ``n_grid × n_grid`` cell-centred real-space points
     over one unit cell (mean ≈ 0).
 
@@ -159,9 +159,7 @@ def _field_offsets_calibrated(
     if B0_tesla <= 0.0 or Bc2_tesla <= 0.0 or lambda_nm <= 0.0 or B0_tesla >= Bc2_tesla:
         return None
 
-    offsets = _centered_field_offsets(
-        round(lam_eff, 3), round(B0_tesla, 9), round(float(Bc2_tesla), 6), int(n_g), int(n_grid)
-    )
+    offsets = _centered_field_offsets(lam_eff, B0_tesla, float(Bc2_tesla), int(n_g), int(n_grid))
     raw_rms = float(np.sqrt(np.mean(offsets**2)))
     # Target rate from the validated Brandt model (powder factor already folded
     # into lam_eff above, so call the single-crystal width with lam_eff).

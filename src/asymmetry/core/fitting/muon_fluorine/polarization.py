@@ -25,7 +25,6 @@ from asymmetry.core.fitting.muon_fluorine.dipolar import (
 _DEFAULT_NUM_BETA = 8
 _DEFAULT_NUM_ALPHA = 8
 _DEFAULT_NUM_GAMMA = 6
-_CACHE_KEY_DECIMALS = 9
 _SPECTRUM_BIN_DECIMALS = 10
 
 
@@ -267,14 +266,10 @@ def general_fmuf_polarization(
     """
     t_arr = np.asarray(t, dtype=float)
 
-    r1_key = round(float(r1), _CACHE_KEY_DECIMALS)
-    r2_key = round(float(r2), _CACHE_KEY_DECIMALS)
-    theta_key = round(float(theta), _CACHE_KEY_DECIMALS)
-
     freqs, amps = _general_spectral_terms_cached(
-        r1_key,
-        r2_key,
-        theta_key,
+        float(r1),
+        float(r2),
+        float(theta),
         _DEFAULT_NUM_BETA,
         _DEFAULT_NUM_ALPHA,
         _DEFAULT_NUM_GAMMA,
@@ -407,14 +402,10 @@ def fmuf_triangle_polarization(
     """
     t_arr = np.asarray(t, dtype=float)
 
-    r_key = round(float(r_muF), _CACHE_KEY_DECIMALS)
-    r3_key = round(float(r3), _CACHE_KEY_DECIMALS)
-    phi3_key = round(float(phi3), _CACHE_KEY_DECIMALS)
-
     freqs, amps = _triangle_spectral_terms_cached(
-        r_key,
-        r3_key,
-        phi3_key,
+        float(r_muF),
+        float(r3),
+        float(phi3),
         _DEFAULT_NUM_BETA,
         _DEFAULT_NUM_ALPHA,
         _DEFAULT_NUM_GAMMA,

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 from numpy.typing import NDArray
@@ -443,31 +444,6 @@ def static_lorentzian_kt_zf(
     return A0 * (1.0 / 3.0 + 2.0 / 3.0 * (1.0 - at) * exp_term) + baseline
 
 
-def _bounded_cache_get(
-    cache: dict, max_size: int, key: tuple, compute: Callable[[], tuple]
-) -> tuple:
-    """Return ``cache[key]``, computing and inserting it on a miss.
-
-    When full, the *oldest* entry is evicted (dicts are insertion-ordered)
-    rather than clearing the cache, which would force a full recompute on the
-    next call.  Shared by the grid caches of the static Lorentzian-LF line
-    shape and the dynamic Kubo-Toyabe family, so cache-policy fixes (eviction,
-    thread-safety) happen in one place.
-    """
-    cached = cache.get(key)
-    if cached is None:
-        cached = compute()
-        if len(cache) >= max_size:
-            cache.pop(next(iter(cache)))
-        cache[key] = cached
-    return cached
-
-
-# Cache of (uniform time grid, static Lorentzian-LF line shape) keyed by
-# quantised (a_L, omega0, tmax).
-_LOR_LF_CACHE: dict[tuple, tuple[NDArray, NDArray]] = {}
-_LOR_LF_CACHE_MAX = 64
-
 # Longest spectral FFT the longitudinal-field Lorentzian line shape will use.
 # The frequency sampling step must resolve the strip of analyticity of the
 # spectral density, whose half-width is a_L, so the sample count grows like
@@ -647,6 +623,7 @@ def _lorentzian_lf_lineshape_reference(
     return out
 
 
+@lru_cache(maxsize=64)
 def _static_lorentzian_lf_grid(a_L: float, omega0: float, tmax: float) -> tuple[NDArray, NDArray]:
     """Cached (uniform grid, line shape) for the static Lorentzian-LF, for interpolation.
 
@@ -654,21 +631,19 @@ def _static_lorentzian_lf_grid(a_L: float, omega0: float, tmax: float) -> tuple[
     of phase per step, never coarser than 0.02 us), so linear interpolation
     onto the requested times errs by ~1e-4 of the oscillation amplitude at any
     field; the FFT evaluation costs ~O(n log n) in the grid length.
+
+    Keyed on the exact arguments: a repeated evaluation hits, a perturbed one
+    recomputes, so the line shape responds to any finite-difference step.
     """
-    key = (round(a_L, 6), round(omega0, 6), round(tmax, 5))
-
-    def _compute() -> tuple[NDArray, NDArray]:
-        h = min(0.02, _LOR_LF_STATIC_STEP_RAD / max(abs(float(omega0)), 1e-12))
-        n = int(np.ceil(float(tmax) / h)) + 1
-        if 2 * n > _LOR_LF_FFT_CAP:
-            # The FFT needs 2n samples; beyond the cap coarsen the grid instead
-            # of growing the transform (only reachable for extreme B_L * tmax).
-            n = _LOR_LF_FFT_CAP // 2
-            h = float(tmax) / (n - 1)
-        grid = h * np.arange(n)
-        return grid, _lorentzian_lf_uniform(a_L, omega0, h, n)
-
-    return _bounded_cache_get(_LOR_LF_CACHE, _LOR_LF_CACHE_MAX, key, _compute)
+    h = min(0.02, _LOR_LF_STATIC_STEP_RAD / max(abs(float(omega0)), 1e-12))
+    n = int(np.ceil(float(tmax) / h)) + 1
+    if 2 * n > _LOR_LF_FFT_CAP:
+        # The FFT needs 2n samples; beyond the cap coarsen the grid instead
+        # of growing the transform (only reachable for extreme B_L * tmax).
+        n = _LOR_LF_FFT_CAP // 2
+        h = float(tmax) / (n - 1)
+    grid = h * np.arange(n)
+    return grid, _lorentzian_lf_uniform(a_L, omega0, h, n)
 
 
 def static_lorentzian_kt_lf(
@@ -992,11 +967,6 @@ def _lorentzian_kt_zf_realisation(a_L: float) -> tuple[NDArray, NDArray, NDArray
     return a_mat, b, c
 
 
-# Cache of dynamic-KT solutions keyed by quantised (kind, width, nu, B_L, tmax).
-_DYN_KT_CACHE: dict[tuple, tuple[NDArray, NDArray]] = {}
-_DYN_KT_CACHE_MAX = 256
-
-
 # Above this fluctuation rate (MHz) the explicit trapezoidal strong-collision
 # solver is numerically unstable: the kernel e^{-nu t} G_s(t) decays within a few
 # grid steps and the recursion amplifies roundoff (it diverges, not "degrades
@@ -1010,20 +980,19 @@ _DYN_KT_CACHE_MAX = 256
 _DYN_KT_NU_SWITCH = 12.0
 
 
+@lru_cache(maxsize=256)
 def _dynamic_kt_grid(
     kind: str, width: float, nu: float, B_L: float, tmax: float
 ) -> tuple[NDArray, NDArray]:
-    """Return (grid, G_d) for a grid-solved dynamic KT, computing+caching as needed.
+    """Return the cached (grid, G_d) of a grid-solved dynamic KT.
 
     Serves the Gaussian family and the longitudinal-field Lorentzian; the
     zero-field Lorentzian is evaluated in closed form by
     :func:`dynamic_lorentzian_kt` and never comes here.
-    """
-    key = (kind, round(width, 6), round(nu, 6), round(B_L, 4), round(tmax, 5))
-    cached = _DYN_KT_CACHE.get(key)
-    if cached is not None:
-        return cached
 
+    Keyed on the exact arguments: a repeated evaluation hits, a perturbed one
+    recomputes, so the solution responds to any finite-difference step.
+    """
     gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
     omega0 = abs(gamma_mu * (float(B_L) * GAUSS_TO_TESLA))
     if nu <= _DYN_KT_NU_SWITCH:
@@ -1033,11 +1002,7 @@ def _dynamic_kt_grid(
         # Fast-fluctuation Gaussian: the Keren function is the analytic motional-
         # narrowing limit (rate ~2*Delta^2/nu), accurate to <0.5% here and bounded.
         grid = np.linspace(0.0, tmax, 800)
-        gd = keren(grid, 1.0, width, nu, B_L)
-        if len(_DYN_KT_CACHE) >= _DYN_KT_CACHE_MAX:
-            _DYN_KT_CACHE.pop(next(iter(_DYN_KT_CACHE)))  # see _bounded_cache_get
-        _DYN_KT_CACHE[key] = (grid, gd)
-        return grid, gd
+        return grid, keren(grid, 1.0, width, nu, B_L)
     else:
         # Fast-fluctuation Lorentzian in a field: the relaxation rate saturates
         # (it is ~independent of nu, since a Lorentzian distribution has no
@@ -1061,12 +1026,7 @@ def _dynamic_kt_grid(
         gs = static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
     else:
         gs = _lorentzian_lf_uniform(width, omega0, h, n)
-    gd = _strong_collision_solve(np.asarray(gs, dtype=float), nu_solve, h)
-
-    if len(_DYN_KT_CACHE) >= _DYN_KT_CACHE_MAX:
-        _DYN_KT_CACHE.pop(next(iter(_DYN_KT_CACHE)))  # see _bounded_cache_get
-    _DYN_KT_CACHE[key] = (grid, gd)
-    return grid, gd
+    return grid, _strong_collision_solve(np.asarray(gs, dtype=float), nu_solve, h)
 
 
 def dynamic_gaussian_kt(
