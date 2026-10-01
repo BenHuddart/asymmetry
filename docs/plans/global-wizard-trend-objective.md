@@ -186,6 +186,20 @@ Lead proposals:
   per pass (a pass is a maximal stretch of runs monotone in the axis) and
   names the passes.
 
+## Settled in Phase 3 review (lead, 2026-10-01)
+
+- **D21: the amplitude stage does not branch.** When the shared total and
+  all amplitudes shared are both adequate, the ladder continues in the plain
+  form only, and the shared-total rung stays listed as an alternative. On
+  BiSCCO that gives amplitudes, phases and one frequency shared at +1.8σ with
+  both widths trending (quality 0.84 and 0.93): a better outcome than the
+  hand-run pattern of the prototype, at half the fits a branch would cost.
+- **D22: the end block is where the amplitude departs.** On YMnAl that is the
+  three coldest runs, not the eight the plain shared fit left over 2σ; the
+  other five offended only because those three dragged the shared value.
+- **D23: an exemption proposed from the amplitude trace is not confirmed by
+  cost.** A run four scatters from the series median is exempt and listed.
+
 ## Code map (verify before editing)
 
 - **Core.** `core/fitting/global_fit_wizard.py`:
@@ -329,9 +343,9 @@ these are run by the lead before the PR and recorded in it:
 
 | Series | The trend objective must recommend |
 |---|---|
-| YMnAl | stretched exponential, background shared; amplitude reported as not shareable below ~97 K |
+| YMnAl | stretched exponential, background shared; amplitude reported as not shareable through the three coldest runs (24573–24575) |
 | Copper | dynamic Gaussian KT with amplitude, background and Δ shared |
-| BiSCCO | total shared pre-selected; the smooth-σ pattern listed with its cost |
+| BiSCCO | two Gaussian lines with both amplitudes, both phases and one frequency shared, both widths local; the shared-total rung listed at no cost |
 | Re₆Zr | amplitude shared with runs 38223, 38230, 38231 exempt; static KT × exponential offered within the band |
 | PTFE | a recommendation carrying the pass-disagreement caveat |
 | Nickel, molecular AFM | per-phase patterns; no series-wide claim |
