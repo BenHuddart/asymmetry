@@ -226,8 +226,6 @@ def _global_wizard_recommendation_for_dataset(
                 global_score=10.0,
                 local_score=12.0,
                 score_delta=2.0,
-                total_variation=0.0,
-                roughness=0.0,
                 rationale="Shared amplitude is sufficient.",
             ),
             GlobalParameterRecommendation(
@@ -236,8 +234,6 @@ def _global_wizard_recommendation_for_dataset(
                 global_score=15.0,
                 local_score=10.0,
                 score_delta=5.0,
-                total_variation=0.2,
-                roughness=0.1,
                 rationale="Local relaxation rates improve the score.",
             ),
             GlobalParameterRecommendation(
@@ -246,8 +242,6 @@ def _global_wizard_recommendation_for_dataset(
                 global_score=10.0,
                 local_score=11.0,
                 score_delta=1.0,
-                total_variation=0.0,
-                roughness=0.0,
                 rationale="Background remains stable.",
             ),
         ),
@@ -3233,8 +3227,6 @@ def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
                 global_score=10.0,
                 local_score=12.0,
                 score_delta=2.0,
-                total_variation=0.0,
-                roughness=0.0,
                 rationale="Shared amplitude is adequate.",
             ),
             GlobalParameterRecommendation(
@@ -3243,8 +3235,6 @@ def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
                 global_score=14.0,
                 local_score=8.0,
                 score_delta=6.0,
-                total_variation=1.5,
-                roughness=0.1,
                 rationale="Rate variation is strongly supported.",
             ),
             GlobalParameterRecommendation(
@@ -3253,8 +3243,6 @@ def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
                 global_score=10.0,
                 local_score=11.0,
                 score_delta=1.0,
-                total_variation=0.0,
-                roughness=0.0,
                 rationale="Background remains stable.",
             ),
         ),

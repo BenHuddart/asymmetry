@@ -802,8 +802,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         details_layout.addWidget(
             _muted_label(
                 "The optimised fits' scores, and the parameter-sharing diagnostics for A. "
-                "Role recommendations use penalized score differences plus continuity "
-                "diagnostics; fixed parameters are left untouched."
+                "Role recommendations use penalized score differences; fixed parameters "
+                "are left untouched."
             )
         )
         self._optimised_table = QTableWidget(0, 8)
@@ -818,9 +818,9 @@ class GlobalFitWizardWindow(WizardWindowBase):
             )
         details_layout.addWidget(self._optimised_table)
         details_layout.addWidget(make_section_header("Parameter roles for A"))
-        self._roles_table = QTableWidget(0, 7)
+        self._roles_table = QTableWidget(0, 5)
         self._roles_table.setHorizontalHeaderLabels(
-            ["Parameter", "Role", "Global Score", "Local Score", "Δ", "TV", "Roughness"]
+            ["Parameter", "Role", "Global Score", "Local Score", "Δ"]
         )
         self._roles_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         details_layout.addWidget(self._roles_table)
@@ -1748,8 +1748,6 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self._roles_table.setItem(row, 2, _numeric_item(parameter.global_score))
             self._roles_table.setItem(row, 3, _numeric_item(parameter.local_score))
             self._roles_table.setItem(row, 4, _numeric_item(parameter.score_delta))
-            self._roles_table.setItem(row, 5, _numeric_item(parameter.total_variation))
-            self._roles_table.setItem(row, 6, _numeric_item(parameter.roughness))
         self._roles_rationale.setText(_role_rationale(assessment))
 
     def _choose_apply_target(self, target: _ApplyTarget) -> None:
@@ -2325,8 +2323,9 @@ class GlobalFitWizardWindow(WizardWindowBase):
             (
                 "The Screen step intentionally does not claim that a candidate is good for global fitting. "
                 "It only reports how promising the function looks when each dataset is fit independently.\n\n"
-                "Warnings on the Compare step combine per-run residual checks with ordered-series "
-                "continuity diagnostics after the coupled global optimisation has run."
+                "Warnings on the Compare step combine per-run residual checks with a check for "
+                "an abrupt change in the spectra along the series, after the coupled global "
+                "optimisation has run."
             ),
         )
 

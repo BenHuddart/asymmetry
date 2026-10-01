@@ -88,7 +88,6 @@ from asymmetry.core.fitting.global_search.partition import (
 )
 from asymmetry.core.fitting.global_search.role_policy import (
     localisation_priorities,
-    localisation_threshold_scale,
 )
 from asymmetry.core.fitting.global_search.surrogate import (
     CollapseResult,
@@ -216,7 +215,6 @@ _STAGED_LOCAL_SEARCH_CANDIDATES_PER_BRANCH = 2
 _STAGED_V2_LOCAL_SEARCH_BEAM_WIDTH = 5
 _STAGED_V2_LOCAL_SEARCH_CANDIDATES_PER_BRANCH = 3
 _STAGED_V2_EXACT_CANDIDATES_PER_TIER = 2
-_STAGED_GLOBALIZATION_CANDIDATES_PER_STEP = 3
 _CONSOLIDATED_SEARCH_VARIANT = "staged_v2"
 _MAX_ROLE_CANDIDATES_PER_TIER = 3
 
@@ -456,8 +454,6 @@ class GlobalParameterRecommendation:
     global_score: float
     local_score: float
     score_delta: float
-    total_variation: float
-    roughness: float
     rationale: str
 
 
@@ -540,10 +536,8 @@ class GlobalCandidateAssessment:
 
     @property
     def residual_gate_passed(self) -> bool:
-        return (
-            all(diagnostic.gate_passed for diagnostic in self.run_diagnostics)
-            and not self.series_warnings
-        )
+        """Every run clears its residual gate; a series warning is a caveat, not a veto."""
+        return all(diagnostic.gate_passed for diagnostic in self.run_diagnostics)
 
     @property
     def applied_roles(self) -> dict[str, str]:
@@ -3715,48 +3709,29 @@ def rerank_global_fit_wizard_recommendation(
             summary=recommendation.mixed_axes_warning,
         )
 
+    optimized_assessments = recommendation.optimized_assessments()
+    if not optimized_assessments:
+        return replace(
+            recommendation,
+            metric=metric,
+            recommended_key=None,
+            comparable_keys=(),
+            summary=_screening_no_recommendation_summary(recommendation),
+        )
     passing = [
         assessment
-        for assessment in recommendation.assessments
+        for assessment in optimized_assessments
         if assessment.is_successful and assessment.residual_gate_passed
     ]
-    tentative = False
     if not passing:
-        # Recommend-with-caveat: when no candidate passes strictly but the fit is
-        # demonstrably excellent -- every run clears its per-run residual gate --
-        # a heuristic *series-consistency* warning (a fingerprint jump across a
-        # transition, a rough local-parameter trace) should not hard-veto to None.
-        # Surface the best such candidate as a tentative recommendation with the
-        # series_warnings as a caveat instead. (Per-run gate failures still block:
-        # those mean the model genuinely does not fit some runs.)
-        run_gated = [
-            assessment
-            for assessment in recommendation.assessments
-            if assessment.is_successful
-            and assessment.run_diagnostics
-            and all(diagnostic.gate_passed for diagnostic in assessment.run_diagnostics)
-        ]
-        if run_gated:
-            passing = run_gated
-            tentative = True
-    if not passing:
-        optimized_assessments = recommendation.optimized_assessments()
-        if not optimized_assessments:
-            return replace(
-                recommendation,
-                metric=metric,
-                recommended_key=None,
-                comparable_keys=(),
-                summary=_screening_no_recommendation_summary(recommendation),
-            )
         return replace(
             recommendation,
             metric=metric,
             recommended_key=None,
             comparable_keys=(),
             summary=(
-                "No globally optimized candidate passed the automatic residual and "
-                "continuity checks. Inspect the optimized-results table before applying a model."
+                "No globally optimized candidate passed the automatic residual checks "
+                "on every run. Inspect the optimized-results table before applying a model."
             ),
         )
 
@@ -3799,17 +3774,14 @@ def rerank_global_fit_wizard_recommendation(
     compare_summary = (
         ", with a similarly scoring alternative to inspect." if comparable_keys else "."
     )
-    if tentative and primary.series_warnings:
-        summary = (
-            f"Recommended (tentative): {primary.template.title} by {metric.value}"
-            f"{compare_summary} The coupled fit is strong (every run passes the residual "
-            f"gate), but a series-consistency check flagged: "
+    summary = (
+        f"Recommended globally optimized candidate: {primary.template.title} "
+        f"by {metric.value}{compare_summary}"
+    )
+    if primary.series_warnings:
+        summary += (
+            " Every run passes its residual checks, but the series as a whole was flagged: "
             f"{' '.join(primary.series_warnings)} Review before applying."
-        )
-    else:
-        summary = (
-            f"Recommended globally optimized candidate: {primary.template.title} "
-            f"by {metric.value}{compare_summary}"
         )
     return replace(
         recommendation,
@@ -4219,8 +4191,6 @@ def _serialize_global_parameter_recommendation(
         "global_score": recommendation.global_score,
         "local_score": recommendation.local_score,
         "score_delta": recommendation.score_delta,
-        "total_variation": recommendation.total_variation,
-        "roughness": recommendation.roughness,
         "rationale": recommendation.rationale,
     }
 
@@ -4237,8 +4207,6 @@ def _deserialize_global_parameter_recommendation(
             global_score=float(payload.get("global_score", float("inf"))),
             local_score=float(payload.get("local_score", float("inf"))),
             score_delta=float(payload.get("score_delta", float("inf"))),
-            total_variation=float(payload.get("total_variation", 0.0)),
-            roughness=float(payload.get("roughness", 0.0)),
             rationale=str(payload.get("rationale", "")),
         )
     except (TypeError, ValueError):
@@ -5502,201 +5470,6 @@ def _staged_multi_local_assignment(
     return None, best_partial
 
 
-def _staged_globalization_assignment(
-    datasets: list[MuonDataset],
-    template: CandidateTemplate,
-    *,
-    fit_engine: FitEngine,
-    base_by_run: dict[int, ParameterSet],
-    fixed_param_names: tuple[str, ...],
-    axis_key: str,
-    metric: SelectionMetric,
-    cache: dict[tuple[tuple[str, ...], tuple[str, ...]], GlobalCandidateAssessment],
-    progress_callback: Callable[[str], None] | None = None,
-    instrumentation: dict[str, object] | None = None,
-    warm_start_cache: dict[
-        tuple[
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[str, ...],
-            tuple[tuple[int, tuple[tuple[str, float], ...]], ...],
-        ],
-        dict[int, ParameterSet],
-    ]
-    | None = None,
-) -> GlobalCandidateAssessment | None:
-    promotable_names = tuple(
-        name for name in template.model.param_names if name not in fixed_param_names
-    )
-    if not promotable_names:
-        return None
-
-    _progress_log(
-        progress_callback,
-        f"{template.title}: starting direct staged globalization from all-local prefits.",
-    )
-    incumbent = _fit_exact_assignment(
-        datasets,
-        template,
-        fit_engine=fit_engine,
-        base_by_run=base_by_run,
-        global_param_names=(),
-        local_param_names=promotable_names,
-        fixed_param_names=fixed_param_names,
-        axis_key=axis_key,
-        metric=metric,
-        cache=cache,
-        warm_start_by_run=base_by_run,
-        progress_callback=progress_callback,
-        search_strategy="staged_v2",
-        instrumentation=instrumentation,
-    )
-    if not incumbent.is_successful:
-        _progress_log(
-            progress_callback,
-            f"{template.title}: all-local globalization baseline failed.",
-        )
-        return None
-
-    while incumbent.local_param_names:
-        ranked_names = _globalization_candidate_order(
-            datasets,
-            incumbent,
-            remaining=incumbent.local_param_names,
-        )
-        if not ranked_names:
-            break
-
-        stage_names = ranked_names[:_STAGED_GLOBALIZATION_CANDIDATES_PER_STEP]
-        best_candidate: GlobalCandidateAssessment | None = None
-        for name in stage_names:
-            candidate_local_names = tuple(
-                sorted(
-                    local_name for local_name in incumbent.local_param_names if local_name != name
-                )
-            )
-            candidate_global_names = tuple(
-                param_name
-                for param_name in template.model.param_names
-                if param_name not in fixed_param_names and param_name not in candidate_local_names
-            )
-            candidate = _fit_exact_assignment(
-                datasets,
-                template,
-                fit_engine=fit_engine,
-                base_by_run=base_by_run,
-                global_param_names=candidate_global_names,
-                local_param_names=candidate_local_names,
-                fixed_param_names=fixed_param_names,
-                axis_key=axis_key,
-                metric=metric,
-                cache=cache,
-                warm_start_by_run=_warm_start_parameter_sets(
-                    datasets,
-                    assessment=incumbent,
-                    base_by_run=base_by_run,
-                    target_global_names=candidate_global_names,
-                    target_local_names=candidate_local_names,
-                    fit_engine=fit_engine,
-                    template=template,
-                    progress_callback=progress_callback,
-                    cache=warm_start_cache,
-                ),
-                progress_callback=progress_callback,
-                search_strategy="staged_v2",
-                instrumentation=instrumentation,
-                initial_step_sizes=_step_hints_from_assessment(
-                    datasets,
-                    incumbent,
-                    target_global_names=candidate_global_names,
-                    target_local_names=candidate_local_names,
-                ),
-            )
-            if not candidate.is_successful:
-                continue
-            if best_candidate is None or _assessment_sort_key(
-                candidate, metric
-            ) < _assessment_sort_key(
-                best_candidate,
-                metric,
-            ):
-                best_candidate = candidate
-
-        if best_candidate is None or not _prefer_globalization_change(
-            best_candidate,
-            incumbent,
-            metric=metric,
-        ):
-            break
-
-        promoted_names = sorted(
-            name
-            for name in best_candidate.global_param_names
-            if name not in incumbent.global_param_names
-        )
-        if promoted_names:
-            _progress_log(
-                progress_callback,
-                f"{template.title}: promoted {', '.join(promoted_names)} to Global; "
-                f"{metric.value} improved to {best_candidate.metric_value(metric):.3f}.",
-            )
-        incumbent = best_candidate
-
-    return incumbent
-
-
-def _globalization_candidate_order(
-    datasets: list[MuonDataset],
-    assessment: GlobalCandidateAssessment,
-    *,
-    remaining: tuple[str, ...],
-) -> tuple[str, ...]:
-    kinds = assessment.template.model.parameter_kinds()
-    priorities = localisation_priorities(kinds)
-    scored_names: list[tuple[float, float, float, float, str]] = []
-    for name in remaining:
-        total_variation, roughness = _parameter_trace_roughness(
-            datasets,
-            assessment,
-            name,
-        )
-        threshold_scale = localisation_threshold_scale(kinds[name])
-        scored_names.append(
-            (
-                (total_variation + roughness) / threshold_scale,
-                total_variation + roughness,
-                -float(priorities[name]),
-                -threshold_scale,
-                name,
-            )
-        )
-    scored_names.sort()
-    return tuple(name for *_unused, name in scored_names)
-
-
-def _prefer_globalization_change(
-    candidate: GlobalCandidateAssessment,
-    incumbent: GlobalCandidateAssessment,
-    *,
-    metric: SelectionMetric,
-) -> bool:
-    if not candidate.is_successful:
-        return False
-    if incumbent.residual_gate_passed and not candidate.residual_gate_passed:
-        return False
-    score_delta = incumbent.metric_value(metric) - candidate.metric_value(metric)
-    if score_delta > 1e-6:
-        return True
-    if (
-        not incumbent.residual_gate_passed
-        and candidate.residual_gate_passed
-        and score_delta >= -1e-6
-    ):
-        return True
-    return False
-
-
 def _warm_certificate_fit(
     datasets: list[MuonDataset],
     template: CandidateTemplate,
@@ -5875,14 +5648,7 @@ def _assemble_assignment_assessment(
             fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
             component_curves_by_run[run_number] = component_curves
 
-    series_warnings = tuple(
-        _series_warnings(
-            datasets,
-            run_diagnostics,
-            results_by_run=results_by_run,
-            local_param_names=local_param_names,
-        )
-    )
+    series_warnings = tuple(_series_warnings(datasets, run_diagnostics))
     if not dense_curves:
         # The diagnostics above are the last read of the residual series; a
         # search node keeps only what the search itself ranks on.
@@ -6439,7 +6205,6 @@ def _fit_exact_assignment(
 
 
 def _build_parameter_recommendations_from_exact_cache(
-    datasets: list[MuonDataset],
     assessment: GlobalCandidateAssessment,
     *,
     template: CandidateTemplate,
@@ -6457,11 +6222,6 @@ def _build_parameter_recommendations_from_exact_cache(
         if name in fixed_names:
             continue
 
-        total_variation, roughness = _parameter_trace_roughness(
-            datasets,
-            assessment,
-            name,
-        )
         current_role = "Local" if name in current_local else "Global"
         if names_to_test is not None and name not in names_to_test:
             recommendations.append(
@@ -6471,8 +6231,6 @@ def _build_parameter_recommendations_from_exact_cache(
                     global_score=current_score,
                     local_score=current_score,
                     score_delta=0.0,
-                    total_variation=total_variation,
-                    roughness=roughness,
                     rationale=(
                         f"Wavefront exhaustive search kept {name} {current_role}; "
                         "no stronger alternative assignment improved the penalized score."
@@ -6567,8 +6325,6 @@ def _build_parameter_recommendations_from_exact_cache(
                 global_score=float(global_score),
                 local_score=float(local_score),
                 score_delta=float(abs(delta)) if np.isfinite(delta) else float("inf"),
-                total_variation=total_variation,
-                roughness=roughness,
                 rationale=rationale,
             )
         )
@@ -7958,10 +7714,8 @@ def _aggregate_fingerprints(
 def _series_warnings(
     datasets: list[MuonDataset],
     run_diagnostics: list[RunResidualDiagnostic],
-    results_by_run: dict[int, FitResult],
-    *,
-    local_param_names: tuple[str, ...],
 ) -> list[str]:
+    """Caveats about the series as a whole: clustered residual failures, a fingerprint jump."""
     warnings: list[str] = []
     if not run_diagnostics:
         return warnings
@@ -7979,18 +7733,6 @@ def _series_warnings(
             )
 
     warnings.extend(_fingerprint_jump_warnings(datasets))
-
-    for name in local_param_names:
-        total_variation, roughness = _parameter_trace_roughness_from_results(
-            datasets,
-            results_by_run,
-            name,
-        )
-        if total_variation >= 2.5 or roughness >= 0.9:
-            warnings.append(
-                f"{name} changes abruptly across the ordered series "
-                f"(TV {total_variation:.2f}, roughness {roughness:.2f})."
-            )
     return warnings
 
 
@@ -8115,47 +7857,6 @@ def _fingerprint_jump_warnings(datasets: list[MuonDataset]) -> list[str]:
             f"{datasets[max_index + 1].run_label}."
         )
     return warnings
-
-
-def _parameter_trace_roughness(
-    datasets: list[MuonDataset],
-    assessment: GlobalCandidateAssessment,
-    name: str,
-) -> tuple[float, float]:
-    return _parameter_trace_roughness_from_results(
-        datasets,
-        assessment.fit_results_by_run,
-        name,
-    )
-
-
-def _parameter_trace_roughness_from_results(
-    datasets: list[MuonDataset],
-    results_by_run: dict[int, FitResult],
-    name: str,
-) -> tuple[float, float]:
-    values = np.array(
-        [
-            results_by_run[int(dataset.run_number)].parameters[name].value
-            for dataset in datasets
-            if int(dataset.run_number) in results_by_run
-            and name in results_by_run[int(dataset.run_number)].parameters
-        ],
-        dtype=float,
-    )
-    if values.size < 2:
-        return 0.0, 0.0
-
-    span = max(
-        float(np.max(values) - np.min(values)),
-        float(np.max(np.abs(values))),
-        1e-9,
-    )
-    total_variation = float(np.sum(np.abs(np.diff(values))) / span)
-    if values.size < 3:
-        return total_variation, 0.0
-    roughness = float(np.sqrt(np.mean(np.square(np.diff(values, n=2)))) / span)
-    return total_variation, roughness
 
 
 def _prefer_role_change(
@@ -9251,7 +8952,6 @@ def _finalise_heuristic_assessments(
                     assessment,
                     fixed_param_names=state.fixed_param_names,
                     parameter_recommendations=_build_parameter_recommendations_from_exact_cache(
-                        datasets,
                         assessment,
                         template=state.template,
                         fixed_param_names=state.fixed_param_names,
@@ -11674,7 +11374,6 @@ def _run_exhaustive_wavefront_search(
                         assessment,
                         fixed_param_names=state.fixed_param_names,
                         parameter_recommendations=_build_parameter_recommendations_from_exact_cache(
-                            datasets,
                             assessment,
                             template=state.template,
                             fixed_param_names=state.fixed_param_names,

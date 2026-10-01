@@ -317,9 +317,8 @@ expresses.
 The collapsed **Details** section holds the raw optimised table (the ranking
 score, **AIC**, **AICc**, **BIC**, the gate, and the Global and Local
 parameters) and the **Parameter roles for A**: for each non-fixed parameter,
-the score with it kept ``Global``, the score with it made ``Local``, the
-difference, and simple trace diagnostics (normalised total variation and
-roughness). These recommendations discourage overfitting: a model with more
+the score with it kept ``Global``, the score with it made ``Local``, and the
+difference. These recommendations discourage overfitting: a model with more
 local parameters usually fits better in raw :math:`\chi^2`, so the wizard only
 recommends ``Local`` when the penalised information criterion improves enough
 to overcome the extra flexibility. **Continue with A →** takes A to the Apply
@@ -561,26 +560,20 @@ verdict to accept unread. Its confidence is worth calibrating against what the
 gate logic actually checks.
 
 The recommended candidate is the best-scoring optimised candidate whose
-residuals pass every automatic residual and continuity check across the series.
+residuals pass every automatic residual check on every run.
 When the top two are within a small score margin the wizard presents them as a
 comparable pair and prefers the simpler one as the starting A on the Compare
 step; the status line then adds "with a similarly scoring alternative to
 inspect", and pinning the runner-up as B sets the two side by side. This is the case to trust with least reservation: a clean recommendation
 means every run's residuals look unstructured under the shared-parameter fit.
 
-Two softer outcomes deserve a closer look. When *no* candidate passes the
-strict series checks but the best coupled fit is nonetheless excellent — every
-run clears its own per-run residual gate — the wizard does not veto to nothing.
-It surfaces that candidate as a **tentative** recommendation (it starts as A on
-the Compare step) and names the
-series-consistency check that flagged (a fingerprint jump across a transition,
-a rough local-parameter trace), with the caveat "Review before applying." Treat
-a tentative recommendation as a lead: the per-run fits are sound, but something
-about how the parameters move across the series is worth understanding before
-you rely on it. A per-run gate failure is different and still blocks — it means
-the model genuinely does not fit some runs — so a tentative result is
-specifically the "fits every run, but the trend looks odd" case, not "fits
-badly somewhere."
+Two softer outcomes deserve a closer look. A recommendation can carry a
+series-level caveat: every run clears its own residual gate, but the spectra
+change abruptly somewhere along the series, and the status line names where and
+ends "Review before applying." Treat it as a lead: the per-run fits are sound,
+but the series may hold a transition that one model should not be fitted
+through. A per-run gate failure is different and still blocks under the
+statistical ranking — it means the model genuinely does not fit some runs.
 
 The per-run readouts in the Scope step's **Series** table carry the same honesty. A
 run whose best single fit shows **no significant structure** — its winner
