@@ -1,7 +1,7 @@
 # Global Fit Wizard: recommend the fit that trends best
 
-Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Phases 1–2
-implemented; phases 3–5 not yet. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are lead proposals
+Status: plan, 2026-10-01, on `feat/global-wizard-trend-objective`. Phases 1–3
+implemented; phases 4–5 not yet. Decisions D1–D5 and D16–D18 were taken with Ben; D6–D15 are lead proposals
 recorded here so review can overturn them. Follows
 [global-wizard-transitions.md](global-wizard-transitions.md) (phases) and
 [global-wizard-stepper.md](global-wizard-stepper.md) (the Compare step).
@@ -251,11 +251,68 @@ checkout, in order.
    thousands; pass disagreement needs two passes of three or more runs. The
    tests are in `tests/core/test_sharing_ladder.py`; the wizard harness scores
    a recommendation against planted roles, so its cases wait for Phase 4.
-   Open for review: offenders are read from one plain least-squares fit, so
-   when the anomaly is strong against the noise the shared amplitude is pulled
-   far enough that every run offends and none is isolated.
+   Exemption detection was reworked in Phase 3 (below): offenders read from
+   one plain fit failed once the anomaly was strong against the noise.
 3. **Shared total (core).** D11, with a synthetic two-line series whose
    fraction changes through a transition.
+   *Landed*, with the exemption rework.
+   - **The form.** `core/fitting/fraction_form.py`: `signal_fraction_form`
+     groups a plain sum's signal terms under one fraction group, leaves
+     background terms outside (D16), and maps values both ways (total = Σ Aᵢ,
+     fractionᵢ = Aᵢ / total). A model has the form when it is a sum of two or
+     more added signal terms standing side by side plus background terms
+     only; n amplitudes become a total and n − 1 fractions, so the parameter
+     count is the same. A series has it when, further, every run's total has
+     one sign and no signal amplitude opposes it by more than 2σ (fraction
+     weights are clamped to [0, 1], so a line whose sign the amplitude
+     carries has no fraction; an insignificantly negative amplitude is a term
+     that has vanished and starts at fraction 0).
+   - **The ladder** is a table of stages walked by one loop: background;
+     amplitudes (total shared in the fraction form, then every amplitude in
+     the template as given, both from the same rung); one further parameter
+     at a time. Each stage continues from the last adequate rung of the stage
+     before, in that rung's form, and `LadderRung.model` says which. The
+     all-local fits are not repeated in the fraction form: their values are
+     mapped into it and costs stay against the plain fits.
+   - **D3** now reads a term's amplitude as local when its fraction is, and
+     covers the factors multiplied onto an amplitude's component (the
+     Gaussian of `Oscillatory * Gaussian`), so the two forms flag alike.
+   - **Exemptions (D12), chosen design.** The rung below the amplitudes
+     (background shared) fixes each run's amplitude, so the anomaly is read
+     there: a run departs when its amplitude, or its total, lies more than
+     4 scatters from the series median, the scatter combining the series'
+     MAD with the run's own error. Isolated departing runs are exempt from
+     the first fit; runs that still offend by cost are exempted in a second
+     and last fit when all of them together are isolated. Two fits at most,
+     as in Phase 2; the caps are unchanged. Compared on synthetic series
+     (dynamic KT + constant, 12–38 runs):
+
+     | Case | Phase 2 (plain fit's offenders) | Greedy (exempt the costliest, refit) | Chosen |
+     |---|---|---|---|
+     | 2 isolated, +2.5 % to +30 %, σ 0.05 | fails from +2.5 % | exempts them, 2 fits | exempts them, 1 fit |
+     | 1 isolated, +10 % | fails | exempts it and a neighbour | exempts it |
+     | 3 of 38, +2 % | exempts them | exempts them | exempts them |
+     | end block, −3 % | names it | names it | names it |
+     | end block, −10 % and −35 % | every run offends, nothing named | nothing named | names it |
+     | interior block of 3 | fails | fails | fails |
+     | drift or wander across the series | fails, names most of the series | the same | fails, names nothing |
+
+     The trace alone is not enough either: on Re₆Zr the amplitude wanders by
+     four times its error, the three runs sit 2.7–2.9 scatters out, and it is
+     the cost that finds them — hence both.
+   - **What the finding names.** The end block of the runs that depart in
+     the rung below when they were too many to exempt, else of the exempt
+     and offending runs of the fit. Nothing when the departure reaches both
+     ends: a smooth drift fails the rung with no exemption and no finding,
+     and the amplitude stays local, where its trace shows the drift. On YMnAl
+     this names the three coldest runs, not seven: with those three exempt
+     the amplitude shares at +0.6σ with no offender, so the other four
+     offended only because the three dragged the shared value.
+   - **Open for Phase 4.** On BiSCCO both amplitude rungs are adequate
+     (total 0.0σ, every amplitude +0.9σ), so the ladder goes on in the
+     template as given and the fraction form's further rungs are not fitted.
+     If the acceptance row (total pre-selected, the smooth-σ pattern listed)
+     is to hold, the stage has to branch when both are adequate.
 4. **Verdict and persistence (core).** D1, D13, D14: the objective on
    `GlobalFitWizardRecommendation`, re-rank under either objective, phases
    path, deletions, schema bump with migration for stored recommendations.

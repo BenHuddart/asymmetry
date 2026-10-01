@@ -53,11 +53,16 @@ __all__ = [
 #: A rung is adequate while χ²ᵣ rises by no more than this many of its own
 #: standard deviations, √(2/ν), for the series and for every run (plan D9, D18).
 ADEQUACY_SIGMA = 2.0
-#: Offending runs this many in a row are a block, not isolated anomalies.
+#: Departing runs this many in a row are a block, not isolated anomalies.
 _BLOCK_LENGTH = 3
 #: At most max(this many, this share of the series) runs may be exempted.
 _EXEMPT_MIN_RUNS = 2
 _EXEMPT_SERIES_SHARE = 0.1
+#: A run's amplitude is anomalous this many scatters from the series median,
+#: the scatter being the series' robust one combined with the run's own error.
+_ANOMALY_SIGMA = 4.0
+#: Standard deviations per median absolute deviation, for a normal scatter.
+_MAD_TO_SIGMA = 1.4826
 #: A signal amplitude this many of its errors on the far side of zero from its
 #: run's total is a real sign, and the series then has no fractions.
 _OPPOSING_AMPLITUDE_SIGMA = 2.0
@@ -111,8 +116,9 @@ class LadderRung:
     trend: CandidateTrend
     #: Shared rates and frequencies whose own component's amplitude is local (plan D3).
     hard_to_justify: tuple[str, ...]
-    #: A block of runs at an end of the series through which the amplitude
-    #: cannot be shared — possible missing asymmetry. Empty when there is none.
+    #: A block of runs at one end of the series whose amplitude departs from the
+    #: rest — possible missing asymmetry. Empty when the rung is adequate, and
+    #: when the amplitude departs at both ends or only inside the series.
     amplitude_unshareable_runs: tuple[int, ...]
     #: Local parameters whose acquisition passes disagree, with the passes (plan D15).
     pass_disagreements: Mapping[str, PassDiagnostic]
@@ -320,6 +326,54 @@ def _isolated(positions: Sequence[int], series_length: int) -> bool:
     )
 
 
+def _end_block(positions: Sequence[int], series_length: int) -> list[int]:
+    """The block among ``positions`` that reaches one end of the series, and only one.
+
+    Empty when neither end is among them, and when both are: an amplitude that
+    drifts across the whole series departs at both ends, and that is a trend,
+    not asymmetry missing from a stretch of runs.
+    """
+    at_start = 0 in positions
+    if at_start == (series_length - 1 in positions):
+        return []
+    block = _blocks(positions)[0 if at_start else -1]
+    return [int(position) for position in block] if len(block) >= _BLOCK_LENGTH else []
+
+
+def _departing(
+    runs: Sequence[int],
+    results: Mapping[int, FitResult],
+    amplitude_groups: Sequence[Sequence[str]],
+) -> list[int]:
+    """Positions of the runs whose amplitude stands apart from the series'.
+
+    Each group of amplitudes is about to take one value for its sum. A run
+    departs when that sum lies more than ``_ANOMALY_SIGMA`` scatters from the
+    series median, the scatter combining the series' median absolute deviation
+    with the run's own error on the sum. A run whose fit gave no covariance for
+    the amplitudes cannot be judged and does not depart.
+    """
+    departing: set[int] = set()
+    for names in amplitude_groups:
+        values = np.array(
+            [sum(results[run].parameters[name].value for name in names) for run in runs]
+        )
+        centre = float(np.median(values))
+        scatter = _MAD_TO_SIGMA * float(np.median(np.abs(values - centre)))
+        for position, run in enumerate(runs):
+            covered = results[run].covariance_parameters
+            if not set(names) <= set(covered):
+                continue
+            columns = [covered.index(name) for name in names]
+            # Rounding can take the variance of a sum just below zero.
+            variance = max(float(results[run].covariance[np.ix_(columns, columns)].sum()), 0.0)
+            if abs(values[position] - centre) > _ANOMALY_SIGMA * math.hypot(
+                scatter, math.sqrt(variance)
+            ):
+                departing.add(position)
+    return sorted(departing)
+
+
 @dataclass(frozen=True)
 class _Series:
     """The series in axis order with its all-local fits: what every rung is fitted and scored on."""
@@ -447,29 +501,40 @@ class _Series:
         )
         return self.rung(form, shared, exempt, results)
 
-    def share_amplitudes(self, form: _Form, shared: tuple[str, ...]) -> LadderRung:
-        """Fit the rung that shares the amplitudes, exempting isolated offenders (plan D12).
+    def share_amplitudes(
+        self,
+        form: _Form,
+        shared: tuple[str, ...],
+        amplitude_groups: Sequence[Sequence[str]],
+        below: LadderRung,
+    ) -> LadderRung:
+        """Fit the rung that shares the amplitudes, exempting isolated anomalous runs (plan D12).
 
-        Isolated offending runs keep their own amplitudes and the rung is
-        refitted once. Offenders that are not isolated fail the rung, and a
-        block of them reaching one end of the series (not both: then no run is
-        left to share with) is recorded as the runs the amplitude cannot be
-        shared through.
+        ``below`` is the rung being climbed from, in the template as given, and
+        ``amplitude_groups`` its amplitudes that are each about to share their
+        sum. Runs whose amplitude departs in ``below`` are exempt from the
+        first fit when they are isolated; runs that still offend are exempted
+        in a second and last fit when, with the first, they are isolated too.
+        A rung that stays inadequate names the end block of whichever located
+        the departure: the runs departing in ``below`` when they were too many
+        to exempt, else the exempt and offending runs of the fit.
         """
         runs = tuple(self.axis)
-        rung = self.fit(form, shared, ())
-        positions = [runs.index(run) for run in rung.offending_runs]
-        if not rung.converged or not positions:
+        departing = _departing(runs, below.results_by_run, amplitude_groups)
+        exempted = departing if _isolated(departing, len(runs)) else []
+        rung = self.fit(form, shared, tuple(runs[position] for position in exempted))
+        located = sorted({*exempted, *(runs.index(run) for run in rung.offending_runs)})
+        if rung.converged and rung.offending_runs and _isolated(located, len(runs)):
+            rung = self.fit(form, shared, tuple(runs[position] for position in located))
+        if not rung.converged or rung.adequate:
             return rung
-        if _isolated(positions, len(runs)):
-            return self.fit(form, shared, rung.offending_runs)
         return replace(
             rung,
             amplitude_unshareable_runs=tuple(
                 runs[position]
-                for block in _blocks(positions)
-                if len(block) >= _BLOCK_LENGTH and (block[0] == 0) != (block[-1] == len(runs) - 1)
-                for position in block
+                for position in _end_block(
+                    located if exempted == departing else departing, len(runs)
+                )
             ),
         )
 
@@ -587,7 +652,10 @@ def climb_sharing_ladder(
             given = below.shared + step.addition
             shared = tuple(dict.fromkeys(form.names[name] for name in given))
             if step.addition is amplitudes:
-                rung = series.share_amplitudes(form, shared)
+                sums: dict[str, list[str]] = {}
+                for name in amplitudes:
+                    sums.setdefault(form.names[name], []).append(name)
+                rung = series.share_amplitudes(form, shared, list(sums.values()), below.rung)
             else:
                 rung = series.fit(form, shared, below.rung.exempt_runs)
             climbed.append(rung)

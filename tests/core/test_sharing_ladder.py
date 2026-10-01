@@ -7,6 +7,7 @@ and modelled on a case in ``docs/plans/global-wizard-trend-objective.md``.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from types import MappingProxyType
 
 import numpy as np
@@ -117,6 +118,7 @@ def _hopping_series(
     runs: int = 10,
     sigma: float = 0.15,
     amplitude_scale: Mapping[int, float] = MappingProxyType({}),
+    background: bool = True,
 ) -> _Series:
     """Dynamic Gaussian KT + constant: one static width, a hop rate rising (copper).
 
@@ -125,14 +127,14 @@ def _hopping_series(
     """
     hop_rates = np.logspace(-1.5, 0.4, runs)
     return _Series(
-        "DynamicGaussianKT + Constant",
+        "DynamicGaussianKT" + " + Constant" * background,
         [
             {
                 "A_1": 18.0 * amplitude_scale.get(run, 1.0),
                 "Delta": 0.39,
                 "nu": hop_rates[run - 1],
                 "B_L": 0.0,
-                "A_bg": 4.0,
+                **({"A_bg": 4.0} if background else {}),
             }
             for run in range(1, runs + 1)
         ],
@@ -293,9 +295,66 @@ def test_two_isolated_anomalous_runs_are_exempt_from_the_shared_amplitude() -> N
     assert ladder.preselected is width
 
 
-def test_three_contiguous_interior_anomalous_runs_are_not_exempted() -> None:
+@pytest.mark.parametrize("excess", [0.025, 0.04, 0.10, 0.30])
+def test_isolated_anomalous_runs_are_exempt_however_strong_the_anomaly(excess: float) -> None:
+    # At this noise even 2.5 % drags a plainly shared amplitude until other runs offend.
+    series = _hopping_series(
+        runs=12, sigma=0.05, amplitude_scale={4: 1.0 + excess, 10: 1.0 + excess}
+    )
+    amplitude = series.climb(max_further_parameters=0).rungs[2]
+
+    assert amplitude.exempt_runs == (4, 10)
+    assert amplitude.adequate
+    assert amplitude.amplitude_unshareable_runs == ()
+    assert amplitude.results_by_run[1].parameters["A_1"].value == pytest.approx(18.0, abs=0.1)
+
+
+def test_three_isolated_anomalous_runs_of_a_long_series_are_exempt() -> None:
+    series = _hopping_series(runs=38, sigma=0.09, amplitude_scale={5: 1.02, 17: 1.02, 30: 1.02})
+    amplitude = series.climb(max_further_parameters=0).rungs[2]
+
+    assert amplitude.exempt_runs == (5, 17, 30)
+    assert amplitude.adequate
+    # 152 − 37 for the background − 34 for an amplitude 35 runs share.
+    assert amplitude.free_parameter_count == 81
+
+
+def test_anomalous_runs_the_rung_below_cannot_place_are_found_by_their_cost() -> None:
+    # No background, so the amplitude rung climbs from the all-local fits, and
+    # these gave no covariance to judge an amplitude by.
+    series = _hopping_series(
+        runs=14, sigma=0.09, amplitude_scale={4: 1.025, 10: 1.025}, background=False
+    )
+    series.all_local = {
+        run: replace(result, covariance=None, covariance_parameters=[])
+        for run, result in series.all_local.items()
+    }
+    amplitude = series.climb(max_further_parameters=0).rungs[1]
+
+    assert amplitude.shared == ("A_1",)
+    assert amplitude.exempt_runs == (4, 10)
+    assert amplitude.adequate
+
+
+@pytest.mark.parametrize("reduction", [0.03, 0.35])
+@pytest.mark.parametrize("block", [(1, 2, 3, 4), (12, 13, 14)])
+def test_end_block_with_less_amplitude_is_named_exactly(
+    block: tuple[int, ...], reduction: float
+) -> None:
+    series = _hopping_series(
+        runs=14, sigma=0.09, amplitude_scale=dict.fromkeys(block, 1.0 - reduction)
+    )
+    amplitude = series.climb(max_further_parameters=0).rungs[2]
+
+    assert amplitude.amplitude_unshareable_runs == block
+    assert amplitude.exempt_runs == ()
+    assert not amplitude.adequate
+
+
+@pytest.mark.parametrize("excess", [0.025, 0.10])
+def test_three_contiguous_interior_anomalous_runs_are_not_exempted(excess: float) -> None:
     ladder = _hopping_series(
-        runs=14, sigma=0.09, amplitude_scale=dict.fromkeys((6, 7, 8), 1.025)
+        runs=14, sigma=0.09, amplitude_scale=dict.fromkeys((6, 7, 8), 1.0 + excess)
     ).climb(max_further_parameters=1)
     amplitude, width = ladder.rungs[2:]
 
@@ -306,6 +365,28 @@ def test_three_contiguous_interior_anomalous_runs_are_not_exempted() -> None:
     assert not amplitude.adequate
     assert width.shared == ("A_bg", "Delta")
     assert ladder.preselected is width
+
+
+@pytest.mark.parametrize(
+    "amplitude_scale",
+    [
+        {run: 1.0 + 0.05 * (run - 1) / 13 for run in range(1, 15)},
+        {run: 1.0 + 0.20 * (run - 1) / 13 for run in range(1, 15)},
+        {run: 1.0 + 0.03 * np.sin(1.9 * run) for run in range(1, 15)},
+    ],
+    ids=["drift of 5 %", "drift of 20 %", "wander of 3 %"],
+)
+def test_amplitude_that_varies_across_the_series_is_neither_exempted_nor_an_end_block(
+    amplitude_scale: dict[int, float],
+) -> None:
+    series = _hopping_series(runs=14, sigma=0.09, amplitude_scale=amplitude_scale)
+    background, amplitude = series.climb(max_further_parameters=0).rungs[1:]
+
+    assert amplitude.exempt_runs == ()
+    assert amplitude.amplitude_unshareable_runs == ()
+    assert not amplitude.adequate
+    # The amplitude stays local, where its trace is the finding.
+    assert "A_1" in background.trend.parameters
 
 
 def test_total_is_shared_and_the_fraction_trends_through_a_transition() -> None:
