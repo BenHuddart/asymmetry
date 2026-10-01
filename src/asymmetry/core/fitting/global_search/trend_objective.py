@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "TEMPLATE_BAND",
+    "TREND_TIE",
     "CandidateRung",
     "SelectionObjective",
     "templates_within_band",
@@ -34,6 +35,8 @@ __all__ = [
 #: A template competes on trend quality while its all-local series χ²ᵣ is within
 #: this share of the best template's (plan D9, D18).
 TEMPLATE_BAND = 0.03
+#: Worst trend qualities this close are a tie: the better-fitting template leads.
+TREND_TIE = 0.05
 
 
 class SelectionObjective(Enum):
@@ -155,8 +158,10 @@ def trend_contenders(
     The band is taken over the templates that have a ladder among
     ``assessments``: a template climbed because the data identified it, or
     because the user ticked it, is listed with its rungs but contends only when
-    it fits about as well as the best of them. Ties go to the rung that is not
-    hard to justify, then to ``metric``. A rung with no local parameter orders
+    it fits about as well as the best of them. Rungs whose worst trend quality
+    is within :data:`TREND_TIE` of the leader's trend equally well: among them
+    the rung that is not hard to justify leads, then the template that fits
+    best all-local. A rung with no local parameter orders
     below every rung that has one, so it leads only when nothing else is
     adequate.
     """
@@ -168,11 +173,27 @@ def trend_contenders(
     band = templates_within_band(
         {assessment.template.key: assessment.rung.all_local_chi2r for assessment in preselected}
     )
-    return sorted(
+    ranked = sorted(
         (assessment for assessment in preselected if assessment.template.key in band),
         key=lambda assessment: _ranked(assessment, metric),
         reverse=True,
     )
+    if not ranked:
+        return []
+    is_trend, worst, _mean = ranked[0].rung.trend.ordering_key
+    level = [
+        assessment
+        for assessment in ranked
+        if assessment.rung.trend.is_trend == is_trend
+        and worst - assessment.rung.trend.ordering_key[1] <= TREND_TIE
+    ]
+    level.sort(
+        key=lambda assessment: (
+            bool(assessment.rung.hard_to_justify),
+            assessment.rung.all_local_chi2r,
+        )
+    )
+    return level + [assessment for assessment in ranked if assessment not in level]
 
 
 def trend_sort_key(

@@ -24,6 +24,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
 )
 from asymmetry.core.fitting.global_search.trend_objective import (
     TEMPLATE_BAND,
+    TREND_TIE,
     SelectionObjective,
     templates_within_band,
     trend_contenders,
@@ -34,6 +35,7 @@ from asymmetry.core.fitting.global_search.trend_search import (
     _prescreen_fits_for_ladder,
     _run_ladder_task,
 )
+from asymmetry.core.fitting.trend_quality import CandidateTrend, TraceQuality
 from tests.core.sharing_series import (
     TRANSITION,
     SimulatedSeries,
@@ -127,6 +129,40 @@ def test_template_outside_the_band_is_listed_and_does_not_contend(hopping) -> No
     ]
     contenders = trend_contenders(flattered, SelectionMetric.AICC)
     assert [assessment.template.key for assessment in contenders] == ["dynamic_gkt_constant"]
+
+
+def test_templates_that_trend_equally_well_are_led_by_the_better_fit(hopping) -> None:
+    _series, recommendation = hopping
+    winner = recommendation.recommended_assessment
+    name = next(iter(winner.rung.trend.parameters))
+
+    def contender(key: str, chi2r: float, quality: float, hard: tuple[str, ...] = ()):
+        return replace(
+            winner,
+            template=replace(winner.template, key=key),
+            rung=replace(
+                winner.rung,
+                trend=CandidateTrend(
+                    {name: TraceQuality(determined=1.0, signal=quality, zigzag=0.0)}
+                ),
+                all_local_chi2r=chi2r,
+                hard_to_justify=hard,
+            ),
+        )
+
+    def order(*contenders):
+        ranked = trend_contenders(list(contenders), SelectionMetric.AICC)
+        return [assessment.template.key for assessment in ranked]
+
+    best_fit = contender("best_fit", 1.00, 0.60)
+    # A slightly better trend on a slightly worse fit is a tie: the better fit leads.
+    close = contender("close", 1.01, 0.60 + 0.5 * TREND_TIE)
+    # Within the tie, a rung that is hard to justify yields however well it fits.
+    flagged = contender("flagged", 0.99, 0.60 + 0.5 * TREND_TIE, hard=("nu",))
+    assert order(best_fit, close, flagged) == ["best_fit", "close", "flagged"]
+    # A clearly better trend inside the band wins outright.
+    clear = contender("clear", 1.02, 0.60 + 3 * TREND_TIE)
+    assert order(best_fit, clear) == ["clear", "best_fit"]
 
 
 def test_failed_residual_gate_is_a_caveat_on_the_recommendation(hopping) -> None:

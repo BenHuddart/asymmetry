@@ -200,6 +200,24 @@ Lead proposals:
 - **D23: an exemption proposed from the amplitude trace is not confirmed by
   cost.** A run four scatters from the series median is exempt and listed.
 
+## Settled in Phase 4 review (lead, 2026-10-01)
+
+- **D24: trend qualities within 0.05 are a tie between templates.** Among
+  tied pre-selected rungs the one that is not hard to justify leads, then the
+  template that fits best all-local. On Re₆Zr three templates sat at 0.74,
+  0.76 and 0.77 and the worst-fitting one led; with the tie rule the static
+  KT × exponential leads, with the amplitude shared and three runs exempt.
+- **D25: the budget is a stopwatch on the ladder's own rungs**, not the
+  fit-time store, whose per-component estimates overstate a coupled
+  least-squares fit by orders of magnitude.
+- **D26: a rung whose oscillation has vanished on a run does not contend**
+  under the trend objective, series-wide as well as per phase.
+- **Open: the template band on BiSCCO.** The three-line templates fit at
+  χ²ᵣ 1.04–1.05 and the two-line ones at 1.20, so the band admits only the
+  three-line models, whose pre-selected rung has worst trend quality 0.46
+  against 0.59 for the two-line model. Whether a much simpler, better
+  trending model should be able to win from outside a 3 % band is Ben's call.
+
 ## Code map (verify before editing)
 
 - **Core.** `core/fitting/global_fit_wizard.py`:
