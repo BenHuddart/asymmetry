@@ -11,8 +11,15 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 23)
+Current schema (version 24)
 ---------------------------
+
+Version 24 gives every persisted Global Fit Wizard recommendation an
+``objective`` and each of its candidate assessments a ``rung`` (the sharing
+ladder data of docs/plans/global-wizard-trend-objective.md), and drops the
+``total_variation``/``roughness`` entries of its parameter recommendations.
+A recommendation stored before v24 was ranked statistically and has no rungs.
+See :func:`_migrate_v23_to_v24`.
 
 Version 23 rewrites every persisted fit-wizard scope from the version-1 preset
 payload (``{"version": 1, "preset", "include", "exclude"}``, where a preset
@@ -266,10 +273,10 @@ from pathlib import Path
 
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 23
+CURRENT_SCHEMA_VERSION: int = 24
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
 )
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
@@ -401,6 +408,63 @@ def migrate_to_current(data: dict) -> dict:
         version = 22
     if version == 22:
         migrated = _migrate_v22_to_v23(migrated)
+        version = 23
+    if version == 23:
+        migrated = _migrate_v23_to_v24(migrated)
+    return migrated
+
+
+def _v24_assessment(assessment: dict) -> dict:
+    """A pre-v24 global candidate assessment: no rung, no roughness on its roles."""
+    return {
+        **assessment,
+        "parameter_recommendations": [
+            {
+                key: value
+                for key, value in recommendation.items()
+                if key not in ("total_variation", "roughness")
+            }
+            for recommendation in assessment.get("parameter_recommendations", [])
+        ],
+        "rung": None,
+    }
+
+
+def _v24_rewrite_recommendations(node: object) -> object:
+    """Return *node* with every Global Fit Wizard recommendation in the v24 shape.
+
+    A global recommendation is the one payload with a ``series_axis_key``; its
+    candidates sit under ``assessments`` and ``phase_assessments[].assessment``.
+    """
+    if isinstance(node, list):
+        return [_v24_rewrite_recommendations(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    if "series_axis_key" not in node:
+        return {key: _v24_rewrite_recommendations(value) for key, value in node.items()}
+    return {
+        **node,
+        "objective": "statistical",
+        "assessments": [_v24_assessment(entry) for entry in node.get("assessments", [])],
+        "phase_assessments": [
+            {**entry, "assessment": _v24_assessment(entry["assessment"])}
+            for entry in node.get("phase_assessments", [])
+        ],
+    }
+
+
+def _migrate_v23_to_v24(data: dict) -> dict:
+    """Migrate schema v23 project state to v24.
+
+    Every stored Global Fit Wizard recommendation was ranked by an information
+    criterion over the role search, so it becomes a ``statistical`` one whose
+    assessments carry no ladder rung, and the deleted trace diagnostics leave
+    its parameter recommendations (docs/plans/global-wizard-trend-objective.md
+    D1, D14). The recommendations live in the fit-panel global wizard caches;
+    the whole tree is walked, as for v23, so no copy of a cache is missed.
+    """
+    migrated = _v24_rewrite_recommendations(dict(data))
+    migrated["schema_version"] = 24
     return migrated
 
 

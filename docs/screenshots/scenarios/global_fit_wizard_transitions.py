@@ -4,18 +4,21 @@ Drives the wizard's **Phases** step to a **partitioned** recommendation over
 the synthetic two-phase ZF scan (:func:`make_two_phase_zf_tscan`): a damped-oscillation
 phase below a planted 20 K transition and a plain-relaxation phase above it.
 Unlike ``global_fit_wizard_result`` this does not run any real search or fit —
-the screening table, the penalty path, and the per-phase coupled-fit results
-are all hand-built (mirroring
-``tests/gui/test_wizard_transitions_card.py::_partitioned_recommendation``)
+the screening table, the penalty path, and the per-phase answers (each a rung
+of a sharing ladder, as the default "Best for trending" objective gives, with
+its cost and trend quality) are all hand-built (mirroring
+``tests/gui/test_wizard_transitions_card.py::_trend_partitioned_recommendation``)
 and handed to the window via ``set_cached_recommendation``, the same path a
 reopened, already-optimised wizard state uses. That keeps the capture fast and
 fully deterministic while still exercising the real ``TransitionsCard`` and
 ``GlobalFitWizardWindow`` rendering code — nothing about the *display* is
 faked, only the (expensive) search that would normally produce its input.
 
-The cached state lands on Screen, so the scenario opens Phases and clicks the
-second phase in the per-phase strip: the overlay is coloured by phase and draws
-that phase's coupled fit over its runs.
+The cached state lands on Screen, so the scenario opens Phases and picks the
+second phase's row: the overlay is coloured by phase and draws that phase's
+coupled fit over its runs, and the trace strip below it follows the precession
+frequency through the ordered phase and the relaxation rate above it, with the
+boundary marked.
 
 ``requires_fit = False``: no iminuit call happens at capture time.
 """
@@ -72,13 +75,19 @@ def _assessment(
     *,
     global_param_names: tuple[str, ...],
     local_param_names: tuple[str, ...],
+    fixed_param_names: tuple[str, ...] = (),
+    series_cost: float,
+    trend_quality: float,
 ):
+    """A phase's answer: one rung, at ``series_cost`` σ, whose local parameters trend."""
     from asymmetry.core.fitting.engine import FitResult
     from asymmetry.core.fitting.global_fit_wizard import (
         GlobalCandidateAssessment,
         RunResidualDiagnostic,
     )
+    from asymmetry.core.fitting.global_search.trend_objective import CandidateRung
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+    from asymmetry.core.fitting.trend_quality import CandidateTrend, TraceQuality
 
     by_run = {int(dataset.run_number): dataset for dataset in datasets}
     fit_results: dict[int, FitResult] = {}
@@ -96,11 +105,17 @@ def _assessment(
             dof=47,
             parameters=ParameterSet(
                 [
-                    Parameter(name, value=value, min=-50.0, max=50.0)
+                    Parameter(
+                        name, value=value, min=-50.0, max=50.0, fixed=name in fixed_param_names
+                    )
                     for name, value in params.items()
                 ]
             ),
-            uncertainties={name: abs(value) * 0.03 + 1e-3 for name, value in params.items()},
+            uncertainties={
+                name: abs(value) * 0.03 + 1e-3
+                for name, value in params.items()
+                if name not in fixed_param_names
+            },
             residuals=np.zeros_like(dataset.time),
             message="ok",
         )
@@ -130,7 +145,7 @@ def _assessment(
         ),
         global_param_names=global_param_names,
         local_param_names=local_param_names,
-        fixed_param_names=(),
+        fixed_param_names=fixed_param_names,
         parameter_recommendations=(),
         run_diagnostics=tuple(diagnostics),
         series_warnings=(),
@@ -140,14 +155,31 @@ def _assessment(
         selected_score=92.0,
         fitted_curves_by_run=fitted_curves,
         component_curves_by_run=component_curves,
+        rung=CandidateRung(
+            exempt_runs=(),
+            series_cost=series_cost,
+            run_costs=dict.fromkeys(runs, series_cost),
+            trend=CandidateTrend(
+                {
+                    name: TraceQuality(determined=1.0, signal=trend_quality, zigzag=0.0)
+                    for name in local_param_names
+                }
+            ),
+            hard_to_justify=(),
+            pass_disagreements={},
+            preselected=True,
+            amplitude_unshareable_runs=(),
+            all_local_chi2r=1.02,
+        ),
     )
 
 
 class GlobalFitWizardTransitionsScenario(Scenario):
     name = "global_fit_wizard_transitions"
     description = (
-        "Global Fit Wizard Phases step — the Transitions card, per-phase strip "
-        "and phase-coloured overlay on a synthetic two-phase temperature scan."
+        "Global Fit Wizard Phases step — the Transitions card, each phase's rung, "
+        "the phase-coloured overlay and the trace strip on a synthetic two-phase "
+        "temperature scan."
     )
     size = (1180, 800)
     requires_fit = False
@@ -160,6 +192,7 @@ class GlobalFitWizardTransitionsScenario(Scenario):
             PartitionSolution,
             Segment,
         )
+        from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
         from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
         datasets = make_two_phase_zf_tscan()
@@ -204,16 +237,21 @@ class GlobalFitWizardTransitionsScenario(Scenario):
             cold_runs,
             cold_template,
             _cold_params,
-            global_param_names=("A_1", "A_bg"),
-            local_param_names=("frequency", "Lambda"),
+            global_param_names=("A_bg", "A_1", "Lambda"),
+            local_param_names=("frequency",),
+            fixed_param_names=("phase",),
+            series_cost=0.6,
+            trend_quality=0.95,
         )
         warm_assessment = _assessment(
             datasets,
             warm_runs,
             warm_template,
             _warm_params,
-            global_param_names=("A_bg",),
-            local_param_names=("A_1", "Lambda"),
+            global_param_names=("A_bg", "A_1"),
+            local_param_names=("Lambda",),
+            series_cost=0.3,
+            trend_quality=0.88,
         )
 
         cold_segment = Segment(
@@ -265,6 +303,7 @@ class GlobalFitWizardTransitionsScenario(Scenario):
             partition_path=partition_path,
             phase_assessments={(1, 0): cold_assessment, (1, 1): warm_assessment},
             recommended_partition_k=1,
+            objective=SelectionObjective.TREND,
         )
 
         window = GlobalFitWizardWindow()
@@ -272,9 +311,9 @@ class GlobalFitWizardTransitionsScenario(Scenario):
         _process_events_for(milliseconds=60)
         window.set_cached_recommendation(recommendation)
         window._show_step("phases")
-        # Pick the paramagnetic phase in the strip, as a click would: its relaxation
+        # Pick the paramagnetic phase's row, as a click would: its relaxation
         # curves read clearly, where the 5 MHz precession fills the overlay.
-        window._transitions_card._phase_buttons[1].click()
+        window._phase_rung_rows[1].picked.emit(window._phase_rung_rows[1].key)
         _process_events_for(milliseconds=200)
         return window
 

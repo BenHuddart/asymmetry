@@ -50,6 +50,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalParameterRecommendation,
     RunResidualDiagnostic,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit import global_tab as global_tab_module
 from asymmetry.gui.panels.fit import single_tab as single_tab_module
@@ -454,8 +455,6 @@ def _global_wizard_recommendation_for_dataset(
                 global_score=10.0,
                 local_score=12.0,
                 score_delta=2.0,
-                total_variation=0.0,
-                roughness=0.0,
                 rationale="Shared amplitude is sufficient.",
             ),
             GlobalParameterRecommendation(
@@ -464,8 +463,6 @@ def _global_wizard_recommendation_for_dataset(
                 global_score=15.0,
                 local_score=10.0,
                 score_delta=5.0,
-                total_variation=0.2,
-                roughness=0.1,
                 rationale="Local relaxation rates improve the score.",
             ),
             GlobalParameterRecommendation(
@@ -474,8 +471,6 @@ def _global_wizard_recommendation_for_dataset(
                 global_score=10.0,
                 local_score=11.0,
                 score_delta=1.0,
-                total_variation=0.0,
-                roughness=0.0,
                 rationale="Background remains stable.",
             ),
         ),
@@ -523,4 +518,5 @@ def _global_wizard_recommendation_for_dataset(
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        objective=SelectionObjective.STATISTICAL,
     )

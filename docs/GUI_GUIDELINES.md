@@ -146,7 +146,11 @@ structural harness.)
   step), `SeriesFitCanvas` (series overlay with A/B fits and residual strips),
   `ScreeningLeaderboard`, `ModelComparePanel` (pick A, pin B, overlay,
   parameter table and trend; both wizards use it, the single-run one with
-  N = 1) (`widgets/`). Per-run series colours come from
+  N = 1; `set_candidates` lists rows ranked by a criterion, `set_ladders` the
+  rungs of sharing ladders), its rows (`CompareRow` is the shell; subclass it
+  as `CandidateRow` and `RungRow` do rather than adding a second row widget),
+  and `ParameterTraceStrip` (small multiples of local-parameter traces with
+  their trend quality) (`widgets/`). Per-run series colours come from
   `series_colours` (`utils/series_colours.py`).
 - **`WizardWindowBase`** (`windows/wizard_base.py`) — subclass this for a new
   guided-wizard window; it owns the `TaskRunner`, progress UI, staleness,

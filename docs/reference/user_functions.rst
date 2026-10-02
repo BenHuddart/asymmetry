@@ -139,6 +139,15 @@ file can never crash a fit (or the application) later:
   **Leave out slow models** then drops it like any other slow model. Once
   timed, its measured fit time decides (see
   :ref:`which models are slow <fit-wizard-slow-models>`).
+* Optional ``param_kinds`` says what each parameter measures, for example
+  ``param_kinds={"lam": "rate", "phi": "phase"}``. The kinds are
+  ``"amplitude"``, ``"fraction"``, ``"background"``, ``"phase"``,
+  ``"shape"``, ``"static-width"``, ``"rate"``, ``"frequency"``, ``"field"``
+  and ``"geometry"``. Seeding and the Global Fit Wizard read them: amplitudes
+  and backgrounds start from the record's scale and are preferred shared,
+  rates and frequencies are expected to vary from run to run. A parameter you
+  leave out is a ``"shape"``, except ``A`` (an ``"amplitude"``), ``A_bg``
+  (a ``"background"``) and ``phase`` (a ``"phase"``).
 * ``domain`` is required; it places the component in the matching picker
   and plots. Optional metadata (``latex_equation``, ``applicability``,
   ``references``, ``category``, ``fixed_params``, ``param_defaults``)

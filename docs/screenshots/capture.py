@@ -329,6 +329,7 @@ def _import_scenarios() -> None:
         fourier_tf,
         global_fit_lfkt,
         global_fit_wizard_apply,
+        global_fit_wizard_ladder,
         global_fit_wizard_result,
         global_fit_wizard_running,
         global_fit_wizard_screen,

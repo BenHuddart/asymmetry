@@ -45,6 +45,7 @@ class GlobalFitWizardResultScenario(Scenario):
         from asymmetry.core.fitting.global_fit_wizard import (
             build_global_fit_wizard_recommendation,
         )
+        from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
         from asymmetry.core.fitting.wizard_scope import WizardScope
         from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -83,10 +84,13 @@ class GlobalFitWizardResultScenario(Scenario):
 
         # Only the LF-KT candidate goes through coupled optimisation, which keeps
         # the Global/Local role search tractable while still exercising it.
+        # The statistical objective, which is what the page describes: the
+        # Compare step's ladder view of the trend objective is not built yet.
         recommendation = build_global_fit_wizard_recommendation(
             datasets,
             scope=scope,
             selected_template_keys=("lf_kt_constant",),
+            objective=SelectionObjective.STATISTICAL,
         )
 
         window = GlobalFitWizardWindow()

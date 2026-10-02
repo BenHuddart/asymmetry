@@ -110,7 +110,7 @@ def _scope(physics: set[PhysicsClass], **kwargs) -> WizardScope:
 def test_v22_scopes_migrate_to_version_2_physics_payloads():
     result = migrate_to_current(_v22_project())
     validate(result)
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 23
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 24
 
     rep = result["datasets"][0]["representations"]["time_fb_asymmetry"]
     single = rep["fit"]["ui_state"]["wizard_state"]
@@ -204,7 +204,7 @@ def test_v22_project_round_trips_through_save_and_load(tmp_path):
     save_project(migrate_to_current(_v22_project()), path)
     loaded = load_project(path)
     validate(loaded)
-    assert loaded["schema_version"] == 23
+    assert loaded["schema_version"] == 24
     single = loaded["datasets"][0]["representations"]["time_fb_asymmetry"]["fit"]["ui_state"][
         "wizard_state"
     ]
@@ -212,5 +212,5 @@ def test_v22_project_round_trips_through_save_and_load(tmp_path):
         PhysicsClass.DYNAMICS,
         PhysicsClass.MAGNETISM,
     }
-    # Re-migrating a v23 project is a no-op.
+    # Re-migrating a current project is a no-op.
     assert migrate_to_current(loaded) == loaded

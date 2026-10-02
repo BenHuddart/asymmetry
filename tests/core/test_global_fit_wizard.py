@@ -40,13 +40,10 @@ from asymmetry.core.fitting.global_fit_wizard import (
     _canonicalize_parameter_sets,
     _deserialize_global_candidate_assessment,
     _fit_exact_assignment,
-    _globalization_candidate_order,
     _layer_parameter_count,
-    _localisation_penalty,
     _metric_penalty,
     _single_run_prefit_parameter_sets,
     _staged_assignment_seed,
-    _staged_globalization_assignment,
     _staged_multi_local_assignment,
     _supported_oscillatory_run_numbers,
     _warm_start_parameter_sets,
@@ -58,8 +55,16 @@ from asymmetry.core.fitting.global_fit_wizard import (
     rerank_global_fit_wizard_recommendation,
     single_fit_table_covers_portfolio,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
+
+
+def build_statistical_recommendation(*args, **kwargs):
+    """The wizard under the statistical objective, whose role search this file pins."""
+    return build_global_fit_wizard_recommendation(
+        *args, objective=SelectionObjective.STATISTICAL, **kwargs
+    )
 
 
 def _dataset_for(
@@ -218,7 +223,7 @@ def test_global_fit_wizard_prefers_shared_exponential_for_uniform_series(
         for idx in range(1, 5)
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
 
     assert recommendation.recommended_assessment is not None
     assert recommendation.recommended_assessment.template.key == "exp_constant"
@@ -242,7 +247,7 @@ def test_global_fit_wizard_localizes_lambda_when_series_rate_varies(
         for idx in range(1, 5)
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
     assessment = recommendation.recommended_assessment
 
     assert assessment is not None
@@ -269,7 +274,7 @@ def test_global_fit_wizard_records_consolidated_search_instrumentation(
     ]
     instrumentation: dict[str, object] = {}
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         metric=SelectionMetric.BIC,
         instrumentation=instrumentation,
@@ -1425,7 +1430,7 @@ def test_global_fit_wizard_uses_single_fit_prescreen_when_available(
         _wrapped,
     )
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         current_model=model,
         single_fit_recommendations_by_run=single_fit_recommendations_by_run,
@@ -1462,7 +1467,7 @@ def test_global_fit_wizard_selected_candidate_optimisation_merges_into_screening
         current_model=model,
         single_fit_recommendations_by_run=single_fit_recommendations_by_run,
     )
-    optimized = build_global_fit_wizard_recommendation(
+    optimized = build_statistical_recommendation(
         datasets,
         current_model=model,
         single_fit_recommendations_by_run=single_fit_recommendations_by_run,
@@ -1516,11 +1521,8 @@ def test_filtered_gate_reasons_drops_bound_hit_when_fit_is_good() -> None:
     assert "Lambda at lower bound" in poor
 
 
-def test_rerank_recommends_tentatively_when_only_series_warnings_block() -> None:
-    """Fix C2: when every run clears its per-run residual gate (a demonstrably
-    strong coupled fit) but a heuristic series-consistency warning fires, the
-    wizard recommends the candidate tentatively with a caveat rather than
-    returning None. A per-run gate failure still blocks the recommendation."""
+def test_rerank_recommends_with_a_caveat_when_only_a_series_warning_stands() -> None:
+    """A series warning is a caveat on the recommendation; a per-run gate failure blocks it."""
     datasets = [
         _dataset_for(
             run_number=700 + idx,
@@ -1565,13 +1567,14 @@ def test_rerank_recommends_tentatively_when_only_series_warnings_block() -> None
             recommended_key=None,
             comparable_keys=(),
             summary="",
+            objective=SelectionObjective.STATISTICAL,
         )
 
     reranked = rerank_global_fit_wizard_recommendation(
         _recommendation((assessment,)), SelectionMetric.AICC
     )
     assert reranked.recommended_key == assessment.selection_key
-    assert "tentative" in reranked.summary.lower()
+    assert assessment.residual_gate_passed
     assert "Fingerprint features change abruptly" in reranked.summary
 
     # A genuine per-run gate failure must still block (stays None).
@@ -1659,6 +1662,7 @@ def test_merge_global_fit_wizard_recommendations_keeps_all_optimized_variants() 
         recommended_key=local_variant.selection_key,
         comparable_keys=(local_variant.selection_key, shared_variant.selection_key),
         summary="optimized",
+        objective=SelectionObjective.STATISTICAL,
     )
 
     merged = merge_global_fit_wizard_recommendations(screening, optimized)
@@ -1747,6 +1751,7 @@ def test_merge_global_fit_wizard_recommendations_prefers_simpler_comparable_vari
         recommended_key=local_variant.selection_key,
         comparable_keys=(local_variant.selection_key, shared_variant.selection_key),
         summary="optimized",
+        objective=SelectionObjective.STATISTICAL,
     )
 
     merged = merge_global_fit_wizard_recommendations(screening, optimized)
@@ -1798,7 +1803,7 @@ def test_selected_candidate_optimisation_skips_prescreen_repair(
         _wrapped,
     )
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         current_model=model,
         single_fit_recommendations_by_run=single_fit_recommendations_by_run,
@@ -2178,7 +2183,6 @@ def test_cache_derived_role_recommendations_reuse_wavefront_assignments() -> Non
     local_assessment = _make_assessment(local=("Lambda",), score=10.0)
     shared_assessment = _make_assessment(local=(), score=16.0)
     recommendations = _build_parameter_recommendations_from_exact_cache(
-        datasets,
         local_assessment,
         template=template,
         fixed_param_names=(),
@@ -2217,10 +2221,9 @@ def test_global_fit_wizard_threads_selected_template_keys(monkeypatch) -> None:
         _fake_staged,
     )
 
-    assert build_global_fit_wizard_recommendation([]) is sentinel
+    assert build_statistical_recommendation([]) is sentinel
     assert (
-        build_global_fit_wizard_recommendation([], selected_template_keys=("exp_constant",))
-        is sentinel
+        build_statistical_recommendation([], selected_template_keys=("exp_constant",)) is sentinel
     )
     assert captured == [None, ("exp_constant",)]
 
@@ -2238,7 +2241,7 @@ def test_global_fit_wizard_warns_for_mixed_field_temperature_grid() -> None:
         for idx in range(1, 5)
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
 
     assert recommendation.mixed_axes_warning is not None
     assert recommendation.recommended_key is None
@@ -2281,7 +2284,7 @@ def test_global_fit_wizard_flags_abrupt_regime_changes(
         ),
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(datasets)
+    recommendation = build_statistical_recommendation(datasets)
 
     assert any(
         "Fingerprint features change abruptly" in warning
@@ -2306,7 +2309,7 @@ def test_global_fit_wizard_reranks_existing_assessments(
         for idx in range(1, 5)
     ]
 
-    recommendation = build_global_fit_wizard_recommendation(datasets, metric=SelectionMetric.AICC)
+    recommendation = build_statistical_recommendation(datasets, metric=SelectionMetric.AICC)
     reranked = rerank_global_fit_wizard_recommendation(recommendation, SelectionMetric.BIC)
 
     assert reranked.metric == SelectionMetric.BIC
@@ -2367,6 +2370,7 @@ def test_deserialize_global_candidate_assessment_migrates_legacy_fraction_params
         "aic": 1.0,
         "bic": 1.0,
         "selected_score": 1.0,
+        "rung": None,
     }
 
     assessment = _deserialize_global_candidate_assessment(payload)
@@ -2395,11 +2399,6 @@ def test_deserialize_global_candidate_assessment_migrates_legacy_fraction_params
     assert not any(name.startswith("fraction_") for name in assessment.global_param_names)
     assert not any(name.startswith("fraction_") for name in assessment.local_param_names)
     assert not any(name.startswith("fraction_") for name in assessment.fixed_param_names)
-
-
-def test_localisation_penalty_prefers_rate_parameters_over_amplitudes() -> None:
-    assert _localisation_penalty(("Lambda",)) < _localisation_penalty(("A_1",))
-    assert _localisation_penalty(("A_1",)) < _localisation_penalty(("A_bg",))
 
 
 def test_component_canonicalization_orders_biexponential_components_by_rate() -> None:
@@ -2432,83 +2431,6 @@ def test_component_canonicalization_orders_biexponential_components_by_rate() ->
     assert canonical[1]["Lambda_2"].value == 0.2
     assert canonical[1]["A_1"].value == 0.3
     assert canonical[1]["A_2"].value == 0.1
-
-
-def test_globalization_candidate_order_prefers_stable_amplitudes_over_rates() -> None:
-    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
-    template = CandidateTemplate(
-        key="exp_constant",
-        title="Exponential + Constant",
-        category="General",
-        rationale="test",
-        model=model,
-    )
-    datasets = [
-        _dataset_for(
-            run_number=720 + idx,
-            field=25.0 * idx,
-            temperature=5.0,
-            model=model,
-            params={"A_1": 0.2, "Lambda": 0.2 + (0.2 * idx), "A_bg": 0.01},
-        )
-        for idx in range(3)
-    ]
-    fit_results = {
-        int(dataset.run_number): FitResult(
-            success=True,
-            chi_squared=1.0,
-            reduced_chi_squared=0.1,
-            parameters=ParameterSet(
-                [
-                    Parameter("A_1", value=0.2 + (0.005 * idx), min=0.0, max=1.0),
-                    Parameter("Lambda", value=0.15 + (0.35 * idx), min=0.0, max=5.0),
-                    Parameter("A_bg", value=0.01, min=-0.2, max=0.2),
-                ]
-            ),
-            message="ok",
-        )
-        for idx, dataset in enumerate(datasets)
-    }
-    diagnostics = tuple(
-        RunResidualDiagnostic(
-            run_number=int(dataset.run_number),
-            run_label=dataset.run_label,
-            axis_value=float(dataset.metadata["field"]),
-            residual_rms=0.05,
-            runs_z_score=0.0,
-            max_abs_autocorrelation=0.0,
-            residual_fft_peak_snr=0.0,
-            gate_passed=True,
-            gate_reasons=(),
-        )
-        for dataset in datasets
-    )
-    assessment = GlobalCandidateAssessment(
-        template=template,
-        fit_results_by_run=fit_results,
-        global_parameters=fit_results[int(datasets[0].run_number)].parameters,
-        global_param_names=(),
-        local_param_names=("A_1", "Lambda", "A_bg"),
-        fixed_param_names=(),
-        parameter_recommendations=(),
-        run_diagnostics=diagnostics,
-        series_warnings=(),
-        aic=10.0,
-        aicc=10.0,
-        bic=10.0,
-        selected_score=10.0,
-        fitted_curves_by_run={},
-        component_curves_by_run={},
-    )
-
-    ordered = _globalization_candidate_order(
-        datasets,
-        assessment,
-        remaining=assessment.local_param_names,
-    )
-
-    assert ordered.index("A_1") < ordered.index("Lambda")
-    assert ordered.index("A_bg") < ordered.index("Lambda")
 
 
 def test_staged_assignment_seed_completes_when_local_only_pinned_on_one_run() -> None:
@@ -2578,330 +2500,6 @@ def test_staged_assignment_seed_completes_when_local_only_pinned_on_one_run() ->
     assert result[901]["B_L"].fixed
     assert result[901]["B_L"].value == 0.0
     assert not result[902]["B_L"].fixed
-
-
-def test_staged_globalization_assignment_keeps_varying_lambda_local(
-    monkeypatch,
-) -> None:
-    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
-    template = CandidateTemplate(
-        key="exp_constant",
-        title="Exponential + Constant",
-        category="General",
-        rationale="test",
-        model=model,
-    )
-    lambda_values = {801: 0.15, 802: 0.30, 803: 0.60, 804: 0.90}
-    datasets = [
-        _dataset_for(
-            run_number=run_number,
-            field=40.0 * index,
-            temperature=4.0,
-            model=model,
-            params={"A_1": 0.2, "Lambda": lambda_value, "A_bg": 0.01},
-        )
-        for index, (run_number, lambda_value) in enumerate(sorted(lambda_values.items()), start=1)
-    ]
-    base_by_run = {
-        run_number: ParameterSet(
-            [
-                Parameter("A_1", value=0.28, min=0.0, max=1.0),
-                Parameter("Lambda", value=0.45, min=0.0, max=2.0),
-                Parameter("A_bg", value=0.04, min=-0.2, max=0.2),
-            ]
-        )
-        for run_number in lambda_values
-    }
-
-    trace_values = {
-        "A_1": {801: 0.20, 802: 0.205, 803: 0.195, 804: 0.20},
-        "Lambda": {801: 0.15, 802: 0.30, 803: 0.60, 804: 0.90},
-        "A_bg": {801: 0.01, 802: 0.01, 803: 0.01, 804: 0.01},
-    }
-    score_by_local_names = {
-        ("A_1", "A_bg", "Lambda"): 10.0,
-        ("A_bg", "Lambda"): 8.0,
-        ("A_1", "Lambda"): 9.0,
-        ("A_1", "A_bg"): 12.0,
-        ("Lambda",): 7.5,
-        ("A_bg",): 11.0,
-        ("A_1",): 11.0,
-        (): 13.0,
-    }
-
-    def _make_assessment(local_param_names: tuple[str, ...]) -> GlobalCandidateAssessment:
-        local_set = set(local_param_names)
-        global_param_names = tuple(
-            name for name in template.model.param_names if name not in local_set
-        )
-        fit_results = {}
-        for run_number in lambda_values:
-            params = []
-            for name in template.model.param_names:
-                values = trace_values[name]
-                if name in local_set:
-                    value = values[run_number]
-                else:
-                    value = float(np.mean(list(values.values())))
-                bounds = (0.0, 1.0)
-                if name == "Lambda":
-                    bounds = (0.0, 2.0)
-                elif name == "A_bg":
-                    bounds = (-0.2, 0.2)
-                params.append(Parameter(name, value=value, min=bounds[0], max=bounds[1]))
-            fit_results[run_number] = FitResult(
-                success=True,
-                chi_squared=score_by_local_names[tuple(sorted(local_param_names))],
-                reduced_chi_squared=0.1,
-                parameters=ParameterSet(params),
-                message="ok",
-            )
-        diagnostics = tuple(
-            RunResidualDiagnostic(
-                run_number=run_number,
-                run_label=str(run_number),
-                axis_value=float(run_number),
-                residual_rms=0.05,
-                runs_z_score=0.0,
-                max_abs_autocorrelation=0.0,
-                residual_fft_peak_snr=0.0,
-                gate_passed=True,
-                gate_reasons=(),
-            )
-            for run_number in lambda_values
-        )
-        score = score_by_local_names[tuple(sorted(local_param_names))]
-        return GlobalCandidateAssessment(
-            template=template,
-            fit_results_by_run=fit_results,
-            global_parameters=fit_results[801].parameters,
-            global_param_names=global_param_names,
-            local_param_names=tuple(sorted(local_param_names)),
-            fixed_param_names=(),
-            parameter_recommendations=(),
-            run_diagnostics=diagnostics,
-            series_warnings=(),
-            aic=score,
-            aicc=score,
-            bic=score,
-            selected_score=score,
-            fitted_curves_by_run={},
-            component_curves_by_run={},
-        )
-
-    def _fake_fit_exact_assignment(
-        datasets,
-        template,
-        *,
-        fit_engine,
-        base_by_run,
-        global_param_names,
-        local_param_names,
-        fixed_param_names,
-        axis_key,
-        metric,
-        cache,
-        warm_start_by_run=None,
-        progress_callback=None,
-        search_strategy="legacy",
-        instrumentation=None,
-        initial_step_sizes=None,
-    ):
-        del (
-            fit_engine,
-            base_by_run,
-            fixed_param_names,
-            axis_key,
-            metric,
-            cache,
-            warm_start_by_run,
-            progress_callback,
-            search_strategy,
-            instrumentation,
-            initial_step_sizes,
-            global_param_names,
-        )
-        return _make_assessment(tuple(sorted(local_param_names)))
-
-    monkeypatch.setattr(
-        global_fit_wizard_module,
-        "_fit_exact_assignment",
-        _fake_fit_exact_assignment,
-    )
-    monkeypatch.setattr(
-        global_fit_wizard_module,
-        "_warm_start_parameter_sets",
-        lambda *args, **kwargs: base_by_run,
-    )
-    monkeypatch.setattr(
-        global_fit_wizard_module,
-        "_step_hints_from_assessment",
-        lambda *args, **kwargs: {},
-    )
-
-    assessment = _staged_globalization_assignment(
-        datasets,
-        template,
-        fit_engine=FitEngine(),
-        base_by_run=base_by_run,
-        fixed_param_names=(),
-        axis_key="field",
-        metric=SelectionMetric.AICC,
-        cache={},
-        warm_start_cache={},
-    )
-
-    assert assessment is not None
-    assert assessment.is_successful
-    assert "Lambda" in assessment.local_param_names
-    assert "A_1" in assessment.global_param_names
-    assert "A_bg" in assessment.global_param_names
-
-
-def test_staged_globalization_assignment_attempts_high_dimension_all_local_baseline(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
-    template = CandidateTemplate(
-        key="exp_constant",
-        title="Exponential + Constant",
-        category="General",
-        rationale="test",
-        model=model,
-    )
-    datasets = [
-        _dataset_for(
-            run_number=900 + idx,
-            field=10.0 * idx,
-            temperature=5.0,
-            model=model,
-            params={"A_1": 0.2, "Lambda": 0.3, "A_bg": 0.01},
-        )
-        for idx in range(1, 4)
-    ]
-    base_by_run = {
-        int(dataset.run_number): ParameterSet(
-            [
-                Parameter("A_1", value=0.2, min=0.0, max=1.0),
-                Parameter("Lambda", value=0.3, min=0.0, max=2.0),
-                Parameter("A_bg", value=0.01, min=-0.2, max=0.2),
-            ]
-        )
-        for dataset in datasets
-    }
-    diagnostics = tuple(
-        RunResidualDiagnostic(
-            run_number=int(dataset.run_number),
-            run_label=dataset.run_label,
-            axis_value=float(dataset.metadata["field"]),
-            residual_rms=0.05,
-            runs_z_score=0.0,
-            max_abs_autocorrelation=0.0,
-            residual_fft_peak_snr=0.0,
-            gate_passed=True,
-            gate_reasons=(),
-        )
-        for dataset in datasets
-    )
-    baseline_calls: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
-
-    def _fake_fit_exact_assignment(
-        datasets,
-        template,
-        *,
-        fit_engine,
-        base_by_run,
-        global_param_names,
-        local_param_names,
-        fixed_param_names,
-        axis_key,
-        metric,
-        cache,
-        warm_start_by_run=None,
-        progress_callback=None,
-        search_strategy="legacy",
-        instrumentation=None,
-        initial_step_sizes=None,
-    ):
-        del (
-            fit_engine,
-            base_by_run,
-            fixed_param_names,
-            axis_key,
-            metric,
-            cache,
-            warm_start_by_run,
-            progress_callback,
-            search_strategy,
-            instrumentation,
-            initial_step_sizes,
-        )
-        baseline_calls.append((tuple(global_param_names), tuple(local_param_names)))
-        fit_results = {
-            int(dataset.run_number): FitResult(
-                success=True,
-                chi_squared=1.0,
-                reduced_chi_squared=0.1,
-                parameters=ParameterSet(
-                    [
-                        Parameter("A_1", value=0.2, min=0.0, max=1.0),
-                        Parameter("Lambda", value=0.3, min=0.0, max=2.0),
-                        Parameter("A_bg", value=0.01, min=-0.2, max=0.2),
-                    ]
-                ),
-                message="ok",
-            )
-            for dataset in datasets
-        }
-        return GlobalCandidateAssessment(
-            template=template,
-            fit_results_by_run=fit_results,
-            global_parameters=next(iter(fit_results.values())).parameters,
-            global_param_names=tuple(global_param_names),
-            local_param_names=tuple(local_param_names),
-            fixed_param_names=(),
-            parameter_recommendations=(),
-            run_diagnostics=diagnostics,
-            series_warnings=(),
-            aic=10.0,
-            aicc=10.0,
-            bic=10.0,
-            selected_score=10.0,
-            fitted_curves_by_run={},
-            component_curves_by_run={},
-        )
-
-    monkeypatch.setattr(
-        global_fit_wizard_module,
-        "_fit_exact_assignment",
-        _fake_fit_exact_assignment,
-    )
-    monkeypatch.setattr(
-        global_fit_wizard_module,
-        "_free_parameter_count",
-        lambda *args, **kwargs: 133,
-    )
-    monkeypatch.setattr(
-        global_fit_wizard_module,
-        "_globalization_candidate_order",
-        lambda *args, **kwargs: (),
-    )
-
-    assessment = _staged_globalization_assignment(
-        datasets,
-        template,
-        fit_engine=FitEngine(),
-        base_by_run=base_by_run,
-        fixed_param_names=(),
-        axis_key="field",
-        metric=SelectionMetric.AICC,
-        cache={},
-        warm_start_cache={},
-    )
-
-    assert assessment is not None
-    assert assessment.is_successful
-    assert baseline_calls == [((), ("A_1", "Lambda", "A_bg"))]
 
 
 def test_single_run_prefits_improve_staged_seed_parameters() -> None:
@@ -3419,7 +3017,7 @@ def test_heuristic_engines_share_uniform_series(
     _restrict_to_exp_constant_template(monkeypatch, model)
     datasets = _uniform_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(datasets, search_engine=engine)
+    recommendation = build_statistical_recommendation(datasets, search_engine=engine)
 
     assessment = recommendation.recommended_assessment
     assert assessment is not None
@@ -3435,7 +3033,7 @@ def test_heuristic_engines_localize_varying_lambda(
     _restrict_to_exp_constant_template(monkeypatch, model)
     datasets = _varying_lambda_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(datasets, search_engine=engine)
+    recommendation = build_statistical_recommendation(datasets, search_engine=engine)
 
     assessment = recommendation.recommended_assessment
     assert assessment is not None
@@ -3454,7 +3052,7 @@ def test_heuristic_winner_flip_neighbourhood_is_fitted(
     # has a non-trivial flip-neighbourhood spanning all three free params.
     datasets = _varying_lambda_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(datasets, search_engine=engine)
+    recommendation = build_statistical_recommendation(datasets, search_engine=engine)
 
     assert _winner_flip_neighbours_present(recommendation), (
         "sparse search left the winner's flip-neighbourhood incomplete; the "
@@ -3470,7 +3068,7 @@ def test_heuristic_engine_records_q_pretest_instrumentation(
     datasets = _varying_lambda_series(model)
     instrumentation: dict[str, object] = {}
 
-    build_global_fit_wizard_recommendation(
+    build_statistical_recommendation(
         datasets, search_engine="balanced", instrumentation=instrumentation
     )
 
@@ -3500,10 +3098,8 @@ def test_separable_engine_is_the_default_and_agrees_with_the_referee(
     datasets = _varying_lambda_series(model)
     default_instrumentation: dict[str, object] = {}
 
-    default = build_global_fit_wizard_recommendation(
-        datasets, instrumentation=default_instrumentation
-    )
-    explicit = build_global_fit_wizard_recommendation(datasets, search_engine="exhaustive")
+    default = build_statistical_recommendation(datasets, instrumentation=default_instrumentation)
+    explicit = build_statistical_recommendation(datasets, search_engine="exhaustive")
 
     assert default_instrumentation.get("search_engine") == "separable"
     assert default.recommended_assessment is not None
@@ -3541,7 +3137,7 @@ def test_wavefront_assignment_tasks_carry_fit_records_not_raw_counts(
         global_fit_wizard_module, "_run_wavefront_assignment_task", _recording_runner
     )
 
-    build_global_fit_wizard_recommendation(datasets, search_engine="exhaustive")
+    build_statistical_recommendation(datasets, search_engine="exhaustive")
 
     assert submitted
     for task in submitted:
@@ -3560,7 +3156,7 @@ def test_unknown_search_engine_raises_value_error(
     datasets = _uniform_series(model)
 
     with pytest.raises(ValueError, match="Unknown search_engine"):
-        build_global_fit_wizard_recommendation(datasets, search_engine="turbo")
+        build_statistical_recommendation(datasets, search_engine="turbo")
 
 
 # --------------------------------------------------------------------------- #
@@ -3597,7 +3193,7 @@ def test_effort_tier_always_resolves_to_the_separable_engine(
     datasets = _uniform_series(model)
     instrumentation: dict[str, object] = {}
 
-    build_global_fit_wizard_recommendation(
+    build_statistical_recommendation(
         datasets, instrumentation=instrumentation, effort_tier=EffortTier(tier_value)
     )
 
@@ -3629,7 +3225,7 @@ def test_explicit_search_engine_overrides_effort_tier_engine_selection(
 
     # effort_tier says Balanced, but an explicit search_engine="low" must win for
     # *engine selection* (backward compatibility with PR 4 callers/tests).
-    build_global_fit_wizard_recommendation(
+    build_statistical_recommendation(
         datasets,
         instrumentation=instrumentation,
         effort_tier=EffortTier.BALANCED,
@@ -3695,7 +3291,7 @@ def test_low_portfolio_cap_skips_over_budget_templates_via_search_engine_seam(
     _restrict_to_templates(monkeypatch, (small_template, big_template))
     datasets = _uniform_series(small_model)
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         search_engine="low",
         selected_template_keys=(small_template.key, big_template.key),
@@ -3728,7 +3324,7 @@ def test_low_portfolio_cap_is_inert_via_effort_tier(
     _restrict_to_templates(monkeypatch, (small_template, big_template))
     datasets = _uniform_series(small_model)
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         effort_tier=EffortTier.LOW,
         selected_template_keys=(small_template.key, big_template.key),
@@ -3861,7 +3457,7 @@ def test_screening_decimation_fires_and_leaves_full_resolution_leaderboard(
     full_n_points = datasets[0].n_points
     instrumentation: dict[str, object] = {}
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets, search_engine=engine, instrumentation=instrumentation
     )
 
@@ -3966,7 +3562,7 @@ def test_cancel_callback_aborts_before_running_full_search(
     instrumentation: dict[str, object] = {}
 
     with pytest.raises(FitCancelledError):
-        build_global_fit_wizard_recommendation(
+        build_statistical_recommendation(
             datasets,
             instrumentation=instrumentation,
             cancel_callback=lambda: True,
@@ -4005,7 +3601,7 @@ def test_cancel_callback_aborts_mid_search_past_the_top_guard(
         return state["calls"] > 1
 
     with pytest.raises(FitCancelledError):
-        build_global_fit_wizard_recommendation(
+        build_statistical_recommendation(
             datasets,
             cancel_callback=_cancel_after_first_poll,
         )
@@ -4021,7 +3617,7 @@ def test_cancel_callback_false_completes_normally(
     _restrict_to_exp_constant_template(monkeypatch, model)
     datasets = _uniform_series(model)
 
-    recommendation = build_global_fit_wizard_recommendation(
+    recommendation = build_statistical_recommendation(
         datasets,
         cancel_callback=lambda: False,
     )
@@ -4246,8 +3842,6 @@ def test_applied_roles_let_recommendations_override_and_keep_fixed_fixed() -> No
                 global_score=1.0,
                 local_score=2.0,
                 score_delta=1.0,
-                total_variation=0.0,
-                roughness=0.0,
                 rationale="shared",
             ),
         ),

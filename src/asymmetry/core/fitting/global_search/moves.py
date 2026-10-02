@@ -7,7 +7,7 @@ from asymmetry.core.fitting.global_search.adapters import (
     subset_additive_structure,
     with_parameter_roles,
 )
-from asymmetry.core.fitting.global_search.heuristics import allows_rate_first_localization
+from asymmetry.core.fitting.global_search.role_policy import allows_rate_first_localization
 from asymmetry.core.fitting.global_search.types import (
     DiscreteCandidate,
     ModelStructure,
@@ -27,9 +27,10 @@ def generate_search_moves(
     shared_names, local_names, _fixed_names = structure.role_names()
     moves: list[SearchMove] = []
     ambiguous = set(candidate.ambiguous_param_names)
+    kinds = structure.model.parameter_kinds()
 
     for name in shared_names:
-        if name in ambiguous and allows_rate_first_localization(name):
+        if name in ambiguous and allows_rate_first_localization(kinds[name]):
             moves.append(SearchMove(SearchMoveType.SPLIT_TO_LOCAL, name))
     for name in local_names:
         if name in ambiguous or allow_backward_moves:

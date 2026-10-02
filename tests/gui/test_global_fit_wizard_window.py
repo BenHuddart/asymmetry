@@ -39,6 +39,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalParameterRecommendation,
     RunResidualDiagnostic,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
 from asymmetry.gui.panels.log_panel import LogPanel
@@ -181,8 +182,6 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
                 global_score=10.0,
                 local_score=12.0,
                 score_delta=2.0,
-                total_variation=0.0,
-                roughness=0.0,
                 rationale="Shared amplitude is adequate.",
             ),
             GlobalParameterRecommendation(
@@ -191,8 +190,6 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
                 global_score=15.0,
                 local_score=9.0,
                 score_delta=6.0,
-                total_variation=1.8,
-                roughness=0.2,
                 rationale="Rate variation is strongly supported.",
             ),
             GlobalParameterRecommendation(
@@ -201,8 +198,6 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
                 global_score=10.0,
                 local_score=11.0,
                 score_delta=1.0,
-                total_variation=0.0,
-                roughness=0.0,
                 rationale="Background remains stable.",
             ),
         ),
@@ -227,6 +222,7 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
         recommended_key="exp_constant",
         comparable_keys=(),
         summary="Recommended: Exponential + Constant by AICc.",
+        objective=SelectionObjective.STATISTICAL,
     )
 
 
@@ -691,7 +687,7 @@ def test_global_fit_wizard_window_warning_info_dialog_contains_expected_text(
     window._show_warning_info()
 
     assert captured["title"] == "Global Fit Wizard Warnings"
-    assert "continuity diagnostics" in captured["text"]
+    assert "abrupt change in the spectra" in captured["text"]
 
 
 def _expectation_rows_by_name(window: GlobalFitWizardWindow) -> dict[str, int]:
@@ -1702,6 +1698,10 @@ def test_the_stepper_follows_screening_optimise_and_apply(
     )
     window = GlobalFitWizardWindow()
     window.set_analysis_context(datasets)
+    # The planted fits are role splits, which is what "Best statistical fit" optimises.
+    window._objective_combo.setCurrentIndex(
+        window._objective_combo.findData(SelectionObjective.STATISTICAL)
+    )
     _screen(window, qapp)
 
     assert _step(window, "scope")[0] is StepState.DONE

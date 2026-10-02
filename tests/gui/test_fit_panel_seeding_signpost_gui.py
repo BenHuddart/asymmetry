@@ -9,13 +9,12 @@ no guidance.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import numpy as np
 import pytest
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit.global_tab import (
@@ -26,7 +25,7 @@ from asymmetry.gui.panels.fit.global_tab import (
 
 pytestmark = [pytest.mark.gui]
 
-_MODEL = SimpleNamespace(param_names=["A_1", "frequency", "lambda", "A_bg"])
+_MODEL = CompositeModel.from_expression("Oscillatory * Exponential + Constant")
 # Run -> (temperature, fitted amplitude, fitted frequency); run 2944 collapsed.
 _TREND = {
     2960: (10.0, 25.0, 30.0),

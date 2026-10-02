@@ -1,0 +1,213 @@
+{
+  "cases": {
+    "trend_degenerate_amplitude_background_g12": {
+      "minuit_fevals": 1438,
+      "minuit_fits": 3,
+      "provenance": {
+        "case_id": "trend_degenerate_amplitude_background_g12",
+        "components": [
+          "StretchedExponential",
+          "Constant"
+        ],
+        "description": "Stretched exponential whose rate falls by three decades: the slow runs cannot tell amplitude from background until both are shared.",
+        "n_groups": 12,
+        "n_params": 4,
+        "operators": [
+          "+"
+        ],
+        "planted_roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "Lambda": "local",
+          "beta": "local"
+        },
+        "seed": 2001,
+        "template_keys": [
+          "stretched_constant"
+        ]
+      },
+      "status": "OK",
+      "verdict": {
+        "aic": 4814.298271586491,
+        "aicc": 4814.592426206227,
+        "bic": 4982.683922705786,
+        "exempt_groups": [],
+        "n_params": 26,
+        "recommended_key": "stretched_constant|g=A_bg,A_1|l=Lambda,beta",
+        "roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "Lambda": "local",
+          "beta": "local"
+        },
+        "template_key": "stretched_constant",
+        "unshareable_groups": []
+      },
+      "wall_s": 0.951923834043555
+    },
+    "trend_shared_width_local_hop_rate_g12": {
+      "minuit_fevals": 587,
+      "minuit_fits": 3,
+      "provenance": {
+        "case_id": "trend_shared_width_local_hop_rate_g12",
+        "components": [
+          "DynamicGaussianKT",
+          "Constant"
+        ],
+        "description": "Dynamic Gaussian KT: shared static width, local hop rate.",
+        "n_groups": 12,
+        "n_params": 5,
+        "operators": [
+          "+"
+        ],
+        "planted_roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "B_L": "fixed",
+          "Delta": "global",
+          "nu": "local"
+        },
+        "seed": 2002,
+        "template_keys": [
+          "dynamic_gkt_constant"
+        ]
+      },
+      "status": "OK",
+      "verdict": {
+        "aic": 3587.710759618657,
+        "aicc": 3588.1340518918933,
+        "bic": 3754.8053659786506,
+        "exempt_groups": [],
+        "n_params": 27,
+        "recommended_key": "dynamic_gkt_constant|g=A_bg,A_1,Delta|l=nu,B_L",
+        "roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "B_L": "fixed",
+          "Delta": "global",
+          "nu": "local"
+        },
+        "template_key": "dynamic_gkt_constant",
+        "unshareable_groups": []
+      },
+      "wall_s": 1.737709500011988
+    },
+    "trend_two_anomalous_amplitude_runs_g12": {
+      "minuit_fevals": 443,
+      "minuit_fits": 3,
+      "provenance": {
+        "case_id": "trend_two_anomalous_amplitude_runs_g12",
+        "components": [
+          "DynamicGaussianKT",
+          "Constant"
+        ],
+        "description": "Shared amplitude with two isolated anomalous runs exempt.",
+        "n_groups": 12,
+        "n_params": 5,
+        "operators": [
+          "+"
+        ],
+        "planted_roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "B_L": "fixed",
+          "Delta": "global",
+          "nu": "local"
+        },
+        "seed": 2003,
+        "template_keys": [
+          "dynamic_gkt_constant"
+        ]
+      },
+      "status": "OK",
+      "verdict": {
+        "aic": 3588.2586954796307,
+        "aicc": 3588.746090437614,
+        "bic": 3767.7306800885126,
+        "exempt_groups": [
+          2,
+          7
+        ],
+        "n_params": 29,
+        "recommended_key": "dynamic_gkt_constant|g=A_bg,A_1,Delta|l=nu,B_L",
+        "roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "B_L": "fixed",
+          "Delta": "global",
+          "nu": "local"
+        },
+        "template_key": "dynamic_gkt_constant",
+        "unshareable_groups": []
+      },
+      "wall_s": 1.8794314579572529
+    },
+    "trend_two_line_fraction_transition_g12": {
+      "minuit_fevals": 2770,
+      "minuit_fits": 3,
+      "provenance": {
+        "case_id": "trend_two_line_fraction_transition_g12",
+        "components": [
+          "Oscillatory",
+          "Gaussian",
+          "Oscillatory",
+          "Gaussian",
+          "Constant"
+        ],
+        "description": "Two Gaussian-damped lines sharing 20 % of asymmetry; the first line's share rises through a transition while the total stays put.",
+        "n_groups": 12,
+        "n_params": 9,
+        "operators": [
+          "*",
+          "+",
+          "*",
+          "+"
+        ],
+        "planted_roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "f_Oscillatory": "local",
+          "frequency_1": "global",
+          "frequency_2": "global",
+          "phase_1": "global",
+          "phase_2": "global",
+          "sigma_1": "local",
+          "sigma_2": "local"
+        },
+        "seed": 2004,
+        "template_keys": [
+          "current_model"
+        ]
+      },
+      "status": "OK",
+      "verdict": {
+        "aic": 3692.7092274423626,
+        "aicc": 3693.724689910735,
+        "bic": 3952.634170669019,
+        "exempt_groups": [],
+        "n_params": 42,
+        "recommended_key": "current_model|g=A_bg,A_1,phase_1,phase_2,frequency_1,frequency_2|l=f_Oscillatory,sigma_1,sigma_2",
+        "roles": {
+          "A_1": "global",
+          "A_bg": "global",
+          "f_Oscillatory": "local",
+          "frequency_1": "global",
+          "frequency_2": "global",
+          "phase_1": "global",
+          "phase_2": "global",
+          "sigma_1": "local",
+          "sigma_2": "local"
+        },
+        "template_key": "current_model",
+        "unshareable_groups": []
+      },
+      "wall_s": 3.7488946249941364
+    }
+  },
+  "engine": "sharing_ladder",
+  "generation_date": "2026-10-01",
+  "git_sha": "01b7ee58bf664ab7cbac8ec5f25212e8d7da62b0",
+  "objective": "trend",
+  "schema_version": 1,
+  "tier": "exhaustive"
+}

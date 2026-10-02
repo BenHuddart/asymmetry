@@ -20,6 +20,7 @@ from asymmetry.core.fitting.component_tags import (
     ALL_GEOMETRIES,
     ComputationalCost,
     FieldGeometry,
+    ParameterKind,
     PhysicsClass,
 )
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
@@ -130,6 +131,36 @@ def test_register_component_tag_defaults_when_omitted():
     assert definition.field_geometries == ALL_GEOMETRIES
     assert definition.physics_classes == frozenset({PhysicsClass.CUSTOM})
     assert definition.cost is ComputationalCost.MODERATE
+
+
+def test_register_component_declared_parameter_kinds_land_on_definition():
+    definition = _register_stretched(param_kinds={"tau": "rate"})
+    assert definition.param_kinds == {
+        "A": ParameterKind.AMPLITUDE,  # the amplitude policy's scale name
+        "tau": ParameterKind.RATE,  # declared
+        "alpha": ParameterKind.SHAPE,  # the documented default
+    }
+
+
+def test_register_component_undeclared_phase_is_a_phase():
+    definition = register_component(
+        "UserPrecession",
+        lambda t, A, nu, phase: A * np.cos(2 * np.pi * nu * t + phase),
+        ["A", "nu", "phase"],
+        domain="time",
+        description="A precession signal.",
+        formula_template="{A}*cos(2*pi*{nu}*t + {phase})",
+        param_defaults={"A": 20.0, "nu": 1.0, "phase": 0.0},
+    )
+    assert definition.param_kinds["phase"] is ParameterKind.PHASE
+
+
+def test_register_component_bad_parameter_kind_rejected():
+    with pytest.raises(UserFunctionError, match="'speed'"):
+        _register_stretched(param_kinds={"tau": "speed"})
+    with pytest.raises(UserFunctionError, match="nope"):
+        _register_stretched(param_kinds={"nope": "rate"})
+    assert "UserStretched" not in COMPONENTS
 
 
 def test_register_component_bad_geometry_rejected():

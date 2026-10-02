@@ -31,11 +31,9 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from asymmetry.core.data.dataset import MuonDataset  # noqa: E402
+from asymmetry.core.fitting.component_tags import ParameterKind  # noqa: E402
 from asymmetry.core.fitting.composite import CompositeModel  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
-from asymmetry.core.fitting.global_search.heuristics import (  # noqa: E402
-    is_amplitude_parameter,
-)
 from asymmetry.core.fitting.grouped_time_domain import (  # noqa: E402
     build_grouped_count_model,
 )
@@ -159,8 +157,12 @@ def test_b_a_grouped_series_completion_ignores_a_live_extra_amplitude(
         tab._set_composite_model(
             CompositeModel(["OscillatoryField", "Exponential"], operators=["-"])
         )
-        live_only = set(tab._grouped_fit_model().param_names) - set(model_a.param_names)
-        assert [name for name in live_only if is_amplitude_parameter(name)] == ["A_2"]
+        live_kinds = tab._grouped_fit_model().parameter_kinds()
+        assert [
+            name
+            for name, kind in live_kinds.items()
+            if kind is ParameterKind.AMPLITUDE and name not in model_a.param_names
+        ] == ["A_2"]
 
         member = _result({**_GROUP_NUISANCES, **_GROUPED_PHYSICS})
         series_result = SimpleNamespace(

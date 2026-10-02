@@ -30,6 +30,13 @@ Global fit-wizard helpers:
 .. autoclass:: asymmetry.core.fitting.GlobalFitWizardRecommendation
    :members:
 
+.. autoclass:: asymmetry.core.fitting.SelectionObjective
+   :members:
+
+.. autoclass:: asymmetry.core.fitting.global_search.trend_objective.CandidateRung
+   :members:
+   :inherited-members:
+
 .. autofunction:: asymmetry.core.fitting.build_global_fit_wizard_recommendation
 
 .. autofunction:: asymmetry.core.fitting.rerank_global_fit_wizard_recommendation
