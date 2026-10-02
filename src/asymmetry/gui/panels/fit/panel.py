@@ -109,6 +109,7 @@ class FitPanel(QWidget):
     # Global Fit Wizard's Transitions card asks for its optimised partition to
     # become phase data groups (the main window owns the group policy).
     apply_wizard_phases_requested = Signal(object, int)
+    series_group_requested = Signal(object)  # forwarded from GlobalFitTab
     add_single_fit_to_series_requested = Signal()
     fit_range_edit_committed = Signal(float, float)  # forwarded from SingleFitTab
     # Forwarded from the Batch tab's series row (D1/D7): open a recorded series,
@@ -225,6 +226,7 @@ class FitPanel(QWidget):
         self._global_tab.series_new_from_group_requested.connect(
             self.series_new_from_group_requested.emit
         )
+        self._global_tab.series_group_requested.connect(self.series_group_requested.emit)
         self._global_tab.series_rename_requested.connect(self.series_rename_requested.emit)
         self._global_tab.series_delete_requested.connect(self.series_delete_requested.emit)
         self._global_tab.field_direction_answered.connect(self.field_direction_answered.emit)

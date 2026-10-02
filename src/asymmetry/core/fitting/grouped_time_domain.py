@@ -19,6 +19,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import ParameterKind
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import (
     COST_FACTORIES,
     POISSON_COST,
@@ -27,10 +29,6 @@ from asymmetry.core.fitting.engine import (
     FitEngine,
     FitResult,
     _reject_affine_ties,
-)
-from asymmetry.core.fitting.global_search.heuristics import (
-    is_amplitude_parameter,
-    is_background_parameter,
 )
 from asymmetry.core.fitting.member_quality import MemberQuality, assess_member_quality
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
@@ -54,9 +52,12 @@ GROUP_NUISANCE_PARAMS: tuple[str, ...] = (
     "relative_phase",
 )
 
+#: Group nuisances a chained seed does not carry from the previous run's fit.
+_CHAIN_NUISANCE_RESTART: dict[str, float] = {"amplitude": 1.0, "background": 0.0}
+
 
 def validate_grouped_model_contract(
-    model_param_names: list[str] | tuple[str, ...],
+    model: CompositeModel,
     *,
     model_values: dict[str, float],
     fixed_params: set[str] | list[str] | tuple[str, ...],
@@ -73,16 +74,15 @@ def validate_grouped_model_contract(
 
     background_conflicts: list[str] = []
     amplitude_conflicts: list[str] = []
-    for name in model_param_names:
-        if is_background_parameter(name):
+    for name, kind in model.parameter_kinds().items():
+        if kind is ParameterKind.BACKGROUND:
             value = float(model_values.get(name, 0.0))
             if name not in fixed or not np.isclose(value, 0.0):
-                background_conflicts.append(str(name))
-            continue
-        if is_amplitude_parameter(name):
+                background_conflicts.append(name)
+        elif kind is ParameterKind.AMPLITUDE:
             value = float(model_values.get(name, 1.0))
             if name not in fixed or not np.isclose(value, 1.0):
-                amplitude_conflicts.append(str(name))
+                amplitude_conflicts.append(name)
 
     messages: list[str] = []
     if background_conflicts:
@@ -102,7 +102,7 @@ def validate_grouped_model_contract(
 
 
 def normalize_to_grouped_contract(
-    model_param_names: list[str] | tuple[str, ...],
+    model: CompositeModel,
     base_values: dict[str, float] | None = None,
 ) -> dict[str, float]:
     """Force a model's parameters to the normalised-polarisation contract.
@@ -117,10 +117,10 @@ def normalize_to_grouped_contract(
     multi-group simulate dialog.
     """
     values = dict(base_values or {})
-    for name in model_param_names:
-        if is_amplitude_parameter(name):
+    for name, kind in model.parameter_kinds().items():
+        if kind is ParameterKind.AMPLITUDE:
             values[name] = 1.0
-        elif is_background_parameter(name):
+        elif kind is ParameterKind.BACKGROUND:
             values[name] = 0.0
     return values
 
@@ -947,9 +947,10 @@ def _chained_initial_from_member(
     """Build the next member's seed from ``prev_result``'s fitted values.
 
     Each group's seed keeps the provided structure (names, bounds, fixed, links) but
-    takes the previous fit's fitted values, re-pinned through the normalised
-    polarisation contract (amplitude→1, background→0, per W5). A group whose previous
-    fit is missing or unsuccessful falls back to its provided seed.
+    takes the previous fit's fitted values, except the group's own scale and
+    baseline, which restart at ``_CHAIN_NUISANCE_RESTART``. The model's amplitudes
+    and backgrounds are fixed by the grouped contract, so they carry unchanged. A
+    group whose previous fit is missing or unsuccessful falls back to its provided seed.
     """
     chained: dict[Hashable, ParameterSet] = {}
     for group_id, seed in provided.items():
@@ -963,14 +964,13 @@ def _chained_initial_from_member(
                 float(group_result.parameters[p.name].value) if p.name in fitted_names else p.value
             )
             for p in seed
-        }
-        normalised = normalize_to_grouped_contract([p.name for p in seed], carried)
+        } | _CHAIN_NUISANCE_RESTART
         rebuilt = ParameterSet()
         for p in seed:
             rebuilt.add(
                 Parameter(
                     name=p.name,
-                    value=normalised[p.name],
+                    value=carried[p.name],
                     min=p.min,
                     max=p.max,
                     fixed=p.fixed,

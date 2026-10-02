@@ -22,6 +22,7 @@ from asymmetry.core.fitting.component_tags import (
     ALL_GEOMETRIES,
     ComputationalCost,
     FieldGeometry,
+    ParameterKind,
     PhysicsClass,
 )
 from asymmetry.core.fitting.helical import helical_crystal_line, helical_line
@@ -139,6 +140,14 @@ def _unknown_component_hint(
     return f"{base}.", ()
 
 
+#: The local names the amplitude policy treats as a component's scale, with the
+#: kind each one is.
+SCALING_PARAMETER_KINDS: dict[str, ParameterKind] = {
+    "A": ParameterKind.AMPLITUDE,
+    "A_bg": ParameterKind.BACKGROUND,
+}
+
+
 class UnknownComponentError(ValueError):
     """An expression referenced a component name that is not registered.
 
@@ -169,6 +178,8 @@ class ComponentDefinition:
     param_names: list[str]
     param_defaults: dict[str, float]
     param_info: dict[str, ParamInfo]
+    #: What each parameter measures; one entry per name in ``param_names``.
+    param_kinds: dict[str, ParameterKind]
     formula_template: str
     latex_equation: str = ""
     category: str = "General"
@@ -203,6 +214,14 @@ class ComponentDefinition:
     #: Relative evaluation-cost hint for tiered wizard screening (the wizard
     #: trials cheap components before expensive ones).
     cost: ComputationalCost = ComputationalCost.MODERATE
+
+    def __post_init__(self) -> None:
+        mismatched = sorted(set(self.param_names) ^ set(self.param_kinds))
+        if mismatched:
+            raise ValueError(
+                f"Component {self.name!r} must declare a ParameterKind for exactly its "
+                f"parameters; missing or unknown: {', '.join(mismatched)}."
+            )
 
 
 def _exp_component(t: NDArray, A: float, Lambda: float) -> NDArray[np.float64]:
@@ -547,6 +566,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_names=["A", "Lambda"],
         param_defaults={"A": 25.0, "Lambda": 0.5},
         param_info={"A": get_param_info("A"), "Lambda": get_param_info("Lambda")},
+        param_kinds={"A": ParameterKind.AMPLITUDE, "Lambda": ParameterKind.RATE},
         formula_template="{A}*exp(-{Lambda}*t)",
         latex_equation=r"A(t) = A e^{-\Lambda t}",
         category="Relaxation",
@@ -563,6 +583,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_names=["A", "sigma"],
         param_defaults={"A": 25.0, "sigma": 0.5},
         param_info={"A": get_param_info("A"), "sigma": get_param_info("sigma")},
+        param_kinds={"A": ParameterKind.AMPLITUDE, "sigma": ParameterKind.RATE},
         formula_template="{A}*exp(-({sigma}*t)^2)",
         latex_equation=r"A(t) = A e^{-(\sigma t)^2}",
         category="Relaxation",
@@ -582,6 +603,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A": get_param_info("A"),
             "frequency": get_param_info("frequency"),
             "phase": get_param_info("phase"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "frequency": ParameterKind.FREQUENCY,
+            "phase": ParameterKind.PHASE,
         },
         formula_template="{A}*cos(2*pi*{frequency}*t + {phase})",
         latex_equation=r"A(t) = A \cos(2\pi f t + \phi)",
@@ -603,6 +629,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A": get_param_info("A"),
             "field": get_param_info("field"),
             "phase": get_param_info("phase"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "field": ParameterKind.FIELD,
+            "phase": ParameterKind.PHASE,
         },
         formula_template="{A}*cos(2*pi*gamma_mu*{field}*t + {phase})",
         latex_equation=r"A(t) = A \cos(2\pi \gamma_\mu B t + \phi)",
@@ -630,6 +661,13 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "lambda_ab": get_param_info("lambda_ab"),
             "Bc2": get_param_info("Bc2"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "field": ParameterKind.FIELD,
+            "phase": ParameterKind.PHASE,
+            "lambda_ab": ParameterKind.STATIC_WIDTH,
+            "Bc2": ParameterKind.FIELD,
+        },
         formula_template="{A}*Re[exp(i(2*pi*gamma_mu*{field}*t + {phase})) * R_VL(t; {lambda_ab}, {Bc2})]",
         latex_equation=r"A(t) = A\,\mathrm{Re}\!\left[e^{i(2\pi\gamma_\mu B t + \phi)} R_{VL}(t;\lambda,B_{c2})\right]",
         category="Oscillation",
@@ -656,6 +694,13 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "lambda_ab": get_param_info("lambda_ab"),
             "Bc2": get_param_info("Bc2"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "field": ParameterKind.FIELD,
+            "phase": ParameterKind.PHASE,
+            "lambda_ab": ParameterKind.STATIC_WIDTH,
+            "Bc2": ParameterKind.FIELD,
+        },
         formula_template="{A}*Re[exp(i(2*pi*gamma_mu*{field}*t + {phase})) * R_VL_powder(t; {lambda_ab}, {Bc2})]",
         latex_equation=r"A(t) = A\,\mathrm{Re}\!\left[e^{i(2\pi\gamma_\mu B t + \phi)} R_{VL}^{\mathrm{pow}}(t;\lambda_{ab},B_{c2})\right]",
         category="Oscillation",
@@ -676,6 +721,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A": get_param_info("A"),
             "frequency": get_param_info("frequency"),
             "phase": get_param_info("phase"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "frequency": ParameterKind.FREQUENCY,
+            "phase": ParameterKind.PHASE,
         },
         formula_template="{A}*J0(2*pi*{frequency}*t + {phase})",
         latex_equation=r"A(t) = A\,J_0(2\pi f t + \phi)",
@@ -701,6 +751,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "frequency": get_param_info("frequency"),
             "lambda_T": get_param_info("lambda_T"),
             "lambda_L": get_param_info("lambda_L"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "frequency": ParameterKind.FREQUENCY,
+            "lambda_T": ParameterKind.RATE,
+            "lambda_L": ParameterKind.RATE,
         },
         formula_template=(
             "{A}*(1/3*exp(-{lambda_L}*t) + 2/3*J0(2*pi*{frequency}*t)*exp(-{lambda_T}*t))"
@@ -740,6 +796,14 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "phase": get_param_info("phase"),
             "lambda_T": get_param_info("lambda_T"),
             "lambda_L": get_param_info("lambda_L"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "frequency": ParameterKind.FREQUENCY,
+            "ratio": ParameterKind.SHAPE,
+            "phase": ParameterKind.PHASE,
+            "lambda_T": ParameterKind.RATE,
+            "lambda_L": ParameterKind.RATE,
         },
         formula_template=(
             "{A}*(1/3*exp(-{lambda_L}*t) + 2/3*J0(pi*{frequency}*(1-{ratio})*t)*"
@@ -781,6 +845,14 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "lambda_T": get_param_info("lambda_T"),
             "lambda_L": get_param_info("lambda_L"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "frequency": ParameterKind.FREQUENCY,
+            "delta_frequency": ParameterKind.FREQUENCY,
+            "phase": ParameterKind.PHASE,
+            "lambda_T": ParameterKind.RATE,
+            "lambda_L": ParameterKind.RATE,
+        },
         formula_template=(
             "{A}*(1/3*exp(-{lambda_L}*t) + 2/3*J0(2*pi*{delta_frequency}*t)*"
             "cos(2*pi*{frequency}*t + {phase})*exp(-{lambda_T}*t))"
@@ -819,6 +891,14 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "phase": get_param_info("phase"),
             "lambda_T": get_param_info("lambda_T"),
             "lambda_L": get_param_info("lambda_L"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "frequency": ParameterKind.FREQUENCY,
+            "ratio": ParameterKind.SHAPE,
+            "phase": ParameterKind.PHASE,
+            "lambda_T": ParameterKind.RATE,
+            "lambda_L": ParameterKind.RATE,
         },
         formula_template=(
             "{A}*(1/3*exp(-{lambda_L}*t) + "
@@ -873,6 +953,16 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "lambda_T": get_param_info("lambda_T"),
             "lambda_L": get_param_info("lambda_L"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "frequency": ParameterKind.FREQUENCY,
+            "ratio": ParameterKind.SHAPE,
+            "theta_h": ParameterKind.GEOMETRY,
+            "phi_h": ParameterKind.GEOMETRY,
+            "phase": ParameterKind.PHASE,
+            "lambda_T": ParameterKind.RATE,
+            "lambda_L": ParameterKind.RATE,
+        },
         formula_template=(
             "{A}*(W0({ratio}, {theta_h}, {phi_h})*exp(-{lambda_L}*t) + "
             "H_helix(t; {frequency}, {ratio}, {phase}, {theta_h}, {phi_h})*exp(-{lambda_T}*t))"
@@ -901,6 +991,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A_hf": get_param_info("A_hf"),
             "phase": get_param_info("phase"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "field": ParameterKind.FIELD,
+            "A_hf": ParameterKind.GEOMETRY,
+            "phase": ParameterKind.PHASE,
+        },
         formula_template="{A}*TFmuonium(t; {field}, {A_hf}, {phase})",
         latex_equation=(
             r"A(t) = \frac{A}{4}\sum_{ij}(1\pm\delta)\cos(2\pi w_{ij} t + \phi),"
@@ -926,6 +1022,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A_hf": get_param_info("A_hf"),
             "phase": get_param_info("phase"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "field": ParameterKind.FIELD,
+            "A_hf": ParameterKind.GEOMETRY,
+            "phase": ParameterKind.PHASE,
+        },
         formula_template="{A}*LowTFmuonium(t; {field}, {A_hf}, {phase})",
         latex_equation=(
             r"A(t) = \frac{A}{4}\left[(1+\delta)\cos(2\pi w_{12} t + \phi)"
@@ -950,6 +1052,13 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "D_mu": get_param_info("D_mu"),
             "f_cut": get_param_info("f_cut"),
             "phase": get_param_info("phase"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "A_hf": ParameterKind.GEOMETRY,
+            "D_mu": ParameterKind.GEOMETRY,
+            "f_cut": ParameterKind.RATE,
+            "phase": ParameterKind.PHASE,
         },
         formula_template="{A}*ZFmuonium(t; {A_hf}, {D_mu}, {f_cut}, {phase})",
         latex_equation=(
@@ -979,6 +1088,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "field": get_param_info("field"),
             "A_hf": get_param_info("A_hf"),
             "phase": get_param_info("phase"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "field": ParameterKind.FIELD,
+            "A_hf": ParameterKind.GEOMETRY,
+            "phase": ParameterKind.PHASE,
         },
         formula_template="{A}*HighTFmuonium(t; {field}, {A_hf}, {phase})",
         latex_equation=(
@@ -1010,6 +1125,13 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A_hf": get_param_info("A_hf"),
             "D_mu": get_param_info("D_mu"),
             "phase": get_param_info("phase"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "field": ParameterKind.FIELD,
+            "A_hf": ParameterKind.GEOMETRY,
+            "D_mu": ParameterKind.GEOMETRY,
+            "phase": ParameterKind.PHASE,
         },
         formula_template="{A}*HighTFmuoniumAniso(t; {field}, {A_hf}, {D_mu}, {phase})",
         latex_equation=(
@@ -1043,6 +1165,13 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "B_L": get_param_info("B_L"),
             "A_hf": get_param_info("A_hf"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "delta_ex": ParameterKind.STATIC_WIDTH,
+            "tau_c": ParameterKind.RATE,
+            "B_L": ParameterKind.FIELD,
+            "A_hf": ParameterKind.GEOMETRY,
+        },
         formula_template="{A}*exp(-lambda({delta_ex},{tau_c},{B_L},{A_hf})*t)",
         fixed_params=("A_hf",),
         latex_equation=(
@@ -1068,6 +1197,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Lambda": get_param_info("Lambda"),
             "beta": get_param_info("beta"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "Lambda": ParameterKind.RATE,
+            "beta": ParameterKind.SHAPE,
+        },
         formula_template="{A}*exp(-(abs({Lambda})*t)^({beta}))",
         latex_equation=r"A(t) = A \exp\left(-(|\Lambda| t)^\beta\right)",
         category="Relaxation",
@@ -1084,6 +1218,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_names=["A", "Gamma"],
         param_defaults={"A": 25.0, "Gamma": 1.0},
         param_info={"A": get_param_info("A"), "Gamma": get_param_info("Gamma")},
+        param_kinds={"A": ParameterKind.AMPLITUDE, "Gamma": ParameterKind.RATE},
         formula_template="{A}*exp({Gamma}*t)*erfc(sqrt({Gamma}*t))",
         latex_equation=r"A(t) = A\, e^{\Gamma t}\,\mathrm{erfc}\!\left(\sqrt{\Gamma t}\right)",
         category="Relaxation",
@@ -1100,6 +1235,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_names=["A", "Delta"],
         param_defaults={"A": 25.0, "Delta": 0.5},
         param_info={"A": get_param_info("A"), "Delta": get_param_info("Delta")},
+        param_kinds={"A": ParameterKind.AMPLITUDE, "Delta": ParameterKind.STATIC_WIDTH},
         formula_template=("{A}*(1/3 + 2/3*(1-({Delta}*t)^2)*exp(-({Delta}*t)^2/2))"),
         latex_equation=(
             r"A(t) = A\left[\frac{1}{3} + \frac{2}{3}\left(1-(\Delta t)^2\right)e^{-(\Delta t)^2/2}\right]"
@@ -1121,6 +1257,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A": get_param_info("A"),
             "Delta": get_param_info("Delta"),
             "B_L": get_param_info("B_L"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "Delta": ParameterKind.STATIC_WIDTH,
+            "B_L": ParameterKind.FIELD,
         },
         formula_template="{A}*Gz(t; Delta={Delta}, B_L={B_L})",
         latex_equation=(
@@ -1150,6 +1291,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "nu": get_param_info("nu"),
             "B_L": get_param_info("B_L"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "Delta": ParameterKind.STATIC_WIDTH,
+            "nu": ParameterKind.RATE,
+            "B_L": ParameterKind.FIELD,
+        },
         formula_template="{A}*G_dyn(t; Delta={Delta}, nu={nu}, B_L={B_L})",
         latex_equation=(
             r"A(t)=A\,G^{\mathrm{dyn}}_{\mathrm{GKT}}(t;\Delta,\nu,B_L),\quad "
@@ -1178,6 +1325,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "nu": get_param_info("nu"),
             "B_L": get_param_info("B_L"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "a_L": ParameterKind.STATIC_WIDTH,
+            "nu": ParameterKind.RATE,
+            "B_L": ParameterKind.FIELD,
+        },
         formula_template="{A}*G_dyn_L(t; a_L={a_L}, nu={nu}, B_L={B_L})",
         latex_equation=(
             r"A(t)=A\,G^{\mathrm{dyn}}_{\mathrm{LKT}}(t;a_L,\nu,B_L),\quad "
@@ -1201,6 +1354,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Delta": get_param_info("Delta"),
             "B_L": get_param_info("B_L"),
             "w_rel": get_param_info("w_rel"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "Delta": ParameterKind.STATIC_WIDTH,
+            "B_L": ParameterKind.FIELD,
+            "w_rel": ParameterKind.SHAPE,
         },
         formula_template="{A}*<G_KT(t; Delta', {B_L})>_(Delta'~N({Delta},{w_rel}*{Delta}))",
         latex_equation=(
@@ -1229,6 +1388,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "nu": get_param_info("nu"),
             "B_L": get_param_info("B_L"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "Delta": ParameterKind.STATIC_WIDTH,
+            "nu": ParameterKind.RATE,
+            "B_L": ParameterKind.FIELD,
+        },
         formula_template="{A}*exp(-Gamma(t; Delta={Delta}, nu={nu}, B_L={B_L}))",
         latex_equation=(
             r"A(t)=A\exp[-\Gamma(t)],\ \Gamma(t)=\frac{2\Delta^2}{(\omega_0^2+\nu^2)^2}"
@@ -1256,6 +1421,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "Delta": get_param_info("Delta"),
             "nu": get_param_info("nu"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "Delta": ParameterKind.STATIC_WIDTH,
+            "nu": ParameterKind.RATE,
+        },
         formula_template="{A}*exp(-({Delta}^2/{nu}^2)*(exp(-{nu}*t)-1+{nu}*t))",
         latex_equation=(
             r"A(t)=A\exp\!\left[-\frac{\Delta^2}{\nu^2}\left(e^{-\nu t}-1+\nu t\right)\right]"
@@ -1274,6 +1444,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_names=["A", "r_muF"],
         param_defaults={"A": 25.0, "r_muF": 1.17},
         param_info={"A": get_param_info("A"), "r_muF": get_param_info("r_muF")},
+        param_kinds={"A": ParameterKind.AMPLITUDE, "r_muF": ParameterKind.GEOMETRY},
         formula_template="{A}*Dz_muF(t,{r_muF})",
         latex_equation=(
             r"A(t)=A\frac{1}{6}\left[1+2\cos\left(\frac{\omega_d t}{2}\right)+\cos(\omega_d t)+2\cos\left(\frac{3\omega_d t}{2}\right)\right]"
@@ -1292,6 +1463,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_names=["A", "r_muF"],
         param_defaults={"A": 25.0, "r_muF": 1.17},
         param_info={"A": get_param_info("A"), "r_muF": get_param_info("r_muF")},
+        param_kinds={"A": ParameterKind.AMPLITUDE, "r_muF": ParameterKind.GEOMETRY},
         formula_template="{A}*G_FmuF_linear(t,{r_muF})",
         latex_equation=(r"A(t)=A\,G_{F\mu F}(t)"),
         category="Nuclear dipolar",
@@ -1311,6 +1483,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A": get_param_info("A"),
             "r_muF": get_param_info("r_muF"),
             "nu": get_param_info("nu"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "r_muF": ParameterKind.GEOMETRY,
+            "nu": ParameterKind.RATE,
         },
         formula_template="{A}*G_FmuF_dyn(t; {r_muF}, {nu})",
         latex_equation=(
@@ -1336,6 +1513,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "r2": get_param_info("r2"),
             "theta": get_param_info("theta"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "r1": ParameterKind.GEOMETRY,
+            "r2": ParameterKind.GEOMETRY,
+            "theta": ParameterKind.GEOMETRY,
+        },
         formula_template="{A}*Dz_FmuF_general(t,{r1},{r2},{theta})",
         latex_equation=(r"A(t)=A\,D_z^{\mathrm{powder}}\!(t;r_1,r_2,\theta)"),
         category="Nuclear dipolar",
@@ -1357,6 +1540,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "r3": get_param_info("r3"),
             "phi3": get_param_info("phi3"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "r_muF": ParameterKind.GEOMETRY,
+            "r3": ParameterKind.GEOMETRY,
+            "phi3": ParameterKind.GEOMETRY,
+        },
         formula_template="{A}*Dz_FmuF_F(t; {r_muF}, {r3}, {phi3})",
         latex_equation=(r"A(t)=A\,D_z^{\mathrm{powder}}\!(t;r_{\mu F},r_3,\phi_3)"),
         category="Nuclear dipolar",
@@ -1376,6 +1565,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A": get_param_info("A"),
             "B_dip": get_param_info("B_dip"),
             "lambda_T": get_param_info("lambda_T"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "B_dip": ParameterKind.FIELD,
+            "lambda_T": ParameterKind.RATE,
         },
         formula_template=(
             "{A}/6*(1 + exp(-{lambda_T}*t)*(2*cos(w*t/2)+cos(w*t)+2*cos(3*w*t/2))),"
@@ -1404,6 +1598,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "r_muH": get_param_info("r_muH"),
             "lambda_T": get_param_info("lambda_T"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "r_muH": ParameterKind.GEOMETRY,
+            "lambda_T": ParameterKind.RATE,
+        },
         formula_template="{A}*Dz_pair(t; omega_d({r_muH}), {lambda_T})",
         latex_equation=(
             r"A(t)=\frac{A}{6}\left[1+e^{-\lambda_T t}\left(2\cos\frac{\omega_d t}{2}"
@@ -1427,6 +1626,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "A": get_param_info("A"),
             "r_mue": get_param_info("r_mue"),
             "lambda_T": get_param_info("lambda_T"),
+        },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "r_mue": ParameterKind.GEOMETRY,
+            "lambda_T": ParameterKind.RATE,
         },
         formula_template="{A}*Dz_pair(t; omega_d({r_mue}), {lambda_T})",
         latex_equation=(
@@ -1453,6 +1657,12 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "f_quad": get_param_info("f_quad"),
             "J_spin": get_param_info("J_spin"),
         },
+        param_kinds={
+            "A": ParameterKind.AMPLITUDE,
+            "f_dip": ParameterKind.GEOMETRY,
+            "f_quad": ParameterKind.GEOMETRY,
+            "J_spin": ParameterKind.GEOMETRY,
+        },
         formula_template="{A}*Dz_spinJ(t; {f_dip}, {f_quad}, {J_spin})",
         fixed_params=("J_spin",),
         latex_equation=(
@@ -1473,6 +1683,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_names=["A_bg"],
         param_defaults={"A_bg": 0.0},
         param_info={"A_bg": get_param_info("A_bg")},
+        param_kinds={"A_bg": ParameterKind.BACKGROUND},
         formula_template="{A_bg}",
         latex_equation=r"A(t) = A_{bg}",
         category="Background",
@@ -1492,6 +1703,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "height": get_param_info("height"),
             "nu0": get_param_info("nu0"),
             "fwhm": get_param_info("fwhm"),
+        },
+        param_kinds={
+            "height": ParameterKind.AMPLITUDE,
+            "nu0": ParameterKind.FREQUENCY,
+            "fwhm": ParameterKind.STATIC_WIDTH,
         },
         formula_template="{height}*exp(-4*ln(2)*((nu-{nu0})/{fwhm})^2)",
         latex_equation=(
@@ -1517,6 +1733,11 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "nu0": get_param_info("nu0"),
             "fwhm": get_param_info("fwhm"),
         },
+        param_kinds={
+            "height": ParameterKind.AMPLITUDE,
+            "nu0": ParameterKind.FREQUENCY,
+            "fwhm": ParameterKind.STATIC_WIDTH,
+        },
         formula_template="{height}/(1+4*((nu-{nu0})/{fwhm})^2)",
         latex_equation=(r"S(\nu)=\frac{h}{1+4\,(\nu-\nu_0)^2/w^2},\quad w \equiv \mathrm{FWHM}"),
         category="Frequency Domain",
@@ -1534,6 +1755,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_names=["bg"],
         param_defaults={"bg": 0.0},
         param_info={"bg": get_param_info("bg")},
+        param_kinds={"bg": ParameterKind.BACKGROUND},
         formula_template="{bg}",
         latex_equation=r"S(\nu)=b_g",
         category="Frequency Domain",
@@ -1551,6 +1773,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_names=["bg", "slope"],
         param_defaults={"bg": 0.0, "slope": 0.0},
         param_info={"bg": get_param_info("bg"), "slope": get_param_info("slope")},
+        param_kinds={"bg": ParameterKind.BACKGROUND, "slope": ParameterKind.BACKGROUND},
         formula_template="{bg}+{slope}*nu",
         latex_equation=r"S(\nu)=b_g+m\nu",
         category="Frequency Domain",
@@ -2070,6 +2293,7 @@ def placeholder_component_definition(name: str) -> ComponentDefinition:
         param_names=[],
         param_defaults={},
         param_info={},
+        param_kinds={},
         formula_template="0",
         latex_equation="",
         category="User",
@@ -2263,6 +2487,24 @@ class CompositeModel:
             if fraction_name is not None:
                 identities[fraction_name] = FractionWeight(idx)
         return identities
+
+    def parameter_kinds(self) -> dict[str, ParameterKind]:
+        """Map every unique parameter name to the kind its component declares.
+
+        A fraction group's total is an ``AMPLITUDE`` (told from a component's
+        own amplitude by its :class:`GroupAmplitude` identity) and its free
+        weights are ``FRACTION``. The keys are :attr:`param_names`, in order.
+        """
+        kinds: dict[str, ParameterKind] = {}
+        for name, identity in self.parameter_identities().items():
+            if isinstance(identity, ComponentParameter):
+                component = self.components[identity.component]
+                kinds[name] = component.param_kinds[identity.local_name]
+            elif isinstance(identity, GroupAmplitude):
+                kinds[name] = ParameterKind.AMPLITUDE
+            else:
+                kinds[name] = ParameterKind.FRACTION
+        return kinds
 
     def scale_parameter_name(self, component_index: int) -> str | None:
         """Return the fitted name of a component's scale, or ``None``.
@@ -2722,7 +2964,7 @@ class CompositeModel:
 
     def _is_scaling_parameter(self, pname: str) -> bool:
         """Return True for parameters that act as component scale factors."""
-        return pname in {"A", "A_bg"}
+        return pname in SCALING_PARAMETER_KINDS
 
     def _component_has_scaling_parameter(self, idx: int) -> bool:
         return any(self._is_scaling_parameter(pname) for pname in self.components[idx].param_names)

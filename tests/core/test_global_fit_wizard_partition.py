@@ -50,6 +50,7 @@ from asymmetry.core.fitting.global_search.partition import (
     PartitionSolution,
     Segment,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 
 # --------------------------------------------------------------------------- #
 # The planted two-phase series
@@ -379,6 +380,7 @@ def test_every_distinct_verified_segment_is_fitted_exactly_once(planted_series):
             partition_path=screening.partition_path,
             partition_k=1,
             instrumentation=instrumentation,
+            objective=SelectionObjective.STATISTICAL,
         )
 
     # k = 0 → (0, 10); k = 1 → (0, 5), (5, 10): three distinct segments.
@@ -445,7 +447,7 @@ def test_partition_k_none_runs_the_series_wide_search_and_carries_no_partition(
 ):
     """The existing contract: without a ``partition_k`` nothing here applies.
 
-    On *this* series the series-wide answer is that there isn't one — no single
+    On *this* series the statistical series-wide answer is that there isn't one — no single
     template describes runs on both sides of the transition well enough to pass
     the residual gate, which is exactly the failure the partitioned path exists to
     replace. What matters here is that the coupled search still ran and that none
@@ -460,7 +462,9 @@ def test_partition_k_none_runs_the_series_wide_search_and_carries_no_partition(
             lambda fingerprint, current_model=None: TEMPLATES,
         )
         plain = build_global_fit_wizard_recommendation(
-            datasets, single_fit_recommendations_by_run=table
+            datasets,
+            single_fit_recommendations_by_run=table,
+            objective=SelectionObjective.STATISTICAL,
         )
 
     assert plain.partition_path is None
@@ -778,7 +782,12 @@ def test_a_phase_is_ranked_by_the_partition_score_not_the_search_metric():
 
     lean = _gated_assessment(key="one_line", aicc=100.0, gate_passed=True)
     rich = _gated_assessment(key="two_line", aicc=90.0, gate_passed=True)
-    rich = dc_replace(rich, local_param_names=("A_1", "A_2", "A_3", "A_4"), global_param_names=())
+    rich = dc_replace(
+        rich,
+        template=dc_replace(rich.template, model=CompositeModel(["Exponential"] * 4)),
+        local_param_names=("A_1", "A_2", "A_3", "A_4"),
+        global_param_names=(),
+    )
     lean = dc_replace(lean, local_param_names=("A_1",), global_param_names=())
     points = {1: 20000}
     assert global_fit_wizard_module._partition_bic(rich, points) > (
@@ -1120,3 +1129,37 @@ def test_the_rescored_elbow_never_passes_the_verified_window():
     assert [round(s.gain, 1) for s in updated.solutions] == [0.0, 100.0, 80.0, 30.0, 490.0]
     assert updated.solutions[4].admissible
     assert updated.selected_k == 3
+
+
+# --------------------------------------------------------------------------- #
+# The trend objective, phase by phase (plan D13)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.integration
+def test_each_phase_answer_is_the_ladder_rung_that_trends_best(planted_series):
+    """Under the default objective a phase's answer is a rung of its own ladder."""
+    _datasets, _table, _screening, optimised = planted_series
+
+    assert optimised.objective is SelectionObjective.TREND
+    answers = [optimised.phase_assessment(index) for index in (0, 1)]
+    assert [answer.template.key for answer in answers] == ["exp_constant", "gauss_constant"]
+    for answer, rate in zip(answers, ("Lambda", "sigma"), strict=True):
+        assert answer.rung.preselected
+        assert set(answer.global_param_names) == {"A_1", "A_bg"}
+        assert set(answer.rung.trend.parameters) == {rate}
+        assert len(answer.rung.run_costs) == PLANTED_BREAK
+
+
+@pytest.mark.integration
+def test_a_break_is_scored_by_the_best_fit_of_the_phase_not_by_its_answer(planted_series):
+    """A rung may cost 2σ, so the answer's own BIC is never better than the segment's."""
+    _datasets, table, _screening, optimised = planted_series
+    points = {run: int(recommendation.analysed_points) for run, recommendation in table.items()}
+
+    for index, segment in enumerate(optimised.recommended_partition.segments):
+        answer_bic = global_fit_wizard_module._partition_bic(
+            optimised.phase_assessment(index), points
+        )
+        assert segment.structure == optimised.phase_assessment(index).selection_key
+        assert segment.ic <= answer_bic + 1e-9

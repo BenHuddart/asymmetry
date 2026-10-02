@@ -194,8 +194,7 @@ def _trace_variation_and_roughness(values: np.ndarray) -> tuple[float, float]:
     ``total_variation`` is the sum of absolute successive differences divided by
     the value span; ``roughness`` is the RMS of second differences divided by
     the span. Both are scale-free so rationale thresholds do not depend on the
-    parameter's magnitude. Mirrors
-    ``global_fit_wizard._parameter_trace_roughness_from_results``.
+    parameter's magnitude.
     """
     values = np.asarray(values, dtype=float)
     values = values[np.isfinite(values)]

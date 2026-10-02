@@ -9,6 +9,7 @@ descending-frequency warm-start that fixes it.
 
 from __future__ import annotations
 
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.series_seeding import (
     SeriesPoint,
     detect_amplitude_collapse,
@@ -24,15 +25,16 @@ from asymmetry.core.fitting.series_seeding import (
 
 
 def test_resolve_series_params_picks_leading_amplitude_and_frequency():
-    names = ["A_1", "frequency", "phase", "lambda", "A_bg"]
-    amp, freq = resolve_series_params(names)
-    assert amp == "A_1"
+    # The leading constant is a background, so the amplitude is the oscillation's.
+    model = CompositeModel.from_expression("Constant + Oscillatory * Exponential")
+    amp, freq = resolve_series_params(model)
+    assert amp == "A_2"
     assert freq == "frequency"
 
 
 def test_resolve_series_params_handles_missing_frequency():
-    amp, freq = resolve_series_params(["A", "lambda", "A_bg"])
-    assert amp == "A"
+    amp, freq = resolve_series_params(CompositeModel.from_expression("Exponential + Constant"))
+    assert amp == "A_1"
     assert freq is None
 
 

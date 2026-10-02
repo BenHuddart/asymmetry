@@ -790,9 +790,7 @@ class MultiGroupSimulateDialog(_SimulateDialogBase):
         polarisation — delegated to the single core definition of the grouped
         contract.
         """
-        self._base_values = normalize_to_grouped_contract(
-            list(getattr(self._model, "param_names", [])), self._base_values
-        )
+        self._base_values = normalize_to_grouped_contract(self._model, self._base_values)
 
     def _on_edit_model(self) -> None:
         old_model = self._model

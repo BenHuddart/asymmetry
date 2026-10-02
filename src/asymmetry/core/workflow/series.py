@@ -678,7 +678,7 @@ def fit_series(
     local_params = [
         parameter for parameter in recipe.parameter_names if parameter not in global_params
     ]
-    amplitude_param, frequency_param = resolve_series_params(model.param_names)
+    amplitude_param, frequency_param = resolve_series_params(model)
 
     records = {run: _prepared(datasets_by_run[run], recipe) for run in runs}
     free_params = [

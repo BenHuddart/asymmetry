@@ -623,7 +623,7 @@ the free-global correlation matrix, with canonical `to_dict()`/`from_dict()`.
 `asymmetry.core.fitting.cross_group_roles.suggest_cross_group_roles` recommends
 Global-vs-Local roles by a bounded (not `3^k`), deterministic AIC/AICc/BIC
 search — an all-global baseline, single "flip to local" refits, then a greedy
-beam accumulation — reusing the vocabulary of `global_fit_wizard`
+beam accumulation — with a recommendation per parameter
 (`score_delta`/`total_variation`/`roughness`/`rationale`).
 `asymmetry.core.representation.global_fit_study.GlobalFitStudy` is the persisted
 entity: a `study_id`, name, parameter/x/group-variable keys and labels, the

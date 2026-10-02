@@ -37,6 +37,7 @@ from asymmetry.core.fitting.global_search.partition import (
     PartitionSolution,
     Segment,
 )
+from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.utils.phase_colors import phase_color
 
@@ -216,6 +217,7 @@ def _recommendation() -> GlobalFitWizardRecommendation:
             (2, 1): _assessment(_PHASE_II, "Warm phase model"),
         },
         recommended_partition_k=2,
+        objective=SelectionObjective.STATISTICAL,
     )
 
 

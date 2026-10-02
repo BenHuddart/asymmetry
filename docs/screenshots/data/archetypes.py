@@ -159,6 +159,47 @@ def make_ag_lf_decoupling(
     return datasets
 
 
+def make_hopping_zf_tscan(seed: int = 58) -> list[MuonDataset]:
+    """Synthetic ZF temperature scan: a static nuclear width under a rising hop rate.
+
+    Ten runs of a dynamic Gaussian Kubo–Toyabe signal on a constant background.
+    The static width is the Ag archetype's Δ = 0.39 μs⁻¹ at every temperature;
+    the hop rate is planted as ν = 12 exp(−500 K / T) MHz, so the recovery of
+    the ⅓ tail is lost and the relaxation motionally narrows as the series
+    warms. One run (at 140 K) carries 10 % more asymmetry than the rest, as a
+    run taken after a change of slits or sample position would. Entirely
+    synthetic: round numbers, not a measurement.
+    """
+    rng = np.random.default_rng(seed)
+    model = CompositeModel.from_expression("DynamicGaussianKT + Constant")
+    time = np.linspace(0.02, 12.0, 300)
+    datasets: list[MuonDataset] = []
+    for index, temperature in enumerate(np.arange(80.0, 280.0, 20.0)):
+        clean = model.function(
+            time,
+            A_1=18.0 * (1.1 if temperature == 140.0 else 1.0),
+            Delta=DELTA_AG_PER_US,
+            nu=12.0 * np.exp(-500.0 / temperature),
+            B_L=0.0,
+            A_bg=4.0,
+        )
+        error = _poisson_errors(clean, counts_per_bin=1.0e5)
+        datasets.append(
+            MuonDataset(
+                time=time,
+                asymmetry=clean + rng.normal(0.0, error),
+                error=error,
+                metadata={
+                    "run_number": 6101 + index,
+                    "title": f"Synthetic ZF hopping scan {temperature:g}K",
+                    "temperature": float(temperature),
+                    "field": 0.0,
+                },
+            )
+        )
+    return datasets
+
+
 # ---------------------------------------------------------------------------
 # Magnetism thread: EuO ferromagnet through Tc (Ch 6, Fig 6.6)
 # ---------------------------------------------------------------------------

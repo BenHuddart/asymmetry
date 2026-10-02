@@ -78,6 +78,7 @@ from asymmetry.core.data.combine import (
     runs_with_dataset_metadata,
 )
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import (
     CompositeModel,
     migrate_legacy_fraction_state,
@@ -99,9 +100,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
     GlobalFitWizardRecommendation,
 )
-from asymmetry.core.fitting.global_search.heuristics import (
-    is_amplitude_parameter,
-)
+from asymmetry.core.fitting.global_search.trend_objective import left_out_note
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
     _group_dataset_run_number,
@@ -465,6 +464,9 @@ class GlobalFitTab(FitTabBase):
     # window's policy (``_resolve_batch_group``), so the request travels up and
     # the window drives the per-phase applies back through this tab.
     apply_wizard_phases_requested = Signal(object, int)
+    #: ``(run numbers)`` — bind this tab to the data group that owns these runs,
+    #: minting one if need be, before a fit that leaves some of them out is recorded.
+    series_group_requested = Signal(object)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     # (run_number, model, physics_values_by_name) — a converged single grouped
     # fit's shared physics, so the batch grouped surface can chain-seed per run.
@@ -3245,7 +3247,7 @@ class GlobalFitTab(FitTabBase):
         if oversampling > 1.0:
             fit_kwargs["error_oversampling"] = oversampling
         if not free_global_params:
-            amplitude_param, frequency_param = resolve_series_params(model.param_names)
+            amplitude_param, frequency_param = resolve_series_params(model)
             self._fit_worker = _start_fit_call(
                 self,
                 functools.partial(
@@ -3371,7 +3373,7 @@ class GlobalFitTab(FitTabBase):
         grouped_model = self._grouped_fit_model()
         try:
             validate_grouped_model_contract(
-                grouped_model.param_names,
+                grouped_model,
                 model_values=dict(grouped_config["model_values"]),
                 fixed_params=set(grouped_config["fixed"]),
             )
@@ -3562,9 +3564,7 @@ class GlobalFitTab(FitTabBase):
         for name in model.param_names:
             lo, hi = bounds.get(name, (-float("inf"), float("inf")))
             # The asymmetry amplitude (unit "%") is what count modes recover, so
-            # leave it free and seed it near a calibration value. Identify it by
-            # its unit, not is_amplitude_parameter, which also matches rate
-            # parameters like ``a_L`` and misses the standard ``A0``.
+            # leave it free and seed it near a calibration value.
             if get_param_info(name).unit == "%":
                 seed = float(model_values.get(name, 0.0))
                 if lo == hi:
@@ -4314,8 +4314,8 @@ class GlobalFitTab(FitTabBase):
             if fit_result is None:
                 continue
             param_dict = {parameter.name: parameter.value for parameter in fit_result.parameters}
-            for pname in launch.model.param_names:
-                if is_amplitude_parameter(pname):
+            for pname, kind in launch.model.parameter_kinds().items():
+                if kind is ParameterKind.AMPLITUDE:
                     param_dict.setdefault(pname, 1.0)
             fit_t_min, fit_t_max = _finite_time_span(dataset.time)
             n_samples = _fit_curve_sample_count(launch.model, param_dict, fit_t_min, fit_t_max)
@@ -4366,7 +4366,7 @@ class GlobalFitTab(FitTabBase):
         grouped_model = self._grouped_fit_model()
         try:
             validate_grouped_model_contract(
-                grouped_model.param_names,
+                grouped_model,
                 model_values=dict(grouped_config["model_values"]),
                 fixed_params=set(grouped_config["fixed"]),
             )
@@ -4641,11 +4641,30 @@ class GlobalFitTab(FitTabBase):
                 if self._fit_wizard_window is not None
                 else self._cached_wizard_log_text
             )
+            # Cached under the series the wizard analysed: an earlier apply may
+            # have left this tab on fewer runs (a phase, or a rung's coupled runs).
             self._cache_wizard_analysis(
                 recommendation,
-                signature=self._wizard_context_signature(parsed),
+                signature=self._wizard_context_signature(parsed)
+                | {"run_numbers": [int(run) for run in recommendation.dataset_order]},
                 log_text=log_text,
             )
+
+        # Exempt runs stay in the series' group, unticked, and out of the coupled fit
+        # (docs/plans/global-wizard-trend-objective.md, D17). The group must own them
+        # before the fit is recorded; minting it republishes the selection.
+        pool = list(self._member_pool)
+        if assessment.exempt_runs and self._bound_group_id is None:
+            self.series_group_requested.emit(sorted(assessment.fit_results_by_run))
+        coupled_runs = set(assessment.fit_results_by_run) - set(assessment.exempt_runs)
+        self._set_member_pool(
+            pool,
+            [
+                int(dataset.run_number)
+                for dataset in pool
+                if int(dataset.run_number) not in coupled_runs
+            ],
+        )
 
         self._set_composite_model(assessment.template.model)
         role_by_name = assessment.applied_roles
@@ -4712,6 +4731,7 @@ class GlobalFitTab(FitTabBase):
                     assessment.component_curves_by_run[run_number],
                 )
                 for run_number, result in assessment.fit_results_by_run.items()
+                if run_number in coupled_runs
             },
             assessment.global_parameters,
         )
@@ -4766,6 +4786,8 @@ class GlobalFitTab(FitTabBase):
             f"<b>Global:</b> {', '.join(assessment.global_param_names) or 'None'}",
             f"<b>Local:</b> {', '.join(assessment.local_param_names) or 'None'}",
         ]
+        if assessment.exempt_runs:
+            lines.append(left_out_note(assessment))
         if assessment.series_warnings:
             lines.append("<br><b>Warnings:</b>")
             lines.extend(f"  {warning}" for warning in assessment.series_warnings)
@@ -4893,10 +4915,9 @@ class GlobalFitTab(FitTabBase):
         the results card; otherwise there is nothing to say.
         """
         self._suggested_series_seeds = {}
-        param_names = list(getattr(launch.model, "param_names", []) or [])
-        if not param_names or len(results_dict) < 3:
+        if len(results_dict) < 3:
             return ""
-        amplitude_param, frequency_param = resolve_series_params(param_names)
+        amplitude_param, frequency_param = resolve_series_params(launch.model)
         if amplitude_param is None and frequency_param is None:
             return ""
         order_key = self._asymmetry_series_order_key(launch.datasets) or {}
@@ -4979,7 +5000,7 @@ class GlobalFitTab(FitTabBase):
         # values, then apply the grouped contract (amplitude→1, background→0).
         base = {name: float(model.param_defaults.get(name, 0.0)) for name in model.param_names}
         base.update({k: v for k, v in shared_values.items() if k in base})
-        base = normalize_to_grouped_contract(model.param_names, base)
+        base = normalize_to_grouped_contract(model, base)
         specs = group_specs_from_grouped_fit(grouped_result)
         if not specs:
             return
@@ -5109,8 +5130,8 @@ class GlobalFitTab(FitTabBase):
             if dataset is None:
                 continue
             param_dict = {parameter.name: parameter.value for parameter in fit_result.parameters}
-            for pname in launch.model.param_names:
-                if is_amplitude_parameter(pname):
+            for pname, kind in launch.model.parameter_kinds().items():
+                if kind is ParameterKind.AMPLITUDE:
                     param_dict.setdefault(pname, 1.0)
             # Every group was fitted over the launch run's span; a member with no
             # run behind it (no active dataset) falls back to its own samples.
@@ -6057,7 +6078,9 @@ class GlobalFitTab(FitTabBase):
         grouped_model = self._grouped_fit_model()
         grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
         visible_param_names = [
-            pname for pname in grouped_model.param_names if not is_amplitude_parameter(pname)
+            pname
+            for pname, kind in grouped_model.parameter_kinds().items()
+            if kind is not ParameterKind.AMPLITUDE
         ]
         # The individual-groups context is what holds the shared background and
         # phase at zero: this fit carries both in its per-group nuisances.
@@ -6305,10 +6328,10 @@ class GlobalFitTab(FitTabBase):
                 bounds[pname] = (min_val, max_val)
 
         grouped_model = self._grouped_fit_model()
-        for pname in grouped_model.param_names:
+        for pname, kind in grouped_model.parameter_kinds().items():
             if pname in model_values:
                 continue
-            if is_amplitude_parameter(pname):
+            if kind is ParameterKind.AMPLITUDE:
                 model_values[pname] = 1.0
                 bounds[pname] = (1.0, 1.0)
                 if pname not in fixed_params:

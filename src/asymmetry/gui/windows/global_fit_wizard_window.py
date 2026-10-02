@@ -25,7 +25,7 @@ from __future__ import annotations
 import copy
 import html
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 
 import numpy as np
@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.component_tags import FieldGeometry
+from asymmetry.core.fitting.component_tags import FieldGeometry, ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import (
@@ -72,12 +72,15 @@ from asymmetry.core.fitting.global_fit_wizard import (
     rerank_global_fit_wizard_recommendation,
     transitions_summary,
 )
-from asymmetry.core.fitting.global_search.heuristics import (
-    is_amplitude_parameter,
-    is_background_parameter,
-    is_rate_like_parameter,
-)
 from asymmetry.core.fitting.global_search.partition import PartitionPath
+from asymmetry.core.fitting.global_search.sharing_ladder import ADEQUACY_SIGMA
+from asymmetry.core.fitting.global_search.trend_objective import (
+    RungSummary,
+    SelectionObjective,
+    cost_text,
+    left_out_note,
+    summarise_rungs,
+)
 from asymmetry.core.fitting.model_comparison import shortlist, summarise_candidates
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.core.fitting.wizard_narrative import TrailStep
@@ -95,6 +98,7 @@ from asymmetry.core.fitting.wizard_scope import (
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
     build_primary_button_qss,
+    clear_layout,
     make_section_header,
     make_warning_banner,
 )
@@ -105,10 +109,12 @@ from asymmetry.gui.utils.phase_colors import (
     format_axis_range,
     phase_color,
 )
+from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.key_value_grid import KeyValueGrid
-from asymmetry.gui.widgets.model_compare_panel import ModelComparePanel
+from asymmetry.gui.widgets.model_compare_panel import ModelComparePanel, RungRow
 from asymmetry.gui.widgets.model_family_picker import ModelFamilyPicker
 from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.widgets.parameter_trace_strip import ParameterTraceStrip, TracedRung, rung_traces
 from asymmetry.gui.widgets.run_progress import RunProgress
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.screening_leaderboard import OptimisationStatus, ScreeningLeaderboard
@@ -138,6 +144,19 @@ _STEPS = (
     ("phases", "Phases"),
     ("apply", "Apply"),
 )
+
+#: The objective switch (plan D1 of the trend objective): label and one-line hint, default first.
+_OBJECTIVES: dict[SelectionObjective, tuple[str, str]] = {
+    SelectionObjective.TREND: (
+        "Best for trending",
+        "Recommends the sharing pattern whose per-run parameters vary most cleanly along "
+        "the series, among the models that fit adequately.",
+    ),
+    SelectionObjective.STATISTICAL: (
+        "Best statistical fit",
+        "Recommends the model and sharing pattern with the best information criterion.",
+    ),
+}
 
 #: Analysis modes whose result *adds to* the standing screening recommendation
 #: rather than replacing it (so the shortlist and the path survive the run).
@@ -303,6 +322,7 @@ def _run_global_fit_wizard_analysis(
     parameter_bounds: dict[str, tuple[float, float]],
     existing_single_fit_recommendations_by_run: dict[int, object] | None,
     metric: SelectionMetric,
+    objective: SelectionObjective,
     selected_template_keys: tuple[str, ...] = (),
     scope: WizardScope = WizardScope(),
     fit_times: FitTimeEstimates,
@@ -322,7 +342,8 @@ def _run_global_fit_wizard_analysis(
     ``fit_times`` judgement the picker described it by.
     ``effort_tier`` is the user-facing effort slider (PR 5); it only affects the
     coupled-optimisation builder (``mode == "optimize"``) — the independent
-    per-run screening pass has no tier concept.
+    per-run screening pass has no tier concept. ``objective`` is what that
+    builder searches and ranks for; screening is the same under either.
 
     ``partition_path``/``partition_k`` carry the *Transitions* pick of the
     ``"optimize_phases"`` mode: the same coupled-optimisation builder then runs
@@ -415,6 +436,7 @@ def _run_global_fit_wizard_analysis(
             cancel_callback=worker.is_cancelled,
             partition_path=partition_path,
             partition_k=partition_k,
+            objective=objective,
         )
     updated_single_fit_recommendations = {
         int(run_number): rec
@@ -497,6 +519,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._applied_target: _ApplyTarget | None = None
         # A Scope edit invalidates the shown results; screening must be re-run.
         self._analysis_stale = False
+        # Compare's rungs by key under the trend objective; empty under the statistical one.
+        self._rung_summaries: dict[str, RungSummary] = {}
+        # The selected path row's optimised phases as rungs, in phase order; likewise.
+        self._phase_rung_summaries: tuple[RungSummary, ...] = ()
         # Row order of the embedded expectations table; empty when the table
         # could not be populated (portfolio failure / mixed axes / no context).
         self._expectation_parameter_names: list[str] = []
@@ -513,6 +539,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
         )
         self._stale_banner.setVisible(False)
         self._central_layout.addWidget(self._stale_banner)
+        # Shown while the optimised fits answer the objective the user has since left.
+        self._objective_banner = make_warning_banner()
+        self._objective_banner.setVisible(False)
+        self._central_layout.addWidget(self._objective_banner)
 
         self._stepper = WizardStepper(_STEPS)
         self._stepper.step_requested.connect(self._show_step)
@@ -621,6 +651,13 @@ class GlobalFitWizardWindow(WizardWindowBase):
         # --- Search settings. ---
         layout.addWidget(make_section_header("Search settings"))
         settings_row = QHBoxLayout()
+        settings_row.addWidget(QLabel("Recommend:"))
+        self._objective_combo = QComboBox()
+        for index, (objective, (label, hint)) in enumerate(_OBJECTIVES.items()):
+            self._objective_combo.addItem(label, userData=objective)
+            self._objective_combo.setItemData(index, hint, Qt.ItemDataRole.ToolTipRole)
+        self._objective_combo.currentIndexChanged.connect(self._on_objective_changed)
+        settings_row.addWidget(self._objective_combo)
         settings_row.addWidget(QLabel("Ranking Metric:"))
         self._metric_combo = QComboBox()
         self._metric_combo.addItems([metric.value for metric in SelectionMetric])
@@ -647,6 +684,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         settings_row.addWidget(warning_info_btn)
         settings_row.addStretch()
         layout.addLayout(settings_row)
+        self._objective_hint = _muted_label(_OBJECTIVES[SelectionObjective.TREND][1])
+        layout.addWidget(self._objective_hint)
         layout.addStretch()
 
         view = QWidget()
@@ -804,13 +843,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         details_content = QWidget()
         details_layout = QVBoxLayout(details_content)
         details_layout.setContentsMargins(0, 0, 0, 0)
-        details_layout.addWidget(
-            _muted_label(
-                "The optimised fits' scores, and the parameter-sharing diagnostics for A. "
-                "Role recommendations use penalized score differences plus continuity "
-                "diagnostics; fixed parameters are left untouched."
-            )
-        )
+        self._details_intro = _muted_label("")
+        details_layout.addWidget(self._details_intro)
         self._optimised_table = QTableWidget(0, 8)
         self._optimised_table.setHorizontalHeaderLabels(
             ["Candidate", "Score", "AIC", "AICc", "BIC", "Gate", "Global", "Local"]
@@ -822,16 +856,39 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 column, QHeaderView.ResizeMode.Stretch
             )
         details_layout.addWidget(self._optimised_table)
-        details_layout.addWidget(make_section_header("Parameter roles for A"))
-        self._roles_table = QTableWidget(0, 7)
+
+        # What follows A depends on the objective: the role search's diagnostics, or a rung's cost.
+        self._roles_details = QWidget()
+        roles_layout = QVBoxLayout(self._roles_details)
+        roles_layout.setContentsMargins(0, 0, 0, 0)
+        roles_layout.addWidget(make_section_header("Parameter roles for A"))
+        self._roles_table = QTableWidget(0, 5)
         self._roles_table.setHorizontalHeaderLabels(
-            ["Parameter", "Role", "Global Score", "Local Score", "Δ", "TV", "Roughness"]
+            ["Parameter", "Role", "Global Score", "Local Score", "Δ"]
         )
         self._roles_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        details_layout.addWidget(self._roles_table)
+        roles_layout.addWidget(self._roles_table)
         self._roles_rationale = QLabel("")
         self._roles_rationale.setWordWrap(True)
-        details_layout.addWidget(self._roles_rationale)
+        roles_layout.addWidget(self._roles_rationale)
+
+        self._rung_details = QWidget()
+        rung_layout = QVBoxLayout(self._rung_details)
+        rung_layout.setContentsMargins(0, 0, 0, 0)
+        rung_layout.addWidget(make_section_header("Cost of A"))
+        self._rung_grid = KeyValueGrid()
+        rung_layout.addWidget(self._rung_grid)
+        self._run_costs_table = QTableWidget(0, 4)
+        self._run_costs_table.setHorizontalHeaderLabels(["Run", "χ²ᵣ", "Cost (σ)", "Note"])
+        self._run_costs_table.horizontalHeader().setStretchLastSection(True)
+        self._run_costs_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._run_costs_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        rung_layout.addWidget(self._run_costs_table)
+
+        self._details_stack = QStackedWidget()
+        self._details_stack.addWidget(self._roles_details)
+        self._details_stack.addWidget(self._rung_details)
+        details_layout.addWidget(self._details_stack)
         details.addWidget(self._make_scroll_page(details_content))
         layout.addWidget(details)
 
@@ -864,10 +921,19 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._transitions_card.phase_selected.connect(self._on_phase_selected)
         card_column = QVBoxLayout()
         card_column.addWidget(self._transitions_card)
-        card_column.addStretch()
+        # Under the trend objective each optimised phase's answer is a ladder rung.
+        self._phase_rungs = QVBoxLayout()
+        self._phase_rungs.setSpacing(6)
+        card_column.addLayout(self._phase_rungs)
+        self._phase_rung_rows: dict[int, RungRow] = {}
+        card_column.addStretch(1)
         layout.addLayout(card_column, 2)
+        plots = QVBoxLayout()
         self._phases_canvas = SeriesFitCanvas()
-        layout.addWidget(self._phases_canvas, 3)
+        plots.addWidget(self._phases_canvas, 3)
+        self._phases_strip = ParameterTraceStrip()
+        plots.addWidget(self._phases_strip, 2)
+        layout.addLayout(plots, 3)
 
         view = QWidget()
         view_layout = QVBoxLayout(view)
@@ -894,6 +960,11 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._apply_roles_section.addWidget(self._apply_roles)
         layout.addWidget(self._apply_roles_section)
 
+        # Runs a rung exempts: listed, and left out of the coupled series (plan D17).
+        self._apply_left_out = QLabel("")
+        self._apply_left_out.setWordWrap(True)
+        layout.addWidget(self._apply_left_out)
+
         self._apply_values_section = PanelSection("Starting values")
         self._apply_values_table = QTableWidget(0, 2)
         self._apply_values_table.setHorizontalHeaderLabels(["Parameter", "Value"])
@@ -914,7 +985,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._apply_rationale.setWordWrap(True)
         self._apply_why.addWidget(self._apply_rationale)
         layout.addWidget(self._apply_why)
-        layout.addStretch()
+        # The stretch takes every spare pixel, or the fixed-height table is centred in its section.
+        layout.addStretch(1)
 
         view = QWidget()
         view_layout = QVBoxLayout(view)
@@ -973,6 +1045,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._metric_combo.blockSignals(True)
         self._metric_combo.setCurrentText(SelectionMetric.AICC.value)
         self._metric_combo.blockSignals(False)
+        self._show_objective(SelectionObjective.TREND)
         self._set_empty_state()
         # Run / Field / Temperature are known now, so show the series immediately
         # rather than an empty table until screening. The classification columns
@@ -1068,6 +1141,17 @@ class GlobalFitWizardWindow(WizardWindowBase):
         recommendation = self._recommendation
         done = StepState.STALE if self._analysis_stale else StepState.DONE
         ready = StepState.STALE if self._analysis_stale else StepState.READY
+        # The optimised fits answer another objective than the one now chosen.
+        objective_stale = (
+            recommendation is not None and recommendation.objective is not self.current_objective()
+        )
+        self._objective_banner.setVisible(objective_stale)
+        if objective_stale:
+            self._objective_banner.setText(
+                f"These fits were optimised as “{_OBJECTIVES[recommendation.objective][0]}”. "
+                "Optimise the shortlist on the Screen step again, and the phases on the Phases "
+                f"step, to rank them as “{_OBJECTIVES[self.current_objective()][0]}”."
+            )
         steps: dict[str, tuple[StepState, str]] = {
             "scope": (
                 StepState.READY if recommendation is None else StepState.DONE,
@@ -1086,7 +1170,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
             )
             optimised = len(recommendation.optimized_assessments())
             steps["compare"] = (
-                (done, f"{optimised} role split{'' if optimised == 1 else 's'} optimised")
+                (
+                    StepState.STALE if objective_stale else done,
+                    _compare_step_summary(recommendation),
+                )
                 if optimised
                 else (ready, "Next: optimise the shortlist")
             )
@@ -1103,7 +1190,9 @@ class GlobalFitWizardWindow(WizardWindowBase):
             else:
                 solution = path.solutions[self._partition_k]
                 steps["phases"] = (
-                    done if recommendation.phase_assessments else ready,
+                    (StepState.STALE if objective_stale else done)
+                    if recommendation.phase_assessments
+                    else ready,
                     (
                         f"{solution.breaks} transition{'' if solution.breaks == 1 else 's'} · "
                         + format_transition_boundaries(solution, recommendation.series_axis_label)
@@ -1129,6 +1218,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._refresh_btn.setEnabled(bool(self._datasets) and not busy and self._picker.is_valid())
         has_result = self._recommendation is not None
         self._metric_combo.setEnabled(has_result and not busy)
+        self._objective_combo.setEnabled(not busy)
         ticked = len(self._leaderboard.ticked())
         self._optimise_btn.setText(f"Optimise {ticked} famil{'y' if ticked == 1 else 'ies'} →")
         self._optimise_btn.setEnabled(
@@ -1149,13 +1239,19 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self._screening_table,
             self._optimised_table,
             self._roles_table,
+            self._run_costs_table,
         ):
             table.setRowCount(0)
+        self._rung_summaries = {}
         self._running_template_keys = set()
         self._screen_body.setVisible(False)
         self._compare_body.setVisible(False)
         self._compare_empty.setVisible(True)
         self._transitions_card.clear()
+        clear_layout(self._phase_rungs)
+        self._phase_rung_rows = {}
+        self._phase_rung_summaries = ()
+        self._phases_strip.setVisible(False)
         self._phases_canvas.set_series([], [], [])
         self._phases_canvas.set_curves(None, None)
         self._partition_k = None
@@ -1248,6 +1344,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         parameter_bounds = dict(self._parameter_bounds)
         existing = dict(self._single_fit_recommendations_by_run)
         metric = SelectionMetric.from_value(self._metric_combo.currentText())
+        objective = self.current_objective()
         selected_keys = tuple(sorted(self._running_template_keys)) if mode == "optimize" else ()
         scope = self._picker.scope()
         fit_times = self._fit_times()
@@ -1272,6 +1369,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 parameter_bounds=parameter_bounds,
                 existing_single_fit_recommendations_by_run=existing,
                 metric=metric,
+                objective=objective,
                 selected_template_keys=selected_keys,
                 scope=scope,
                 fit_times=fit_times,
@@ -1300,7 +1398,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 result.recommendation,
             )
         else:
-            self._recommendation = result.recommendation
+            # A screening holds no optimised fit, so it carries the chosen objective.
+            self._recommendation = replace(
+                result.recommendation, objective=self.current_objective()
+            )
             self._apply_target = None
             self._applied_target = None
         recommendation = self._recommendation
@@ -1451,6 +1552,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._metric_combo.blockSignals(True)
         self._metric_combo.setCurrentText(recommendation.metric.value)
         self._metric_combo.blockSignals(False)
+        self._show_objective(recommendation.objective)
         self._status_label.setText(status_text or recommendation.summary)
         landing = "compare" if recommendation.optimized_assessments() else "screen"
         self._run_progress.restore_log(log_text)
@@ -1461,6 +1563,41 @@ class GlobalFitWizardWindow(WizardWindowBase):
             _shortlist_keys(recommendation), _recommended_optimised_key(recommendation)
         )
         self._show_step(landing)
+
+    def current_objective(self) -> SelectionObjective:
+        """What the next optimisation will search and rank for (the Scope step's switch)."""
+        return self._objective_combo.currentData()
+
+    def _show_objective(self, objective: SelectionObjective) -> None:
+        """Put the switch on ``objective`` without treating it as the user's change."""
+        self._objective_combo.blockSignals(True)
+        self._objective_combo.setCurrentIndex(self._objective_combo.findData(objective))
+        self._objective_combo.blockSignals(False)
+        self._objective_hint.setText(_OBJECTIVES[objective][1])
+
+    def _on_objective_changed(self) -> None:
+        """Take the user's objective; fits optimised for the other one read stale.
+
+        Screening is the same under either objective, so it stays. A
+        recommendation that holds no optimised fit takes the choice at once,
+        which is how the choice is stored with the result (as the metric is);
+        one that holds some keeps saying what they were optimised for until
+        the shortlist, or the phases, are optimised again.
+        """
+        objective = self.current_objective()
+        self._objective_hint.setText(_OBJECTIVES[objective][1])
+        recommendation = self._recommendation
+        if recommendation is not None and not (
+            recommendation.optimized_assessments() or recommendation.phase_assessments
+        ):
+            self._recommendation = replace(recommendation, objective=objective)
+            if isinstance(self._cached_signature, dict):
+                self.analysis_cached.emit(
+                    self._recommendation,
+                    self.current_log_text(),
+                    copy.deepcopy(self._cached_signature),
+                )
+        self._set_busy(self._analysis_in_progress)
 
     def current_effort_tier(self) -> EffortTier:
         """The effort tier the wizard will run.
@@ -1540,6 +1677,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._set_expectations_warning("")
 
         names, usage_by_name = _portfolio_parameter_usage(portfolio.templates)
+        # A name shared by several templates takes the kind the first one declares.
+        kinds: dict[str, ParameterKind] = {}
+        for template in reversed(portfolio.templates):
+            kinds.update(template.model.parameter_kinds())
         self._expectation_parameter_names = names
         self._expectations_table.setRowCount(len(names))
         for row, name in enumerate(names):
@@ -1550,13 +1691,17 @@ class GlobalFitWizardWindow(WizardWindowBase):
             role_combo = QComboBox()
             role_combo.addItems(["Global", "Local", "Fixed"])
             role_combo.setCurrentText(
-                _default_parameter_role(name, current_parameter_types=self._current_parameter_types)
+                _default_parameter_role(
+                    name, kinds[name], current_parameter_types=self._current_parameter_types
+                )
             )
             self._expectations_table.setCellWidget(row, 1, role_combo)
 
             bounds_item = QTableWidgetItem(
                 _format_bounds_text(
-                    _default_parameter_bounds(name, current_parameter_bounds=self._parameter_bounds)
+                    _default_parameter_bounds(
+                        name, kinds[name], current_parameter_bounds=self._parameter_bounds
+                    )
                 )
             )
             self._expectations_table.setItem(row, 2, bounds_item)
@@ -1680,17 +1825,38 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._populate_screening_table(prescreen)
         self._screen_body.setVisible(True)
 
-        optimised = recommendation.sorted_optimized_assessments()
-        self._compare_body.setVisible(bool(optimised))
-        self._compare_empty.setVisible(not optimised)
         self._compare_panel.set_series(
             datasets, labels, axis_values, recommendation.series_axis_label
         )
-        self._compare_panel.set_candidates(
-            summarise_candidates(optimised, self._datasets, recommendation.metric),
-            metric_label,
-            a_key=a_key,
-        )
+        # The objective picks what Compare lists: ladder rungs, or role-search nodes.
+        if recommendation.objective is SelectionObjective.TREND:
+            optimised = recommendation.sorted_rungs()
+            rungs = summarise_rungs(optimised, self._datasets, recommendation.metric)
+            self._rung_summaries = {rung.key: rung for rung in rungs}
+            self._compare_panel.set_ladders(
+                rungs, recommended_key=recommendation.recommended_key, a_key=a_key
+            )
+            self._details_intro.setText(
+                "The rungs' information criteria, and what A costs against the same model "
+                "with every parameter local: for the series, and run by run."
+            )
+            self._details_stack.setCurrentWidget(self._rung_details)
+        else:
+            optimised = recommendation.sorted_optimized_assessments()
+            self._rung_summaries = {}
+            self._compare_panel.set_candidates(
+                summarise_candidates(optimised, self._datasets, recommendation.metric),
+                metric_label,
+                a_key=a_key,
+            )
+            self._details_intro.setText(
+                "The optimised fits' scores, and the parameter-sharing diagnostics for A. "
+                "Role recommendations use penalized score differences; fixed parameters "
+                "are left untouched."
+            )
+            self._details_stack.setCurrentWidget(self._roles_details)
+        self._compare_body.setVisible(bool(optimised))
+        self._compare_empty.setVisible(not optimised)
         self._populate_optimised_table(optimised)
         if optimised:
             self._show_compare_a(self._compare_panel.a_key())
@@ -1703,6 +1869,9 @@ class GlobalFitWizardWindow(WizardWindowBase):
     def _repopulate(self) -> None:
         """Re-render the same recommendation, keeping the user's ticks and A."""
         self._populate_from_recommendation(self._leaderboard.ticked(), self._compare_panel.a_key())
+
+    def _run_labels(self) -> dict[int, str]:
+        return {int(dataset.run_number): dataset.run_label for dataset in self._datasets}
 
     def _series_in_order(
         self, recommendation: GlobalFitWizardRecommendation
@@ -1732,9 +1901,13 @@ class GlobalFitWizardWindow(WizardWindowBase):
         )
 
     def _show_compare_a(self, key: str) -> None:
-        """Follow candidate A in the role diagnostics and Continue."""
-        assessment = self._recommendation.assessment_for_key(key)
+        """Follow candidate A in the Details section and Continue."""
+        recommendation = self._recommendation
+        assessment = recommendation.assessment_for_key(key)
         self._compare_panel.set_continue_enabled(assessment.is_successful)
+        if recommendation.objective is SelectionObjective.TREND:
+            self._show_rung_cost(self._rung_summaries[key])
+            return
         recommendations = assessment.parameter_recommendations
         self._roles_table.setRowCount(len(recommendations))
         for row, parameter in enumerate(recommendations):
@@ -1745,9 +1918,46 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self._roles_table.setItem(row, 2, _numeric_item(parameter.global_score))
             self._roles_table.setItem(row, 3, _numeric_item(parameter.local_score))
             self._roles_table.setItem(row, 4, _numeric_item(parameter.score_delta))
-            self._roles_table.setItem(row, 5, _numeric_item(parameter.total_variation))
-            self._roles_table.setItem(row, 6, _numeric_item(parameter.roughness))
         self._roles_rationale.setText(_role_rationale(assessment))
+
+    def _show_rung_cost(self, summary: RungSummary) -> None:
+        """Details for a rung: its χ²ᵣ against all-local, and each run's cost in σ."""
+        rung = summary.rung
+        self._rung_grid.set_rows(
+            [
+                ("χ²ᵣ, every parameter local", f"{rung.all_local_chi2r:.4f}"),
+                ("χ²ᵣ, this rung", f"{summary.chi2r:.4f}"),
+                ("Cost", f"{rung.series_cost:+.2f}σ (tolerance {ADEQUACY_SIGMA:g}σ)"),
+                (
+                    "Trend quality",
+                    html.escape(
+                        " · ".join(
+                            f"{_symbol(name)} {quality.quality:.2f}"
+                            for name, quality in rung.trend.parameters.items()
+                        )
+                        or "nothing left local"
+                    ),
+                ),
+            ]
+        )
+        notes = {
+            **dict.fromkeys(rung.offending_runs, f"over the {ADEQUACY_SIGMA:g}σ tolerance"),
+            **dict.fromkeys(rung.exempt_runs, "exempt: keeps its own amplitude"),
+        }
+        self._run_costs_table.setRowCount(len(summary.runs))
+        for row, run in enumerate(summary.runs):
+            note = notes.get(run.run_number, "")
+            cells = (
+                QTableWidgetItem(run.run_label),
+                _numeric_item(run.reduced_chi_squared),
+                QTableWidgetItem(f"{rung.run_costs[run.run_number]:+.2f}"),
+                QTableWidgetItem(note),
+            )
+            for column, cell in enumerate(cells):
+                if note:
+                    cell.setForeground(QColor(tokens.WARN))
+                self._run_costs_table.setItem(row, column, cell)
+        _fit_height_to_rows(self._run_costs_table)
 
     def _choose_apply_target(self, target: _ApplyTarget) -> None:
         """Continue from Compare or Phases to review ``target`` on Apply (D5)."""
@@ -1762,7 +1972,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 return self._recommendation.assessment_for_key(key).template.title
             case _PhasesTarget(partition_k=partition_k):
                 solution = self._recommendation.partition_path.solutions[partition_k]
-                return f"{sum(not segment.excluded for segment in solution.segments)} phases"
+                phases = sum(not segment.excluded for segment in solution.segments)
+                return f"{phases} phase{'' if phases == 1 else 's'}"
 
     def _populate_apply(self) -> None:
         """Review what the chosen target will hand over (D5)."""
@@ -1771,6 +1982,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
         model = isinstance(target, _ModelTarget)
         for widget in (self._apply_values_section, self._apply_warnings, self._apply_why):
             widget.setVisible(model)
+        self._apply_left_out.setVisible(False)
         self._apply_roles_section.setVisible(target is not None)
         self._apply_btn.setVisible(target is not None)
         match target:
@@ -1798,8 +2010,15 @@ class GlobalFitWizardWindow(WizardWindowBase):
                         for role in ("Global", "Local", "Fixed")
                     ]
                 )
+                if assessment.exempt_runs:
+                    self._apply_left_out.setText(left_out_note(assessment))
+                    self._apply_left_out.setVisible(True)
                 # The global fit tab seeds every parameter from its first run's fit.
-                first_run = self._datasets[0]
+                first_run = next(
+                    dataset
+                    for dataset in self._datasets
+                    if int(dataset.run_number) not in assessment.exempt_runs
+                )
                 self._apply_values_section.set_hint(
                     f"From run {first_run.run_label}'s fit; local parameters start "
                     "there on every run."
@@ -1815,17 +2034,16 @@ class GlobalFitWizardWindow(WizardWindowBase):
                     self._apply_values_table.setItem(
                         row, 1, QTableWidgetItem(f"{parameter.value:.6g}")
                     )
-                # Tall enough for every row, so the view scrolls rather than the table.
-                self._apply_values_table.setFixedHeight(
-                    self._apply_values_table.horizontalHeader().sizeHint().height()
-                    + self._apply_values_table.verticalHeader().length()
-                    + 2 * self._apply_values_table.frameWidth()
-                )
+                _fit_height_to_rows(self._apply_values_table)
                 self._apply_warnings.setText(
                     "\n".join(f"• {warning}" for warning in assessment.series_warnings)
                 )
                 self._apply_warnings.setVisible(bool(assessment.series_warnings))
-                self._apply_rationale.setText(_role_rationale(assessment))
+                self._apply_rationale.setText(
+                    _rung_rationale(self._rung_summaries[key], self._run_labels())
+                    if recommendation.objective is SelectionObjective.TREND
+                    else _role_rationale(assessment)
+                )
                 self._apply_btn.setText("Apply to the global fit tab")
                 self._apply_btn.setEnabled(assessment.is_successful)
             case _PhasesTarget(partition_k=partition_k):
@@ -1838,14 +2056,29 @@ class GlobalFitWizardWindow(WizardWindowBase):
                     [
                         (
                             f"Phase {phase.ordinal} · {phase.range_text}",
-                            html.escape(
-                                f"{phase.template_title} · {phase.roles_text} · "
-                                f"{phase.confidence_text}"
+                            # One line each for the model, the shared and the local
+                            # parameters and the verdict: a phase can leave a dozen local.
+                            "<br>".join(
+                                html.escape(line)
+                                for line in (
+                                    phase.template_title,
+                                    *phase.roles_text.split(" · "),
+                                    phase.confidence_text,
+                                )
                             ),
                         )
                         for phase in self._phase_summaries(recommendation, partition_k)
                     ]
                 )
+                left_out = [
+                    left_out_note(assessment)
+                    for (k, _segment), assessment in sorted(
+                        recommendation.phase_assessments.items()
+                    )
+                    if k == partition_k and assessment.exempt_runs
+                ]
+                self._apply_left_out.setText("\n".join(left_out))
+                self._apply_left_out.setVisible(bool(left_out))
                 self._apply_btn.setText("Apply phases")
                 self._apply_btn.setEnabled(True)
         self._apply_note.setText(
@@ -1970,7 +2203,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                         f"Global: {', '.join(assessment.global_param_names) or 'none'} · "
                         f"Local: {', '.join(assessment.local_param_names) or 'none'}"
                     ),
-                    confidence_text=_phase_confidence_text(assessment),
+                    confidence_text=_phase_verdict_text(assessment, recommendation.objective),
                 )
             )
         return summaries
@@ -1978,14 +2211,51 @@ class GlobalFitWizardWindow(WizardWindowBase):
     def _populate_transitions_card(self) -> None:
         """Render the path, the selected row's phases, and the actions."""
         recommendation = self._recommendation
+        clear_layout(self._phase_rungs)
+        self._phase_rung_rows = {}
+        self._phase_rung_summaries = ()
         if recommendation.partition_path is None:
             self._transitions_card.clear()
             return
         self._transitions_card.set_rows(self._transition_rows(recommendation), self._partition_k)
         verified = any(k == self._partition_k for k, _ in recommendation.phase_assessments)
-        self._transitions_card.set_phases(
-            self._phase_summaries(recommendation, self._partition_k) if verified else ()
-        )
+        phases = self._phase_summaries(recommendation, self._partition_k) if verified else []
+        ladders = recommendation.objective is SelectionObjective.TREND
+        # A ladder rung has more to say than a chip holds: it gets a row of its own below.
+        self._transitions_card.set_phases(() if ladders else phases)
+        if ladders:
+            # Each phase is its own pool: one answer, and the band taken on its runs.
+            self._phase_rung_summaries = tuple(
+                summarise_rungs(
+                    [recommendation.phase_assessments[(self._partition_k, phase.segment_index)]],
+                    self._datasets,
+                    recommendation.metric,
+                )[0]
+                for phase in phases
+            )
+            run_labels = self._run_labels()
+            for phase, rung in zip(phases, self._phase_rung_summaries, strict=True):
+                # The phase's colour on a left stripe, as in the Data Browser; the
+                # title elides rather than wrapping the column taller.
+                heading = QWidget()
+                heading_row = QHBoxLayout(heading)
+                heading_row.setContentsMargins(0, 4, 0, 0)
+                stripe = QFrame()
+                stripe.setFixedWidth(4)
+                stripe.setStyleSheet(f"background: {phase.color};")
+                heading_row.addWidget(stripe)
+                title = ElidedLabel(
+                    f"Phase {phase.ordinal} · {phase.range_text} · {phase.template_title}"
+                )
+                title.setFont(_bold_font(title.font()))
+                heading_row.addWidget(title, 1)
+                self._phase_rungs.addWidget(heading)
+                row = RungRow(rung, run_labels, self, recommended=False, slots=False)
+                row.picked.connect(
+                    lambda _key, index=phase.segment_index: self._on_phase_selected(index)
+                )
+                self._phase_rung_rows[phase.segment_index] = row
+                self._phase_rungs.addWidget(row)
         self._transitions_card.set_actions_enabled(
             not self._analysis_in_progress and not self._analysis_stale
         )
@@ -2038,6 +2308,26 @@ class GlobalFitWizardWindow(WizardWindowBase):
             else summarise_candidates([phase], self._datasets, recommendation.metric)[0],
             None,
         )
+        for segment_index, row in self._phase_rung_rows.items():
+            row.set_slot("A" if segment_index == self._selected_phase_segment else "")
+        # One trace per parameter a phase leaves local, each phase in its own colour.
+        self._phases_strip.setVisible(bool(self._phase_rung_summaries))
+        if self._phase_rung_summaries:
+            self._phases_strip.set_traces(
+                rung_traces(
+                    [
+                        TracedRung(rung, f"Phase {ordinal}", phase_color(ordinal))
+                        for ordinal, rung in enumerate(self._phase_rung_summaries, start=1)
+                    ]
+                ),
+                recommendation.series_axis_label,
+                [
+                    estimate
+                    for estimate, _half_gap in recommendation.partition_path.solutions[
+                        self._partition_k
+                    ].boundaries
+                ],
+            )
 
     def _on_transition_row_changed(self, index: int) -> None:
         """A path row was picked: recolour the overlay and re-offer the actions."""
@@ -2306,8 +2596,11 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self,
             "Global Fit Wizard Metrics",
             (
-                "The Screen and Compare steps rank the same candidates by the chosen "
-                "information criterion, as the difference from the best row.\n\n"
+                "The Screen step ranks the candidates by the chosen information criterion, "
+                "as the difference from the best row. So does the Compare step under "
+                f"“{_OBJECTIVES[SelectionObjective.STATISTICAL][0]}”; under "
+                f"“{_OBJECTIVES[SelectionObjective.TREND][0]}” it lists each model's "
+                "sharing ladder by trend quality, and the criterion only breaks ties.\n\n"
                 "Screening rows are based on independent per-dataset fits only. Optimized rows rerun the "
                 "candidate under coupled global parameter sharing before being compared.\n\n"
                 "AICc is the default because it adds a small-sample correction when the total fitted point "
@@ -2322,8 +2615,9 @@ class GlobalFitWizardWindow(WizardWindowBase):
             (
                 "The Screen step intentionally does not claim that a candidate is good for global fitting. "
                 "It only reports how promising the function looks when each dataset is fit independently.\n\n"
-                "Warnings on the Compare step combine per-run residual checks with ordered-series "
-                "continuity diagnostics after the coupled global optimisation has run."
+                "Warnings on the Compare step combine per-run residual checks with a check for "
+                "an abrupt change in the spectra along the series, after the coupled global "
+                "optimisation has run."
             ),
         )
 
@@ -2347,6 +2641,15 @@ def _shortlist_keys(recommendation: GlobalFitWizardRecommendation) -> tuple[str,
     )
 
 
+def _compare_step_summary(recommendation: GlobalFitWizardRecommendation) -> str:
+    """The Compare step's stepper line: what was optimised, counted as its objective lists it."""
+    if recommendation.objective is SelectionObjective.TREND:
+        ladders = len({rung.template.key for rung in recommendation.sorted_rungs()})
+        return f"{ladders} sharing ladder{'' if ladders == 1 else 's'} climbed"
+    optimised = len(recommendation.optimized_assessments())
+    return f"{optimised} role split{'' if optimised == 1 else 's'} optimised"
+
+
 def _recommended_optimised_key(recommendation: GlobalFitWizardRecommendation) -> str | None:
     """Compare's default A: the recommended optimised row, else ``None`` (the first row)."""
     recommended = recommendation.recommended_assessment
@@ -2355,13 +2658,27 @@ def _recommended_optimised_key(recommendation: GlobalFitWizardRecommendation) ->
     return recommended.selection_key
 
 
+def _rung_rationale(summary: RungSummary, run_labels: dict[int, str]) -> str:
+    """Why a ladder rung shares what it shares: its cost, its trends, and the ladder's findings."""
+    trends = " · ".join(
+        f"{_symbol(name)} {quality.quality:.2f}"
+        for name, quality in summary.rung.trend.parameters.items()
+    )
+    return "\n".join(
+        [
+            cost_text(summary.rung, run_labels),
+            f"Trend quality of what stays local: {trends}."
+            if trends
+            else "Nothing is left local, so there is no trend to judge.",
+            *(finding.detail for finding in summary.findings),
+        ]
+    )
+
+
 def _role_rationale(assessment: GlobalCandidateAssessment) -> str:
     """One line per parameter: why the role search gave it its role."""
     if not assessment.parameter_recommendations:
-        return (
-            "This assignment comes straight from the exhaustive wavefront search, "
-            "which recorded no per-parameter rationale."
-        )
+        return "No per-parameter rationale was recorded for this candidate."
     return "\n".join(
         f"{parameter.name}: {parameter.rationale}"
         for parameter in assessment.parameter_recommendations
@@ -2379,16 +2696,33 @@ def _symbol(name: str) -> str:
     return format_param_label(name, include_unit=False)
 
 
-def _phase_confidence_text(assessment: GlobalCandidateAssessment) -> str:
-    """How much to trust one phase's coupled fit, in one short phrase.
+def _phase_verdict_text(
+    assessment: GlobalCandidateAssessment, objective: SelectionObjective
+) -> str:
+    """How far to trust one phase's answer, in one short phrase.
 
-    A phase whose per-run residual gates all pass and which raised no
-    ordered-series warning is the wizard's "high" tier; anything else is
-    "medium" and the reader is told to look at the warnings.
+    A ladder rung says what it costs and how what it leaves local trends. A
+    role-search node whose per-run residual gates all pass is the wizard's
+    "high" tier; anything else is "medium" and the reader is told to look at
+    the warnings.
     """
+    if objective is SelectionObjective.TREND:
+        rung = assessment.rung
+        is_trend, worst, _mean = rung.trend.ordering_key
+        trend = f"trend {worst:.2f}" if is_trend else "nothing left local"
+        return f"Cost {rung.series_cost:+.1f}σ · {trend}"
     if assessment.residual_gate_passed:
         return "High confidence"
     return "Medium confidence — check the warnings"
+
+
+def _fit_height_to_rows(table: QTableWidget) -> None:
+    """Make ``table`` tall enough for every row, so its view scrolls rather than the table."""
+    table.setFixedHeight(
+        table.horizontalHeader().sizeHint().height()
+        + table.verticalHeader().length()
+        + 2 * table.frameWidth()
+    )
 
 
 def _numeric_item(value: float) -> QTableWidgetItem:
@@ -2432,19 +2766,33 @@ def _portfolio_parameter_usage(
     return ordered_names, usage_by_name
 
 
+#: Kinds a series is expected to hold steady, and kinds it is expected to move.
+_GLOBAL_BY_DEFAULT = frozenset({ParameterKind.BACKGROUND, ParameterKind.AMPLITUDE})
+_LOCAL_BY_DEFAULT = frozenset(
+    {
+        ParameterKind.RATE,
+        ParameterKind.FREQUENCY,
+        ParameterKind.STATIC_WIDTH,
+        ParameterKind.SHAPE,
+        ParameterKind.PHASE,
+    }
+)
+#: Kinds that start bounded below at zero, whatever bounds the Fit tab holds.
+_NON_NEGATIVE = (_LOCAL_BY_DEFAULT - {ParameterKind.PHASE}) | {ParameterKind.AMPLITUDE}
+
+
 def _default_parameter_role(
     name: str,
+    kind: ParameterKind,
     *,
     current_parameter_types: dict[str, str],
 ) -> str:
     current = str(current_parameter_types.get(name, "")).strip()
     if current == "Fixed":
         return "Fixed"
-    if is_background_parameter(name):
+    if kind in _GLOBAL_BY_DEFAULT:
         return "Global"
-    if is_amplitude_parameter(name):
-        return "Global"
-    if _is_positive_rate_parameter(name) or _is_phase_parameter(name):
+    if kind in _LOCAL_BY_DEFAULT:
         return "Local"
     if current in {"Global", "Local"}:
         return current
@@ -2453,12 +2801,13 @@ def _default_parameter_role(
 
 def _default_parameter_bounds(
     name: str,
+    kind: ParameterKind,
     *,
     current_parameter_bounds: dict[str, tuple[float, float]],
 ) -> tuple[float, float]:
-    if is_background_parameter(name):
+    if kind is ParameterKind.BACKGROUND:
         return -float("inf"), float("inf")
-    if is_amplitude_parameter(name) or _is_positive_rate_parameter(name):
+    if kind in _NON_NEGATIVE:
         return 0.0, float("inf")
     if name in current_parameter_bounds:
         return current_parameter_bounds[name]
@@ -2468,17 +2817,6 @@ def _default_parameter_bounds(
         if default_min is not None
         else (-float("inf"), float("inf"))
     )
-
-
-def _is_positive_rate_parameter(name: str) -> bool:
-    lower_name = name.lower()
-    if "phase" in lower_name:
-        return False
-    return is_rate_like_parameter(name)
-
-
-def _is_phase_parameter(name: str) -> bool:
-    return "phase" in name.lower()
 
 
 def _format_bounds_text(bounds: tuple[float, float]) -> str:

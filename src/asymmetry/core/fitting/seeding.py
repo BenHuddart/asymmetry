@@ -41,12 +41,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.global_search.heuristics import (
-    is_amplitude_parameter,
-    is_background_parameter,
-)
-from asymmetry.core.fitting.models import LINEAR_PARAM_ROLE_NAMES
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, suggest_trend_seeds
 from asymmetry.core.fitting.parameters import get_param_info, split_parameter_name
 from asymmetry.core.fitting.spectral import (
@@ -60,20 +56,6 @@ _FIELD_SEED_BASE_NAMES: frozenset[str] = frozenset({"field", "B_L"})
 
 #: Base name of the Larmor frequency seeded from the applied field (MHz).
 _FREQUENCY_SEED_BASE_NAME = "frequency"
-
-#: Base name of the oscillation phase seeded from the record's early-vs-tail sign.
-_PHASE_SEED_BASE_NAME = "phase"
-
-#: Base names that carry the *record's* asymmetry amplitude. Deliberately the
-#: intersection of the linear (amplitude/background) roles with the amplitude
-#: predicate rather than the predicate alone: ``is_amplitude_parameter`` matches
-#: any ``a_*`` name, which would sweep in physical quantities that merely start
-#: that way (``A_hf``, a hyperfine coupling; ``a_L``, a Lorentzian weight).
-_AMPLITUDE_ROLE_BASE_NAMES: frozenset[str] = frozenset(
-    name
-    for name in LINEAR_PARAM_ROLE_NAMES
-    if is_amplitude_parameter(name) and not is_background_parameter(name)
-)
 
 #: Trend parameters that read as a baseline (start at the series' mean), as a
 #: slope/amplitude (start at its span), or as a characteristic x (start at half
@@ -215,16 +197,16 @@ def _record_scale_values(model: CompositeModel, context: SeedContext) -> dict[st
         return {}
     amplitude, tail = record_scale_estimate(context.dataset.time, context.dataset.asymmetry)
     phase = phase_seed_from_sign(amplitude)
-    values: dict[str, float] = {}
-    for param_name in model.param_names:
-        base_name, _index = split_parameter_name(param_name)
-        if is_background_parameter(base_name):
-            values[param_name] = tail
-        elif base_name in _AMPLITUDE_ROLE_BASE_NAMES:
-            values[param_name] = abs(amplitude)
-        elif base_name == _PHASE_SEED_BASE_NAME:
-            values[param_name] = phase
-    return values
+    by_kind = {
+        ParameterKind.BACKGROUND: tail,
+        ParameterKind.AMPLITUDE: abs(amplitude),
+        ParameterKind.PHASE: phase,
+    }
+    return {
+        param_name: by_kind[kind]
+        for param_name, kind in model.parameter_kinds().items()
+        if kind in by_kind
+    }
 
 
 def _applied_field_values(model: CompositeModel, context: SeedContext) -> dict[str, float]:
@@ -327,12 +309,11 @@ def _individual_group_held_names(model: CompositeModel, context: SeedContext) ->
     """
     if not context.individual_groups:
         return []
-    held: list[str] = []
-    for param_name in model.param_names:
-        base_name, _index = split_parameter_name(param_name)
-        if is_background_parameter(base_name) or base_name == "phase":
-            held.append(param_name)
-    return held
+    return [
+        param_name
+        for param_name, kind in model.parameter_kinds().items()
+        if kind in (ParameterKind.BACKGROUND, ParameterKind.PHASE)
+    ]
 
 
 # ── composition helpers ─────────────────────────────────────────────────────

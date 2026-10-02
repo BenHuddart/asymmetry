@@ -2135,6 +2135,7 @@ class MainWindow(QMainWindow):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
         self._fit_panel.apply_wizard_phases_requested.connect(self._on_apply_wizard_phases)
+        self._fit_panel.series_group_requested.connect(self._bind_batch_tab_to_group_of)
         self._fit_panel.field_direction_answered.connect(self._save_field_direction_answer)
         if hasattr(self._fit_panel, "batch_seeding_mode_changed"):
             self._fit_panel.batch_seeding_mode_changed.connect(self._sync_batch_seeding_menu)
@@ -13003,6 +13004,16 @@ class MainWindow(QMainWindow):
                 return gid
         return None
 
+    def _bind_batch_tab_to_group_of(self, run_numbers) -> None:
+        """Bind the Batch tab to the group that owns ``run_numbers``, minting one if need be.
+
+        A fit that leaves some of its runs out records them as the owning
+        group's members that were not fitted, so the group must hold them
+        before the fit is recorded (the Global Fit Wizard's exempt runs).
+        """
+        group = self._project_model.data_group(self._resolve_batch_group(run_numbers))
+        self._fit_panel.set_bound_group(group.group_id, group.name)
+
     def _save_field_direction_answer(
         self, run_numbers: frozenset[int], geometry: FieldGeometry | None
     ) -> None:
@@ -13120,8 +13131,15 @@ class MainWindow(QMainWindow):
             ],
         )
         self._mark_dirty()
+        left_out = sorted(run for assessment in assessments for run in assessment.exempt_runs)
         self.statusBar().showMessage(
             f"Applied {len(specs)} phases under {parent.name} ({solution.breaks} transition(s))."
+            + (
+                f" Left out of the coupled fits, keeping their own amplitude: "
+                f"runs {', '.join(map(str, left_out))}."
+                if left_out
+                else ""
+            )
         )
 
     def _series_group_for_phases(self, series_runs) -> str | None:

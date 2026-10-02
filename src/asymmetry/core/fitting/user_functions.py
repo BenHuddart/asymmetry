@@ -34,11 +34,17 @@ import numpy as np
 
 from asymmetry.core.fitting.component_docs import register_component_documentation
 from asymmetry.core.fitting.component_tags import (
+    ParameterKind,
     coerce_cost,
     coerce_geometries,
+    coerce_parameter_kind,
     coerce_physics_classes,
 )
-from asymmetry.core.fitting.composite import COMPONENTS, ComponentDefinition
+from asymmetry.core.fitting.composite import (
+    COMPONENTS,
+    SCALING_PARAMETER_KINDS,
+    ComponentDefinition,
+)
 from asymmetry.core.fitting.domain_library import DOMAINS
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameter_models import (
@@ -220,6 +226,13 @@ def _probe_function(
         )
 
 
+#: Kinds given at this boundary to parameters a plugin does not declare.
+_UNDECLARED_PARAMETER_KINDS: dict[str, ParameterKind] = {
+    **SCALING_PARAMETER_KINDS,
+    "phase": ParameterKind.PHASE,
+}
+
+
 def register_component(
     name: str,
     function: Callable[..., np.ndarray],
@@ -237,6 +250,7 @@ def register_component(
     field_geometries: Sequence[str] = ("ZF", "TF", "LF"),
     physics_classes: Sequence[str] = ("custom",),
     cost: str = "moderate",
+    param_kinds: Mapping[str, str] | None = None,
 ) -> ComponentDefinition:
     """Register a user fit component for the time- or frequency-domain pickers.
 
@@ -252,6 +266,13 @@ def register_component(
     component for fit-wizard scoping; they default to all geometries, the
     ``"custom"`` sentinel class, and ``"moderate"`` cost. Invalid tokens raise
     :class:`UserFunctionError`.
+
+    ``param_kinds`` says what each parameter measures (see
+    :class:`~asymmetry.core.fitting.component_tags.ParameterKind` values, e.g.
+    ``{"lam": "rate", "phi": "phase"}``); series seeding and the global-fit
+    wizard read it. A parameter left out is a ``"shape"``, except three names
+    with a settled meaning: ``A`` is an ``"amplitude"``, ``A_bg`` a
+    ``"background"`` and ``phase`` a ``"phase"``.
 
     Returns the registered :class:`ComponentDefinition` (flagged ``user=True``).
     Raises :class:`UserFunctionError` on any validation failure, in which case
@@ -275,10 +296,22 @@ def register_component(
         raise UserFunctionError(
             f"{name}: fixed_params {unknown_fixed} are not declared parameters."
         )
+    declared_kinds = dict(param_kinds or {})
+    unknown_kinds = sorted(set(declared_kinds) - set(params))
+    if unknown_kinds:
+        raise UserFunctionError(f"{name}: param_kinds {unknown_kinds} are not declared parameters.")
     try:
         geometries = coerce_geometries(field_geometries)
         classes = coerce_physics_classes(physics_classes)
         cost_tag = coerce_cost(cost)
+        kinds = {
+            p: (
+                coerce_parameter_kind(declared_kinds[p])
+                if p in declared_kinds
+                else _UNDECLARED_PARAMETER_KINDS.get(p, ParameterKind.SHAPE)
+            )
+            for p in params
+        }
     except ValueError as exc:
         raise UserFunctionError(f"{name}: {exc}") from exc
     _probe_function(name, function, defaults, _PROBE_GRIDS[domain_token])
@@ -292,6 +325,7 @@ def register_component(
         param_names=params,
         param_defaults=defaults,
         param_info={p: get_param_info(p) for p in params},
+        param_kinds=kinds,
         formula_template=str(formula_template),
         latex_equation=str(latex_equation),
         category=str(category),

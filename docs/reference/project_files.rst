@@ -342,6 +342,14 @@ well as the physics; ``_migrate_v22_to_v23`` rewrites each one to that
 preset's physics classes, keeps its include and exclude lists, and drops the
 geometry, which now always comes from the runs.
 
+Since schema v24 a stored Global Fit Wizard recommendation records its
+``objective`` (``"trend"`` or ``"statistical"``), and each candidate a ``rung``:
+``null`` for a candidate of the statistical role search, otherwise what its
+sharing-ladder fit cost in :math:`\sigma`, the trend quality of each local
+parameter, and the runs exempt from a shared amplitude.
+``_migrate_v23_to_v24`` marks every older recommendation ``"statistical"`` with
+no rungs and drops the trace diagnostics its parameter roles used to carry.
+
 A field direction the user answered in the picker, for a run whose file records
 none, is saved in that dataset's ``metadata_overrides`` as ``field_direction``
 (``"Zero field"``, ``"Longitudinal"``, or ``"Transverse"``) together with

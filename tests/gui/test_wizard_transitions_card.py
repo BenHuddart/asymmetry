@@ -23,6 +23,8 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.windows.global_fit_wizard_window as wizard_window_module
@@ -45,7 +47,12 @@ from asymmetry.core.fitting.global_search.partition import (
     PartitionSolution,
     Segment,
 )
+from asymmetry.core.fitting.global_search.trend_objective import (
+    CandidateRung,
+    SelectionObjective,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.trend_quality import CandidateTrend, TraceQuality
 from asymmetry.gui.utils.phase_colors import EXCLUDED_PHASE_HATCH_COLOR, phase_color
 from asymmetry.gui.utils.series_colours import series_colours
 from asymmetry.gui.widgets.wizard_stepper import StepState
@@ -278,6 +285,7 @@ def _partitioned_recommendation(
         partition_path=_partition_path(),
         phase_assessments=phase_assessments,
         recommended_partition_k=optimised_k,
+        objective=SelectionObjective.STATISTICAL,
     )
 
 
@@ -518,6 +526,97 @@ def test_clicking_a_phase_shows_that_phase_s_fit(qapp, datasets) -> None:
     assert a.title == "Warm phase model"
     # Only the picked phase's runs carry a fit overlay.
     assert [run.run_label for run in a.runs] == [str(run) for run in _PHASE_II + (_STUB,)]
+
+
+# ── phases under the trend objective ────────────────────────────────────────
+
+
+def _trend_partitioned_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommendation:
+    """The optimised one-break partition with each phase's answer a ladder rung."""
+    statistical = _partitioned_recommendation(datasets, optimised_k=1)
+    costs = {0: 0.4, 1: 1.2}
+    return replace(
+        statistical,
+        objective=SelectionObjective.TREND,
+        phase_assessments={
+            (k, segment): replace(
+                assessment,
+                rung=CandidateRung(
+                    # The warm phase's first run keeps its own amplitude.
+                    exempt_runs=(_PHASE_II[0],) if segment else (),
+                    series_cost=costs[segment],
+                    run_costs=dict.fromkeys(assessment.fit_results_by_run, costs[segment]),
+                    trend=CandidateTrend(
+                        {"Lambda": TraceQuality(determined=1.0, signal=0.8, zigzag=0.0)}
+                    ),
+                    hard_to_justify=(),
+                    pass_disagreements={},
+                    preselected=True,
+                    amplitude_unshareable_runs=(),
+                    all_local_chi2r=1.03,
+                ),
+            )
+            for (k, segment), assessment in statistical.phase_assessments.items()
+        },
+    )
+
+
+def test_under_the_trend_objective_each_phase_answer_is_a_rung_row(qapp, datasets) -> None:
+    window = _window(datasets, _trend_partitioned_recommendation(datasets))
+    rows = window._phase_rung_rows
+
+    # The rows replace the chips: a rung has a cost, a trend and findings to show.
+    assert window._transitions_card._phase_buttons == []
+    assert list(rows) == [0, 1]
+    assert [(row.cost.text, row.trend.text) for row in rows.values()] == [
+        ("+0.4σ", "0.80"),
+        ("+1.2σ", "0.80"),
+    ]
+    assert [chip.text() for chip in rows[0].chips] == ["Global A_1", "Global A_bg", "Local λ"]
+    assert rows[1].flag_labels[0].text() == f"Run {_PHASE_II[0]} exempt"
+    # A phase row is picked, not compared: no slot disc, no pin.
+    assert all(row.disc.isHidden() and row.pin_button.isHidden() for row in rows.values())
+
+    QTest.mouseClick(rows[1], Qt.MouseButton.LeftButton)
+
+    assert window._selected_phase_segment == 1
+    assert window._phases_canvas._a.title == "Warm phase model"
+
+
+def test_the_phases_strip_traces_every_phase_with_the_boundaries(qapp, datasets) -> None:
+    window = _window(datasets, _trend_partitioned_recommendation(datasets))
+    strip = window._phases_strip
+
+    assert not strip.isHidden()
+    (trace,) = strip._traces
+    assert trace.name == "Lambda"
+    assert [(series.label, series.colour) for series in trace.series] == [
+        ("Phase 1", phase_color(1)),
+        ("Phase 2", phase_color(2)),
+    ]
+    assert trace.series[1].exempt.tolist() == [True, False, False]
+    (boundary,) = [line for line in strip.figure.axes[0].lines if line.get_linestyle() == "--"]
+    assert boundary.get_xdata()[0] == 19.0
+    # The statistical objective keeps the chips and shows no strip.
+    statistical = _window(datasets, _partitioned_recommendation(datasets, optimised_k=1))
+    assert statistical._phases_strip.isHidden()
+    assert statistical._phase_rung_rows == {}
+
+
+def test_the_apply_review_lists_the_runs_each_phase_leaves_out(qapp, datasets) -> None:
+    window = _window(datasets, _trend_partitioned_recommendation(datasets))
+
+    window._transitions_card._apply_btn.click()
+
+    assert window._stepper.current_key() == "apply"
+    assert window._apply_left_out.text() == (
+        f"Run {_PHASE_II[0]} is left out of the coupled fit: it keeps its own amplitude, which "
+        "the series does not share. It stays in the data group, unticked."
+    )
+    assert (
+        "Cost +1.2σ · trend 0.80"
+        in window._apply_roles.layout().itemAtPosition(1, 1).widget().text()
+    )
 
 
 # ── cache round-trip ─────────────────────────────────────────────────────────
