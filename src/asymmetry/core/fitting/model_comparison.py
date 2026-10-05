@@ -230,8 +230,9 @@ class CandidateSummary:
     """Everything a comparison panel shows about one candidate, for N runs.
 
     ``delta`` and ``weight`` are relative to the pool the summary was built in
-    (see :func:`summarise_candidates`). ``gate_summary`` is empty when every run
-    passed its residual gate.
+    (see :func:`summarise_candidates`). ``gate_passed`` is ``None`` when no
+    residual gate was run (a saved fit); ``gate_summary`` is empty when every
+    run passed it, or when it was not run.
     """
 
     key: str
@@ -239,7 +240,7 @@ class CandidateSummary:
     metric_value: float
     delta: float
     weight: float
-    gate_passed: bool
+    gate_passed: bool | None
     gate_summary: str
     series_warnings: tuple[str, ...]
     runs: tuple[RunFit, ...]
@@ -472,7 +473,7 @@ def _saved_fit_summary(
         metric_value=score,
         delta=delta,
         weight=weight,
-        gate_passed=True,
+        gate_passed=None,
         gate_summary="",
         series_warnings=(),
         runs=(run,),

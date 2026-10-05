@@ -354,6 +354,7 @@ from asymmetry.gui.windows.joint_fit_window import (
 from asymmetry.gui.windows.knight_shift_window import KnightShiftWindow
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
+from asymmetry.gui.windows.saved_fit_compare_window import SavedFitCompareWindow
 from asymmetry.gui.windows.simulate_dialog import SimulateDialog
 
 if TYPE_CHECKING:
@@ -1018,6 +1019,8 @@ class MainWindow(QMainWindow):
         #: window's "Compare with…" submenu). Only one is allowed at a time; a new
         #: comparison closes the previous one.
         self._global_fit_compare_dialog: GlobalFitCompareDialog | None = None
+        #: The Compare window over the bound run's saved single fits; one at a time.
+        self._saved_fit_compare_window: SavedFitCompareWindow | None = None
         #: The named cross-group global-parameter-fit studies, insertion-ordered
         #: (dict preserves order). Replaces the trend panel's single-slot
         #: ``last_cross_group_fit``; persisted under the schema-v13 top-level
@@ -2177,6 +2180,7 @@ class MainWindow(QMainWindow):
         self._fit_panel.saved_fit_rename_requested.connect(self._on_saved_fit_rename_requested)
         self._fit_panel.saved_fit_delete_requested.connect(self._on_saved_fit_delete_requested)
         self._fit_panel.single_dataset_bound.connect(self._sync_saved_fit_overlays)
+        self._fit_panel.saved_fit_compare_requested.connect(self._on_saved_fit_compare_requested)
         self._fit_panel.batch_fit_range_changed.connect(self._on_batch_fit_range_changed)
         for _panel in (self._plot_panel, self._frequency_plot_panel):
             _panel.fit_range_guide_changed.connect(self._fit_panel.set_batch_fit_range)
@@ -12165,15 +12169,20 @@ class MainWindow(QMainWindow):
         model = CompositeModel.from_dict(slot.model, allow_missing=True)
         values = {name: float(slot.result["parameters"][name]) for name in model.param_names}
         window = slot.fit_range or {"min": None, "max": None}
-        record = (
-            self._active_frequency_fit_dataset()
-            if self._plot_workspace.active_domain() == "frequency"
-            else self._current_dataset
-        )
+        record = self._bound_record()
         x_min = float(np.min(record.time)) if window["min"] is None else window["min"]
         x_max = float(np.max(record.time)) if window["max"] is None else window["max"]
         x, y = dense_fit_curve(model, values, x_min, x_max)
         return (x, y, name, (), None, model.formula_string(), axis_key)
+
+    def _bound_record(self) -> MuonDataset:
+        """The bound run's whole record in the active domain, before the fit-range crop."""
+        if self._plot_workspace.active_domain() == "frequency":
+            panel = self._frequency_plot_panel
+            return self._frequency_dataset_with_fit_errors(
+                panel.get_analysis_dataset(panel._current_dataset)
+            )
+        return self._get_full_fit_context()[0]
 
     def _sync_saved_fit_overlays(self) -> None:
         """Draw the bound run's saved fits that are not open, under their own ids (D6).
@@ -12211,6 +12220,37 @@ class MainWindow(QMainWindow):
             if plot_id not in stored:
                 payload = self._saved_fit_curve_payload(slot, representation.fit_name(slot), key)
                 panel.set_global_fits({run_number: payload}, fit_id=plot_id)
+        self._refresh_saved_fit_compare()
+
+    def _on_saved_fit_compare_requested(self) -> None:
+        """Open (or raise) the Compare window over the bound run's saved fits (D2)."""
+        if self._saved_fit_compare_window is None:
+            window = SavedFitCompareWindow(self)
+            window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            window.open_requested.connect(self._on_saved_fit_open_requested)
+            window.destroyed.connect(self._on_saved_fit_compare_window_destroyed)
+            self._saved_fit_compare_window = window
+        self._refresh_saved_fit_compare()
+        self._saved_fit_compare_window.show()
+        self._saved_fit_compare_window.raise_()
+        self._saved_fit_compare_window.activateWindow()
+
+    def _on_saved_fit_compare_window_destroyed(self, *_args) -> None:
+        self._saved_fit_compare_window = None
+
+    def _refresh_saved_fit_compare(self) -> None:
+        """Point an open Compare window at the bound run's saved fits as they now stand."""
+        window = self._saved_fit_compare_window
+        bound = self._bound_saved_fits()
+        if window is None or bound is None:
+            return
+        _run_number, representation, projection = bound
+        fit_set = representation.fit_set(projection)
+        window.set_fits(
+            self._bound_record(),
+            [(slot, representation.fit_name(slot)) for slot in fit_set.fits],
+            fit_set.open_id,
+        )
 
     def _on_saved_fit_open_requested(self, fit_id: str) -> None:
         """Open one of the bound run's saved fits: its form, its window and its curve."""
@@ -12254,6 +12294,7 @@ class MainWindow(QMainWindow):
         self._log_panel.log(f"Deleted saved fit {name}.", tag="fit")
         if not was_open:
             self._fit_panel.refresh_saved_fits()
+            self._refresh_saved_fit_compare()
             return
         if fit_set.fits:
             self._on_saved_fit_open_requested(fit_set.open_id)

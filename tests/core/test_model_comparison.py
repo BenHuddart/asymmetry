@@ -744,7 +744,7 @@ def test_saved_fit_rows_split_fitted_from_fixed_with_bound_flags() -> None:
     lam = summary.parameters[1]
     assert lam.values == (Estimate(0.2, 0.01),)
     assert lam.flags == (ParameterFlag.AT_LOWER_BOUND,)
-    assert summary.gate_passed and not summary.runs[0].curves
+    assert summary.gate_passed is None and not summary.runs[0].curves
 
 
 def test_saved_fit_curves_span_the_window_and_carry_residuals() -> None:

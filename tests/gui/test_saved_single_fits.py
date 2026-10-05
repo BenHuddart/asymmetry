@@ -18,7 +18,7 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QSettings  # noqa: E402
+from PySide6.QtCore import QSettings, QThread  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run  # noqa: E402
@@ -207,3 +207,54 @@ def test_rename_then_delete_down_to_no_fit(mw) -> None:
     assert SINGLE_FIT_ID not in mw._plot_panel.stored_fit_ids(_RUN)
     assert _count(mw) == ""
     assert not _tab(mw)._delete_fit_btn.isEnabled()
+
+
+# ── the Compare window (D2, D7–D9) ──────────────────────────────────────────
+
+
+def _wait_for_curves(window, fit_id: str) -> None:
+    """Let the window's curve worker for *fit_id* finish and its result land."""
+    app = QApplication.instance()
+    for _ in range(500):
+        app.processEvents()
+        if fit_id in window._curves:
+            return
+        QThread.msleep(10)
+    raise AssertionError(f"no curves were built for {fit_id}")
+
+
+def test_compare_ranks_the_runs_fits_and_opens_a(mw) -> None:
+    _fit(mw, _EXP, chi_squared=80.0)
+    _fit(mw, _GAUSS, chi_squared=60.0)
+    _rep, fit_set = _fit_set(mw)
+    exp, gauss = fit_set.fits
+
+    _tab(mw)._compare_fits_btn.click()
+    window = mw._saved_fit_compare_window
+    assert window is not None and window.isVisible()
+    panel = window.panel
+    # Same window and points: ranked on AICc, the lower χ² first; the open fit is A.
+    assert list(panel._summaries) == [gauss.fit_id, exp.fit_id]
+    assert panel._summaries[exp.fit_id].delta == pytest.approx(20.0)
+    assert panel.a_key() == gauss.fit_id
+    _wait_for_curves(window, gauss.fit_id)
+    assert window._curves[gauss.fit_id][1].fit[0].size > 0
+
+    panel.set_a(exp.fit_id)
+    panel.continue_requested.emit(panel.a_key())
+    assert fit_set.open_id == exp.fit_id
+    assert _tab(mw)._composite_model.component_names == ["Exponential", "Constant"]
+    window.close()
+
+
+def test_compare_follows_a_new_fit_on_the_run(mw) -> None:
+    _fit(mw, _EXP)
+    _fit(mw, _GAUSS)
+    _tab(mw)._compare_fits_btn.click()
+    window = mw._saved_fit_compare_window
+
+    _fit(mw, CompositeModel(["Exponential", "Gaussian", "Constant"], operators=["+", "+"]))
+
+    assert len(window.panel._summaries) == 3
+    window.close()
+    QApplication.instance().processEvents()

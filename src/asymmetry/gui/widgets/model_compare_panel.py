@@ -407,9 +407,15 @@ class CandidateRow(CompareRow):
         )
         self.weight.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self.weight.setToolTip("Evidence weight: w ∝ exp(−Δ/2) across the candidates listed")
-        text, background, foreground = _GATE_BADGES[summary.gate_passed]
-        self.gate = _chip(text, background, foreground)
-        self.gate.setToolTip(summary.gate_summary or "Every run passes the residual gate")
+        if summary.gate_passed is None:
+            # No residual gate was run (a saved fit): its χ²ᵣ is the verdict to hand.
+            (run,) = summary.runs
+            self.gate = QLabel(f"χ²ᵣ {run.reduced_chi_squared:.3g}", self)
+            self.gate.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        else:
+            text, background, foreground = _GATE_BADGES[summary.gate_passed]
+            self.gate = _chip(text, background, foreground)
+            self.gate.setToolTip(summary.gate_summary or "Every run passes the residual gate")
         self._add_scores([(self.delta_bar, 1), (self.weight, 0), (self.gate, 0)])
         self._add_flag_lines(_warning_lines(summary, run_labels))
 
