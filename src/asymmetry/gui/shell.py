@@ -3,8 +3,8 @@
 Each tab is a whole :class:`~asymmetry.gui.mainwindow.MainWindow`, constructed
 as a plain child widget, so a project keeps its own docks, panels, and session
 state and the two layers stay separable. The shell owns only what must be
-shared: the tab strip, the stack of per-page menu bars, the reduction-cache
-budget, and the quit sequence.
+shared: the tab strip, the window's one menu bar, the reduction-cache budget,
+and the quit sequence.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDockWidget,
     QHBoxLayout,
+    QMenuBar,
     QSizePolicy,
     QStackedWidget,
     QTabBar,
@@ -85,8 +86,11 @@ class ProjectShell(QWidget):
         # restored when that page comes back.
         self._hidden_floating_docks: dict[MainWindow, list[QDockWidget]] = {}
 
-        self._menu_bars = QStackedWidget()
-        self._menu_bars.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        # macOS shows the last native bar attached to a window, not the visible
+        # one, so the shell owns the window's only bar and lends it the active
+        # page's menus; each page's own bar stays hidden and non-native.
+        self._menu_bar = QMenuBar()
+        self._menu_bar.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
 
         self._tabs = QTabBar()
         self._tabs.setDocumentMode(True)
@@ -103,7 +107,7 @@ class ProjectShell(QWidget):
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(0)
-        row_layout.addWidget(self._menu_bars)
+        row_layout.addWidget(self._menu_bar)
         row_layout.addSpacing(16)
         row_layout.addWidget(self._tabs, 1, Qt.AlignmentFlag.AlignBottom)
 
@@ -140,10 +144,7 @@ class ProjectShell(QWidget):
         page._shell = self
         page._reduction_cache = self._reduction_cache
         self._pages.addWidget(page)
-        # Taking the bar reparents it out of the page's own layout, which drops
-        # the page's menu-bar pointer — so page.menuBar() must never be called
-        # again, or Qt mints a fresh, empty bar in its place.
-        self._menu_bars.addWidget(page.menuBar())
+        page.menuBar().hide()
         index = self._tabs.addTab("")
         page.windowTitleChanged.connect(lambda _title, page=page: self._refresh_tab(page))
         page.dirty_changed.connect(lambda _dirty, page=page: self._refresh_tab(page))
@@ -170,14 +171,9 @@ class ProjectShell(QWidget):
             return
         index = self._pages.indexOf(page)
         self._hidden_floating_docks.pop(page, None)
-        # Both stacks shrink before the tab does, so the currentChanged the
+        # The page stack shrinks before the tab does, so the currentChanged the
         # removal emits already sees matching indices.
         self._pages.removeWidget(page)
-        # The bar was reparented into the stack, so deleting the page alone
-        # would leave it (and its action tree) alive under the shell.
-        bar = self._menu_bars.widget(index)
-        self._menu_bars.removeWidget(bar)
-        bar.deleteLater()
         self._tabs.removeTab(index)
         page.deleteLater()
         if self._pages.count() == 0:
@@ -208,7 +204,8 @@ class ProjectShell(QWidget):
             self._hidden_floating_docks[outgoing] = floating
             for dock in floating:
                 dock.hide()
-        self._menu_bars.setCurrentIndex(index)
+        self._menu_bar.clear()
+        self._menu_bar.addActions(page.menuBar().actions())
         self._pages.setCurrentIndex(index)
         for dock in self._hidden_floating_docks.pop(page, []):
             dock.show()

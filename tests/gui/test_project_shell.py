@@ -21,7 +21,6 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-import shiboken6  # noqa: E402
 from PySide6.QtCore import QEvent, QPoint, QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
@@ -221,16 +220,16 @@ def test_closing_last_tab_leaves_fresh_untitled_tab(
             page._dirty = False
 
 
-def test_close_page_deletes_its_menu_bar(shell: ProjectShell, qapp: QApplication) -> None:
+def test_close_page_hands_the_menu_bar_to_the_next_page(
+    shell: ProjectShell, qapp: QApplication
+) -> None:
     page1 = shell.add_project()
-    shell.add_project()
-    bar = shell._menu_bars.widget(0)
+    page2 = shell.add_project()
 
-    shell.close_page(page1)
+    shell.close_page(page2)
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
 
-    assert shell._menu_bars.count() == 1
-    assert not shiboken6.isValid(bar)
+    assert shell._menu_bar.actions() == page1.menuBar().actions()
 
 
 # ── quit guard ────────────────────────────────────────────────────────────
@@ -303,19 +302,27 @@ def test_tab_label_shows_file_stem_after_open(shell: ProjectShell, tmp_path) -> 
     assert shell._tabs.tabText(0) == "myproj"
 
 
-# ── menu-bar stack follows the active tab ─────────────────────────────────
+# ── the shell's one menu bar follows the active tab ───────────────────────
 
 
-def test_menu_bar_stack_follows_active_tab(shell: ProjectShell) -> None:
-    shell.add_project()
+def test_menu_bar_follows_active_tab(shell: ProjectShell) -> None:
+    page1 = shell.add_project()
     page2 = shell.add_project()
 
-    shell._tabs.setCurrentIndex(1)
+    shell._tabs.setCurrentIndex(0)
 
-    assert shell._menu_bars.currentIndex() == 1
-    assert shell._pages.currentWidget() is page2
-    assert shell._menu_bars.currentWidget() is not shell._menu_bars.widget(0)
-    assert shell._menu_bars.currentWidget().actions()[0].text() == "&File"
+    assert shell._menu_bar.actions() == page1.menuBar().actions()
+    assert shell._menu_bar.actions() != page2.menuBar().actions()
+    assert shell._menu_bar.actions()[0].text() == "&File"
+
+
+def test_hosted_page_menu_bar_is_hidden_and_never_native(shell: ProjectShell) -> None:
+    # macOS shows only the last native bar attached to a window, so a native
+    # page bar would displace the shell's and strand it on a closed page.
+    page = shell.add_project()
+
+    assert not page.menuBar().isNativeMenuBar()
+    assert not page.menuBar().isVisibleTo(page)
 
 
 # ── bulk-load gate is process-wide, not per-page ──────────────────────────
