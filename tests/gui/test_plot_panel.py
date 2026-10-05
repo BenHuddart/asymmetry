@@ -3049,8 +3049,11 @@ class TestPlotPanel:
 
         ax_px = _FakeAxis()
         ax_py = _FakeAxis()
-        panel._plot_datasets_on_axis(ax_px, panel._display_entries([ds_px]), "P_x", None)
-        panel._plot_datasets_on_axis(ax_py, panel._display_entries([ds_py]), "P_y", None)
+        # Stacked subplots look fits up under each clone's own projection.
+        for ax, ds, axis in ((ax_px, ds_px, "P_x"), (ax_py, ds_py, "P_y")):
+            panel._plot_datasets_on_axis(
+                ax, panel._display_entries([ds]), axis, None, fit_axis=None, color_slots=[0]
+            )
 
         assert ax_px.plot_calls
         assert ax_py.plot_calls

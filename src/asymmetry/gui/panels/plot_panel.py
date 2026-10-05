@@ -4321,12 +4321,17 @@ class PlotPanel(QWidget):
         entries: list[_DisplayEntry],
         axis_key: str | None,
         window: tuple[float, float] | None,
+        *,
+        fit_axis: str | None,
+        color_slots: list[int],
     ) -> None:
         """Draw pre-materialised display *entries* on ``ax`` inside *window*.
 
         The arrays are materialised once by :meth:`_display_entries` — the same
         list feeds the x/y bounds the render resolves — so the analysis + RRF
-        pipeline runs once per dataset per render.
+        pipeline runs once per dataset per render. ``color_slots`` gives each
+        entry's trace colour index; ``fit_axis`` overrides the projection fits
+        are looked up under (``None``: each dataset's own).
         """
         # Handoff plot grammar: y = 0 reference line under the data (it is
         # excluded from autoscaling, so positive-only data never stretches).
@@ -4334,7 +4339,7 @@ class PlotPanel(QWidget):
         self._rrf_frame_drawn = None
         period_color_counts: dict[str, int] = {}
 
-        for i, entry in enumerate(entries):
+        for i, entry in zip(color_slots, entries, strict=True):
             dataset = entry.dataset
             color = f"C{i % 10}"
             period_color = self._period_mode_color_for_dataset(dataset)
@@ -4377,7 +4382,7 @@ class PlotPanel(QWidget):
             )
 
             for order, (_fit_id, curve) in enumerate(
-                self._shown_fit_curves_for_dataset(dataset, axis_override=axis_key)
+                self._shown_fit_curves_for_dataset(dataset, axis_override=fit_axis)
             ):
                 fit_to_plot = rrf_display_fit_curve(self, curve, entry.analysis)
                 if fit_to_plot is None:
@@ -4476,6 +4481,13 @@ class PlotPanel(QWidget):
         shared_ax = None
         last_arrays = (None, None, None, None)
         vector_x_ranges: list[tuple[float, float]] = []
+        # A run keeps one trace colour on every subplot, even when overlaid runs
+        # from different groupings sit on different projections.
+        run_slots: dict[int, int] = {}
+        for axis_key in order:
+            for ds in self._vector_subplot_datasets.get(axis_key, []):
+                run_slots.setdefault(ds.run_number, len(run_slots))
+        first_runs = {ds.run_number for ds in self._vector_subplot_datasets[order[0]]}
         for idx, axis_key in enumerate(order):
             ax = self._figure.add_subplot(len(order), 1, idx + 1, sharex=shared_ax)
             style_axes(ax)
@@ -4484,7 +4496,17 @@ class PlotPanel(QWidget):
             self._subplot_axes_by_polarization[axis_key] = ax
             self._ax = ax if idx == 0 else self._ax
 
-            self._plot_datasets_on_axis(ax, entries_by_axis[axis_key], axis_key, window)
+            members = self._vector_subplot_datasets.get(axis_key, [])
+            # Clones carry their projection as ``vector_axis``, and a single-pair
+            # run its own default slot, so each dataset resolves its own fits.
+            self._plot_datasets_on_axis(
+                ax,
+                entries_by_axis[axis_key],
+                axis_key,
+                window,
+                fit_axis=None,
+                color_slots=[run_slots[ds.run_number] for ds in members],
+            )
             self._apply_projection_frame_tint(ax, axis_key)
             if idx == len(order) - 1:
                 x_label, _ = self._axis_labels_for_dataset(
@@ -4494,7 +4516,8 @@ class PlotPanel(QWidget):
                 ax.set_xlabel(x_label)
             else:
                 ax.tick_params(labelbottom=False)
-            if idx == 0:
+            # Each distinct run membership gets a legend; identical ones share the top one.
+            if idx == 0 or {ds.run_number for ds in members} != first_runs:
                 style_legend(ax.legend())
             arrays = arrays_by_axis[axis_key]
             # An all-NaN projection has no signal to frame; give it a neutral
@@ -4590,7 +4613,9 @@ class PlotPanel(QWidget):
             if idx == 0:
                 self._ax = ax
 
-            self._plot_datasets_on_axis(ax, entries_by_axis[axis_key], axis_key, window)
+            self._plot_datasets_on_axis(
+                ax, entries_by_axis[axis_key], axis_key, window, fit_axis=axis_key, color_slots=[0]
+            )
             ax.set_title(str(dataset.run_label), loc="left", fontsize=10)
             if idx == len(datasets) - 1:
                 x_label, _ = self._axis_labels_for_dataset(dataset, axis_key)

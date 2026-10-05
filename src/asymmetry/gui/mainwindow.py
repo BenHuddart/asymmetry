@@ -189,6 +189,7 @@ from asymmetry.core.instrument import (
     PROJECTION_TINTS,
     TRANSVERSE_PROJECTION_TINTS,
     derive_projection_pairs,
+    projection_memberships,
     recommend_grouping_preset_for_run,
 )
 from asymmetry.core.io import resolve_background_reference
@@ -2502,6 +2503,14 @@ class MainWindow(QMainWindow):
         else:
             grouping.pop("projections", None)
 
+    @staticmethod
+    def _store_vector_axis(grouping: dict, axis: str | None) -> None:
+        """Write the active projection onto *grouping*, clearing it when ``None``."""
+        if axis:
+            grouping["vector_axis"] = axis
+        else:
+            grouping.pop("vector_axis", None)
+
     def _vector_axis_state_for_dataset(
         self, dataset
     ) -> tuple[dict[str, tuple[int, int]], str | None]:
@@ -2543,27 +2552,31 @@ class MainWindow(QMainWindow):
             axis = "P_z" if "P_z" in pairs else next(iter(pairs))
         return pairs, axis
 
-    def _projection_specs_for_dataset(
-        self,
-        dataset: MuonDataset,
-        pairs: dict[str, tuple[int, int]],
-    ) -> list[dict]:
-        """Return ordered ``[{"label", "tint"}]`` specs for *pairs*.
+    @staticmethod
+    def _projection_memberships(datasets: list[MuonDataset]) -> dict[str, list[int]]:
+        """The projection subplots *datasets* share; see :func:`projection_memberships`."""
+        return projection_memberships(
+            [ds.run.grouping if ds.run is not None else {} for ds in datasets]
+        )
 
-        Tints come from the dataset's declared projections when present, else
+    def _projection_specs(self, datasets: list[MuonDataset], labels: list[str]) -> list[dict]:
+        """Return ordered ``[{"label", "tint"}]`` specs for *labels*.
+
+        Tints come from the datasets' declared projections when present, else
         the canonical :data:`PROJECTION_TINTS` / transverse-field
         :data:`TRANSVERSE_PROJECTION_TINTS` fallback by label.
         """
         tint_by_label: dict[str, str] = {}
-        run = getattr(dataset, "run", None)
-        grouping = getattr(run, "grouping", None)
-        if isinstance(grouping, dict):
-            for proj in grouping.get("projections") or []:
-                if isinstance(proj, dict) and proj.get("label") and proj.get("tint"):
-                    tint_by_label[str(proj["label"])] = str(proj["tint"])
+        for dataset in datasets:
+            run = getattr(dataset, "run", None)
+            grouping = getattr(run, "grouping", None)
+            if isinstance(grouping, dict):
+                for proj in grouping.get("projections") or []:
+                    if isinstance(proj, dict) and proj.get("label") and proj.get("tint"):
+                        tint_by_label.setdefault(str(proj["label"]), str(proj["tint"]))
 
         specs: list[dict] = []
-        for label in pairs:
+        for label in labels:
             spec: dict = {"label": label}
             tint = (
                 tint_by_label.get(label)
@@ -2600,18 +2613,19 @@ class MainWindow(QMainWindow):
             self._plot_panel.set_projections([])
             return
 
-        first_pairs, first_axis = self._vector_axis_state_for_dataset(targets[0])
-        if not first_pairs:
+        # Overlaid runs from different groupings share the union of their
+        # projections; a single-pair run sits only on the projection it measures.
+        memberships = self._projection_memberships(targets)
+        if not memberships:
             self._plot_panel.set_projections([])
             return
+        first_axis = next(
+            axis
+            for pairs, axis in map(self._vector_axis_state_for_dataset, targets)
+            if len(pairs) >= 2
+        )
 
-        for dataset in targets[1:]:
-            pairs, _axis = self._vector_axis_state_for_dataset(dataset)
-            if pairs != first_pairs:
-                self._plot_panel.set_projections([])
-                return
-
-        specs = self._projection_specs_for_dataset(targets[0], first_pairs)
+        specs = self._projection_specs(targets, list(memberships))
         labels = [spec["label"] for spec in specs]
 
         # Preserve the live chip selection where it still applies; otherwise
@@ -2866,27 +2880,25 @@ class MainWindow(QMainWindow):
         datasets: list[MuonDataset],
         labels: list[str] | None = None,
     ) -> dict[str, list[MuonDataset]]:
-        """Return per-projection cloned datasets for stacked-subplot rendering.
+        """Return per-projection datasets for stacked-subplot rendering.
 
-        ``labels`` selects which projections to build (defaults to the canonical
-        vector triple); each clone is reduced with that projection's pair.
+        ``labels`` selects which projections to build (defaults to every one the
+        datasets share). A multi-projection run contributes a clone reduced with
+        each projection's pair; a single-pair run is already that projection's
+        asymmetry and joins its one subplot as-is.
         """
-        axis_labels = list(labels) if labels else ["P_x", "P_y", "P_z"]
+        memberships = self._projection_memberships(datasets)
+        axis_labels = list(labels) if labels else list(memberships)
         axis_map: dict[str, list[MuonDataset]] = {label: [] for label in axis_labels}
         for axis in axis_labels:
-            for dataset in datasets:
+            for index in memberships.get(axis, []):
+                dataset = datasets[index]
                 payload = self._extract_grouping_overrides(dataset)
-                if not isinstance(payload, dict):
-                    continue
-                run = getattr(dataset, "run", None)
-                if run is None:
-                    continue
-                groups = payload.get("groups", {})
-                names = payload.get("group_names")
                 pairs = self._vector_axis_pairs_for_grouping(
-                    groups, names, payload.get("projections")
+                    payload["groups"], payload.get("group_names"), payload.get("projections")
                 )
-                if axis not in pairs:
+                if len(pairs) < 2:
+                    axis_map[axis].append(dataset)
                     continue
 
                 payload["vector_axis"] = axis
@@ -3094,6 +3106,13 @@ class MainWindow(QMainWindow):
                     ]
                     self._plot_panel.plot_vector_subplots(axis_datasets)
                     return
+
+            if active_axis is not None and len(targets) > 1:
+                # One projection of a mixed overlay shows only the runs measuring it.
+                members = self._projection_memberships(targets).get(active_axis)
+                if members:
+                    targets = [targets[index] for index in members]
+                    rendered_targets = list(targets)
 
             if len(targets) > 1:
                 render_mode = "overlay"
@@ -5265,17 +5284,10 @@ class MainWindow(QMainWindow):
         group_names_for_axis = grouping_result.get("group_names")
         if not isinstance(group_names_for_axis, dict) and isinstance(existing_grouping, dict):
             group_names_for_axis = existing_grouping.get("group_names")
-        # An explicit "projections" key (even an empty list, which the dialog
-        # always emits) is authoritative; only inherit from the existing grouping
-        # when the caller is a partial update that omits the key entirely.
-        # Otherwise switching a vector dataset to a single-pair preset would
-        # resurrect the stale vector projections.
-        if "projections" in grouping_result:
-            projections_for_axis = grouping_result.get("projections")
-        elif isinstance(existing_grouping, dict):
-            projections_for_axis = existing_grouping.get("projections")
-        else:
-            projections_for_axis = None
+        # Projections belong to the grouping being applied: a payload without
+        # them (a single-pair profile or preset) leaves the run with none, so a
+        # run moved off a vector grouping never keeps its old projections.
+        projections_for_axis = grouping_result.get("projections")
         projections_to_store = (
             [dict(p) for p in projections_for_axis if isinstance(p, dict)]
             if isinstance(projections_for_axis, list) and projections_for_axis
@@ -5505,8 +5517,7 @@ class MainWindow(QMainWindow):
                 run.grouping["included_groups"] = {
                     int(k): bool(v) for k, v in included_groups.items()
                 }
-            if vector_axis and axis_pairs:
-                run.grouping["vector_axis"] = vector_axis
+            self._store_vector_axis(run.grouping, vector_axis if axis_pairs else None)
             self._store_projections(run.grouping, projections_to_store)
             preset_name = grouping_result.get("grouping_preset")
             if preset_name:
@@ -5843,8 +5854,7 @@ class MainWindow(QMainWindow):
         included_groups = grouping_result.get("included_groups")
         if isinstance(included_groups, dict):
             run.grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
-        if vector_axis and axis_pairs:
-            run.grouping["vector_axis"] = vector_axis
+        self._store_vector_axis(run.grouping, vector_axis if axis_pairs else None)
         self._store_projections(run.grouping, projections_to_store)
         preset_name = grouping_result.get("grouping_preset")
         if preset_name:
@@ -11818,6 +11828,11 @@ class MainWindow(QMainWindow):
             return None
         if not hasattr(self._plot_panel, "get_current_polarization_axis"):
             return None
+        if self._current_dataset is not None:
+            pairs, _axis = self._vector_axis_state_for_dataset(self._current_dataset)
+            if len(pairs) < 2:
+                # A single-pair run sharing a projection subplot fits its own asymmetry.
+                return None
         axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
         if axis == "ALL":
             # Stacked multi-subplot view: the selected subplot is the fit target.

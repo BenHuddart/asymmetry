@@ -71,17 +71,34 @@ Backwards compatibility:
 Display in the main plot
 ------------------------
 
-The Polarization selector in the plot header provides:
-
-* ``x`` (``P_x``)
-* ``y`` (``P_y``)
-* ``z`` (``P_z``)
-* ``All``
+When the run on screen has a vector grouping, a **Projection:** chip bar
+appears above the plot with one chip per projection (``P_x``, ``P_y``,
+``P_z``). Select one chip to show that projection, or several to stack them
+as subplots; **all** selects every projection at once. A run whose grouping
+has a single forward/backward pair has only one polarisation component, so it
+gets one plain plot and no chip bar.
 
 Alpha display behaviour:
 
-* Single-axis views show the alpha for the selected axis.
-* ``All`` mode hides alpha in the header.
+* Single-projection views show the alpha for the selected axis.
+* Stacked subplots hide alpha in the header.
+
+Runs from different groupings
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Overlaying runs whose groupings differ shows every projection any of them
+declares, and each subplot holds only the runs that measure that projection.
+A single-pair run joins the projection whose forward and backward groups hold
+exactly its detectors on the same instrument: an EMU **Longitudinal** run sits
+on the ``P_z`` subplot beside the vector runs and is absent from ``P_x`` and
+``P_y``; a GPS **Longitudinal** run joins the **WEP (spin-rotated)** ``FB``
+projection. A run keeps one trace colour on every subplot. When a single-pair
+run matches no projection (a MuSR **Longitudinal** run beside the
+**Transverse (Vector)** grouping, whose detector split differs), the overlay
+falls back to one plain plot without the chip bar.
+
+A fit on a single-pair run always belongs to the run's own asymmetry, even
+when it is selected from a shared projection subplot.
 
 Persistence
 -----------
