@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   old ``P_x``/``P_y``/``P_z`` projections and active axis on the run, so a
   plain forward/backward run could still offer projection chips and key its
   fits and fit overlays to ``P_z``.
+- **On macOS the menu bar follows the active project tab.** The menu bar
+  stayed on the most recently opened tab whatever tab was showing, so a menu
+  command acted on that project. Closing that tab left the menu bar with no
+  working menus.
 
 ### Changed
 
