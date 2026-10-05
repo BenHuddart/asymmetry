@@ -2,9 +2,10 @@
 
 Evidence weights, the shortlist rule, normalised residuals, parameter flags and
 the neutral :class:`CandidateSummary` a comparison panel renders. The summary is
-written for N runs; the single-run wizard adapts to it with N = 1. Design:
-``docs/plans/global-wizard-stepper.md`` (D4, D7, D8) and
-``docs/plans/fit-wizard-compare.md`` (D2, D3).
+written for N runs; the single-run wizard and a run's saved single fits adapt
+to it with N = 1. Design: ``docs/plans/global-wizard-stepper.md`` (D4, D7, D8),
+``docs/plans/fit-wizard-compare.md`` (D2, D3) and
+``docs/plans/single-fit-compare.md`` (D7–D9).
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from typing import TYPE_CHECKING, Literal, TypeVar
 import numpy as np
 from numpy.typing import NDArray
 
+from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.fit_curves import dense_fit_curve
 from asymmetry.core.fitting.parameters import Parameter
 
 if TYPE_CHECKING:
@@ -29,6 +32,7 @@ if TYPE_CHECKING:
         SelectionMetric,
     )
     from asymmetry.core.fitting.global_fit_wizard import GlobalCandidateAssessment
+    from asymmetry.core.representation.base import FitSlot
 
 Curve = tuple[NDArray[np.float64], NDArray[np.float64]]
 _Assessment = TypeVar("_Assessment", "GlobalCandidateAssessment", "CandidateAssessment")
@@ -226,8 +230,9 @@ class CandidateSummary:
     """Everything a comparison panel shows about one candidate, for N runs.
 
     ``delta`` and ``weight`` are relative to the pool the summary was built in
-    (see :func:`summarise_candidates`). ``gate_summary`` is empty when every run
-    passed its residual gate.
+    (see :func:`summarise_candidates`). ``gate_passed`` is ``None`` when no
+    residual gate was run (a saved fit); ``gate_summary`` is empty when every
+    run passed it, or when it was not run.
     """
 
     key: str
@@ -235,7 +240,7 @@ class CandidateSummary:
     metric_value: float
     delta: float
     weight: float
-    gate_passed: bool
+    gate_passed: bool | None
     gate_summary: str
     series_warnings: tuple[str, ...]
     runs: tuple[RunFit, ...]
@@ -347,6 +352,158 @@ def _single_candidate_summary(
         parameters=parameters,
         prescreen=False,
     )
+
+
+def saved_fit_model(slot: FitSlot) -> tuple[CompositeModel, dict[str, float]] | None:
+    """The model and values a saved fit draws with; ``None`` when it cannot be drawn.
+
+    A legacy slot may hold no model, or a table missing one of its model's
+    parameters (:meth:`FitSlot.fitted_values`); such a fit is listed but has no
+    curve.
+    """
+    if slot.model is None:
+        return None
+    model = CompositeModel.from_dict(slot.model, allow_missing=True)
+    values = slot.fitted_values()
+    if not set(model.param_names) <= values.keys():
+        return None
+    return model, {name: values[name] for name in model.param_names}
+
+
+def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
+    """A saved single fit's dense curve over its window, and its normalised residuals.
+
+    ``None`` for a fit :func:`saved_fit_model` cannot draw. An open window
+    side, or a fit saved before its window was recorded (pre-v25), reaches the
+    edge of the record. Evaluates the model, so a caller off the GUI thread
+    runs it.
+    """
+    drawable = saved_fit_model(slot)
+    if drawable is None:
+        return None
+    model, values = drawable
+    window = slot.fit_range or {"min": None, "max": None}
+    x_min = float(np.min(dataset.time)) if window["min"] is None else window["min"]
+    x_max = float(np.max(dataset.time)) if window["max"] is None else window["max"]
+    curve = dense_fit_curve(model, values, x_min, x_max)
+    return RunCurves(curve, normalised_residuals(dataset, curve))
+
+
+def saved_fit_score(slot: FitSlot, metric: SelectionMetric) -> float:
+    """*slot*'s information criterion from its stored χ² (k = npar); NaN with no data key."""
+    from asymmetry.core.fitting.fit_wizard import SelectionMetric, compute_information_criteria
+
+    data_key = slot.data_key()
+    if data_key is None:
+        return math.nan
+    aic, aicc, bic = compute_information_criteria(
+        float(slot.result["chi_squared"]), int(slot.result["npar"]), data_key[2]
+    )
+    score = {SelectionMetric.AIC: aic, SelectionMetric.AICC: aicc, SelectionMetric.BIC: bic}[metric]
+    return math.nan if score is None else float(score)
+
+
+def summarise_saved_fits(
+    fits: Sequence[tuple[FitSlot, str]],
+    dataset: MuonDataset,
+    metric: SelectionMetric,
+    curves: Mapping[str, RunCurves],
+    *,
+    first: str,
+) -> tuple[CandidateSummary, ...]:
+    """One single-run summary per saved fit, ranked within each data key (single-fit D7).
+
+    ``fits`` pairs each slot with the name it reads under; the summary's key is
+    its ``fit_id``. Fits sharing :meth:`FitSlot.data_key` saw the same points,
+    so Δ and weights are taken within that group, best first; a group of one or
+    a fit with no key is not ranked (Δ is infinite, its weight 0). The group
+    holding *first* leads, then the others in the order given. ``curves``
+    holds the dense curves built so far; a fit missing from it has none yet.
+    """
+    groups: dict[object, list[tuple[FitSlot, str]]] = {}
+    for slot, name in fits:
+        data_key = slot.data_key()
+        groups.setdefault(data_key if data_key is not None else slot.fit_id, []).append(
+            (slot, name)
+        )
+    ordered = sorted(
+        groups.values(), key=lambda group: all(slot.fit_id != first for slot, _ in group)
+    )
+    summaries: list[CandidateSummary] = []
+    for group in ordered:
+        scores = [saved_fit_score(slot, metric) for slot, _ in group]
+        ranked = len(group) > 1
+        deltas = score_deltas(scores) if ranked else [math.inf]
+        weights = information_weights(scores) if ranked else [0.0]
+        order = sorted(range(len(group)), key=lambda index: deltas[index])
+        summaries.extend(
+            _saved_fit_summary(
+                *group[index], dataset, scores[index], deltas[index], weights[index], curves
+            )
+            for index in order
+        )
+    return tuple(summaries)
+
+
+def _saved_fit_summary(
+    slot: FitSlot,
+    name: str,
+    dataset: MuonDataset,
+    score: float,
+    delta: float,
+    weight: float,
+    curves: Mapping[str, RunCurves],
+) -> CandidateSummary:
+    run = RunFit(
+        run_number=int(dataset.run_number),
+        run_label=dataset.run_label,
+        axis_value=math.nan,
+        curves=curves.get(slot.fit_id),
+        reduced_chi_squared=slot.reduced_chi_squared(),
+    )
+    values = slot.fitted_values()
+    errors = (slot.result or {}).get("uncertainties") or {}
+    bounds = {str(entry["name"]): entry for entry in slot.parameters}
+    rows = []
+    for parameter_name, value in values.items():
+        entry = bounds.get(parameter_name, {})
+        # A fit that recorded no uncertainties (a legacy slot) is split by its table's Fix.
+        free = parameter_name in errors if errors else not entry.get("fixed", False)
+        error = float(errors[parameter_name]) if parameter_name in errors else math.nan
+        parameter = Parameter(
+            parameter_name,
+            float(value),
+            min=_bound(entry.get("min"), -math.inf),
+            max=_bound(entry.get("max"), math.inf),
+            fixed=not free,
+        )
+        rows.append(
+            ParameterRow(
+                name=parameter_name,
+                role=ParameterRole.FITTED if free else ParameterRole.FIXED,
+                values=(Estimate(float(value), error),),
+                run_flags=(parameter_flags(parameter, error),),
+            )
+        )
+    role_order = (ParameterRole.FITTED, ParameterRole.FIXED)
+    return CandidateSummary(
+        key=slot.fit_id,
+        title=name,
+        metric_value=score,
+        delta=delta,
+        weight=weight,
+        gate_passed=None,
+        gate_summary="",
+        series_warnings=(),
+        runs=(run,),
+        parameters=tuple(sorted(rows, key=lambda row: role_order.index(row.role))),
+        prescreen=False,
+    )
+
+
+def _bound(text: object, default: float) -> float:
+    """A parameter-table bound cell as a float; a blank cell is unbounded."""
+    return float(str(text)) if text is not None and str(text).strip() else default
 
 
 def _candidate_summary(

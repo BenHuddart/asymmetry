@@ -359,6 +359,7 @@ def _import_scenarios() -> None:
         quickstart_first_fit,
         run_info_provenance,
         simulate_dialog,
+        single_fit_saved_fits,
         spectral_moments_readout,
         suggest_next_point,
         trend_model_fit_dialog,

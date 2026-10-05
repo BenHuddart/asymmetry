@@ -5070,7 +5070,7 @@ class TestMainWindowBasic:
         assert rep is not None
         # ALL is the aggregate sentinel — it keys onto the default slot.
         assert rep.fit.provenance == "single"
-        assert rep.projection_fits == {}
+        assert not rep.has_projection_fits()
 
     def test_restore_payload_resolves_per_projection(
         self,
@@ -5081,7 +5081,10 @@ class TestMainWindowBasic:
         rep = mainwindow._project_model.ensure_dataset(8803).ensure(
             RepresentationType.TIME_FB_ASYMMETRY
         )
-        rep.set_fit_for("P_x", FitSlot(provenance="single", ui_state={"result_html": "x"}))
+        rep.set_fit_for(
+            "P_x",
+            FitSlot(provenance="single", result={"success": True}, ui_state={"result_html": "x"}),
+        )
 
         monkeypatch.setattr(mainwindow._plot_panel, "get_current_polarization_axis", lambda: "P_x")
         assert mainwindow._single_fit_restore_payload(dataset) == {"result_html": "x"}
@@ -5123,9 +5126,13 @@ class TestMainWindowBasic:
         titles = [title for title, _ in mainwindow._collect_latest_fit_records()]
 
         rep_label = RepresentationType.TIME_FB_ASYMMETRY.value
-        assert f"Run 8808 · {rep_label}" in titles  # default slot (no projection suffix)
-        assert f"Run 8808 · {rep_label} · P_x" in titles
-        assert f"Run 8808 · {rep_label} · P_z" in titles
+        # The default slot carries no projection suffix; each title ends with the
+        # fit's name ("Single fit" for a slot with no model to name it after).
+        assert titles == [
+            f"Run 8808 · {rep_label} · Single fit",
+            f"Run 8808 · {rep_label} · P_x · Single fit",
+            f"Run 8808 · {rep_label} · P_z · Single fit",
+        ]
 
     def test_in_session_projection_swap_restores_each_fit(
         self,
@@ -5145,7 +5152,14 @@ class TestMainWindowBasic:
         panel._single_tab._set_composite_model(
             CompositeModel(["Gaussian", "Constant"], operators=["+"])
         )
-        rep.set_fit_for("P_x", FitSlot(provenance="single", ui_state=panel.get_single_form_state()))
+        rep.set_fit_for(
+            "P_x",
+            FitSlot(
+                provenance="single",
+                result={"success": True},
+                ui_state=panel.get_single_form_state(),
+            ),
+        )
         # P_z is left unfit.
 
         # Viewing the unfit P_z blanks the form (no inherited P_x fit).

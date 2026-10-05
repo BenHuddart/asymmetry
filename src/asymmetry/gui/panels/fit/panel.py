@@ -43,7 +43,7 @@ from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 
 from .global_tab import GlobalFitTab
-from .single_tab import SingleFitTab
+from .single_tab import SavedFitCatalogue, SingleFitTab
 from .wizard_cache import (
     WizardCacheEntry,
     persisted_single_fit_form_state,
@@ -111,6 +111,13 @@ class FitPanel(QWidget):
     apply_wizard_phases_requested = Signal(object, int)
     series_group_requested = Signal(object)  # forwarded from GlobalFitTab
     add_single_fit_to_series_requested = Signal()
+    # Forwarded from the Single tab's Saved fits row (single-fit plan D1/D2).
+    saved_fit_open_requested = Signal(str)
+    saved_fit_rename_requested = Signal(str, str)
+    saved_fit_delete_requested = Signal(str)
+    saved_fit_compare_requested = Signal()
+    #: A record was bound to the Single tab: the host draws its saved fits.
+    single_dataset_bound = Signal()
     fit_range_edit_committed = Signal(float, float)  # forwarded from SingleFitTab
     # Forwarded from the Batch tab's series row (D1/D7): open a recorded series,
     # start a draft over the browser selection or over a data group, rename or
@@ -203,6 +210,10 @@ class FitPanel(QWidget):
             self.add_single_fit_to_series_requested.emit
         )
         self._single_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
+        self._single_tab.saved_fit_open_requested.connect(self.saved_fit_open_requested.emit)
+        self._single_tab.saved_fit_rename_requested.connect(self.saved_fit_rename_requested.emit)
+        self._single_tab.saved_fit_delete_requested.connect(self.saved_fit_delete_requested.emit)
+        self._single_tab.saved_fit_compare_requested.connect(self.saved_fit_compare_requested.emit)
         self._single_tab.field_direction_answered.connect(self.field_direction_answered.emit)
         self._tabs.addTab(self._single_tab, "Single")
 
@@ -461,6 +472,7 @@ class FitPanel(QWidget):
 
         self._single_tab.set_dataset(dataset)
         self._global_tab.set_current_dataset(dataset)
+        self.single_dataset_bound.emit()
 
         run_number = self._run_number_from_dataset(dataset)
         self._active_single_run_number = run_number
@@ -1251,6 +1263,34 @@ class FitPanel(QWidget):
     def single_fit_range_text(self) -> str | None:
         """Active single-fit range as a provenance string (see SingleFitTab)."""
         return self._single_tab.current_fit_range_text()
+
+    # ── Saved single fits (docs/plans/single-fit-compare.md) ──────────────
+
+    def set_saved_fit_catalogue_provider(self, provider: Callable[[], SavedFitCatalogue]) -> None:
+        """Install the host callback that answers the bound run's saved fits."""
+        self._single_tab.set_saved_fit_catalogue_provider(provider)
+
+    def refresh_saved_fits(self) -> None:
+        """Re-read the bound run's saved fits (after a rename, say)."""
+        self._single_tab.refresh_saved_fits()
+
+    def note_single_fit_saved(self) -> None:
+        """The host saved the Single tab's fit: ``New fit`` is spent."""
+        self._single_tab.note_fit_saved()
+
+    def single_fit_records_new(self) -> bool:
+        """Whether the next single fit records beside the open one whatever it describes."""
+        return self._single_tab.records_new_fit()
+
+    def single_fit_window(self) -> dict[str, float | None]:
+        """The window the Single tab's next fit uses, as a saved fit records it."""
+        return self._single_tab.fit_window()
+
+    def show_saved_single_fit(self, payload: dict) -> None:
+        """Show a saved fit the host just opened on the bound run, verbatim."""
+        self._single_tab.set_has_recorded_fit(True)
+        self._restore_protected_single_fit_form(self._active_single_run_number, payload)
+        self._single_tab.refresh_saved_fits()
 
     def batch_fit_range_text(self) -> str | None:
         """Active batch/global/grouped fit range as a provenance string."""

@@ -8,8 +8,8 @@ the single- and global-fit model setups with their parameter tables and
 bounds, separate frequency-domain fit state with spectral peak models,
 the most recent fit overlays, the Fourier panel state including
 per-run phase tables, any cached Fit Wizard or Global Fit Wizard
-analyses, per-run *representation* fit slots (the Single tab's fit
-alone — a batch, global, grouped or scan run never writes one), and the
+analyses, per-run *representation* saved single fits (the Single tab's
+fits alone — a batch, global, grouped or scan run never writes one), and the
 *batches* (fit series, each carrying the recipe that produced it) that
 drive the Fit Parameters trending panel and the plot's overlays. Raw
 detector arrays are *not* embedded — the file references source data by
@@ -68,12 +68,14 @@ Project files store:
 * Cached single-fit and global-fit wizard analysis payloads when present
 * **Per-dataset representations** — for each analysis domain (F-B asymmetry,
   detector groups, FFT, MaxEnt) that the user has exercised, the stored
-  representation records a *recipe* (for FFT: the generation config) and a
-  *FitSlot* — the Single tab's own fit for that representation only: model,
-  parameters, result summary, provenance (``"none"``/``"single"``/``"wizard"``)
+  representation records a *recipe* (for FFT: the generation config) and its
+  ``single_fits`` — the Single tab's saved fits for that representation only,
+  per projection, each a *FitSlot*: model, parameters, result summary,
+  provenance (``"none"``/``"single"``/``"wizard"``), its window, name and id,
   and, when the single-fit GUI produced it, a ``ui_state`` blob that restores
-  the form verbatim. Fourier spectra are re-generated from the recipe on
-  load; time-domain asymmetry is re-computed from the raw data.
+  the form verbatim (see `Saved single fits (schema v25)`_). Fourier spectra
+  are re-generated from the recipe on load; time-domain asymmetry is
+  re-computed from the raw data.
 * **Fit series (batches)** — each batch, global, grouped or scan fit over
   multiple runs (or multiple runs' detector groups) is recorded as a
   ``FitSeries`` that carries the member list, parameter roles, per-member
@@ -279,13 +281,17 @@ place. A solo Batch-tab run of a stamped series always clears both fields,
 which is what makes staleness (see :ref:`joint-fit-staleness-and-detaching`
 in :doc:`joint_fit`) computable from live project state rather than stored.
 
-.. _fit-slot-fields-v20:
+.. _saved-single-fits-v25:
 
-Per-run fit slot fields (schema v20)
---------------------------------------
+Saved single fits (schema v25)
+------------------------------
 
-A representation's ``fit`` (and each entry of ``projection_fits``) is a
-*FitSlot* holding the Single tab's own fit alone:
+A representation's ``single_fits`` maps each projection to the single fits
+saved on it (:ref:`saved-single-fits`): ``""`` keys the default view, a label
+such as ``"P_x"`` a projection of a vector grouping. Each entry is
+``{"open_id", "fits"}``: the fits in the order they were saved, and the id of
+the one the Single tab shows. An ``open_id`` that names no fit (a hand-edited
+file) opens the newest. Each fit is a *FitSlot* holding a Single-tab fit alone:
 
 ``model``, ``parameters``, ``result``
     The composite model, its parameter table and the fit-result summary —
@@ -303,6 +309,19 @@ A representation's ``fit`` (and each entry of ``projection_fits``) is a
     wizard cache) needed to restore the editor verbatim; present only when
     the single-fit GUI itself produced the slot, omitted (not written)
     otherwise.
+
+``fit_id``, ``label``, ``fit_range``
+    A project-unique id (the plot draws a saved fit that is not open under
+    ``"single:<fit_id>"``); a user rename or a disambiguating name, ``null``
+    while the default ``<model> · <window>`` applies; and the window fitted,
+    ``{"min", "max"}`` in the domain's unit, with ``null`` for an open side
+    (a frequency fit over the whole spectrum).
+
+Up to schema v24 a representation held one slot, ``fit``, plus one per
+projection in ``projection_fits``, and each Fit overwrote it.
+``_migrate_v24_to_v25`` makes each non-empty slot the only, open fit of its
+projection's set. A migrated fit has ``fit_range: null`` — its window was not
+recorded — so the Compare window lists it without ranking it.
 
 A slot no longer carries ``batch_id``, ``diverged`` or ``include_in_trend``:
 per-run state cannot diverge when it only ever holds one fit, and trend

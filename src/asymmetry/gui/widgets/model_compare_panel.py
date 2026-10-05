@@ -19,6 +19,7 @@ parameter's trace. Design: ``docs/plans/global-wizard-trend-objective.md``
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from functools import partial
 from itertools import groupby
@@ -400,12 +401,22 @@ class CandidateRow(CompareRow):
     ) -> None:
         super().__init__(summary, parent)
         self.delta_bar = _DeltaBar(summary.delta, metric_label, self)
-        self.weight = QLabel(format_weight(summary.weight), self)
+        # An unranked candidate (Δ "—") has no share of the evidence to show.
+        self.weight = QLabel(
+            format_weight(summary.weight) if math.isfinite(summary.delta) else "—", self
+        )
         self.weight.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self.weight.setToolTip("Evidence weight: w ∝ exp(−Δ/2) across the candidates listed")
-        text, background, foreground = _GATE_BADGES[summary.gate_passed]
-        self.gate = _chip(text, background, foreground)
-        self.gate.setToolTip(summary.gate_summary or "Every run passes the residual gate")
+        if summary.gate_passed is None:
+            # No residual gate was run (a saved fit): its χ²ᵣ is the verdict to hand.
+            (run,) = summary.runs
+            chi2 = run.reduced_chi_squared
+            self.gate = QLabel(f"χ²ᵣ {chi2:.3g}" if math.isfinite(chi2) else "χ²ᵣ —", self)
+            self.gate.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        else:
+            text, background, foreground = _GATE_BADGES[summary.gate_passed]
+            self.gate = _chip(text, background, foreground)
+            self.gate.setToolTip(summary.gate_summary or "Every run passes the residual gate")
         self._add_scores([(self.delta_bar, 1), (self.weight, 0), (self.gate, 0)])
         self._add_flag_lines(_warning_lines(summary, run_labels))
 

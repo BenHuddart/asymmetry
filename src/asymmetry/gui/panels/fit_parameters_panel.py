@@ -186,7 +186,7 @@ from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.parameter_card import ParameterCard, ParameterCardStack
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
-from asymmetry.gui.widgets.series_dialogs import confirm_series_delete, prompt_series_rename
+from asymmetry.gui.widgets.series_dialogs import SERIES, confirm_delete, prompt_rename
 from asymmetry.gui.windows.fit_results_window import (
     FitParameterRow,
     FitRangeResults,
@@ -2061,7 +2061,7 @@ class FitParametersPanel(QWidget):
         elif selected_action is duplicate_action:
             self.series_duplicate_requested.emit(group_id)
         elif selected_action is rename_action:
-            new_name = prompt_series_rename(self, group.group_name)
+            new_name = prompt_rename(self, SERIES, group.group_name)
             if new_name is not None:
                 self.series_rename_requested.emit(group_id, new_name)
         elif selected_action is select_action:
@@ -2076,7 +2076,7 @@ class FitParametersPanel(QWidget):
         if group is None:
             return
 
-        if not confirm_series_delete(self, group.group_name):
+        if not confirm_delete(self, SERIES, group.group_name):
             return
 
         self._sync_active_group_state()

@@ -20,6 +20,7 @@ from asymmetry.core.project import (
     save_project,
 )
 from asymmetry.core.project.schema import migrate_to_current, validate
+from tests.project.single_fits import open_fit
 
 
 def _minimal_state() -> dict:
@@ -236,7 +237,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 24
+        assert CURRENT_SCHEMA_VERSION == 25
 
     def test_v15_migrates_to_v16_frequency_axis_mode(self):
         # v16 replaces the frequency relative-axis boolean with a real axis mode
@@ -447,7 +448,7 @@ class TestSchemaMigrationV5toV6:
         result = migrate_to_current(self._v5_state())
         by_run = {ds["run_number"]: ds for ds in result["datasets"]}
 
-        fit_100 = by_run[100]["representations"]["time_fb_asymmetry"]["fit"]
+        fit_100 = open_fit(by_run[100]["representations"]["time_fb_asymmetry"])
         assert fit_100["model"]["component_names"] == ["Exponential"]
         assert fit_100["provenance"] == "single"
         assert fit_100["result"] == {"result_html": "<b>chi2 = 2.0</b>"}
@@ -457,7 +458,7 @@ class TestSchemaMigrationV5toV6:
         by_run = {ds["run_number"]: ds for ds in result["datasets"]}
 
         # Run 200 is the active run -> inherits the bare composite model.
-        fit_200 = by_run[200]["representations"]["time_fb_asymmetry"]["fit"]
+        fit_200 = open_fit(by_run[200]["representations"]["time_fb_asymmetry"])
         assert fit_200["model"]["component_names"] == ["Gaussian"]
         # Run 300 had no single fit -> no time_fb_asymmetry representation.
         assert "time_fb_asymmetry" not in by_run[300].get("representations", {})
@@ -467,7 +468,7 @@ class TestSchemaMigrationV5toV6:
         by_run = {ds["run_number"]: ds for ds in result["datasets"]}
 
         freq_100 = by_run[100]["representations"]["freq_fft"]
-        assert freq_100["fit"]["model"]["component_names"] == ["GaussianPeak"]
+        assert open_fit(freq_100)["model"]["component_names"] == ["GaussianPeak"]
         config = freq_100["recipe"]["fourier_config"]
         assert config["window"] == "gaussian"
         assert config["padding"] == 2
@@ -478,10 +479,10 @@ class TestSchemaMigrationV5toV6:
     def test_fourier_recipe_applied_even_without_freq_fit(self):
         result = migrate_to_current(self._v5_state())
         by_run = {ds["run_number"]: ds for ds in result["datasets"]}
-        # Run 300 has no frequency fit but still gets the FFT recipe + empty slot.
+        # Run 300 has no frequency fit but still gets the FFT recipe, and no saved fit.
         freq_300 = by_run[300]["representations"]["freq_fft"]
         assert freq_300["recipe"]["fourier_config"]["window"] == "gaussian"
-        assert freq_300["fit"]["provenance"] == "none"
+        assert freq_300["single_fits"] == {}
 
     def test_old_blobs_preserved(self):
         result = migrate_to_current(self._v5_state())

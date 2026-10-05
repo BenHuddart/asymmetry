@@ -6,6 +6,19 @@ subsystems or days.
 
 ## Active
 
+### Saved single fits and a Compare window
+
+Status: implemented 2026-10-05 on `feat/single-fit-compare`, PR to follow.
+Decision log (D1–D9), code map and phases are in
+[plans/single-fit-compare.md](plans/single-fit-compare.md).
+
+The Single tab keeps every distinct fit of a run, recorded by the series' rule
+(same function, window and constraints replace; anything else is saved
+beside), behind a Saved fits row (open, New fit, Rename, Delete, Compare).
+Saved fits overlay through the plot's Fits menu, and a Compare window ranks
+them by AICc within each window and point count with the shared
+`ModelComparePanel`. Schema v25.
+
 ### Global Fit Wizard: recommend the fit that trends best
 
 Status: implemented 2026-10-01 on `feat/global-wizard-trend-objective`, PR to

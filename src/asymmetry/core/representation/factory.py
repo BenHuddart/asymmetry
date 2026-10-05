@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from asymmetry.core.representation.base import FitSlot, Representation, RepresentationType
+from asymmetry.core.representation.base import Representation, RepresentationType, SingleFitSet
 from asymmetry.core.representation.frequency import FrequencyFFT, FrequencyMaxEnt
 from asymmetry.core.representation.time import (
     TimeFBAsymmetry,
@@ -30,20 +30,18 @@ def make_representation(
     rep_type: RepresentationType | str,
     recipe: dict | None = None,
     *,
-    fit: FitSlot | None = None,
     trend_state: dict | None = None,
     result_metadata: dict | None = None,
-    projection_fits: dict[str, FitSlot] | None = None,
+    single_fits: dict[str | None, SingleFitSet] | None = None,
 ) -> Representation:
     """Construct a representation of *rep_type* with the given recipe/state."""
     resolved = _coerce_type(rep_type)
     cls = REPRESENTATION_REGISTRY[resolved]
     return cls(
         recipe=recipe,
-        fit=fit,
         trend_state=trend_state,
         result_metadata=result_metadata,
-        projection_fits=projection_fits,
+        single_fits=single_fits,
     )
 
 
@@ -52,23 +50,15 @@ def representation_from_dict(data: dict) -> Representation:
     if not isinstance(data, dict):
         raise ValueError("Representation data must be a dict.")
     rep_type = _coerce_type(data["rep_type"])
-    raw_projection_fits = data.get("projection_fits")
-    projection_fits = (
-        {
-            str(key): FitSlot.from_dict(slot)
-            for key, slot in raw_projection_fits.items()
-            if isinstance(slot, dict)
-        }
-        if isinstance(raw_projection_fits, dict)
-        else None
-    )
     return make_representation(
         rep_type,
         recipe=data.get("recipe"),
-        fit=FitSlot.from_dict(data.get("fit")),
         trend_state=data.get("trend_state"),
         result_metadata=data.get("result_metadata"),
-        projection_fits=projection_fits,
+        single_fits={
+            key: SingleFitSet.from_dict(fit_set)
+            for key, fit_set in (data.get("single_fits") or {}).items()
+        },
     )
 
 

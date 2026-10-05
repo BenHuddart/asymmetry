@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 from asymmetry.core.representation.series import FitSeries
 
 if TYPE_CHECKING:
+    from asymmetry.core.representation.base import FitSlot
     from asymmetry.core.representation.group import DataGroup
 
 #: Axis unit rendered in a default label, per representation domain.
@@ -109,6 +110,16 @@ def fit_window_label(fit_range: Mapping[str, float | None], domain: str) -> str:
     if low is None and high is None:
         return ""
     return f"{_format_bound(low)}–{_format_bound(high)} {_DOMAIN_UNITS[domain]}"
+
+
+def default_single_fit_label(slot: FitSlot, domain: str) -> str:
+    """``"<model> · <window>"`` for a saved single fit, its default name (single-fit plan D5).
+
+    A fit saved before its window was recorded (pre-v25) reads as its model alone.
+    """
+    window = fit_window_label(slot.fit_range, domain) if slot.fit_range is not None else ""
+    parts = [part for part in (composite_model_label(slot.model), window) if part]
+    return " · ".join(parts) if parts else "Single fit"
 
 
 def default_series_label(series: FitSeries, *, group_name: str | None = None) -> str:

@@ -259,6 +259,8 @@ reach from the welcome page, now populated with the finished analysis:
 Expanding a step never re-runs anything; the trail (and every panel it
 exposes) is derived directly from the completed analysis.
 
+.. _fit-wizard-ranking-metrics:
+
 The comparison table (reached from step 4) also lets you switch the ranking
 metric. A **"Ranking metric"** control on the result page reranks the already
 computed candidate fits immediately — it does not rerun the expensive fitting
@@ -285,6 +287,8 @@ it adds a small-sample correction when :math:`n` is not large compared with
 :math:`k` (falling back to ``AIC`` when the correction would not be valid).
 ``BIC`` applies a stronger penalty to model complexity and therefore usually
 favours simpler descriptions.
+
+.. _fit-wizard-compare:
 
 Comparing candidates and applying a fit
 -----------------------------------------

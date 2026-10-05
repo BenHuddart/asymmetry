@@ -93,6 +93,7 @@ from asymmetry.core.fitting.count_domain import (
 )
 from asymmetry.core.fitting.domain_library import coerce_domain
 from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.fit_curves import fit_curve_sample_count
 from asymmetry.core.fitting.fit_wizard import (
     FitWizardRecommendation,
 )
@@ -170,7 +171,7 @@ from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.info_popover import InfoPopover
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
-from asymmetry.gui.widgets.series_dialogs import confirm_series_delete, prompt_series_rename
+from asymmetry.gui.widgets.series_dialogs import SERIES, confirm_delete, prompt_rename
 from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -192,7 +193,6 @@ from .tab_base import (
     _apply_param_table_style,
     _CommitOnTabDelegate,
     _configure_fraction_rows_in_table,
-    _fit_curve_sample_count,
     _fit_curve_time_bounds,
     _fit_domain_mismatch_message,
     _fit_summary,
@@ -1411,7 +1411,7 @@ class GlobalFitTab(FitTabBase):
         """Ask for a new name for the open series and hand it to the host."""
         if self._open_series_id is None:
             return
-        new_name = prompt_series_rename(self, self._open_series_name)
+        new_name = prompt_rename(self, SERIES, self._open_series_name)
         if new_name is None:
             return
         self._open_series_name = new_name or self._open_series_name
@@ -1422,7 +1422,7 @@ class GlobalFitTab(FitTabBase):
         """Confirm, then ask the host to delete the open series (D6)."""
         if self._open_series_id is None:
             return
-        if not confirm_series_delete(self, self._open_series_name):
+        if not confirm_delete(self, SERIES, self._open_series_name):
             return
         self.series_delete_requested.emit(self._open_series_id)
 
@@ -4318,7 +4318,7 @@ class GlobalFitTab(FitTabBase):
                 if kind is ParameterKind.AMPLITUDE:
                     param_dict.setdefault(pname, 1.0)
             fit_t_min, fit_t_max = _finite_time_span(dataset.time)
-            n_samples = _fit_curve_sample_count(launch.model, param_dict, fit_t_min, fit_t_max)
+            n_samples = fit_curve_sample_count(launch.model, param_dict, fit_t_min, fit_t_max)
             t_fit = np.linspace(fit_t_min, fit_t_max, n_samples)
             y_fit = grouped_model(t_fit, **param_dict)
             results_with_curves[key] = (fit_result, (t_fit, y_fit), tuple())
@@ -4490,7 +4490,7 @@ class GlobalFitTab(FitTabBase):
                 continue
             fit_t_min = float(np.min(fit_time[finite_mask]))
             fit_t_max = float(np.max(fit_time[finite_mask]))
-            n_samples = _fit_curve_sample_count(
+            n_samples = fit_curve_sample_count(
                 fit_model,
                 param_dict,
                 fit_t_min,
@@ -5136,7 +5136,7 @@ class GlobalFitTab(FitTabBase):
             # Every group was fitted over the launch run's span; a member with no
             # run behind it (no active dataset) falls back to its own samples.
             fit_t_min, fit_t_max = launch.time_span or _finite_time_span(dataset.time)
-            n_samples = _fit_curve_sample_count(
+            n_samples = fit_curve_sample_count(
                 launch.model,
                 param_dict,
                 fit_t_min,

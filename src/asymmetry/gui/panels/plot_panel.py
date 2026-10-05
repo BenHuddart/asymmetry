@@ -236,6 +236,10 @@ _GLE_BAND_TINT = {
 #: Fit id of the run's own Single-tab fit (D5). Every other fit id stored here
 #: is a :class:`~asymmetry.core.representation.series.FitSeries` ``batch_id``.
 SINGLE_FIT_ID = "single"
+#: Prefix of a saved single fit's id that is not the run's open fit: the open
+#: fit draws as :data:`SINGLE_FIT_ID`, every other saved fit as
+#: ``"single:<fit_id>"`` (docs/plans/single-fit-compare.md D6).
+SAVED_FIT_ID_PREFIX = "single:"
 
 #: Colours for the *non-active* fits a run shows alongside the active series'
 #: (the Okabe-Ito trace ordering; ``PLOT_FIT`` is not a period base colour, so
@@ -1045,21 +1049,26 @@ class PlotPanel(QWidget):
     def _ordered_fit_ids_for_run(self, run_number: int) -> list[str]:
         """*run_number*'s fit ids as the Fits menu lists them.
 
-        The active series first, every other series in recording order, the
-        run's own single fit last.
+        The active series first, every other series in recording order, then
+        the run's own single fits: the open one, then the other saved ones.
         """
         stored = self._fit_ids_recorded_for_run(run_number)
+        singles = [fid for fid in stored if fid.startswith(SAVED_FIT_ID_PREFIX)]
         ordered = [fid for fid in stored if fid == self._active_fit_id]
-        ordered += [fid for fid in stored if fid not in ordered and fid != SINGLE_FIT_ID]
+        ordered += [
+            fid
+            for fid in stored
+            if fid not in ordered and fid != SINGLE_FIT_ID and fid not in singles
+        ]
         if SINGLE_FIT_ID in stored:
             ordered.append(SINGLE_FIT_ID)
-        return ordered
+        return ordered + singles
 
     def fit_label(self, fit_id: str) -> str:
-        """The menu/legend name for *fit_id*: "Single fit", a series' own name, or itself."""
-        if fit_id == SINGLE_FIT_ID:
-            return "Single fit"
-        return self._fit_label_by_id.get(fit_id, fit_id)
+        """The menu name for *fit_id*: as the host named it, else "Single fit" or the id."""
+        return self._fit_label_by_id.get(
+            fit_id, "Single fit" if fit_id == SINGLE_FIT_ID else fit_id
+        )
 
     def set_fit_labels(self, labels: dict[str, str]) -> None:
         """Record display names for fit ids, read back by :meth:`fit_label`.
@@ -3748,6 +3757,38 @@ class PlotPanel(QWidget):
         if removed:
             self._refresh_fits_button()
         return removed
+
+    def clear_run_fit(self, run_number: int, fit_id: str) -> None:
+        """Drop *run_number*'s curve, components and metadata under *fit_id*, on every axis.
+
+        The overlay half of opening another saved single fit or deleting one
+        (single-fit plan D6): the run's other fits are untouched.
+        """
+        if not self._has_mpl:
+            return
+        run_number, fit_id = int(run_number), str(fit_id)
+        for store in (
+            self._fit_curves_by_key,
+            self._fit_components_by_key,
+            self._fit_metadata_by_key,
+        ):
+            for key in [k for k in store if k[0] == run_number and k[2] == fit_id]:
+                store.pop(key)
+        if fit_id == SINGLE_FIT_ID:
+            self._fit_curves.pop(run_number, None)
+            self._fit_components_by_run.pop(run_number, None)
+            self._fit_metadata.pop(run_number, None)
+            if self._fit_curve_run_number == run_number:
+                self._fit_curve = None
+                self._fit_curve_run_number = None
+                self._fit_components = None
+        self._update_export_enabled()
+        self._refresh_fits_button()
+        self._redraw_current_view()
+
+    def stored_fit_ids(self, run_number: int) -> set[str]:
+        """Fit ids this panel holds a curve for on *run_number*."""
+        return self._stored_fit_ids_for_run(run_number)
 
     def _fit_curve_for_dataset(
         self,

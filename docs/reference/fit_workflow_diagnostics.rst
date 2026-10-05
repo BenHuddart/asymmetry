@@ -138,17 +138,18 @@ The persistent fit record
 --------------------------
 
 Asymmetry does not keep a separate fit-log file. The durable record of a fit is
-**structured, and lives in the project**: the latest fit of each
-``(dataset, representation)`` is stored on that representation, and the latest
-batch on its series — overwritten when you re-fit, exactly the "most recent fit
-per dataset" snapshot that WiMDA's ``.fit``/``.bfit`` files hold, but kept inside
-the ``.asymp`` project with the full provenance (the quality verdict and, when
-run, the MINOS intervals) rather than in a side file.
+**structured, and lives in the project**: each distinct single fit of a
+``(dataset, representation)`` is saved on that representation (re-fitting the
+same setup replaces it; see :ref:`saved-single-fits`), and each batch on its
+series. This holds what WiMDA's ``.fit``/``.bfit`` files hold, but inside the
+``.asymp`` project with the full provenance (the quality verdict and, when run,
+the MINOS intervals) rather than in a side file.
 
 When you want that record outside the project — to paste into a logbook or grep
 across runs — **Analysis ▸ Export fit report…** writes a human-readable block per
-dataset's latest fit: model, parameters with their symmetric and (when present)
-asymmetric errors, and the :math:`\chi^2_r` with its quality verdict.
+saved single fit, titled with its run, view and name: model, parameters with
+their symmetric and (when present) asymmetric errors, and the
+:math:`\chi^2_r` with its quality verdict.
 
 See also
 --------

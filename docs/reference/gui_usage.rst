@@ -1007,14 +1007,107 @@ the run currently shown.
 * Look for χ²ᵣ ≈ 1 (good fit); >> 1 (poor fit); << 1 (overestimated errors)
 * If fit fails to converge, try different initial values or tighter bounds
 
+.. _saved-single-fits:
+
+**Saving and comparing single fits**
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Deciding between two descriptions of one run — a simple exponential against a
+stretched one, one oscillating component against two, a fit from 0.1 μs against
+one that skips the first half-microsecond — means having both fits in hand at
+once. The Single tab therefore keeps every distinct fit you run on a run, in the
+same way a batch keeps every distinct series, and lets you overlay and rank
+them.
+
+.. image:: /_generated/screenshots/single_fit_saved_fits.png
+   :alt: The Single tab's Saved fits row naming the open fit, with the Compare
+      saved fits window ranking three fits of one run by AICc
+   :width: 100%
+
+*Three saved fits of one synthetic ZF Ag run (Δ ≈ 0.39 μs⁻¹). Left: the*
+*Single tab's* **Saved fits** *row, naming the open fit. Right: the Compare*
+*window, which ranks the two fits over 0.05–8 μs against each other and lists*
+*the Kubo–Toyabe fit over 0.5–6 μs without a Δ, because it saw different data.*
+*The static Gaussian Kubo–Toyabe fit (A) is set against a Gaussian relaxation*
+*(B): the Gaussian cannot recover towards 1/3 after the dip near*
+*t = √3/Δ ≈ 4.4 μs, which its residuals show as structure and its Δ AICc of*
+*more than 17 000 rules out.*
+
+**Recording is automatic.** Every **Fit** on the Single tab is saved on the run
+it fitted, for the view and projection it was taken in. What happens to the
+fits already there depends on what the form describes:
+
+* Fitting again with the same function, fit range, fixed values, links and
+  ties replaces the open fit in place, keeping its name. Seed values and bounds
+  do not count, so iterating on starting guesses or tightening a bound refines
+  one fit instead of growing the list.
+* Anything else saves a new fit beside the others, and it becomes the open
+  one. Returning to a setup you have already fitted replaces that fit rather
+  than adding a copy.
+
+**The Saved fits row.** The **Saved fits** section above **Model** names the
+open fit after its function and window (for example
+``Exponential + Constant · 0.1–10 µs``), with the number of fits in the header
+("2 on this run"). A second fit that would read exactly like the first is
+named with a ``(2)`` suffix. Once the form no longer describes the open fit, a
+line under the name says what **Fit** will do: "Edited: the next Fit is saved
+as a new fit.", or "Edited: the next Fit replaces “*name*”." when the form
+matches another saved fit. The buttons below act on the run's fits:
+
+* Click the name to open another fit; its menu lists every fit on the run
+  with its χ²ᵣ and the time it was fitted (``χ²ᵣ 1.024 · 14:32``), the open
+  one ticked. Opening a fit restores its function, parameter table and
+  results card, sets the fit range to its window, and draws its curve.
+* **New fit** keeps the open fit and saves the next **Fit** beside it even
+  when nothing has changed ("New fit: the next Fit is saved beside this run's
+  other fits.") — the way to keep a second minimum of the same function
+  found from different starting values.
+* **Rename…** names the open fit; clearing the name restores the default.
+* **Delete…** asks first ("Removes this saved fit from the run. The run's
+  other fits and every series are kept.") and then opens the newest
+  remaining fit.
+* **Compare…** opens the comparison window described below. It needs two
+  fits on the run.
+
+On the plot, the open fit is the run's single fit as before. Each other saved
+fit is listed in the toolbar's **Fits** menu as ``Single fit ·`` *name*, after
+any series covering the run (see `Batch fitting`_); tick it to overlay its
+curve in a trace colour with its name in the legend.
+
+**Comparing saved fits.** **Compare…** opens the **Compare saved fits** window
+for the run. It uses the comparison panel the Fit Wizard uses for its
+candidates (see :ref:`fit-wizard-compare`): saved fits are listed best first
+on a **Ranking metric** — ``AICc`` by default, or ``AIC`` or ``BIC`` — each
+with a bar for its difference Δ from the best fit, its evidence weight
+:math:`w_i \propto \exp(-\Delta_i/2)`, and its χ²ᵣ. The criteria are computed
+from each fit's stored χ², counting :math:`k` as its free parameters and
+:math:`n` as the points it fitted, with the definitions given in
+:ref:`the Fit Wizard's ranking metrics <fit-wizard-ranking-metrics>`. Click a row to make it **A** and **Pin as
+B** on another to set it beside A: the run's data are drawn with A solid and B
+dashed above their normalised residuals, and a table sets A's parameter values
+beside B's. **Open A in the Single tab** opens A as the run's open fit.
+
+An information criterion compares descriptions of *the same data*: χ² summed
+over a different window, or over a run rebinned since, is a sum over different
+points. The window therefore ranks fits only against others with the same fit
+range and the same number of fitted points, taking Δ and the weights within
+each such group, with the open fit's group first. A fit with no partner over
+its data — and a fit saved before this release, which recorded no window — is
+listed with Δ "—" and no weight. Compare fits over different windows by their
+residuals and parameter values instead.
+
+Saved fits are written into the project file, and **Analysis ▸ Export fit report…**
+lists every saved fit by name.
+
 **Carrying a model forward between runs**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Selecting a different run in the Data Browser does not always blank the
 Single tab's form. A run that already carries a **recorded fit result** —
-its own single fit, or, lacking that, the result the representation's
-*active* series recorded for it — is *protected*: selecting it always
-restores exactly that fitted state, so it is never silently overwritten. A
+its own open saved fit (see `Saving and comparing single fits`_), or, lacking
+that, the result the representation's *active* series recorded for it — is
+*protected*: selecting it always restores exactly that fitted state, so it is
+never silently overwritten. A
 single fit never joins or alters a series (batch and global fits stopped
 writing to a member's own fit slot); it is only ever a fallback read, so
 fitting the run yourself on the Single tab afterwards is what actually

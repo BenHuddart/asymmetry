@@ -16,6 +16,7 @@ from asymmetry.core.representation.base import (
     FitSlot,
     Representation,
     RepresentationType,
+    SingleFitSet,
 )
 from asymmetry.core.representation.container import DatasetRepresentations
 from asymmetry.core.representation.factory import (
@@ -73,6 +74,7 @@ __all__ = [
     "GlobalFitStudy",
     "JointFit",
     "PhaseSpec",
+    "SingleFitSet",
     "Representation",
     "RepresentationType",
     "TrendState",
