@@ -124,6 +124,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMainWindow,
+    QMenuBar,
     QMessageBox,
     QProgressDialog,
     QPushButton,
@@ -833,6 +834,14 @@ class MainWindow(QMainWindow):
         # click in the tab by the shell's client origin.
         if parent is not None:
             self.setWindowFlags(Qt.WindowType.Widget)
+            # A native bar here would displace the shell's (see ProjectShell),
+            # so none is ever built: not setMenuBar, whose PySide wrapper calls
+            # menuBar() first and so creates a native default bar.
+            no_native = Qt.ApplicationAttribute.AA_DontUseNativeMenuBar
+            was_set = QGuiApplication.testAttribute(no_native)
+            QGuiApplication.setAttribute(no_native, True)
+            self.setMenuWidget(QMenuBar())
+            QGuiApplication.setAttribute(no_native, was_set)
         # Includes Qt's [*] window-modified placeholder so the unsaved-changes
         # guard's setWindowModified() shows/hides a "*" without retitling.
         self.setWindowTitle("Asymmetry — μSR Data Analysis[*]")
