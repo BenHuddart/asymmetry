@@ -258,3 +258,18 @@ def test_compare_follows_a_new_fit_on_the_run(mw) -> None:
     assert len(window.panel._summaries) == 3
     window.close()
     QApplication.instance().processEvents()
+
+
+def test_opening_renaming_or_deleting_a_saved_fit_is_unsaved_work(mw) -> None:
+    _fit(mw, _EXP)
+    _fit(mw, _GAUSS)
+    _rep, fit_set = _fit_set(mw)
+    exp, gauss = fit_set.fits
+    for emit in (
+        lambda: _tab(mw).saved_fit_open_requested.emit(exp.fit_id),
+        lambda: _tab(mw).saved_fit_rename_requested.emit(exp.fit_id, "Plain"),
+        lambda: _tab(mw).saved_fit_delete_requested.emit(gauss.fit_id),
+    ):
+        mw._clear_dirty()
+        emit()
+        assert mw._dirty

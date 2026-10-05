@@ -2252,6 +2252,9 @@ class MainWindow(QMainWindow):
             "model_fit_completed",
             "series_rename_requested",
             "series_delete_requested",
+            "saved_fit_open_requested",
+            "saved_fit_rename_requested",
+            "saved_fit_delete_requested",
         ):
             for _panel in (self._fit_panel, self._fit_parameters_panel):
                 _signal = getattr(_panel, _signal_name, None)
