@@ -354,15 +354,34 @@ def _single_candidate_summary(
     )
 
 
-def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves:
+def saved_fit_model(slot: FitSlot) -> tuple[CompositeModel, dict[str, float]] | None:
+    """The model and values a saved fit draws with; ``None`` when it cannot be drawn.
+
+    A legacy slot may hold no model, or a table missing one of its model's
+    parameters (:meth:`FitSlot.fitted_values`); such a fit is listed but has no
+    curve.
+    """
+    if slot.model is None:
+        return None
+    model = CompositeModel.from_dict(slot.model, allow_missing=True)
+    values = slot.fitted_values()
+    if not set(model.param_names) <= values.keys():
+        return None
+    return model, {name: values[name] for name in model.param_names}
+
+
+def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
     """A saved single fit's dense curve over its window, and its normalised residuals.
 
-    An open window side, or a fit saved before its window was recorded
-    (pre-v25), reaches the edge of the record. Evaluates the model, so a
-    caller off the GUI thread runs it.
+    ``None`` for a fit :func:`saved_fit_model` cannot draw. An open window
+    side, or a fit saved before its window was recorded (pre-v25), reaches the
+    edge of the record. Evaluates the model, so a caller off the GUI thread
+    runs it.
     """
-    model = CompositeModel.from_dict(slot.model, allow_missing=True)
-    values = {name: float(slot.result["parameters"][name]) for name in model.param_names}
+    drawable = saved_fit_model(slot)
+    if drawable is None:
+        return None
+    model, values = drawable
     window = slot.fit_range or {"min": None, "max": None}
     x_min = float(np.min(dataset.time)) if window["min"] is None else window["min"]
     x_max = float(np.max(dataset.time)) if window["max"] is None else window["max"]
@@ -435,22 +454,22 @@ def _saved_fit_summary(
     weight: float,
     curves: Mapping[str, RunCurves],
 ) -> CandidateSummary:
-    result = slot.result
     run = RunFit(
         run_number=int(dataset.run_number),
         run_label=dataset.run_label,
         axis_value=math.nan,
         curves=curves.get(slot.fit_id),
-        reduced_chi_squared=float(result["reduced_chi_squared"]),
+        reduced_chi_squared=slot.reduced_chi_squared(),
     )
-    values = result["parameters"]
-    errors = result.get("uncertainties") or {}
+    values = slot.fitted_values()
+    errors = (slot.result or {}).get("uncertainties") or {}
     bounds = {str(entry["name"]): entry for entry in slot.parameters}
     rows = []
     for parameter_name, value in values.items():
-        free = parameter_name in errors
-        error = float(errors[parameter_name]) if free else math.nan
         entry = bounds.get(parameter_name, {})
+        # A fit that recorded no uncertainties (a legacy slot) is split by its table's Fix.
+        free = parameter_name in errors if errors else not entry.get("fixed", False)
+        error = float(errors[parameter_name]) if parameter_name in errors else math.nan
         parameter = Parameter(
             parameter_name,
             float(value),

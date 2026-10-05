@@ -410,7 +410,8 @@ class CandidateRow(CompareRow):
         if summary.gate_passed is None:
             # No residual gate was run (a saved fit): its χ²ᵣ is the verdict to hand.
             (run,) = summary.runs
-            self.gate = QLabel(f"χ²ᵣ {run.reduced_chi_squared:.3g}", self)
+            chi2 = run.reduced_chi_squared
+            self.gate = QLabel(f"χ²ᵣ {chi2:.3g}" if math.isfinite(chi2) else "χ²ᵣ —", self)
             self.gate.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         else:
             text, background, foreground = _GATE_BADGES[summary.gate_passed]

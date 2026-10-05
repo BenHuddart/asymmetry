@@ -38,6 +38,7 @@ from asymmetry.core.fitting.model_comparison import (
     normalised_residuals,
     parameter_flags,
     saved_fit_curves,
+    saved_fit_model,
     score_deltas,
     shortlist,
     summarise_candidates,
@@ -758,3 +759,33 @@ def test_saved_fit_curves_span_the_window_and_carry_residuals() -> None:
     # A fit with no recorded window is drawn over the whole record.
     legacy = saved_fit_curves(_saved("l", chi_squared=80.0, window=None), _dataset(701))
     assert (legacy.fit[0][0], legacy.fit[0][-1]) == (0.0, 8.0)
+
+
+def test_legacy_saved_fits_without_structured_results_are_listed_unranked() -> None:
+    """A v5-era slot (result HTML only) or a model-only slot lists and draws from its table."""
+    table = [
+        {"name": "A_1", "value": 20.0, "fixed": False},
+        {"name": "Lambda", "value": 0.2, "fixed": False},
+        {"name": "A_bg", "value": 1.0, "fixed": True},
+    ]
+    html_only = FitSlot(model=dict(_EXP_MODEL), parameters=table, result={"result_html": "<b/>"})
+    html_only.fit_id = "h"
+    model_only = FitSlot(model=dict(_EXP_MODEL), parameters=table)
+    model_only.fit_id = "m"
+    new = _saved("a", chi_squared=80.0)
+
+    summaries = _summarise_saved(new, html_only, model_only)
+    legacy = {summary.key: summary for summary in summaries if summary.key != "a"}
+    assert all(summary.delta == math.inf for summary in legacy.values())
+    assert math.isnan(legacy["h"].runs[0].reduced_chi_squared)
+    # No uncertainties were recorded, so the table's Fix splits fitted from fixed.
+    assert legacy["m"].names(ParameterRole.FIXED) == ("A_bg",)
+    assert saved_fit_curves(html_only, _dataset(701)) is not None
+
+
+def test_a_saved_fit_with_no_model_or_values_has_no_curve() -> None:
+    no_model = FitSlot(result={"result_html": "<b/>"}, fit_id="x")
+    short_table = FitSlot(model=dict(_EXP_MODEL), parameters=[{"name": "A_1", "value": 1.0}])
+    assert saved_fit_model(no_model) is None
+    assert saved_fit_model(short_table) is None
+    assert saved_fit_curves(no_model, _dataset(701)) is None

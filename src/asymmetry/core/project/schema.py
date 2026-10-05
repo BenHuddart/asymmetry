@@ -438,24 +438,37 @@ def _migrate_v24_to_v25(data: dict) -> dict:
     migrated = dict(data)
     migrated["schema_version"] = 25
     datasets = migrated.get("datasets")
-    if not isinstance(datasets, list):
-        return migrated
-    for entry in datasets:
-        reps = entry.get("representations") if isinstance(entry, dict) else None
-        if not isinstance(reps, dict):
-            continue
-        for rep in reps.values():
-            if not isinstance(rep, dict):
-                continue
-            slots = {"": rep.pop("fit", None)}
-            projections = rep.pop("projection_fits", None)
-            if isinstance(projections, dict):
-                slots.update({str(key): slot for key, slot in projections.items() if key})
-            rep["single_fits"] = {
-                key: fit_set
-                for key, fit_set in ((key, _v25_fit_set(slot)) for key, slot in slots.items())
-                if fit_set is not None
-            }
+    if isinstance(datasets, list):
+        migrated["datasets"] = [_v25_dataset(entry) for entry in datasets]
+    return migrated
+
+
+def _v25_dataset(entry: object) -> object:
+    """A copy of one dataset entry with each representation in the v25 shape."""
+    reps = entry.get("representations") if isinstance(entry, dict) else None
+    if not isinstance(reps, dict):
+        return entry
+    return {
+        **entry,
+        "representations": {
+            key: _v25_representation(rep) if isinstance(rep, dict) else rep
+            for key, rep in reps.items()
+        },
+    }
+
+
+def _v25_representation(rep: dict) -> dict:
+    """A copy of *rep* whose ``fit``/``projection_fits`` became ``single_fits``."""
+    migrated = {key: value for key, value in rep.items() if key not in ("fit", "projection_fits")}
+    slots = {"": rep.get("fit")}
+    projections = rep.get("projection_fits")
+    if isinstance(projections, dict):
+        slots.update({str(key): slot for key, slot in projections.items() if key})
+    migrated["single_fits"] = {
+        key: fit_set
+        for key, fit_set in ((key, _v25_fit_set(slot)) for key, slot in slots.items())
+        if fit_set is not None
+    }
     return migrated
 
 

@@ -157,6 +157,7 @@ from asymmetry.core.fitting.fit_curves import dense_fit_curve, fit_curve_sample_
 from asymmetry.core.fitting.knight_analysis import (
     migrate_legacy_state as migrate_legacy_knight_state,
 )
+from asymmetry.core.fitting.model_comparison import saved_fit_model
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterGroupData,
@@ -12163,14 +12164,20 @@ class MainWindow(QMainWindow):
             open_id=fit_set.open_id,
         )
 
-    def _saved_fit_curve_payload(self, slot: FitSlot, name: str, axis_key: str | None) -> tuple:
+    def _saved_fit_curve_payload(
+        self, slot: FitSlot, name: str, axis_key: str | None
+    ) -> tuple | None:
         """A ``set_global_fits`` payload drawing *slot* over its window.
 
-        An open window side (a full-spectrum frequency fit, or a pre-v25 fit
-        with no window) reaches the edge of the bound record.
+        ``None`` for a legacy fit with no model or values to draw
+        (:func:`saved_fit_model`). An open window side (a full-spectrum
+        frequency fit, or a pre-v25 fit with no window) reaches the edge of the
+        bound record.
         """
-        model = CompositeModel.from_dict(slot.model, allow_missing=True)
-        values = {name: float(slot.result["parameters"][name]) for name in model.param_names}
+        drawable = saved_fit_model(slot)
+        if drawable is None:
+            return None
+        model, values = drawable
         window = slot.fit_range or {"min": None, "max": None}
         record = self._bound_record()
         x_min = float(np.min(record.time)) if window["min"] is None else window["min"]
@@ -12198,6 +12205,7 @@ class MainWindow(QMainWindow):
         """
         bound = self._bound_saved_fits()
         if bound is None:
+            self._refresh_saved_fit_compare()
             return
         run_number, representation, projection = bound
         panel = self._plot_panel_for_rep(representation.rep_type)
@@ -12220,8 +12228,10 @@ class MainWindow(QMainWindow):
             labels[SINGLE_FIT_ID] = f"Single fit · {representation.fit_name(open_fit)}"
         panel.set_fit_labels(labels)
         for plot_id, (key, slot) in wanted.items():
-            if plot_id not in stored:
-                payload = self._saved_fit_curve_payload(slot, representation.fit_name(slot), key)
+            if plot_id in stored:
+                continue
+            payload = self._saved_fit_curve_payload(slot, representation.fit_name(slot), key)
+            if payload is not None:
                 panel.set_global_fits({run_number: payload}, fit_id=plot_id)
         self._refresh_saved_fit_compare()
 
@@ -12242,10 +12252,17 @@ class MainWindow(QMainWindow):
         self._saved_fit_compare_window = None
 
     def _refresh_saved_fit_compare(self) -> None:
-        """Point an open Compare window at the bound run's saved fits as they now stand."""
+        """Point an open Compare window at the bound run's saved fits as they now stand.
+
+        A binding with no saved fits to show (another view, no run) closes it:
+        its A would name a fit the Single tab can no longer open.
+        """
         window = self._saved_fit_compare_window
+        if window is None:
+            return
         bound = self._bound_saved_fits()
-        if window is None or bound is None:
+        if bound is None:
+            window.close()
             return
         _run_number, representation, projection = bound
         fit_set = representation.fit_set(projection)
@@ -12262,10 +12279,11 @@ class MainWindow(QMainWindow):
         fit_set.open(fit_id)
         slot = fit_set.open_fit()
         panel = self._plot_panel_for_rep(representation.rep_type)
-        panel.set_global_fits(
-            {run_number: self._saved_fit_curve_payload(slot, "Fit", projection)},
-            fit_id=SINGLE_FIT_ID,
-        )
+        payload = self._saved_fit_curve_payload(slot, "Fit", projection)
+        if payload is None:
+            panel.clear_run_fit(run_number, SINGLE_FIT_ID)
+        else:
+            panel.set_global_fits({run_number: payload}, fit_id=SINGLE_FIT_ID)
         panel.set_shown_fits(run_number, [SINGLE_FIT_ID])
         self._sync_saved_fit_overlays()
         # Re-fitting the opened fit unchanged must replace it (D1), so the
@@ -12273,9 +12291,15 @@ class MainWindow(QMainWindow):
         window = slot.fit_range
         if window is not None and None not in window.values():
             panel.set_fit_range(window["min"], window["max"])
-        self._fit_panel.show_saved_single_fit(
-            self._single_fit_restore_payload(self._current_dataset)
+        # A legacy model-only fit has no stored form: rebuild one from its own
+        # model and table. A slot with no model at all leaves the form as it is.
+        form = self._single_fit_restore_payload(
+            self._current_dataset
+        ) or self._fit_panel.build_single_fit_payload_from_slot(
+            slot.model, slot.parameters, slot.result or {}
         )
+        if form:
+            self._fit_panel.show_saved_single_fit(form)
         self._log_panel.log(f"Opened saved fit {representation.fit_name(slot)}.", tag="fit")
 
     def _on_saved_fit_rename_requested(self, fit_id: str, label: str) -> None:

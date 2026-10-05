@@ -7,6 +7,7 @@ against a stub engine, so the recorder sees the form exactly as a user leaves it
 
 from __future__ import annotations
 
+import math
 import os
 from types import SimpleNamespace
 
@@ -25,7 +26,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run  # noqa: E40
 from asymmetry.core.fitting.composite import CompositeModel  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
-from asymmetry.core.representation import RepresentationType  # noqa: E402
+from asymmetry.core.representation import FitSlot, RepresentationType  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 from asymmetry.gui.panels.plot_panel import SAVED_FIT_ID_PREFIX, SINGLE_FIT_ID  # noqa: E402
 from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY  # noqa: E402
@@ -273,3 +274,41 @@ def test_opening_renaming_or_deleting_a_saved_fit_is_unsaved_work(mw) -> None:
         mw._clear_dirty()
         emit()
         assert mw._dirty
+
+
+def test_a_legacy_fit_beside_a_new_one_opens_compares_and_draws_nothing_it_cannot(mw) -> None:
+    """A migrated v5-era fit (model and table, no structured result) never breaks the row."""
+    rep = mw._project_model.ensure_dataset(_RUN).ensure(RepresentationType.TIME_FB_ASYMMETRY)
+    names = list(_GAUSS.param_names)
+    rep.set_fit_for(
+        None,
+        FitSlot(
+            model=_GAUSS.to_dict(),
+            parameters=[{"name": name, "value": 1.0} for name in names],
+            result={"result_html": "<b>legacy</b>"},
+            provenance="single",
+        ),
+    )
+    legacy = rep.fit
+    _fit(mw, _EXP)
+    assert len(rep.fit_set(None).fits) == 2
+
+    _tab(mw)._compare_fits_btn.click()
+    window = mw._saved_fit_compare_window
+    assert window.panel._summaries[legacy.fit_id].delta == math.inf
+
+    mw._on_saved_fit_open_requested(legacy.fit_id)
+    assert _tab(mw)._composite_model.component_names == ["Gaussian", "Constant"]
+    window.close()
+
+
+def test_losing_the_binding_closes_the_compare_window(mw) -> None:
+    _fit(mw, _EXP)
+    _fit(mw, _GAUSS)
+    _tab(mw)._compare_fits_btn.click()
+    assert mw._saved_fit_compare_window is not None
+    # The run is gone from the Single tab (no record bound): nothing to compare.
+    mw._current_dataset = None
+    mw._sync_saved_fit_overlays()
+    QApplication.instance().processEvents()
+    assert mw._saved_fit_compare_window is None or not mw._saved_fit_compare_window.isVisible()

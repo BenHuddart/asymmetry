@@ -22,6 +22,7 @@ from asymmetry.core.fitting.model_comparison import (
     CandidateSummary,
     RunCurves,
     saved_fit_curves,
+    saved_fit_model,
     summarise_saved_fits,
 )
 from asymmetry.core.representation.base import FitSlot
@@ -132,6 +133,11 @@ class SavedFitCompareWindow(QDialog):
         if self._building.get(fit_id) is slot:
             return
         self._building[fit_id] = slot
+        if saved_fit_model(slot) is None:
+            self._status.setText(
+                "That fit was saved without fitted values to draw; its data is shown alone."
+            )
+            return
         dataset = self._dataset
 
         def _materialise(_worker: object) -> tuple[MuonDataset, FitSlot, RunCurves]:

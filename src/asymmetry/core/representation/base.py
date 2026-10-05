@@ -16,6 +16,7 @@ Each dataset owns up to four representations, one per
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -122,6 +123,23 @@ class FitSlot:
             sort_keys=True,
             default=str,
         )
+
+    def fitted_values(self) -> dict[str, float]:
+        """The values the fit ended on: its result's, else its parameter table's.
+
+        A fit saved before results were structured (a v5-era slot holding a
+        model and a result-HTML read-out, or a model alone) carries no
+        ``result["parameters"]``; its form's table holds the values it showed.
+        """
+        result = self.result or {}
+        if isinstance(result.get("parameters"), dict):
+            return {str(name): float(value) for name, value in result["parameters"].items()}
+        return {str(entry["name"]): float(entry["value"]) for entry in self.parameters}
+
+    def reduced_chi_squared(self) -> float:
+        """The fit's χ²ᵣ, NaN for a pre-structured-result slot that recorded none."""
+        value = (self.result or {}).get("reduced_chi_squared")
+        return math.nan if value is None else float(value)
 
     def data_key(self) -> tuple[float | None, float | None, int] | None:
         """``(min, max, n)`` of the data this fit saw, or ``None`` when unknown (plan D7).
