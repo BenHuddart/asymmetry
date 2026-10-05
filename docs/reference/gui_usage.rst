@@ -376,6 +376,9 @@ the data instead.
   button
 * Click **Auto X** to make the X axis follow the data; click **Auto Y** to do
   the same for Y
+* **Pan** and **Zoom** are the four-way-arrow and magnifier icon buttons at
+  the right end of the second toolbar row (hover for their names); click one
+  to drag the view or drag a box to zoom, and click it again to stop
 
 Auto-Y uses points inside the currently selected X range and prefers reliable
 foreground points (excluding undefined/low-confidence bins when available). On
@@ -481,9 +484,9 @@ keeps a long near-zero tail beyond the framed peak region that would otherwise
 shrink Δ to a fraction of the visible spans. Neighbouring curves therefore
 clear each other with a little breathing room without any tuning; zooming
 afterwards does not re-space an already-drawn stack.
-Type a value into the field beside the checkbox to fix Δ manually instead —
-its placeholder reads ``Auto``, and clearing the field (leaving it blank)
-returns to automatic spacing.
+To fix Δ manually instead, type a value into the field that appears beside
+the checkbox while **Waterfall** is on — its placeholder reads ``Auto``, and
+clearing the field (leaving it blank) returns to automatic spacing.
 
 In the time domain, each stacked trace also gets a faint horizontal hairline
 at its own shifted zero, so a curve's depolarisation or oscillation reads

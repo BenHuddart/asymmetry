@@ -27,6 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version becomes its run's only saved fit. See
   `docs/reference/gui_usage.rst` § "Saving and comparing single fits".
 
+### Changed
+
+- **The plot toolbar fits a 13-inch display, including in vector mode.**
+  **Pan** and **Zoom** are now icon buttons (name in the tooltip), and the
+  waterfall Δ field appears only while **Waterfall** is on. The projection
+  chips no longer widen the plot: when space runs short they show short names
+  (``T–B``, ``F–B``, ``L–R``) and then fold into one button that summarises the
+  selection (``T–B ▾``, ``2 of 3 ▾``, ``All 3 ▾``) and opens a menu of
+  projections. With transverse-field projections and a **Fits · 2** button on
+  screen, the plot panel's minimum width drops from 837 px to 580 px. See
+  `docs/reference/vector_polarization.rst` § "Display in the main plot".
+
 ## [0.23.0] - 2026-10-03
 
 ### Changed

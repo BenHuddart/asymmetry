@@ -71,17 +71,22 @@ Backwards compatibility:
 Display in the main plot
 ------------------------
 
-The Polarization selector in the plot header provides:
+The plot toolbar shows one chip per projection — ``P_x``, ``P_y`` and
+``P_z``, each in its own tint. Click a chip to show or hide that projection;
+selecting more than one stacks them as subplots, and **all** selects every
+projection at once. At least one chip always stays selected.
 
-* ``x`` (``P_x``)
-* ``y`` (``P_y``)
-* ``z`` (``P_z``)
-* ``All``
+The chips never make the plot wider. When the toolbar is too narrow for the
+full names they switch to short ones (a detector pair such as ``Top-Bottom``
+becomes ``T–B``; the full name stays in the tooltip). When even those do not
+fit, the chips fold into a single button that summarises the selection — the
+selected projection's short name (``P_x ▾``), ``2 of 3 ▾``, or ``All 3 ▾`` —
+and opens a menu of the projections with a **Show all** entry.
 
 Alpha display behaviour:
 
 * Single-axis views show the alpha for the selected axis.
-* ``All`` mode hides alpha in the header.
+* Views with several projections hide alpha in the header.
 
 Persistence
 -----------

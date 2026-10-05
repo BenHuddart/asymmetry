@@ -11,13 +11,16 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from asymmetry.core.instrument import PROJECTION_TINTS
-from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
+from asymmetry.core.instrument import PROJECTION_TINTS, TRANSVERSE_PROJECTION_TINTS
+from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar, short_projection_label
 
 _VECTOR = [
     {"label": "P_x", "tint": PROJECTION_TINTS["P_x"]},
     {"label": "P_y", "tint": PROJECTION_TINTS["P_y"]},
     {"label": "P_z", "tint": PROJECTION_TINTS["P_z"]},
+]
+_TRANSVERSE = [
+    {"label": label, "tint": tint} for label, tint in TRANSVERSE_PROJECTION_TINTS.items()
 ]
 
 
@@ -122,30 +125,85 @@ class TestProjectionChipBar:
         assert "P_z" not in bar._chips
         assert bar._chips["P_x"] is not chip_before
 
-    def test_wide_chip_set_scrolls_instead_of_overflowing(self, qapp):
-        """A chip set wider than the available width scrolls in place (P2-2).
-
-        At narrow widths the chips must not push the plot's neighbouring Pan/
-        Zoom controls off-screen; the strip keeps a small minimum and exposes a
-        horizontal scrollbar, while the label, the chips, and the "all" action
-        all remain present.
-        """
+    def test_bar_minimum_is_the_folded_button_not_the_chips(self, qapp):
+        """The chips never set the toolbar's minimum width: the bar folds instead."""
         bar = ProjectionChipBar()
-        many = [{"label": f"P_{n}"} for n in ("x", "y", "z", "tot", "lng", "trv")]
-        bar.set_projections(many)
+        bar.set_projections(_TRANSVERSE)
+        assert bar.minimumSizeHint().width() < bar.sizeHint().width()
+        many = [{"label": f"Label-{n}-Pair"} for n in range(8)]
+        wide = ProjectionChipBar()
+        wide.set_projections(many)
+        assert wide.sizeHint().width() > bar.sizeHint().width()
+        assert wide.minimumSizeHint().width() < wide.sizeHint().width() / 4
+
+    def test_presentation_steps_from_full_to_short_to_folded(self, qapp):
+        bar = ProjectionChipBar()
+        bar.set_projections(_TRANSVERSE)
         bar.show()
 
-        # The strip can shrink well below the chips' natural width (so the
-        # layout can keep neighbouring controls visible) ...
-        content_width = bar._chip_host.sizeHint().width()
-        assert bar._chip_scroll.minimumSizeHint().width() < content_width
-
-        # ... and when constrained, it scrolls rather than clipping silently.
-        bar._chip_scroll.setFixedWidth(80)
+        bar.resize(bar.sizeHint().width(), bar.sizeHint().height())
         qapp.processEvents()
-        assert bar._chip_scroll.horizontalScrollBar().maximum() > 0
+        assert bar.presentation() == "full"
+        assert bar._chips["Top-Bottom"].text() == "Top-Bottom"
 
-        # Nothing is dropped: every chip plus the label and "all" survive.
-        assert set(bar._chips) == {p["label"] for p in many}
-        assert bar._label.isVisible()
-        assert bar._all_btn.isVisible()
+        bar.resize(bar.sizeHint().width() - 1, bar.sizeHint().height())
+        qapp.processEvents()
+        assert bar.presentation() == "short"
+        assert bar._chips["Top-Bottom"].text() == "T–B"
+        assert bar._chips["Top-Bottom"].toolTip() == "Top-Bottom"
+
+        bar.resize(bar.minimumSizeHint().width(), bar.sizeHint().height())
+        qapp.processEvents()
+        assert bar.presentation() == "folded"
+        assert all(chip.isHidden() for chip in bar._chips.values())
+        assert bar._all_btn.isHidden()
+        assert not bar._fold_btn.isHidden()
+
+    def test_folded_button_summarises_the_selection(self, qapp):
+        bar = ProjectionChipBar()
+        bar.set_projections(_TRANSVERSE)
+        assert bar._fold_btn.text() == "All 3 ▾"
+        bar.set_selected(["Fwd-Back"])
+        assert bar._fold_btn.text() == "F–B ▾"
+        assert TRANSVERSE_PROJECTION_TINTS["Fwd-Back"] in bar._fold_btn.styleSheet()
+        bar.set_selected(["Fwd-Back", "Left-Right"])
+        assert bar._fold_btn.text() == "2 of 3 ▾"
+
+    def test_fold_menu_toggles_through_the_chips(self, qapp):
+        """Menu entries drive the chips, so the floor of one still holds."""
+        bar = ProjectionChipBar()
+        bar.set_projections(_TRANSVERSE, ["Top-Bottom"])
+        events = _capture(bar)
+        bar._rebuild_fold_menu()
+        actions = {a.text(): a for a in bar._fold_menu.actions()}
+
+        actions["Top-Bottom"].trigger()  # the last selected projection
+        assert bar.selected_labels() == ["Top-Bottom"]
+        assert events == []
+
+        actions["Left-Right"].trigger()
+        assert bar.selected_labels() == ["Top-Bottom", "Left-Right"]
+        assert events[-1] == ["Top-Bottom", "Left-Right"]
+
+        bar._rebuild_fold_menu()
+        actions = {a.text(): a for a in bar._fold_menu.actions()}
+        actions["Show all"].trigger()
+        assert bar.selected_labels() == ["Top-Bottom", "Fwd-Back", "Left-Right"]
+
+    def test_long_unhyphenated_label_does_not_widen_the_folded_button(self, qapp):
+        """A custom label is clipped on the fold button; the menu keeps it whole."""
+        bar = ProjectionChipBar()
+        bar.set_projections([{"label": "UpstreamComposite"}, {"label": "Downstream"}])
+        bounded = bar.minimumSizeHint().width()
+        long_label = "UpstreamCompositeAsymmetryProjection" * 4
+        bar.set_projections([{"label": long_label}, {"label": "Downstream"}], [long_label])
+        # Both names clip to the same text, so the label's length costs nothing.
+        assert bar.minimumSizeHint().width() == bounded
+        assert bar._fold_btn.text() == "Upstrea… ▾"
+        bar._rebuild_fold_menu()
+        assert long_label in {action.text() for action in bar._fold_menu.actions()}
+
+    def test_short_label_abbreviates_detector_pairs_only(self):
+        assert short_projection_label("Top-Bottom") == "T–B"
+        assert short_projection_label("Fwd-Back") == "F–B"
+        assert short_projection_label("P_x") == "P_x"

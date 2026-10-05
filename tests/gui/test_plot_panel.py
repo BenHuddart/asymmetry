@@ -265,8 +265,7 @@ class TestPlotPanel:
         assert "Auto" not in button_texts
         assert "Auto X" in button_texts
         assert "Auto Y" in button_texts
-        assert "Pan" in button_texts
-        assert "Zoom" in button_texts
+        assert {"Pan", "Zoom"} <= {btn.accessibleName() for btn in buttons}
 
         labels = panel.findChildren(QLabel)
         label_texts = {lbl.text() for lbl in labels}
@@ -373,6 +372,26 @@ class TestPlotPanel:
         assert "QPushButton:checked" in panel._pan_btn.styleSheet()
         assert "#1f4d8a" in panel._pan_btn.styleSheet()
         assert panel._pan_btn.styleSheet() == panel._zoom_btn.styleSheet()
+
+    def test_pan_and_zoom_are_icon_buttons_named_in_their_tooltips(self, panel: PlotPanel) -> None:
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        for button, name in ((panel._pan_btn, "Pan"), (panel._zoom_btn, "Zoom")):
+            assert button.text() == ""
+            assert not button.icon().isNull()
+            assert button.toolTip().startswith(name)
+            assert button.accessibleName() == name
+
+    def test_projection_set_does_not_widen_the_panel_minimum(self, panel: PlotPanel) -> None:
+        """However many projections there are, the chips fold rather than widen the plot."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.set_projections([{"label": "Top-Bottom"}, {"label": "Fwd-Back"}])
+        two = panel.minimumSizeHint().width()
+        panel.set_projections([{"label": f"Detector-Pair-{n}"} for n in range(8)])
+        assert panel.minimumSizeHint().width() <= two
 
     def test_limit_fields_follow_a_completed_gesture(
         self, panel: PlotPanel, sample_dataset: MuonDataset
@@ -5910,7 +5929,10 @@ class TestFitsMenuButton:
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
         panel.plot_dataset(self._dataset(500))
-        empty = panel.minimumSizeHint().width()
+        # The plot row is measured directly: the axis-limit row above it is
+        # usually the wider of the two and would mask a change here.
+        plot_row = panel.layout().itemAt(1).layout()
+        empty = plot_row.minimumSize().width()
 
         t, y = self._curve()
         # One short-named fit shows the button; that is the only width step.
@@ -5918,7 +5940,7 @@ class TestFitsMenuButton:
             {500: (t, y, "leg-a", [])}, fit_id="batch-1", fit_labels={"batch-1": "a"}
         )
         panel.layout().activate()
-        before = panel.minimumSizeHint().width()
+        before = plot_row.minimumSize().width()
 
         long_name = "Europium oxide transverse field temperature scan"[:60].ljust(60, "·")
         panel.set_fit_labels({"batch-1": long_name})
@@ -5929,6 +5951,6 @@ class TestFitsMenuButton:
         panel.layout().activate()
 
         assert panel._fits_button.text() == "Fits · 2"
-        assert panel.minimumSizeHint().width() == before
+        assert plot_row.minimumSize().width() == before
         # And a run with no fit at all keeps the pre-series row width.
         assert empty < before
