@@ -71,17 +71,24 @@ Backwards compatibility:
 Display in the main plot
 ------------------------
 
-When the run on screen has a vector grouping, a **Projection:** chip bar
-appears above the plot with one chip per projection (``P_x``, ``P_y``,
-``P_z``). Select one chip to show that projection, or several to stack them
-as subplots; **all** selects every projection at once. A run whose grouping
-has a single forward/backward pair has only one polarisation component, so it
-gets one plain plot and no chip bar.
+The plot toolbar shows one chip per projection — ``P_x``, ``P_y`` and
+``P_z``, each in its own tint. Click a chip to show or hide that projection;
+selecting more than one stacks them as subplots, and **all** selects every
+projection at once. At least one chip always stays selected. A run whose
+grouping has a single forward/backward pair has only one polarisation
+component, so it gets one plain plot and no chips.
+
+The chips never make the plot wider. When the toolbar is too narrow for the
+full names they switch to short ones (a detector pair such as ``Top-Bottom``
+becomes ``T–B``; the full name stays in the tooltip). When even those do not
+fit, the chips fold into a single button that summarises the selection — the
+selected projection's short name (``P_x ▾``), ``2 of 3 ▾``, or ``All 3 ▾`` —
+and opens a menu of the projections with a **Show all** entry.
 
 Alpha display behaviour:
 
-* Single-projection views show the alpha for the selected axis.
-* Stacked subplots hide alpha in the header.
+* Single-axis views show the alpha for the selected axis.
+* Views with several projections hide alpha in the header.
 
 Runs from different groupings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -95,7 +102,7 @@ on the ``P_z`` subplot beside the vector runs and is absent from ``P_x`` and
 projection. A run keeps one trace colour on every subplot. When a single-pair
 run matches no projection (a MuSR **Longitudinal** run beside the
 **Transverse (Vector)** grouping, whose detector split differs), the overlay
-falls back to one plain plot without the chip bar.
+falls back to one plain plot without chips.
 
 A fit on a single-pair run always belongs to the run's own asymmetry, even
 when it is selected from a shared projection subplot.

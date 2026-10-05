@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version becomes its run's only saved fit. See
   `docs/reference/gui_usage.rst` § "Saving and comparing single fits".
 - **Overlaying runs from vector and single-pair groupings puts each run on
-  the projections it measures.** The **Projection:** chips show every
+  the projections it measures.** The projection chips show every
   projection the overlaid runs declare; an EMU **Longitudinal** run sits on
   the ``P_z`` subplot only (a GPS **Longitudinal** run on the WEP ``FB``
   subplot), and each run keeps one colour across subplots. Previously the chip
@@ -41,6 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   old ``P_x``/``P_y``/``P_z`` projections and active axis on the run, so a
   plain forward/backward run could still offer projection chips and key its
   fits and fit overlays to ``P_z``.
+
+### Changed
+
+- **The plot toolbar fits a 13-inch display, including in vector mode.**
+  **Pan** and **Zoom** are now icon buttons (name in the tooltip), and the
+  waterfall Δ field appears only while **Waterfall** is on. The projection
+  chips no longer widen the plot: when space runs short they show short names
+  (``T–B``, ``F–B``, ``L–R``) and then fold into one button that summarises the
+  selection (``T–B ▾``, ``2 of 3 ▾``, ``All 3 ▾``) and opens a menu of
+  projections. With transverse-field projections and a **Fits · 2** button on
+  screen, the plot panel's minimum width drops from 837 px to 580 px. See
+  `docs/reference/vector_polarization.rst` § "Display in the main plot".
 
 ## [0.23.0] - 2026-10-03
 
