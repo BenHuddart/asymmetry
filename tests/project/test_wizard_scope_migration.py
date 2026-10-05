@@ -22,6 +22,7 @@ from asymmetry.core.project.schema import (
     save_project,
     validate,
 )
+from tests.project.single_fits import open_fit
 
 
 def _v1(preset: str, include: list[str] = (), exclude: list[str] = ()) -> dict:
@@ -56,6 +57,10 @@ def _global_wizard_state(scope: dict, runs: list[int]) -> dict:
     }
 
 
+#: A recorded fit's result: a slot holding one is a saved fit, not an empty slot.
+_FITTED = {"success": True}
+
+
 def _v22_project() -> dict:
     single = _single_wizard_state(_v1("lf-dynamics", include=["Oscillatory"]), [2.5])
     projection = _single_wizard_state(_v1("tf-superconductor", exclude=["Bessel"]))
@@ -71,9 +76,9 @@ def _v22_project() -> dict:
                     "time_fb_asymmetry": {
                         "rep_type": "time_fb_asymmetry",
                         "recipe": {"scopes": ["common"]},
-                        "fit": {"model": None, "ui_state": {"wizard_state": single}},
+                        "fit": {"result": _FITTED, "ui_state": {"wizard_state": single}},
                         "projection_fits": {
-                            "real": {"model": None, "ui_state": {"wizard_state": projection}}
+                            "real": {"result": _FITTED, "ui_state": {"wizard_state": projection}}
                         },
                     }
                 },
@@ -85,7 +90,7 @@ def _v22_project() -> dict:
                     "time_grouped": {
                         "rep_type": "time_grouped",
                         "fit": {
-                            "model": None,
+                            "result": _FITTED,
                             "ui_state": {
                                 "wizard_state": _global_wizard_state(_v1("muonium-radical"), [11]),
                                 "wizard_state_by_run_set": [grouped],
@@ -110,10 +115,10 @@ def _scope(physics: set[PhysicsClass], **kwargs) -> WizardScope:
 def test_v22_scopes_migrate_to_version_2_physics_payloads():
     result = migrate_to_current(_v22_project())
     validate(result)
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 24
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 25
 
     rep = result["datasets"][0]["representations"]["time_fb_asymmetry"]
-    single = rep["fit"]["ui_state"]["wizard_state"]
+    single = open_fit(rep)["ui_state"]["wizard_state"]
     expected = _scope(
         {PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM},
         include_components=frozenset({"Oscillatory"}),
@@ -132,13 +137,13 @@ def test_v22_scopes_migrate_to_version_2_physics_payloads():
         expected, [2.5]
     )
 
-    projection = rep["projection_fits"]["real"]["ui_state"]["wizard_state"]
+    projection = open_fit(rep, "real")["ui_state"]["wizard_state"]
     assert WizardScope.from_payload(projection["signature"]["scope"]) == _scope(
         {PhysicsClass.SUPERCONDUCTIVITY, PhysicsClass.MAGNETISM},
         exclude_components=frozenset({"Bessel"}),
     )
 
-    grouped_ui = result["datasets"][1]["representations"]["time_grouped"]["fit"]["ui_state"]
+    grouped_ui = open_fit(result["datasets"][1]["representations"]["time_grouped"])["ui_state"]
     assert WizardScope.from_payload(grouped_ui["wizard_state"]["signature"]["scope"]) == _scope(
         {PhysicsClass.MUONIUM}
     )
@@ -160,7 +165,7 @@ def test_migration_leaves_everything_else_untouched():
     result = migrate_to_current(project)
     rep = result["datasets"][0]["representations"]["time_fb_asymmetry"]
     assert rep["recipe"] == {"scopes": ["common"]}
-    assert rep["fit"]["ui_state"]["wizard_state"]["recommendation"]["recommended_key"] == (
+    assert open_fit(rep)["ui_state"]["wizard_state"]["recommendation"]["recommended_key"] == (
         "exp_constant"
     )
     # The input dict is not mutated.
@@ -204,8 +209,8 @@ def test_v22_project_round_trips_through_save_and_load(tmp_path):
     save_project(migrate_to_current(_v22_project()), path)
     loaded = load_project(path)
     validate(loaded)
-    assert loaded["schema_version"] == 24
-    single = loaded["datasets"][0]["representations"]["time_fb_asymmetry"]["fit"]["ui_state"][
+    assert loaded["schema_version"] == 25
+    single = open_fit(loaded["datasets"][0]["representations"]["time_fb_asymmetry"])["ui_state"][
         "wizard_state"
     ]
     assert WizardScope.from_payload(single["signature"]["scope"]).physics == {

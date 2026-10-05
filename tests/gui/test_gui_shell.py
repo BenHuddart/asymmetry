@@ -90,6 +90,12 @@ class _StubFitPanel(QWidget):
         self.series_rename_requested = _DummySignal()
         self.series_delete_requested = _DummySignal()
         self.batch_fit_range_changed = _DummySignal()
+        # Saved fits row (docs/plans/single-fit-compare.md): likewise inert.
+        self.saved_fit_open_requested = _DummySignal()
+        self.saved_fit_rename_requested = _DummySignal()
+        self.saved_fit_delete_requested = _DummySignal()
+        self.saved_fit_compare_requested = _DummySignal()
+        self.single_dataset_bound = _DummySignal()
         self.set_trends_available = lambda _available: None
         self.last_dataset = None
         self.last_datasets = None
@@ -97,6 +103,9 @@ class _StubFitPanel(QWidget):
         self._grouped_mode = False
 
     def set_series_catalogue_provider(self, _provider):
+        return
+
+    def set_saved_fit_catalogue_provider(self, _provider):
         return
 
     def open_series_id(self):

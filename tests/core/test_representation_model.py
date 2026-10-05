@@ -19,6 +19,7 @@ from asymmetry.core.representation import (
     FrequencyFFT,
     FrequencyMaxEnt,
     RepresentationType,
+    SingleFitSet,
     TimeFBAsymmetry,
     TimeGroups,
     make_representation,
@@ -74,6 +75,9 @@ def test_fit_slot_round_trip_and_provenance_guard():
         result={"chi_squared": 2.0},
         provenance="single",
         ui_state={"result_html": "<p>ok</p>"},
+        fit_id="fit-a",
+        label="Mine",
+        fit_range={"min": 0.1, "max": 8.0},
     )
     restored = FitSlot.from_dict(slot.to_dict())
     assert restored == slot
@@ -96,7 +100,15 @@ def test_fit_slot_ignores_pre_v20_series_fields():
     )
     assert restored.provenance == "single"
     assert not hasattr(restored, "batch_id")
-    assert set(restored.to_dict()) == {"model", "parameters", "result", "provenance"}
+    assert set(restored.to_dict()) == {
+        "model",
+        "parameters",
+        "result",
+        "provenance",
+        "fit_id",
+        "label",
+        "fit_range",
+    }
 
 
 def test_fit_slot_migrates_legacy_fraction_parameters():
@@ -330,102 +342,185 @@ def test_representation_to_dict_excludes_arrays_and_round_trips():
         RepresentationType.FREQ_FFT,
         recipe={"fourier_config": {"display": "Cos", "padding": 2}},
     )
-    rep.fit = FitSlot(
-        model=CompositeModel(["GaussianPeak", "ConstantBackground"]).to_dict(),
-        provenance="single",
-    )
+    rep.fit = _fitted(model=CompositeModel(["GaussianPeak", "ConstantBackground"]).to_dict())
     rep.trend_state = {"x_key": "field"}
     rep.ensure_computed(run)  # populate transient arrays
 
     data = rep.to_dict()
-    assert set(data) == {"rep_type", "recipe", "fit", "trend_state", "result_metadata"}
+    assert set(data) == {"rep_type", "recipe", "single_fits", "trend_state", "result_metadata"}
     assert "datasets" not in data and "_datasets" not in data
 
     restored = representation_from_dict(data)
     assert isinstance(restored, FrequencyFFT)
     assert restored.recipe == rep.recipe
-    assert restored.fit.provenance == "single"
+    assert restored.fit == rep.fit
     assert restored.trend_state == {"x_key": "field"}
     assert restored.primary is None  # arrays not restored
 
 
-def test_fit_property_aliases_default_slot():
+_EXP = {"component_names": ["Exponential", "Constant"], "operators": ["+"]}
+_GAUSS = {"component_names": ["Gaussian", "Constant"], "operators": ["+"]}
+
+
+def _fitted(
+    model: dict = _EXP,
+    *,
+    window: tuple[float, float] = (0.1, 8.0),
+    parameters: list[dict] | None = None,
+    chi_squared: float = 120.0,
+    npar: int = 3,
+    ndof: int = 97,
+) -> FitSlot:
+    """A recorded single fit, shaped as the recorder writes one."""
+    return FitSlot(
+        model=dict(model),
+        parameters=parameters if parameters is not None else [{"name": "A", "value": 0.2}],
+        result={
+            "success": True,
+            "chi_squared": chi_squared,
+            "reduced_chi_squared": chi_squared / ndof,
+            "parameters": {"A": 0.2},
+            "uncertainties": {"A": 0.01},
+            "npar": npar,
+            "ndof": ndof,
+        },
+        provenance="single",
+        fit_range={"min": window[0], "max": window[1]},
+    )
+
+
+def test_fit_property_reads_and_writes_the_default_open_fit():
     rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
-    rep.fit = FitSlot(provenance="single")
-    # The default slot is the None-keyed entry; fit_for(None) is the same object.
+    rep.fit = _fitted()
     assert rep.fit_for(None) is rep.fit
-    assert rep.fit.provenance == "single"
-    assert rep.projection_fits == {}
+    assert not rep.has_projection_fits()
 
 
 def test_per_projection_fits_round_trip():
     rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
-    rep.fit = FitSlot(provenance="single")  # default (non-projection) slot
-    rep.set_fit_for("P_x", FitSlot(provenance="single", result={"chi2": 1.1}))
-    rep.set_fit_for("P_z", FitSlot(provenance="single", result={"chi2": 0.9}))
+    rep.fit = _fitted()
+    rep.set_fit_for("P_x", _fitted(chi_squared=110.0))
+    rep.set_fit_for("P_z", _fitted(chi_squared=90.0))
 
     data = rep.to_dict()
-    assert set(data["projection_fits"]) == {"P_x", "P_z"}
+    assert set(data["single_fits"]) == {"", "P_x", "P_z"}
 
     restored = representation_from_dict(data)
-    assert restored.fit.provenance == "single"
-    assert restored.fit_for("P_x").result == {"chi2": 1.1}
-    assert restored.fit_for("P_z").result == {"chi2": 0.9}
-    assert set(restored.projection_fits) == {"P_x", "P_z"}
+    assert restored.fit == rep.fit
+    assert restored.fit_for("P_x").result["chi_squared"] == 110.0
+    assert restored.fit_for("P_z").result["chi_squared"] == 90.0
+    assert restored.has_projection_fits()
     # An unfit projection yields a fresh empty slot, not a crash.
     assert restored.fit_for("P_y").is_empty()
 
 
-def test_to_dict_omits_projection_fits_when_none():
+def test_iter_fit_slots_lists_every_saved_fit_default_first():
     rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
-    rep.fit = FitSlot(provenance="single")
-    assert "projection_fits" not in rep.to_dict()
-
-
-def test_pre_v9_representation_loads_without_projection_fits():
-    """A representation dict lacking projection_fits (pre-v9) loads cleanly."""
-    legacy = {
-        "rep_type": "time_fb_asymmetry",
-        "recipe": {},
-        "fit": FitSlot(provenance="single").to_dict(),
-        "trend_state": {},
-        "result_metadata": {},
-    }
-    rep = representation_from_dict(legacy)
-    assert rep.fit.provenance == "single"
-    assert rep.projection_fits == {}
-
-
-def test_iter_fit_slots_includes_default_and_projections():
-    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
-    rep.set_fit_for("P_x", FitSlot(provenance="single"))
-    keys = {key for key, _slot in rep.iter_fit_slots()}
-    assert keys == {None, "P_x"}
+    rep.set_fit_for("P_x", _fitted())
+    rep.record_single_fit(None, _fitted(), detached=False)
+    rep.record_single_fit(None, _fitted(_GAUSS), detached=False)
+    assert [key for key, _slot in rep.iter_fit_slots()] == [None, None, "P_x"]
 
 
 def test_fit_for_is_a_pure_read_and_does_not_insert():
-    # Inspecting an unfit projection must not leak an empty slot into the model.
+    # Inspecting an unfit projection must not leak an empty set into the model.
     rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
-    slot = rep.fit_for("P_y")
-    assert slot.is_empty()
-    assert rep.projection_fits == {}
-    assert "projection_fits" not in rep.to_dict()
+    assert rep.fit_for("P_y").is_empty()
+    assert rep.single_fits == {}
+    assert rep.to_dict()["single_fits"] == {}
 
 
-def test_to_dict_skips_empty_projection_slots():
+def test_storing_an_empty_slot_clears_the_projection():
     rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
-    rep.set_fit_for("P_x", FitSlot())  # empty slot
-    rep.set_fit_for("P_z", FitSlot(provenance="single", result={"chi2": 1.0}))
-    data = rep.to_dict()
-    # Only the projection that actually carries a fit is persisted.
-    assert set(data["projection_fits"]) == {"P_z"}
+    rep.set_fit_for("P_x", _fitted())
+    rep.set_fit_for("P_x", FitSlot())
+    assert rep.to_dict()["single_fits"] == {}
 
 
 def test_all_sentinel_maps_to_default_slot():
     rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
-    rep.set_fit_for("ALL", FitSlot(provenance="single"))
-    assert rep.fit.provenance == "single"
-    assert rep.projection_fits == {}
+    rep.set_fit_for("ALL", _fitted())
+    assert not rep.fit.is_empty()
+    assert not rep.has_projection_fits()
+
+
+# ── saved single fits (docs/plans/single-fit-compare.md) ───────────────────
+
+
+def test_refitting_the_same_analysis_replaces_the_open_fit_in_place():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    first = rep.record_single_fit(None, _fitted(chi_squared=130.0), detached=False)
+    rep.fit_set(None).rename(first.fit_id, "Exp")
+    # A new seed is not a new analysis (D3).
+    again = _fitted(chi_squared=120.0, parameters=[{"name": "A", "value": 0.9}])
+    second = rep.record_single_fit(None, again, detached=False)
+    assert [slot.fit_id for slot in rep.fit_set(None).fits] == [first.fit_id]
+    assert (second.fit_id, second.label) == (first.fit_id, "Exp")
+    assert rep.fit.result["chi_squared"] == 120.0
+
+
+def test_a_different_model_window_or_constraint_records_a_new_fit():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    rep.record_single_fit(None, _fitted(), detached=False)
+    rep.record_single_fit(None, _fitted(_GAUSS), detached=False)
+    rep.record_single_fit(None, _fitted(window=(0.5, 8.0)), detached=False)
+    fixed = [{"name": "A", "value": 0.2, "fixed": True}]
+    newest = rep.record_single_fit(None, _fitted(parameters=fixed), detached=False)
+    assert len(rep.fit_set(None).fits) == 4
+    assert rep.fit_set(None).open_id == newest.fit_id
+
+
+def test_returning_to_an_earlier_analysis_replaces_that_fit_and_opens_it():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    exp = rep.record_single_fit(None, _fitted(), detached=False)
+    rep.record_single_fit(None, _fitted(_GAUSS), detached=False)
+    again = rep.record_single_fit(None, _fitted(chi_squared=100.0), detached=False)
+    assert again.fit_id == exp.fit_id
+    assert len(rep.fit_set(None).fits) == 2
+    assert rep.fit_set(None).open_id == exp.fit_id
+
+
+def test_a_detached_fit_records_beside_an_identical_one_under_a_distinct_name():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    first = rep.record_single_fit(None, _fitted(), detached=False)
+    second = rep.record_single_fit(None, _fitted(), detached=True)
+    assert second.fit_id != first.fit_id
+    assert rep.fit_name(first) == "Exponential + Constant · 0.1–8 µs"
+    assert rep.fit_name(second) == "Exponential + Constant · 0.1–8 µs (2)"
+
+
+def test_deleting_the_open_fit_opens_the_newest_remaining_one():
+    rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
+    exp = rep.record_single_fit(None, _fitted(), detached=False)
+    gauss = rep.record_single_fit(None, _fitted(_GAUSS), detached=False)
+    rep.fit_set(None).open(exp.fit_id)
+    rep.fit_set(None).delete(exp.fit_id)
+    assert rep.fit_set(None).open_id == gauss.fit_id
+    rep.fit_set(None).delete(gauss.fit_id)
+    assert rep.fit.is_empty()
+
+
+def test_a_blank_rename_restores_the_default_name():
+    rep = make_representation(RepresentationType.FREQ_FFT)
+    slot = rep.record_single_fit(None, _fitted(window=(0.0, 20.0)), detached=False)
+    rep.fit_set(None).rename(slot.fit_id, "  Peak  ")
+    assert rep.fit_name(slot) == "Peak"
+    rep.fit_set(None).rename(slot.fit_id, " ")
+    assert rep.fit_name(slot) == "Exponential + Constant · 0–20 MHz"
+
+
+def test_a_saved_set_naming_no_open_fit_opens_the_newest():
+    first, second = _fitted(), _fitted(_GAUSS)
+    first.fit_id, second.fit_id = "fit-1", "fit-2"
+    data = {"open_id": "fit-gone", "fits": [first.to_dict(), second.to_dict()]}
+    assert SingleFitSet.from_dict(data).open_id == "fit-2"
+
+
+def test_data_key_is_the_window_and_the_point_count():
+    assert _fitted(npar=3, ndof=97).data_key() == (0.1, 8.0, 100)
+    pre_v25 = _fitted()
+    pre_v25.fit_range = None
+    assert pre_v25.data_key() is None
 
 
 def test_fit_slot_ui_state_round_trips():
@@ -457,10 +552,9 @@ def test_fit_slot_from_dict_without_ui_state_defaults_empty():
 
 def test_per_projection_ui_state_round_trips_through_representation():
     rep = make_representation(RepresentationType.TIME_FB_ASYMMETRY)
-    rep.set_fit_for(
-        "P_x",
-        FitSlot(provenance="single", result={"chi2": 1.1}, ui_state={"result_html": "x-fit"}),
-    )
+    slot = _fitted()
+    slot.ui_state = {"result_html": "x-fit"}
+    rep.set_fit_for("P_x", slot)
     restored = representation_from_dict(rep.to_dict())
     assert restored.fit_for("P_x").ui_state == {"result_html": "x-fit"}
 

@@ -37,12 +37,16 @@ from asymmetry.core.fitting.model_comparison import (
     information_weights,
     normalised_residuals,
     parameter_flags,
+    saved_fit_curves,
+    saved_fit_model,
     score_deltas,
     shortlist,
     summarise_candidates,
+    summarise_saved_fits,
     summarise_single_candidates,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.representation.base import FitSlot
 
 # ---------------------------------------------------------------------------
 # Synthetic series
@@ -654,3 +658,134 @@ def test_compare_places_fitted_parameters_before_fixed_ones() -> None:
     assert [pair.name for pair in pairs] == ["A_1", "Lambda", "A_bg"]
     # A single run's values are per run, never a shared global: no kσ judgement.
     assert pairs[0].sigma_difference is None
+
+
+# ---------------------------------------------------------------------------
+# Saved single fits (docs/plans/single-fit-compare.md D7, D8)
+# ---------------------------------------------------------------------------
+
+_EXP_MODEL = CompositeModel(["Exponential", "Constant"], operators=["+"]).to_dict()
+
+
+def _saved(
+    fit_id: str,
+    *,
+    chi_squared: float,
+    npar: int = 3,
+    window: tuple[float, float] | None = (0.0, 8.0),
+    fixed_bg: bool = False,
+) -> FitSlot:
+    """A saved single fit on run 701, as the recorder writes one: 81 points in the window."""
+    errors = {"A_1": 0.2, "Lambda": 0.01, "A_bg": 0.1}
+    if fixed_bg:
+        del errors["A_bg"]
+    return FitSlot(
+        model=dict(_EXP_MODEL),
+        parameters=[
+            {"name": "A_1", "value": 20.0, "min": "0", "max": "100"},
+            {"name": "Lambda", "value": 0.2, "min": "0.2", "max": "inf"},
+            {"name": "A_bg", "value": 1.0, "min": "-inf", "max": "inf", "fixed": fixed_bg},
+        ],
+        result={
+            "chi_squared": chi_squared,
+            "reduced_chi_squared": chi_squared / (81 - npar),
+            "parameters": {"A_1": 20.0, "Lambda": 0.2, "A_bg": 1.0},
+            "uncertainties": errors,
+            "npar": npar,
+            "ndof": 81 - npar,
+        },
+        provenance="single",
+        fit_id=fit_id,
+        fit_range=None if window is None else {"min": window[0], "max": window[1]},
+    )
+
+
+def _summarise_saved(*slots: FitSlot, first: str = "a", metric=SelectionMetric.AICC):
+    return summarise_saved_fits(
+        [(slot, slot.fit_id.upper()) for slot in slots], _dataset(701), metric, {}, first=first
+    )
+
+
+def test_saved_fits_on_the_same_data_rank_by_the_criterion_best_first() -> None:
+    a, b = _saved("a", chi_squared=90.0), _saved("b", chi_squared=80.0)
+    summaries = _summarise_saved(a, b)
+    assert [summary.key for summary in summaries] == ["b", "a"]
+    assert [summary.delta for summary in summaries] == pytest.approx([0.0, 10.0])
+    assert summaries[0].weight == pytest.approx(1.0 / (1.0 + math.exp(-5.0)))
+    assert summaries[0].title == "B"
+
+
+def test_saved_fit_criterion_counts_only_free_parameters() -> None:
+    # One fewer free parameter buys 2 AIC units: equal χ² ranks the simpler fit first.
+    simple = _saved("s", chi_squared=80.0, npar=2, fixed_bg=True)
+    full = _saved("f", chi_squared=80.0)
+    # n is 81 for both (ndof + npar), so the two share one data key.
+    ranked = _summarise_saved(full, simple, first="f", metric=SelectionMetric.AIC)
+    assert [summary.key for summary in ranked] == ["s", "f"]
+    assert ranked[1].delta == pytest.approx(2.0)
+
+
+def test_saved_fits_rank_within_their_own_window_and_leave_lone_fits_unranked() -> None:
+    a = _saved("a", chi_squared=90.0)
+    b = _saved("b", chi_squared=80.0)
+    other = _saved("w", chi_squared=10.0, window=(0.5, 8.0))
+    legacy = _saved("l", chi_squared=5.0, window=None)
+    summaries = _summarise_saved(other, a, legacy, b, first="a")
+    # a's data group leads; a fit alone in its window, or with no key, is not ranked.
+    assert [summary.key for summary in summaries] == ["b", "a", "w", "l"]
+    assert [summary.delta for summary in summaries[2:]] == [math.inf, math.inf]
+    assert [summary.weight for summary in summaries[2:]] == [0.0, 0.0]
+    assert math.isnan(summaries[3].metric_value)
+
+
+def test_saved_fit_rows_split_fitted_from_fixed_with_bound_flags() -> None:
+    (summary,) = _summarise_saved(_saved("a", chi_squared=80.0, fixed_bg=True))
+    assert summary.names(ParameterRole.FITTED) == ("A_1", "Lambda")
+    assert summary.names(ParameterRole.FIXED) == ("A_bg",)
+    lam = summary.parameters[1]
+    assert lam.values == (Estimate(0.2, 0.01),)
+    assert lam.flags == (ParameterFlag.AT_LOWER_BOUND,)
+    assert summary.gate_passed is None and not summary.runs[0].curves
+
+
+def test_saved_fit_curves_span_the_window_and_carry_residuals() -> None:
+    curves = saved_fit_curves(_saved("a", chi_squared=80.0, window=(1.0, 6.0)), _dataset(701))
+    x, y = curves.fit
+    assert (x[0], x[-1]) == (1.0, 6.0)
+    assert y[0] == pytest.approx(20.0 * math.exp(-0.2) + 1.0)
+    # The data was generated with Lambda = 0.2 on run 701: the residuals vanish,
+    # up to linear interpolation of the dense curve.
+    assert np.allclose(curves.residuals[1], 0.0, atol=1e-4)
+    # A fit with no recorded window is drawn over the whole record.
+    legacy = saved_fit_curves(_saved("l", chi_squared=80.0, window=None), _dataset(701))
+    assert (legacy.fit[0][0], legacy.fit[0][-1]) == (0.0, 8.0)
+
+
+def test_legacy_saved_fits_without_structured_results_are_listed_unranked() -> None:
+    """A v5-era slot (result HTML only) or a model-only slot lists and draws from its table."""
+    table = [
+        {"name": "A_1", "value": 20.0, "fixed": False},
+        {"name": "Lambda", "value": 0.2, "fixed": False},
+        {"name": "A_bg", "value": 1.0, "fixed": True},
+    ]
+    html_only = FitSlot(model=dict(_EXP_MODEL), parameters=table, result={"result_html": "<b/>"})
+    html_only.fit_id = "h"
+    model_only = FitSlot(model=dict(_EXP_MODEL), parameters=table)
+    model_only.fit_id = "m"
+    new = _saved("a", chi_squared=80.0)
+
+    summaries = _summarise_saved(new, html_only, model_only)
+    legacy = {summary.key: summary for summary in summaries if summary.key != "a"}
+    assert all(summary.delta == math.inf for summary in legacy.values())
+    assert math.isnan(legacy["h"].runs[0].reduced_chi_squared)
+    # No uncertainties were recorded, so the table's Fix splits fitted from fixed.
+    assert legacy["m"].names(ParameterRole.FIXED) == ("A_bg",)
+    assert saved_fit_curves(html_only, _dataset(701)) is not None
+
+
+def test_a_saved_fit_with_no_model_or_values_has_no_curve() -> None:
+    no_model = FitSlot(result={"result_html": "<b/>"}, fit_id="x")
+    short_table = FitSlot(model=dict(_EXP_MODEL), parameters=[{"name": "A_1", "value": 1.0}])
+    assert saved_fit_model(no_model) is None
+    assert saved_fit_model(short_table) is None
+    assert saved_fit_curves(no_model, _dataset(701)) is None
