@@ -628,6 +628,9 @@ class PlotPanel(QWidget):
             self._projection_specs: list[dict] = []
             self._tint_by_label: dict[str, str] = {}
             self._selected_projection_labels: list[str] = []
+            # Chip selection remembered per projection set (the ordered chip
+            # labels), so each grouping reopens with the projections last shown.
+            self._projection_selection_by_set: dict[tuple[str, ...], list[str]] = {}
             # Which stacked subplot is the active single-fit target (multi-view).
             self._fit_target_projection: str | None = None
             self._fit_target_artists: list = []
@@ -3995,6 +3998,7 @@ class PlotPanel(QWidget):
     def _on_projection_selection_changed(self, labels: list[str]) -> None:
         """Handle a projection chip-selection change from the header chip bar."""
         self._selected_projection_labels = list(labels)
+        self._remember_projection_selection()
         axis = self._axis_for_selection(list(labels))
         if axis is None:
             return
@@ -4124,6 +4128,7 @@ class PlotPanel(QWidget):
 
         self._projection_bar.set_projections(specs, chosen)
         self._selected_projection_labels = self._projection_bar.selected_labels()
+        self._remember_projection_selection()
 
         new_axis = self._axis_for_selection(self._selected_projection_labels)
         previous_axis = self._current_polarization_axis
@@ -4132,6 +4137,14 @@ class PlotPanel(QWidget):
             self._mirror_y_fields_for_axis(new_axis)
             self._sync_y_controls_with_visible_axis()
         self._update_y_limit_controls_for_axis(new_axis)
+
+    def _remember_projection_selection(self) -> None:
+        key = tuple(str(p["label"]) for p in self._projection_specs)
+        self._projection_selection_by_set[key] = list(self._selected_projection_labels)
+
+    def remembered_projection_selection(self, labels: list[str]) -> list[str]:
+        """The selection last shown for the projection set *labels*, or ``[]``."""
+        return list(self._projection_selection_by_set.get(tuple(labels), []))
 
     def selected_projection_labels(self) -> list[str]:
         """Return the projection labels currently selected.
@@ -9092,6 +9105,10 @@ class PlotPanel(QWidget):
             "axis_limits": self._limits.state(),
             "polarization_axis": self._current_polarization_axis,
             "projection_selection": list(self._selected_projection_labels),
+            "projection_selection_by_set": [
+                {"labels": list(labels), "selected": list(selected)}
+                for labels, selected in self._projection_selection_by_set.items()
+            ],
             "fit_curve": None,
             "fit_curve_run_number": self._fit_curve_run_number,
             "fit_curves": {},
@@ -9208,6 +9225,12 @@ class PlotPanel(QWidget):
             if isinstance(raw_selection, list)
             else []
         )
+        self._projection_selection_by_set = {
+            tuple(str(label) for label in entry["labels"]): [
+                str(label) for label in entry["selected"]
+            ]
+            for entry in state.get("projection_selection_by_set") or []
+        }
         # The per-axis Auto/Hold snapshot IS the restored view: the buttons
         # mirror its Auto flags and the replot below resolves through it, so
         # there is no separate lock and no post-plot re-apply.

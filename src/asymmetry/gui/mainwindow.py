@@ -2628,11 +2628,10 @@ class MainWindow(QMainWindow):
         specs = self._projection_specs(targets, list(memberships))
         labels = [spec["label"] for spec in specs]
 
-        # Preserve the live chip selection where it still applies; otherwise
-        # honour a restored ``ALL``/single axis (so a saved subplot view reopens
-        # as subplots), then fall back to the dataset's active single axis —
-        # which preserves the immediate fit workflow, since multi-select is a
-        # deliberate user action.
+        # Reopen this projection set with the selection it last showed (each
+        # grouping keeps its own, across runs with fewer projections); else keep
+        # the live chips where they still apply, honour a restored ``ALL``/single
+        # axis, then fall back to the dataset's active single axis.
         prior: list[str] = []
         if hasattr(self._plot_panel, "selected_projection_labels"):
             prior = [lbl for lbl in self._plot_panel.selected_projection_labels() if lbl in labels]
@@ -2641,7 +2640,10 @@ class MainWindow(QMainWindow):
             current_axis = self._normalize_vector_axis(
                 self._plot_panel.get_current_polarization_axis()
             )
-        if prior:
+        remembered = self._plot_panel.remembered_projection_selection(labels)
+        if remembered:
+            chosen = remembered
+        elif prior:
             chosen = prior
         elif current_axis == "ALL":
             chosen = list(labels)
@@ -2653,6 +2655,14 @@ class MainWindow(QMainWindow):
             chosen = labels[:1]
 
         self._plot_panel.set_projections(specs, chosen)
+        axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+        if axis == current_axis:
+            return
+        # A remembered selection changed the view after the selection flows
+        # rendered; redraw only when the plot no longer matches it.
+        updated = self._synchronize_targets_to_axis(targets, axis)
+        if axis == "ALL" or updated or len(targets) > 1:
+            self._render_current_selection_plot()
 
     def _refresh_time_view_selector(self) -> None:
         """Keep the top-level plot tabs and internal time-view state in sync."""

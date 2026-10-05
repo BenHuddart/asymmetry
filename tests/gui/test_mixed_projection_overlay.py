@@ -199,3 +199,46 @@ def test_fit_needs_the_current_run_to_measure_the_target_projection(
     assert mainwindow._current_fit_block_state()[0]
     mainwindow._current_dataset = vector
     assert mainwindow._current_fit_block_state() == (False, "")
+
+
+def test_vector_run_reopens_with_the_projections_it_last_showed(mainwindow: MainWindow) -> None:
+    vector, plain = _dataset(314, vector=True), _dataset(315, vector=False)
+    _load(mainwindow, vector, plain)
+    panel = mainwindow._plot_panel
+    mainwindow._data_browser.select_runs([314])
+    _select_chips(mainwindow, ["P_x", "P_z"])
+
+    mainwindow._data_browser.select_runs([315])
+    assert panel._projection_bar.isHidden()
+    mainwindow._data_browser.select_runs([314])
+
+    assert panel.selected_projection_labels() == ["P_x", "P_z"]
+    assert list(panel._vector_subplot_datasets) == ["P_x", "P_z"]
+    assert len(panel._figure.axes) == 2
+
+
+def test_each_projection_set_keeps_its_own_selection(mainwindow: MainWindow) -> None:
+    emu, gps = _dataset(316, vector=True), _dataset(317, vector=True)
+    gps.run.grouping["projections"] = [
+        {"label": "FB", "forward_group": 1, "backward_group": 2},
+        {"label": "UD", "forward_group": 3, "backward_group": 4},
+    ]
+    gps.run.grouping["vector_axis"] = "FB"
+    _load(mainwindow, emu, gps)
+    panel = mainwindow._plot_panel
+    mainwindow._data_browser.select_runs([316])
+    _select_chips(mainwindow, ["P_y"])
+    mainwindow._data_browser.select_runs([317])
+    _select_chips(mainwindow, ["FB", "UD"])
+
+    mainwindow._data_browser.select_runs([316])
+    assert panel.selected_projection_labels() == ["P_y"]
+    assert panel.get_current_polarization_axis() == "P_y"
+    mainwindow._data_browser.select_runs([317])
+    assert panel.selected_projection_labels() == ["FB", "UD"]
+
+    restored = type(panel)()
+    restored.restore_state(panel.get_state())
+    assert restored.remembered_projection_selection(["FB", "UD"]) == ["FB", "UD"]
+    assert restored.remembered_projection_selection(["P_x", "P_y", "P_z"]) == ["P_y"]
+    restored.deleteLater()
