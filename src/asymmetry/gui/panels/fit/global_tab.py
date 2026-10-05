@@ -171,7 +171,7 @@ from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.info_popover import InfoPopover
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
-from asymmetry.gui.widgets.series_dialogs import confirm_series_delete, prompt_series_rename
+from asymmetry.gui.widgets.series_dialogs import SERIES, confirm_delete, prompt_rename
 from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -1411,7 +1411,7 @@ class GlobalFitTab(FitTabBase):
         """Ask for a new name for the open series and hand it to the host."""
         if self._open_series_id is None:
             return
-        new_name = prompt_series_rename(self, self._open_series_name)
+        new_name = prompt_rename(self, SERIES, self._open_series_name)
         if new_name is None:
             return
         self._open_series_name = new_name or self._open_series_name
@@ -1422,7 +1422,7 @@ class GlobalFitTab(FitTabBase):
         """Confirm, then ask the host to delete the open series (D6)."""
         if self._open_series_id is None:
             return
-        if not confirm_series_delete(self, self._open_series_name):
+        if not confirm_delete(self, SERIES, self._open_series_name):
             return
         self.series_delete_requested.emit(self._open_series_id)
 

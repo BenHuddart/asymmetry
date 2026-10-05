@@ -356,15 +356,15 @@ def _single_candidate_summary(
 def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves:
     """A saved single fit's dense curve over its window, and its normalised residuals.
 
-    A fit saved before its window was recorded (pre-v25) is drawn over the
-    whole record. Evaluates the model, so a caller off the GUI thread runs it.
+    An open window side, or a fit saved before its window was recorded
+    (pre-v25), reaches the edge of the record. Evaluates the model, so a
+    caller off the GUI thread runs it.
     """
     model = CompositeModel.from_dict(slot.model, allow_missing=True)
     values = {name: float(slot.result["parameters"][name]) for name in model.param_names}
-    if slot.fit_range is None:
-        x_min, x_max = float(np.min(dataset.time)), float(np.max(dataset.time))
-    else:
-        x_min, x_max = slot.fit_range["min"], slot.fit_range["max"]
+    window = slot.fit_range or {"min": None, "max": None}
+    x_min = float(np.min(dataset.time)) if window["min"] is None else window["min"]
+    x_max = float(np.max(dataset.time)) if window["max"] is None else window["max"]
     curve = dense_fit_curve(model, values, x_min, x_max)
     return RunCurves(curve, normalised_residuals(dataset, curve))
 

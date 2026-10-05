@@ -72,7 +72,8 @@ class FitSlot:
     ``fit_id`` is unique across the project (the plot keys curves by it);
     ``label`` is a user rename or a disambiguating suffix, ``None`` while the
     default name applies; ``fit_range`` is the window fitted, ``{"min", "max"}``
-    in the domain's unit, ``None`` for a fit saved before v25.
+    in the domain's unit with ``None`` for an open side (a frequency fit over
+    the full spectrum), and ``None`` as a whole for a fit saved before v25.
     """
 
     model: dict | None = None
@@ -122,7 +123,7 @@ class FitSlot:
             default=str,
         )
 
-    def data_key(self) -> tuple[float, float, int] | None:
+    def data_key(self) -> tuple[float | None, float | None, int] | None:
         """``(min, max, n)`` of the data this fit saw, or ``None`` when unknown (plan D7).
 
         Two fits with equal keys were fitted to the same points, so an
@@ -132,8 +133,8 @@ class FitSlot:
         if self.fit_range is None or result.get("npar") is None or result.get("ndof") is None:
             return None
         return (
-            float(self.fit_range["min"]),
-            float(self.fit_range["max"]),
+            self.fit_range["min"],
+            self.fit_range["max"],
             int(result["ndof"]) + int(result["npar"]),
         )
 
@@ -209,11 +210,16 @@ class FitSlot:
             fit_id=str(data.get("fit_id") or new_fit_id()),
             label=str(data["label"]) if data.get("label") else None,
             fit_range=(
-                {"min": float(fit_range["min"]), "max": float(fit_range["max"])}
+                {side: _optional_float(fit_range.get(side)) for side in ("min", "max")}
                 if isinstance(fit_range, dict)
                 else None
             ),
         )
+
+
+def _optional_float(value: object) -> float | None:
+    """*value* as a float, or ``None`` for an open window side."""
+    return None if value is None else float(value)
 
 
 def new_fit_id() -> str:
@@ -363,7 +369,11 @@ class Representation(ABC):
         return str(projection)
 
     def fit_set(self, projection: str | None) -> SingleFitSet:
-        """The saved fits on *projection*, created empty on first use."""
+        """The saved fits on *projection*; an empty set, not stored, when it has none."""
+        return self.single_fits.get(self._fit_key(projection), SingleFitSet())
+
+    def _stored_fit_set(self, projection: str | None) -> SingleFitSet:
+        """The saved fits on *projection*, stored on first use so a write lands."""
         return self.single_fits.setdefault(self._fit_key(projection), SingleFitSet())
 
     def fit_for(self, projection: str | None) -> FitSlot:
@@ -381,7 +391,7 @@ class Representation(ABC):
         if slot.is_empty():
             self.single_fits.pop(key, None)
         else:
-            self.fit_set(key).replace_open(slot)
+            self._stored_fit_set(key).replace_open(slot)
 
     @property
     def fit(self) -> FitSlot:
@@ -396,7 +406,7 @@ class Representation(ABC):
         self, projection: str | None, slot: FitSlot, *, detached: bool
     ) -> FitSlot:
         """Save a completed single fit on *projection* (plan D1) and return it, opened."""
-        return self.fit_set(projection).record(
+        return self._stored_fit_set(projection).record(
             slot, detached=detached, default_name=self.default_fit_name
         )
 

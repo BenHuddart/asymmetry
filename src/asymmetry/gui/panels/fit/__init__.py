@@ -44,7 +44,7 @@ from .seeding import (
     _seed_group_absolute_phases,
     _seed_group_background_and_n0,
 )
-from .single_tab import SingleFitTab
+from .single_tab import SavedFitCatalogue, SavedFitEntry, SingleFitTab
 from .tab_base import (
     _PARAM_BATCH_ROLE_DATA,
     _SINGLE_PARAM_BATCH_COLUMN,
@@ -78,6 +78,8 @@ __all__ = [
     "QMessageBox",
     "SeriesCatalogue",
     "SeriesMenuEntry",
+    "SavedFitCatalogue",
+    "SavedFitEntry",
     "SingleFitTab",
     "_CommitOnTabDelegate",
     "_MAX_PHASE_SEED_FFT_POINTS",

@@ -153,7 +153,7 @@ from asymmetry.core.fitting import (
 )
 from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.fit_curves import fit_curve_sample_count
+from asymmetry.core.fitting.fit_curves import dense_fit_curve, fit_curve_sample_count
 from asymmetry.core.fitting.knight_analysis import (
     migrate_legacy_state as migrate_legacy_knight_state,
 )
@@ -233,6 +233,7 @@ from asymmetry.core.representation import (
     FitSeries,
     FitSlot,
     JointFit,
+    Representation,
     RepresentationType,
     build_maxent_reconstruction_datasets,
     composite_model_label,
@@ -300,6 +301,8 @@ from asymmetry.gui.panels.fit import (
     BATCH_SEEDING_MODES,
     BATCH_SEEDING_TOOLTIP,
     FitPanel,
+    SavedFitCatalogue,
+    SavedFitEntry,
     SeriesCatalogue,
     SeriesMenuEntry,
 )
@@ -314,7 +317,7 @@ from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, PhaseD
 from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.maxent_panel import MaxEntPanel
-from asymmetry.gui.panels.plot_panel import PlotPanel
+from asymmetry.gui.panels.plot_panel import SAVED_FIT_ID_PREFIX, SINGLE_FIT_ID, PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
 from asymmetry.gui.screen_guard import place_window_on_screen
 from asymmetry.gui.styles import metrics, tokens
@@ -433,6 +436,22 @@ _MAXENT_WARN_TOTAL_MATRIX_BYTES = 8 * 1024**3
 _GLOBAL_FIT_DECORATIONS_EXTRA_KEY = "global_fit_decorations"
 
 _MAXENT_WARN_TOTAL_OBSERVATIONS = 500_000
+
+
+def _saved_fit_detail(slot: FitSlot) -> str:
+    """``"χ²ᵣ 1.024 · 14:32"``: how a saved fit went, beside its name in the menu.
+
+    A saved fit's result is read as the file stored it, so a grouped fit's
+    per-group result (no top-level χ²ᵣ) or a pre-timestamp fit reads with less.
+    """
+    result = slot.result or {}
+    parts = []
+    if result.get("reduced_chi_squared") is not None:
+        parts.append(f"χ²ᵣ {float(result['reduced_chi_squared']):.3f}")
+    timestamp = str(result.get("timestamp") or "")
+    if len(timestamp) >= 16:
+        parts.append(timestamp[11:16])
+    return " · ".join(parts)
 
 
 def _safe_float(value: object) -> float | None:
@@ -2152,6 +2171,12 @@ class MainWindow(QMainWindow):
         self._fit_panel.series_new_from_group_requested.connect(self._on_fit_group_requested)
         self._fit_panel.series_rename_requested.connect(self._on_series_rename_requested)
         self._fit_panel.series_delete_requested.connect(self._on_series_delete_requested)
+        # The Single tab's Saved fits row (single-fit plan D1/D2).
+        self._fit_panel.set_saved_fit_catalogue_provider(self._saved_fit_catalogue)
+        self._fit_panel.saved_fit_open_requested.connect(self._on_saved_fit_open_requested)
+        self._fit_panel.saved_fit_rename_requested.connect(self._on_saved_fit_rename_requested)
+        self._fit_panel.saved_fit_delete_requested.connect(self._on_saved_fit_delete_requested)
+        self._fit_panel.single_dataset_bound.connect(self._sync_saved_fit_overlays)
         self._fit_panel.batch_fit_range_changed.connect(self._on_batch_fit_range_changed)
         for _panel in (self._plot_panel, self._frequency_plot_panel):
             _panel.fit_range_guide_changed.connect(self._fit_panel.set_batch_fit_range)
@@ -6272,24 +6297,24 @@ class MainWindow(QMainWindow):
             self._log_panel.log(f"Batch seeding: {BATCH_SEEDING_LABELS.get(mode, mode)}", tag="fit")
 
     def _collect_latest_fit_records(self) -> list[tuple[str, dict]]:
-        """Gather (title, record) for every persisted latest fit in the project.
+        """Gather (title, record) for every saved single fit in the project.
 
         Each ``record`` is the enriched ``fit_result_summary`` dict already stored on
-        a representation's :class:`FitSlot` (the structured ``.fit`` snapshot) — the
-        same provenance that rides into ``.asymp``.
+        a representation's :class:`FitSlot` — the same provenance that rides into
+        ``.asymp``. The title names the run, view, projection and the fit itself.
         """
         records: list[tuple[str, dict]] = []
         for run_number, container in sorted(self._project_model.datasets.items()):
             for rep_type, representation in container.by_type.items():
                 rep_label = getattr(rep_type, "value", str(rep_type))
-                # Include every stored slot — the default fit and each
-                # per-projection single fit — so a fit taken in a vector
-                # projection view is not silently absent from the report.
+                # Every saved fit — on the default view and on each projection —
+                # so neither a projection fit nor a non-open fit goes missing.
                 for projection, slot in representation.iter_fit_slots():
                     result = getattr(slot, "result", None)
                     if isinstance(result, dict) and result.get("parameters"):
                         suffix = f" · {projection}" if projection else ""
-                        records.append((f"Run {run_number} · {rep_label}{suffix}", result))
+                        title = f"Run {run_number} · {rep_label}{suffix}"
+                        records.append((f"{title} · {representation.fit_name(slot)}", result))
         return records
 
     def _on_export_fit_report(self) -> None:
@@ -12068,7 +12093,8 @@ class MainWindow(QMainWindow):
             return
         projection = self._current_single_fit_projection()
         representation = self._project_model.ensure_dataset(run_number).ensure(rep_type)
-        representation.set_fit_for(
+        # Saved beside the run's other fits, or over the one it re-runs (D1).
+        representation.record_single_fit(
             projection,
             FitSlot(
                 model=form_state.get("composite_model"),
@@ -12087,7 +12113,158 @@ class MainWindow(QMainWindow):
                 },
                 provenance="single",
                 ui_state=form_state,
+                fit_range=self._fit_panel.single_fit_window(),
             ),
+            detached=self._fit_panel.single_fit_records_new(),
+        )
+        self._fit_panel.note_single_fit_saved()
+        self._sync_saved_fit_overlays()
+
+    # ── Saved single fits (docs/plans/single-fit-compare.md) ─────────────────
+
+    def _bound_saved_fits(self) -> tuple[int, Representation, str | None] | None:
+        """``(run, representation, projection)`` the Single tab's saved fits live on.
+
+        ``None`` while no run is bound, or no fit was ever recorded on its view.
+        """
+        rep_type = self._active_representation_type()
+        run_number = self._single_fit_run_number()
+        if rep_type is None or run_number is None:
+            return None
+        representation = self._project_model.representation(run_number, rep_type)
+        if representation is None:
+            return None
+        return run_number, representation, self._current_single_fit_projection()
+
+    def _saved_fit_catalogue(self) -> SavedFitCatalogue:
+        """What the Single tab's Saved fits row lists for the bound run."""
+        bound = self._bound_saved_fits()
+        if bound is None:
+            return SavedFitCatalogue()
+        _run_number, representation, projection = bound
+        fit_set = representation.fit_set(projection)
+        return SavedFitCatalogue(
+            entries=tuple(
+                SavedFitEntry(
+                    fit_id=slot.fit_id,
+                    name=representation.fit_name(slot),
+                    detail=_saved_fit_detail(slot),
+                    identity=slot.identity(),
+                )
+                for slot in fit_set.fits
+            ),
+            open_id=fit_set.open_id,
+        )
+
+    def _saved_fit_curve_payload(self, slot: FitSlot, name: str, axis_key: str | None) -> tuple:
+        """A ``set_global_fits`` payload drawing *slot* over its window.
+
+        An open window side (a full-spectrum frequency fit, or a pre-v25 fit
+        with no window) reaches the edge of the bound record.
+        """
+        model = CompositeModel.from_dict(slot.model, allow_missing=True)
+        values = {name: float(slot.result["parameters"][name]) for name in model.param_names}
+        window = slot.fit_range or {"min": None, "max": None}
+        record = (
+            self._active_frequency_fit_dataset()
+            if self._plot_workspace.active_domain() == "frequency"
+            else self._current_dataset
+        )
+        x_min = float(np.min(record.time)) if window["min"] is None else window["min"]
+        x_max = float(np.max(record.time)) if window["max"] is None else window["max"]
+        x, y = dense_fit_curve(model, values, x_min, x_max)
+        return (x, y, name, (), None, model.formula_string(), axis_key)
+
+    def _sync_saved_fit_overlays(self) -> None:
+        """Draw the bound run's saved fits that are not open, under their own ids (D6).
+
+        Every saved fit of the run's representation that is not its set's open
+        fit draws as ``single:<fit_id>`` on its projection's axis; a curve whose
+        fit was deleted, or is now open (and so draws as ``"single"``), goes.
+        Only a missing curve is evaluated, so a re-bind of the same run draws
+        nothing new.
+        """
+        bound = self._bound_saved_fits()
+        if bound is None:
+            return
+        run_number, representation, projection = bound
+        panel = self._plot_panel_for_rep(representation.rep_type)
+        wanted = {
+            SAVED_FIT_ID_PREFIX + slot.fit_id: (key, slot)
+            for key, fit_set in representation.single_fits.items()
+            for slot in fit_set.fits
+            if slot.fit_id != fit_set.open_id
+        }
+        stored = panel.stored_fit_ids(run_number)
+        for fit_id in stored:
+            if fit_id.startswith(SAVED_FIT_ID_PREFIX) and fit_id not in wanted:
+                panel.clear_run_fit(run_number, fit_id)
+        labels = {
+            plot_id: f"Single fit · {representation.fit_name(slot)}"
+            for plot_id, (_key, slot) in wanted.items()
+        }
+        open_fit = representation.fit_for(projection)
+        if not open_fit.is_empty():
+            labels[SINGLE_FIT_ID] = f"Single fit · {representation.fit_name(open_fit)}"
+        panel.set_fit_labels(labels)
+        for plot_id, (key, slot) in wanted.items():
+            if plot_id not in stored:
+                payload = self._saved_fit_curve_payload(slot, representation.fit_name(slot), key)
+                panel.set_global_fits({run_number: payload}, fit_id=plot_id)
+
+    def _on_saved_fit_open_requested(self, fit_id: str) -> None:
+        """Open one of the bound run's saved fits: its form, its window and its curve."""
+        run_number, representation, projection = self._bound_saved_fits()
+        fit_set = representation.fit_set(projection)
+        fit_set.open(fit_id)
+        slot = fit_set.open_fit()
+        panel = self._plot_panel_for_rep(representation.rep_type)
+        panel.set_global_fits(
+            {run_number: self._saved_fit_curve_payload(slot, "Fit", projection)},
+            fit_id=SINGLE_FIT_ID,
+        )
+        panel.set_shown_fits(run_number, [SINGLE_FIT_ID])
+        self._sync_saved_fit_overlays()
+        # Re-fitting the opened fit unchanged must replace it (D1), so the
+        # project's window follows it; an open side leaves the range as it is.
+        window = slot.fit_range
+        if window is not None and None not in window.values():
+            panel.set_fit_range(window["min"], window["max"])
+        self._fit_panel.show_saved_single_fit(
+            self._single_fit_restore_payload(self._current_dataset)
+        )
+        self._log_panel.log(f"Opened saved fit {representation.fit_name(slot)}.", tag="fit")
+
+    def _on_saved_fit_rename_requested(self, fit_id: str, label: str) -> None:
+        """Rename one of the bound run's saved fits; a blank name restores the default."""
+        _run_number, representation, projection = self._bound_saved_fits()
+        representation.fit_set(projection).rename(fit_id, label)
+        self._fit_panel.refresh_saved_fits()
+        self._sync_saved_fit_overlays()
+
+    def _on_saved_fit_delete_requested(self, fit_id: str) -> None:
+        """Delete one of the bound run's saved fits; deleting the open one opens the newest."""
+        run_number, representation, projection = self._bound_saved_fits()
+        fit_set = representation.fit_set(projection)
+        was_open = fit_set.open_id == fit_id
+        name = representation.fit_name(fit_set.get(fit_id))
+        fit_set.delete(fit_id)
+        panel = self._plot_panel_for_rep(representation.rep_type)
+        panel.clear_run_fit(run_number, SAVED_FIT_ID_PREFIX + fit_id)
+        self._log_panel.log(f"Deleted saved fit {name}.", tag="fit")
+        if not was_open:
+            self._fit_panel.refresh_saved_fits()
+            return
+        if fit_set.fits:
+            self._on_saved_fit_open_requested(fit_set.open_id)
+            return
+        # The run's last fit is gone: its curve goes, and the form becomes
+        # whatever an unfit run shows (D5's refresh rules).
+        panel.clear_run_fit(run_number, SINGLE_FIT_ID)
+        self._fit_panel.set_dataset(
+            self._active_frequency_fit_dataset()
+            if self._plot_workspace.active_domain() == "frequency"
+            else self._get_fit_dataset(self._current_dataset)
         )
 
     def _record_global_fit_batch(

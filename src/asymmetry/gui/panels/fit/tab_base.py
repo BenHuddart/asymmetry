@@ -1593,6 +1593,8 @@ class FitParameterTable(ElasticTable):
 
     #: Emitted with the parameter name whose Value cell the user just edited.
     value_edited = Signal(str)
+    #: Emitted when the user changes a row's Fix, Link or Tie.
+    constraints_edited = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, 8, parent)
@@ -1856,6 +1858,7 @@ class FitParameterTable(ElasticTable):
                 with self.suspend():
                     _set_link_group_combo_value(link_combo, None)
             link_combo.setEnabled(not checked)
+            self.constraints_edited.emit()
 
         def on_link_changed(_index: int) -> None:
             self.viewport().update()  # the Value cell paints the row's ⇄N badge
@@ -1866,6 +1869,7 @@ class FitParameterTable(ElasticTable):
                 with self.suspend():
                     fix_checkbox.setChecked(False)
             fix_checkbox.setEnabled(not linked)
+            self.constraints_edited.emit()
 
         fix_checkbox.toggled.connect(on_fix_toggled)
         link_combo.currentIndexChanged.connect(on_link_changed)
@@ -1927,6 +1931,7 @@ class FitParameterTable(ElasticTable):
                     _set_link_group_combo_value(link_combo, None)
             fix_checkbox.setEnabled(tie is None)
             link_combo.setEnabled(tie is None)
+            self.constraints_edited.emit()
 
         tie_button.clicked.connect(on_clicked)
 

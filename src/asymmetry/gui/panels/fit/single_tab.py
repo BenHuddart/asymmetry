@@ -17,6 +17,7 @@ import functools
 import html
 import logging
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 
 import numpy as np
 from PySide6.QtCore import QSettings, Qt, Signal
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
@@ -57,21 +59,27 @@ from asymmetry.core.fitting.rrf_offset import (
 )
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.spectral import default_frequency_model
+from asymmetry.core.representation.base import FitSlot
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.styles.typography import SIZE_NUMERIC
 from asymmetry.gui.styles.widgets import (
     VERDICT_CHIP_OBJECT_NAME,
     build_primary_button_qss,
+    build_segmented_button_qss,
     fit_quality_chip_html,
+    make_provenance_label,
     make_section_header,
     verdict_chip_qss,
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.formatting import format_value_uncertainty
 from asymmetry.gui.widgets.fit_results_card import FitCardSummary, FitResultsCard
+from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.widgets.series_dialogs import SAVED_FIT, confirm_delete, prompt_rename
 from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
@@ -122,6 +130,34 @@ DIAGNOSTIC_ACTION = "Diagnostic…"
 ADD_TO_SERIES_ACTION = "Add to series…"
 SEND_TO_BATCH_ACTION = "Send to Batch →"
 
+#: The saved-fit selector is a handle capped at a character count, like the
+#: Batch tab's series selector: a fit named after its model and window would
+#: otherwise set the dock's width. The full name lives on the tooltip.
+_SAVED_FIT_SELECTOR_MAX_CHARS = 34
+
+
+@dataclass(frozen=True)
+class SavedFitEntry:
+    """One saved fit on the bound run, as the Saved fits row lists it."""
+
+    fit_id: str
+    name: str
+    #: ``"χ²ᵣ 1.02 · 14:32"``: how the fit went, beside its name in the menu.
+    detail: str
+    #: :meth:`FitSlot.identity`, so the row can say what the next Fit will do.
+    identity: str
+
+
+@dataclass(frozen=True)
+class SavedFitCatalogue:
+    """The bound run's saved fits and the open one, as the host answers them."""
+
+    entries: tuple[SavedFitEntry, ...] = ()
+    open_id: str | None = None
+
+    def open_entry(self) -> SavedFitEntry | None:
+        return next((entry for entry in self.entries if entry.fit_id == self.open_id), None)
+
 
 class SingleFitTab(FitTabBase):
     """Single dataset fitting interface.
@@ -149,6 +185,12 @@ class SingleFitTab(FitTabBase):
     )  # (FitResult, fitted_curve, component_curves)
     send_model_to_batch_requested = Signal()
     add_to_series_requested = Signal()
+    #: The Saved fits row (single-fit plan D1/D2): open, rename, delete one of
+    #: the bound run's saved fits, or compare them.
+    saved_fit_open_requested = Signal(str)
+    saved_fit_rename_requested = Signal(str, str)
+    saved_fit_delete_requested = Signal(str)
+    saved_fit_compare_requested = Signal()
     #: Forwarded from the Fit Wizard: ``(run numbers, FieldGeometry | None)``.
     field_direction_answered = Signal(object, object)
 
@@ -202,6 +244,14 @@ class SingleFitTab(FitTabBase):
         #: Reset while the fit ran (Reset reuses the same object, so object
         #: identity alone would miss it), so the stale result is not applied.
         self._model_generation = 0
+        self._saved_fit_catalogue_provider: Callable[[], SavedFitCatalogue] | None = None
+        self._saved_fits = SavedFitCatalogue()
+        #: ``New fit`` was pressed: the next Fit records beside the open fit
+        #: even when it describes the same analysis (plan D1). Transient: a
+        #: recorded fit or a run switch clears it.
+        self._records_new_fit = False
+
+        layout.addWidget(self._build_saved_fits_section())
 
         # ── Model ───────────────────────────────────────────────────────────
         model_group = PanelSection("Model")
@@ -232,6 +282,8 @@ class SingleFitTab(FitTabBase):
 
         self._fit_range_unit_label = QLabel("µs")
 
+        self._fit_range_min_spin.editingFinished.connect(self._refresh_saved_fits_row)
+        self._fit_range_max_spin.editingFinished.connect(self._refresh_saved_fits_row)
         fit_range_layout.addWidget(self._fit_range_min_spin)
         fit_range_layout.addWidget(self._fit_range_mid_label)
         fit_range_layout.addWidget(self._fit_range_max_spin)
@@ -245,6 +297,8 @@ class SingleFitTab(FitTabBase):
         # It self-connects itemChanged for fraction sync.
         param_group = PanelSection("Parameters")
         self._param_table = FitParameterTable()
+        self._param_table.itemChanged.connect(self._refresh_saved_fits_row)
+        self._param_table.constraints_edited.connect(self._refresh_saved_fits_row)
         self._build_parameters_rail(
             param_group,
             self._param_table,
@@ -319,6 +373,180 @@ class SingleFitTab(FitTabBase):
 
         self._set_composite_model(self._composite_model)
         self._update_card_actions()
+
+    # ── Saved fits (docs/plans/single-fit-compare.md) ──────────────────────
+
+    def _build_saved_fits_section(self) -> PanelSection:
+        """The row above Model naming the bound run's open saved fit.
+
+        The selector opens another of the run's fits; ``New fit`` makes the next
+        Fit record beside the open one; ``Rename…``/``Delete…`` act on the open
+        fit and ``Compare…`` opens the comparison. The header counts the run's
+        fits; a line under the selector says what the next Fit will do, once
+        the form no longer describes the open fit.
+        """
+        section = PanelSection("Saved fits")
+        self._saved_fits_section = section
+        self._saved_fit_selector_btn = QPushButton()
+        self._saved_fit_selector_btn.setStyleSheet(
+            build_segmented_button_qss() + "QPushButton { text-align: left; }"
+        )
+        self._saved_fit_selector_btn.clicked.connect(self._show_saved_fits_menu)
+        section.addWidget(self._saved_fit_selector_btn)
+        self._saved_fit_hint = make_provenance_label()
+        section.addWidget(self._saved_fit_hint)
+
+        actions = QWidget()
+        # A wrapping row: four buttons side by side would widen the dock.
+        actions_layout = FlowLayout(actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        self._new_fit_btn = QPushButton("New fit")
+        self._new_fit_btn.setToolTip(
+            "Keep the open fit and save the next Fit beside it, even with the same setup."
+        )
+        self._new_fit_btn.clicked.connect(self._start_new_fit)
+        self._rename_fit_btn = QPushButton("Rename…")
+        self._rename_fit_btn.clicked.connect(self._rename_open_fit)
+        self._delete_fit_btn = QPushButton("Delete…")
+        self._delete_fit_btn.setStyleSheet(
+            build_segmented_button_qss() + f"QPushButton {{ color: {tokens.ACCENT_RED}; }}"
+        )
+        self._delete_fit_btn.clicked.connect(self._delete_open_fit)
+        self._compare_fits_btn = QPushButton("Compare…")
+        self._compare_fits_btn.setToolTip(
+            "Rank this run's saved fits by an information criterion and set two side by side."
+        )
+        self._compare_fits_btn.clicked.connect(self.saved_fit_compare_requested)
+        for button in (self._new_fit_btn, self._rename_fit_btn, self._compare_fits_btn):
+            button.setStyleSheet(build_segmented_button_qss())
+        for button in (
+            self._new_fit_btn,
+            self._rename_fit_btn,
+            self._delete_fit_btn,
+            self._compare_fits_btn,
+        ):
+            actions_layout.addWidget(button)
+        section.addWidget(actions)
+        return section
+
+    def set_saved_fit_catalogue_provider(self, provider: Callable[[], SavedFitCatalogue]) -> None:
+        """Install the host callback that answers the bound run's saved fits."""
+        self._saved_fit_catalogue_provider = provider
+
+    def refresh_saved_fits(self) -> None:
+        """Re-read the bound run's saved fits from the host and re-render the row."""
+        self._saved_fits = (
+            self._saved_fit_catalogue_provider()
+            if self._saved_fit_catalogue_provider is not None
+            else SavedFitCatalogue()
+        )
+        self._refresh_saved_fits_row()
+
+    def note_fit_saved(self) -> None:
+        """The host saved this tab's fit: ``New fit`` is spent, the list has changed."""
+        self._records_new_fit = False
+        self.refresh_saved_fits()
+
+    def records_new_fit(self) -> bool:
+        """Whether the next Fit records beside the open fit whatever it describes."""
+        return self._records_new_fit
+
+    def fit_window(self) -> dict[str, float | None]:
+        """The window the next Fit uses, as a saved fit records it; an unset side is open."""
+        spins = (self._fit_range_min_spin, self._fit_range_max_spin)
+        if not self._fit_range_min_spin.isEnabled() or any(spin.is_unset() for spin in spins):
+            return {"min": None, "max": None}
+        return {"min": float(spins[0].value()), "max": float(spins[1].value())}
+
+    def _form_identity(self) -> str:
+        """What the next Fit would record, as :meth:`FitSlot.identity` reads it."""
+        return FitSlot(
+            model=self._composite_model.to_dict(),
+            parameters=self._param_table.parameters_state(),
+            fit_range=self.fit_window(),
+        ).identity()
+
+    def _refresh_saved_fits_row(self, *_args) -> None:
+        """Re-render the selector, its header suffix and the buttons.
+
+        Wired to every per-event signal that changes what the form describes
+        (a cell edit, a Fix/Link/Tie, the window), so it only reads widgets and
+        compares strings. A table rebuild is skipped; its caller refreshes once.
+        """
+        if self._param_table.is_updating:
+            return
+        catalogue = self._saved_fits
+        open_entry = catalogue.open_entry()
+        name = open_entry.name if open_entry is not None else "No saved fit on this run"
+        several = len(catalogue.entries) > 1
+        elided = self._saved_fit_selector_btn.fontMetrics().elidedText(
+            name, Qt.TextElideMode.ElideRight, char_width(_SAVED_FIT_SELECTOR_MAX_CHARS)
+        )
+        self._saved_fit_selector_btn.setText(f"{elided}  ▾" if several else elided)
+        self._saved_fit_selector_btn.setToolTip(
+            f"{name}\nClick to open another of this run's saved fits."
+        )
+        self._saved_fit_selector_btn.setEnabled(several)
+        self._saved_fits_section.set_title_suffix(
+            f"{len(catalogue.entries)} on this run" if catalogue.entries else None
+        )
+        hint = self._next_fit_hint(open_entry)
+        self._saved_fit_hint.setText(hint)
+        self._saved_fit_hint.setVisible(bool(hint))
+        self._new_fit_btn.setEnabled(open_entry is not None and not self._records_new_fit)
+        self._rename_fit_btn.setEnabled(open_entry is not None)
+        self._delete_fit_btn.setEnabled(open_entry is not None)
+        self._compare_fits_btn.setEnabled(len(catalogue.entries) > 1)
+
+    def _next_fit_hint(self, open_entry: SavedFitEntry | None) -> str:
+        """What the next Fit does with the form, when that is not "re-fit the open fit" (D1)."""
+        if open_entry is None:
+            return ""
+        if self._records_new_fit:
+            return "New fit: the next Fit is saved beside this run's other fits."
+        identity = self._form_identity()
+        if identity == open_entry.identity:
+            return ""
+        matches = [entry for entry in self._saved_fits.entries if entry.identity == identity]
+        if matches:
+            return f"Edited: the next Fit replaces “{matches[-1].name}”."
+        return "Edited: the next Fit is saved as a new fit."
+
+    def _show_saved_fits_menu(self) -> None:
+        """The selector's menu: every saved fit on the bound run, the open one ticked."""
+        menu = QMenu(self)
+        actions: dict[object, str] = {}
+        for entry in self._saved_fits.entries:
+            action = menu.addAction(f"{entry.name} · {entry.detail}")
+            action.setCheckable(True)
+            action.setChecked(entry.fit_id == self._saved_fits.open_id)
+            actions[action] = entry.fit_id
+        button = self._saved_fit_selector_btn
+        chosen = self._exec_menu(menu, button.mapToGlobal(button.rect().bottomLeft()))
+        if chosen in actions and actions[chosen] != self._saved_fits.open_id:
+            self.saved_fit_open_requested.emit(actions[chosen])
+
+    def _exec_menu(self, menu: QMenu, pos) -> object:
+        """Show *menu* and return the chosen action — the seam a headless test replaces."""
+        return menu.exec(pos)
+
+    def _start_new_fit(self) -> None:
+        """``New fit``: the next Fit records beside the open fit (plan D1)."""
+        self._records_new_fit = True
+        self._refresh_saved_fits_row()
+
+    def _rename_open_fit(self) -> None:
+        """Ask for a new name for the open fit and hand it to the host."""
+        entry = self._saved_fits.open_entry()
+        new_name = prompt_rename(self, SAVED_FIT, entry.name)
+        if new_name is not None:
+            self.saved_fit_rename_requested.emit(entry.fit_id, new_name)
+
+    def _delete_open_fit(self) -> None:
+        """Confirm, then ask the host to delete the open fit."""
+        entry = self._saved_fits.open_entry()
+        if confirm_delete(self, SAVED_FIT, entry.name):
+            self.saved_fit_delete_requested.emit(entry.fit_id)
 
     def _apply_column_group(self, group: str, visible: bool) -> None:
         """Show or hide one rail column group on the single-fit parameter table."""
@@ -491,6 +719,8 @@ class SingleFitTab(FitTabBase):
         self._preview_btn.setEnabled(enabled)
         self._fit_wizard_btn.setEnabled(enabled and self._domain == "time")
         self._update_card_actions()
+        self._records_new_fit = False
+        self.refresh_saved_fits()
 
     def set_has_recorded_fit(self, has_fit: bool) -> None:
         """Track whether the active run has a persisted single fit (F18).
@@ -713,6 +943,7 @@ class SingleFitTab(FitTabBase):
         # on top of the freshly seeded rows; components with no predecessor keep
         # the seeds populate() just wrote.
         self._param_table.restore_parameters({entry["name"]: entry for entry in carried})
+        self._refresh_saved_fits_row()
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._param_table.synchronize_fractions(edited_param_name)
@@ -1441,6 +1672,7 @@ class SingleFitTab(FitTabBase):
         # auxiliary non-model parameters that have no row.
         params_data = {p["name"]: p for p in state.get("parameters", []) if isinstance(p, dict)}
         self._param_table.restore_parameters(params_data)
+        self._refresh_saved_fits_row()
 
         result_html = state.get("result_html")
         if isinstance(result_html, str) and result_html:
