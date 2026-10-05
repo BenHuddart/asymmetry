@@ -61,10 +61,12 @@ import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -306,6 +308,27 @@ def _fits_button_qss(*, multiple: bool) -> str:
     return qss
 
 
+def _nav_icon_button(icon_name: str, tooltip: str) -> QPushButton:
+    """Return a checkable icon-only Pan/Zoom toggle in the nav treatment.
+
+    Icons rather than words keep the plot row narrow enough for a 13-inch
+    display; the tooltip and accessible name carry the word.
+    """
+    button = QPushButton()
+    button.setCheckable(True)
+    button.setIcon(QIcon(str(files("asymmetry.resources") / icon_name)))
+    button.setToolTip(tooltip)
+    button.setAccessibleName(tooltip.split(" ", 1)[0])
+    # The nav QSS's text-sized min-width would win over any setFixedWidth at
+    # polish time, so the icon's own width is the floor, set in QSS too.
+    icon_width = button.iconSize().width()
+    button.setStyleSheet(
+        build_nav_button_qss()
+        + f"QPushButton, QPushButton:checked {{ min-width: {icon_width}px; padding: 2px 4px; }}"
+    )
+    return button
+
+
 @dataclass(frozen=True)
 class _DisplayEntry:
     """One dataset's drawable display arrays, materialised once per render.
@@ -541,8 +564,6 @@ class PlotPanel(QWidget):
             nav_row.addWidget(self._projection_bar)
             nav_row.addSpacing(4)
 
-            _nav_qss = build_nav_button_qss()
-
             # Which of the current run's fits are drawn, and which series is
             # active. A menu rather than a row of named buttons: the fit names
             # live in the popup, so the panel's minimum width never follows
@@ -560,17 +581,11 @@ class PlotPanel(QWidget):
             self._fits_button.setStyleSheet(_fits_button_qss(multiple=False))
             nav_row.addWidget(self._fits_button)
 
-            self._pan_btn = QPushButton("Pan")
-            self._pan_btn.setCheckable(True)
-            self._pan_btn.setMaximumWidth(60)
-            self._pan_btn.setStyleSheet(_nav_qss)
+            self._pan_btn = _nav_icon_button("pan.svg", "Pan — drag to move the view")
             self._pan_btn.clicked.connect(self._on_pan_button_clicked)
             nav_row.addWidget(self._pan_btn)
 
-            self._zoom_btn = QPushButton("Zoom")
-            self._zoom_btn.setCheckable(True)
-            self._zoom_btn.setMaximumWidth(60)
-            self._zoom_btn.setStyleSheet(_nav_qss)
+            self._zoom_btn = _nav_icon_button("zoom.svg", "Zoom — drag a box to zoom in")
             self._zoom_btn.clicked.connect(self._on_zoom_button_clicked)
             nav_row.addWidget(self._zoom_btn)
 
@@ -826,7 +841,8 @@ class PlotPanel(QWidget):
             0.0, decimals=3, minimum_width=56, maximum_width=88, value_range=(0.0, 1e6)
         )
         self._waterfall_delta_field.set_unset("Auto")
-        self._waterfall_delta_field.setEnabled(False)
+        # Shown only while Waterfall is on, so it costs no toolbar width otherwise.
+        self._waterfall_delta_field.setVisible(False)
         self._waterfall_delta_field.setToolTip(
             "Manual waterfall spacing Δ between traces (blank = automatic)."
         )
@@ -2673,11 +2689,11 @@ class PlotPanel(QWidget):
             self.waterfall_changed.emit()
 
     def _sync_waterfall_controls_enabled(self, overlay_enabled: bool) -> None:
-        """Enable the waterfall controls only while overlay mode is active.
+        """Enable the waterfall checkbox only while overlay mode is active.
 
         Turning overlay off unchecks waterfall (a stacked view makes no sense
-        for a single displayed trace) and disables its controls; the manual-Δ
-        field additionally follows the waterfall checkbox.
+        for a single displayed trace); the manual-Δ field is shown only while
+        the waterfall checkbox is checked.
         """
         if not self._has_mpl or not hasattr(self, "_waterfall_checkbox"):
             return
@@ -2687,7 +2703,7 @@ class PlotPanel(QWidget):
             previous = self._waterfall_checkbox.blockSignals(True)
             self._waterfall_checkbox.setChecked(False)
             self._waterfall_checkbox.blockSignals(previous)
-        self._waterfall_delta_field.setEnabled(overlay_on and self._waterfall_checkbox.isChecked())
+        self._waterfall_delta_field.setVisible(overlay_on and self._waterfall_checkbox.isChecked())
 
     def _on_waterfall_checkbox_toggled(self, checked: bool) -> None:
         """Handle a user toggle of the Waterfall checkbox."""

@@ -267,15 +267,15 @@ class TestWaterfallControlCoupling:
         time_panel.set_overlay_enabled(False)
         assert time_panel.is_waterfall_enabled() is False
         assert time_panel._waterfall_checkbox.isEnabled() is False
-        assert time_panel._waterfall_delta_field.isEnabled() is False
+        assert time_panel._waterfall_delta_field.isHidden()
 
-    def test_delta_field_enabled_only_with_waterfall(self, time_panel: PlotPanel) -> None:
+    def test_delta_field_shown_only_with_waterfall(self, time_panel: PlotPanel) -> None:
         if not time_panel._has_mpl:
             pytest.skip("matplotlib not available")
         time_panel.set_overlay_enabled(True)
-        assert time_panel._waterfall_delta_field.isEnabled() is False
+        assert time_panel._waterfall_delta_field.isHidden()
         time_panel.set_waterfall_enabled(True)
-        assert time_panel._waterfall_delta_field.isEnabled() is True
+        assert not time_panel._waterfall_delta_field.isHidden()
 
     def test_waterfall_changed_emitted_on_toggle(self, time_panel: PlotPanel) -> None:
         if not time_panel._has_mpl:
