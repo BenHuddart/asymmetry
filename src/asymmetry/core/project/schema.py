@@ -269,14 +269,15 @@ import os
 import re
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 24
+CURRENT_SCHEMA_VERSION: int = 25
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
 )
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
@@ -411,6 +412,50 @@ def migrate_to_current(data: dict) -> dict:
         version = 23
     if version == 23:
         migrated = _migrate_v23_to_v24(migrated)
+        version = 24
+    if version == 24:
+        migrated = _migrate_v24_to_v25(migrated)
+    return migrated
+
+
+def _v25_fit_set(slot: object) -> dict | None:
+    """One pre-v25 slot as a v25 single-fit set holding it, open; ``None`` when empty."""
+    if not isinstance(slot, dict) or (slot.get("model") is None and slot.get("result") is None):
+        return None
+    fit_id = f"fit-{uuid.uuid4().hex[:12]}"
+    return {"open_id": fit_id, "fits": [{**slot, "fit_id": fit_id}]}
+
+
+def _migrate_v24_to_v25(data: dict) -> dict:
+    """Migrate schema v24 project state to v25.
+
+    A representation's one single fit per projection (``fit`` and
+    ``projection_fits``) becomes the sole, open fit of that projection's
+    ``single_fits`` set (docs/plans/single-fit-compare.md D4). The default
+    set is keyed ``""``. A migrated fit has no recorded window, so it is never
+    ranked against another fit (D7).
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 25
+    datasets = migrated.get("datasets")
+    if not isinstance(datasets, list):
+        return migrated
+    for entry in datasets:
+        reps = entry.get("representations") if isinstance(entry, dict) else None
+        if not isinstance(reps, dict):
+            continue
+        for rep in reps.values():
+            if not isinstance(rep, dict):
+                continue
+            slots = {"": rep.pop("fit", None)}
+            projections = rep.pop("projection_fits", None)
+            if isinstance(projections, dict):
+                slots.update({str(key): slot for key, slot in projections.items() if key})
+            rep["single_fits"] = {
+                key: fit_set
+                for key, fit_set in ((key, _v25_fit_set(slot)) for key, slot in slots.items())
+                if fit_set is not None
+            }
     return migrated
 
 

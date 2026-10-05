@@ -576,11 +576,11 @@ def test_plot_sample_count_accounts_for_hyperfine_frequencies() -> None:
     import os
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from asymmetry.gui.panels.fit_panel import _fit_curve_sample_count
+    from asymmetry.core.fitting.fit_curves import fit_curve_sample_count
 
     model = CompositeModel(["MuoniumHighTF"])
     params = {"A_1": 25.0, "field": 3000.0, "A_hf": 4463.302, "phase": 0.0}
-    n = _fit_curve_sample_count(model, params, 0.0, 0.2)
+    n = fit_curve_sample_count(model, params, 0.0, 0.2)
     # 4463 MHz over 0.2 us needs ~36k points at 40/cycle -> hits the cap,
     # far above what the 41 MHz field-only estimate (~330 points) would give.
     assert n == 20000

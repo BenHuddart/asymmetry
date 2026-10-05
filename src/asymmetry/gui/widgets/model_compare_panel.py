@@ -19,6 +19,7 @@ parameter's trace. Design: ``docs/plans/global-wizard-trend-objective.md``
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from functools import partial
 from itertools import groupby
@@ -400,7 +401,10 @@ class CandidateRow(CompareRow):
     ) -> None:
         super().__init__(summary, parent)
         self.delta_bar = _DeltaBar(summary.delta, metric_label, self)
-        self.weight = QLabel(format_weight(summary.weight), self)
+        # An unranked candidate (Δ "—") has no share of the evidence to show.
+        self.weight = QLabel(
+            format_weight(summary.weight) if math.isfinite(summary.delta) else "—", self
+        )
         self.weight.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self.weight.setToolTip("Evidence weight: w ∝ exp(−Δ/2) across the candidates listed")
         text, background, foreground = _GATE_BADGES[summary.gate_passed]

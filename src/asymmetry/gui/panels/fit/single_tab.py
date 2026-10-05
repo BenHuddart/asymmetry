@@ -38,6 +38,7 @@ from asymmetry.core.fitting.composite import (
 )
 from asymmetry.core.fitting.domain_library import coerce_domain
 from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.fit_curves import fit_curve_sample_count
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     FitWizardRecommendation,
@@ -81,7 +82,6 @@ from .tab_base import (
     FitParameterTable,
     FitTabBase,
     _apply_domain_mismatch_warning,
-    _fit_curve_sample_count,
     _fit_curve_time_bounds,
     _fit_domain_mismatch_message,
     _fit_result_is_usable,
@@ -907,7 +907,7 @@ class SingleFitTab(FitTabBase):
 
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
         t_min, t_max = _fit_curve_time_bounds(self._current_dataset)
-        n_samples = _fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
+        n_samples = fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
         t_fit = np.linspace(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
         component_curves = self._composite_model.evaluate_components(
@@ -971,7 +971,7 @@ class SingleFitTab(FitTabBase):
 
         param_dict = {p.name: p.value for p in parameters}
         t_min, t_max = _fit_curve_time_bounds(self._current_dataset)
-        n_samples = _fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
+        n_samples = fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
         # Generate fitted curve for plotting
         t_fit = np.linspace(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
@@ -1222,7 +1222,7 @@ class SingleFitTab(FitTabBase):
 
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
         t_min, t_max = _fit_curve_time_bounds(dataset)
-        n_samples = _fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
+        n_samples = fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
         t_fit = np.linspace(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
         component_curves = self._composite_model.evaluate_components(
@@ -1343,7 +1343,7 @@ class SingleFitTab(FitTabBase):
 
         param_dict = {p.name: p.value for p in result.parameters}
         t_min, t_max = _fit_curve_time_bounds(dataset)
-        n_samples = _fit_curve_sample_count(model, param_dict, t_min, t_max)
+        n_samples = fit_curve_sample_count(model, param_dict, t_min, t_max)
         t_fit = np.linspace(t_min, t_max, n_samples)
         y_fit = model.function(t_fit, **param_dict)
         component_curves = model.evaluate_components(t_fit, additive_only=True, **param_dict)

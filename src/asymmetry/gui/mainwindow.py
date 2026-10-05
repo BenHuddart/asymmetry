@@ -153,6 +153,7 @@ from asymmetry.core.fitting import (
 )
 from asymmetry.core.fitting.component_tags import FieldGeometry
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.fit_curves import fit_curve_sample_count
 from asymmetry.core.fitting.knight_analysis import (
     migrate_legacy_state as migrate_legacy_knight_state,
 )
@@ -303,7 +304,6 @@ from asymmetry.gui.panels.fit import (
     SeriesMenuEntry,
 )
 from asymmetry.gui.panels.fit.tab_base import (
-    _fit_curve_sample_count,
     _fit_curve_time_bounds,
 )
 from asymmetry.gui.panels.fit.wizard_cache import (
@@ -11406,7 +11406,7 @@ class MainWindow(QMainWindow):
             if bounds is None:
                 continue
             t_min, t_max = bounds
-            t_fit = np.linspace(t_min, t_max, _fit_curve_sample_count(model, values, t_min, t_max))
+            t_fit = np.linspace(t_min, t_max, fit_curve_sample_count(model, values, t_min, t_max))
             fit_curves[int(run_number)] = (
                 t_fit,
                 model.function(t_fit, **values),
@@ -11867,7 +11867,7 @@ class MainWindow(QMainWindow):
         # run with no projection fits defers to the blob (the default-slot
         # and legacy-project path, where the blob is the authoritative single
         # store).
-        if projection is not None or representation.projection_fits:
+        if projection is not None or representation.has_projection_fits():
             return {}
         return None
 

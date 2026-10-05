@@ -17,6 +17,7 @@ from asymmetry.core.project.schema import (
     validate,
 )
 from asymmetry.core.representation.project_model import ProjectModel
+from tests.project.single_fits import open_fit
 
 _FB = "time_fb_asymmetry"
 _GROUPS = "time_groups"
@@ -111,7 +112,7 @@ def _batch_project() -> dict:
 
 def test_batch_series_seeds_recipe_from_the_member_template():
     result = migrate_to_current(_batch_project())
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 24
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 25
     recipe = result["batches"][0]["recipe"]
     assert recipe["parameters"] == [
         {"name": "A", "value": 0.2, "type": "Local", "bounds": "0, 1", "seeded": False},
@@ -131,8 +132,7 @@ def test_batch_series_seeds_recipe_from_the_member_template():
 def test_batch_member_slots_are_dropped():
     result = migrate_to_current(_batch_project())
     for entry in result["datasets"]:
-        slot = entry["representations"][_FB]["fit"]
-        assert slot == {"model": None, "parameters": [], "result": None, "provenance": "none"}
+        assert entry["representations"][_FB]["single_fits"] == {}
 
 
 def test_series_loses_diverged_runs_and_gains_an_active_pointer():
@@ -206,7 +206,7 @@ def test_single_fit_slot_keeps_ui_state_and_loses_only_the_moved_fields():
         ui_state={"composite_model": dict(_MODEL), "result_html": "<p>ok</p>"},
     )
     state = _v19_state(datasets=[_dataset(10, fit=single)], batches=[])
-    slot = migrate_to_current(state)["datasets"][0]["representations"][_FB]["fit"]
+    slot = open_fit(migrate_to_current(state)["datasets"][0]["representations"][_FB])
     assert slot["provenance"] == "single"
     assert slot["model"] == _MODEL
     assert slot["parameters"] == _TEMPLATE
@@ -236,17 +236,11 @@ def test_projection_fits_are_migrated_like_the_default_slot():
         ],
         batches=[],
     )
-    projections = migrate_to_current(state)["datasets"][0]["representations"][_GROUPS][
-        "projection_fits"
-    ]
-    assert projections["P_x"]["ui_state"] == {"result_html": "keep"}
-    assert "batch_id" not in projections["P_x"]
-    assert projections["P_y"] == {
-        "model": None,
-        "parameters": [],
-        "result": None,
-        "provenance": "none",
-    }
+    representation = migrate_to_current(state)["datasets"][0]["representations"][_GROUPS]
+    assert open_fit(representation, "P_x")["ui_state"] == {"result_html": "keep"}
+    assert "batch_id" not in open_fit(representation, "P_x")
+    # The batch pointer slot is emptied, and an empty slot holds no saved fit.
+    assert set(representation["single_fits"]) == {"P_x"}
 
 
 # ── (d) a computed (model-less) scan series ──────────────────────────────────
@@ -315,7 +309,7 @@ def test_group_series_reads_its_template_from_the_source_run_slot():
     assert series["trend_excluded_runs"] == [-10002, -10001]
     assert result["active_series"] == {_GROUPS: "g1"}
     # The shared pointer slot is dropped like any other member slot.
-    assert result["datasets"][0]["representations"][_GROUPS]["fit"]["provenance"] == "none"
+    assert result["datasets"][0]["representations"][_GROUPS]["single_fits"] == {}
 
 
 def test_group_series_without_a_source_map_decodes_the_synthetic_key():
@@ -343,7 +337,7 @@ def test_project_with_no_batches_migrates_clean():
     assert "batches" not in state
     result = migrate_to_current(state)
     validate(result)
-    assert result["schema_version"] == 24
+    assert result["schema_version"] == 25
     assert "active_series" not in result
     model = ProjectModel.from_project_state(result)
     assert model.batches == {}
@@ -368,7 +362,7 @@ def test_member_slot_naming_a_dead_series_is_dropped_without_raising():
     state = _v19_state(datasets=[_dataset(10, fit=orphan)], batches=[_series("b1", members=(11,))])
     result = migrate_to_current(state)
     # The orphan pointer slot is emptied; the live series seeds nothing from it.
-    assert result["datasets"][0]["representations"][_FB]["fit"]["provenance"] == "none"
+    assert result["datasets"][0]["representations"][_FB]["single_fits"] == {}
     assert result["batches"][0]["recipe"]["parameters"] == []
     ProjectModel.from_project_state(result)  # loads without raising
 
