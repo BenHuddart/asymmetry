@@ -3155,10 +3155,27 @@ class MainWindow(QMainWindow):
             )
 
         # In the stacked multi-subplot view a fit acts on the selected subplot
-        # (the fit target). Only block if somehow nothing is selected.
-        blocked = active_axis == "ALL" and self._current_single_fit_projection() is None
-        reason = "Click a subplot to choose the projection to fit."
-        return blocked, reason if blocked else ""
+        # (the fit target); a single fit always binds the current run, so it
+        # must be one of the runs shown on that projection.
+        if active_axis == "ALL":
+            projection = self._plot_panel.fit_target_projection()
+            if projection is None:
+                return True, "Click a subplot to choose the projection to fit."
+        else:
+            projection = active_axis
+        current = self._current_dataset
+        if projection is None or current is None:
+            return False, ""
+        targets = self._selected_or_current_datasets()
+        members = self._projection_memberships(targets).get(projection)
+        position = next((i for i, ds in enumerate(targets) if ds is current), None)
+        if members is None or position is None or position in members:
+            return False, ""
+        return (
+            True,
+            f"Run {current.run_label} has no {projection} projection — select one of "
+            f"the runs shown on {projection} to fit it.",
+        )
 
     def _update_fit_block_state(self) -> None:
         """Disable ambiguous fitting workflows when the current view is not fit-safe."""

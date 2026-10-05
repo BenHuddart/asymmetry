@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from asymmetry.core.transform.grouping import resolve_group_indices
+
 __all__ = [
     "DetectorSegment",
     "BankLayout",
@@ -437,13 +439,6 @@ def derive_projection_pairs(
     return legacy_pairs
 
 
-def _group_detectors(groups: dict, gid: object) -> frozenset[int]:
-    for key, members in groups.items():
-        if str(key) == str(gid):
-            return frozenset(int(d) for d in members)
-    return frozenset()
-
-
 def projection_memberships(groupings: list[dict]) -> dict[str, list[int]]:
     """Place several runs' groupings on shared projection subplots.
 
@@ -467,7 +462,11 @@ def projection_memberships(groupings: list[dict]) -> dict[str, list[int]]:
         instrument = str(grouping.get("instrument") or "")
         for label, (fwd, bwd) in pairs.items():
             groups = grouping["groups"]
-            key = (instrument, _group_detectors(groups, fwd), _group_detectors(groups, bwd))
+            key = (
+                instrument,
+                frozenset(resolve_group_indices(groups, fwd)),
+                frozenset(resolve_group_indices(groups, bwd)),
+            )
             detectors.setdefault(key, label)
             memberships.setdefault(label, []).append(index)
     if not memberships:
@@ -478,8 +477,8 @@ def projection_memberships(groupings: list[dict]) -> dict[str, list[int]]:
         groups = grouping.get("groups") or {}
         key = (
             str(grouping.get("instrument") or ""),
-            _group_detectors(groups, grouping.get("forward_group")),
-            _group_detectors(groups, grouping.get("backward_group")),
+            frozenset(resolve_group_indices(groups, grouping.get("forward_group"))),
+            frozenset(resolve_group_indices(groups, grouping.get("backward_group"))),
         )
         label = detectors.get(key)
         if label is None:

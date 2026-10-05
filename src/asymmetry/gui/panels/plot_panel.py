@@ -4339,30 +4339,28 @@ class PlotPanel(QWidget):
         window: tuple[float, float] | None,
         *,
         fit_axis: str | None,
-        color_slots: list[int],
+        color_slots: list[tuple[int, int]],
     ) -> None:
         """Draw pre-materialised display *entries* on ``ax`` inside *window*.
 
         The arrays are materialised once by :meth:`_display_entries` — the same
         list feeds the x/y bounds the render resolves — so the analysis + RRF
         pipeline runs once per dataset per render. ``color_slots`` gives each
-        entry's trace colour index; ``fit_axis`` overrides the projection fits
-        are looked up under (``None``: each dataset's own).
+        entry's ``(trace colour index, RG period-colour variant)``; ``fit_axis``
+        overrides the projection fits are looked up under (``None``: each
+        dataset's own).
         """
         # Handoff plot grammar: y = 0 reference line under the data (it is
         # excluded from autoscaling, so positive-only data never stretches).
         draw_zero_line(ax)
         self._rrf_frame_drawn = None
-        period_color_counts: dict[str, int] = {}
 
-        for i, entry in zip(color_slots, entries, strict=True):
+        for (i, period_variant), entry in zip(color_slots, entries, strict=True):
             dataset = entry.dataset
             color = f"C{i % 10}"
             period_color = self._period_mode_color_for_dataset(dataset)
             if period_color is not None:
-                variant_idx = period_color_counts.get(period_color, 0)
-                color = self._period_mode_color_variant(period_color, variant_idx)
-                period_color_counts[period_color] = variant_idx + 1
+                color = self._period_mode_color_variant(period_color, period_variant)
 
             finite_mask = entry.finite_mask
             valid_low = finite_mask & entry.low_count_mask
@@ -4499,10 +4497,15 @@ class PlotPanel(QWidget):
         vector_x_ranges: list[tuple[float, float]] = []
         # A run keeps one trace colour on every subplot, even when overlaid runs
         # from different groupings sit on different projections.
-        run_slots: dict[int, int] = {}
+        run_slots: dict[int, tuple[int, int]] = {}
+        period_counts: dict[str | None, int] = {}
         for axis_key in order:
             for ds in self._vector_subplot_datasets.get(axis_key, []):
-                run_slots.setdefault(ds.run_number, len(run_slots))
+                if ds.run_number not in run_slots:
+                    period_color = self._period_mode_color_for_dataset(ds)
+                    variant = period_counts.get(period_color, 0)
+                    period_counts[period_color] = variant + 1
+                    run_slots[ds.run_number] = (len(run_slots), variant)
         first_runs = {ds.run_number for ds in self._vector_subplot_datasets[order[0]]}
         for idx, axis_key in enumerate(order):
             ax = self._figure.add_subplot(len(order), 1, idx + 1, sharex=shared_ax)
@@ -4630,7 +4633,12 @@ class PlotPanel(QWidget):
                 self._ax = ax
 
             self._plot_datasets_on_axis(
-                ax, entries_by_axis[axis_key], axis_key, window, fit_axis=axis_key, color_slots=[0]
+                ax,
+                entries_by_axis[axis_key],
+                axis_key,
+                window,
+                fit_axis=axis_key,
+                color_slots=[(0, 0)],
             )
             ax.set_title(str(dataset.run_label), loc="left", fontsize=10)
             if idx == len(datasets) - 1:

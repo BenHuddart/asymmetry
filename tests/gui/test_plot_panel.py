@@ -3071,7 +3071,7 @@ class TestPlotPanel:
         # Stacked subplots look fits up under each clone's own projection.
         for ax, ds, axis in ((ax_px, ds_px, "P_x"), (ax_py, ds_py, "P_y")):
             panel._plot_datasets_on_axis(
-                ax, panel._display_entries([ds]), axis, None, fit_axis=None, color_slots=[0]
+                ax, panel._display_entries([ds]), axis, None, fit_axis=None, color_slots=[(0, 0)]
             )
 
         assert ax_px.plot_calls

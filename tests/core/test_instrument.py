@@ -1994,3 +1994,11 @@ class TestProjectionMemberships:
         vector = self._grouping("EMU", "Vector Polarization")
         other = dict(self._grouping("EMU", "Longitudinal"), instrument="HiFi")
         assert projection_memberships([vector, other]) == {}
+
+    def test_detector_t0_pair_entries_resolve_like_plain_detectors(self):
+        vector = self._grouping("EMU", "Vector Polarization")
+        longitudinal = self._grouping("EMU", "Longitudinal")
+        longitudinal["groups"] = {
+            gid: [(d, 0) for d in members] for gid, members in longitudinal["groups"].items()
+        }
+        assert projection_memberships([longitudinal, vector])["P_z"] == [0, 1]

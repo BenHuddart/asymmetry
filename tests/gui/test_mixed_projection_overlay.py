@@ -146,3 +146,56 @@ def test_mixed_overlay_places_each_run_on_its_own_projections(mainwindow: MainWi
 
     _select_chips(mainwindow, ["P_z"])
     assert sorted(ds.run_number for ds in panel._current_datasets) == [304, 305]
+
+
+def _legend_colors(axis) -> dict[str, str]:
+    legend = axis.get_legend()
+    return {
+        text.get_text(): to_hex(line.get_color())
+        for text, line in zip(legend.get_texts(), legend.get_lines(), strict=True)
+    }
+
+
+def test_run_keeps_its_period_colour_when_a_plain_run_precedes_it(
+    mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plain, vector = _dataset(310, vector=False), _dataset(311, vector=True)
+    _load(mainwindow, plain, vector)
+    panel = mainwindow._plot_panel
+    monkeypatch.setattr(panel, "_period_mode_color_for_dataset", lambda _ds: "#d62728")
+    panel.set_overlay_enabled(True, emit_signal=True)
+    mainwindow._data_browser.select_runs([310, 311])
+    _select_chips(mainwindow, ["P_x", "P_y", "P_z"])
+
+    axes = panel._subplot_axes_by_polarization
+    on_px, on_pz = _legend_colors(axes["P_x"]), _legend_colors(axes["P_z"])
+    (vector_label,) = on_px
+    assert on_pz[vector_label] == on_px[vector_label]
+    assert len(set(on_pz.values())) == 2
+
+
+def test_fit_needs_the_current_run_to_measure_the_target_projection(
+    mainwindow: MainWindow,
+) -> None:
+    vector, plain = _dataset(312, vector=True), _dataset(313, vector=False)
+    _load(mainwindow, vector, plain)
+    panel = mainwindow._plot_panel
+    panel.set_overlay_enabled(True, emit_signal=True)
+    mainwindow._data_browser.select_runs([312, 313])
+    _select_chips(mainwindow, ["P_x", "P_y", "P_z"])
+    mainwindow._current_dataset = plain
+
+    panel.set_fit_target_projection("P_z")
+    assert mainwindow._current_fit_block_state() == (False, "")
+    assert mainwindow._current_single_fit_projection() is None
+
+    panel.set_fit_target_projection("P_x")
+    blocked, reason = mainwindow._current_fit_block_state()
+    assert blocked
+    assert "P_x" in reason
+
+    _select_chips(mainwindow, ["P_x"])
+    mainwindow._current_dataset = plain
+    assert mainwindow._current_fit_block_state()[0]
+    mainwindow._current_dataset = vector
+    assert mainwindow._current_fit_block_state() == (False, "")
