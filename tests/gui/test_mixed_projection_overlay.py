@@ -7,6 +7,8 @@ it (a longitudinal run sits on ``P_z`` alone).
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 from matplotlib.colors import to_hex
@@ -15,6 +17,7 @@ from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.project.profiles import profile_fingerprint_for_run, profile_from_payload
 from asymmetry.gui.mainwindow import MainWindow
 
 pytestmark = [pytest.mark.gui]
@@ -239,6 +242,56 @@ def test_each_projection_set_keeps_its_own_selection(mainwindow: MainWindow) -> 
 
     restored = type(panel)()
     restored.restore_state(panel.get_state())
-    assert restored.remembered_projection_selection(["FB", "UD"]) == ["FB", "UD"]
-    assert restored.remembered_projection_selection(["P_x", "P_y", "P_z"]) == ["P_y"]
+    # Runs following no profile remember by their projection set.
+    assert restored.remembered_projection_selection("FB,UD") == ["FB", "UD"]
+    assert restored.remembered_projection_selection("P_x,P_y,P_z") == ["P_y"]
     restored.deleteLater()
+
+
+def test_each_profile_keeps_its_own_selection(mainwindow: MainWindow) -> None:
+    first, second = _dataset(318, vector=True), _dataset(319, vector=True)
+    _load(mainwindow, first, second)
+    fingerprint = profile_fingerprint_for_run(first.run)
+    for name in ("Vector A", "Vector B"):
+        mainwindow._store_grouping_profile(
+            profile_from_payload(dict(first.run.grouping), name, fingerprint)
+        )
+    mainwindow._on_assign_profile_requested([318], "Vector A")
+    mainwindow._on_assign_profile_requested([319], "Vector B")
+    panel = mainwindow._plot_panel
+
+    mainwindow._data_browser.select_runs([318])
+    _select_chips(mainwindow, ["P_x"])
+    mainwindow._data_browser.select_runs([319])
+    _select_chips(mainwindow, ["P_y", "P_z"])
+
+    mainwindow._data_browser.select_runs([318])
+    assert panel.selected_projection_labels() == ["P_x"]
+    mainwindow._data_browser.select_runs([319])
+    assert panel.selected_projection_labels() == ["P_y", "P_z"]
+
+
+def test_profile_rename_keeps_its_projection_memory(mainwindow: MainWindow) -> None:
+    first, second = _dataset(320, vector=True), _dataset(321, vector=True)
+    _load(mainwindow, first, second)
+    fingerprint = profile_fingerprint_for_run(first.run)
+    for name in ("Vector A", "Vector B"):
+        mainwindow._store_grouping_profile(
+            profile_from_payload(dict(first.run.grouping), name, fingerprint)
+        )
+    mainwindow._on_assign_profile_requested([320], "Vector A")
+    mainwindow._on_assign_profile_requested([321], "Vector B")
+    panel = mainwindow._plot_panel
+    mainwindow._data_browser.select_runs([320])
+    _select_chips(mainwindow, ["P_x"])
+    mainwindow._data_browser.select_runs([321])
+    _select_chips(mainwindow, ["P_y", "P_z"])
+
+    vector_a = next(p for p in mainwindow._grouping_profiles if p.name == "Vector A")
+    mainwindow._store_grouping_profile(
+        dataclasses.replace(vector_a, name="Vector C"), renamed_from="Vector A"
+    )
+
+    mainwindow._data_browser.select_runs([320])
+    assert first.metadata["grouping_profile"] == "Vector C"
+    assert panel.selected_projection_labels() == ["P_x"]

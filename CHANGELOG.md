@@ -31,10 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   projection the overlaid runs declare; an EMU **Longitudinal** run sits on
   the ``P_z`` subplot only (a GPS **Longitudinal** run on the WEP ``FB``
   subplot), and each run keeps one colour across subplots. Previously the chip
-  bar disappeared whenever the overlaid runs' groupings differed. Each set of
-  projections also remembers its own chip selection (saved with the project),
-  so returning from a single-pair run to a vector run brings back the
-  projections it last showed instead of only one. See
+  bar disappeared whenever the overlaid runs' groupings differed. Each grouping
+  profile also remembers its own chip selection (saved with the project and
+  kept across a rename), so
+  returning from a single-pair run to a vector run brings back the projections
+  that profile last showed instead of only one. See
   `docs/reference/vector_polarization.rst` § "Display in the main plot" and
   § "Runs from different groupings".
 

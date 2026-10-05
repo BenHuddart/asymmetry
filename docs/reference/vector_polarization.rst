@@ -76,11 +76,13 @@ The plot toolbar shows one chip per projection — ``P_x``, ``P_y`` and
 selecting more than one stacks them as subplots, and **all** selects every
 projection at once. At least one chip always stays selected. A run whose
 grouping has a single forward/backward pair has only one polarisation
-component, so it gets one plain plot and no chips. Each set of projections
-remembers its own selection: browse from a vector run showing ``P_x`` and
-``P_z`` to a single-pair run and back, and both subplots return; a GPS run's
-``FB``/``UD`` choice is kept separately from the EMU ``P_x``/``P_y``/``P_z``
-one. The remembered selections are saved with the project.
+component, so it gets one plain plot and no chips. Each grouping profile
+remembers its own chip selection: browse from a vector run showing ``P_x``
+and ``P_z`` to a single-pair run and back, and both subplots return, while a
+run on another profile keeps the selection last made there. A run released
+from its profile remembers its own, and an overlay of runs from several
+profiles remembers that combination. Renaming a profile keeps its
+selection, and the remembered selections are saved with the project.
 
 The chips never make the plot wider. When the toolbar is too narrow for the
 full names they switch to short ones (a detector pair such as ``Top-Bottom``

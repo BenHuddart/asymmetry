@@ -221,6 +221,7 @@ from asymmetry.core.project.profiles import (
     GoodWindowPolicy,
     GroupingProfile,
     aligned_n_bins,
+    assigned_profile_for_run,
     default_profile_for_run,
     effective_grouping_for_loaded_run,
     heal_t0_policies,
@@ -2559,6 +2560,34 @@ class MainWindow(QMainWindow):
             [ds.run.grouping if ds.run is not None else {} for ds in datasets]
         )
 
+    def _projection_memory_key(self, datasets: list[MuonDataset]) -> str | None:
+        """Name the grouping(s) whose projection chip selection *datasets* share.
+
+        Each profile (by fingerprint and name) and each released run keeps its
+        own selection; an overlay of several is its own combination. ``None``
+        when a run follows no profile — the projection set is then the memory.
+        """
+        identities: set[str] = set()
+        for dataset in datasets:
+            if self._dataset_has_grouping_override(dataset):
+                identities.add(f"run {dataset.run_number}")
+                continue
+            profile = assigned_profile_for_run(
+                self._grouping_profiles,
+                dataset.run,
+                self._dataset_assigned_profile_name(dataset),
+            )
+            if profile is None:
+                return None
+            identities.add(self._profile_memory_identity(profile.fingerprint, profile.name))
+        # Newline cannot occur in a profile name, so a rename can split the key.
+        return "\n".join(sorted(identities))
+
+    @staticmethod
+    def _profile_memory_identity(fingerprint, name: str) -> str:
+        """One profile's part of a projection memory key."""
+        return f"{fingerprint.instrument}/{fingerprint.histogram_count}/{name}"
+
     def _projection_specs(self, datasets: list[MuonDataset], labels: list[str]) -> list[dict]:
         """Return ordered ``[{"label", "tint"}]`` specs for *labels*.
 
@@ -2628,8 +2657,8 @@ class MainWindow(QMainWindow):
         specs = self._projection_specs(targets, list(memberships))
         labels = [spec["label"] for spec in specs]
 
-        # Reopen this projection set with the selection it last showed (each
-        # grouping keeps its own, across runs with fewer projections); else keep
+        # Reopen this grouping with the selection it last showed (each profile
+        # keeps its own, across runs with fewer projections); else keep
         # the live chips where they still apply, honour a restored ``ALL``/single
         # axis, then fall back to the dataset's active single axis.
         prior: list[str] = []
@@ -2640,7 +2669,12 @@ class MainWindow(QMainWindow):
             current_axis = self._normalize_vector_axis(
                 self._plot_panel.get_current_polarization_axis()
             )
-        remembered = self._plot_panel.remembered_projection_selection(labels)
+        memory_key = self._projection_memory_key(targets) or ",".join(labels)
+        remembered = [
+            lbl
+            for lbl in self._plot_panel.remembered_projection_selection(memory_key)
+            if lbl in labels
+        ]
         if remembered:
             chosen = remembered
         elif prior:
@@ -2654,7 +2688,7 @@ class MainWindow(QMainWindow):
         else:
             chosen = labels[:1]
 
-        self._plot_panel.set_projections(specs, chosen)
+        self._plot_panel.set_projections(specs, chosen, memory_key=memory_key)
         axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
         if axis == current_axis:
             return
@@ -4674,6 +4708,14 @@ class MainWindow(QMainWindow):
         for source_datasets in combined_sources.values():
             for dataset in source_datasets:
                 _rewrite(dataset)
+
+        old_identity = self._profile_memory_identity(fingerprint, str(old_name))
+        new_identity = self._profile_memory_identity(fingerprint, str(new_name))
+        self._plot_panel.rekey_projection_memory(
+            lambda key: "\n".join(
+                sorted(new_identity if part == old_identity else part for part in key.split("\n"))
+            )
+        )
 
     def _delete_grouping_profiles(self, names: list[str], *, fingerprint) -> None:
         """Remove the *names*d profiles of *fingerprint* from the project.

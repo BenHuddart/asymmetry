@@ -628,9 +628,10 @@ class PlotPanel(QWidget):
             self._projection_specs: list[dict] = []
             self._tint_by_label: dict[str, str] = {}
             self._selected_projection_labels: list[str] = []
-            # Chip selection remembered per projection set (the ordered chip
-            # labels), so each grouping reopens with the projections last shown.
-            self._projection_selection_by_set: dict[tuple[str, ...], list[str]] = {}
+            # Chip selection remembered per grouping (``memory_key`` of
+            # set_projections), so each reopens with the projections last shown.
+            self._projection_memory: dict[str, list[str]] = {}
+            self._projection_memory_key = ""
             # Which stacked subplot is the active single-fit target (multi-view).
             self._fit_target_projection: str | None = None
             self._fit_target_artists: list = []
@@ -4084,13 +4085,16 @@ class PlotPanel(QWidget):
         self,
         projections: list[dict],
         selected: list[str] | None = None,
+        *,
+        memory_key: str | None = None,
     ) -> None:
         """Show/update the projection chip bar, or hide it when unavailable.
 
         ``projections`` is an ordered list of ``{"label", "tint"?}`` dicts;
         ``selected`` is the subset of labels to show as subplots (defaults to
         all). The bar (and any multi-projection behaviour) is suppressed when
-        fewer than two projections exist.
+        fewer than two projections exist. ``memory_key`` names the grouping the
+        chip selection is remembered under (default: the projection set itself).
         """
         if not hasattr(self, "_projection_bar"):
             return
@@ -4125,6 +4129,7 @@ class PlotPanel(QWidget):
         labels = [str(p["label"]) for p in specs]
         wanted = set(selected) if selected else set(labels)
         chosen = [lbl for lbl in labels if lbl in wanted] or list(labels)
+        self._projection_memory_key = memory_key or ",".join(labels)
 
         self._projection_bar.set_projections(specs, chosen)
         self._selected_projection_labels = self._projection_bar.selected_labels()
@@ -4139,12 +4144,20 @@ class PlotPanel(QWidget):
         self._update_y_limit_controls_for_axis(new_axis)
 
     def _remember_projection_selection(self) -> None:
-        key = tuple(str(p["label"]) for p in self._projection_specs)
-        self._projection_selection_by_set[key] = list(self._selected_projection_labels)
+        self._projection_memory[self._projection_memory_key] = list(
+            self._selected_projection_labels
+        )
 
-    def remembered_projection_selection(self, labels: list[str]) -> list[str]:
-        """The selection last shown for the projection set *labels*, or ``[]``."""
-        return list(self._projection_selection_by_set.get(tuple(labels), []))
+    def rekey_projection_memory(self, rekey: Callable[[str], str]) -> None:
+        """Rename every remembered selection's key (a grouping was renamed)."""
+        self._projection_memory = {
+            rekey(key): selected for key, selected in self._projection_memory.items()
+        }
+        self._projection_memory_key = rekey(self._projection_memory_key)
+
+    def remembered_projection_selection(self, memory_key: str) -> list[str]:
+        """The selection last shown under *memory_key*, or ``[]``."""
+        return list(self._projection_memory.get(memory_key, []))
 
     def selected_projection_labels(self) -> list[str]:
         """Return the projection labels currently selected.
@@ -9105,10 +9118,9 @@ class PlotPanel(QWidget):
             "axis_limits": self._limits.state(),
             "polarization_axis": self._current_polarization_axis,
             "projection_selection": list(self._selected_projection_labels),
-            "projection_selection_by_set": [
-                {"labels": list(labels), "selected": list(selected)}
-                for labels, selected in self._projection_selection_by_set.items()
-            ],
+            "projection_memory": {
+                key: list(selected) for key, selected in self._projection_memory.items()
+            },
             "fit_curve": None,
             "fit_curve_run_number": self._fit_curve_run_number,
             "fit_curves": {},
@@ -9225,11 +9237,9 @@ class PlotPanel(QWidget):
             if isinstance(raw_selection, list)
             else []
         )
-        self._projection_selection_by_set = {
-            tuple(str(label) for label in entry["labels"]): [
-                str(label) for label in entry["selected"]
-            ]
-            for entry in state.get("projection_selection_by_set") or []
+        self._projection_memory = {
+            str(key): [str(label) for label in selected]
+            for key, selected in (state.get("projection_memory") or {}).items()
         }
         # The per-axis Auto/Hold snapshot IS the restored view: the buttons
         # mirror its Auto flags and the replot below resolves through it, so
