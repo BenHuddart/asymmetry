@@ -1,6 +1,6 @@
 # Saved single fits and a Compare window
 
-Status: in progress on `feat/single-fit-compare` (2026-10-05).
+Status: implemented 2026-10-05 on `feat/single-fit-compare`, PR to follow.
 
 ## Problem
 

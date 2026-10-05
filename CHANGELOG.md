@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The Single tab keeps every distinct fit of a run, and compares them.** A
+  **Saved fits** row above **Model** names the run's open fit
+  (``<model> · <window>``). Re-running the same function, window, fixed values,
+  links and ties replaces it; anything else saves a new fit beside it, and a
+  line under the name says which the next **Fit** will do. Click the name to
+  open another fit (its function, table, results and window come back);
+  **New fit** keeps the open fit and saves the next one beside it even when
+  nothing changed; **Rename…** and **Delete…** act on the open fit. Each saved
+  fit that is not open is listed in the plot's **Fits** menu as
+  ``Single fit ·`` *name* for overlaying. **Compare…** opens **Compare saved
+  fits**: the fits ranked by AICc (or AIC/BIC) with a Δ bar and evidence
+  weight, only against fits over the same window and points, with A against
+  B, normalised residuals and an A-vs-B parameter table, and **Open A in the
+  Single tab**. **Analysis ▸ Export fit report…** lists every saved fit by
+  name. Project files move to schema version 25; a fit saved by an earlier
+  version becomes its run's only saved fit. See
+  `docs/reference/gui_usage.rst` § "Saving and comparing single fits".
+
 ### Changed
 
 - **The Global Fit Wizard now recommends the fit whose parameters trend best
