@@ -195,12 +195,17 @@ class ProjectionChipBar(QWidget):
         return margins + chips + spacing + self._all_btn.sizeHint().width()
 
     def _chip_width(self, text: str) -> int:
-        """Width of a chip showing *text*: its QSS chrome plus the text advance."""
+        """Width of a chip showing *text*: its QSS chrome plus the text width.
+
+        Text is measured with ``QFontMetrics.size`` — what ``QPushButton.sizeHint``
+        uses — so the derived chrome is the same whichever chip text it came from.
+        """
         chip = next(iter(self._chips.values()))
         chip.ensurePolished()
         metrics = chip.fontMetrics()
-        chrome = chip.sizeHint().width() - metrics.horizontalAdvance(chip.text())
-        return chrome + metrics.horizontalAdvance(text)
+        flags = Qt.TextFlag.TextShowMnemonic
+        chrome = chip.sizeHint().width() - metrics.size(flags, chip.text()).width()
+        return chrome + metrics.size(flags, text).width()
 
     def _fold_width(self) -> int:
         """Width of the fold button holding its widest possible summary."""
