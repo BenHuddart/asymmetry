@@ -26,6 +26,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name. Project files move to schema version 25; a fit saved by an earlier
   version becomes its run's only saved fit. See
   `docs/reference/gui_usage.rst` § "Saving and comparing single fits".
+- **Overlaying runs from vector and single-pair groupings puts each run on
+  the projections it measures.** The projection chips show every
+  projection the overlaid runs declare; an EMU **Longitudinal** run sits on
+  the ``P_z`` subplot only (a GPS **Longitudinal** run on the WEP ``FB``
+  subplot), and each run keeps one colour across subplots. Previously the chip
+  bar disappeared whenever the overlaid runs' groupings differed. Each grouping
+  profile also remembers its own chip selection (saved with the project and
+  kept across a rename), so
+  returning from a single-pair run to a vector run brings back the projections
+  that profile last showed instead of only one. See
+  `docs/reference/vector_polarization.rst` § "Display in the main plot" and
+  § "Runs from different groupings".
+
+### Fixed
+
+- **A run moved off a vector grouping no longer keeps its projections.**
+  Assigning a run to a single-pair profile (or resolving one onto it) left the
+  old ``P_x``/``P_y``/``P_z`` projections and active axis on the run, so a
+  plain forward/backward run could still offer projection chips and key its
+  fits and fit overlays to ``P_z``.
 
 ### Changed
 

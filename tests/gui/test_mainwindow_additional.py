@@ -113,6 +113,24 @@ def _make_dataset(run_number: int, *, with_grouping: bool) -> MuonDataset:
     )
 
 
+def _make_vector_dataset(run_number: int) -> MuonDataset:
+    """A two-detector run on a P_x/P_y/P_z grouping (each pair reuses both detectors)."""
+    dataset = _make_dataset(run_number, with_grouping=True)
+    assert dataset.run is not None
+    dataset.run.grouping.update(
+        {
+            "groups": {1: [1], 2: [2], 3: [1], 4: [2], 5: [1], 6: [2]},
+            "projections": [
+                {"label": "P_x", "forward_group": 5, "backward_group": 6},
+                {"label": "P_y", "forward_group": 3, "backward_group": 4},
+                {"label": "P_z", "forward_group": 1, "backward_group": 2},
+            ],
+            "vector_axis": "P_z",
+        }
+    )
+    return dataset
+
+
 def _good_window_dataset(
     run_number: int,
     *,
@@ -5031,7 +5049,7 @@ class TestMainWindowBasic:
         mainwindow: MainWindow,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        dataset = _make_dataset(8801, with_grouping=True)
+        dataset = _make_vector_dataset(8801)
         mainwindow._current_dataset = dataset
         # Sanity: the default view is the time F-B asymmetry these slots key off.
         assert mainwindow._active_representation_type() == RepresentationType.TIME_FB_ASYMMETRY
@@ -5139,7 +5157,7 @@ class TestMainWindowBasic:
         mainwindow: MainWindow,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        dataset = _make_dataset(8804, with_grouping=True)
+        dataset = _make_vector_dataset(8804)
         mainwindow._current_dataset = dataset
         monkeypatch.setattr(mainwindow, "_get_fit_dataset", lambda ds: ds)
         panel = mainwindow._fit_panel

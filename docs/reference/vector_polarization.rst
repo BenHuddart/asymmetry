@@ -74,7 +74,15 @@ Display in the main plot
 The plot toolbar shows one chip per projection — ``P_x``, ``P_y`` and
 ``P_z``, each in its own tint. Click a chip to show or hide that projection;
 selecting more than one stacks them as subplots, and **all** selects every
-projection at once. At least one chip always stays selected.
+projection at once. At least one chip always stays selected. A run whose
+grouping has a single forward/backward pair has only one polarisation
+component, so it gets one plain plot and no chips. Each grouping profile
+remembers its own chip selection: browse from a vector run showing ``P_x``
+and ``P_z`` to a single-pair run and back, and both subplots return, while a
+run on another profile keeps the selection last made there. A run released
+from its profile remembers its own, and an overlay of runs from several
+profiles remembers that combination. Renaming a profile keeps its
+selection, and the remembered selections are saved with the project.
 
 The chips never make the plot wider. When the toolbar is too narrow for the
 full names they switch to short ones (a detector pair such as ``Top-Bottom``
@@ -87,6 +95,23 @@ Alpha display behaviour:
 
 * Single-axis views show the alpha for the selected axis.
 * Views with several projections hide alpha in the header.
+
+Runs from different groupings
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Overlaying runs whose groupings differ shows every projection any of them
+declares, and each subplot holds only the runs that measure that projection.
+A single-pair run joins the projection whose forward and backward groups hold
+exactly its detectors on the same instrument: an EMU **Longitudinal** run sits
+on the ``P_z`` subplot beside the vector runs and is absent from ``P_x`` and
+``P_y``; a GPS **Longitudinal** run joins the **WEP (spin-rotated)** ``FB``
+projection. A run keeps one trace colour on every subplot. When a single-pair
+run matches no projection (a MuSR **Longitudinal** run beside the
+**Transverse (Vector)** grouping, whose detector split differs), the overlay
+falls back to one plain plot without chips.
+
+A fit on a single-pair run always belongs to the run's own asymmetry, even
+when it is selected from a shared projection subplot.
 
 Persistence
 -----------
