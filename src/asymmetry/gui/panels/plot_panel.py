@@ -2707,7 +2707,7 @@ class PlotPanel(QWidget):
 
     def _on_waterfall_checkbox_toggled(self, checked: bool) -> None:
         """Handle a user toggle of the Waterfall checkbox."""
-        self._waterfall_delta_field.setEnabled(bool(checked) and self._overlay_checkbox.isChecked())
+        self._sync_waterfall_controls_enabled(self._overlay_checkbox.isChecked())
         self.waterfall_changed.emit()
 
     def _on_waterfall_delta_edited(self) -> None:

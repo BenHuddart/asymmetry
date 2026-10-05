@@ -42,6 +42,9 @@ _DEFAULT_TINT = tokens.ACCENT
 #: Presentations from widest to narrowest; the bar shows the first that fits.
 _PRESENTATIONS = ("full", "short", "folded")
 
+#: Longest projection name the folded button shows; the menu keeps full names.
+_FOLD_LABEL_CHARS = 8
+
 
 def short_projection_label(label: str) -> str:
     """Return the compact chip text: ``Top-Bottom`` → ``T–B``; ``P_x`` stays ``P_x``."""
@@ -61,6 +64,12 @@ def _chip_qss(tint: str) -> str:
         f"QPushButton:checked {{ background: {tint}; color: {tokens.WHITE}; }}"
         "QPushButton::menu-indicator { image: none; }"
     )
+
+
+def _fold_label(label: str) -> str:
+    """Short label clipped to :data:`_FOLD_LABEL_CHARS`, so the folded width is bounded."""
+    short = short_projection_label(label)
+    return short if len(short) <= _FOLD_LABEL_CHARS else short[: _FOLD_LABEL_CHARS - 1] + "…"
 
 
 class ProjectionChipBar(QWidget):
@@ -198,7 +207,7 @@ class ProjectionChipBar(QWidget):
         if not self._chips:
             return 0
         count = len(self._chips)
-        candidates = [short_projection_label(label) for label in self._chips]
+        candidates = [_fold_label(label) for label in self._chips]
         candidates += [f"{count} of {count}", f"All {count}"]
         return max(self._chip_width(f"{text} ▾") for text in candidates)
 
@@ -277,7 +286,7 @@ class ProjectionChipBar(QWidget):
         count = len(self._chips)
         self._all_btn.setEnabled(bool(self._chips) and len(selected) < count)
         if len(selected) == 1:
-            text = short_projection_label(selected[0])
+            text = _fold_label(selected[0])
             tint = next(
                 str(p.get("tint") or _DEFAULT_TINT)
                 for p in self._projections

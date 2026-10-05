@@ -190,6 +190,19 @@ class TestProjectionChipBar:
         actions["Show all"].trigger()
         assert bar.selected_labels() == ["Top-Bottom", "Fwd-Back", "Left-Right"]
 
+    def test_long_unhyphenated_label_does_not_widen_the_folded_button(self, qapp):
+        """A custom label is clipped on the fold button; the menu keeps it whole."""
+        bar = ProjectionChipBar()
+        bar.set_projections([{"label": "UpstreamComposite"}, {"label": "Downstream"}])
+        bounded = bar.minimumSizeHint().width()
+        long_label = "UpstreamCompositeAsymmetryProjection" * 4
+        bar.set_projections([{"label": long_label}, {"label": "Downstream"}], [long_label])
+        # Both names clip to the same text, so the label's length costs nothing.
+        assert bar.minimumSizeHint().width() == bounded
+        assert bar._fold_btn.text() == "Upstrea… ▾"
+        bar._rebuild_fold_menu()
+        assert long_label in {action.text() for action in bar._fold_menu.actions()}
+
     def test_short_label_abbreviates_detector_pairs_only(self):
         assert short_projection_label("Top-Bottom") == "T–B"
         assert short_projection_label("Fwd-Back") == "F–B"
