@@ -21,6 +21,7 @@ from asymmetry.core.instrument import (
     instrument_display_name,
     layout_detector_labels,
     preset_grouping_for_run,
+    projection_memberships,
     variant_for_histograms,
 )
 
@@ -1939,3 +1940,65 @@ class TestDeriveProjectionPairs:
         assert derive_projection_pairs({}, None, None) == {}
         assert derive_projection_pairs(None, None, None) == {}
         assert derive_projection_pairs({1: [1], 2: [2]}, {1: "Forward", 2: "Backward"}) == {}
+
+
+class TestProjectionMemberships:
+    """Several runs' groupings share projection subplots by detector identity."""
+
+    @staticmethod
+    def _grouping(instrument: str, preset_name: str) -> dict:
+        preset = get_instrument_layout(instrument).presets[preset_name]
+        return {
+            "instrument": instrument,
+            "groups": {gid: list(g.detector_ids) for gid, g in preset.groups.items()},
+            "group_names": {gid: g.name for gid, g in preset.groups.items()},
+            "forward_group": preset.forward_group,
+            "backward_group": preset.backward_group,
+            "projections": [p.to_payload() for p in preset.projections],
+        }
+
+    def test_vector_runs_join_every_projection(self):
+        vector = self._grouping("EMU", "Vector Polarization")
+        assert projection_memberships([vector, vector]) == {
+            "P_x": [0, 1],
+            "P_y": [0, 1],
+            "P_z": [0, 1],
+        }
+
+    def test_longitudinal_run_joins_only_the_matching_projection(self):
+        vector = self._grouping("EMU", "Vector Polarization")
+        longitudinal = self._grouping("EMU", "Longitudinal")
+        assert projection_memberships([longitudinal, vector]) == {
+            "P_x": [1],
+            "P_y": [1],
+            "P_z": [0, 1],
+        }
+
+    def test_gps_longitudinal_joins_the_wep_fb_projection(self):
+        wep = self._grouping("GPS", "WEP (spin-rotated)")
+        longitudinal = self._grouping("GPS", "Longitudinal")
+        assert projection_memberships([wep, longitudinal]) == {"FB": [0, 1], "UD": [0]}
+
+    def test_plain_runs_alone_have_no_projections(self):
+        longitudinal = self._grouping("EMU", "Longitudinal")
+        assert projection_memberships([longitudinal]) == {}
+        assert projection_memberships([longitudinal, longitudinal]) == {}
+
+    def test_unmatched_plain_run_collapses_to_one_pane(self):
+        # MuSR's transverse Fwd-Back pair is not the longitudinal detector split.
+        vector = self._grouping("MuSR", "Transverse (Vector)")
+        longitudinal = self._grouping("MuSR", "Longitudinal")
+        assert projection_memberships([vector, longitudinal]) == {}
+
+    def test_plain_run_from_another_instrument_matches_nothing(self):
+        vector = self._grouping("EMU", "Vector Polarization")
+        other = dict(self._grouping("EMU", "Longitudinal"), instrument="HiFi")
+        assert projection_memberships([vector, other]) == {}
+
+    def test_detector_t0_pair_entries_resolve_like_plain_detectors(self):
+        vector = self._grouping("EMU", "Vector Polarization")
+        longitudinal = self._grouping("EMU", "Longitudinal")
+        longitudinal["groups"] = {
+            gid: [(d, 0) for d in members] for gid, members in longitudinal["groups"].items()
+        }
+        assert projection_memberships([longitudinal, vector])["P_z"] == [0, 1]

@@ -628,6 +628,10 @@ class PlotPanel(QWidget):
             self._projection_specs: list[dict] = []
             self._tint_by_label: dict[str, str] = {}
             self._selected_projection_labels: list[str] = []
+            # Chip selection remembered per grouping (``memory_key`` of
+            # set_projections), so each reopens with the projections last shown.
+            self._projection_memory: dict[str, list[str]] = {}
+            self._projection_memory_key = ""
             # Which stacked subplot is the active single-fit target (multi-view).
             self._fit_target_projection: str | None = None
             self._fit_target_artists: list = []
@@ -3995,6 +3999,7 @@ class PlotPanel(QWidget):
     def _on_projection_selection_changed(self, labels: list[str]) -> None:
         """Handle a projection chip-selection change from the header chip bar."""
         self._selected_projection_labels = list(labels)
+        self._remember_projection_selection()
         axis = self._axis_for_selection(list(labels))
         if axis is None:
             return
@@ -4080,13 +4085,16 @@ class PlotPanel(QWidget):
         self,
         projections: list[dict],
         selected: list[str] | None = None,
+        *,
+        memory_key: str | None = None,
     ) -> None:
         """Show/update the projection chip bar, or hide it when unavailable.
 
         ``projections`` is an ordered list of ``{"label", "tint"?}`` dicts;
         ``selected`` is the subset of labels to show as subplots (defaults to
         all). The bar (and any multi-projection behaviour) is suppressed when
-        fewer than two projections exist.
+        fewer than two projections exist. ``memory_key`` names the grouping the
+        chip selection is remembered under (default: the projection set itself).
         """
         if not hasattr(self, "_projection_bar"):
             return
@@ -4121,9 +4129,11 @@ class PlotPanel(QWidget):
         labels = [str(p["label"]) for p in specs]
         wanted = set(selected) if selected else set(labels)
         chosen = [lbl for lbl in labels if lbl in wanted] or list(labels)
+        self._projection_memory_key = memory_key or ",".join(labels)
 
         self._projection_bar.set_projections(specs, chosen)
         self._selected_projection_labels = self._projection_bar.selected_labels()
+        self._remember_projection_selection()
 
         new_axis = self._axis_for_selection(self._selected_projection_labels)
         previous_axis = self._current_polarization_axis
@@ -4132,6 +4142,22 @@ class PlotPanel(QWidget):
             self._mirror_y_fields_for_axis(new_axis)
             self._sync_y_controls_with_visible_axis()
         self._update_y_limit_controls_for_axis(new_axis)
+
+    def _remember_projection_selection(self) -> None:
+        self._projection_memory[self._projection_memory_key] = list(
+            self._selected_projection_labels
+        )
+
+    def rekey_projection_memory(self, rekey: Callable[[str], str]) -> None:
+        """Rename every remembered selection's key (a grouping was renamed)."""
+        self._projection_memory = {
+            rekey(key): selected for key, selected in self._projection_memory.items()
+        }
+        self._projection_memory_key = rekey(self._projection_memory_key)
+
+    def remembered_projection_selection(self, memory_key: str) -> list[str]:
+        """The selection last shown under *memory_key*, or ``[]``."""
+        return list(self._projection_memory.get(memory_key, []))
 
     def selected_projection_labels(self) -> list[str]:
         """Return the projection labels currently selected.
@@ -4337,27 +4363,30 @@ class PlotPanel(QWidget):
         entries: list[_DisplayEntry],
         axis_key: str | None,
         window: tuple[float, float] | None,
+        *,
+        fit_axis: str | None,
+        color_slots: list[tuple[int, int]],
     ) -> None:
         """Draw pre-materialised display *entries* on ``ax`` inside *window*.
 
         The arrays are materialised once by :meth:`_display_entries` — the same
         list feeds the x/y bounds the render resolves — so the analysis + RRF
-        pipeline runs once per dataset per render.
+        pipeline runs once per dataset per render. ``color_slots`` gives each
+        entry's ``(trace colour index, RG period-colour variant)``; ``fit_axis``
+        overrides the projection fits are looked up under (``None``: each
+        dataset's own).
         """
         # Handoff plot grammar: y = 0 reference line under the data (it is
         # excluded from autoscaling, so positive-only data never stretches).
         draw_zero_line(ax)
         self._rrf_frame_drawn = None
-        period_color_counts: dict[str, int] = {}
 
-        for i, entry in enumerate(entries):
+        for (i, period_variant), entry in zip(color_slots, entries, strict=True):
             dataset = entry.dataset
             color = f"C{i % 10}"
             period_color = self._period_mode_color_for_dataset(dataset)
             if period_color is not None:
-                variant_idx = period_color_counts.get(period_color, 0)
-                color = self._period_mode_color_variant(period_color, variant_idx)
-                period_color_counts[period_color] = variant_idx + 1
+                color = self._period_mode_color_variant(period_color, period_variant)
 
             finite_mask = entry.finite_mask
             valid_low = finite_mask & entry.low_count_mask
@@ -4393,7 +4422,7 @@ class PlotPanel(QWidget):
             )
 
             for order, (_fit_id, curve) in enumerate(
-                self._shown_fit_curves_for_dataset(dataset, axis_override=axis_key)
+                self._shown_fit_curves_for_dataset(dataset, axis_override=fit_axis)
             ):
                 fit_to_plot = rrf_display_fit_curve(self, curve, entry.analysis)
                 if fit_to_plot is None:
@@ -4492,6 +4521,18 @@ class PlotPanel(QWidget):
         shared_ax = None
         last_arrays = (None, None, None, None)
         vector_x_ranges: list[tuple[float, float]] = []
+        # A run keeps one trace colour on every subplot, even when overlaid runs
+        # from different groupings sit on different projections.
+        run_slots: dict[int, tuple[int, int]] = {}
+        period_counts: dict[str | None, int] = {}
+        for axis_key in order:
+            for ds in self._vector_subplot_datasets.get(axis_key, []):
+                if ds.run_number not in run_slots:
+                    period_color = self._period_mode_color_for_dataset(ds)
+                    variant = period_counts.get(period_color, 0)
+                    period_counts[period_color] = variant + 1
+                    run_slots[ds.run_number] = (len(run_slots), variant)
+        first_runs = {ds.run_number for ds in self._vector_subplot_datasets[order[0]]}
         for idx, axis_key in enumerate(order):
             ax = self._figure.add_subplot(len(order), 1, idx + 1, sharex=shared_ax)
             style_axes(ax)
@@ -4500,7 +4541,17 @@ class PlotPanel(QWidget):
             self._subplot_axes_by_polarization[axis_key] = ax
             self._ax = ax if idx == 0 else self._ax
 
-            self._plot_datasets_on_axis(ax, entries_by_axis[axis_key], axis_key, window)
+            members = self._vector_subplot_datasets.get(axis_key, [])
+            # Clones carry their projection as ``vector_axis``, and a single-pair
+            # run its own default slot, so each dataset resolves its own fits.
+            self._plot_datasets_on_axis(
+                ax,
+                entries_by_axis[axis_key],
+                axis_key,
+                window,
+                fit_axis=None,
+                color_slots=[run_slots[ds.run_number] for ds in members],
+            )
             self._apply_projection_frame_tint(ax, axis_key)
             if idx == len(order) - 1:
                 x_label, _ = self._axis_labels_for_dataset(
@@ -4510,7 +4561,8 @@ class PlotPanel(QWidget):
                 ax.set_xlabel(x_label)
             else:
                 ax.tick_params(labelbottom=False)
-            if idx == 0:
+            # Each distinct run membership gets a legend; identical ones share the top one.
+            if idx == 0 or {ds.run_number for ds in members} != first_runs:
                 style_legend(ax.legend())
             arrays = arrays_by_axis[axis_key]
             # An all-NaN projection has no signal to frame; give it a neutral
@@ -4606,7 +4658,14 @@ class PlotPanel(QWidget):
             if idx == 0:
                 self._ax = ax
 
-            self._plot_datasets_on_axis(ax, entries_by_axis[axis_key], axis_key, window)
+            self._plot_datasets_on_axis(
+                ax,
+                entries_by_axis[axis_key],
+                axis_key,
+                window,
+                fit_axis=axis_key,
+                color_slots=[(0, 0)],
+            )
             ax.set_title(str(dataset.run_label), loc="left", fontsize=10)
             if idx == len(datasets) - 1:
                 x_label, _ = self._axis_labels_for_dataset(dataset, axis_key)
@@ -9059,6 +9118,9 @@ class PlotPanel(QWidget):
             "axis_limits": self._limits.state(),
             "polarization_axis": self._current_polarization_axis,
             "projection_selection": list(self._selected_projection_labels),
+            "projection_memory": {
+                key: list(selected) for key, selected in self._projection_memory.items()
+            },
             "fit_curve": None,
             "fit_curve_run_number": self._fit_curve_run_number,
             "fit_curves": {},
@@ -9175,6 +9237,10 @@ class PlotPanel(QWidget):
             if isinstance(raw_selection, list)
             else []
         )
+        self._projection_memory = {
+            str(key): [str(label) for label in selected]
+            for key, selected in (state.get("projection_memory") or {}).items()
+        }
         # The per-axis Auto/Hold snapshot IS the restored view: the buttons
         # mirror its Auto flags and the replot below resolves through it, so
         # there is no separate lock and no post-plot re-apply.

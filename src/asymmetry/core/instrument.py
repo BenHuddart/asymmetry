@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from asymmetry.core.transform.grouping import resolve_group_indices
+
 __all__ = [
     "DetectorSegment",
     "BankLayout",
@@ -42,6 +44,7 @@ __all__ = [
     "PROJECTION_TINTS",
     "TRANSVERSE_PROJECTION_TINTS",
     "derive_projection_pairs",
+    "projection_memberships",
     "get_instrument_layout",
     "layout_detector_labels",
     "preset_grouping_for_run",
@@ -434,6 +437,54 @@ def derive_projection_pairs(
             return {}
         legacy_pairs[label] = (fwd, bwd)
     return legacy_pairs
+
+
+def projection_memberships(groupings: list[dict]) -> dict[str, list[int]]:
+    """Place several runs' groupings on shared projection subplots.
+
+    Returns ordered ``{label: [index into groupings]}``. A grouping resolving two
+    or more projections joins each of them. A single-pair grouping measures one
+    polarization component, so it joins the projection whose forward/backward
+    groups hold exactly its own detectors on the same instrument — EMU
+    ``Longitudinal`` is the ``Vector Polarization`` ``P_z`` pair, GPS
+    ``Longitudinal`` the WEP ``FB`` pair. ``{}`` when no grouping has projections
+    or a single-pair grouping matches none: the runs then share one plain pane.
+    """
+    resolved = [
+        derive_projection_pairs(g.get("groups"), g.get("group_names"), g.get("projections"))
+        for g in groupings
+    ]
+    detectors: dict[tuple[str, frozenset[int], frozenset[int]], str] = {}
+    memberships: dict[str, list[int]] = {}
+    for index, (grouping, pairs) in enumerate(zip(groupings, resolved)):
+        if len(pairs) < 2:
+            continue
+        instrument = str(grouping.get("instrument") or "")
+        for label, (fwd, bwd) in pairs.items():
+            groups = grouping["groups"]
+            key = (
+                instrument,
+                frozenset(resolve_group_indices(groups, fwd)),
+                frozenset(resolve_group_indices(groups, bwd)),
+            )
+            detectors.setdefault(key, label)
+            memberships.setdefault(label, []).append(index)
+    if not memberships:
+        return {}
+    for index, (grouping, pairs) in enumerate(zip(groupings, resolved)):
+        if len(pairs) >= 2:
+            continue
+        groups = grouping.get("groups") or {}
+        key = (
+            str(grouping.get("instrument") or ""),
+            frozenset(resolve_group_indices(groups, grouping.get("forward_group"))),
+            frozenset(resolve_group_indices(groups, grouping.get("backward_group"))),
+        )
+        label = detectors.get(key)
+        if label is None:
+            return {}
+        memberships[label].append(index)
+    return {label: sorted(members) for label, members in memberships.items()}
 
 
 # ---------------------------------------------------------------------------
