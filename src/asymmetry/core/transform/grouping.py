@@ -290,22 +290,33 @@ def parse_detector_list(text: str) -> list[int]:
         fragment = fragment.strip()
         if not fragment:
             continue
-        if "-" in fragment:
-            parts = fragment.split("-")
-            if len(parts) != 2:
-                raise ValueError(f"Cannot parse detector range {fragment!r}")
-            start, end = (int(parts[0]), int(parts[1]))
-            if start > end:
-                start, end = end, start
-            if start < 1:
-                raise ValueError(f"Detector ids start at 1, got {fragment!r}")
-            ids.update(range(start, end + 1))
-        else:
-            value = int(fragment)
-            if value < 1:
-                raise ValueError(f"Detector ids start at 1, got {fragment!r}")
-            ids.add(value)
+        parts = fragment.split("-")
+        if len(parts) > 2 or not all(part.isdecimal() for part in parts):
+            raise ValueError(f"Cannot read {fragment!r} as a detector id or range")
+        start, end = sorted(int(part) for part in (parts[0], parts[-1]))
+        if start < 1:
+            raise ValueError(f"Detector ids start at 1, got {fragment!r}")
+        ids.update(range(start, end + 1))
     return sorted(ids)
+
+
+def parse_group_detectors(text: str, n_detectors: int) -> list[int]:
+    """Parse one group's typed detector list for a run of *n_detectors*.
+
+    :func:`parse_detector_list`, plus the two rules a group adds: it needs at
+    least one detector, and every id must exist on the run. Raises
+    ``ValueError`` with a message fit to show the user.
+    """
+    ids = parse_detector_list(text)
+    if not ids:
+        raise ValueError("A group needs at least one detector")
+    out_of_range = [d for d in ids if d > n_detectors]
+    if out_of_range:
+        raise ValueError(
+            f"This run has {n_detectors} detectors, so "
+            f"{format_detector_list(out_of_range)} does not exist"
+        )
+    return ids
 
 
 def format_detector_list(ids: list[int]) -> str:

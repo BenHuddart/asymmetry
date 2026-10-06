@@ -22,7 +22,7 @@ from functools import partial
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
@@ -55,8 +55,10 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
+    GENERIC_INSTRUMENT,
     derive_projection_pairs,
     detect_instrument,
+    generic_layout,
     get_instrument_layout,
     instrument_display_name,
     variant_for_histograms,
@@ -88,6 +90,7 @@ from asymmetry.core.transform import (
     find_t0_for_run,
     format_detector_list,
     parse_detector_list,
+    parse_group_detectors,
     resolve_background_mode,
     resolve_binning_mode,
     resolve_facility,
@@ -202,6 +205,9 @@ _CARD_STATUS_PREFIXES: dict[str, str] = {
     "alpha": "α = ",
     "beta": "β = ",
 }
+
+#: Tooltip of a group's detector cell while its text is a valid list.
+_DETECTORS_CELL_TIP = "Detector ids for this group, e.g. 1-16, 33. Double-click to edit."
 
 #: Debounce before the detected-t0 scan starts, in ms. Matches the live
 #: preview's coalescing window, so a burst of group edits costs one scan.
@@ -551,8 +557,6 @@ class GroupingDialog(QDialog):
         preset_row.addWidget(QLabel("Preset"))
         self._preset_combo = NoScrollComboBox()
         self._preset_combo.setMinimumContentsLength(18)
-        # Shown at index -1: the draft matches none of the instrument's presets.
-        self._preset_combo.setPlaceholderText("Custom")
         self._preset_combo.activated.connect(self._on_preset_combo_activated)
         preset_row.addWidget(self._preset_combo)
         preset_row.addStretch()
@@ -574,6 +578,8 @@ class GroupingDialog(QDialog):
         # three stay content-sized (set once — resizeColumnsToContents in
         # _populate_group_table only touches the non-stretch columns).
         self._group_table.horizontalHeader().setStretchLastSection(True)
+        # Connected first: the dirty and preview slots must see the edited draft.
+        self._group_table.itemChanged.connect(self._on_group_table_edited)
         left_layout.addWidget(self._group_table)
         self._populate_group_table()
 
@@ -614,6 +620,9 @@ class GroupingDialog(QDialog):
         self._detector_layout_instrument_name: str | None = (
             str(grouping.get("instrument")).strip() if grouping.get("instrument") else None
         )
+        # Generic is a drawing, not an instrument: picking it in the layout
+        # editor must never rewrite the run's instrument (its profile fingerprint).
+        self._layout_is_generic = False
         forward_gid, backward_gid = self._analysis_pair_for_reference(
             int(grouping.get("forward_group", 1)),
             int(grouping.get("backward_group", 2)),
@@ -1594,6 +1603,9 @@ class GroupingDialog(QDialog):
         if not datasets or datasets[0].run is None:
             return
         self._fingerprint = fingerprint
+        # The layout follows the new instrument, not the outgoing one's choice.
+        self._detector_layout_instrument_name = fingerprint.instrument or None
+        self._layout_is_generic = False
         self._reference_dataset = datasets[0]
         self._run = datasets[0].run
         self._current_run = int(datasets[0].run_number)
@@ -2170,15 +2182,16 @@ class GroupingDialog(QDialog):
     def _rebuild_preset_combo(self) -> None:
         """Populate the preset dropdown from the preview run's instrument."""
         combo = self._preset_combo
+        presets = self._current_instrument_layout().presets
         combo.blockSignals(True)
         combo.clear()
-        try:
-            layout = self._current_instrument_layout()
-            for name in layout.presets:
-                combo.addItem(name, name)
-        except (KeyError, AttributeError):
-            pass
+        for name in presets:
+            combo.addItem(name, name)
         combo.blockSignals(False)
+        # Shown at index -1: the draft matches none of the presets, or the
+        # instrument has none (a generic layout).
+        combo.setPlaceholderText("Custom" if presets else "No presets for this instrument")
+        combo.setEnabled(bool(presets))
         self._refresh_preset_selection()
 
     def _on_preset_combo_activated(self, index: int) -> None:
@@ -2186,11 +2199,7 @@ class GroupingDialog(QDialog):
         preset_name = self._preset_combo.itemData(index)
         if not preset_name:
             return
-        try:
-            layout = self._current_instrument_layout()
-        except (KeyError, AttributeError):
-            return
-        payload = preset_payload(layout, str(preset_name))
+        payload = preset_payload(self._current_instrument_layout(), str(preset_name))
         if payload is None:
             return
         self._apply_preset_payload_to_form(payload)
@@ -2232,14 +2241,10 @@ class GroupingDialog(QDialog):
         from the named preset, so a drifted draft never stores it.
         """
         preset_name = self._grouping_preset_name
-        if preset_name:
-            try:
-                layout = self._current_instrument_layout()
-                payload = self._current_grouping_payload()
-                if not payload_matches_preset(payload, layout, preset_name):
-                    self._grouping_preset_name = preset_name = None
-            except (KeyError, AttributeError):
-                pass
+        if preset_name and not payload_matches_preset(
+            self._current_grouping_payload(), self._current_instrument_layout(), preset_name
+        ):
+            self._grouping_preset_name = preset_name = None
         # Index -1 shows the "Custom" placeholder, as does a preset the
         # instrument does not list. Programmatic, so ``activated`` stays quiet.
         combo = self._preset_combo
@@ -4492,7 +4497,9 @@ class GroupingDialog(QDialog):
         try:
             self._group_table.setRowCount(len(self._groups))
             for row, gid in enumerate(sorted(self._groups)):
-                self._group_table.setItem(row, 0, QTableWidgetItem(str(gid)))
+                gid_item = QTableWidgetItem(str(gid))
+                gid_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                self._group_table.setItem(row, 0, gid_item)
                 include_item = QTableWidgetItem()
                 include_item.setFlags(
                     Qt.ItemFlag.ItemIsEnabled
@@ -4508,7 +4515,9 @@ class GroupingDialog(QDialog):
                 name = self._group_names.get(gid, "")
                 self._group_table.setItem(row, 2, QTableWidgetItem(name))
                 detectors = [str(idx + 1) for idx in self._groups[gid]]
-                self._group_table.setItem(row, 3, QTableWidgetItem(", ".join(detectors)))
+                detectors_item = QTableWidgetItem(", ".join(detectors))
+                detectors_item.setToolTip(_DETECTORS_CELL_TIP)
+                self._group_table.setItem(row, 3, detectors_item)
         finally:
             self._group_table.blockSignals(blocked)
         self._group_table.resizeColumnsToContents()
@@ -4519,6 +4528,43 @@ class GroupingDialog(QDialog):
         height = header_height + visible_rows * row_height + frame + 8
         self._group_table.setMinimumHeight(0)
         self._group_table.setMaximumHeight(height)
+
+    def _on_group_table_edited(self, item: QTableWidgetItem) -> None:
+        """Read a typed group name or detector list back into the draft.
+
+        A detector list that does not parse leaves the draft unchanged and
+        marks the cell with the reason; the Include column is read on demand
+        by :meth:`_current_included_groups`.
+        """
+        gid = int(self._group_table.item(item.row(), 0).text())
+        if item.column() == 2:
+            name = item.text().strip()
+            if name:
+                self._group_names[gid] = name
+            else:
+                self._group_names.pop(gid, None)
+        elif item.column() == 3:
+            n_detectors = len(self._run.histograms) if self._run and self._run.histograms else 0
+            try:
+                ids = parse_group_detectors(item.text(), n_detectors)
+            except ValueError as exc:
+                with QSignalBlocker(self._group_table):
+                    item.setForeground(QColor(tokens.ERROR))
+                    item.setBackground(QColor(tokens.ERROR_SOFT))
+                    item.setToolTip(str(exc))
+                return
+            with QSignalBlocker(self._group_table):
+                item.setData(Qt.ItemDataRole.ForegroundRole, None)
+                item.setData(Qt.ItemDataRole.BackgroundRole, None)
+                item.setToolTip(_DETECTORS_CELL_TIP)
+                item.setText(", ".join(str(d) for d in ids))
+            self._groups[gid] = [d - 1 for d in ids]
+        else:
+            return
+        self._group_table.resizeColumnsToContents()
+        self._refresh_group_combo_items()
+        self._update_vector_mode_controls()
+        self._refresh_preset_selection()
 
     def _current_included_groups(self) -> dict[int, bool]:
         """Return the include-checkbox state from the group table."""
@@ -4813,8 +4859,11 @@ class GroupingDialog(QDialog):
            stored name resolves to an ISIS-only layout, because the PSI loader
            records the raw instrument string (e.g. ``"HIFI"``) which otherwise
            canonicalises to the unrelated ISIS HiFi layout instead of HAL-9500.
-        3. HiFi as a final fallback.
+        3. A :func:`generic_layout` ring of the run's detectors when the
+           instrument is unknown (or the user picked it in the layout editor).
         """
+        if self._layout_is_generic:
+            return generic_layout(n_histo)
         instrument = None
         instrument_name = self._detector_layout_instrument_name
         if instrument_name:
@@ -4837,13 +4886,11 @@ class GroupingDialog(QDialog):
                     pass
 
         if instrument is None:
-            instrument = get_instrument_layout("HiFi")
-        else:
-            # Correct to the layout variant whose detector count matches this run
-            # (e.g. GPS 6-detector BIN vs GPS-RD 11-detector ROOT), so a stored
-            # name does not pin the wrong-sized layout when the data format changes.
-            instrument = get_instrument_layout(variant_for_histograms(instrument.name, n_histo))
-        return instrument
+            return generic_layout(n_histo)
+        # Correct to the layout variant whose detector count matches this run
+        # (e.g. GPS 6-detector BIN vs GPS-RD 11-detector ROOT), so a stored
+        # name does not pin the wrong-sized layout when the data format changes.
+        return get_instrument_layout(variant_for_histograms(instrument.name, n_histo))
 
     def _on_detector_layout(self) -> None:
         """Open the interactive detector layout editor as a sub-dialog."""
@@ -4882,6 +4929,7 @@ class GroupingDialog(QDialog):
             excluded_detectors=current_exclusion,
             projections=self._projection_specs,
             field_direction=self._reference_field_direction(),
+            n_histograms=n_histo,
             parent=self,
         )
         if dlg.exec() != DetectorLayoutDialog.DialogCode.Accepted:
@@ -4926,12 +4974,16 @@ class GroupingDialog(QDialog):
         preset_name = result.get("grouping_preset")
         # When the editor reports a match, adopt its name outright. When it
         # reports None (custom/drifted state), keep the *previous* preset name
-        # for now: ``_refresh_preset_selection`` below re-derives drift from the
+        # for now: ``_rebuild_preset_combo`` below re-derives drift from the
         # payload itself and clears it to None.
         if preset_name:
             self._grouping_preset_name = str(preset_name)
         instrument_name = result.get("instrument")
-        self._detector_layout_instrument_name = str(instrument_name) if instrument_name else None
+        self._layout_is_generic = instrument_name == GENERIC_INSTRUMENT
+        if not self._layout_is_generic:
+            self._detector_layout_instrument_name = (
+                str(instrument_name) if instrument_name else None
+            )
 
         # Update forward/backward combos
         new_fwd = result.get("forward_group", forward_gid)
@@ -4942,7 +4994,8 @@ class GroupingDialog(QDialog):
         self._populate_group_table()
         self._update_vector_mode_controls()
         self._mark_dirty()
-        self._refresh_preset_selection()
+        # The editor may have switched instrument, so the preset list too.
+        self._rebuild_preset_combo()
         self._refresh_preview()
 
     def _set_combo_to_group(self, combo: QComboBox, group_id: int) -> None:

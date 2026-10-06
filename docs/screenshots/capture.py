@@ -327,6 +327,7 @@ def _import_scenarios() -> None:
         fit_wizard_result,
         fit_wizard_welcome,
         fourier_tf,
+        generic_layout,
         global_fit_lfkt,
         global_fit_wizard_apply,
         global_fit_wizard_ladder,
