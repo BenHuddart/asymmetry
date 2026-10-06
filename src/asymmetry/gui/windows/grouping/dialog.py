@@ -4605,24 +4605,11 @@ class GroupingDialog(QDialog):
             "P_z": "alpha_z",
         }.get(axis, "alpha")
 
-    def _legacy_vector_alpha_key(self, axis: str) -> str:
-        """Return legacy payload key for backward compatibility."""
-        return {
-            "P_x": "alpha_px",
-            "P_y": "alpha_py",
-            "P_z": "alpha_pz",
-        }.get(axis, "alpha")
-
     def _alpha_value_for_axis(self, grouping: dict[str, Any], axis: str, fallback: float) -> float:
         """Return best alpha value for *axis* from grouping payload/state."""
-        key = self._vector_alpha_key(axis)
-        legacy_key = self._legacy_vector_alpha_key(axis)
         try:
             return float(
-                grouping.get(
-                    key,
-                    grouping.get(legacy_key, grouping.get("alpha", fallback)),
-                )
+                grouping.get(self._vector_alpha_key(axis), grouping.get("alpha", fallback))
             )
         except (TypeError, ValueError):
             return float(fallback)

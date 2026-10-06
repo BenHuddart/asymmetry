@@ -4940,13 +4940,8 @@ class PlotPanel(QWidget):
                 "P_y": "alpha_y",
                 "P_z": "alpha_z",
             }.get(axis)
-            legacy_axis_key = {
-                "P_x": "alpha_px",
-                "P_y": "alpha_py",
-                "P_z": "alpha_pz",
-            }.get(axis)
             if axis_key is not None:
-                alpha = run.grouping.get(axis_key, run.grouping.get(legacy_axis_key))
+                alpha = run.grouping.get(axis_key)
                 try:
                     return float(alpha)
                 except (TypeError, ValueError):
