@@ -2414,14 +2414,6 @@ class MainWindow(QMainWindow):
             "P_z": "alpha_z",
         }.get(str(axis) if axis is not None else "")
 
-    def _legacy_vector_alpha_key(self, axis: str | None) -> str | None:
-        """Return legacy vector-alpha key for backward compatibility."""
-        return {
-            "P_x": "alpha_px",
-            "P_y": "alpha_py",
-            "P_z": "alpha_pz",
-        }.get(str(axis) if axis is not None else "")
-
     def _resolve_vector_alpha_values(
         self,
         grouping_result: dict,
@@ -2438,9 +2430,8 @@ class MainWindow(QMainWindow):
         legacy groupings whose projections predate per-projection alpha.
 
         The canonical EMU axes ``P_x``/``P_y``/``P_z`` are simply one case of this:
-        they keep their dedicated ``alpha_x``/``alpha_y``/``alpha_z`` (and legacy
-        ``alpha_px`` …) keys, which the per-axis alpha table writes, and they fall
-        back to the base alpha — never to a seeded projection value — so the EMU
+        they keep their dedicated ``alpha_x``/``alpha_y``/``alpha_z`` keys, which
+        the per-axis alpha table writes, and they fall back to the base alpha — never to a seeded projection value — so the EMU
         vector-polarization behaviour is unchanged.
         """
         existing = existing_grouping if isinstance(existing_grouping, dict) else {}
@@ -2472,14 +2463,7 @@ class MainWindow(QMainWindow):
         # the base alpha (not the seeded projection alpha) so EMU is unchanged.
         for axis in CANONICAL_VECTOR_AXES:
             key = self._vector_alpha_key(axis)
-            legacy_key = self._legacy_vector_alpha_key(axis)
-            raw = grouping_result.get(
-                key,
-                grouping_result.get(
-                    legacy_key,
-                    existing.get(key, existing.get(legacy_key, base_alpha)),
-                ),
-            )
+            raw = grouping_result.get(key, existing.get(key, base_alpha))
             try:
                 resolved[axis] = float(raw)
             except (TypeError, ValueError):
@@ -5064,14 +5048,11 @@ class MainWindow(QMainWindow):
 
         for axis in ("P_x", "P_y", "P_z"):
             key = self._vector_alpha_key(axis)
-            legacy_key = self._legacy_vector_alpha_key(axis)
             if key is None:
                 continue
             try:
                 if key in grouping:
                     payload[key] = float(grouping.get(key))
-                elif legacy_key in grouping:
-                    payload[key] = float(grouping.get(legacy_key))
             except (TypeError, ValueError):
                 continue
 
