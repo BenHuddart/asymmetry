@@ -17882,6 +17882,9 @@ class MainWindow(QMainWindow):
         }
         self._lazy_recompute_failures = set()
         self._pending_recipe_recompute = set()
+        # Series, joint fits and rotating frames are keyed by run number, a
+        # per-experiment counter: none may carry into the next project.
+        self._project_model = ProjectModel()
         # Drop any stale in-flight recompute bookkeeping; a cleared session has
         # nothing displayed and the overlay must not survive into it.
         self._frequency_recompute_inflight = set()

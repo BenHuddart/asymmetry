@@ -16,6 +16,7 @@ from asymmetry.core.representation import (
     make_representation,
 )
 from asymmetry.core.representation.project_model import ProjectModel
+from asymmetry.core.transform.rotating_frame import Provenance, RotatingFrame
 
 _FB = RepresentationType.TIME_FB_ASYMMETRY
 
@@ -768,3 +769,14 @@ def test_phase_group_names_use_conventional_numerals():
         "Phase CD",
         "Phase MCMXCIV",
     ]
+
+
+def test_rotating_frames_round_trip_on_their_dataset_entries():
+    frame = RotatingFrame.typed_frequency(1.4925).with_values(
+        Provenance.ESTIMATED, rf_phase_deg=47.0, baseline_x=0.12, gain=0.97
+    )
+    model = ProjectModel(rotating_frames={2: frame})
+    project = {"datasets": [{"run_number": 1}, {"run_number": 2}]}
+    model.write_to_project_state(project)
+    assert "rotating_frame" not in project["datasets"][0]
+    assert ProjectModel.from_project_state(project).rotating_frames == {2: frame}
