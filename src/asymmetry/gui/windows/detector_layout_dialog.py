@@ -44,7 +44,9 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.instrument import (
+    GENERIC_INSTRUMENT,
     InstrumentLayout,
+    generic_layout,
     get_instrument_layout,
     instrument_choices_for,
     recommend_grouping_preset,
@@ -88,6 +90,9 @@ class DetectorLayoutDialog(QDialog):
         current preset is not the recommended transverse one, the dialog shows a
         non-blocking hint and pre-selects the recommended preset in the combo
         (the user still clicks *Apply Grouping*).
+    n_histograms:
+        Detector count of the run, for the "Generic (N detectors)" choice
+        offered beside the known instruments. Defaults to *instrument*'s count.
     parent:
         Parent Qt widget.
     """
@@ -103,6 +108,7 @@ class DetectorLayoutDialog(QDialog):
         excluded_detectors: list[int] | None = None,
         projections: list[dict] | None = None,
         field_direction: str | None = None,
+        n_histograms: int | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -110,6 +116,9 @@ class DetectorLayoutDialog(QDialog):
         self.resize(1020, 560)
 
         self._instrument = instrument
+        self._generic = generic_layout(
+            instrument.n_detectors if n_histograms is None else n_histograms
+        )
         # Applied-field geometry of the loaded run (metadata["field_direction"]):
         # used to nudge transverse-field data off a longitudinal preset.
         self._field_direction = field_direction
@@ -260,6 +269,7 @@ class DetectorLayoutDialog(QDialog):
         # data, so the user only sees the GPS that fits their file format.
         for display_name, registry_key in instrument_choices_for(self._instrument.name):
             self._instrument_combo.addItem(display_name, registry_key)
+        self._instrument_combo.addItem(self._generic.display, GENERIC_INSTRUMENT)
         current_idx = self._instrument_combo.findData(self._instrument.name)
         if current_idx >= 0:
             self._instrument_combo.setCurrentIndex(current_idx)
@@ -273,18 +283,18 @@ class DetectorLayoutDialog(QDialog):
 
         preset_layout.addWidget(QLabel("Preset grouping:"))
         self._preset_combo = QComboBox()
-        self._populate_preset_combo()
         preset_layout.addWidget(self._preset_combo)
 
         self._preset_status_label = QLabel("(Current: Custom)")
         self._preset_status_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         preset_layout.addWidget(self._preset_status_label)
 
-        apply_btn = QPushButton("Apply Grouping")
-        apply_btn.setDefault(False)
-        apply_btn.setAutoDefault(False)
-        apply_btn.clicked.connect(self._on_apply_preset)
-        preset_layout.addWidget(apply_btn)
+        self._apply_preset_btn = QPushButton("Apply Grouping")
+        self._apply_preset_btn.setDefault(False)
+        self._apply_preset_btn.setAutoDefault(False)
+        self._apply_preset_btn.clicked.connect(self._on_apply_preset)
+        preset_layout.addWidget(self._apply_preset_btn)
+        self._populate_preset_combo()
 
         # Non-blocking transverse-field nudge: shown when a TF run is on a
         # longitudinal (or otherwise non-recommended) preset. Hidden otherwise.
@@ -431,6 +441,11 @@ class DetectorLayoutDialog(QDialog):
         self._preset_combo.clear()
         for name in self._instrument.presets:
             self._preset_combo.addItem(name)
+        # A generic layout has none: groups are built by clicking detectors.
+        has_presets = bool(self._instrument.presets)
+        self._preset_combo.setPlaceholderText("No presets for this instrument")
+        self._preset_combo.setEnabled(has_presets)
+        self._apply_preset_btn.setEnabled(has_presets)
 
     # ------------------------------------------------------------------
     # Schematic synchronisation
@@ -575,17 +590,9 @@ class DetectorLayoutDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _on_instrument_index_changed(self, _index: int) -> None:
-        """Combo slot: resolve the selected item's registry key, then load it."""
-        registry_key = self._instrument_combo.currentData()
-        if registry_key:
-            self._on_instrument_changed(str(registry_key))
-
-    def _on_instrument_changed(self, name: str) -> None:
-        """Load a different instrument layout and rebuild the schematic."""
-        try:
-            new_layout = get_instrument_layout(name)
-        except KeyError:
-            return
+        """Load the selected instrument's layout and rebuild the schematic."""
+        key = str(self._instrument_combo.currentData())
+        new_layout = self._generic if key == GENERIC_INSTRUMENT else get_instrument_layout(key)
         self._instrument = new_layout
         self._groups = {}
         self._group_names = {}
@@ -673,6 +680,14 @@ class DetectorLayoutDialog(QDialog):
 
     def _on_ok(self) -> None:
         """Flush name-edit widgets into ``self._group_names`` then accept."""
+        if sum(1 for ids in self._groups.values() if ids) < 2:
+            QMessageBox.warning(
+                self,
+                "Detector Layout",
+                "Assign detectors to at least two groups: the asymmetry needs a "
+                "forward and a backward group.",
+            )
+            return
         for gid, edit in self._group_name_edits.items():
             text = edit.text().strip()
             if text:

@@ -5,7 +5,8 @@ for HiFi, EMU, MuSR, PSI FLAME, PSI HAL-9500, and PSI GPS (in three variants —
 6-detector PSI-BIN layout ``GPS``, the 11-detector ROOT sub-detector layout
 ``GPS-RD``, and the 15-detector ROOT layout ``GPS-RD15`` that exports the combined
 counters *and* the sub-detectors, all shown to the user as "GPS"), along with
-standard grouping presets.  The data here is used by the interactive detector
+standard grouping presets, plus a preset-free generic ring
+(:func:`generic_layout`) for instruments it does not know.  The data here is used by the interactive detector
 layout editor
 (:class:`~asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog`)
 but has no GUI dependencies and can be used independently.
@@ -40,12 +41,14 @@ __all__ = [
     "ReferenceArrow",
     "InstrumentLayout",
     "INSTRUMENT_NAMES",
+    "GENERIC_INSTRUMENT",
     "CANONICAL_VECTOR_AXES",
     "PROJECTION_TINTS",
     "TRANSVERSE_PROJECTION_TINTS",
     "derive_projection_pairs",
     "projection_memberships",
     "get_instrument_layout",
+    "generic_layout",
     "layout_detector_labels",
     "preset_grouping_for_run",
     "recommend_grouping_preset",
@@ -1630,6 +1633,39 @@ def _build_hal() -> InstrumentLayout:
         # Applying the default preset on load makes the per-group analysis
         # available immediately, without opening the grouping window.
         apply_default_preset_on_load=True,
+    )
+
+
+#: Layout name of :func:`generic_layout`. It is not a registry key: the layout
+#: depends on the run's detector count, so callers build it per run.
+GENERIC_INSTRUMENT: Final = "Generic"
+
+
+def generic_layout(n_detectors: int) -> InstrumentLayout:
+    """Return a preset-free ring of *n_detectors* equal wedges.
+
+    For instruments Asymmetry has no layout for: the drawing makes no claim
+    about geometry, only gives each detector a clickable segment. Detector 1
+    sits at the top and numbering runs clockwise.
+    """
+    segments = tuple(
+        DetectorSegment(
+            detector_id=d,
+            sector_index=d - 1,
+            ring_index=0,
+            angle_center_deg=(90.0 - (d - 1) * 360.0 / n_detectors) % 360.0,
+            angle_half_width_deg=180.0 / n_detectors,
+            r_inner=0.28,
+            r_outer=1.00,
+        )
+        for d in range(1, n_detectors + 1)
+    )
+    return InstrumentLayout(
+        name=GENERIC_INSTRUMENT,
+        n_detectors=n_detectors,
+        banks=(BankLayout(name="Detectors", segments=segments),),
+        presets={},
+        display_name=f"Generic ({n_detectors} detectors)",
     )
 
 

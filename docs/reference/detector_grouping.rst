@@ -13,6 +13,9 @@ experiment needs distinct pairs assigned to :math:`P_x`, :math:`P_y`, and
 supported instruments — ISIS HiFi, MuSR, EMU and the PSI FLAME, HAL-9500 and
 GPS spectrometers — the matching preset in the Detector Layout editor seeds
 sensible defaults that can then be refined graphically before being applied.
+Data from any other instrument is grouped by typing detector lists into the
+Grouping window's table, or by clicking a generic ring of its detectors (see
+`Instruments without a layout`_).
 
 Grouping is configured from the **Grouping** window and edited graphically
 with the **Detector Layout** editor. This page covers both, together with the
@@ -1029,10 +1032,74 @@ Detector layout editor workflow
 A detector can belong to multiple groups. This is required for transverse and
 vector-polarisation workflows.
 
-The Grouping table includes an **Include** checkbox for each group. This does
-not change the stored detector membership of the group. Instead, it controls
-whether that group participates in the **Individual Groups** plot view and in
-grouped time-domain fitting.
+Editing groups in the Grouping table
+-------------------------------------
+
+The Grouping window's table edits the same groups without opening the editor.
+Double-click a **Name** cell to rename a group, or a **Detector Indices
+(1-based)** cell to retype its detectors. A detector list takes ids and
+ranges separated by commas or spaces, such as ``1-16, 33``. A range may run
+either way, and repeated ids count once. Once accepted, the cell shows the
+list in full, ``1, 2, 3, …``.
+
+A list that cannot be a group leaves the group as it was. The cell turns red,
+and its tooltip gives the reason:
+
+* "A group needs at least one detector" — the cell was cleared.
+* "This run has 16 detectors, so 17-20 does not exist" — an id beyond the
+  run's detector count.
+* "Cannot read 'x' as a detector id or range" — text that is not an id or a
+  range.
+
+Correct the cell and the edit is taken. Any accepted edit that moves the groups
+away from a preset turns the **Preset** dropdown to **Custom**; choose the
+preset again to restore it. Groups are added and removed in the Detector Layout
+editor.
+
+The **Include** checkbox for each group does not change the stored detector
+membership of the group. Instead, it controls whether that group participates
+in the **Individual Groups** plot view and in grouped time-domain fitting.
+
+Instruments without a layout
+-----------------------------
+
+Asymmetry has drawings and presets for HiFi, MuSR, EMU, FLAME, HAL-9500 and
+GPS. A run from any other instrument gets a generic layout instead: one ring
+of the run's own detectors, numbered clockwise from the top, with no presets.
+The ring makes no claim about where the detectors sit. It only gives each
+detector a segment to click.
+
+For such a run the **Preset** dropdown reads **No presets for this
+instrument** and is disabled. The groups come from the file, and you edit them
+in the table or by clicking the ring. **Detector Layout…** opens on
+**Generic (N detectors)**, where *N* is the run's detector count. The
+**Preset grouping** list and **Apply Grouping** are disabled there.
+
+**Generic (N detectors)** is also listed under **Instrument** for every run.
+Choose it when Asymmetry has mistaken an unknown instrument for a known one,
+for example a 64-detector run detected as HiFi from its detector count alone.
+It changes only the drawing: the run keeps its own instrument, so it stays
+with its grouping profile. The choice lasts while the Grouping window stays on
+that instrument.
+
+The editor's **OK** needs at least two groups with detectors, because the
+asymmetry needs a forward and a backward group. Switching instrument in the
+editor clears the groups, so assign detectors before pressing **OK**.
+
+A project saved by an earlier version opens with its groups unchanged. Earlier
+versions drew HiFi for an unknown instrument and offered HiFi's presets. A
+preset name stored that way reads **Custom**, because it is no preset of the
+generic layout.
+
+.. figure:: /_generated/screenshots/generic_layout.png
+   :width: 100%
+   :alt: Detector Layout editor on a generic ring of sixteen detectors, with
+      the preset controls disabled.
+
+   The Detector Layout editor on ``Generic (16 detectors)``: a ring of the
+   run's sixteen detectors, grouped here into a forward half and a backward
+   half. The preset controls are disabled because a generic layout has no
+   presets.
 
 In-app arrangement schematics
 -------------------------------

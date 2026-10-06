@@ -21,6 +21,7 @@ from asymmetry.core.transform import (
     group_detectors_outside_run,
     group_forward_backward,
     parse_detector_list,
+    parse_group_detectors,
 )
 
 
@@ -52,6 +53,28 @@ def test_parse_detector_list_wimda_forms():
 def test_parse_detector_list_rejects_garbage(bad):
     with pytest.raises(ValueError):
         parse_detector_list(bad)
+
+
+def test_parse_detector_list_names_the_unreadable_fragment():
+    with pytest.raises(ValueError, match="Cannot read 'abc' as a detector id or range"):
+        parse_detector_list("1,abc")
+
+
+def test_parse_group_detectors_accepts_ids_on_the_run():
+    assert parse_group_detectors("1-4, 16", 16) == [1, 2, 3, 4, 16]
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("", "A group needs at least one detector"),
+        (" , ", "A group needs at least one detector"),
+        ("1-20", "This run has 16 detectors, so 17-20 does not exist"),
+    ],
+)
+def test_parse_group_detectors_rejects_empty_and_absent_ids(text, message):
+    with pytest.raises(ValueError, match=message):
+        parse_group_detectors(text, 16)
 
 
 def test_format_detector_list_round_trips():

@@ -7,6 +7,7 @@ import math
 import pytest
 
 from asymmetry.core.instrument import (
+    GENERIC_INSTRUMENT,
     INSTRUMENT_NAMES,
     PROJECTION_TINTS,
     AsymmetryProjection,
@@ -16,6 +17,7 @@ from asymmetry.core.instrument import (
     PresetLayoutMismatchError,
     derive_projection_pairs,
     detect_instrument,
+    generic_layout,
     get_instrument_layout,
     instrument_choices_for,
     instrument_display_name,
@@ -2002,3 +2004,25 @@ class TestProjectionMemberships:
             gid: [(d, 0) for d in members] for gid, members in longitudinal["groups"].items()
         }
         assert projection_memberships([longitudinal, vector])["P_z"] == [0, 1]
+
+
+class TestGenericLayout:
+    def test_one_clickable_segment_per_detector_and_no_presets(self):
+        layout = generic_layout(16)
+        assert layout.name == GENERIC_INSTRUMENT
+        assert layout.display == "Generic (16 detectors)"
+        assert layout.n_detectors == 16
+        assert [seg.detector_id for seg in layout.active_segments] == list(range(1, 17))
+        assert layout.presets == {}
+
+    def test_equal_wedges_from_the_top_clockwise(self):
+        segments = generic_layout(8).banks[0].segments
+        assert segments[0].angle_center_deg == pytest.approx(90.0)
+        assert segments[1].angle_center_deg == pytest.approx(45.0)
+        assert segments[2].angle_center_deg == pytest.approx(0.0)
+        assert {seg.angle_half_width_deg for seg in segments} == {22.5}
+
+    def test_is_not_a_registry_name(self):
+        assert GENERIC_INSTRUMENT not in INSTRUMENT_NAMES
+        with pytest.raises(KeyError):
+            get_instrument_layout(GENERIC_INSTRUMENT)
