@@ -2952,6 +2952,14 @@ def test_generic_choice_in_the_layout_editor_sticks(
     assert dialog._current_instrument_layout().name == "Generic"
     assert dialog._preset_combo.count() == 0
     assert dialog._preset_combo.isEnabled() is False
+    # Generic is only the drawing: Apply writes the payload's instrument into
+    # the run, where it is the profile fingerprint, so it stays the run's own.
+    assert dialog._current_grouping_payload()["instrument"] == "GPS"
+
+    # Picking a real instrument again replaces the generic drawing.
+    result["instrument"] = "GPS"
+    dialog._on_detector_layout()
+    assert dialog._current_instrument_layout().name == "GPS"
 
 
 def test_preset_dropdown_follows_a_forward_backward_swap(qapp: QApplication) -> None:

@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instrument with no registered layout was shown HiFi's 64-detector drawing and
   offered HiFi's presets, which reference detectors the run does not have.
   Groups saved that way in earlier projects are kept as they are.
+- **Switching instrument in the Grouping window switches its drawing and
+  presets.** With runs from two instruments loaded, the window kept showing the
+  first instrument's Detector Layout drawing and Preset list after switching to
+  the other.
+- **The Detector Layout editor's OK needs at least two groups with detectors.**
+  Switching instrument in the editor clears the groups, and pressing **OK**
+  straight away left the Grouping window with no forward or backward group, and
+  could crash it.
 
 ### Changed
 

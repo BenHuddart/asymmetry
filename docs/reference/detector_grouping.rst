@@ -1078,7 +1078,13 @@ in the table or by clicking the ring. **Detector Layout…** opens on
 **Generic (N detectors)** is also listed under **Instrument** for every run.
 Choose it when Asymmetry has mistaken an unknown instrument for a known one,
 for example a 64-detector run detected as HiFi from its detector count alone.
-The choice lasts until the Grouping window closes.
+It changes only the drawing: the run keeps its own instrument, so it stays
+with its grouping profile. The choice lasts while the Grouping window stays on
+that instrument.
+
+The editor's **OK** needs at least two groups with detectors, because the
+asymmetry needs a forward and a backward group. Switching instrument in the
+editor clears the groups, so assign detectors before pressing **OK**.
 
 A project saved by an earlier version opens with its groups unchanged. Earlier
 versions drew HiFi for an unknown instrument and offered HiFi's presets. A

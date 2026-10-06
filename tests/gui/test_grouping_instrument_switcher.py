@@ -133,6 +133,19 @@ def test_switch_swaps_draft_and_presets(qapp: QApplication) -> None:
     assert dialog._preset_combo.count() > 0
 
 
+def test_switch_moves_the_layout_to_the_new_instrument(qapp: QApplication) -> None:
+    """The drawing and presets follow the instrument switched to, not the first one."""
+    dialog = GroupingDialog(
+        [_dataset(1, instrument="HiFi", n_hist=64), _dataset(2, instrument="EMU", n_hist=96)]
+    )
+    assert dialog._current_instrument_layout().name == "HiFi"
+    emu_index = dialog._instrument_combo.findText("EMU — 1 run")
+
+    dialog._on_instrument_combo_activated(emu_index)
+
+    assert dialog._current_instrument_layout().name == "EMU"
+
+
 def test_dirty_draft_prompts_before_switch(qapp: QApplication, monkeypatch) -> None:
     """A dirty draft prompts to discard before an instrument switch; cancel aborts."""
     dialog = GroupingDialog(

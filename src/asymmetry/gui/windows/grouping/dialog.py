@@ -620,6 +620,9 @@ class GroupingDialog(QDialog):
         self._detector_layout_instrument_name: str | None = (
             str(grouping.get("instrument")).strip() if grouping.get("instrument") else None
         )
+        # Generic is a drawing, not an instrument: picking it in the layout
+        # editor must never rewrite the run's instrument (its profile fingerprint).
+        self._layout_is_generic = False
         forward_gid, backward_gid = self._analysis_pair_for_reference(
             int(grouping.get("forward_group", 1)),
             int(grouping.get("backward_group", 2)),
@@ -1600,6 +1603,9 @@ class GroupingDialog(QDialog):
         if not datasets or datasets[0].run is None:
             return
         self._fingerprint = fingerprint
+        # The layout follows the new instrument, not the outgoing one's choice.
+        self._detector_layout_instrument_name = fingerprint.instrument or None
+        self._layout_is_generic = False
         self._reference_dataset = datasets[0]
         self._run = datasets[0].run
         self._current_run = int(datasets[0].run_number)
@@ -4856,7 +4862,7 @@ class GroupingDialog(QDialog):
         3. A :func:`generic_layout` ring of the run's detectors when the
            instrument is unknown (or the user picked it in the layout editor).
         """
-        if self._detector_layout_instrument_name == GENERIC_INSTRUMENT:
+        if self._layout_is_generic:
             return generic_layout(n_histo)
         instrument = None
         instrument_name = self._detector_layout_instrument_name
@@ -4973,7 +4979,11 @@ class GroupingDialog(QDialog):
         if preset_name:
             self._grouping_preset_name = str(preset_name)
         instrument_name = result.get("instrument")
-        self._detector_layout_instrument_name = str(instrument_name) if instrument_name else None
+        self._layout_is_generic = instrument_name == GENERIC_INSTRUMENT
+        if not self._layout_is_generic:
+            self._detector_layout_instrument_name = (
+                str(instrument_name) if instrument_name else None
+            )
 
         # Update forward/backward combos
         new_fwd = result.get("forward_group", forward_gid)

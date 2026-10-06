@@ -130,6 +130,29 @@ class TestConstruction:
         assert dlg._apply_preset_btn.isEnabled() is False
         assert dlg.get_result()["instrument"] == "Generic"
 
+    def test_ok_needs_two_groups_with_detectors(self, qapp, monkeypatch):
+        """Switching instrument clears the groups; OK must not hand back none."""
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            "asymmetry.gui.windows.detector_layout_dialog.QMessageBox.warning",
+            lambda _parent, _title, text: warnings.append(text),
+        )
+        dlg = DetectorLayoutDialog(get_instrument_layout("HiFi"), groups={}, n_histograms=16)
+        dlg._instrument_combo.setCurrentIndex(dlg._instrument_combo.findData("Generic"))
+        dlg._groups[1] = {1, 2}
+
+        dlg._on_ok()
+
+        assert dlg.result() != DetectorLayoutDialog.DialogCode.Accepted
+        assert warnings == [
+            "Assign detectors to at least two groups: the asymmetry needs a "
+            "forward and a backward group."
+        ]
+
+        dlg._groups[2] = {3}
+        dlg._on_ok()
+        assert dlg.result() == DetectorLayoutDialog.DialogCode.Accepted
+
     def test_generic_layout_opens_on_its_own_entry(self, qapp):
         dlg = DetectorLayoutDialog(generic_layout(12), groups={1: [1, 2]})
         assert dlg._instrument_combo.currentText() == "Generic (12 detectors)"

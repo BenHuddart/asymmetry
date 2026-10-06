@@ -680,6 +680,14 @@ class DetectorLayoutDialog(QDialog):
 
     def _on_ok(self) -> None:
         """Flush name-edit widgets into ``self._group_names`` then accept."""
+        if sum(1 for ids in self._groups.values() if ids) < 2:
+            QMessageBox.warning(
+                self,
+                "Detector Layout",
+                "Assign detectors to at least two groups: the asymmetry needs a "
+                "forward and a backward group.",
+            )
+            return
         for gid, edit in self._group_name_edits.items():
             text = edit.text().strip()
             if text:
