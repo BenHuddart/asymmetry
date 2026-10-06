@@ -34,6 +34,7 @@ from asymmetry.core.data.dataset import MuonDataset
 
 __all__ = [
     "FRAME_FIELDS",
+    "MIN_CONTRAST",
     "ROTATED_LABELS",
     "RUN_FIELDS",
     "SETUP_FIELDS",
@@ -197,11 +198,10 @@ class RunEstimate:
 class FrameEstimate:
     """Proposed setup fields from the runs together, and each run's own fields.
 
-    ``frequency_mhz`` is a check on the typed ν_RF: the power centroid of the
-    band around it, which sits between a nutation's two sidebands at ν ± ν₁.
+    ν_RF is the user's and is not estimated: under RF the transverse spectrum is
+    a sideband pair at ν ± ν₁, which can lie far from ν when B₁ is large.
     """
 
-    frequency_mhz: float
     sense: int
     rf_phase_deg: float
     contrast: float
@@ -210,11 +210,10 @@ class FrameEstimate:
 
 #: Half-width of the band about ±ν, as a fraction of ν, that holds the signal.
 _BAND = 0.25
+_MIN_BINS = 8
 
-
-def _weighted_mean(values: NDArray[np.float64], errors: NDArray[np.float64]) -> float:
-    weights = 1.0 / np.square(errors)
-    return float(np.sum(weights * values) / np.sum(weights))
+#: Below this contrast the data carry too little transverse signal for an estimate.
+MIN_CONTRAST = 3.0
 
 
 def estimate_frame(
@@ -225,7 +224,10 @@ def estimate_frame(
 ) -> FrameEstimate:
     """Estimate a frame from runs' (key, P_x, P_y) curves at the typed ν_RF.
 
-    - Baselines are inverse-variance means: whole turns average to them.
+    Every sum is weighted by inverse variance, so the noisy late bins of a long
+    window do not drown the signal.
+
+    - Baselines are weighted means: whole turns average to them.
     - The gain is the ratio of the RMS transverse swings, because the lab-frame
       transverse polarisation is circular.
     - The sense is the side, ±ν, whose band holds more power; the contrast is the
@@ -236,14 +238,21 @@ def estimate_frame(
     """
     if not pairs:
         raise ValueError("Auto-detect needs at least one run with P_x and P_y.")
+    short = [key for key, px, _py in pairs if px.time.size < _MIN_BINS]
+    if short:
+        raise ValueError(
+            f"Auto-detect needs {_MIN_BINS} bins per run in the window; runs {short} have fewer."
+        )
     nu = float(frequency_mhz)
     baselined = []
     for key, px, py in pairs:
-        bx = _weighted_mean(px.asymmetry, px.error)
-        by = _weighted_mean(py.asymmetry, py.error)
+        wx, wy = 1.0 / np.square(px.error), 1.0 / np.square(py.error)
+        bx = float(np.sum(wx * px.asymmetry) / np.sum(wx))
+        by = float(np.sum(wy * py.asymmetry) / np.sum(wy))
         x, y = px.asymmetry - bx, py.asymmetry - by
-        gain = float(np.sqrt(np.mean(np.square(y)) / np.mean(np.square(x))))
-        baselined.append((key, px.time, x + 1j * y / gain, bx, by, gain))
+        gain = float(np.sqrt((np.sum(wy * y**2) / np.sum(wy)) / (np.sum(wx * x**2) / np.sum(wx))))
+        weight = 2.0 / (np.square(px.error) + np.square(py.error / gain))
+        baselined.append((key, px.time, weight * (x + 1j * y / gain), bx, by, gain))
 
     span = max(t[-1] - t[0] for _, t, *_ in baselined)
     band = nu + _BAND * nu * np.linspace(-1.0, 1.0, max(9, int(16.0 * _BAND * nu * span)))
@@ -260,9 +269,6 @@ def estimate_frame(
         runs.append((key, bx, by, gain, sums))
     side = 0 if totals[0] >= totals[1] else 1
     sense = 1 if side == 0 else -1
-    floor = np.median(spectrum[1 - side])
-    excess = np.clip(spectrum[side] - floor, 0.0, None)
-    centroid = float(np.sum(band * excess) / np.sum(excess)) if excess.any() else nu
 
     second_moment = 0j
     early = 0j
@@ -275,7 +281,6 @@ def estimate_frame(
     direction = math.degrees(axis_angle) + (0.0 if along >= 0.0 else 180.0)
     phase = _NUTATION_TARGET_DEG[str(b1_axis)] - direction
     return FrameEstimate(
-        frequency_mhz=centroid,
         sense=sense,
         rf_phase_deg=(phase + 180.0) % 360.0 - 180.0,
         contrast=float(np.sqrt(totals[side] / totals[1 - side])),

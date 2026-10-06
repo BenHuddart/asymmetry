@@ -164,7 +164,6 @@ class TestPlotText:
 
 def _estimate(contrast: float = 12.0, run_contrast: tuple[float, float] = (8.0, 2.0)):
     return FrameEstimate(
-        frequency_mhz=1.5006,
         sense=-1,
         rf_phase_deg=47.0,
         contrast=contrast,
@@ -183,38 +182,35 @@ class TestReview:
     def test_pre_ticks_defaults_and_estimates_never_typed_values(self, qapp):
         dialog = FrameReviewDialog(_estimate(), {7: ESTIMATED, 8: TYPED})
         assert _ticks(dialog) == {
-            "ν_RF": (False, True),  # typed by the user
-            "Sense": (True, True),
-            "φ_RF": (False, True),  # run 8 typed it
+            "Sense, φ_RF": (False, True),  # run 8 typed φ_RF; φ_RF needs its sense
             "Run 7": (True, True),
             "Run 8": (False, False),  # contrast 2 < 3
         }
-        assert dialog._apply_btn.text() == "Apply 2 changes"
+        assert dialog._apply_btn.text() == "Apply 1 change"
         assert FOOTER_NOTE.startswith("Ticked rows are written as estimates.")
 
     def test_weak_shared_contrast_disables_every_setup_row(self, qapp):
         dialog = FrameReviewDialog(_estimate(contrast=2.5), {7: TYPED_NU, 8: TYPED_NU})
         ticks = _ticks(dialog)
-        assert ticks["Sense"] == (False, False) and ticks["φ_RF"] == (False, False)
+        assert ticks["Sense, φ_RF"] == (False, False)
         assert ticks["Run 7"] == (True, True)
 
     def test_apply_reports_only_ticked_values(self, qapp):
         dialog = FrameReviewDialog(_estimate(), {7: TYPED_NU, 8: TYPED_NU})
         applied: list[tuple[dict, str]] = []
         dialog.applied.connect(lambda changes, status: applied.append((changes, status)))
-        sense = next(tick for tick, row in dialog._ticks if row.title == "Sense")
-        sense.setChecked(False)
-        assert dialog._apply_btn.text() == "Apply 2 changes"
+        run_7 = next(tick for tick, row in dialog._ticks if row.title == "Run 7")
+        run_7.setChecked(False)
+        assert dialog._apply_btn.text() == "Apply 1 change"
         dialog._apply_btn.click()
         changes, status = applied[0]
         assert changes == {
-            7: {"rf_phase_deg": 47.0, "baseline_x": 0.31, "baseline_y": -0.18, "gain": 0.93},
-            8: {"rf_phase_deg": 47.0},
+            7: {"sense": -1, "rf_phase_deg": 47.0},
+            8: {"sense": -1, "rf_phase_deg": 47.0},
         }
-        assert status == "✓ Applied 2 estimates · contrast 12"
+        assert status == "✓ Applied 1 estimate · contrast 12"
 
-    def test_frequency_row_is_a_check_on_the_typed_value(self, qapp):
+    def test_the_header_names_the_users_nu_and_axis(self, qapp):
         dialog = FrameReviewDialog(_estimate(), {7: TYPED_NU})
         labels = [label.text() for label in dialog.findChildren(QLabel)]
-        assert "1.5 MHz → 1.5006 MHz" in labels
-        assert "typed · agrees within 0.04 %" in labels
+        assert "at ν_RF = 1.5 MHz, B₁ ∥ x · from the runs together" in labels

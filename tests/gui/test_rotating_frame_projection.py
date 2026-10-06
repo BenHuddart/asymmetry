@@ -231,7 +231,7 @@ def test_auto_detect_proposes_and_apply_writes_estimates(mainwindow, qapp):
     wait_for(lambda: mainwindow.findChildren(FrameReviewDialog), qapp, timeout_s=20.0)
     dialog = mainwindow.findChild(FrameReviewDialog)
     ticks = {tick.text(): tick.isChecked() for tick, _row in dialog._ticks}
-    assert ticks == {"ν_RF": False, "Sense": True, "φ_RF": True, "Run 909": False}
+    assert ticks == {"Sense, φ_RF": True, "Run 909": False}
     assert mainwindow._project_model.rotating_frames[909].rf_phase_deg == 0.0
 
     dialog._apply_btn.click()
@@ -241,7 +241,7 @@ def test_auto_detect_proposes_and_apply_writes_estimates(mainwindow, qapp):
     assert frame.sense == -1
     assert frame.provenance["rf_phase_deg"] is Provenance.ESTIMATED
     assert frame.provenance["gain"] is Provenance.TYPED
-    assert panel._frame_status_label.text().startswith("✓ Applied 2 estimates · contrast ")
+    assert panel._frame_status_label.text().startswith("✓ Applied 1 estimate · contrast ")
 
 
 def test_the_filtered_rrf_bar_stays_out_of_vector_mode(mainwindow):
@@ -253,6 +253,20 @@ def test_the_filtered_rrf_bar_stays_out_of_vector_mode(mainwindow):
     mainwindow._data_browser.add_dataset(_single_pair(911))
     mainwindow._data_browser.select_runs([911])
     assert not panel._rrf_controls.isHidden() and panel.frame_bar.isHidden()
+
+
+def test_a_transverse_grouping_without_the_pair_keeps_the_filtered_bar(mainwindow):
+    # HiFi-style transverse-vector projections are not P_x/P_y: no exact frame is
+    # offered, so the filtered rotating frame stays available.
+    dataset = _vector(913)
+    dataset.run.grouping["projections"] = [
+        {"label": "Left-Right", "forward_group": 5, "backward_group": 6},
+        {"label": "Top-Bottom", "forward_group": 3, "backward_group": 4},
+    ]
+    panel = _show(mainwindow, dataset)
+    panel.set_rrf_feature_enabled(True)
+    assert not panel.offers_rotating_frame()
+    assert not panel._rrf_controls.isHidden()
 
 
 def test_lab_fit_overlays_stay_off_rotated_subplots(mainwindow):

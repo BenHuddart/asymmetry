@@ -3,8 +3,9 @@
 - Rows still on defaults or earlier estimates start ticked; a row holding a
   typed value never does.
 - An estimate with contrast below :data:`MIN_CONTRAST` cannot be applied.
-- Setup rows (ν_RF, sense, φ_RF) come from the runs together and write to every
-  run; run rows (b_x, b_y, a_y/a_x) come from each run alone.
+- The setup row (sense with φ_RF, which is estimated for that sense) comes from
+  the runs together and writes to every run; run rows (b_x, b_y, a_y/a_x) come
+  from each run alone. ν_RF and the B₁ axis are the user's: the header names them.
 - Nothing changes until Apply, which reports the ticked values through
   :attr:`FrameReviewDialog.applied` for the host to write as estimates.
 """
@@ -26,23 +27,26 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.transform.rotating_frame import FrameEstimate, Provenance, RotatingFrame
+from asymmetry.core.transform.rotating_frame import (
+    MIN_CONTRAST,
+    FrameEstimate,
+    Provenance,
+    RotatingFrame,
+)
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import build_primary_button_qss, make_section_header
 
-__all__ = ["MIN_CONTRAST", "FrameReviewDialog"]
-
-#: Contrast below which an estimate is too weak to apply.
-MIN_CONTRAST = 3.0
+__all__ = ["FrameReviewDialog"]
 
 FOOTER_NOTE = (
     "Ticked rows are written as estimates. Rows on defaults or earlier estimates start "
-    "ticked; a row holding a typed value never does. An estimate with contrast below 3 "
-    "cannot be applied."
+    "ticked; a row holding a typed value never does. An estimate with contrast below "
+    f"{MIN_CONTRAST:g} cannot be applied."
 )
 
 _FORMATS: dict[str, Callable[[object], str]] = {
     "frequency_mhz": lambda v: f"{v:.6g} MHz",
+    "b1_axis": lambda v: f"{v}",
     "sense": lambda v: "+1" if v > 0 else "−1",
     "rf_phase_deg": lambda v: f"{v:.1f}°",
     "baseline_x": lambda v: f"{v:.2f}",
@@ -83,17 +87,13 @@ class FrameReviewDialog(QDialog):
         self._frames = dict(frames)
         self._estimate = estimate
         runs = tuple(self._frames)
-        setup = [
-            _Row(
-                "ν_RF",
-                {"frequency_mhz": estimate.frequency_mhz},
-                runs,
-                estimate.contrast,
-                self._frequency_note(estimate.frequency_mhz),
-            ),
-            _Row("Sense", {"sense": estimate.sense}, runs, estimate.contrast),
-            _Row("φ_RF", {"rf_phase_deg": estimate.rf_phase_deg}, runs, estimate.contrast),
-        ]
+        setup = _Row(
+            "Sense, φ_RF",
+            {"sense": estimate.sense, "rf_phase_deg": estimate.rf_phase_deg},
+            runs,
+            estimate.contrast,
+            f"contrast {_contrast(estimate.contrast)}",
+        )
         per_run = [
             _Row(
                 f"Run {run.run_key}",
@@ -115,23 +115,23 @@ class FrameReviewDialog(QDialog):
         grid.setVerticalSpacing(6)
         grid.addWidget(make_section_header("Setup"), 0, 0)
         grid.addWidget(
-            self._muted(f"from the runs together · contrast {_contrast(estimate.contrast)}"),
+            self._muted(
+                f"at ν_RF = {self._current(setup, 'frequency_mhz')}, "
+                f"B₁ ∥ {self._current(setup, 'b1_axis')} · from the runs together"
+            ),
             0,
             1,
             1,
             4,
         )
-        line = 1
-        for row in setup:
-            self._add_row(grid, line, row, span=3)
-            line += 1
-        grid.addWidget(make_section_header("Runs"), line, 0)
+        for column, heading in enumerate(("Sense", "φ_RF"), start=1):
+            grid.addWidget(self._muted(heading), 1, column)
+        self._add_row(grid, 2, setup)
+        grid.addWidget(make_section_header("Runs"), 3, 0)
         for column, heading in enumerate(("b_x (%)", "b_y (%)", "a_y/a_x"), start=1):
-            grid.addWidget(self._muted(heading), line, column)
-        line += 1
-        for row in per_run:
-            self._add_row(grid, line, row, span=1)
-            line += 1
+            grid.addWidget(self._muted(heading), 3, column)
+        for line, row in enumerate(per_run, start=4):
+            self._add_row(grid, line, row)
         layout.addLayout(grid)
 
         footer = self._muted(FOOTER_NOTE)
@@ -161,16 +161,7 @@ class FrameReviewDialog(QDialog):
         values = {getattr(self._frames[run], name) for run in row.runs}
         return _FORMATS[name](values.pop()) if len(values) == 1 else "mixed"
 
-    def _frequency_note(self, estimate_mhz: float) -> str:
-        """ν_RF's estimate is a check on the typed value, so its note is the agreement."""
-        values = {frame.frequency_mhz for frame in self._frames.values()}
-        if len(values) != 1:
-            return ""
-        current = values.pop()
-        percent = abs(estimate_mhz - current) / current * 100.0
-        return f"agrees within {percent:.2g} %" if percent < 1.0 else f"differs by {percent:.2g} %"
-
-    def _add_row(self, grid: QGridLayout, line: int, row: _Row, *, span: int) -> None:
+    def _add_row(self, grid: QGridLayout, line: int, row: _Row) -> None:
         tick = QCheckBox(row.title)
         typed = any(
             self._frames[run].provenance[name] is Provenance.TYPED
@@ -185,9 +176,9 @@ class FrameReviewDialog(QDialog):
         for column, (name, value) in enumerate(row.values.items(), start=1):
             cell = QLabel(f"{self._current(row, name)} → {_FORMATS[name](value)}")
             cell.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            grid.addWidget(cell, line, column, 1, span)
+            grid.addWidget(cell, line, column)
         if weak:
-            note = QLabel(f"contrast {_contrast(row.contrast)} < 3 — cannot apply")
+            note = QLabel(f"contrast {_contrast(row.contrast)} < {MIN_CONTRAST:g} — cannot apply")
             note.setStyleSheet(f"color: {tokens.WARN};")
         else:
             note = self._muted(("typed · " if typed else "") + row.note)

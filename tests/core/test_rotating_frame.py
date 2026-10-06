@@ -157,9 +157,3 @@ def test_auto_detect_reports_low_contrast_without_a_transverse_signal():
         [(900, reduced["P_x"], reduced["P_y"])], frequency_mhz=NU, b1_axis=B1Axis.X
     )
     assert estimate.contrast < 3.0
-
-
-def test_the_frequency_check_finds_the_true_nu_between_the_nutation_sidebands():
-    pairs = [(901, *_pair(B1Axis.X, -1, seed=901))]
-    typed_off = estimate_frame(pairs, frequency_mhz=1.52, b1_axis=B1Axis.X)
-    assert typed_off.frequency_mhz == pytest.approx(NU, rel=3e-3)

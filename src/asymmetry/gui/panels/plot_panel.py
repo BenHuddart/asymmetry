@@ -4186,9 +4186,9 @@ class PlotPanel(QWidget):
             self._sync_y_controls_with_visible_axis()
         self._update_y_limit_controls_for_axis(new_axis)
 
-    def shows_projections(self) -> bool:
-        """True while the chip bar offers several projections of the displayed runs."""
-        return bool(self._projection_specs)
+    def offers_rotating_frame(self) -> bool:
+        """True while the displayed projections include the transverse pair P_x, P_y."""
+        return self._projection_bar.frame_available()
 
     def frame_rotating(self) -> bool:
         """True while the projection chips show the rotating frame."""
