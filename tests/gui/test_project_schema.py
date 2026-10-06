@@ -200,6 +200,41 @@ class TestSchemaMigration:
         assert grouping["alpha_y"] == pytest.approx(1.7)
         assert grouping["alpha_z"] == pytest.approx(1.7)
 
+    def test_v3_legacy_alpha_px_keys_migrate_to_alpha_xyz(self):
+        """Legacy ``alpha_px``/``py``/``pz`` are read only here; runtime reads ``alpha_x``…"""
+        state = {
+            "schema_version": 3,
+            "datasets": [
+                {
+                    "run_number": 5001,
+                    "source_file": "/tmp/run_5001.nxs",
+                    "metadata_overrides": {"field": 100.0},
+                    "grouping_overrides": {
+                        "groups": {1: [1], 2: [2], 3: [1], 4: [2], 5: [1], 6: [2]},
+                        "group_names": {
+                            1: "Pz Forward",
+                            2: "Pz Backward",
+                            3: "Py Top",
+                            4: "Py Bottom",
+                            5: "Px Left",
+                            6: "Px Right",
+                        },
+                        "forward_group": 1,
+                        "backward_group": 2,
+                        "alpha": 1.7,
+                        "alpha_px": 1.1,
+                        "alpha_py": 1.2,
+                        "alpha_pz": 1.3,
+                    },
+                }
+            ],
+        }
+
+        grouping = migrate_to_current(state)["datasets"][0]["grouping_overrides"]
+        assert grouping["alpha_x"] == pytest.approx(1.1)
+        assert grouping["alpha_y"] == pytest.approx(1.2)
+        assert grouping["alpha_z"] == pytest.approx(1.3)
+
     def test_v4_migrates_to_v5_with_frequency_fit_state(self):
         state = {"schema_version": 4, "datasets": []}
         result = migrate_to_current(state)
