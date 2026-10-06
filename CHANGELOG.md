@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Groups can be typed into the Grouping window's table.** Double-click a
+  **Name** or **Detector Indices (1-based)** cell to rename a group or retype
+  its detectors as ids and ranges, such as ``1-16, 33``. A list that is empty,
+  unreadable or names a detector the run does not have leaves the group as it
+  was, and the cell turns red with the reason in its tooltip. Before, these
+  cells took typing but the edit was silently dropped. See
+  `docs/reference/detector_grouping.rst` § "Editing groups in the Grouping
+  table".
+- **Runs from instruments Asymmetry does not know get a generic layout.** The
+  Detector Layout editor shows a ring of the run's own detectors, listed as
+  **Generic (N detectors)**, and the **Preset** dropdown reads **No presets for
+  this instrument**. **Generic (N detectors)** can also be chosen for any run
+  whose instrument was misdetected. See § "Instruments without a layout".
+
+### Fixed
+
+- **An unknown instrument is no longer drawn as HiFi.** A run from an
+  instrument with no registered layout was shown HiFi's 64-detector drawing and
+  offered HiFi's presets, which reference detectors the run does not have.
+  Groups saved that way in earlier projects are kept as they are.
+
 ### Changed
 
 - **The Grouping window's Preset dropdown shows the current preset.** It used

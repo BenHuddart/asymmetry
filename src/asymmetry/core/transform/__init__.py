@@ -43,6 +43,7 @@ from asymmetry.core.transform.grouping import (
     group_detectors_outside_run,
     group_forward_backward,
     parse_detector_list,
+    parse_group_detectors,
     resolve_group_indices,
 )
 from asymmetry.core.transform.integral import (
@@ -202,4 +203,5 @@ __all__ = [
     "good_frames",
     "format_detector_list",
     "parse_detector_list",
+    "parse_group_detectors",
 ]

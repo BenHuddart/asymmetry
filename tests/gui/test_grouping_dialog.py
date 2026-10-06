@@ -1895,7 +1895,7 @@ def test_detector_layout_prefers_saved_instrument(
     )
     monkeypatch.setattr(
         "asymmetry.gui.windows.grouping.dialog.get_instrument_layout",
-        lambda name: type("_Layout", (), {"name": name})(),
+        lambda name: type("_Layout", (), {"name": name, "presets": {}})(),
     )
     monkeypatch.setattr(
         "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog",
@@ -2795,6 +2795,163 @@ def test_preset_dropdown_clears_stale_preset_on_drift(qapp: QApplication) -> Non
     assert dialog._preset_combo.currentIndex() == -1
     # The drifted draft must not carry the stale preset.
     assert not dialog._current_grouping_payload().get("grouping_preset")
+
+
+def _unknown_instrument_dataset(grouping_extra: dict | None = None) -> MuonDataset:
+    """A 16-histogram run from an instrument Asymmetry has no layout for."""
+    histograms = [Histogram(counts=np.full(4, 100.0), bin_width=0.01) for _ in range(16)]
+    metadata = {"run_number": 7001, "facility": "TRIUMF", "instrument": "M20"}
+    run = Run(
+        run_number=7001,
+        histograms=histograms,
+        metadata=dict(metadata),
+        grouping={
+            "groups": {1: list(range(1, 9)), 2: list(range(9, 17))},
+            "forward_group": 1,
+            "backward_group": 2,
+            "instrument": "M20",
+            "alpha": 1.0,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+        }
+        | (grouping_extra or {}),
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata=dict(metadata),
+        run=run,
+    )
+
+
+def test_unknown_instrument_gets_a_generic_layout_without_presets(qapp: QApplication) -> None:
+    """No HiFi fallback: the run's own 16 detectors, and no presets to offer."""
+    dialog = GroupingDialog([_unknown_instrument_dataset()])
+    layout = dialog._current_instrument_layout()
+    assert layout.name == "Generic"
+    assert layout.n_detectors == 16
+    assert dialog._preset_combo.count() == 0
+    assert dialog._preset_combo.isEnabled() is False
+    assert dialog._preset_combo.placeholderText() == "No presets for this instrument"
+
+
+def test_unknown_instrument_keeps_a_stored_hifi_fallback_grouping(qapp: QApplication) -> None:
+    """A project saved under the old HiFi fallback opens with its groups intact."""
+    dataset = _unknown_instrument_dataset({"grouping_preset": "Longitudinal"})
+    dialog = GroupingDialog([dataset])
+    assert dialog._groups == {1: list(range(0, 8)), 2: list(range(8, 16))}
+    # "Longitudinal" is no preset of this run's layout, so it reads as Custom.
+    assert dialog._grouping_preset_name is None
+    assert dialog._preset_combo.currentIndex() == -1
+
+
+def test_typed_detector_list_updates_the_draft(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_unknown_instrument_dataset()])
+    dialog._group_table.item(0, 3).setText("1-4, 16")
+
+    assert dialog._groups[1] == [0, 1, 2, 3, 15]
+    assert dialog._current_grouping_payload()["groups"][1] == [1, 2, 3, 4, 16]
+    assert dialog._group_table.item(0, 3).text() == "1, 2, 3, 4, 16"
+    assert dialog._draft_dirty is True
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ("1-20", "This run has 16 detectors, so 17-20 does not exist"),
+        ("", "A group needs at least one detector"),
+        ("1, x", "Cannot read 'x' as a detector id or range"),
+    ],
+)
+def test_invalid_detector_list_leaves_the_draft_and_marks_the_cell(
+    qapp: QApplication, text: str, reason: str
+) -> None:
+    dialog = GroupingDialog([_unknown_instrument_dataset()])
+    item = dialog._group_table.item(0, 3)
+    item.setText(text)
+
+    assert dialog._groups[1] == list(range(0, 8))
+    assert item.toolTip() == reason
+    assert item.background().color().name() == tokens.ERROR_SOFT
+
+    # Correcting the cell clears the mark and takes the edit.
+    item.setText("1-3")
+    assert dialog._groups[1] == [0, 1, 2]
+    assert item.toolTip() == grouping_dialog_dialog_module._DETECTORS_CELL_TIP
+    assert item.data(Qt.ItemDataRole.BackgroundRole) is None
+
+
+def test_typed_group_name_updates_the_draft_and_the_pair_pickers(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_unknown_instrument_dataset()])
+    dialog._group_table.item(0, 2).setText("  Upstream ")
+
+    assert dialog._group_names[1] == "Upstream"
+    assert dialog._forward_combo.itemText(dialog._forward_combo.findData(1)) == "1: Upstream"
+
+    dialog._group_table.item(0, 2).setText("")
+    assert 1 not in dialog._group_names
+
+
+def test_group_id_cell_is_not_editable(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_unknown_instrument_dataset()])
+    flags = dialog._group_table.item(0, 0).flags()
+    assert not flags & Qt.ItemFlag.ItemIsEditable
+
+
+def test_typed_detector_list_drifts_a_preset_to_custom(qapp: QApplication) -> None:
+    dataset = _gps_dataset(None)
+    dialog = GroupingDialog([dataset])
+    dialog._on_preset_combo_activated(0)
+    assert dialog._preset_combo.currentText() == "Longitudinal"
+
+    dialog._group_table.item(0, 3).setText("1, 2")
+
+    assert dialog._grouping_preset_name is None
+    assert dialog._preset_combo.currentIndex() == -1
+    assert dialog._preset_combo.placeholderText() == "Custom"
+
+
+def test_generic_choice_in_the_layout_editor_sticks(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Picking Generic for a known instrument drops its presets for the session."""
+    dataset = _gps_dataset(None)
+    dialog = GroupingDialog([dataset])
+    captured: dict[str, int] = {}
+    result = {
+        "groups": {1: [1], 2: [2, 3]},
+        "group_names": {},
+        "forward_group": 1,
+        "backward_group": 2,
+        "instrument": "Generic",
+        "grouping_preset": None,
+        "excluded_detectors": [],
+        "projections": [],
+    }
+
+    class _FakeDialog:
+        DialogCode = type("DialogCode", (), {"Accepted": 1})
+
+        def __init__(self, *args, n_histograms, **kwargs):
+            captured["n_histograms"] = n_histograms
+
+        def exec(self):
+            return 1
+
+        def get_result(self):
+            return result
+
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog", _FakeDialog
+    )
+    dialog._on_detector_layout()
+
+    assert captured["n_histograms"] == 6
+    assert dialog._current_instrument_layout().name == "Generic"
+    assert dialog._preset_combo.count() == 0
+    assert dialog._preset_combo.isEnabled() is False
 
 
 def test_preset_dropdown_follows_a_forward_backward_swap(qapp: QApplication) -> None:

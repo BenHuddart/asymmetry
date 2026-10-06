@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.instrument import (
     INSTRUMENT_NAMES,
+    generic_layout,
     get_instrument_layout,
     instrument_choices_for,
     instrument_display_name,
@@ -115,6 +116,24 @@ class TestConstruction:
         for display, _key in instrument_choices_for(None):
             assert display in combo_texts
         assert combo_texts.count("GPS") == 1
+
+    def test_instrument_combo_offers_generic_for_the_run(self, qapp):
+        dlg = DetectorLayoutDialog(get_instrument_layout("HiFi"), groups={}, n_histograms=16)
+        index = dlg._instrument_combo.findData("Generic")
+        assert dlg._instrument_combo.itemText(index) == "Generic (16 detectors)"
+
+        dlg._instrument_combo.setCurrentIndex(index)
+
+        assert dlg._instrument.n_detectors == 16
+        assert dlg._preset_combo.count() == 0
+        assert dlg._preset_combo.isEnabled() is False
+        assert dlg._apply_preset_btn.isEnabled() is False
+        assert dlg.get_result()["instrument"] == "Generic"
+
+    def test_generic_layout_opens_on_its_own_entry(self, qapp):
+        dlg = DetectorLayoutDialog(generic_layout(12), groups={1: [1, 2]})
+        assert dlg._instrument_combo.currentText() == "Generic (12 detectors)"
+        assert dlg._apply_preset_btn.isEnabled() is False
 
     def test_preset_combo_populated_for_hifi(self, qapp):
         layout = get_instrument_layout("HiFi")
