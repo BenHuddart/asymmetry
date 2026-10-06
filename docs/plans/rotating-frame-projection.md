@@ -70,6 +70,12 @@ engine, RF settings, RF vector fit window) is parked for a later revisit.
   - It uses the displayed runs, the current period and the visible window.
   - ν, s and φ_RF are estimated from the runs together; baselines and gain run
     by run.
+  - *Phase 2 review:* ν_RF is not estimated at all. Under RF the transverse
+    spectrum is a sideband pair at ν ± ν₁, which a check band about ν cannot
+    hold when B₁ is large, so a ν check only echoed the typed value. Sense and
+    φ_RF form one review row, because φ_RF is estimated for that sense. Every
+    estimator sum is inverse-variance weighted, so the full window works
+    without zooming in.
 - **D7 — Rotated projections are fit targets.** Single and Batch fit P′_x, P′_y
   or P_z like any projection. The fit records its frame and goes stale when the
   frame changes. No new fit functions yet.
