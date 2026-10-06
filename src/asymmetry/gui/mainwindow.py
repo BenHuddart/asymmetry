@@ -198,6 +198,7 @@ from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
     combine_period_asymmetry,
+    period_count,
     select_period_histograms,
 )
 from asymmetry.core.maxent import (
@@ -283,6 +284,7 @@ from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
     promote_deadtime_to_grouping,
 )
+from asymmetry.core.transform.projections import reduce_run_projections
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
 from asymmetry.core.transform.rotating_frame import (
     ROTATED_LABELS,
@@ -290,6 +292,7 @@ from asymmetry.core.transform.rotating_frame import (
     Provenance,
     RotatingFrame,
     estimate_frame,
+    period_weights,
     rotate_transverse,
 )
 from asymmetry.core.utils.constants import (
@@ -379,7 +382,6 @@ if TYPE_CHECKING:
 #: The plot's message while a displayed run has no rotating frame (D6).
 _FRAME_MISSING_MESSAGE = "Enter ν_RF to show the rotating frame."
 #: Fewest bins of a run in the visible window that Auto-detect estimates from.
-_MIN_DETECT_BINS = 8
 #: Why a rotated projection cannot be the fit target yet.
 _ROTATED_FIT_BLOCK = (
     "Rotated projections cannot be fitted yet — select the P_z subplot, or switch the "
@@ -3309,13 +3311,16 @@ class MainWindow(QMainWindow):
             if current is not None and current.run_number in frames
             else next(iter(frames), None)
         )
-        self._plot_panel.frame_bar.show_frames(frames, selected)
+        weights = {run: self._frame_period_weights(pairs["P_x"][run]) for run in runs}
+        self._plot_panel.frame_bar.show_frames(frames, selected, weights.get(selected, (1.0,)))
         rotated_shown = any(label in ROTATED_LABELS for label in labels)
         if rotated_shown and (not runs or None in frames.values()):
             self._plot_panel.show_message(_FRAME_MISSING_MESSAGE)
             return []
         rotated = {
-            run: rotate_transverse(pairs["P_x"][run], pairs["P_y"][run], frames[run])
+            run: rotate_transverse(
+                pairs["P_x"][run], pairs["P_y"][run], frames[run], weights=weights[run]
+            )
             for run in runs
         }
         for run, pair in rotated.items():
@@ -3341,17 +3346,34 @@ class MainWindow(QMainWindow):
         self._rebind_single_fit_to_active_projection()
         self._update_fit_block_state()
 
+    @staticmethod
+    def _frame_period_weights(dataset: MuonDataset) -> tuple[float, ...]:
+        """How *dataset*'s displayed curve combines its run's periods."""
+        run = dataset.run
+        return period_weights(
+            str(run.grouping.get("period_mode", PeriodMode.RED)), period_count(run)
+        )
+
     def _on_frame_field_edited(self, runs: list[int], name: str, value: object) -> None:
-        """Write a typed frame field to *runs*; ν_RF on a run with no frame creates it."""
+        """Write a typed frame field to *runs*; ν_RF on a run with no frame creates it.
+
+        A typed baseline goes to the period the run displays: the bar enables the
+        baseline fields only on a single period (D9).
+        """
         frames = self._project_model.rotating_frames
         for run in runs:
             frame = frames.get(run)
-            # The bar enables only ν_RF while a run has no frame (D6).
-            frames[run] = (
-                RotatingFrame.typed_frequency(float(value))
-                if frame is None
-                else frame.with_values(Provenance.TYPED, **{name: value})
-            )
+            if frame is None:
+                # The bar enables only ν_RF while a run has no frame (D6).
+                dataset = self._data_browser.get_dataset(run)
+                frames[run] = RotatingFrame.typed_frequency(float(value), period_count(dataset.run))
+            elif name in ("baseline_x", "baseline_y"):
+                period = self._plot_panel.frame_bar.shown_period()
+                current = frame.baselines[period]
+                x, y = (value, current.y) if name == "baseline_x" else (current.x, value)
+                frames[run] = frame.with_baseline(period, Provenance.TYPED, x, y)
+            else:
+                frames[run] = frame.with_values(Provenance.TYPED, **{name: value})
         self._plot_panel.set_frame_status(None)
         self._mark_dirty()
         self._render_current_selection_plot()
@@ -3360,23 +3382,31 @@ class MainWindow(QMainWindow):
         """Estimate the displayed runs' frames over the visible window, then review (D6)."""
         runs = self._plot_panel.frame_bar.runs()
         frame = self._project_model.rotating_frames[runs[0]]
-        datasets = [self._data_browser.get_dataset(run) for run in runs]
-        built = self._build_vector_axis_datasets(datasets, list(ROTATED_LABELS))
+        sources = [(run, self._data_browser.get_dataset(run).run) for run in runs]
         x_min, x_max, _, _ = self._plot_panel.get_view_limits()
-        windowed = {
-            label: {ds.run_number: ds.time_range(x_min, x_max) for ds in built[label]}
-            for label in ROTATED_LABELS
-        }
-        pairs = [(run, windowed["P_x"][run], windowed["P_y"][run]) for run in runs]
-        # The visible window is the user's choice: one holding no turn has nothing to estimate.
-        if any(px.time.size < _MIN_DETECT_BINS for _run, px, _py in pairs):
-            self.statusBar().showMessage("Auto-detect needs data in the visible window.")
-            return
+
+        def estimate(_worker) -> FrameEstimate:
+            # Every period on its own, never the combination shown: baselines are
+            # a period's, and green − red turns the nutation over (D9).
+            periods = {
+                run: [
+                    {
+                        label: curve.time_range(x_min, x_max)
+                        for label, curve in reduce_run_projections(source, index).items()
+                    }
+                    for index in range(period_count(source))
+                ]
+                for run, source in sources
+            }
+            return estimate_frame(
+                [(run, [(p["P_x"], p["P_y"]) for p in periods[run]]) for run, _ in sources],
+                frequency_mhz=frame.frequency_mhz,
+                b1_axis=frame.b1_axis,
+            )
+
         self._plot_panel.set_frame_status("Auto-detect: estimating…")
         self._tasks.start(
-            lambda _worker: estimate_frame(
-                pairs, frequency_mhz=frame.frequency_mhz, b1_axis=frame.b1_axis
-            ),
+            estimate,
             on_finished=self._open_frame_review,
             on_error=self._on_frame_detect_failed,
         )
@@ -3402,7 +3432,11 @@ class MainWindow(QMainWindow):
         """Write the review's ticked values as estimates (D5, D6)."""
         frames = self._project_model.rotating_frames
         for run, values in changes.items():
-            frames[run] = frames[run].with_values(Provenance.ESTIMATED, **values)
+            baselines = values.pop("baselines", {})
+            frame = frames[run].with_values(Provenance.ESTIMATED, **values)
+            for period, (x, y) in baselines.items():
+                frame = frame.with_baseline(period, Provenance.ESTIMATED, x, y)
+            frames[run] = frame
         self._mark_dirty()
         self._render_current_selection_plot()
         self._plot_panel.set_frame_status(status)

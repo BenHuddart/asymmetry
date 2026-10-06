@@ -772,8 +772,10 @@ def test_phase_group_names_use_conventional_numerals():
 
 
 def test_rotating_frames_round_trip_on_their_dataset_entries():
-    frame = RotatingFrame.typed_frequency(1.4925).with_values(
-        Provenance.ESTIMATED, rf_phase_deg=47.0, baseline_x=0.12, gain=0.97
+    frame = (
+        RotatingFrame.typed_frequency(1.4925, 2)
+        .with_values(Provenance.ESTIMATED, rf_phase_deg=47.0, gain=0.97)
+        .with_baseline(1, Provenance.ESTIMATED, 0.12, -0.05)
     )
     model = ProjectModel(rotating_frames={2: frame})
     project = {"datasets": [{"run_number": 1}, {"run_number": 2}]}

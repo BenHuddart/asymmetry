@@ -80,6 +80,28 @@ engine, RF settings, RF vector fit window) is parked for a later revisit.
   or P_z like any projection. The fit records its frame and goes stale when the
   frame changes. No new fit functions yet.
 - **D8 — Rotate first, then bunch.** Display bunching applies after the rotation.
+- **D9 — Baselines per period** (Ben, 2026-10-07, after measuring).
+  - Each period of a run keeps its own transverse baselines b_x, b_y, with
+    their provenance. Gain, sense and φ_RF stay shared.
+  - A period combination's curve removes the same combination of the period
+    baselines: green − red uses b_G − b_R, green + red uses b_G + b_R. The bar
+    shows these derived values read-only.
+  - Auto-detect reads every DAE period on its own, never the displayed
+    combination. In green − red the RF-off period has no transverse signal, so
+    the nutation appears turned over, into −y′, rather than φ_RF hiding it.
+  - Evidence from the first RF dataset: with a bias-free estimator, the red
+    and green baselines differ by up to about 0.1 %, beyond errors.
+    - Driving the RF raises P_x's baseline by about 0.08 % in RF-on/off runs.
+    - The two periods agree when both are driven, as in the echo runs.
+    - P_y's shift across the field scan follows the detuning and changes sign
+      through resonance.
+    - The mechanism is open (RF pickup, or a P_z cross-talk of about 1 % in
+      P_x).
+  - Baselines are fitted beside the signal as b + c(t)·cos 2πνt +
+    d(t)·sin 2πνt, with c and d cubic splines at 0.8 turns per knot.
+    - A plain inverse-variance mean is pulled by the strong early turns, by up
+      to about 0.08 %.
+    - A whole-turn average leaks a nutation's ν ± ν₁ sidebands.
 
 ## Estimation (D6)
 

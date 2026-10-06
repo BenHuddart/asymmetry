@@ -4,15 +4,16 @@
   typed value never does.
 - An estimate with contrast below :data:`MIN_CONTRAST` cannot be applied.
 - The setup row (sense with φ_RF, which is estimated for that sense) comes from
-  the runs together and writes to every run; run rows (b_x, b_y, a_y/a_x) come
-  from each run alone. ν_RF and the B₁ axis are the user's: the header names them.
+  the runs together and writes to every run. Each run then has a gain row and a
+  baseline row per period (D9: the periods' baselines differ). ν_RF and the B₁
+  axis are the user's: the header names them.
 - Nothing changes until Apply, which reports the ticked values through
   :attr:`FrameReviewDialog.applied` for the host to write as estimates.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, Signal
@@ -44,36 +45,40 @@ FOOTER_NOTE = (
     f"{MIN_CONTRAST:g} cannot be applied."
 )
 
-_FORMATS: dict[str, Callable[[object], str]] = {
-    "frequency_mhz": lambda v: f"{v:.6g} MHz",
-    "b1_axis": lambda v: f"{v}",
-    "sense": lambda v: "+1" if v > 0 else "−1",
-    "rf_phase_deg": lambda v: f"{v:.1f}°",
-    "baseline_x": lambda v: f"{v:.2f}",
-    "baseline_y": lambda v: f"{v:.2f}",
-    "gain": lambda v: f"{v:.3f}",
-}
+#: A two-period run's periods by the app's red/green convention (red is period 1).
+_PERIOD_NAMES = {2: ("red", "green")}
 
 
 def _contrast(value: float) -> str:
     return f"{value:.0f}" if value >= 10 else f"{value:.1f}"
 
 
+def _sense(value: int) -> str:
+    return "+1" if value > 0 else "−1"
+
+
+def _shared(texts: set[str]) -> str:
+    return texts.pop() if len(texts) == 1 else "mixed"
+
+
 @dataclass(frozen=True)
 class _Row:
-    """One tickable proposal: these fields' estimates, for these runs."""
+    """One tickable proposal: its cells by grid column, and what Apply writes."""
 
     title: str
-    values: dict[str, object]
-    runs: tuple[int, ...]
+    #: ``{grid column: "current → estimate"}``.
+    cells: dict[int, str]
     contrast: float
-    note: str = ""
+    typed: bool
+    #: ``{run: {field: value}}``; per-period baselines go under ``"baselines"``.
+    changes: dict[int, dict[str, object]]
+    note: str
 
 
 class FrameReviewDialog(QDialog):
     """Review an Auto-detect estimate against the runs' current frames."""
 
-    #: ``({run: {field: value}}, status text)`` when the user applies.
+    #: ``({run: {field: value, "baselines": {period: (x, y)}}}, status text)`` on Apply.
     applied = Signal(object, str)
 
     def __init__(
@@ -84,27 +89,56 @@ class FrameReviewDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Auto-detect rotating frame")
-        self._frames = dict(frames)
         self._estimate = estimate
-        runs = tuple(self._frames)
+        values = list(frames.values())
+        setup_typed = any(
+            frame.provenance[name] is Provenance.TYPED
+            for frame in values
+            for name in ("sense", "rf_phase_deg")
+        )
         setup = _Row(
             "Sense, φ_RF",
-            {"sense": estimate.sense, "rf_phase_deg": estimate.rf_phase_deg},
-            runs,
+            {
+                1: f"{_shared({_sense(f.sense) for f in values})} → {_sense(estimate.sense)}",
+                2: f"{_shared({f'{f.rf_phase_deg:.1f}°' for f in values})}"
+                f" → {estimate.rf_phase_deg:.1f}°",
+            },
             estimate.contrast,
+            setup_typed,
+            {
+                run: {"sense": estimate.sense, "rf_phase_deg": estimate.rf_phase_deg}
+                for run in frames
+            },
             f"contrast {_contrast(estimate.contrast)}",
         )
-        per_run = [
-            _Row(
-                f"Run {run.run_key}",
-                {"baseline_x": run.baseline_x, "baseline_y": run.baseline_y, "gain": run.gain},
-                (run.run_key,),
-                run.contrast,
-                f"contrast {_contrast(run.contrast)}",
+        per_run: list[_Row] = []
+        for run in estimate.runs:
+            frame = frames[run.run_key]
+            note = f"contrast {_contrast(run.contrast)}"
+            per_run.append(
+                _Row(
+                    f"Run {run.run_key} · gain",
+                    {3: f"{frame.gain:.3f} → {run.gain:.3f}"},
+                    run.contrast,
+                    frame.provenance["gain"] is Provenance.TYPED,
+                    {run.run_key: {"gain": run.gain}},
+                    note,
+                )
             )
-            for run in estimate.runs
-            if run.run_key in self._frames
-        ]
+            names = _PERIOD_NAMES.get(len(run.baselines), ())
+            for period, (bx, by) in enumerate(run.baselines):
+                current = frame.baselines[period]
+                suffix = f" · {names[period]}" if names else ""
+                per_run.append(
+                    _Row(
+                        f"Run {run.run_key}{suffix}",
+                        {1: f"{current.x:.2f} → {bx:.2f}", 2: f"{current.y:.2f} → {by:.2f}"},
+                        run.contrast,
+                        current.provenance is Provenance.TYPED,
+                        {run.run_key: {"baselines": {period: (bx, by)}}},
+                        note,
+                    )
+                )
         self._ticks: list[tuple[QCheckBox, _Row]] = []
 
         layout = QVBoxLayout(self)
@@ -114,16 +148,10 @@ class FrameReviewDialog(QDialog):
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(6)
         grid.addWidget(make_section_header("Setup"), 0, 0)
-        grid.addWidget(
-            self._muted(
-                f"at ν_RF = {self._current(setup, 'frequency_mhz')}, "
-                f"B₁ ∥ {self._current(setup, 'b1_axis')} · from the runs together"
-            ),
-            0,
-            1,
-            1,
-            4,
-        )
+        nu = _shared({f"{f.frequency_mhz:.6g} MHz" for f in values})
+        axis = _shared({str(f.b1_axis) for f in values})
+        header = self._muted(f"at ν_RF = {nu}, B₁ ∥ {axis} · from the runs together")
+        grid.addWidget(header, 0, 1, 1, 4)
         for column, heading in enumerate(("Sense", "φ_RF"), start=1):
             grid.addWidget(self._muted(heading), 1, column)
         self._add_row(grid, 2, setup)
@@ -157,31 +185,22 @@ class FrameReviewDialog(QDialog):
         label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         return label
 
-    def _current(self, row: _Row, name: str) -> str:
-        values = {getattr(self._frames[run], name) for run in row.runs}
-        return _FORMATS[name](values.pop()) if len(values) == 1 else "mixed"
-
     def _add_row(self, grid: QGridLayout, line: int, row: _Row) -> None:
         tick = QCheckBox(row.title)
-        typed = any(
-            self._frames[run].provenance[name] is Provenance.TYPED
-            for run in row.runs
-            for name in row.values
-        )
         weak = row.contrast < MIN_CONTRAST
-        tick.setChecked(not typed and not weak)
+        tick.setChecked(not row.typed and not weak)
         tick.setEnabled(not weak)
         tick.toggled.connect(self._sync_apply)
         grid.addWidget(tick, line, 0)
-        for column, (name, value) in enumerate(row.values.items(), start=1):
-            cell = QLabel(f"{self._current(row, name)} → {_FORMATS[name](value)}")
+        for column, text in row.cells.items():
+            cell = QLabel(text)
             cell.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             grid.addWidget(cell, line, column)
         if weak:
             note = QLabel(f"contrast {_contrast(row.contrast)} < {MIN_CONTRAST:g} — cannot apply")
             note.setStyleSheet(f"color: {tokens.WARN};")
         else:
-            note = self._muted(("typed · " if typed else "") + row.note)
+            note = self._muted(("typed · " if row.typed else "") + row.note)
         grid.addWidget(note, line, 4)
         self._ticks.append((tick, row))
 
@@ -189,12 +208,18 @@ class FrameReviewDialog(QDialog):
         return sum(tick.isChecked() for tick, _row in self._ticks)
 
     def changes(self) -> dict[int, dict[str, object]]:
-        """``{run: {field: value}}`` of the ticked rows."""
+        """``{run: {field: value, "baselines": {period: (x, y)}}}`` of the ticked rows."""
         changes: dict[int, dict[str, object]] = {}
         for tick, row in self._ticks:
-            if tick.isChecked():
-                for run in row.runs:
-                    changes.setdefault(run, {}).update(row.values)
+            if not tick.isChecked():
+                continue
+            for run, values in row.changes.items():
+                merged = changes.setdefault(run, {})
+                for name, value in values.items():
+                    if name == "baselines":
+                        merged.setdefault("baselines", {}).update(value)
+                    else:
+                        merged[name] = value
         return changes
 
     def _sync_apply(self) -> None:

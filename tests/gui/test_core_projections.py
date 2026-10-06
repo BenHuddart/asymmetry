@@ -54,6 +54,6 @@ def test_core_projections_match_the_gui_vector_subplots(mainwindow, mode, index)
 
 
 def test_a_new_project_forgets_the_previous_projects_rotating_frames(mainwindow):
-    mainwindow._project_model.rotating_frames[5] = RotatingFrame.typed_frequency(1.5)
+    mainwindow._project_model.rotating_frames[5] = RotatingFrame.typed_frequency(1.5, 1)
     mainwindow._clear_all_state()
     assert mainwindow._project_model.rotating_frames == {}

@@ -23,6 +23,7 @@ from asymmetry.core.transform.rotating_frame import (
     RotatingFrame,
     rotate_transverse,
 )
+from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.widgets.rotating_frame_review import FrameReviewDialog
@@ -104,7 +105,7 @@ def _type(panel: PlotPanel, name: str, text: str) -> None:
 
 
 def _frame(**values) -> RotatingFrame:
-    return RotatingFrame.typed_frequency(NU).with_values(Provenance.TYPED, **values)
+    return RotatingFrame.typed_frequency(NU, 1).with_values(Provenance.TYPED, **values)
 
 
 def test_the_switch_is_offered_only_for_groupings_with_the_transverse_pair(mainwindow):
@@ -137,8 +138,8 @@ def test_the_first_switch_asks_for_frequency_and_typing_it_creates_the_frames(ma
 
     frames = mainwindow._project_model.rotating_frames
     assert frames == {
-        903: RotatingFrame.typed_frequency(1.49),
-        904: RotatingFrame.typed_frequency(1.49),
+        903: RotatingFrame.typed_frequency(1.49, 1),
+        904: RotatingFrame.typed_frequency(1.49, 1),
     }
     assert list(panel._subplot_axes_by_polarization) == ["P′_x", "P′_y", "P_z"]
     assert mainwindow._dirty
@@ -151,7 +152,9 @@ def test_rotated_subplots_are_the_exact_rotation_of_each_run(mainwindow):
     _rotate(panel)
 
     built = mainwindow._build_vector_axis_datasets([dataset], ["P_x", "P_y"])
-    expected = rotate_transverse(built["P_x"][0], built["P_y"][0], _frame(rf_phase_deg=PHI))
+    expected = rotate_transverse(
+        built["P_x"][0], built["P_y"][0], _frame(rf_phase_deg=PHI), weights=(1.0,)
+    )
     shown = panel._vector_subplot_datasets
     for label, rotated in zip(("P′_x", "P′_y"), expected, strict=True):
         np.testing.assert_allclose(shown[label][0].asymmetry, rotated.asymmetry)
@@ -209,10 +212,10 @@ def test_setup_edits_reach_every_run_and_run_edits_only_the_selected_one(mainwin
 
     frames = mainwindow._project_model.rotating_frames
     assert frames[907].rf_phase_deg == frames[908].rf_phase_deg == 20.0
-    assert frames[908].baseline_x == 0.4
-    assert frames[908].provenance["baseline_x"] is Provenance.TYPED
-    assert frames[907].baseline_x == 0.0
-    assert frames[907].provenance["baseline_x"] is Provenance.DEFAULT
+    assert frames[908].baselines[0].x == 0.4
+    assert frames[908].baselines[0].provenance is Provenance.TYPED
+    assert frames[907].baselines[0].x == 0.0
+    assert frames[907].baselines[0].provenance is Provenance.DEFAULT
 
     frames[907] = frames[907].with_values(Provenance.TYPED, rf_phase_deg=50.0)
     mainwindow._render_current_selection_plot()
@@ -231,7 +234,7 @@ def test_auto_detect_proposes_and_apply_writes_estimates(mainwindow, qapp):
     wait_for(lambda: mainwindow.findChildren(FrameReviewDialog), qapp, timeout_s=20.0)
     dialog = mainwindow.findChild(FrameReviewDialog)
     ticks = {tick.text(): tick.isChecked() for tick, _row in dialog._ticks}
-    assert ticks == {"Sense, φ_RF": True, "Run 909": False}
+    assert ticks == {"Sense, φ_RF": True, "Run 909 · gain": False, "Run 909": True}
     assert mainwindow._project_model.rotating_frames[909].rf_phase_deg == 0.0
 
     dialog._apply_btn.click()
@@ -241,7 +244,92 @@ def test_auto_detect_proposes_and_apply_writes_estimates(mainwindow, qapp):
     assert frame.sense == -1
     assert frame.provenance["rf_phase_deg"] is Provenance.ESTIMATED
     assert frame.provenance["gain"] is Provenance.TYPED
-    assert panel._frame_status_label.text().startswith("✓ Applied 1 estimate · contrast ")
+    assert frame.baselines[0].provenance is Provenance.ESTIMATED
+    assert panel._frame_status_label.text().startswith("✓ Applied 2 estimates · contrast ")
+
+
+#: Each period's own transverse baselines (%): red, then green (D9).
+RED_BASELINES, GREEN_BASELINES = (0.4, -0.3), (0.1, 0.05)
+
+
+def _with_baselines(polarisation, baselines):
+    def shifted(t):
+        p = polarisation(t)
+        return p + np.array([[baselines[0] / 10.0], [baselines[1] / 10.0], [0.0]])
+
+    return shifted
+
+
+def _still(t: np.ndarray) -> np.ndarray:
+    return np.stack([np.zeros_like(t), np.zeros_like(t), np.ones_like(t)])
+
+
+def _two_period(run_number: int, period_mode: PeriodMode) -> MuonDataset:
+    """RF on (red, nutating) and RF off (green, still), each with its own baselines."""
+    run = synthetic_vector_run(
+        [_with_baselines(_nutation, RED_BASELINES), _with_baselines(_still, GREEN_BASELINES)],
+        amplitudes=(0.1, 0.1, 0.2),
+        rate=4.0e5,
+        n_bins=600,
+        run_number=run_number,
+    )
+    run.grouping["period_mode"] = str(period_mode)
+    return MuonDataset(
+        time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=run
+    )
+
+
+def test_green_minus_red_removes_the_difference_of_the_period_baselines(mainwindow):
+    frame = (
+        RotatingFrame.typed_frequency(NU, 2)
+        .with_values(Provenance.TYPED, rf_phase_deg=PHI)
+        .with_baseline(0, Provenance.TYPED, *RED_BASELINES)
+        .with_baseline(1, Provenance.TYPED, *GREEN_BASELINES)
+    )
+    mainwindow._project_model.rotating_frames[914] = frame
+    dataset = _two_period(914, PeriodMode.GREEN_MINUS_RED)
+    panel = _show(mainwindow, dataset)
+    _rotate(panel)
+
+    built = mainwindow._build_vector_axis_datasets([dataset], ["P_x", "P_y"])
+    expected = rotate_transverse(built["P_x"][0], built["P_y"][0], frame, weights=(-1.0, 1.0))
+    shown = panel._vector_subplot_datasets
+    for label, rotated in zip(("P′_x", "P′_y"), expected, strict=True):
+        np.testing.assert_allclose(shown[label][0].asymmetry, rotated.asymmetry)
+    # The RF-off period carries no transverse signal: green − red turns the
+    # red nutation over, into −y′, rather than φ_RF hiding it.
+    t = shown["P′_y"][0].time
+    early = (t > 0.5) & (t < 3.0)
+    assert np.mean(shown["P′_y"][0].asymmetry[early]) < -1.0
+    # A combination's baselines are derived, so the bar shows them read-only.
+    b_x = panel.frame_bar._edits["baseline_x"]
+    assert not b_x.isEnabled()
+    assert float(b_x.text()) == pytest.approx(GREEN_BASELINES[0] - RED_BASELINES[0])
+
+
+def test_auto_detect_reads_every_period_whatever_the_display_combines(mainwindow, qapp):
+    panel = _show(mainwindow, _two_period(915, PeriodMode.GREEN_MINUS_RED))
+    _rotate(panel)
+    _type(panel, "frequency_mhz", str(NU))
+
+    panel.frame_bar._detect_btn.click()
+    wait_for(lambda: mainwindow.findChildren(FrameReviewDialog), qapp, timeout_s=20.0)
+    dialog = mainwindow.findChild(FrameReviewDialog)
+    assert {tick.text() for tick, _row in dialog._ticks} == {
+        "Sense, φ_RF",
+        "Run 915 · gain",
+        "Run 915 · red",
+        "Run 915 · green",
+    }
+    dialog._apply_btn.click()
+
+    frame = mainwindow._project_model.rotating_frames[915]
+    # φ_RF comes from the periods themselves, not from the flipped difference.
+    assert abs((frame.rf_phase_deg - PHI + 180.0) % 360.0 - 180.0) < 5.0
+    for baseline, truth in zip(frame.baselines, (RED_BASELINES, GREEN_BASELINES), strict=True):
+        assert baseline.x == pytest.approx(truth[0], abs=0.05)
+        assert baseline.y == pytest.approx(truth[1], abs=0.05)
+        assert baseline.provenance is Provenance.ESTIMATED
 
 
 def test_the_filtered_rrf_bar_stays_out_of_vector_mode(mainwindow):

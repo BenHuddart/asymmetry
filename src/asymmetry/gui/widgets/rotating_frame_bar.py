@@ -70,6 +70,11 @@ FRAME_METADATA_KEY = "rotating_frame"
 #: Placeholder of a shared field the displayed runs disagree on (D4).
 MIXED = "mixed"
 
+_DERIVED_TIP = (
+    "Derived from the periods' own baselines for this period combination; "
+    "edit them on a single period (red or green)."
+)
+
 #: The hint shown until every displayed run has a frame (D6).
 FIRST_SWITCH_HINT = (
     "Enter ν_RF (the generator frequency) and the B₁ axis. Auto-detect… proposes "
@@ -77,7 +82,7 @@ FIRST_SWITCH_HINT = (
 )
 
 #: The values a field shows before the run has a frame: ``typed_frequency``'s defaults.
-_DEFAULTS = RotatingFrame.typed_frequency(1.0)
+_DEFAULTS = RotatingFrame.typed_frequency(1.0, 1)
 
 #: The units ν_RF can be typed in, and their toggle labels.
 FREQUENCY_UNITS = {FieldUnit.MHZ: "MHz", FieldUnit.GAUSS: "G"}
@@ -103,10 +108,10 @@ _NUMBER_FIELDS = {
         "φ_RF", 5, -1e5, 1e5, "{:.1f}", "°", "Phase of the RF drive at t0"
     ),
     "baseline_x": _NumberField(
-        "b_x", 5, -1e3, 1e3, "{:.3g}", "%", "Baseline of P_x left after alpha (%)"
+        "b_x", 5, -1e3, 1e3, "{:.3g}", "%", "Baseline of P_x left after alpha (%), this period's"
     ),
     "baseline_y": _NumberField(
-        "b_y", 5, -1e3, 1e3, "{:.3g}", "%", "Baseline of P_y left after alpha (%)"
+        "b_y", 5, -1e3, 1e3, "{:.3g}", "%", "Baseline of P_y left after alpha (%), this period's"
     ),
     "gain": _NumberField(
         "a_y/a_x", 5, 1e-9, 1e3, "{:.4g}", "", "Transverse gain: the amplitude of P_y over P_x"
@@ -213,6 +218,7 @@ class RotatingFrameBar(QWidget):
         )
         self._frames: dict[int, RotatingFrame | None] = {}
         self._selected_run: int | None = None
+        self._selected_weights: tuple[float, ...] = (1.0,)
         self._unit = FieldUnit.MHZ
         self._presentation = "wide"
 
@@ -313,12 +319,29 @@ class RotatingFrameBar(QWidget):
     # ── data ───────────────────────────────────────────────────────────────
 
     def show_frames(
-        self, frames: Mapping[int, RotatingFrame | None], selected_run: int | None
+        self,
+        frames: Mapping[int, RotatingFrame | None],
+        selected_run: int | None,
+        selected_weights: tuple[float, ...],
     ) -> None:
-        """Show the displayed runs' frames (``None``: no frame yet) and the selected run's."""
+        """Show the displayed runs' frames (``None``: no frame yet) and the selected run's.
+
+        ``selected_weights`` say how the selected run's displayed curve combines
+        its periods: one period's baselines are shown and edited; a combination's
+        are derived from them and shown read-only.
+        """
         self._frames = dict(frames)
         self._selected_run = selected_run
+        self._selected_weights = selected_weights
         self._refresh()
+
+    def shown_period(self) -> int | None:
+        """The period whose baselines the run fields edit; ``None`` for a combination."""
+        weights = self._selected_weights
+        ones = [index for index, weight in enumerate(weights) if weight == 1.0]
+        if len(ones) == 1 and sum(abs(w) for w in weights) == 1.0:
+            return ones[0]
+        return None
 
     def runs(self) -> list[int]:
         """The displayed runs whose frames the bar shows."""
@@ -356,10 +379,22 @@ class RotatingFrameBar(QWidget):
             self._edits["frequency_mhz"].setStyleSheet(
                 f"QLineEdit {{ border: 1px solid {tokens.ACCENT}; border-radius: 3px; }}"
             )
-        for name in ("baseline_x", "baseline_y", "gain"):
-            frame = selected if selected is not None else _DEFAULTS
-            source = Provenance.DEFAULT if selected is None else frame.provenance[name]
-            self._show(name, getattr(frame, name), source, enabled=selected is not None)
+        if selected is None:
+            for name, value in (("baseline_x", 0.0), ("baseline_y", 0.0), ("gain", 1.0)):
+                self._show(name, value, Provenance.DEFAULT, enabled=False)
+        else:
+            self._show("gain", selected.gain, selected.provenance["gain"], enabled=True)
+            period = self.shown_period()
+            if period is None:
+                derived = selected.combined_baseline(self._selected_weights)
+                for name, value in zip(("baseline_x", "baseline_y"), derived, strict=True):
+                    self._show(name, value, Provenance.ESTIMATED, enabled=False)
+                    self._edits[name].setToolTip(_DERIVED_TIP)
+            else:
+                baseline = selected.baselines[period]
+                for name, value in (("baseline_x", baseline.x), ("baseline_y", baseline.y)):
+                    self._show(name, value, baseline.provenance, enabled=True)
+                    self._edits[name].setToolTip(_NUMBER_FIELDS[name].tooltip)
         run_text = "—" if self._selected_run is None else str(self._selected_run)
         self._run_header.setText(f"RUN {run_text}")
         self._run_btn.setText(f"Run {run_text} ▾")
