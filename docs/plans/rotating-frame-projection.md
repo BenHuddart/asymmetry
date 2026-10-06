@@ -99,7 +99,7 @@ engine, RF settings, RF vector fit window) is parked for a later revisit.
    - synthetic tests cover the conventions for both senses and both axes, the
      error propagation, and estimator recovery;
    - the estimators have been checked on the research data, outside the repo.
-2. **GUI: switch, bar and plot.**
+2. **GUI: switch, bar and plot.** *Done 2026-10-06.* On the research data the rotated overlay matches Phase 1 (P′_y nutates positive, P′_x stays near zero, P_z falls; per-run contrast 9–12 over 0–5 µs); fitting a P′ subplot is blocked until Phase 3.
    - The Lab | Rotating switch in the chip bar, including its short and folded
      forms.
    - The Setup | Run frame bar: mixed fields, provenance styling, the per-run

@@ -284,6 +284,14 @@ from asymmetry.core.transform.deadtime import (
     promote_deadtime_to_grouping,
 )
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
+from asymmetry.core.transform.rotating_frame import (
+    ROTATED_LABELS,
+    FrameEstimate,
+    Provenance,
+    RotatingFrame,
+    estimate_frame,
+    rotate_transverse,
+)
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -345,6 +353,8 @@ from asymmetry.gui.utils.reduction_cache import ReductionCache
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
+from asymmetry.gui.widgets.rotating_frame_bar import FRAME_METADATA_KEY
+from asymmetry.gui.widgets.rotating_frame_review import FrameReviewDialog
 from asymmetry.gui.windows.global_fit_compare_dialog import GlobalFitCompareDialog
 from asymmetry.gui.windows.global_parameter_fit_window import (
     GlobalParameterFitWindow,
@@ -364,6 +374,17 @@ from asymmetry.gui.windows.simulate_dialog import SimulateDialog
 if TYPE_CHECKING:
     # Imported for typing only: shell.py imports this module to build its pages.
     from asymmetry.gui.shell import ProjectShell
+
+
+#: The plot's message while a displayed run has no rotating frame (D6).
+_FRAME_MISSING_MESSAGE = "Enter ν_RF to show the rotating frame."
+#: Fewest bins of a run in the visible window that Auto-detect estimates from.
+_MIN_DETECT_BINS = 8
+#: Why a rotated projection cannot be the fit target yet.
+_ROTATED_FIT_BLOCK = (
+    "Rotated projections cannot be fitted yet — select the P_z subplot, or switch the "
+    "projections to Lab to fit P_x or P_y."
+)
 
 
 @dataclass(frozen=True)
@@ -2154,6 +2175,9 @@ class MainWindow(QMainWindow):
             self._plot_panel.fit_target_projection_changed.connect(
                 self._on_fit_target_projection_changed
             )
+        self._plot_panel.frame_changed.connect(self._on_plot_frame_changed)
+        self._plot_panel.frame_bar.field_edited.connect(self._on_frame_field_edited)
+        self._plot_panel.frame_bar.auto_detect_requested.connect(self._on_frame_auto_detect)
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         if hasattr(self._fit_panel, "set_single_fit_restore_provider"):
             self._fit_panel.set_single_fit_restore_provider(self._single_fit_restore_payload)
@@ -3129,6 +3153,11 @@ class MainWindow(QMainWindow):
                     self._plot_panel.get_current_polarization_axis()
                 )
 
+            if self._plot_panel.frame_rotating():
+                render_mode = "vector_rotating"
+                rendered_targets = self._render_rotating_frame(targets)
+                return
+
             if active_axis == "ALL" and hasattr(self._plot_panel, "plot_vector_subplots"):
                 labels = (
                     list(self._plot_panel.selected_projection_labels())
@@ -3194,8 +3223,13 @@ class MainWindow(QMainWindow):
         # In the stacked multi-subplot view a fit acts on the selected subplot
         # (the fit target); a single fit always binds the current run, so it
         # must be one of the runs shown on that projection.
-        if active_axis == "ALL":
+        rotating = self._plot_panel.frame_rotating()
+        if active_axis == "ALL" or rotating:
             projection = self._plot_panel.fit_target_projection()
+            if rotating and projection not in self._projection_memberships(
+                self._selected_or_current_datasets()
+            ):
+                return True, _ROTATED_FIT_BLOCK
             if projection is None:
                 return True, "Click a subplot to choose the projection to fit."
         else:
@@ -3252,6 +3286,126 @@ class MainWindow(QMainWindow):
             self._synchronize_targets_to_axis(self._selected_or_current_datasets(), projection)
         self._rebind_single_fit_to_active_projection()
         self._update_fit_block_state()
+
+    # ── rotating frame (docs/plans/rotating-frame-projection.md) ─────────
+
+    def _render_rotating_frame(self, targets: list[MuonDataset]) -> list[MuonDataset]:
+        """Draw the selected projections with the transverse pair in each run's frame.
+
+        The pair is rotated unbunched; the plot bunches the rotated values (D8).
+        Until every displayed run has a frame the plot asks for ν_RF instead (D6).
+        Returns the datasets drawn.
+        """
+        labels = self._plot_panel.selected_projection_labels()
+        built = self._build_vector_axis_datasets(
+            targets, list(dict.fromkeys([*labels, *ROTATED_LABELS]))
+        )
+        pairs = {label: {ds.run_number: ds for ds in built[label]} for label in ROTATED_LABELS}
+        runs = [run for run in pairs["P_x"] if run in pairs["P_y"]]
+        frames = {run: self._project_model.rotating_frames.get(run) for run in runs}
+        current = self._data_browser.get_current_dataset()
+        selected = (
+            current.run_number
+            if current is not None and current.run_number in frames
+            else next(iter(frames), None)
+        )
+        self._plot_panel.frame_bar.show_frames(frames, selected)
+        rotated_shown = any(label in ROTATED_LABELS for label in labels)
+        if rotated_shown and (not runs or None in frames.values()):
+            self._plot_panel.show_message(_FRAME_MISSING_MESSAGE)
+            return []
+        rotated = {
+            run: rotate_transverse(pairs["P_x"][run], pairs["P_y"][run], frames[run])
+            for run in runs
+        }
+        for run, pair in rotated.items():
+            for dataset in pair:
+                dataset.metadata[FRAME_METADATA_KEY] = frames[run]
+        shown = {
+            ROTATED_LABELS.get(label, label): (
+                [rotated[run][list(ROTATED_LABELS).index(label)] for run in runs]
+                if label in ROTATED_LABELS
+                else built[label]
+            )
+            for label in labels
+        }
+        self._plot_panel.plot_vector_subplots(shown)
+        return [dataset for members in shown.values() for dataset in members]
+
+    def _on_plot_frame_changed(self, _rotating: bool) -> None:
+        """Redraw in the chosen frame; Lab returns the runs to the projection shown."""
+        targets = self._selected_or_current_datasets()
+        axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+        self._synchronize_targets_to_axis(targets, axis)
+        self._render_current_selection_plot()
+        self._rebind_single_fit_to_active_projection()
+        self._update_fit_block_state()
+
+    def _on_frame_field_edited(self, runs: list[int], name: str, value: object) -> None:
+        """Write a typed frame field to *runs*; ν_RF on a run with no frame creates it."""
+        frames = self._project_model.rotating_frames
+        for run in runs:
+            frame = frames.get(run)
+            # The bar enables only ν_RF while a run has no frame (D6).
+            frames[run] = (
+                RotatingFrame.typed_frequency(float(value))
+                if frame is None
+                else frame.with_values(Provenance.TYPED, **{name: value})
+            )
+        self._plot_panel.set_frame_status(None)
+        self._mark_dirty()
+        self._render_current_selection_plot()
+
+    def _on_frame_auto_detect(self) -> None:
+        """Estimate the displayed runs' frames over the visible window, then review (D6)."""
+        runs = self._plot_panel.frame_bar.runs()
+        frame = self._project_model.rotating_frames[runs[0]]
+        datasets = [self._data_browser.get_dataset(run) for run in runs]
+        built = self._build_vector_axis_datasets(datasets, list(ROTATED_LABELS))
+        x_min, x_max, _, _ = self._plot_panel.get_view_limits()
+        windowed = {
+            label: {ds.run_number: ds.time_range(x_min, x_max) for ds in built[label]}
+            for label in ROTATED_LABELS
+        }
+        pairs = [(run, windowed["P_x"][run], windowed["P_y"][run]) for run in runs]
+        # The visible window is the user's choice: one holding no turn has nothing to estimate.
+        if any(px.time.size < _MIN_DETECT_BINS for _run, px, _py in pairs):
+            self.statusBar().showMessage("Auto-detect needs data in the visible window.")
+            return
+        self._plot_panel.set_frame_status("Auto-detect: estimating…")
+        self._tasks.start(
+            lambda _worker: estimate_frame(
+                pairs, frequency_mhz=frame.frequency_mhz, b1_axis=frame.b1_axis
+            ),
+            on_finished=self._open_frame_review,
+            on_error=self._on_frame_detect_failed,
+        )
+
+    def _open_frame_review(self, estimate: FrameEstimate) -> None:
+        frames = self._project_model.rotating_frames
+        self._plot_panel.set_frame_status(None)
+        dialog = FrameReviewDialog(
+            estimate,
+            {run.run_key: frames[run.run_key] for run in estimate.runs if run.run_key in frames},
+            self,
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.applied.connect(self._apply_frame_estimates)
+        dialog.open()
+
+    def _on_frame_detect_failed(self, message: str) -> None:
+        self._plot_panel.set_frame_status(None)
+        self._log_panel.log(f"Auto-detect could not estimate the rotating frame: {message}")
+        self.statusBar().showMessage("Auto-detect failed — see the log")
+
+    def _apply_frame_estimates(self, changes: dict, status: str) -> None:
+        """Write the review's ticked values as estimates (D5, D6)."""
+        frames = self._project_model.rotating_frames
+        for run, values in changes.items():
+            frames[run] = frames[run].with_values(Provenance.ESTIMATED, **values)
+        self._mark_dirty()
+        self._render_current_selection_plot()
+        self._plot_panel.set_frame_status(status)
 
     def _on_plot_polarization_axis_changed(self, axis_text: str) -> None:
         """Recompute displayed datasets using the selected vector polarization axis."""
@@ -11893,7 +12047,7 @@ class MainWindow(QMainWindow):
                 # A single-pair run sharing a projection subplot fits its own asymmetry.
                 return None
         axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
-        if axis == "ALL":
+        if axis == "ALL" or self._plot_panel.frame_rotating():
             # Stacked multi-subplot view: the selected subplot is the fit target.
             if hasattr(self._plot_panel, "fit_target_projection"):
                 return self._plot_panel.fit_target_projection()
