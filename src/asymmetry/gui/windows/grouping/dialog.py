@@ -551,11 +551,10 @@ class GroupingDialog(QDialog):
         preset_row.addWidget(QLabel("Preset"))
         self._preset_combo = NoScrollComboBox()
         self._preset_combo.setMinimumContentsLength(18)
+        # Shown at index -1: the draft matches none of the instrument's presets.
+        self._preset_combo.setPlaceholderText("Custom")
         self._preset_combo.activated.connect(self._on_preset_combo_activated)
         preset_row.addWidget(self._preset_combo)
-        self._preset_chip = QLabel("")
-        self._preset_chip.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        preset_row.addWidget(self._preset_chip)
         preset_row.addStretch()
         left_layout.addLayout(preset_row)
         # The preset combo is populated at the end of __init__, once the
@@ -1347,7 +1346,6 @@ class GroupingDialog(QDialog):
         # resolved to.
         self._seed_good_window_mode_from_draft()
         self._connect_dirty_tracking()
-        self._refresh_preset_chip(self._current_grouping_payload())
         self._update_apply_enabled()
         self._refresh_alpha_staleness()
         self._refresh_beta_staleness()
@@ -1762,18 +1760,16 @@ class GroupingDialog(QDialog):
     def _sync_draft_from_form(self) -> None:
         """Lift the current form payload back into the current target's payload.
 
-        Called before the target is read (Apply, preset-chip refresh, profile
-        switch). Also refreshes the preset chip / clears a stale preset marker
-        when the groups have drifted from the named preset.
+        Called before the target is read (Apply, preset refresh, profile
+        switch). Also refreshes the preset dropdown / clears a stale preset
+        marker when the groups have drifted from the named preset.
 
         When an overridden run is the editing target the profile draft is left
         untouched: the form payload is captured into that run's override draft so
         Apply can write it back to the overridden run alone.
         """
-        payload = self._current_grouping_payload()
-        self._refresh_preset_chip(payload)
-        # Re-read the payload after a possible drift-clear so the draft does not
-        # carry a stale ``grouping_preset``.
+        # Drift-clear first so the draft does not carry a stale ``grouping_preset``.
+        self._refresh_preset_selection()
         payload = self._current_grouping_payload()
         target = self._editing_target()
         if target != "profile":
@@ -2161,7 +2157,7 @@ class GroupingDialog(QDialog):
         # this reseed, so refresh it here or it goes stale on a switch.
         self._refresh_editing_strip()
 
-    # -- preset dropdown + chip ------------------------------------------
+    # -- preset dropdown -------------------------------------------------
 
     def _current_instrument_layout(self):
         """Instrument layout matching the preview run, for the preset dropdown."""
@@ -2183,10 +2179,7 @@ class GroupingDialog(QDialog):
         except (KeyError, AttributeError):
             pass
         combo.blockSignals(False)
-        # The chip needs the form controls; skip until they exist (they are built
-        # after the top bar during __init__).
-        if hasattr(self, "_forward_combo"):
-            self._refresh_preset_chip(self._current_grouping_payload())
+        self._refresh_preset_selection()
 
     def _on_preset_combo_activated(self, index: int) -> None:
         """Apply the selected instrument preset to the draft immediately."""
@@ -2230,28 +2223,27 @@ class GroupingDialog(QDialog):
         self._refresh_group_combo_items(forward_gid=forward_gid, backward_gid=backward_gid)
         self._populate_group_table()
         self._update_vector_mode_controls()
-        self._refresh_preset_chip(self._current_grouping_payload())
+        self._refresh_preset_selection()
 
-    def _refresh_preset_chip(self, payload: dict[str, Any]) -> None:
-        """Show ``Preset: <name>`` / ``Custom (edited from <name>)``.
+    def _refresh_preset_selection(self, *_args: object) -> None:
+        """Select the draft's preset in the dropdown, or ``Custom`` once it drifts.
 
         Clears a stale ``grouping_preset`` marker when the groups have drifted
         from the named preset, so a drifted draft never stores it.
         """
         preset_name = self._grouping_preset_name
-        if not preset_name:
-            self._preset_chip.setText("Custom")
-            return
-        try:
-            layout = self._current_instrument_layout()
-        except (KeyError, AttributeError):
-            self._preset_chip.setText(f"Preset: {preset_name}")
-            return
-        if payload_matches_preset(payload, layout, preset_name):
-            self._preset_chip.setText(f"Preset: {preset_name}")
-        else:
-            self._preset_chip.setText(f"Custom (edited from {preset_name})")
-            self._grouping_preset_name = None
+        if preset_name:
+            try:
+                layout = self._current_instrument_layout()
+                payload = self._current_grouping_payload()
+                if not payload_matches_preset(payload, layout, preset_name):
+                    self._grouping_preset_name = preset_name = None
+            except (KeyError, AttributeError):
+                pass
+        # Index -1 shows the "Custom" placeholder, as does a preset the
+        # instrument does not list. Programmatic, so ``activated`` stays quiet.
+        combo = self._preset_combo
+        combo.setCurrentIndex(combo.findData(preset_name) if preset_name else -1)
 
     # -- scope panel ------------------------------------------------------
 
@@ -3360,8 +3352,8 @@ class GroupingDialog(QDialog):
         # payload's window — this re-asserts the selector and its gating, as
         # the t0 seed above does for the t0 spin.
         self._seed_good_window_mode_from_draft()
-        # The preset dropdown follows the preview run's instrument; the chip
-        # follows the (possibly drifted) draft.
+        # The preset dropdown's items follow the preview run's instrument; its
+        # selection follows the (possibly drifted) draft.
         if hasattr(self, "_preset_combo"):
             self._rebuild_preset_combo()
         # A reseed that activates a stage must surface its controls: expand any
@@ -3828,6 +3820,10 @@ class GroupingDialog(QDialog):
         self._group_table.itemChanged.connect(self._mark_dirty)
         for button in self._period_mode_buttons.values():
             button.toggled.connect(self._mark_dirty)
+        # Re-pairing forward/backward drifts the draft off its preset (the
+        # groups themselves change through the layout editor, which refreshes).
+        self._forward_combo.currentIndexChanged.connect(self._refresh_preset_selection)
+        self._backward_combo.currentIndexChanged.connect(self._refresh_preset_selection)
 
     # ------------------------------------------------------------------
     # Live preview pane
@@ -4930,9 +4926,8 @@ class GroupingDialog(QDialog):
         preset_name = result.get("grouping_preset")
         # When the editor reports a match, adopt its name outright. When it
         # reports None (custom/drifted state), keep the *previous* preset name
-        # for now: ``_refresh_preset_chip`` below re-derives drift from the
-        # payload itself and clears it to None, which is what lets the chip
-        # read "Custom (edited from <old preset>)" instead of a bare "Custom".
+        # for now: ``_refresh_preset_selection`` below re-derives drift from the
+        # payload itself and clears it to None.
         if preset_name:
             self._grouping_preset_name = str(preset_name)
         instrument_name = result.get("instrument")
@@ -4947,7 +4942,7 @@ class GroupingDialog(QDialog):
         self._populate_group_table()
         self._update_vector_mode_controls()
         self._mark_dirty()
-        self._refresh_preset_chip(self._current_grouping_payload())
+        self._refresh_preset_selection()
         self._refresh_preview()
 
     def _set_combo_to_group(self, combo: QComboBox, group_id: int) -> None:
