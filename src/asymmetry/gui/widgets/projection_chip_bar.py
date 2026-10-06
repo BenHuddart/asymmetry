@@ -16,6 +16,10 @@ Design (see ``docs/porting/unified-asymmetry-projections/``):
 * The bar never sets the plot toolbar's minimum width. It shows full chip
   labels when they fit, short labels (``Top-Bottom`` → ``T–B``) when they do
   not, and below that **folds** into one menu button summarising the selection.
+* When the projections include the transverse pair (P_x and P_y) a **Lab |
+  Rotating** switch sits left of the chips (``Lab | Rot`` when short, a
+  "Frame" section of the fold menu when folded). Rotating relabels the pair's
+  chips P′_x, P′_y; the chips keep their lab identity (selection, memory, tint).
 
 The chip tint is *projection identity* and is deliberately separate from a data
 trace colour (which encodes run identity in RG mode). This widget owns no plot
@@ -24,8 +28,11 @@ state — it emits :attr:`selection_changed` and the plot panel renders the rest
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSignalBlocker, QSize, Qt, Signal
+from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
+    QButtonGroup,
+    QFrame,
     QHBoxLayout,
     QLayout,
     QMenu,
@@ -35,7 +42,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from asymmetry.core.transform.rotating_frame import ROTATED_LABELS
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.widgets import build_segmented_cell_qss, build_segmented_container_qss
 
 _DEFAULT_TINT = tokens.ACCENT
 
@@ -44,6 +53,11 @@ _PRESENTATIONS = ("full", "short", "folded")
 
 #: Longest projection name the folded button shows; the menu keeps full names.
 _FOLD_LABEL_CHARS = 8
+
+#: The frame switch's segment texts by presentation (folded: in the fold menu).
+_FRAME_TEXTS = {"full": ("Lab", "Rotating"), "short": ("Lab", "Rot")}
+#: The folded button's prefix while the rotating frame is shown.
+_ROTATING_FOLD_PREFIX = "Rot · "
 
 
 def short_projection_label(label: str) -> str:
@@ -77,6 +91,8 @@ class ProjectionChipBar(QWidget):
 
     #: Emitted with the ordered ``list[str]`` of currently selected labels.
     selection_changed = Signal(list)
+    #: Emitted with ``True`` when the user switches to the rotating frame, ``False`` to Lab.
+    frame_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -94,6 +110,28 @@ class ProjectionChipBar(QWidget):
         # Leading stretch: spare width sits left of the chips, keeping them
         # beside the toolbar's Fits/Pan/Zoom group rather than drifting away.
         layout.addStretch()
+
+        self._frame_switch = QFrame()
+        self._frame_switch.setStyleSheet(build_segmented_container_qss())
+        cells = QHBoxLayout(self._frame_switch)
+        cells.setContentsMargins(0, 0, 0, 0)
+        cells.setSpacing(0)
+        self._frame_group = QButtonGroup(self)
+        self._lab_btn, self._rotating_btn = (QPushButton(text) for text in _FRAME_TEXTS["full"])
+        for index, cell in enumerate((self._lab_btn, self._rotating_btn)):
+            cell.setCheckable(True)
+            cell.setCursor(Qt.CursorShape.PointingHandCursor)
+            cell.setStyleSheet(
+                build_segmented_cell_qss(first=index == 0, last=index == 1, padding_h=6)
+            )
+            self._frame_group.addButton(cell)
+            cells.addWidget(cell)
+        self._lab_btn.setChecked(True)
+        self._lab_btn.setToolTip("Lab frame")
+        self._rotating_btn.setToolTip("Rotating frame")
+        self._frame_group.buttonToggled.connect(self._on_frame_toggled)
+        self._frame_switch.hide()
+        layout.addWidget(self._frame_switch)
 
         self._all_btn = QToolButton()
         self._all_btn.setText("all")
@@ -161,6 +199,29 @@ class ProjectionChipBar(QWidget):
         """Return ``"full"``, ``"short"`` or ``"folded"`` — what the bar shows now."""
         return self._presentation
 
+    def frame_available(self) -> bool:
+        """True when the projections include the transverse pair a frame rotates."""
+        return set(ROTATED_LABELS) <= set(self._chips)
+
+    def is_rotating(self) -> bool:
+        """True when the rotating frame is chosen and the projections allow it."""
+        return self.frame_available() and self._rotating_btn.isChecked()
+
+    def rotating_chosen(self) -> bool:
+        """The switch's own position, kept while browsing runs without the pair."""
+        return self._rotating_btn.isChecked()
+
+    def set_rotating(self, rotating: bool) -> None:
+        """Move the switch without emitting :attr:`frame_changed` (a restore)."""
+        with QSignalBlocker(self._frame_group):
+            (self._rotating_btn if rotating else self._lab_btn).setChecked(True)
+        self._refit()
+        self._sync_summary()
+
+    def display_label(self, label: str) -> str:
+        """The name *label*'s chip shows: its rotated name while rotating."""
+        return ROTATED_LABELS.get(label, label) if self.is_rotating() else label
+
     # ------------------------------------------------------------------
     # Width negotiation
     # ------------------------------------------------------------------
@@ -185,14 +246,30 @@ class ProjectionChipBar(QWidget):
         margins = layout.contentsMargins().left() + layout.contentsMargins().right()
         if presentation == "folded":
             return margins + self._fold_width()
-        texts = (
-            list(self._chips)
-            if presentation == "full"
-            else [short_projection_label(label) for label in self._chips]
-        )
+        texts = [self._chip_text(label, presentation) for label in self._chips]
         chips = sum(self._chip_width(text) for text in texts)
         spacing = layout.spacing() * len(texts)
-        return margins + chips + spacing + self._all_btn.sizeHint().width()
+        switch = (
+            self._switch_width(presentation) + layout.spacing() if self.frame_available() else 0
+        )
+        return margins + switch + chips + spacing + self._all_btn.sizeHint().width()
+
+    def _chip_text(self, label: str, presentation: str) -> str:
+        shown = self.display_label(label)
+        return shown if presentation == "full" else short_projection_label(shown)
+
+    def _switch_width(self, presentation: str) -> int:
+        """Width of the Lab | Rotating switch showing *presentation*'s texts."""
+        widths = []
+        for cell, text in zip(
+            (self._lab_btn, self._rotating_btn), _FRAME_TEXTS[presentation], strict=True
+        ):
+            cell.ensurePolished()
+            metrics = cell.fontMetrics()
+            flags = Qt.TextFlag.TextShowMnemonic
+            chrome = cell.sizeHint().width() - metrics.size(flags, cell.text()).width()
+            widths.append(chrome + metrics.size(flags, text).width())
+        return sum(widths)
 
     def _chip_width(self, text: str) -> int:
         """Width of a chip showing *text*: its QSS chrome plus the text width.
@@ -214,14 +291,27 @@ class ProjectionChipBar(QWidget):
         count = len(self._chips)
         candidates = [_fold_label(label) for label in self._chips]
         candidates += [f"{count} of {count}", f"All {count}"]
+        if self.frame_available():
+            candidates += [_ROTATING_FOLD_PREFIX + _fold_label(ROTATED_LABELS["P_x"])]
+            candidates += [f"{_ROTATING_FOLD_PREFIX}{count} of {count}"]
         return max(self._chip_width(f"{text} ▾") for text in candidates)
+
+    def _refit(self) -> None:
+        """Re-measure after the chip texts or the switch changed, and present what fits."""
+        self.updateGeometry()
+        self._present(self._fitting_presentation(self.width()))
 
     def _present(self, presentation: str) -> None:
         self._presentation = presentation
         folded = presentation == "folded"
         for label, chip in self._chips.items():
-            chip.setText(label if presentation == "full" else short_projection_label(label))
+            chip.setText(self._chip_text(label, presentation))
+            chip.setToolTip(self.display_label(label))
             chip.setVisible(not folded)
+        if not folded:
+            self._lab_btn.setText(_FRAME_TEXTS[presentation][0])
+            self._rotating_btn.setText(_FRAME_TEXTS[presentation][1])
+        self._frame_switch.setVisible(self.frame_available() and not folded)
         self._all_btn.setVisible(not folded)
         self._fold_btn.setVisible(folded)
         self._fold_btn.setFixedWidth(self._fold_width())
@@ -247,7 +337,8 @@ class ProjectionChipBar(QWidget):
             chip.setToolTip(label)
             chip.setStyleSheet(_chip_qss(str(proj.get("tint") or _DEFAULT_TINT)))
             chip.toggled.connect(self._on_chip_toggled)
-            layout.insertWidget(index + 1, chip)
+            # After the stretch and the frame switch.
+            layout.insertWidget(index + 2, chip)
             self._chips[label] = chip
         self.updateGeometry()
         if self._chips:
@@ -280,6 +371,13 @@ class ProjectionChipBar(QWidget):
         self._sync_summary()
         self.selection_changed.emit(self.selected_labels())
 
+    def _on_frame_toggled(self, button: QPushButton, checked: bool) -> None:
+        if not checked:
+            return
+        self._refit()
+        self._sync_summary()
+        self.frame_changed.emit(button is self._rotating_btn)
+
     def _on_all_clicked(self) -> None:
         if len(self.selected_labels()) == len(self._chips):
             return
@@ -291,7 +389,7 @@ class ProjectionChipBar(QWidget):
         count = len(self._chips)
         self._all_btn.setEnabled(bool(self._chips) and len(selected) < count)
         if len(selected) == 1:
-            text = _fold_label(selected[0])
+            text = _fold_label(self.display_label(selected[0]))
             tint = next(
                 str(p.get("tint") or _DEFAULT_TINT)
                 for p in self._projections
@@ -301,17 +399,30 @@ class ProjectionChipBar(QWidget):
         else:
             text = f"All {count}" if len(selected) == count else f"{len(selected)} of {count}"
             qss = _chip_qss(tokens.BORDER_STRONG) + f"QPushButton {{ color: {tokens.TEXT}; }}"
+        if self.is_rotating():
+            text = _ROTATING_FOLD_PREFIX + text
         self._fold_btn.setText(f"{text} ▾")
         self._fold_btn.setStyleSheet(qss)
 
     def _rebuild_fold_menu(self) -> None:
-        """Fill the fold menu on ``aboutToShow``: one checkable entry per chip."""
+        """Fill the fold menu on ``aboutToShow``: the frame, then one entry per chip."""
         menu = self._fold_menu
         menu.clear()
+        if self.frame_available():
+            menu.addAction("Frame").setEnabled(False)
+            frames = QActionGroup(menu)
+            for text, cell in (("Lab", self._lab_btn), ("Rotating", self._rotating_btn)):
+                action = menu.addAction(text)
+                action.setCheckable(True)
+                action.setChecked(cell.isChecked())
+                frames.addAction(action)
+                # The switch stays the one source of truth, as the chips do below.
+                action.triggered.connect(cell.click)
+            menu.addSeparator()
         header = menu.addAction("Projections shown")
         header.setEnabled(False)
         for label, chip in self._chips.items():
-            action = menu.addAction(label)
+            action = menu.addAction(self.display_label(label))
             action.setCheckable(True)
             action.setChecked(chip.isChecked())
             # The chip stays the one source of truth, so the floor-of-one veto
