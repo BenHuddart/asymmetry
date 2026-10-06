@@ -259,15 +259,14 @@ draft is what gets applied to every run following the profile.
   **"Editing override for run N — this run only"** while an overridden run is
   selected. The same tint highlights the selected row in the scope list, and a
   run with uncommitted override edits gains an **"override *"** marker there.
-* **Preset dropdown and chip** — an instrument-aware preset dropdown in the
-  left column, directly above the group table it seeds with a
-  sensible starting arrangement (see the per-instrument sections below), and
-  a chip beside it reads either **"Preset: <name>"** when the draft's groups
-  still match that preset exactly, or **"Custom (edited from <name>)"** the
-  moment any group, name, or forward/backward assignment is edited by hand.
-  This comparison is re-made every time the draft changes rather than cached,
-  so the chip never keeps showing a preset name the settings have since
-  drifted away from.
+* **Preset dropdown** — an instrument-aware preset dropdown in the left
+  column, directly above the group table it seeds with a sensible starting
+  arrangement (see the per-instrument sections below). It shows the preset
+  the draft's groups still match exactly, and reads **"Custom"** the moment
+  any group, name, or forward/backward assignment is edited by hand. The
+  comparison is re-made whenever the groups or the forward/backward pair
+  change rather than cached, so the dropdown never keeps showing a preset the
+  settings have since drifted away from.
 * **Live preview** — a debounced plot of what the current draft would produce
   on the selected run, recomputed automatically as groups, :math:`\alpha`,
   binning, deadtime, or background settings change. The recompute runs on a

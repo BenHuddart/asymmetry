@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Grouping window's Preset dropdown shows the current preset.** It used
+  to show the instrument's first preset whatever was applied, with a separate
+  "Preset: <name>" label beside it. The dropdown now shows the applied preset,
+  or **Custom** once the groups or the forward/backward pair are edited by
+  hand, and the label is gone. Swapping forward and backward now switches it to
+  **Custom** straight away.
+
 ## [0.24.0] - 2026-10-05
 
 ### Added

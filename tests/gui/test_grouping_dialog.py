@@ -2154,15 +2154,15 @@ def test_psi_detector_layout_result_is_swapped_for_analysis_dropdowns(
     assert dialog._backward_combo.currentData() == 1
 
 
-def test_detector_layout_custom_edit_refreshes_preset_chip_and_marks_dirty(
+def test_detector_layout_custom_edit_refreshes_preset_dropdown_and_marks_dirty(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A drifted (custom) result from the detector-layout editor must refresh the
-    preset chip and arm the dialog's dirty/close-guard flag immediately, not just
+    preset dropdown and arm the dialog's dirty/close-guard flag immediately, not just
     update the internal state silently (regression: _on_detector_layout updated
     ``_grouping_preset_name``/groups/combos but never called ``_mark_dirty`` or
-    ``_refresh_preset_chip``, so the chip kept showing the stale preset name)."""
+    ``_refresh_preset_selection``, so it kept showing the stale preset name)."""
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
     dataset.run.grouping["instrument"] = "GPS"
@@ -2173,7 +2173,7 @@ def test_detector_layout_custom_edit_refreshes_preset_chip_and_marks_dirty(
     dataset.run.grouping["backward_group"] = 1
 
     dialog = GroupingDialog([dataset])
-    assert dialog._preset_chip.text() == "Preset: Longitudinal"
+    assert dialog._preset_combo.currentText() == "Longitudinal"
     assert dialog._draft_dirty is False
 
     # Drifted from the preset: the layout editor itself detects the state no
@@ -2210,16 +2210,16 @@ def test_detector_layout_custom_edit_refreshes_preset_chip_and_marks_dirty(
     dialog._on_detector_layout()
 
     assert dialog._grouping_preset_name is None
-    assert dialog._preset_chip.text() == "Custom (edited from Longitudinal)"
+    assert dialog._preset_combo.currentIndex() == -1
     assert dialog._draft_dirty is True
 
 
-def test_detector_layout_unchanged_preset_does_not_clear_chip(
+def test_detector_layout_unchanged_preset_does_not_clear_dropdown(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When the layout editor reconfirms the same preset (no drift), the chip
-    must keep reading "Preset: <name>" rather than being over-cleared to
+    """When the layout editor reconfirms the same preset (no drift), the
+    dropdown must keep showing that preset rather than being over-cleared to
     Custom."""
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
@@ -2231,7 +2231,7 @@ def test_detector_layout_unchanged_preset_does_not_clear_chip(
     dataset.run.grouping["backward_group"] = 1
 
     dialog = GroupingDialog([dataset])
-    assert dialog._preset_chip.text() == "Preset: Longitudinal"
+    assert dialog._preset_combo.currentText() == "Longitudinal"
 
     result = {
         "groups": {1: [1], 2: [2]},
@@ -2264,7 +2264,7 @@ def test_detector_layout_unchanged_preset_does_not_clear_chip(
     dialog._on_detector_layout()
 
     assert dialog._grouping_preset_name == "Longitudinal"
-    assert dialog._preset_chip.text() == "Preset: Longitudinal"
+    assert dialog._preset_combo.currentText() == "Longitudinal"
 
 
 # ---------------------------------------------------------------------------
@@ -2761,24 +2761,57 @@ def test_payload_matches_preset_accepts_detector_t0_pair_entries(qapp: QApplicat
     assert payload_matches_preset(payload, layout, "Longitudinal")
 
 
-def test_preset_chip_clears_stale_preset_on_drift(qapp: QApplication) -> None:
+def test_preset_dropdown_shows_the_applied_preset(qapp: QApplication) -> None:
+    """The dropdown stays on the applied preset, not the instrument's first one."""
+    dataset = _gps_dataset(None)
+    dialog = GroupingDialog([dataset])
+    index = dialog._preset_combo.findData("Transverse (Vector)")
+    assert index > 0
+    dialog._preset_combo.setCurrentIndex(index)
+    dialog._on_preset_combo_activated(index)
+    assert dialog._grouping_preset_name == "Transverse (Vector)"
+
+    # A reseed rebuilds the items (preview-run change, profile switch) and
+    # must re-select the draft's preset rather than fall back to item 0.
+    dialog._rebuild_preset_combo()
+    assert dialog._preset_combo.currentText() == "Transverse (Vector)"
+
+
+def test_preset_dropdown_clears_stale_preset_on_drift(qapp: QApplication) -> None:
     """Editing groups away from a preset clears the stored grouping_preset."""
     dataset = _gps_dataset(None)
     dialog = GroupingDialog([dataset])
     # Apply a named preset via the dropdown.
     dialog._preset_combo.setCurrentIndex(0)
     dialog._on_preset_combo_activated(0)
-    assert dialog._grouping_preset_name is not None
-    assert dialog._preset_chip.text().startswith("Preset:")
+    assert dialog._grouping_preset_name == "Longitudinal"
+    assert dialog._preset_combo.currentText() == "Longitudinal"
 
     # Drift the groups so they no longer match the preset.
     dialog._groups = {1: [0], 2: [1, 2, 3, 4, 5]}
     dialog._populate_group_table()
-    dialog._refresh_preset_chip(dialog._current_grouping_payload())
+    dialog._refresh_preset_selection()
     assert dialog._grouping_preset_name is None
-    assert "Custom (edited from" in dialog._preset_chip.text()
+    assert dialog._preset_combo.currentIndex() == -1
     # The drifted draft must not carry the stale preset.
     assert not dialog._current_grouping_payload().get("grouping_preset")
+
+
+def test_preset_dropdown_follows_a_forward_backward_swap(qapp: QApplication) -> None:
+    """Re-pairing forward/backward drops the dropdown to Custom at once."""
+    dataset = _gps_dataset(None)
+    dialog = GroupingDialog([dataset])
+    dialog._on_preset_combo_activated(0)
+    assert dialog._preset_combo.currentText() == "Longitudinal"
+
+    forward = dialog._forward_combo.currentData()
+    backward = dialog._backward_combo.currentData()
+    dialog._forward_combo.setCurrentIndex(dialog._forward_combo.findData(backward))
+    dialog._backward_combo.setCurrentIndex(dialog._backward_combo.findData(forward))
+
+    assert dialog._grouping_preset_name is None
+    assert dialog._preset_combo.currentIndex() == -1
+    assert dialog._preset_combo.placeholderText() == "Custom"
 
 
 def test_release_from_profile_excludes_run_from_apply(qapp: QApplication) -> None:

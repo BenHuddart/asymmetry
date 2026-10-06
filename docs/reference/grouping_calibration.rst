@@ -59,9 +59,9 @@ settings out to whichever runs happen to be checked:
   selected scope row, so the two editing modes are never confused.
 * **Forward Group** / **Backward Group** — the two groups that enter the
   asymmetry. Pick them from the detector groups defined in the layout editor.
-* **Preset dropdown and chip** — an instrument-aware starting arrangement, with
-  a chip that reads "Preset: <name>" until you edit a group by hand, at which
-  point it switches to "Custom (edited from <name>)".
+* **Preset dropdown** — an instrument-aware starting arrangement. The dropdown
+  shows the preset the groups match, and reads "Custom" once you edit a group
+  or swap the forward/backward pair by hand.
 * **Alpha status row** — the current :math:`\alpha` and its provenance (a
   fixed value, or "diamagnetic · run 2923" for a calibrated one), with a
   **Calibrate…** button that opens the alpha calibration dialog (see the
