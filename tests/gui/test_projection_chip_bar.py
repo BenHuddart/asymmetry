@@ -207,3 +207,82 @@ class TestProjectionChipBar:
         assert short_projection_label("Top-Bottom") == "T–B"
         assert short_projection_label("Fwd-Back") == "F–B"
         assert short_projection_label("P_x") == "P_x"
+
+
+class TestFrameSwitch:
+    """The Lab | Rotating switch of the transverse pair (rotating-frame-projection D1)."""
+
+    def test_switch_needs_the_transverse_pair(self, qapp):
+        bar = ProjectionChipBar()
+        bar.set_projections(_TRANSVERSE)
+        assert not bar.frame_available()
+        assert bar._frame_switch.isHidden()
+        bar.set_projections(_VECTOR)
+        assert bar.frame_available()
+        assert not bar._frame_switch.isHidden()
+
+    def test_rotating_relabels_the_pair_and_keeps_chip_identity(self, qapp):
+        bar = ProjectionChipBar()
+        bar.set_projections(_VECTOR, ["P_x", "P_z"])
+        frames: list[bool] = []
+        bar.frame_changed.connect(frames.append)
+        bar._rotating_btn.click()
+        assert frames == [True]
+        assert bar.is_rotating()
+        assert [chip.text() for chip in bar._chips.values()] == ["P′_x", "P′_y", "P_z"]
+        assert bar.selected_labels() == ["P_x", "P_z"]
+        assert PROJECTION_TINTS["P_x"] in bar._chips["P_x"].styleSheet()
+        bar._rotating_btn.click()  # already rotating: no second event
+        assert frames == [True]
+        bar._lab_btn.click()
+        assert frames == [True, False]
+        assert bar._chips["P_x"].text() == "P_x"
+
+    def test_switch_shortens_then_folds_into_the_menu(self, qapp):
+        bar = ProjectionChipBar()
+        bar.set_projections(_VECTOR)
+        bar.show()
+        bar.resize(bar.sizeHint().width(), bar.sizeHint().height())
+        qapp.processEvents()
+        assert (bar._lab_btn.text(), bar._rotating_btn.text()) == ("Lab", "Rotating")
+
+        bar.resize(bar.sizeHint().width() - 1, bar.sizeHint().height())
+        qapp.processEvents()
+        assert bar.presentation() == "short"
+        assert (bar._lab_btn.text(), bar._rotating_btn.text()) == ("Lab", "Rot")
+        assert bar._rotating_btn.toolTip() == "Rotating frame"
+
+        bar.resize(bar.minimumSizeHint().width(), bar.sizeHint().height())
+        qapp.processEvents()
+        assert bar.presentation() == "folded"
+        assert bar._frame_switch.isHidden()
+        frames: list[bool] = []
+        bar.frame_changed.connect(frames.append)
+        bar._rebuild_fold_menu()
+        texts = [action.text() for action in bar._fold_menu.actions()]
+        assert texts[:3] == ["Frame", "Lab", "Rotating"]
+        assert texts.index("Projections shown") > 3
+        next(a for a in bar._fold_menu.actions() if a.text() == "Rotating").trigger()
+        assert frames == [True]
+        assert bar._fold_btn.text() == "Rot · All 3 ▾"
+        bar._rebuild_fold_menu()
+        assert "P′_x" in [action.text() for action in bar._fold_menu.actions()]
+
+    def test_rotating_does_not_widen_the_folded_bar(self, qapp):
+        bar = ProjectionChipBar()
+        bar.set_projections(_VECTOR)
+        lab = bar.minimumSizeHint().width()
+        bar.set_rotating(True)
+        assert bar.minimumSizeHint().width() == lab
+        bar.set_selected(["P_y"])
+        assert bar._fold_btn.text() == "Rot · P′_y ▾"
+
+    def test_set_rotating_is_silent_and_survives_runs_without_the_pair(self, qapp):
+        bar = ProjectionChipBar()
+        frames: list[bool] = []
+        bar.frame_changed.connect(frames.append)
+        bar.set_rotating(True)
+        assert frames == []
+        assert bar.rotating_chosen() and not bar.is_rotating()
+        bar.set_projections(_VECTOR)
+        assert bar.is_rotating()

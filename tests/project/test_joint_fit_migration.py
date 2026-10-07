@@ -82,7 +82,7 @@ def test_v21_project_migrates_with_empty_joint_fits_registry():
     state = _v21_state(batches=[_v21_series("b1")])
     result = migrate_to_current(state)
     validate(result)
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 25
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 26
     assert result["joint_fits"] == []
     series = result["batches"][0]
     assert "joint_fit_id" not in series
@@ -93,7 +93,7 @@ def test_v21_project_with_no_batches_migrates_clean():
     state = _v21_state()
     result = migrate_to_current(state)
     validate(result)
-    assert result["schema_version"] == 25
+    assert result["schema_version"] == 26
     assert result["joint_fits"] == []
 
 
@@ -112,7 +112,7 @@ def test_migrate_is_a_no_op_when_joint_fits_already_present():
     state["schema_version"] = 22
     state["joint_fits"] = [{"joint_id": "j1"}]  # malformed, but migration must not touch it
     result = migrate_to_current(state)
-    assert result["schema_version"] == 25
+    assert result["schema_version"] == 26
     assert result["joint_fits"] == [{"joint_id": "j1"}]
 
 

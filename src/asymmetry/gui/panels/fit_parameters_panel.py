@@ -725,7 +725,7 @@ class FitParametersPanel(QWidget):
         #: Ids of group-bound series whose live membership no longer matches what
         #: was last fit (D1). Surfaced on the series pill as a warning glyph +
         #: tooltip; cleared by re-running.
-        self._stale_series_ids: set[str] = set()
+        self._stale_series_reasons: dict[str, str] = {}
         #: Chip-rail section layout: ``(title, swatch colour or None, [batch_id,
         #: …], header tooltip or None)`` in display order, supplied by the host
         #: via :meth:`load_representation_series`. ``None`` (no caller has ever
@@ -1638,7 +1638,7 @@ class FitParametersPanel(QWidget):
         global_params_by_id: dict[str, dict[str, dict[str, float]]] | None = None,
         knight_observables_by_id: dict[str, dict[str, str]] | None = None,
         fraction_weights_by_id: dict[str, dict[str, float]] | None = None,
-        stale_ids: set[str] | None = None,
+        stale_reasons: dict[str, str] | None = None,
         phase_by_id: dict[str, PhaseDecoration] | None = None,
         sections: list[tuple[str, str | None, list[str], str | None]] | None = None,
         joint_fit_by_id: dict[str, tuple[str, str]] | None = None,
@@ -1795,7 +1795,9 @@ class FitParametersPanel(QWidget):
             self._series_run_numbers = dict(highlight_runs_by_id)
         # Stale group-bound series (membership changed since last fit) — surfaced
         # on the series pill; recomputed on every reload so a re-run clears it.
-        self._stale_series_ids = {str(s) for s in (stale_ids or set())}
+        self._stale_series_reasons = {
+            str(batch_id): reason for batch_id, reason in (stale_reasons or {}).items()
+        }
         # Normalised fraction weights for the table dialog (keyed by series id, so
         # they survive group switches without per-group plumbing).
         self._fraction_weights_by_id = {
@@ -1948,11 +1950,11 @@ class FitParametersPanel(QWidget):
 
     def _build_group_chip(self, group: _GroupFitData, strip_metrics) -> QPushButton:
         """One series pill: icon, tooltip, click/double-click and context menu."""
-        # A stale group-bound series (live membership ≠ last-fitted set, D1)
-        # carries a warning glyph + tooltip on its pill. The clean
+        # A stale series (its results no longer describe its runs) carries a
+        # warning glyph + its reasons on its pill's tooltip. The clean
         # ``group_name`` is left untouched so rename/sort/delete still read
         # the user-facing label.
-        is_stale = group.group_id in self._stale_series_ids
+        stale_reason = self._stale_series_reasons.get(group.group_id, "")
         # Same rule as the y chips: the pill is a short handle capped at a
         # character count, and the full name lives on the tooltip. A pill that
         # grew with the series name was what pushed the dock past 13 inches.
@@ -1961,7 +1963,7 @@ class FitParametersPanel(QWidget):
         pill_text = strip_metrics.elidedText(
             group.short_name, Qt.TextElideMode.ElideMiddle, metrics.char_width(_CHIP_MAX_CHARS)
         )
-        button = QPushButton(f"{pill_text} ⚠" if is_stale else pill_text)
+        button = QPushButton(f"{pill_text} ⚠" if stale_reason else pill_text)
         if group.phase is not None:
             button.setIcon(self._phase_swatch_icon(group.phase.color))
             button.setIconSize(QSize(10, 10))
@@ -1971,8 +1973,8 @@ class FitParametersPanel(QWidget):
             group.group_name,
             "Click to view this series · Shift+click to overlay it with the selected series.",
         ]
-        if is_stale:
-            tooltip.insert(0, "Membership changed since last fit — re-run to refresh.")
+        if stale_reason:
+            tooltip.insert(0, stale_reason)
         button.setToolTip("\n".join(tooltip))
         button.setCheckable(True)
         button.clicked.connect(self._on_group_button_clicked)

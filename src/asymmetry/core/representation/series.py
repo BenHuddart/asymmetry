@@ -28,6 +28,7 @@ from typing import Any
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation.base import RepresentationType
+from asymmetry.core.transform.rotating_frame import FrameSnapshot
 
 # ORDER_KEYS is defined in asymmetry.core.utils.constants and re-exported here
 # (and via representation/__init__) so series and field scans share one tuple.
@@ -136,6 +137,8 @@ class FitSeries:
         trend_excluded_runs: list[int] | None = None,
         joint_fit_id: str | None = None,
         shared_params: dict[str, str] | None = None,
+        projection: str | None = None,
+        member_frames: dict[int, FrameSnapshot] | None = None,
     ) -> None:
         self.batch_id = str(batch_id)
         self.label: str | None = str(label).strip() or None if label else None
@@ -220,6 +223,14 @@ class FitSeries:
         self.joint_fit_id: str | None = str(joint_fit_id) if joint_fit_id else None
         self.shared_params: dict[str, str] = {
             str(name): str(shared_name) for name, shared_name in (shared_params or {}).items()
+        }
+        #: The rotated projection (P′_x, P′_y) every member is fitted on, or
+        #: ``None`` for a series on its members' own axis — every other series.
+        self.projection: str | None = projection
+        #: The rotating frame each member's result was fitted in, for a series
+        #: on a rotated projection (docs/plans/rotating-frame-projection.md D7).
+        self.member_frames: dict[int, FrameSnapshot] = {
+            int(run): snapshot for run, snapshot in (member_frames or {}).items()
         }
 
     # ── joint fit stamp (D5/D8/D9/D10) ──────────────────────────────────────
@@ -389,6 +400,7 @@ class FitSeries:
         self.member_run_numbers = [r for r in self.member_run_numbers if r != run_number]
         self.member_source_run.pop(run_number, None)
         self.results_by_run.pop(run_number, None)
+        self.member_frames.pop(run_number, None)
         self.trend_excluded_runs = [r for r in self.trend_excluded_runs if r != run_number]
 
     def sort_members(self, runs_by_number: dict[int, Run]) -> None:
@@ -423,7 +435,7 @@ class FitSeries:
         identical replaces the results in place under the same ``batch_id`` and
         label; anything else records a new series.
 
-        Included: the representation, member kind, the normalised
+        Included: the representation, the :attr:`projection`, member kind, the normalised
         :attr:`canonical_model`, :attr:`param_roles`, :attr:`order_key`,
         :attr:`excluded_run_numbers`, the effective member set (the sorted
         :attr:`last_fitted_members`, so member *ordering* is not identity), and
@@ -445,6 +457,7 @@ class FitSeries:
         return json.dumps(
             {
                 "rep_type": self.rep_type.value,
+                "projection": self.projection,
                 "member_kind": self.member_kind,
                 "members": sorted(int(r) for r in self.last_fitted_members),
                 "model": model,
@@ -493,6 +506,10 @@ class FitSeries:
             "trend_excluded_runs": list(self.trend_excluded_runs),
             "joint_fit_id": self.joint_fit_id,
             "shared_params": dict(self.shared_params),
+            "projection": self.projection,
+            "member_frames": {
+                str(run): snapshot.to_dict() for run, snapshot in self.member_frames.items()
+            },
         }
 
     @classmethod
@@ -540,4 +557,10 @@ class FitSeries:
             # member, which is exactly what the defaults say.
             joint_fit_id=data.get("joint_fit_id"),
             shared_params=data.get("shared_params"),
+            # Absent before v26: no series was on a rotated projection.
+            projection=data.get("projection"),
+            member_frames={
+                int(run): FrameSnapshot.from_dict(snapshot)
+                for run, snapshot in (data.get("member_frames") or {}).items()
+            },
         )

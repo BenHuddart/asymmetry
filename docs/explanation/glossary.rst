@@ -77,7 +77,22 @@ For a narrative introduction rather than isolated definitions, read the
       A display transform that demodulates a fast transverse-field precession
       down to a slow beat about a chosen reference frequency, making the
       relaxation envelope legible without changing the fitted physics. See
-      :doc:`/reference/rotating_frame`.
+      :doc:`/reference/rotating_frame`. With both transverse projections
+      measured, the frame is reached exactly instead; see
+      :term:`rotating-frame projection`.
+
+   rotating-frame projection
+      The exact rotation of the transverse pair :math:`P_x`, :math:`P_y` of a
+      vector-polarisation grouping into a frame turning at the RF generator's
+      frequency about :math:`B_0 \parallel z`, giving :math:`P'_x` and
+      :math:`P'_y` bin by bin with no filter, so the rotated curves can be
+      fitted. See :doc:`/reference/rotating_frame_projection`.
+
+   nutation
+      The turning of the muon spin about an RF field :math:`B_1` that is
+      static in the rotating frame, at :math:`\nu_1 = (\gamma_\mu/2\pi)B_1` on
+      resonance — the magnetic-resonance analogue of precession. See
+      :doc:`/reference/rotating_frame_projection`.
 
    TF
    transverse field

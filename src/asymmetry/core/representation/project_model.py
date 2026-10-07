@@ -22,6 +22,7 @@ from asymmetry.core.representation.container import DatasetRepresentations
 from asymmetry.core.representation.group import DataGroup, PhaseSpec
 from asymmetry.core.representation.joint_fit import JointFit
 from asymmetry.core.representation.series import FitSeries
+from asymmetry.core.transform.rotating_frame import RotatingFrame
 
 
 def _axis_value(run_number: int, order_key: str, runs_by_number: dict[int, Run]) -> float:
@@ -49,6 +50,7 @@ class ProjectModel:
         data_groups: dict[str, DataGroup] | None = None,
         active_series: dict[str, str] | None = None,
         joint_fits: dict[str, JointFit] | None = None,
+        rotating_frames: dict[int, RotatingFrame] | None = None,
     ) -> None:
         self.datasets: dict[int, DatasetRepresentations] = dict(datasets or {})
         self.batches: dict[str, FitSeries] = dict(batches or {})
@@ -75,6 +77,9 @@ class ProjectModel:
         #: scan every record to answer "does this series belong to a joint
         #: fit, and is it still the one it thinks it does".
         self.joint_fits: dict[str, JointFit] = dict(joint_fits or {})
+        #: Each run's rotating frame by run number (schema v26); a run with none
+        #: has not been shown in the rotating frame.
+        self.rotating_frames: dict[int, RotatingFrame] = dict(rotating_frames or {})
 
     # ── access ───────────────────────────────────────────────────────────────
 
@@ -689,6 +694,7 @@ class ProjectModel:
         batches: dict[str, FitSeries] = {}
         data_groups: dict[str, DataGroup] = {}
         joint_fits: dict[str, JointFit] = {}
+        rotating_frames: dict[int, RotatingFrame] = {}
         if not isinstance(project, dict):
             return cls()
 
@@ -696,6 +702,8 @@ class ProjectModel:
             if not isinstance(entry, dict):
                 continue
             run_number = int(entry.get("run_number", 0))
+            if "rotating_frame" in entry:
+                rotating_frames[run_number] = RotatingFrame.from_dict(entry["rotating_frame"])
             reps = entry.get("representations")
             if isinstance(reps, dict) and reps:
                 container = DatasetRepresentations.from_dict(
@@ -718,7 +726,19 @@ class ProjectModel:
             if joint is not None:
                 joint_fits[joint.joint_id] = joint
 
-        return cls(datasets, batches, data_groups, project.get("active_series"), joint_fits)
+        for entry in project.get("combined_datasets", []) or []:
+            if "rotating_frame" in entry:
+                rotating_frames[int(entry["combined_run_number"])] = RotatingFrame.from_dict(
+                    entry["rotating_frame"]
+                )
+        return cls(
+            datasets,
+            batches,
+            data_groups,
+            project.get("active_series"),
+            joint_fits,
+            rotating_frames,
+        )
 
     def write_to_project_state(self, project: dict) -> None:
         """Write representations onto each dataset entry, and the top-level blocks.
@@ -731,10 +751,19 @@ class ProjectModel:
         for entry in project.get("datasets", []) or []:
             if not isinstance(entry, dict):
                 continue
-            container = self.datasets.get(int(entry.get("run_number", 0)))
+            run_number = int(entry.get("run_number", 0))
+            container = self.datasets.get(run_number)
+            if run_number in self.rotating_frames:
+                entry["rotating_frame"] = self.rotating_frames[run_number].to_dict()
             entry["representations"] = (
                 container.to_dict()["representations"] if container is not None else {}
             )
+        # Combined rows are saved apart from the datasets, under the run number
+        # the host remaps on load; their frames ride with them.
+        for entry in project.get("combined_datasets", []) or []:
+            run_number = int(entry["combined_run_number"])
+            if run_number in self.rotating_frames:
+                entry["rotating_frame"] = self.rotating_frames[run_number].to_dict()
         project["batches"] = [batch.to_dict() for batch in self.batches.values()]
         project["data_groups"] = [group.to_dict() for group in self.data_groups.values()]
         project["active_series"] = dict(self.active_series)

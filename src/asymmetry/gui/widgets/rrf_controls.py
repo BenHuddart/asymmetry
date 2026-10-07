@@ -273,9 +273,16 @@ class RRFControls(QWidget):
         self.refresh_visibility()
 
     def applies_to_current_view(self) -> bool:
-        """True when the active representation is the FB-asymmetry time view."""
+        """True on the FB-asymmetry time view, unless the exact frame is offered.
+
+        Projections that include the transverse pair take the exact rotating
+        frame instead (D2 of docs/plans/rotating-frame-projection.md); other
+        multi-projection groupings keep the filtered one.
+        """
         panel = self._panel
         if getattr(panel, "_is_frequency_plot_panel", lambda: False)():
+            return False
+        if panel.offers_rotating_frame():
             return False
         if self._active_view_token not in {"", "fb_asymmetry"}:
             return False

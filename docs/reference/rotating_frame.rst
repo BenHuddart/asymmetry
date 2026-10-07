@@ -11,6 +11,14 @@ is *slow*: the relaxation envelope, and a beat at the offset
 RRF display is standard practice for vortex-lattice and Knight-shift work at
 high field.
 
+This page describes the *filtered* display of a single forward–backward
+asymmetry, available under **Options → Advanced → Rotating reference frame**.
+When a grouping measures both transverse projections — the :math:`P_x` and
+:math:`P_y` of vector-polarisation mode — the frame is reached exactly instead,
+bin by bin and without a filter, and the result can be fitted: see
+:doc:`rotating_frame_projection`. The filtered controls are not offered for
+such groupings.
+
 The controls live in a row above the time-domain plot and appear only on the
 **FB Asymmetry** representation: an enable box, the frame frequency
 :math:`\nu_0` (entered in MHz or Gauss — the two are equivalent through

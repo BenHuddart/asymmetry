@@ -85,9 +85,9 @@ import os
 import time
 import weakref
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -198,6 +198,7 @@ from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
     combine_period_asymmetry,
+    held_period_count,
     select_period_histograms,
 )
 from asymmetry.core.maxent import (
@@ -283,7 +284,19 @@ from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
     promote_deadtime_to_grouping,
 )
+from asymmetry.core.transform.projections import reduce_run_projections, reduction_identity
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
+from asymmetry.core.transform.rotating_frame import (
+    ROTATED_LABELS,
+    ROTATED_PROJECTIONS,
+    FrameEstimate,
+    FrameSnapshot,
+    Provenance,
+    RotatingFrame,
+    estimate_frame,
+    period_weights,
+    rotate_transverse,
+)
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -345,6 +358,8 @@ from asymmetry.gui.utils.reduction_cache import ReductionCache
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
+from asymmetry.gui.widgets.rotating_frame_bar import FRAME_METADATA_KEY
+from asymmetry.gui.widgets.rotating_frame_review import FrameReviewDialog
 from asymmetry.gui.windows.global_fit_compare_dialog import GlobalFitCompareDialog
 from asymmetry.gui.windows.global_parameter_fit_window import (
     GlobalParameterFitWindow,
@@ -366,6 +381,19 @@ if TYPE_CHECKING:
     from asymmetry.gui.shell import ProjectShell
 
 
+#: The plot's message while a displayed run has no rotating frame (D6).
+_FRAME_DETECT_STALE = (
+    "Auto-detect discarded: the runs, ν_RF, B₁ axis or grouping changed while it ran."
+)
+_FRAME_MISSING_MESSAGE = "Enter ν_RF to show the rotating frame."
+#: Why a run cannot be a member of a series on a rotated projection (D7).
+_NO_FRAME_MEMBER = "No rotating frame — set ν_RF in the rotating view"
+#: A fit made in a frame its run no longer has (D7).
+_FRAME_STALE = "Fitted in a different rotating frame — re-run the fit to update it."
+#: A group-bound series whose live membership left its last run (series D1).
+_MEMBERSHIP_STALE = "Membership changed since last fit — re-run to refresh."
+
+
 @dataclass(frozen=True)
 class _GlobalFitLaunch:
     """The workspace context a batch/global fit was launched from.
@@ -376,8 +404,10 @@ class _GlobalFitLaunch:
     results land: which representation the series is recorded under
     (:attr:`rep_type`), which spectrum cache resolves its members
     (:attr:`frequency_rep_type` — the representation the fit datasets were
-    actually collected from, which the selection path pins), and which plot
-    panel draws its curves (:attr:`domain`).
+    actually collected from, which the selection path pins), which plot
+    panel draws its curves (:attr:`domain`), and — for members rotated into a
+    frame — the projection they are on and the frame each was rotated in
+    (:attr:`projection`, :attr:`member_frames`).
 
     The class default is the pre-launch state: no fit has run, so there is no
     representation to record under.
@@ -386,6 +416,8 @@ class _GlobalFitLaunch:
     rep_type: RepresentationType | None = None
     frequency_rep_type: RepresentationType | None = None
     domain: str = "time"
+    projection: str | None = None
+    member_frames: Mapping[int, FrameSnapshot] = field(default_factory=dict)
 
     @property
     def is_frequency(self) -> bool:
@@ -1720,7 +1752,7 @@ class MainWindow(QMainWindow):
                     if hasattr(self._data_browser, "_rebuild_table"):
                         self._data_browser._rebuild_table()
                     if self._current_dataset is not None:
-                        self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+                        self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
                     self._render_current_selection_plot()
                     self._refresh_vector_axis_selector()
                     self._update_fit_block_state()
@@ -1730,7 +1762,7 @@ class MainWindow(QMainWindow):
             if hasattr(self._plot_panel, "set_bunch_factor"):
                 self._plot_panel.set_bunch_factor(bunch_factor, emit_signal=False)
             if self._current_dataset is not None:
-                self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+                self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
             if targets:
                 self._render_current_selection_plot()
             self._update_selected_datasets()
@@ -2154,6 +2186,9 @@ class MainWindow(QMainWindow):
             self._plot_panel.fit_target_projection_changed.connect(
                 self._on_fit_target_projection_changed
             )
+        self._plot_panel.frame_changed.connect(self._on_plot_frame_changed)
+        self._plot_panel.frame_bar.field_edited.connect(self._on_frame_field_edited)
+        self._plot_panel.frame_bar.auto_detect_requested.connect(self._on_frame_auto_detect)
         self._fit_panel.fit_completed.connect(self._on_fit_completed)
         if hasattr(self._fit_panel, "set_single_fit_restore_provider"):
             self._fit_panel.set_single_fit_restore_provider(self._single_fit_restore_payload)
@@ -2335,10 +2370,10 @@ class MainWindow(QMainWindow):
             if hasattr(self._fit_panel, "set_domain"):
                 self._fit_panel.set_domain("time")
             if self._current_dataset is not None:
-                self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+                self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
                 if self._grouped_fit_surface_active():
                     self._multi_group_fit_window.set_dataset(
-                        self._get_fit_dataset(self._current_dataset)
+                        self._single_fit_dataset(self._current_dataset)
                     )
             self._update_selected_datasets()
         self._refresh_time_view_selector()
@@ -3129,6 +3164,11 @@ class MainWindow(QMainWindow):
                     self._plot_panel.get_current_polarization_axis()
                 )
 
+            if self._plot_panel.frame_rotating():
+                render_mode = "vector_rotating"
+                rendered_targets = self._render_rotating_frame(targets)
+                return
+
             if active_axis == "ALL" and hasattr(self._plot_panel, "plot_vector_subplots"):
                 labels = (
                     list(self._plot_panel.selected_projection_labels())
@@ -3194,7 +3234,7 @@ class MainWindow(QMainWindow):
         # In the stacked multi-subplot view a fit acts on the selected subplot
         # (the fit target); a single fit always binds the current run, so it
         # must be one of the runs shown on that projection.
-        if active_axis == "ALL":
+        if active_axis == "ALL" or self._plot_panel.frame_rotating():
             projection = self._plot_panel.fit_target_projection()
             if projection is None:
                 return True, "Click a subplot to choose the projection to fit."
@@ -3203,10 +3243,15 @@ class MainWindow(QMainWindow):
         current = self._current_dataset
         if projection is None or current is None:
             return False, ""
-        targets = self._selected_or_current_datasets()
-        members = self._projection_memberships(targets).get(projection)
-        position = next((i for i, ds in enumerate(targets) if ds is current), None)
-        if members is None or position is None or position in members:
+        if projection in ROTATED_PROJECTIONS:
+            # P′_x and P′_y exist only for a run with a frame (D7).
+            shown = self._frame_snapshot(current) is not None
+        else:
+            targets = self._selected_or_current_datasets()
+            members = self._projection_memberships(targets).get(projection)
+            position = next((i for i, ds in enumerate(targets) if ds is current), None)
+            shown = members is None or position is None or position in members
+        if shown:
             return False, ""
         return (
             True,
@@ -3251,7 +3296,257 @@ class MainWindow(QMainWindow):
         if projection and projection != "ALL":
             self._synchronize_targets_to_axis(self._selected_or_current_datasets(), projection)
         self._rebind_single_fit_to_active_projection()
+        self._follow_fit_target_in_batch_draft()
         self._update_fit_block_state()
+
+    # ── rotating frame (docs/plans/rotating-frame-projection.md) ─────────
+
+    def _render_rotating_frame(self, targets: list[MuonDataset]) -> list[MuonDataset]:
+        """Draw the selected projections with the transverse pair in each run's frame.
+
+        The pair is rotated unbunched; the plot bunches the rotated values (D8).
+        Until every displayed run has a frame the plot asks for ν_RF instead (D6).
+        Returns the datasets drawn.
+        """
+        labels = self._plot_panel.selected_projection_labels()
+        built = self._build_vector_axis_datasets(
+            targets, [label for label in labels if label not in ROTATED_LABELS]
+        )
+        pair_runs = [ds for ds in targets if self._has_transverse_pair(ds)]
+        frames = {
+            ds.run_number: self._project_model.rotating_frames.get(ds.run_number)
+            for ds in pair_runs
+        }
+        weights = {ds.run_number: self._frame_period_weights(ds) for ds in pair_runs}
+        current = self._data_browser.get_current_dataset()
+        selected = (
+            current.run_number
+            if current is not None and current.run_number in frames
+            else next(iter(frames), None)
+        )
+        self._plot_panel.frame_bar.show_frames(frames, selected, weights.get(selected, (1.0,)))
+        rotated_shown = any(label in ROTATED_LABELS for label in labels)
+        if rotated_shown and (not pair_runs or None in frames.values()):
+            self._plot_panel.show_message(_FRAME_MISSING_MESSAGE)
+            return []
+        rotated = (
+            [self._rotated_curves(ds, self._frame_snapshot(ds)) for ds in pair_runs]
+            if rotated_shown
+            else []
+        )
+        shown = {
+            ROTATED_LABELS.get(label, label): (
+                [curves[ROTATED_LABELS[label]] for curves in rotated]
+                if label in ROTATED_LABELS
+                else built[label]
+            )
+            for label in labels
+        }
+        self._plot_panel.plot_vector_subplots(shown)
+        return [dataset for members in shown.values() for dataset in members]
+
+    def _on_plot_frame_changed(self, _rotating: bool) -> None:
+        """Redraw in the chosen frame; Lab returns the runs to the projection shown."""
+        targets = self._selected_or_current_datasets()
+        axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
+        self._synchronize_targets_to_axis(targets, axis)
+        self._render_current_selection_plot()
+        self._rebind_single_fit_to_active_projection()
+        self._follow_fit_target_in_batch_draft()
+        self._update_fit_block_state()
+
+    def _has_transverse_pair(self, dataset: MuonDataset) -> bool:
+        """Whether *dataset*'s grouping declares the P_x, P_y pair a frame rotates."""
+        return set(ROTATED_LABELS) <= set(self._projection_memberships([dataset]))
+
+    def _frame_snapshot(self, dataset: MuonDataset) -> FrameSnapshot | None:
+        """The frame *dataset*'s P′_x and P′_y are made in now; ``None`` when it has none."""
+        frame = self._project_model.rotating_frames.get(dataset.run_number)
+        if frame is None or not self._has_transverse_pair(dataset):
+            return None
+        return FrameSnapshot(
+            frame, self._frame_period_weights(dataset), reduction_identity(dataset.run.grouping)
+        )
+
+    def _rotated_curves(
+        self, dataset: MuonDataset, snapshot: FrameSnapshot
+    ) -> dict[str, MuonDataset]:
+        """*dataset*'s unbunched P′_x and P′_y in *snapshot*'s frame, each carrying it."""
+        built = self._build_vector_axis_datasets([dataset], list(ROTATED_LABELS))
+        pair = rotate_transverse(
+            built["P_x"][0], built["P_y"][0], snapshot.frame, weights=snapshot.weights
+        )
+        for curve in pair:
+            curve.metadata[FRAME_METADATA_KEY] = snapshot
+        return {curve.metadata["projection"]: curve for curve in pair}
+
+    def _fitted_in_old_frame(self, run_number: int, snapshot: FrameSnapshot) -> bool:
+        """Whether *run_number*'s rotated curves are no longer the ones *snapshot* fitted.
+
+        A run no longer loaded cannot be compared, so it never reads stale.
+        """
+        dataset = self._data_browser.get_dataset(int(run_number))
+        if dataset is None:
+            return False
+        current = self._frame_snapshot(dataset)
+        return current is None or not snapshot.same_rotation(current)
+
+    @staticmethod
+    def _frame_period_weights(dataset: MuonDataset) -> tuple[float, ...]:
+        """How *dataset*'s displayed curve combines its run's periods."""
+        run = dataset.run
+        return period_weights(
+            str(run.grouping.get("period_mode", PeriodMode.RED)), held_period_count(run)
+        )
+
+    def _on_frame_field_edited(self, runs: list[int], name: str, value: object) -> None:
+        """Write a typed frame field to *runs*; ν_RF on a run with no frame creates it.
+
+        A typed baseline goes to the period the run displays: the bar enables the
+        baseline fields only on a single period (D9).
+        """
+        frames = self._project_model.rotating_frames
+        for run in runs:
+            frame = frames.get(run)
+            if frame is None:
+                # The bar enables only ν_RF while a run has no frame (D6).
+                dataset = self._data_browser.get_dataset(run)
+                frames[run] = RotatingFrame.typed_frequency(
+                    float(value), held_period_count(dataset.run)
+                )
+            elif name in ("baseline_x", "baseline_y"):
+                period = self._plot_panel.frame_bar.shown_period()
+                current = frame.baselines[period]
+                x, y = (value, current.y) if name == "baseline_x" else (current.x, value)
+                frames[run] = frame.with_baseline(period, Provenance.TYPED, x, y)
+            else:
+                frames[run] = frame.with_values(Provenance.TYPED, **{name: value})
+        self._plot_panel.set_frame_status(None)
+        self._on_frames_changed()
+
+    def _on_frames_changed(self) -> None:
+        """Redraw, and re-rotate the data the fits run on in the runs' new frames (D7).
+
+        The Single tab and a Batch pool on P′_x or P′_y hold rotated crops, so
+        both are rebuilt: the next fit fits the curve on show, and a fit made in
+        the old frame reads stale where it is listed.
+        """
+        self._mark_dirty()
+        self._render_current_selection_plot()
+        self._rebind_single_fit_to_active_projection()
+        open_id = self._fit_panel.open_series_id()
+        projection = self._project_model.batch(open_id).projection if open_id else None
+        if projection is not None:
+            self._repool_batch(projection)
+        self._follow_fit_target_in_batch_draft()
+        self._refresh_trend_panel(surface=False)
+
+    def _repool_batch(self, projection: str | None) -> None:
+        """Re-read the Batch tab's member runs on *projection*, keeping its form (D7).
+
+        Exclusions, the group binding and the recipe stay; only the members'
+        data, and which runs can join, change.
+        """
+        runs = self._fit_panel.member_pool_runs()
+        self._fit_panel.replace_member_datasets(
+            self._batch_datasets_for_runs(
+                runs, self._fit_panel.batch_fit_range(), None, projection
+            ),
+            self._unavailable_members(runs, projection),
+        )
+
+    def _follow_fit_target_in_batch_draft(self) -> None:
+        """A Batch draft fits what the plot's fit target shows; an open series keeps its own."""
+        if (
+            self._fit_panel.open_series_id() is None
+            and self._plot_workspace.active_domain() == "time"
+        ):
+            self._repool_batch(self._current_single_fit_projection())
+
+    def _frame_detect_identity(self) -> tuple:
+        """What an Auto-detect is about: the displayed runs, their ν_RF and B₁ axis,
+        and the reductions their curves come from."""
+        runs = self._plot_panel.frame_bar.runs()
+        frames = self._project_model.rotating_frames
+        return tuple(
+            (
+                run,
+                frames[run].frequency_mhz,
+                str(frames[run].b1_axis),
+                reduction_identity(self._data_browser.get_dataset(run).run.grouping),
+            )
+            for run in runs
+        )
+
+    def _on_frame_auto_detect(self) -> None:
+        """Estimate the displayed runs' frames over the visible window, then review (D6).
+
+        The estimate comes back with the identity it was launched for; one that
+        no longer matches the displayed runs is discarded, not reviewed.
+        """
+        identity = self._frame_detect_identity()
+        runs = self._plot_panel.frame_bar.runs()
+        frame = self._project_model.rotating_frames[runs[0]]
+        sources = [(run, self._data_browser.get_dataset(run).run) for run in runs]
+        x_min, x_max, _, _ = self._plot_panel.get_view_limits()
+
+        def estimate(_worker) -> tuple[tuple, FrameEstimate]:
+            # Every period on its own, never the combination shown: baselines are
+            # a period's, and green − red turns the nutation over (D9).
+            periods = {
+                run: [
+                    {
+                        label: curve.time_range(x_min, x_max)
+                        for label, curve in reduce_run_projections(source, index).items()
+                    }
+                    for index in range(held_period_count(source))
+                ]
+                for run, source in sources
+            }
+            return identity, estimate_frame(
+                [(run, [(p["P_x"], p["P_y"]) for p in periods[run]]) for run, _ in sources],
+                frequency_mhz=frame.frequency_mhz,
+                b1_axis=frame.b1_axis,
+            )
+
+        self._plot_panel.set_frame_status("Auto-detect: estimating…")
+        self._tasks.start(
+            estimate,
+            on_finished=self._open_frame_review,
+            on_error=self._on_frame_detect_failed,
+        )
+
+    def _open_frame_review(self, outcome: tuple[tuple, FrameEstimate]) -> None:
+        identity, estimate = outcome
+        self._plot_panel.set_frame_status(None)
+        if identity != self._frame_detect_identity():
+            self.statusBar().showMessage(_FRAME_DETECT_STALE)
+            self._log_panel.log(_FRAME_DETECT_STALE)
+            return
+        frames = self._project_model.rotating_frames
+        dialog = FrameReviewDialog(
+            estimate, {run.run_key: frames[run.run_key] for run in estimate.runs}, self
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.applied.connect(self._apply_frame_estimates)
+        dialog.open()
+
+    def _on_frame_detect_failed(self, message: str) -> None:
+        self._plot_panel.set_frame_status(None)
+        self._log_panel.log(f"Auto-detect could not estimate the rotating frame: {message}")
+        self.statusBar().showMessage("Auto-detect failed — see the log")
+
+    def _apply_frame_estimates(self, changes: dict, status: str) -> None:
+        """Write the review's ticked values as estimates (D5, D6)."""
+        frames = self._project_model.rotating_frames
+        for run, values in changes.items():
+            baselines = values.pop("baselines", {})
+            frame = frames[run].with_values(Provenance.ESTIMATED, **values)
+            for period, (x, y) in baselines.items():
+                frame = frame.with_baseline(period, Provenance.ESTIMATED, x, y)
+            frames[run] = frame
+        self._on_frames_changed()
+        self._plot_panel.set_frame_status(status)
 
     def _on_plot_polarization_axis_changed(self, axis_text: str) -> None:
         """Recompute displayed datasets using the selected vector polarization axis."""
@@ -3325,7 +3620,7 @@ class MainWindow(QMainWindow):
             return
         if self._plot_workspace.active_domain() != "time":
             return
-        self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+        self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
 
     # ── slots ──────────────────────────────────────────────────────────
 
@@ -4456,7 +4751,7 @@ class MainWindow(QMainWindow):
                     background_missing += 1
 
             if dataset is self._current_dataset:
-                self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+                self._fit_panel.set_dataset(self._single_fit_dataset(dataset))
             if first_updated_dataset is None:
                 first_updated_dataset = dataset
             try:
@@ -4487,7 +4782,7 @@ class MainWindow(QMainWindow):
                     self._current_dataset.run_number
                 ) == int(combined_target_run_number):
                     self._current_dataset = rebuilt_combined_dataset
-                    self._fit_panel.set_dataset(self._get_fit_dataset(rebuilt_combined_dataset))
+                    self._fit_panel.set_dataset(self._single_fit_dataset(rebuilt_combined_dataset))
 
         if profile_result is not None and (updated == 0 and not override_updated_runs):
             # Structural-only apply (rename/delete/default/assignments with no
@@ -4770,7 +5065,7 @@ class MainWindow(QMainWindow):
             if not applied:
                 continue
             if dataset is self._current_dataset:
-                self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+                self._fit_panel.set_dataset(self._single_fit_dataset(dataset))
             updated.append(rn)
         return sorted(updated)
 
@@ -4832,7 +5127,7 @@ class MainWindow(QMainWindow):
             if isinstance(dataset.metadata, dict):
                 dataset.metadata["grouping_overrides"] = True
             if dataset is self._current_dataset:
-                self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+                self._fit_panel.set_dataset(self._single_fit_dataset(dataset))
             applied_runs.append(int(run_number))
         return sorted(applied_runs)
 
@@ -4863,7 +5158,7 @@ class MainWindow(QMainWindow):
             if not applied:
                 continue
             if dataset is self._current_dataset:
-                self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+                self._fit_panel.set_dataset(self._single_fit_dataset(dataset))
             updated.append(int(rn))
         if not changed:
             return
@@ -6456,15 +6751,42 @@ class MainWindow(QMainWindow):
         """Fit-range crops of the browser selection (the batch/grouped members).
 
         Cropped to the Batch tab's own window (D8) — these datasets are what a
-        series run fits — with an unbounded side falling back to the plot's.
+        series run fits — with an unbounded side falling back to the plot's, on
+        the projection the plot's fit target names: a run without a curve on a
+        rotated one is left out (see :meth:`_unavailable_members`).
         """
         selected = self._data_browser.get_selected_datasets()
         window = self._fit_panel.batch_fit_range()
+        projection = self._current_single_fit_projection()
         return [
             fit_dataset
-            for fit_dataset in (self._get_fit_dataset(ds, window) for ds in selected)
+            for fit_dataset in (
+                self._get_fit_dataset(ds, window, projection=projection) for ds in selected
+            )
             if fit_dataset is not None
         ]
+
+    def _unavailable_members(self, runs, projection: str | None) -> dict[int, str]:
+        """The loaded *runs* that cannot be members of a series on *projection*, by why.
+
+        Only a rotated projection excludes anyone: P′_x and P′_y exist only for a
+        run with a frame (D7).
+        """
+        if projection not in ROTATED_PROJECTIONS:
+            return {}
+        datasets = [self._data_browser.get_dataset(int(run)) for run in runs]
+        return {
+            int(dataset.run_number): _NO_FRAME_MEMBER
+            for dataset in datasets
+            if dataset is not None and self._frame_snapshot(dataset) is None
+        }
+
+    def _selection_unavailable_members(self) -> dict[int, str]:
+        """The selected runs a Batch draft on the plot's fit target cannot take."""
+        return self._unavailable_members(
+            [ds.run_number for ds in self._data_browser.get_selected_datasets()],
+            self._current_single_fit_projection(),
+        )
 
     def _sync_fit_dock_mode(self) -> None:
         """Swap the fit dock between regular, grouped and ALC content."""
@@ -6487,7 +6809,7 @@ class MainWindow(QMainWindow):
 
         if show_grouped and self._multi_group_fit_window is not None:
             dataset = (
-                self._get_fit_dataset(self._current_dataset) if self._current_dataset else None
+                self._single_fit_dataset(self._current_dataset) if self._current_dataset else None
             )
             self._multi_group_fit_window.set_dataset(dataset)
             # The window only tracks the selection while it is the visible fit
@@ -10395,7 +10717,7 @@ class MainWindow(QMainWindow):
                 else:
                     if hasattr(self._fit_panel, "set_domain"):
                         self._fit_panel.set_domain("time")
-                    self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+                    self._fit_panel.set_dataset(self._single_fit_dataset(dataset))
                     _fit_range = self._plot_panel.get_fit_range()
                 if hasattr(self._fit_panel, "set_fit_range_display"):
                     self._fit_panel.set_fit_range_display(*_fit_range)
@@ -10404,7 +10726,7 @@ class MainWindow(QMainWindow):
                     # tables (FFT-seeded) — ~25 ms per switch — so only the
                     # visible surface tracks the selection; _sync_fit_dock_mode
                     # binds the window when the groups view is entered.
-                    self._multi_group_fit_window.set_dataset(self._get_fit_dataset(dataset))
+                    self._multi_group_fit_window.set_dataset(self._single_fit_dataset(dataset))
                 if self._multi_group_fit_window is not None and hasattr(
                     self._multi_group_fit_window, "set_fit_range_display"
                 ):
@@ -10588,10 +10910,10 @@ class MainWindow(QMainWindow):
             else:
                 if hasattr(self._fit_panel, "set_domain"):
                     self._fit_panel.set_domain("time")
-                self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+                self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
             if self._grouped_fit_surface_active():
                 self._multi_group_fit_window.set_dataset(
-                    self._get_fit_dataset(self._current_dataset)
+                    self._single_fit_dataset(self._current_dataset)
                 )
         self._update_selected_datasets()
         # The FFT window inherits the TIME plot's fit range; the staleness check
@@ -11158,9 +11480,10 @@ class MainWindow(QMainWindow):
         # so the panel can show the physical amplitude partition — the raw fitted
         # fractions are un-normalised relative weights and can sum to > 1.
         fraction_weights_by_id: dict[str, dict[str, float]] = {}
-        # Group-bound series whose live membership diverged from the last fit (D1):
-        # surfaced on the series pill, cleared automatically on the next re-run.
-        stale_ids: set[str] = set()
+        # Series whose results no longer describe their runs — live membership
+        # diverged from the last fit (D1), or a member's rotating frame changed
+        # (D7): surfaced on the series pill, cleared on the next re-run.
+        stale_reasons: dict[str, str] = {}
         # Series bound to a phase group (Global Fit Wizard transitions, D1/D4):
         # the panel's swatch/plot-colour/range-band decoration. A series whose
         # group is not a phase — including one with no group at all — is
@@ -11183,8 +11506,9 @@ class MainWindow(QMainWindow):
                 if series.group_id is not None
                 else None
             )
-            if series.group_id is not None and series.is_stale(group):
-                stale_ids.add(batch_id)
+            stale_reason = self._series_stale_reason(series, group)
+            if stale_reason:
+                stale_reasons[batch_id] = stale_reason
             if group is not None and group.is_phase and group.phase_range is not None:
                 phase_by_id[batch_id] = PhaseDecoration(
                     color=group.phase_color or phase_color(group.phase_ordinal),
@@ -11286,7 +11610,7 @@ class MainWindow(QMainWindow):
                 global_params_by_id=global_params_by_id,
                 knight_observables_by_id=knight_observables_by_id,
                 fraction_weights_by_id=fraction_weights_by_id,
-                stale_ids=stale_ids,
+                stale_reasons=stale_reasons,
                 phase_by_id=phase_by_id,
                 sections=sections,
                 joint_fit_by_id=joint_fit_by_id,
@@ -11614,7 +11938,10 @@ class MainWindow(QMainWindow):
             # The Batch tab was editing it: keep the runs and the setup on show
             # as a draft rather than emptying the surface under the user.
             self._fit_panel.open_draft(
-                datasets=self._batch_datasets_for_runs(members, window, series.rep_type),
+                datasets=self._batch_datasets_for_runs(
+                    members, window, series.rep_type, series.projection
+                ),
+                unavailable=self._unavailable_members(members, series.projection),
                 group_id=self._fit_panel.bound_group_id(),
                 group_name=self._data_group_name(self._fit_panel.bound_group_id() or ""),
             )
@@ -11676,19 +12003,36 @@ class MainWindow(QMainWindow):
         """``"<model> · <range> · <status>"`` for one line of the series menu.
 
         Status is how the last run went (``"4/4 · 14:32"``), or the staleness
-        glyph when the owning group has gained or lost runs since (D1).
+        glyph when the owning group has gained or lost runs since (D1) or a
+        member's rotating frame has changed (D7).
         """
         parts = [composite_model_label(series.canonical_model) or "Series"]
         window = fit_range_label(series)
         if window:
             parts.append(window)
-        if series.is_stale(group):
+        if self._series_stale_reason(series, group):
             parts.append("⚠")
         else:
             status = self._series_run_status(series)
             if status:
                 parts.append(status)
         return " · ".join(parts)
+
+    def _series_stale_reason(self, series: FitSeries, group) -> str:
+        """Why *series*' results no longer describe its runs, one reason a line; ``""`` if they do.
+
+        Membership (series D1) and the members' rotating frames (D7) are
+        separate facts, each read from its own record.
+        """
+        reasons = []
+        if series.is_stale(group):
+            reasons.append(_MEMBERSHIP_STALE)
+        if any(
+            self._fitted_in_old_frame(run, snapshot)
+            for run, snapshot in series.member_frames.items()
+        ):
+            reasons.append(_FRAME_STALE)
+        return "\n".join(reasons)
 
     @staticmethod
     def _series_run_status(series: FitSeries) -> str:
@@ -11711,14 +12055,18 @@ class MainWindow(QMainWindow):
                     continue
         return text
 
-    def _batch_datasets_for_runs(self, runs, fit_range, rep_type) -> list[MuonDataset]:
+    def _batch_datasets_for_runs(
+        self, runs, fit_range, rep_type, projection: str | None = None
+    ) -> list[MuonDataset]:
         """The Batch tab's member pool for *runs*, cropped to *fit_range*.
 
         *rep_type* decides both where the members come from and what unit the
         window is in: a frequency representation draws them from its cached
         spectra and crops in MHz, every other one from the browser's time
         datasets in µs. *fit_range* is the series' own window (D8); an unbounded
-        side falls back to the owning plot's bound.
+        side falls back to the owning plot's bound. A rotated *projection* takes
+        each run's rotated curve in its own frame and leaves out a run without
+        one (:meth:`_unavailable_members` lists them).
         """
         if rep_type is not None and rep_type.domain == "frequency":
             return self._frequency_fit_datasets_for_runs(runs, rep_type, fit_range)
@@ -11727,7 +12075,7 @@ class MainWindow(QMainWindow):
             dataset = self._data_browser.get_dataset(int(run_number))
             if dataset is None:
                 continue
-            crop = self._get_fit_dataset(dataset, fit_range)
+            crop = self._get_fit_dataset(dataset, fit_range, projection=projection)
             if crop is not None:
                 datasets.append(crop)
         return datasets
@@ -11768,7 +12116,10 @@ class MainWindow(QMainWindow):
         self._fit_panel.open_series(
             series,
             display_name=series.label or self._series_fallback_name(series),
-            datasets=self._batch_datasets_for_runs(pool, window, series.rep_type),
+            datasets=self._batch_datasets_for_runs(
+                pool, window, series.rep_type, series.projection
+            ),
+            unavailable=self._unavailable_members(pool, series.projection),
             excluded_runs=series.excluded_run_numbers,
             group_id=series.group_id,
             group_name=self._data_group_name(series.group_id) if series.group_id else None,
@@ -11827,7 +12178,9 @@ class MainWindow(QMainWindow):
         selection change: the member pool becomes the selection and the group
         binding is cleared, so the run mints or adopts its own group.
         """
-        self._fit_panel.set_datasets(self._selected_time_fit_datasets())
+        self._fit_panel.set_datasets(
+            self._selected_time_fit_datasets(), self._selection_unavailable_members()
+        )
         self._fit_panel.clear_bound_group()
         self._sync_batch_fit_range_guide()
 
@@ -11893,7 +12246,7 @@ class MainWindow(QMainWindow):
                 # A single-pair run sharing a projection subplot fits its own asymmetry.
                 return None
         axis = self._normalize_vector_axis(self._plot_panel.get_current_polarization_axis())
-        if axis == "ALL":
+        if axis == "ALL" or self._plot_panel.frame_rotating():
             # Stacked multi-subplot view: the selected subplot is the fit target.
             if hasattr(self._plot_panel, "fit_target_projection"):
                 return self._plot_panel.fit_target_projection()
@@ -12133,6 +12486,7 @@ class MainWindow(QMainWindow):
         open_series.member_run_numbers = list(candidate.member_run_numbers)
         open_series.member_source_run = dict(candidate.member_source_run)
         open_series.results_by_run = dict(candidate.results_by_run)
+        open_series.member_frames = dict(candidate.member_frames)
         open_series.last_fitted_members = list(candidate.last_fitted_members)
         open_series.nuisance_params = list(candidate.nuisance_params)
         open_series.group_id = candidate.group_id
@@ -12196,6 +12550,8 @@ class MainWindow(QMainWindow):
                 provenance="single",
                 ui_state=form_state,
                 fit_range=self._fit_panel.single_fit_window(),
+                # The frame of the curve just fitted, on P′_x or P′_y (D7).
+                frame_snapshot=self._fit_panel.single_dataset().metadata.get(FRAME_METADATA_KEY),
             ),
             detached=self._fit_panel.single_fit_records_new(),
         )
@@ -12223,7 +12579,7 @@ class MainWindow(QMainWindow):
         bound = self._bound_saved_fits()
         if bound is None:
             return SavedFitCatalogue()
-        _run_number, representation, projection = bound
+        run_number, representation, projection = bound
         fit_set = representation.fit_set(projection)
         return SavedFitCatalogue(
             entries=tuple(
@@ -12232,6 +12588,12 @@ class MainWindow(QMainWindow):
                     name=representation.fit_name(slot),
                     detail=_saved_fit_detail(slot),
                     identity=slot.identity(),
+                    stale_reason=(
+                        _FRAME_STALE
+                        if slot.frame_snapshot is not None
+                        and self._fitted_in_old_frame(run_number, slot.frame_snapshot)
+                        else ""
+                    ),
                 )
                 for slot in fit_set.fits
             ),
@@ -12406,7 +12768,7 @@ class MainWindow(QMainWindow):
         self._fit_panel.set_dataset(
             self._active_frequency_fit_dataset()
             if self._plot_workspace.active_domain() == "frequency"
-            else self._get_fit_dataset(self._current_dataset)
+            else self._single_fit_dataset(self._current_dataset)
         )
 
     def _record_global_fit_batch(
@@ -12503,6 +12865,8 @@ class MainWindow(QMainWindow):
             # The Batch tab's setup *is* the series' recipe (D2), and its
             # identity is what decides replace-or-new on the next run (D3).
             recipe=self._fit_panel.batch_recipe(),
+            projection=launch.projection,
+            member_frames=dict(launch.member_frames),
         )
         return self._record_fit_series(batch, source_runs=member_runs)
 
@@ -13553,8 +13917,9 @@ class MainWindow(QMainWindow):
             return
         seed = self._newest_series_for_group(group_id)
         window = self._recipe_window(seed.recipe) if seed is not None else None
+        projection = self._current_single_fit_projection()
         analysis_datasets = self._batch_datasets_for_runs(
-            run_numbers, window, self._active_representation_type()
+            run_numbers, window, self._active_representation_type(), projection
         )
         if not analysis_datasets:
             self.statusBar().showMessage("This group has no fittable datasets.")
@@ -13562,6 +13927,7 @@ class MainWindow(QMainWindow):
         group_name = self._data_group_name(group_id) or group_id
         self._fit_panel.open_draft(
             datasets=analysis_datasets,
+            unavailable=self._unavailable_members(run_numbers, projection),
             excluded_runs=seed.excluded_run_numbers if seed is not None else (),
             group_id=group_id,
             group_name=group_name,
@@ -13916,11 +14282,26 @@ class MainWindow(QMainWindow):
         )
 
     def _on_global_fit_started(self) -> None:
-        """Snapshot launch-time fit context before any UI refresh changes it."""
+        """Snapshot launch-time fit context before any UI refresh changes it.
+
+        A pool on a rotated projection is built for one projection, and each
+        member carries the frame it was rotated in (D7).
+        """
+        pool = self._fit_panel.batch_datasets()
+        rotated = [dataset for dataset in pool if FRAME_METADATA_KEY in dataset.metadata]
+        # A lab-frame vector pool is on one projection too: record it, so the
+        # same recipe on another subplot is another series (its identity).
+        projection = (
+            rotated[0].metadata["projection"] if rotated else self._fit_overlay_axis_key(pool[0])
+        )
         self._global_fit_launch = _GlobalFitLaunch(
             rep_type=self._active_representation_type(),
             frequency_rep_type=self._last_frequency_fit_rep_type,
             domain=self._fit_panel.domain(),
+            projection=projection,
+            member_frames={
+                int(dataset.run_number): dataset.metadata[FRAME_METADATA_KEY] for dataset in rotated
+            },
         )
 
     def _on_global_fit_completed(self, results_dict, global_params) -> None:
@@ -13978,7 +14359,9 @@ class MainWindow(QMainWindow):
                 if is_frequency_fit
                 else self._data_browser.get_dataset(run_number)
             )
-            if dataset is not None:
+            if launch.projection is not None:
+                axis_key = launch.projection
+            elif dataset is not None:
                 axis_key = self._fit_overlay_axis_key(dataset)
             fit_curves[run_number] = (
                 t_fit,
@@ -14938,6 +15321,8 @@ class MainWindow(QMainWindow):
             model = self._composite_model_for_series(series)
             if series.member_kind == "groups":
                 blocked = "Detector-group series"
+            elif series.projection is not None:
+                blocked = "Rotating-frame series"
             elif model is None:
                 blocked = "No fit model"
             else:
@@ -15949,12 +16334,7 @@ class MainWindow(QMainWindow):
         else:
             # The batch path crops to the Batch tab's own window (D8), not to
             # whatever the plot happens to be showing.
-            batch_window = self._fit_panel.batch_fit_range()
-            analysis_datasets = [
-                dataset
-                for dataset in (self._get_fit_dataset(ds, batch_window) for ds in selected)
-                if dataset is not None
-            ]
+            analysis_datasets = self._selected_time_fit_datasets()
 
         # Refresh the single-fit tab with the currently active dataset so that
         # bunch-factor or fit-range changes are reflected immediately.
@@ -15972,13 +16352,16 @@ class MainWindow(QMainWindow):
             # run. Re-binding the *leaving* run here first (saving and
             # restoring its form, rebuilding the grouped context) was pure
             # cost on every switch.
-            self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
+            self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
 
         if self._fit_panel.open_series_id() is None:
             # No series open: the Batch tab is a draft over the selection, as it
             # has always been. A selection-driven batch is ad-hoc, so any
             # "Fit this group…" binding goes with it (D1).
-            self._fit_panel.set_datasets(analysis_datasets)
+            self._fit_panel.set_datasets(
+                analysis_datasets,
+                {} if is_frequency_domain else self._selection_unavailable_members(),
+            )
             self._fit_panel.clear_bound_group()
         else:
             # D7: a selection change never rewrites an open series. The tab says
@@ -16111,7 +16494,17 @@ class MainWindow(QMainWindow):
             text += f"  ⟨{float(mean):.4g}±{float(mean_err):.2g}⟩ ({int(n)} pts)"
         self._status_coords_label.setText(text)
 
-    def _get_fit_dataset(self, dataset, fit_range: tuple[float, float] | None = None):
+    def _single_fit_dataset(self, dataset):
+        """*dataset*'s crop on the projection the Single tab fits."""
+        return self._get_fit_dataset(dataset, projection=self._current_single_fit_projection())
+
+    def _get_fit_dataset(
+        self,
+        dataset,
+        fit_range: tuple[float, float] | None = None,
+        *,
+        projection: str | None = None,
+    ):
         """Return analysis dataset restricted to a fit range.
 
         *fit_range* is an explicit ``(t_min, t_max)`` window that overrides the
@@ -16119,6 +16512,11 @@ class MainWindow(QMainWindow):
         passes so its members are cropped to the series' recipe window (D8)
         rather than to whatever the plot happens to be showing. The single-fit
         path passes nothing and keeps the plot-owned, project-wide range.
+
+        A rotated *projection* (P′_x, P′_y) crops the run's rotated curve in its
+        current frame — exactly the curve the plot draws — and is ``None`` for a
+        run without one (D7). Any other projection crops *dataset* itself, which
+        is already reduced onto the axis it shows.
 
         Memoised per source dataset: one run switch asks for the crop several
         times (the selection update, the dataset-selected handler, the grouped
@@ -16137,6 +16535,13 @@ class MainWindow(QMainWindow):
         """
         if dataset is None:
             return None
+        snapshot = self._frame_snapshot(dataset) if projection in ROTATED_PROJECTIONS else None
+        if projection in ROTATED_PROJECTIONS and snapshot is None:
+            return None
+        # A rotated crop is the source's metadata plus what makes it rotated.
+        rotated_tags = (
+            {} if snapshot is None else {"projection": projection, FRAME_METADATA_KEY: snapshot}
+        )
         memo = self.__dict__.get("_fit_dataset_memo")
         if memo is None:
             memo = self._fit_dataset_memo = {}
@@ -16166,19 +16571,25 @@ class MainWindow(QMainWindow):
             id(dataset.run),
             analysis_key,
             requested,
+            projection if snapshot is not None else None,
+            snapshot,
         )
         entry = memo.get(id(dataset))
         if entry is not None and entry[0] == key:
             crop = entry[1]
             if crop is None:
                 return dataset
-            crop.metadata = dict(dataset.metadata)
-            requested_range = key[-1]
-            if requested_range != (None, None):
-                crop.metadata["fit_range"] = requested_range
+            crop.metadata = dict(dataset.metadata) | rotated_tags
+            if requested != (None, None):
+                crop.metadata["fit_range"] = requested
             return crop
-        if analysis_dataset is None:
-            analysis_dataset = self._plot_panel.get_analysis_dataset(dataset)
+        if snapshot is None:
+            source = dataset
+        else:
+            source = self._rotated_curves(dataset, snapshot)[projection]
+            source.metadata = dict(dataset.metadata) | rotated_tags
+        if analysis_dataset is None or snapshot is not None:
+            analysis_dataset = self._plot_panel.get_analysis_dataset(source)
         crop = self._plot_panel.get_fit_dataset(analysis_dataset, requested)
         if entry is None:
             try:
@@ -16196,9 +16607,18 @@ class MainWindow(QMainWindow):
 
         The fit panel is only ever handed the crop (``_get_fit_dataset``); this
         is the accessor the fit wizard uses to analyse the whole record while
-        still knowing what the user's fit range would exclude.
+        still knowing what the user's fit range would exclude. A rotated fit
+        target analyses the run's rotated curve; the wizard opens only while the
+        target is fittable, so the run has a frame.
         """
-        analysis_dataset = self._plot_panel.get_analysis_dataset(self._current_dataset)
+        current = self._current_dataset
+        projection = self._current_single_fit_projection()
+        source = (
+            self._rotated_curves(current, self._frame_snapshot(current))[projection]
+            if projection in ROTATED_PROJECTIONS
+            else current
+        )
+        analysis_dataset = self._plot_panel.get_analysis_dataset(source)
         return self._plot_panel.get_full_fit_context(analysis_dataset)
 
     def _active_frequency_fit_dataset(self) -> MuonDataset | None:
@@ -17647,6 +18067,11 @@ class MainWindow(QMainWindow):
         self._plot_workspace.restore_state(plot_state.get("workspace_state"))
         self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))
         self._restore_frequency_representations(state)
+        # A combined run is restored under a new run number; its frame follows it.
+        self._project_model.rotating_frames = {
+            combined_id_map.get(run, run): frame
+            for run, frame in self._project_model.rotating_frames.items()
+        }
         if self._plot_workspace.active_domain() == "frequency":
             self._sync_frequency_plot_for_current_dataset()
         if (
@@ -17668,7 +18093,7 @@ class MainWindow(QMainWindow):
 
         # Propagate current dataset to fit panel.
         if current_dataset is not None:
-            self._fit_panel.set_dataset(self._get_fit_dataset(current_dataset))
+            self._fit_panel.set_dataset(self._single_fit_dataset(current_dataset))
         self._update_selected_datasets()
 
         restored_axis = self._normalize_vector_axis(plot_state.get("polarization_axis"))
@@ -17882,6 +18307,9 @@ class MainWindow(QMainWindow):
         }
         self._lazy_recompute_failures = set()
         self._pending_recipe_recompute = set()
+        # Series, joint fits and rotating frames are keyed by run number, a
+        # per-experiment counter: none may carry into the next project.
+        self._project_model = ProjectModel()
         # Drop any stale in-flight recompute bookkeeping; a cleared session has
         # nothing displayed and the overlay must not survive into it.
         self._frequency_recompute_inflight = set()

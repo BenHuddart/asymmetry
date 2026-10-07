@@ -52,7 +52,7 @@ def _v24_project() -> dict:
 def test_each_slot_becomes_the_open_fit_of_its_projection():
     result = migrate_to_current(_v24_project())
     validate(result)
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 25
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 26
     reps = result["datasets"][0]["representations"]
     fb = reps["time_fb_asymmetry"]
     assert "fit" not in fb and "projection_fits" not in fb

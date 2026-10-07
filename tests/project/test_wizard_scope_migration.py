@@ -115,7 +115,7 @@ def _scope(physics: set[PhysicsClass], **kwargs) -> WizardScope:
 def test_v22_scopes_migrate_to_version_2_physics_payloads():
     result = migrate_to_current(_v22_project())
     validate(result)
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 25
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 26
 
     rep = result["datasets"][0]["representations"]["time_fb_asymmetry"]
     single = open_fit(rep)["ui_state"]["wizard_state"]
@@ -209,7 +209,7 @@ def test_v22_project_round_trips_through_save_and_load(tmp_path):
     save_project(migrate_to_current(_v22_project()), path)
     loaded = load_project(path)
     validate(loaded)
-    assert loaded["schema_version"] == 25
+    assert loaded["schema_version"] == 26
     single = open_fit(loaded["datasets"][0]["representations"]["time_fb_asymmetry"])["ui_state"][
         "wizard_state"
     ]

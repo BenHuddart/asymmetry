@@ -25,6 +25,7 @@ from enum import Enum
 from typing import Any, ClassVar
 
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.transform.rotating_frame import FrameSnapshot
 
 
 class RepresentationType(str, Enum):
@@ -75,6 +76,9 @@ class FitSlot:
     default name applies; ``fit_range`` is the window fitted, ``{"min", "max"}``
     in the domain's unit with ``None`` for an open side (a frequency fit over
     the full spectrum), and ``None`` as a whole for a fit saved before v25.
+    ``frame_snapshot`` is the rotating frame a fit on P′_x or P′_y was made in,
+    ``None`` for every other fit; it is the data's provenance, not part of
+    :meth:`identity`.
     """
 
     model: dict | None = None
@@ -90,6 +94,7 @@ class FitSlot:
     fit_id: str = ""
     label: str | None = None
     fit_range: dict | None = None
+    frame_snapshot: FrameSnapshot | None = None
 
     def is_empty(self) -> bool:
         """Return ``True`` when no model or result has been stored."""
@@ -171,6 +176,9 @@ class FitSlot:
         # none, and an empty dict would bloat every saved slot for no gain.
         if self.ui_state:
             payload["ui_state"] = dict(self.ui_state)
+        # Only a fit on a rotated projection has a frame to record (D7).
+        if self.frame_snapshot is not None:
+            payload["frame_snapshot"] = self.frame_snapshot.to_dict()
         return payload
 
     @classmethod
@@ -219,6 +227,7 @@ class FitSlot:
         result = data.get("result")
         raw_ui_state = data.get("ui_state")
         fit_range = data.get("fit_range")
+        snapshot = data.get("frame_snapshot")
         return cls(
             model=dict(model) if isinstance(model, dict) else None,
             parameters=parameters,
@@ -232,6 +241,7 @@ class FitSlot:
                 if isinstance(fit_range, dict)
                 else None
             ),
+            frame_snapshot=None if snapshot is None else FrameSnapshot.from_dict(snapshot),
         )
 
 

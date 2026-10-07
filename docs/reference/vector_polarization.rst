@@ -113,6 +113,18 @@ falls back to one plain plot without chips.
 A fit on a single-pair run always belongs to the run's own asymmetry, even
 when it is selected from a shared projection subplot.
 
+The rotating frame
+~~~~~~~~~~~~~~~~~~
+
+With both transverse projections on show, a **Lab | Rotating** switch sits to
+the left of the chips. **Rotating** turns :math:`P_x` and :math:`P_y` exactly
+into a frame rotating at the RF generator's frequency about
+:math:`B_0 \parallel z`, relabelling the chips ``P′_x`` and ``P′_y`` and leaving
+``P_z`` unchanged, which is how an RF nutation or spin-locking experiment is
+read and fitted. The frame's setup and per-run fields, **Auto-detect…**, the
+handling of two-period runs and fitting of the rotated curves are described in
+:doc:`rotating_frame_projection`.
+
 Persistence
 -----------
 
@@ -122,7 +134,8 @@ Per-axis alpha values are persisted in:
 * dataset grouping state
 
 This preserves axis-specific alpha values across save/load cycles and across
-axis switching in vector mode.
+axis switching in vector mode. Each run's rotating frame, when it has one, is
+saved on the run as well (schema v26; see :doc:`project_files`).
 
 Transverse-field dual grouping
 ------------------------------
@@ -200,5 +213,6 @@ Related topics
 --------------
 
 * :doc:`detector_grouping`
+* :doc:`rotating_frame_projection`
 * :doc:`gui_usage`
 * :doc:`data_processing`

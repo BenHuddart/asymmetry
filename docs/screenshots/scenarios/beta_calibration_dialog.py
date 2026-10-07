@@ -34,7 +34,7 @@ from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
 from ..data import make_ybco_knight_grouped
-from ._base import CaptureContext, Scenario, register
+from ._base import CaptureContext, Scenario, pump_until, register
 
 #: The fixed β estimate the scenario substitutes for a real count-domain fit.
 #: These are the same canonical numbers quoted in the widget's own docstring
@@ -95,7 +95,7 @@ class BetaCalibrationDialogScenario(Scenario):
             # patched to return instantly, so a single click does not populate
             # the result before the grab — pump until the worker's queued
             # finished callback has landed (deterministic, not a fixed sleep).
-            _pump_until(lambda: section._tasks.active_count == 0)
+            pump_until(lambda: section._tasks.active_count == 0)
             # Apply so the pipeline chip, card header, β spin, and preview all
             # agree with the result row rather than showing the pre-apply β = 1
             # alongside a completed β̂ = 0.8732 estimate.
@@ -134,27 +134,6 @@ def _pump_events(milliseconds: int) -> None:
     QTimer.singleShot(int(milliseconds), loop.quit)
     loop.exec()
     QApplication.processEvents()
-
-
-def _pump_until(predicate, timeout_ms: int = 10_000) -> None:
-    """Pump a nested event loop until *predicate* holds (or the timeout lapses).
-
-    The estimate lands via a queued cross-thread signal, so the loop must be
-    entered for the callback to run; the timeout is only a backstop.
-    """
-    if predicate():
-        return
-    loop = QEventLoop()
-    check = QTimer()
-    check.timeout.connect(lambda: loop.quit() if predicate() else None)
-    check.start(10)
-    guard = QTimer()
-    guard.setSingleShot(True)
-    guard.timeout.connect(loop.quit)
-    guard.start(int(timeout_ms))
-    loop.exec()
-    check.stop()
-    guard.stop()
 
 
 register(BetaCalibrationDialogScenario())

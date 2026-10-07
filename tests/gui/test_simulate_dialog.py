@@ -281,25 +281,28 @@ class TestBuiltinTemplateDialog:
         # The continuous template seeds a non-zero flat background.
         assert dialog._background_spin.value() > 0.0
 
-    def test_generation_modes_tag_provenance(self, qapp) -> None:
-        for mode, key in (("count", "count_mode"), ("two_period", "two_period")):
-            dialog = SimulateDialog([], run_number_allocator=lambda: 90001)
-            dialog._template_combo.setCurrentIndex(
-                dialog._template_combo.findData("ideal_pulsed_fb")
-            )
-            dialog._mode_combo.setCurrentIndex(dialog._mode_combo.findData(mode))
-            generated: list[Run] = []
-            dialog.run_generated.connect(generated.append)
-            _generate_and_wait(dialog)
-            assert len(generated) == 1
-            sim = generated[0].metadata["simulation"]
-            assert sim.get(key) is True
-            if mode == "two_period":
-                # The green period records the real model formula, not an opaque
-                # wrapper name (scale carries the green-amplitude factor instead).
-                green = sim["periods"][1]
-                assert green["model"] == dialog._model.formula_string()
-                assert "scale" in green
+    # One dialog per test: a dialog dropped mid-test is left to the cyclic
+    # garbage collector, which can run on the next dialog's worker thread and
+    # destroy Qt widgets off the GUI thread.
+    @pytest.mark.parametrize(
+        ("mode", "key"), [("count", "count_mode"), ("two_period", "two_period")]
+    )
+    def test_generation_modes_tag_provenance(self, qapp, mode, key) -> None:
+        dialog = SimulateDialog([], run_number_allocator=lambda: 90001)
+        dialog._template_combo.setCurrentIndex(dialog._template_combo.findData("ideal_pulsed_fb"))
+        dialog._mode_combo.setCurrentIndex(dialog._mode_combo.findData(mode))
+        generated: list[Run] = []
+        dialog.run_generated.connect(generated.append)
+        _generate_and_wait(dialog)
+        assert len(generated) == 1
+        sim = generated[0].metadata["simulation"]
+        assert sim.get(key) is True
+        if mode == "two_period":
+            # The green period records the real model formula, not an opaque
+            # wrapper name (scale carries the green-amplitude factor instead).
+            green = sim["periods"][1]
+            assert green["model"] == dialog._model.formula_string()
+            assert "scale" in green
 
 
 def _ring_template_run(n_groups: int = 4) -> Run:

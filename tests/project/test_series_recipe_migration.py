@@ -112,7 +112,7 @@ def _batch_project() -> dict:
 
 def test_batch_series_seeds_recipe_from_the_member_template():
     result = migrate_to_current(_batch_project())
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 25
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 26
     recipe = result["batches"][0]["recipe"]
     assert recipe["parameters"] == [
         {"name": "A", "value": 0.2, "type": "Local", "bounds": "0, 1", "seeded": False},
@@ -337,7 +337,7 @@ def test_project_with_no_batches_migrates_clean():
     assert "batches" not in state
     result = migrate_to_current(state)
     validate(result)
-    assert result["schema_version"] == 25
+    assert result["schema_version"] == 26
     assert "active_series" not in result
     model = ProjectModel.from_project_state(result)
     assert model.batches == {}

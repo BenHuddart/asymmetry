@@ -66,6 +66,7 @@ __all__ = [
     "combine_period_asymmetry",
     "encode_period_run_number",
     "normalise_period_mapping",
+    "held_period_count",
     "period_count",
     "period_labels",
     "resolve_period_index",
@@ -132,6 +133,17 @@ def period_count(data: MuonDataset | list[MuonDataset] | Run) -> int:
         return max(1, int(metadata.get("period_count", 1)))
     except (TypeError, ValueError):
         return 1
+
+
+def held_period_count(run: Run) -> int:
+    """How many periods *run* itself holds: both for a combined red/green run, else one.
+
+    Unlike :func:`period_count`, which reports the file's period count, a
+    dataset split off a file of three or more periods holds one period although
+    its metadata names them all.
+    """
+    reduced = run.grouping.get("period_reduced")
+    return len(reduced) if reduced else 1
 
 
 def period_labels(data: MuonDataset | list[MuonDataset] | Run) -> list[str]:

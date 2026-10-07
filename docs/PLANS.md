@@ -6,6 +6,21 @@ subsystems or days.
 
 ## Active
 
+### Rotating-frame projection for vector polarisation
+
+Status: implemented 2026-10-07 on `feat/rotating-frame-projection`, PR to
+follow. Decision log (D1–D9), estimators and phases are in
+[plans/rotating-frame-projection.md](plans/rotating-frame-projection.md).
+
+For groupings that declare P_x and P_y, a **Lab | Rotating** switch on the
+projection chips rotates the transverse pair exactly into the frame turning at
+the RF generator's frequency, with no filter. A frame bar holds the shared
+setup (ν_RF, B₁ axis, φ_RF, sense) and the selected run's per-period baselines
+and gain, each with its provenance; Auto-detect proposes all but ν_RF in a
+review. P′_x and P′_y are Single and Batch fit targets whose fits go stale when
+the frame changes. Schema v26. User docs:
+`docs/reference/rotating_frame_projection.rst`.
+
 ### Saved single fits and a Compare window
 
 Status: implemented 2026-10-05 on `feat/single-fit-compare`, PR to follow.

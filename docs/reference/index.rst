@@ -118,6 +118,9 @@ graphical interface where the feature lives.
    * - Demodulate fast TF precession (rotating frame)
      - :doc:`rotating_frame`
      - F-B Asymmetry plot → RRF
+   * - View or fit RF nutation in the rotating frame (P_x, P_y measured)
+     - :doc:`rotating_frame_projection`
+     - Projection chips → Lab | Rotating
    * - Generate synthetic runs to plan or rehearse
      - :doc:`simulation`
      - File → Simulate Preset
@@ -286,7 +289,8 @@ Specialised modes
 
 Techniques that step outside the standard time-domain fit: integral-asymmetry
 field scans for avoided-level-crossing work, the rotating reference frame, full
-vector polarisation, and the lifetime-based analysis of negative muons.
+vector polarisation and its exact rotating-frame projection for RF experiments,
+and the lifetime-based analysis of negative muons.
 
 .. toctree::
    :maxdepth: 1
@@ -295,6 +299,7 @@ vector polarisation, and the lifetime-based analysis of negative muons.
    alc_mode
    rotating_frame
    vector_polarization
+   rotating_frame_projection
    negative_muon_analysis
 
 Simulation

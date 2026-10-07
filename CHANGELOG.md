@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Vector-polarisation runs can be viewed and fitted in the rotating frame.**
+  When the displayed projections include ``P_x`` and ``P_y``, a **Lab |
+  Rotating** switch beside the projection chips rotates the transverse pair
+  exactly into a frame turning at the RF generator's frequency about
+  B₀ ∥ z, shown as ``P′_x`` and ``P′_y`` beside an unchanged ``P_z``. Every
+  bin is rotated on its own with no filter, so display bunching after the
+  rotation is valid and the rotated curves can be fitted. A frame bar above
+  the plot holds the shared setup (**ν_RF** in MHz or G, which you type from
+  the generator, the **B₁ ∥** axis, **φ_RF** and the rotation sense) and the
+  selected run's baselines and gain, each marked as a default, an estimate or
+  a value you typed. **Auto-detect…** estimates the sense, φ_RF, gain and
+  baselines over the visible window and opens a review in which nothing
+  changes until **Apply**. Each period of a two-period run keeps its own
+  baselines, since on RF data red and green differ. ``P′_x`` and ``P′_y`` are
+  fit targets on the Single and Batch tabs; a fit records the frame it was
+  made in and is marked ⚠ "Fitted in a different rotating frame — re-run the
+  fit to update it." once that frame changes. Frames are saved in the project
+  (schema v26). See `docs/reference/rotating_frame_projection.rst`.
+
+### Changed
+
+- **A Batch draft follows the plot's fit target.** Clicking another subplot of
+  a grouping with several projections now moves a draft's members to that
+  projection; before, the draft kept fitting the projection it was created
+  on. A recorded series keeps its own projection.
+
+### Fixed
+
+- **New Project starts with no series or joint fits.** In single-window mode,
+  **New Project** kept the previous project's fit series and joint fits, which
+  are keyed by run number, so they reappeared against the next project's runs.
+
 ## [0.25.0] - 2026-10-06
 
 ### Added

@@ -4451,6 +4451,8 @@ class TestMainWindowBasic:
         state = {"composite_model": {"component_names": ["Gaussian"]}, "result_html": "fb-fit"}
         monkeypatch.setattr(mainwindow._fit_panel, "get_single_form_state", lambda: dict(state))
 
+        # The recorder reads the frame of the record the Single tab fitted.
+        monkeypatch.setattr(mainwindow._fit_panel, "single_dataset", lambda: dataset)
         mainwindow._record_single_fit_slot(self._single_fit_result())
 
         rep = mainwindow._project_model.representation(7473, RepresentationType.TIME_FB_ASYMMETRY)
@@ -5061,6 +5063,8 @@ class TestMainWindowBasic:
         }
         monkeypatch.setattr(mainwindow._fit_panel, "get_single_form_state", lambda: dict(state))
 
+        # The recorder reads the frame of the record the Single tab fitted.
+        monkeypatch.setattr(mainwindow._fit_panel, "single_dataset", lambda: dataset)
         mainwindow._record_single_fit_slot(self._single_fit_result())
 
         rep = mainwindow._project_model.representation(8801, RepresentationType.TIME_FB_ASYMMETRY)
@@ -5082,6 +5086,8 @@ class TestMainWindowBasic:
         state = {"composite_model": {"component_names": ["Gaussian"]}, "result_html": "all"}
         monkeypatch.setattr(mainwindow._fit_panel, "get_single_form_state", lambda: dict(state))
 
+        # The recorder reads the frame of the record the Single tab fitted.
+        monkeypatch.setattr(mainwindow._fit_panel, "single_dataset", lambda: dataset)
         mainwindow._record_single_fit_slot(self._single_fit_result())
 
         rep = mainwindow._project_model.representation(8802, RepresentationType.TIME_FB_ASYMMETRY)
@@ -5159,7 +5165,7 @@ class TestMainWindowBasic:
     ) -> None:
         dataset = _make_vector_dataset(8804)
         mainwindow._current_dataset = dataset
-        monkeypatch.setattr(mainwindow, "_get_fit_dataset", lambda ds: ds)
+        monkeypatch.setattr(mainwindow, "_get_fit_dataset", lambda ds, *_a, **_k: ds)
         panel = mainwindow._fit_panel
         rep = mainwindow._project_model.ensure_dataset(8804).ensure(
             RepresentationType.TIME_FB_ASYMMETRY
@@ -5233,7 +5239,7 @@ class TestMainWindowBasic:
             mainwindow._plot_panel.set_active_label_group = lambda _gid: None
         if hasattr(mainwindow._data_browser, "get_selected_group_ids"):
             mainwindow._data_browser.get_selected_group_ids = lambda: []
-        mainwindow._fit_panel.set_datasets = lambda _datasets: None
+        mainwindow._fit_panel.set_datasets = lambda _datasets, _unavailable=None: None
 
         mainwindow._update_selected_datasets()
 

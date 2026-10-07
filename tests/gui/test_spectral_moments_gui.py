@@ -244,12 +244,12 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 25 for saved single fits (v24->v25).
+    # Baseline guard: bumped to 26 for the rotating-frame projection (v25->v26).
     # A future accidental bump must consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 25
+    assert CURRENT_SCHEMA_VERSION == 26
 
 
-def test_restore_state_tolerates_absent_moments():
+def test_restore_state_tolerates_absent_moments(qapp):
     from asymmetry.gui.panels.fourier_panel import FourierPanel
 
     panel = FourierPanel()

@@ -189,6 +189,9 @@ def test_global_fit_creates_batch_and_leaves_member_slots_alone(mw, monkeypatch)
     )
     payloads = {rn: (_result(rchi=0.4 + 0.1 * i), _CURVE, []) for i, rn in enumerate([10, 11, 12])}
 
+    mw._fit_panel.replace_member_datasets(
+        [mw._data_browser.get_dataset(run) for run in [10, 11, 12]], {}
+    )
     mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed(payloads, ParameterSet())
 
@@ -231,6 +234,9 @@ def test_global_classified_parameter_yields_global_provenance(mw, monkeypatch):
     )
     payloads = {rn: (_result(), _CURVE, []) for rn in (10, 11)}
 
+    mw._fit_panel.replace_member_datasets(
+        [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
+    )
     mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed(payloads, ParameterSet())
 
@@ -431,6 +437,9 @@ def test_add_compatible_single_fit_to_series(mw, monkeypatch):
             "result_html": "",
         },
     )
+    mw._fit_panel.replace_member_datasets(
+        [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
+    )
     mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())
     series = next(iter(mw._project_model.batches.values()))
@@ -488,6 +497,9 @@ def test_add_to_series_action_finds_and_adds_compatible_series(mw, monkeypatch):
             "parameters": [{"name": "A", "type": "Local"}],
             "result_html": "",
         },
+    )
+    mw._fit_panel.replace_member_datasets(
+        [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
     )
     mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())

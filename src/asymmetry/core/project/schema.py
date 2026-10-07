@@ -11,8 +11,19 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 24)
+Current schema (version 26)
 ---------------------------
+
+Version 26 adds an optional ``rotating_frame`` on a dataset entry: the run's
+serialized :class:`~asymmetry.core.transform.rotating_frame.RotatingFrame`
+(docs/plans/rotating-frame-projection.md). A single fit on a rotated
+projection (P′_x, P′_y) carries the ``frame_snapshot`` it was fitted in, and a
+series on one names its ``projection`` and keeps each member's snapshot in
+``member_frames``. Additive: a pre-v26 project has no rotating frames, no
+rotated fits and no rotated series. See :func:`_migrate_v25_to_v26`.
+
+Version 25 makes each projection's single fit one of a set of saved single
+fits (``single_fits``); see :func:`_migrate_v24_to_v25`.
 
 Version 24 gives every persisted Global Fit Wizard recommendation an
 ``objective`` and each of its candidate assessments a ``rung`` (the sharing
@@ -274,10 +285,10 @@ from pathlib import Path
 
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 25
+CURRENT_SCHEMA_VERSION: int = 26
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25}
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26}
 )
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
@@ -415,7 +426,21 @@ def migrate_to_current(data: dict) -> dict:
         version = 24
     if version == 24:
         migrated = _migrate_v24_to_v25(migrated)
+        version = 25
+    if version == 25:
+        migrated = _migrate_v25_to_v26(migrated)
     return migrated
+
+
+def _migrate_v25_to_v26(data: dict) -> dict:
+    """Migrate schema v25 project state to v26.
+
+    v26 adds an optional per-dataset ``rotating_frame``, a single fit's
+    ``frame_snapshot`` and a series' ``projection`` and ``member_frames``. A
+    pre-v26 project has none of them, and their readers take an absent key as
+    none, so only the version moves.
+    """
+    return dict(data) | {"schema_version": 26}
 
 
 def _v25_fit_set(slot: object) -> dict | None:

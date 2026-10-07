@@ -24,10 +24,13 @@ Main application
 Main window
 -----------
 
-.. autoclass:: asymmetry.gui.mainwindow.MainWindow
-   :members:
-   :undoc-members:
-   :show-inheritance:
+The :class:`~asymmetry.gui.mainwindow.MainWindow` class is documented on its
+own page, :doc:`gui_mainwindow`.
+
+.. toctree::
+   :hidden:
+
+   gui_mainwindow
 
 Panels
 ------
