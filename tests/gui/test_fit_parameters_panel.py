@@ -2696,7 +2696,7 @@ def test_series_pill_elides_a_long_short_name(qapp: QApplication) -> None:
 
 def test_stale_series_pill_keeps_glyph_and_warning_on_the_short_pill(qapp: QApplication) -> None:
     panel = _panel_with_long_series(qapp, count=1)
-    panel._stale_series_ids = {"s0"}
+    panel._stale_series_reasons = {"s0": "Membership changed since last fit — re-run to refresh."}
     panel._rebuild_group_buttons()
 
     button = panel._group_button_map["s0"]

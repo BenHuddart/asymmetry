@@ -126,7 +126,7 @@ class _StubFitPanel(QWidget):
     def clear_bound_group(self):
         return
 
-    def set_datasets(self, datasets):
+    def set_datasets(self, datasets, unavailable=None):
         self.last_datasets = datasets
         return
 

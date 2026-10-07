@@ -64,7 +64,8 @@ __all__ = [
     "rotated_ylabel",
 ]
 
-#: Metadata key under which a rotated projection's dataset carries its frame.
+#: Metadata key under which a rotated projection's dataset carries the
+#: :class:`~asymmetry.core.transform.rotating_frame.FrameSnapshot` it was made in.
 FRAME_METADATA_KEY = "rotating_frame"
 
 #: Placeholder of a shared field the displayed runs disagree on (D4).

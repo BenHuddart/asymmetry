@@ -3693,15 +3693,21 @@ class PlotPanel(QWidget):
     ) -> tuple[int, str | None, str] | None:
         """Return axis-aware fit storage key for *dataset* under *fit_id*.
 
-        A rotated projection has none: lab-frame fits never overlay it.
+        A rotated projection keys on its own label (P′_x, P′_y), never the lab
+        axis its clone was reduced on, so lab and rotated fits never overlay
+        each other's subplots.
         """
-        if dataset is None or FRAME_METADATA_KEY in dataset.metadata:
+        if dataset is None:
             return None
         try:
             run_number = int(dataset.run_number)
         except (TypeError, ValueError):
             return None
-        axis_key = self._axis_key_for_dataset(dataset, axis_override=axis_override)
+        axis_key = (
+            dataset.metadata["projection"]
+            if FRAME_METADATA_KEY in dataset.metadata
+            else self._axis_key_for_dataset(dataset, axis_override=axis_override)
+        )
         return run_number, axis_key, fit_id
 
     @staticmethod
@@ -4526,7 +4532,7 @@ class PlotPanel(QWidget):
                 ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label=fit_legend)
 
         frames = [
-            entry.dataset.metadata[FRAME_METADATA_KEY]
+            entry.dataset.metadata[FRAME_METADATA_KEY].frame
             for entry in entries
             if FRAME_METADATA_KEY in entry.dataset.metadata
         ]
@@ -4684,7 +4690,7 @@ class PlotPanel(QWidget):
         self._last_low_count_mask = last_arrays[3]
 
         frames = [
-            dataset.metadata[FRAME_METADATA_KEY]
+            dataset.metadata[FRAME_METADATA_KEY].frame
             for members in self._vector_subplot_datasets.values()
             for dataset in members
             if FRAME_METADATA_KEY in dataset.metadata

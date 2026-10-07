@@ -374,16 +374,6 @@ def test_lab_fit_overlays_stay_off_rotated_subplots(mainwindow):
     assert fit_lines("P′_x") == 0 and fit_lines("P′_y") == 0
 
 
-def test_rotated_fit_targets_block_fitting(mainwindow):
-    mainwindow._project_model.rotating_frames[913] = _frame()
-    panel = _show(mainwindow, _vector(913))
-    _rotate(panel)
-    panel.set_fit_target_projection("P′_y")
-    assert mainwindow._current_fit_block_state() == (True, mw_module._ROTATED_FIT_BLOCK)
-    panel.set_fit_target_projection("P_z")
-    assert mainwindow._current_fit_block_state() == (False, "")
-
-
 def test_the_frame_choice_round_trips_through_plot_state(mainwindow, qapp):
     panel = _show(mainwindow, _vector(914))
     _rotate(panel)
