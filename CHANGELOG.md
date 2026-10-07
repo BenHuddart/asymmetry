@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   width``.
 - **``audit`` names a hyperfine coupling quoted without its relation** when
   ``fourier --correlation`` printed A_μ = ν₁ + ν₂.
+- **``survey`` lists each scan's runs**, in run order (``runs 29592-29721``),
+  instead of the two runs at its axis ends, which read as a range that left
+  runs out.
 - **Gap-law trend fits start at the data's Tc.** ``SC_*`` laws seed Tc where
   σ(T) settles at its normal-state level, and the width and amplitude from the
   two plateaus, instead of at 20 K, which could land on a false minimum.

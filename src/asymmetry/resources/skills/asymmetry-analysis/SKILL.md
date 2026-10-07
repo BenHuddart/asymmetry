@@ -1465,7 +1465,7 @@ Alpha-calibration candidates (alpha on raw counts: deadtime off, background none
   run 101 (best) [measured]: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
 Scans:
-  temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
+  temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (runs 102-107)
 ```
 
 One calibration run, one ZF temperature scan, one decoupling run. The files

@@ -298,7 +298,7 @@ leave the two several kelvin apart, and a series can be ordered by either:
      run 101 (best) [measured] alpha 1.2500: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
    Scans:
-     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
+     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (runs 102-107)
 
 .. _agent-workflow-precession:
 
@@ -456,7 +456,7 @@ disagree:
 .. code-block:: console
 
    Scans:
-     temperature scan, EMU, mixed geometry, B = 100 G: 21 runs, 340 to 380 K (run 124269 -> 124249)
+     temperature scan, EMU, mixed geometry, B = 100 G: 21 runs, 340 to 380 K (runs 124249-124269)
          geometry: TF measured on 12 of 21 runs; 9 unresolved
 
 That note is itself a finding: it says where in the scan the measurement could
@@ -1090,7 +1090,7 @@ the runs left out:
 .. code-block:: text
 
    Scans the survey found with runs that no fit, fit-series, fit-global or integral-scan fitted. Each scan is a measurement:
-     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
+     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (runs 102-107)
          not fitted: runs 105-107. Fit it — a scan crossing a transition needs a series on each side. A run counts once a fit was tried on it, failed or not: a survey 'none' means no Fourier line, not no signal, so fit it before calling it unusable and report what the fit shows.
 
 The far side of a transition that one series stopped short of is still a

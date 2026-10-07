@@ -77,12 +77,11 @@ def scan_label(scan: ScanGroup) -> str:
     )
     if scan.n_periods > 1:
         notes += f", {scan.n_periods} periods" + (" (red/green)" if scan.n_periods == 2 else "")
-    # Runs are listed in axis order, which need not be run order, so the
-    # endpoints are shown with an arrow rather than as a range.
+    # The members in run order: axis order need not be run order, and its two
+    # endpoints read as a run range that leaves runs out.
     return (
         f"{scan.axis} scan, {instrument}{geometry}, {held}{notes}: {len(scan.runs)} runs, "
-        f"{scan.values[0]:g} to {scan.values[-1]:g} {unit} "
-        f"(run {scan.runs[0]} -> {scan.runs[-1]})"
+        f"{scan.values[0]:g} to {scan.values[-1]:g} {unit} ({range_text(sorted(scan.runs))})"
     )
 
 
