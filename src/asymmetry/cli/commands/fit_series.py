@@ -16,7 +16,13 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
-from asymmetry.cli._runs import present_runs, reduced_datasets, window_note
+from asymmetry.cli._runs import (
+    present_runs,
+    range_text,
+    reduced_datasets,
+    run_spec,
+    window_note,
+)
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -181,26 +187,35 @@ def run(args: argparse.Namespace) -> None:
     lineless = lineless_end(outcome.trend)
     if lineless:
         folder_arg = shlex.quote(args.folder)
-        runs = ",".join(lineless)
-        middle = lineless[len(lineless) // 2]
-        x_by_key = {row["key"]: row["x"] for row in outcome.trend.rows}
+        order_key = outcome.order_key
+        runs = sorted(int(row["key"]) for row in lineless)
+        middle = lineless[len(lineless) // 2]["key"]
         supplied = (
             ""
             if args.x is None
-            else " --x " + ",".join(f"{key}={x_by_key[key]:g}" for key in lineless)
+            else " --x " + ",".join(f"{row['key']}={row['x']:g}" for row in lineless)
+        )
+        upper = lineless[-1] is outcome.trend.rows[-1]
+        side = (
+            "the paramagnetic side, where the physics is a relaxation rate to report "
+            f"against {order_key}"
+            if upper and order_key in ("temperature", "sample_temperature_logged")
+            else f"where the physics is a relaxation rate to report against {order_key}"
         )
         print(
-            f"NOTE: runs {runs} show no line in the survey and this model does not describe "
-            f"them (see their flags). Either they are the other side of a transition, where "
-            f"the physics is a relaxation, or a free envelope width has swallowed a weak "
-            f"line: first refit them with the width held (--fix) at a value from the runs "
-            f"that do precess. If they stay undescribed, fit them with a relaxation-only "
-            f"recipe and report its rate against {outcome.order_key}:\n"
+            f"NOTE: the survey finds no precession in {range_text(runs)} ({order_key} "
+            f"{lineless[0]['x']:g}–{lineless[-1]['x']:g}, the {'high' if upper else 'low'}-"
+            f"{order_key} end of this scan): the side of the transition with no precession, {side}. "
+            f"This precession model has no line to describe there, flagged or not, so its "
+            f"values on these runs are not results. Fit them with a relaxation-only recipe:\n"
             f"  asymmetry recipe {folder_arg} --expression 'Exponential + Constant' "
             f"--run {middle} --name {name}-relax\n"
-            f"  asymmetry fit-series {folder_arg} --runs {runs} --recipe {name}-relax "
-            f"--order {outcome.order_key}{supplied} --name {name}-relax\n"
-            f"(or screen run {middle} with the wizard for the relaxation shape first)."
+            f"  asymmetry fit-series {folder_arg} --runs {run_spec(runs)} --recipe "
+            f"{name}-relax --order {order_key}{supplied} --name {name}-relax\n"
+            f"(or screen run {middle} with the wizard for the relaxation shape first). Only "
+            f"where this series still holds a frequency on a weak line the survey missed (a "
+            f"free envelope width can swallow one), refit those runs with the width held "
+            f"(--fix) at a value from the runs that do precess."
         )
     print(
         f"Next: asymmetry trend {shlex.quote(args.folder)} --series {name} — the trend "

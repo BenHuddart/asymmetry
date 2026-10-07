@@ -266,32 +266,23 @@ def envelope_change(trend: TrendTable) -> str | None:
     )
 
 
-#: Flags that say a fit did not describe its run.
-_UNDESCRIBED = frozenset({"failed", FREQUENCY_UNRESOLVED, AMPLITUDE_EXCEEDS_DATA})
+def lineless_end(trend: TrendTable) -> list[dict[str, Any]]:
+    """The rows at one end of a precession scan where the survey found no line.
 
-
-def lineless_end(trend: TrendTable) -> list[str]:
-    """The keys of the runs at one end of a precession scan that hold no line to fit.
-
-    A block of at least two runs, at the start or the end of the scan, where the
-    survey found no line and the fit is flagged as not describing the run: the
-    other side of a transition, which the precession model cannot follow. The
-    longer block when both ends qualify; empty for a series that fits no
-    frequency.
+    The contiguous rows, at the start or the end of the scan, whose survey found
+    no line, when at least two and some other run holds one: the side of a
+    transition with no precession, which the precession model cannot describe
+    whatever its fit flags say. The longer block when both ends qualify; empty
+    for a series that fits no frequency.
     """
     if "survey_line_mhz" not in trend.columns:
         return []
-
-    def block(rows: list[dict[str, Any]]) -> list[str]:
-        keys: list[str] = []
-        for row in rows:
-            if row["survey_line_mhz"] is not None or not _UNDESCRIBED & set(row["flags"]):
-                break
-            keys.append(row["key"])
-        return keys
-
-    ends = [block(list(reversed(trend.rows)))[::-1], block(trend.rows)]
-    longest = max(ends, key=len)
+    lined = [row["survey_line_mhz"] is not None for row in trend.rows]
+    if True not in lined:
+        return []
+    head = trend.rows[: lined.index(True)]
+    tail = trend.rows[len(lined) - lined[::-1].index(True) :]
+    longest = max(tail, head, key=len)
     return longest if len(longest) >= 2 else []
 
 

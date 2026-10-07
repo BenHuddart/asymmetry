@@ -635,16 +635,27 @@ def test_the_lineless_end_of_a_precession_scan_is_named() -> None:
     def row(run: int, line: float | None, flags: list[str]) -> dict:
         return {"key": str(run), "x": float(run), "survey_line_mhz": line, "flags": flags}
 
+    def keys(rows: list[dict]) -> list[str]:
+        return [entry["key"] for entry in lineless_end(TrendTable("temperature", columns, rows))]
+
     columns = ["key", "x", "frequency", "survey_line_mhz", "flags"]
     rows = [
-        row(1, 30.0, []),
-        row(2, None, ["large_rel_err"]),  # no line, but the fit describes it
+        row(1, None, ["large_rel_err"]),  # a lone lineless run at the cold end
+        row(2, 30.0, []),
         row(3, 5.5, ["failed"]),
         row(4, None, ["failed", "frequency_unresolved"]),
-        row(5, None, ["amplitude_exceeds_data"]),
-        row(6, None, ["frequency_unresolved"]),
+        # Lineless but flagged only bound_pinned: the survey, not the fit
+        # flags, says where the precession stops, so the block runs on.
+        row(5, None, ["bound_pinned"]),
+        row(6, None, ["amplitude_exceeds_data"]),
+        row(7, None, []),
+        row(8, None, ["frequency_unresolved"]),
     ]
-    assert lineless_end(TrendTable("temperature", columns, rows)) == ["4", "5", "6"]
-    # One such run is not a block; a series fitting no frequency has none.
-    assert lineless_end(TrendTable("temperature", columns, rows[:4])) == []
+    assert keys(rows) == ["4", "5", "6", "7", "8"]
+    # A block at the cold end is named the same way.
+    assert keys([row(0, None, []), *rows[:3]]) == ["0", "1"]
+    # One lineless run is not a block, nor is a scan with no line anywhere;
+    # a series fitting no frequency has none.
+    assert keys(rows[:4]) == []
+    assert keys(rows[3:]) == []
     assert lineless_end(TrendTable("temperature", ["key", "x", "flags"], [])) == []
