@@ -1259,7 +1259,13 @@ spectrum it points at the plain transform of the same run, whose radical
 lines belong beside :math:`A_\mu` in a summary; it states that the peak is
 :math:`A_\mu = \nu_1 + \nu_2`, the sum of the radical's two lines. The header
 also gives the band searched against the whole transform, and a note names the
-strongest lines detected outside a ``--fmin``/``--fmax`` band.
+strongest lines detected outside a ``--fmin``/``--fmax`` band. A line near the
+Larmor frequency of a field above about 0.74 T (100 MHz) gets a note that
+inequivalent sites or sublattices split a line by about the resolution there,
+with the ``recipe`` and ``fit`` commands that test two lines started either
+side of it; and every plain transform closes by saying that MaxEnt and
+multi-group field-distribution analysis are not available, to be named under
+Not done where the field distribution matters.
 
 The command stores numerical arrays in ``spectra/<name>.npz`` and settings,
 resolution and the peak table in ``spectra/<name>.json``. Zero padding makes

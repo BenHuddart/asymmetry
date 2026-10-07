@@ -15,6 +15,7 @@ from asymmetry.cli._output import (
 )
 from asymmetry.cli._runs import reduced_datasets, resolve_run
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+from asymmetry.cli.commands.trend import HIGH_FIELD_LINE_MHZ
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -133,6 +134,7 @@ def run(args: argparse.Namespace) -> None:
     result = outcome.to_dict() | {
         "name": name,
         "run": args.run,
+        "field_gauss": workdir.entry(args.run).run["field"],
         "plot": None if plot_path is None else str(plot_path),
     }
     array_path, metadata_path = workdir.write_spectrum(
@@ -269,6 +271,41 @@ def _render(result: dict) -> str:
             + f" lie within {_CLOSE_PEAKS} resolution elements of each other: two lines "
             "the FFT barely separates. Report both frequencies (a splitting, not one line), "
             "and fit them in the time domain with two lines started there."
+        )
+    from asymmetry.core.fitting.knight_shift import larmor_frequency_mhz
+
+    paired = {frequency for pair in pairs for frequency in pair}
+    larmor = (
+        None if result["field_gauss"] is None else larmor_frequency_mhz(abs(result["field_gauss"]))
+    )
+    # A diamagnetic line in a field of tesla order, not a radical's hyperfine line.
+    high = [
+        peak
+        for peak in peaks
+        if larmor is not None
+        and larmor >= HIGH_FIELD_LINE_MHZ
+        and abs(peak["frequency_mhz"] - larmor) <= 0.1 * larmor
+        and peak["frequency_mhz"] not in paired
+    ]
+    if high and not coupling:
+        line = max(high, key=lambda peak: peak["snr"])
+        centre, width = line["frequency_mhz"], line["width_mhz"]
+        lines.append(
+            f"NOTE: the line at {centre:.6g} MHz (width {width:.4g} MHz, "
+            f"{width / resolution:.1f} resolution elements) sits in a field of tesla order, "
+            f"where inequivalent muon sites or magnetic sublattices split a line by about the "
+            f"resolution, so one FFT peak can hold two. Fit two lines started either side of it "
+            f"and compare chi2_red with one before reporting a single line: asymmetry recipe "
+            f"<folder> --run {result['run']} --name two-line --expression 'Oscillatory * "
+            f"Exponential + Oscillatory * Exponential + Constant' --initial "
+            f"frequency_1={centre + width / 2:.6g} --initial frequency_3={centre - width / 2:.6g}"
+            f", then asymmetry fit <folder> --run {result['run']} --recipe two-line."
+        )
+    if not coupling:
+        lines.append(
+            "This is an FFT: maximum-entropy (MaxEnt) spectra and multi-group "
+            "field-distribution analysis are not available here — where the field "
+            "distribution is part of the question, say so under Not done."
         )
     if coupling:
         lines.append(

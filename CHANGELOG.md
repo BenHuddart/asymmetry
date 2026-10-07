@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value; the survey's candidate list and ``alpha`` say so too.
 - **``trend`` prints the size of a held line's shift** with its error, beside
   the two end values.
+- **``fourier`` offers a two-line test for a tesla-field line** — the recipe
+  and fit commands for two lines started either side of a peak near the
+  applied field's Larmor frequency above 100 MHz — and says MaxEnt and
+  multi-group field-distribution analysis are not available.
 - **``integral-scan`` names TF stamps its own data contradict.** A run stamped
   TF at 1 kG or more whose integral asymmetry stays well away from zero —
   which a transverse field that strong cannot leave — is named as

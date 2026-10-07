@@ -3146,6 +3146,7 @@ def test_fourier_names_two_peaks_closer_than_two_resolution_elements() -> None:
 
     result = {
         "run": 693,
+        "field_gauss": 60000.0,
         "axis": "frequency",
         "n_points": 1000,
         "resolution_mhz": 0.105,
@@ -3169,6 +3170,12 @@ def test_fourier_names_two_peaks_closer_than_two_resolution_elements() -> None:
     assert "band 812–816 of 0–900 MHz" in text
     assert "NOTE: 813.497 and 813.596 MHz lie within 2 resolution elements" in text
     assert "815.9" not in text.split("NOTE:")[1]
+    # A lone tesla-field line may still hold two, and the transform says what it is not.
+    assert "NOTE: the line at 815.9 MHz (width 0.1 MHz, 1.0 resolution elements)" in text
+    assert "--initial frequency_1=815.95 --initial frequency_3=815.85" in text
+    assert "maximum-entropy (MaxEnt) spectra and multi-group" in text
+    # A line far from the applied field's Larmor frequency is a radical's, not a split one.
+    assert "NOTE: the line at" not in _render(result | {"field_gauss": 3000.0})
     # Lines the transform detected outside the band are named, not hidden.
     hidden = _render(result | {"outside_band": [{"frequency_mhz": 208.7, "snr": 35.0}]})
     assert "NOTE: the transform also holds lines outside this band — 208.7 MHz (SNR 35)" in hidden

@@ -660,7 +660,7 @@ def _frequency_shift(trend, param: str) -> tuple[float, float, float] | None:
 
 #: A held line above this frequency (MHz) sits in a field of tesla order,
 #: where inequivalent sites or sublattices split it by about the resolution.
-_HIGH_FIELD_LINE_MHZ = 100.0
+HIGH_FIELD_LINE_MHZ = 100.0
 
 
 def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
@@ -688,7 +688,7 @@ def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
     cold_exponential = bool(decided) and min(decided, key=lambda row: row["x"])["envelope"] == (
         "Exponential"
     )
-    if held < _HIGH_FIELD_LINE_MHZ and not cold_exponential:
+    if held < HIGH_FIELD_LINE_MHZ and not cold_exponential:
         return []
     two_line = " + ".join([*terms[: lines[0] + 1], terms[lines[0]], *terms[lines[0] + 1 :]])
     new_frequencies = [
