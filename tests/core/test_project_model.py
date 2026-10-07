@@ -864,6 +864,8 @@ def _renumbering_model() -> ProjectModel:
             member_run_numbers=[-5001, -1001, -2001],
             member_source_run={-5001: 5, -1001: -1, -2001: -2},
             results_by_run={-5001: {}, -1001: {}, -2001: {}},
+            excluded_run_numbers=[-1001],
+            last_fitted_members=[-5001, -1001, -2001],
         )
     )
     return model
@@ -914,3 +916,24 @@ def test_renumber_runs_drops_the_facts_of_a_run_mapped_to_none():
     assert groups.member_run_numbers == [-5001, -2001]
     assert groups.results_by_run == {-5001: {}, -2001: {}}
     assert groups.member_source_run == {-5001: 5, -2001: -1}
+    assert groups.last_fitted_members == [-5001, -2001]
+    assert groups.excluded_run_numbers == []
+
+
+def test_renumber_runs_keeps_a_run_ordered_phase_spanning_its_members():
+    model = ProjectModel()
+    model.create_data_group("scan", [-3, -2, 5], group_id="g")
+    spec = PhaseSpec(
+        ordinal=1,
+        name="I",
+        member_run_numbers=(-3, -2),
+        phase_range=(-3.0, -2.0),
+        phase_boundaries={},
+        phase_color=None,
+    )
+    (phase_id,) = model.create_phase_groups("g", [spec])
+
+    model.renumber_runs({-3: None, -2: 7})
+
+    phase = model.data_group(phase_id)
+    assert (phase.member_run_numbers, phase.phase_range) == ([7], (7.0, 7.0))

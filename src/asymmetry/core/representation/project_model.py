@@ -650,11 +650,30 @@ class ProjectModel:
         self.rotating_frames = keyed(self.rotating_frames)
         for group in self.data_groups.values():
             group.member_run_numbers = runs(group.member_run_numbers)
+            if group.is_phase and group.order_key == "run":
+                # A run-ordered phase spans its members' run numbers.
+                group.member_run_numbers.sort()
+                members = group.member_run_numbers
+                group.phase_range = (float(members[0]), float(members[-1])) if members else None
         for series in self.batches.values():
             if series.member_kind == "groups":
-                for key in list(series.member_run_numbers):
-                    if new(series.source_run_for(key)) is None:
-                        series.remove_member(key)
+                gone = {
+                    key
+                    for key in (
+                        *series.member_run_numbers,
+                        *series.last_fitted_members,
+                        *series.excluded_run_numbers,
+                    )
+                    if new(series.source_run_for(key)) is None
+                }
+                for key in gone:
+                    series.remove_member(key)
+                series.last_fitted_members = [
+                    key for key in series.last_fitted_members if key not in gone
+                ]
+                series.excluded_run_numbers = [
+                    key for key in series.excluded_run_numbers if key not in gone
+                ]
                 series.member_source_run = {
                     key: n
                     for key, source in series.member_source_run.items()
