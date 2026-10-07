@@ -196,9 +196,12 @@ def run(args: argparse.Namespace) -> None:
             else " --x " + ",".join(f"{row['key']}={row['x']:g}" for row in lineless)
         )
         upper = lineless[-1] is outcome.trend.rows[-1]
+        # A line also vanishes where the muon's local field passes through zero,
+        # well inside the ordered phase, so the warm end is only *likely* paramagnetic.
         side = (
-            "the paramagnetic side, where the physics is a relaxation rate to report "
-            f"against {order_key}"
+            "above an ordering transition the paramagnetic side (a line also vanishes where "
+            "the local field at the muon passes through zero, so check before naming a "
+            f"transition), and the physics is a relaxation rate to report against {order_key}"
             if upper and order_key in ("temperature", "sample_temperature_logged")
             else f"where the physics is a relaxation rate to report against {order_key}"
         )

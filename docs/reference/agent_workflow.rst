@@ -856,13 +856,16 @@ temperature axis it adds that a Gaussian (a static spread of fields) turning
 exponential as the fluctuations outrun it is motional narrowing — and, when
 the exponential is the cold side instead, that it is not: a broad, skewed
 distribution (a vortex lattice beside a narrow background line) fits an
-exponential better. When the series fits a frequency and at least
-two runs at one end of the scan show no survey line and carry a flag saying
-the fit does not describe them (``failed``, ``frequency_unresolved``,
-``amplitude_exceeds_data``), the command names them: either the other side of
-a transition or a weak line a free envelope width has swallowed. It asks for a
-refit with the width held first, then prints the ``recipe`` and
-``fit-series`` commands that fit them with ``Exponential + Constant``. Ordered by ``temperature`` (the setpoint) while the logged sample
+exponential better. When the series fits a frequency and the survey found no line in at least
+two runs at one end of the scan, while another run holds one, the command
+names every contiguous lineless run at that end, whatever their fit flags say:
+the side with no precession — at the warm end of a temperature scan, likely
+the paramagnetic side, though a line also vanishes where the local field at
+the muon passes through zero. The precession model's values there are not
+results; the note prints the ``recipe`` and ``fit-series`` commands that fit
+exactly those runs with ``Exponential + Constant``, and asks for a refit with
+the width held only where a weak line the survey missed still holds a
+frequency. Ordered by ``temperature`` (the setpoint) while the logged sample
 temperature departs on some of its runs, the command ends with a note naming
 them. Writes
 ``series/<name>.json`` (per-run results, a trend table, and quality flags —

@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   width``.
 - **``audit`` names a hyperfine coupling quoted without its relation** when
   ``fourier --correlation`` printed A_μ = ν₁ + ν₂.
+- **``fit-series`` names the whole lineless end of a precession scan**, not
+  just the runs after the last one the fit flagged, and prints the
+  relaxation-only commands for all of it.
 
 ### Fixed
 
