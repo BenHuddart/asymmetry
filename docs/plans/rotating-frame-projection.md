@@ -1,6 +1,7 @@
 # Rotating-frame projection for vector polarisation
 
-Status: started 2026-10-06 on `feat/rotating-frame-projection`. Mockup (Design
+Status: started 2026-10-06 on `feat/rotating-frame-projection`; Phases 1–3 and
+the Phase 4 docs done 2026-10-07. Mockup (Design
 canvas, 7 artboards): https://claude.ai/artifact/97WPef8vq5t4vHPSn26LjC.
 
 ## Problem
@@ -153,9 +154,15 @@ engine, RF settings, RF vector fit window) is parked for a later revisit.
    - On the research data, single damped-cosine fits of P′_y give
      ν₁ ≈ 0.33–0.38 MHz, and P_z gives ≈ 0.31 MHz. Neither is a good
      description (χ²ᵣ 1.5–2.6).
-4. **Docs and gate.**
-   - A reference page section, updates to `vector_polarization.rst` and
-     `rotating_frame.rst`, and the screenshot scenario.
+4. **Docs and gate.** *Docs done 2026-10-07.*
+   - A new reference page, `docs/reference/rotating_frame_projection.rst`
+     (Specialised modes), linked from `vector_polarization.rst`,
+     `rotating_frame.rst`, the find-a-feature table and the glossary;
+     schema v26 in `project_files.rst`; Batch-draft and stale-fit notes in
+     `gui_usage.rst`.
+   - Screenshot scenarios `rotating_frame_projection` (plot after
+     Auto-detect) and `rotating_frame_review`, on the synthetic
+     `make_rf_nutation_vector` run.
    - CHANGELOG.
    - validate, gui-smoke, docs.
 
