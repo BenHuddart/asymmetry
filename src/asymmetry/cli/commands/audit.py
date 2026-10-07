@@ -115,9 +115,15 @@ def run(args: argparse.Namespace) -> None:
     for message in relations:
         print(message)
     if not found and not laws and not relations:
-        when = "Once every scan above is fitted, send" if unfitted or unfitted_notes else "Now send"
+        if unfitted or unfitted_notes:
+            print(
+                f"No unprinted numbers found in {draft}, but do not reply yet: fit every scan "
+                f"listed above (a measurement left unfitted is a result missing from the "
+                f"summary), add what each shows to {draft}, and run audit again."
+            )
+            return
         print(
-            f"No unprinted numbers found in {draft}. {when} its text as your whole final "
+            f"No unprinted numbers found in {draft}. Now send its text as your whole final "
             f"message, starting at its title — the user sees neither this output nor the "
             f"file, and the reply says nothing about this check."
         )

@@ -1065,8 +1065,10 @@ about 2 G", "differ by 0.6", "falls by about 0.03 MHz", "agree with the survey
 to about 0.02 MHz", "a margin of 3.6"), named as a comparison ("4 points
 better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` (``±0.2 MHz``) —
 is listed unless a command printed it verbatim to three or more significant
-digits, as a run number or a field on the scan's grid is; "a factor of six" is
-listed too. ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. Every command
+digits, as a run number or a field on the scan's grid is; a ratio in words
+("a factor of six", "five and a half times its error", "three times broader")
+is listed too. While a surveyed scan is unfitted, a clean audit says not to
+reply yet. ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. Every command
 that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
 ``integral-scan``, ``fourier``) ends its text output with the step: write
 ``summary.md`` and run ``asymmetry audit summary.md`` before replying. What it catches is the arithmetic an

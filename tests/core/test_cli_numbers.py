@@ -284,6 +284,11 @@ Delta 0.3505 0.2706 0.08  frequency 0.0326399  AICc 4241.2 8423.2
         ("not reliable to better than ±0.2 MHz", ["0.2"]),
         # Ratios in words.
         ("the rate falls by roughly a factor of six", ["factor of six"]),
+        ("the line is about five and a half times its error", ["five and a half times"]),
+        ("amplitudes four to six times their errors", ["four to six times"]),
+        ("amplitudes 4 to 6 times their errors", ["4 times", "6 times"]),
+        ("SNR 3.3 to 2.9 times the noise floor", []),
+        ("one condition repeated five times.", []),
     ],
 )
 def test_wave2_notation_and_contexts(draft: str, flagged: list[str]) -> None:
@@ -323,4 +328,4 @@ def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch
     cli.main(["audit", str(draft)])
     out = capsys.readouterr().out
     assert 'SIM runs 11-13, notes "Steering <x> A" (steering): not fitted: runs 11-13' in out
-    assert "Once every scan above is fitted, send" in out
+    assert "do not reply yet: fit every scan listed above" in out

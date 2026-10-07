@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   width``.
 - **``audit`` names a hyperfine coupling quoted without its relation** when
   ``fourier --correlation`` printed A_μ = ν₁ + ν₂.
+- **Gap-law trend fits start at the data's Tc.** ``SC_*`` laws seed Tc where
+  σ(T) settles at its normal-state level, and the width and amplitude from the
+  two plateaus, instead of at 20 K, which could land on a false minimum.
+- **``audit`` lists ratios written in words** ("five and a half times its
+  error", "three times broader") and, while a surveyed scan is unfitted, says
+  not to reply yet.
 - **Gap-law trend fits ask for a verdict.** ``trend --model SC_*`` asks
   whether the law describes σ(T), prints the ready ``SC_DWave`` comparison
   after ``SC_SWave``, and, when ``--xmax`` leaves fewer than two normal-state

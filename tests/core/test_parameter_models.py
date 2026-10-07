@@ -1565,6 +1565,31 @@ def test_suggest_trend_seeds_enables_convergence_without_manual_reseed() -> None
     assert fitted["Tc"] == pytest.approx(true_tc, abs=2.0)
 
 
+@pytest.mark.parametrize("law", ["SC_SWave", "SC_SWave_Q"])
+def test_a_gap_law_is_seeded_where_sigma_settles_and_converges(law: str) -> None:
+    # Seeded at its 20 K default, a gap law on a 6 K superconductor can land on a
+    # false minimum with the normal-state width pinned at zero.
+    from asymmetry.core.fitting.sc.models import sc_s_wave
+
+    x = np.array([1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 5.8, 6.1, 6.5, 7.0, 8.0, 9.0])
+    y = sc_s_wave(x, 0.5, 6.25, 1.764, 0.17)
+    model = ParameterCompositeModel([law])
+    seeds = suggest_trend_seeds(model, x, y)
+    assert 5.5 <= seeds["Tc"] <= 7.0
+    width = "sigma_nm" if law.endswith("_Q") else "sigma_bg"
+    assert seeds[width] == pytest.approx(0.17, abs=0.02)
+
+    keep = np.arange(x.size) != 3
+    params = ParameterSet()
+    for pname in model.param_names:
+        params.add(
+            Parameter(name=pname, value=float(seeds.get(pname, model.param_defaults[pname])))
+        )
+    result = fit_parameter_model(x[keep], y[keep], None, model, params)
+    assert result.success
+    assert {p.name: p.value for p in result.parameters}["Tc"] == pytest.approx(6.25, abs=0.3)
+
+
 def test_suggest_trend_seeds_ignores_non_trend_models() -> None:
     model = ParameterCompositeModel(["Linear"])
     x = np.array([1.0, 2.0, 3.0])

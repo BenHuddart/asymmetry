@@ -2066,6 +2066,37 @@ def suggest_trend_seeds(
             x_sorted, y_sorted, _ = _finite_xy(xf, yf, None)
             for base_name, value in _fermi_step_seeds(x_sorted, y_sorted).items():
                 seeds[mapping[base_name]] = value
+        elif component.name in SUPERCONDUCTING_GAP_LAWS:
+            x_sorted, y_sorted, _ = _finite_xy(xf, yf, None)
+            gap = _gap_law_seeds(x_sorted, y_sorted, SUPERCONDUCTING_GAP_LAWS[component.name])
+            for base_name, value in gap.items():
+                seeds[mapping[base_name]] = value
+            seeds.setdefault(mapping["Tc"], x_max + margin)
+    return seeds
+
+
+def _gap_law_seeds(x: NDArray[np.float64], y: NDArray[np.float64], width: str) -> dict[str, float]:
+    """Seeds for a superconducting gap law from an x-sorted σ(T) trace.
+
+    σ falls from its cold plateau to the normal-state width and stays there, and
+    the superfluid density rises steeply just below Tc, so Tc sits where 90 % of
+    the fall is complete. The width is the warm plateau; the amplitude is the
+    fall itself, added linearly (``sigma_0``) or in quadrature (``sigma_sc``). A
+    trace that does not fall seeds nothing; one whose fall ends at its last point
+    seeds no Tc (the caller places it past the data).
+    """
+    plateaus = _fermi_step_seeds(x, y)
+    if "A1" not in plateaus or plateaus["A1"] <= plateaus["A2"]:
+        return {}
+    cold, warm = plateaus["A1"], plateaus["A2"]
+    seeds = {width: warm}
+    if width == "sigma_nm":
+        seeds["sigma_sc"] = float(np.sqrt(cold**2 - warm**2))
+    else:
+        seeds["sigma_0"] = cold - warm
+    settled = _level_crossing(x, (y - cold) / (warm - cold), 0.9)
+    if settled is not None and settled < x[-1]:
+        seeds["Tc"] = settled
     return seeds
 
 

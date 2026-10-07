@@ -70,11 +70,18 @@ _DERIVED_PREFIX = re.compile(
     re.IGNORECASE,
 )
 
-#: A ratio written in words ("a factor of six", "tenfold").
+_NUMBER_WORD = (
+    r"(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|fifty"
+    r"|a hundred|hundred|a thousand|thousand)(?:\s+and\s+a\s+half)?"
+)
+
+#: A ratio written in words ("a factor of six", "tenfold", "five and a half
+#: times its error", "four to six times").
 _RATIO_WORD = re.compile(
-    rf"\bfactor of\s*{_HEDGE}\s*(?:two|three|four|five|six|seven|eight|nine|ten|twenty"
-    rf"|fifty|a hundred|hundred|a thousand|thousand)\b"
-    r"|\b(?:two|three|four|five|six|seven|eight|nine|ten|hundred|thousand)-?fold\b",
+    rf"\bfactor of\s*{_HEDGE}\s*{_NUMBER_WORD}\b"
+    rf"|\b{_NUMBER_WORD}(?:\s+to\s+{_NUMBER_WORD})?(?:-?fold\b|\s+times(?=\s+(?:its|their|the"
+    r"|as|larger|smaller|faster|slower|higher|lower|broader|narrower|wider|greater|bigger"
+    r"|stronger|weaker|longer|shorter|more|less)\b))",
     re.IGNORECASE,
 )
 
@@ -156,6 +163,11 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             after = match.end() if range_end is None else range_end.end()
             suffix = _DERIVED_SUFFIX.match(line, match.end())
             text = match.group() if suffix is None else match.group() + suffix.group()
+            # A range's multiple ("4 to 6 times") makes both ends multiples.
+            shared = None if range_end is None else _DERIVED_SUFFIX.match(line, after)
+            if suffix is None and shared is not None and "%" not in shared.group():
+                suffix = shared
+                text = match.group() + shared.group()
             derived = (
                 match.end() <= shared_until
                 or _DERIVED_PREFIX.search(before) is not None
