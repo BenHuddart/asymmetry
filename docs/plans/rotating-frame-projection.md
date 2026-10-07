@@ -134,8 +134,25 @@ engine, RF settings, RF vector fit window) is parked for a later revisit.
      popover when narrow.
    - The Auto-detect review popover.
    - Stacked P′ subplots with the frame badge, rotated before bunching.
-3. **Fitting.** P′ projections as Single and Batch fit targets, with the frame
-   in the fit's provenance and staleness when it changes.
+3. **Fitting.** *Done 2026-10-07.* P′ projections as Single and Batch fit
+   targets, with the frame in the fit's provenance and staleness when it
+   changes.
+   - A fit on P′_x or P′_y fits exactly the rotated curve drawn, cropped to the
+     fit range, and keys under that label beside the lab fits.
+   - The fit records a `FrameSnapshot`: the run's frame and its period weights.
+     It is stale once the values that make the rotation change: ν, B₁ axis,
+     φ_RF, sense, gain, the baselines the weights select, or the period mode.
+     Provenance alone never makes a fit stale.
+   - A stale single fit says so on the Saved fits row, and its menu entry
+     carries ⚠. A stale series shows ⚠ on its pill, with the reason on the
+     tooltip, and in the Batch tab's series menu.
+   - A series records its `projection` (part of its identity) and each
+     member's snapshot. Runs without a frame are listed disabled in the
+     Batch tab's members.
+   - Rotated series are not offered to joint fits yet.
+   - On the research data, single damped-cosine fits of P′_y give
+     ν₁ ≈ 0.33–0.38 MHz, and P_z gives ≈ 0.31 MHz. Neither is a good
+     description (χ²ᵣ 1.5–2.6).
 4. **Docs and gate.**
    - A reference page section, updates to `vector_polarization.rst` and
      `rotating_frame.rst`, and the screenshot scenario.
