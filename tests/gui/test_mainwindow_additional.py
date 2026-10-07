@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,7 +27,7 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.instrument import instrument_display_name
 from asymmetry.core.project import load_project, save_project
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
-from asymmetry.core.representation import FitSlot, RepresentationType
+from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.gui.mainwindow import MainWindow
@@ -732,7 +733,7 @@ class TestMainWindowFourier:
 
         # Simulate reload: drop the in-memory cache and restore recipe state.
         mainwindow._frequency_spectra_by_run = {}
-        mainwindow._restore_frequency_representations(state)
+        mainwindow._restore_frequency_representations(state, set())
         # Lazy contract: restore loads recipes only; nothing is recomputed
         # until first view, which rebuilds the identical spectrum on demand.
         assert 8820 not in mainwindow._frequency_spectra_by_run
@@ -755,7 +756,7 @@ class TestMainWindowFourier:
         state = mainwindow.collect_project_state()
 
         mainwindow._frequency_spectra_by_run = {}
-        mainwindow._restore_frequency_representations(state)
+        mainwindow._restore_frequency_representations(state, set())
         assert 8821 not in mainwindow._frequency_spectra_by_run
 
         mainwindow._sync_frequency_plot_for_run(8821)
@@ -849,7 +850,7 @@ class TestMainWindowFourier:
         mainwindow._frequency_spectra_by_rep[RepresentationType.FREQ_FFT] = (
             mainwindow._frequency_spectra_by_run
         )
-        mainwindow._restore_frequency_representations(state)
+        mainwindow._restore_frequency_representations(state, set())
         # The snapshot must be RETAINED (not popped) pending a recompute.
         assert 8823 in mainwindow._frequency_spectra_by_run
 
@@ -873,7 +874,7 @@ class TestMainWindowFourier:
         mainwindow._frequency_spectra_by_rep[RepresentationType.FREQ_FFT] = (
             mainwindow._frequency_spectra_by_run
         )
-        mainwindow._restore_frequency_representations(state)
+        mainwindow._restore_frequency_representations(state, set())
 
     def test_async_recompute_overlays_then_clears_and_populates(
         self, mainwindow: MainWindow
@@ -6227,7 +6228,9 @@ class TestMainWindowBasic:
         ds2.run.source_file = "/tmp/run_8402.nxs"
         mainwindow._data_browser.add_dataset(ds1)
         mainwindow._data_browser.add_dataset(ds2)
-        combined_rn = mainwindow._data_browser.add_combined_dataset([8401, 8402])
+        combined_rn = mainwindow._data_browser.add_combined_dataset(
+            [8401, 8402], combined_run_number=-1
+        )
         assert combined_rn is not None
         combined_ds = mainwindow._data_browser.get_dataset(combined_rn)
         assert combined_ds is not None
@@ -6275,7 +6278,9 @@ class TestMainWindowBasic:
         ds2.run.source_file = "/tmp/run_8412.nxs"
         mainwindow._data_browser.add_dataset(ds1)
         mainwindow._data_browser.add_dataset(ds2)
-        combined_rn = mainwindow._data_browser.add_combined_dataset([8411, 8412])
+        combined_rn = mainwindow._data_browser.add_combined_dataset(
+            [8411, 8412], combined_run_number=-1
+        )
         assert combined_rn is not None
         combined_ds = mainwindow._data_browser.get_dataset(combined_rn)
         assert combined_ds is not None
@@ -6357,7 +6362,9 @@ class TestMainWindowBasic:
         ds2.run.grouping["good_frames"] = 2000.0
         mainwindow._data_browser.add_dataset(ds1)
         mainwindow._data_browser.add_dataset(ds2)
-        combined_rn = mainwindow._data_browser.add_combined_dataset([8421, 8422], sign=-1)
+        combined_rn = mainwindow._data_browser.add_combined_dataset(
+            [8421, 8422], sign=-1, combined_run_number=-1
+        )
         assert combined_rn is not None
         assert mainwindow._data_browser._combined_signs[combined_rn] == -1
 
@@ -6398,6 +6405,81 @@ class TestMainWindowBasic:
         assert rebuilt is not None
         assert rebuilt.metadata["combination"]["method"] == "subtract_reference"
         assert rebuilt.metadata["combination"]["reference_scale"] == pytest.approx(0.5)
+
+    def test_a_combined_run_reopens_under_its_saved_number_with_its_fits(
+        self,
+        mainwindow: MainWindow,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        runs = (8431, 8432, 8433, 8434)
+        for rn in runs:
+            source = tmp_path / f"run_{rn}.nxs"
+            source.write_bytes(b"")
+            dataset = _make_dataset(rn, with_grouping=True)
+            assert dataset.run is not None
+            dataset.run.source_file = str(source)
+            dataset.metadata["source_file"] = str(source)
+            mainwindow._data_browser.add_dataset(dataset)
+        browser = mainwindow._data_browser
+        browser.add_combined_dataset([8431, 8432], combined_run_number=-1)
+        browser.add_combined_dataset([8433, 8434], combined_run_number=-2)
+        browser.select_runs({-1})
+        browser._separate_combined()
+
+        # -2 survives with -1 free below it; -3 is saved but cannot be rebuilt.
+        model = mainwindow._project_model
+        fit = model.ensure_dataset(-2).ensure(RepresentationType.TIME_FB_ASYMMETRY)
+        fit.record_single_fit(None, FitSlot(provenance="single", result={"A": 2}), detached=False)
+        group = model.create_data_group("scan", [8431, -2, -3])
+        model.add_batch(
+            FitSeries(
+                "batch-1",
+                RepresentationType.TIME_FB_ASYMMETRY,
+                member_run_numbers=[8431, -2, -3],
+                results_by_run={8431: {"A": 1}, -2: {"A": 2}, -3: {"A": 3}},
+                group_id=group.group_id,
+                last_fitted_members=[8431, -2, -3],
+                trend_excluded_runs=[-2],
+            )
+        )
+        maxent_state = mainwindow._maxent_panel.get_state()
+        mainwindow._maxent_panel_state_by_run[-2] = maxent_state
+        saved_fit_id = fit.fit.fit_id
+        state = mainwindow.collect_project_state()
+        state["combined_datasets"].append(
+            {"combined_run_number": -3, "source_run_numbers": [8431, 9999]}
+        )
+
+        project_path = tmp_path / "combined.asymp"
+        save_project(state, project_path)
+        restored = MainWindow()
+
+        def _fake_load_file(path: str) -> MuonDataset:
+            rn = next(rn for rn in runs if str(rn) in path)
+            loaded = _make_dataset(rn, with_grouping=True)
+            assert loaded.run is not None
+            loaded.run.source_file = path
+            loaded.metadata["source_file"] = path
+            return loaded
+
+        monkeypatch.setattr(restored, "_load_file", _fake_load_file)
+        restored.restore_project_state(load_project(project_path), str(project_path))
+
+        assert restored._data_browser._combined_datasets == {-2: [8433, 8434]}
+        model = restored._project_model
+        series = model.batch("batch-1")
+        assert series.member_run_numbers == [8431, -2]
+        assert series.results_by_run == {8431: {"A": 1}, -2: {"A": 2}}
+        assert series.trend_excluded_runs == [-2]
+        assert model.data_group(group.group_id).member_run_numbers == [8431, -2]
+        assert not series.is_stale(model.data_group(group.group_id))
+        restored_fit = model.representation(-2, RepresentationType.TIME_FB_ASYMMETRY).fit
+        assert (restored_fit.fit_id, restored_fit.result) == (saved_fit_id, {"A": 2})
+        assert restored._maxent_panel_state_by_run[-2] == json.loads(json.dumps(maxent_state))
+        # The next combination is numbered below the restored one, onto the
+        # lost -3, whose records are gone with it.
+        assert restored._data_browser._next_combined_id == -3
 
 
 class TestPerRunGoodFramesNormaliser:

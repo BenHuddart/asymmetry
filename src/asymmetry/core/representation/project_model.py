@@ -40,6 +40,24 @@ def _axis_value(run_number: int, order_key: str, runs_by_number: dict[int, Run])
     return float(run.field if order_key == "field" else run.temperature)
 
 
+def _run_entries(project: dict) -> list[tuple[int, dict]]:
+    """Each run entry of a project dict with its run number, combined rows included.
+
+    A combined row is saved and restored under its own run number, so its
+    per-run facts ride with it like a dataset's.
+    """
+    loaded = [
+        (int(entry.get("run_number", 0)), entry)
+        for entry in project.get("datasets", []) or []
+        if isinstance(entry, dict)
+    ]
+    combined = [
+        (int(entry["combined_run_number"]), entry)
+        for entry in project.get("combined_datasets", []) or []
+    ]
+    return loaded + combined
+
+
 class ProjectModel:
     """Holds the representations (per run) and batches for one project."""
 
@@ -605,6 +623,41 @@ class ProjectModel:
         series.label = str(label).strip() or None if label else None
         return True
 
+    # ── lost runs ──────────────────────────────────────────────────────────────
+
+    def forget_runs(self, runs: set[int]) -> None:
+        """Drop every run-keyed fact of *runs*, which are gone for good.
+
+        A combined run that could not be rebuilt on load is one: left in place,
+        its facts would attach to whichever combined run is later given its
+        number. A group series' members go with their source run.
+        """
+        self.datasets = {r: c for r, c in self.datasets.items() if r not in runs}
+        self.rotating_frames = {r: f for r, f in self.rotating_frames.items() if r not in runs}
+        for group in self.data_groups.values():
+            group.member_run_numbers = [r for r in group.member_run_numbers if r not in runs]
+            if group.is_phase and group.order_key == "run":
+                # A run-ordered phase spans its members' run numbers.
+                members = group.member_run_numbers
+                group.phase_range = (float(members[0]), float(members[-1])) if members else None
+        for series in self.batches.values():
+            gone = {
+                key
+                for key in (
+                    *series.member_run_numbers,
+                    *series.results_by_run,
+                    *series.member_frames,
+                    *series.trend_excluded_runs,
+                    *series.last_fitted_members,
+                    *series.excluded_run_numbers,
+                )
+                if series.source_run_for(key) in runs
+            }
+            for key in gone:
+                series.remove_member(key)
+            series.last_fitted_members = [k for k in series.last_fitted_members if k not in gone]
+            series.excluded_run_numbers = [k for k in series.excluded_run_numbers if k not in gone]
+
     # ── recompute-on-load ──────────────────────────────────────────────────────
 
     def recompute_all(self, runs_by_number: dict[int, Run]) -> None:
@@ -698,10 +751,7 @@ class ProjectModel:
         if not isinstance(project, dict):
             return cls()
 
-        for entry in project.get("datasets", []) or []:
-            if not isinstance(entry, dict):
-                continue
-            run_number = int(entry.get("run_number", 0))
+        for run_number, entry in _run_entries(project):
             if "rotating_frame" in entry:
                 rotating_frames[run_number] = RotatingFrame.from_dict(entry["rotating_frame"])
             reps = entry.get("representations")
@@ -726,11 +776,6 @@ class ProjectModel:
             if joint is not None:
                 joint_fits[joint.joint_id] = joint
 
-        for entry in project.get("combined_datasets", []) or []:
-            if "rotating_frame" in entry:
-                rotating_frames[int(entry["combined_run_number"])] = RotatingFrame.from_dict(
-                    entry["rotating_frame"]
-                )
         return cls(
             datasets,
             batches,
@@ -743,27 +788,19 @@ class ProjectModel:
     def write_to_project_state(self, project: dict) -> None:
         """Write representations onto each dataset entry, and the top-level blocks.
 
-        ``project['datasets']`` entries are matched by ``run_number``; entries
+        ``project['datasets']`` entries are matched by ``run_number`` and
+        ``project['combined_datasets']`` rows by ``combined_run_number``; entries
         with no representations get an empty ``representations`` map. The
         ``batches``, ``data_groups``, ``active_series`` and ``joint_fits``
         blocks are written at the top level.
         """
-        for entry in project.get("datasets", []) or []:
-            if not isinstance(entry, dict):
-                continue
-            run_number = int(entry.get("run_number", 0))
+        for run_number, entry in _run_entries(project):
             container = self.datasets.get(run_number)
             if run_number in self.rotating_frames:
                 entry["rotating_frame"] = self.rotating_frames[run_number].to_dict()
             entry["representations"] = (
                 container.to_dict()["representations"] if container is not None else {}
             )
-        # Combined rows are saved apart from the datasets, under the run number
-        # the host remaps on load; their frames ride with them.
-        for entry in project.get("combined_datasets", []) or []:
-            run_number = int(entry["combined_run_number"])
-            if run_number in self.rotating_frames:
-                entry["rotating_frame"] = self.rotating_frames[run_number].to_dict()
         project["batches"] = [batch.to_dict() for batch in self.batches.values()]
         project["data_groups"] = [group.to_dict() for group in self.data_groups.values()]
         project["active_series"] = dict(self.active_series)
