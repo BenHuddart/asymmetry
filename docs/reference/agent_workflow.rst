@@ -1049,7 +1049,10 @@ analyst does in prose — percentage changes, ratios, unit conversions,
 differences between printed columns — which the agent skill's number rule
 forbids. It also lists a law's vocabulary ("critical slowing",
 "activation energy", "correlation time") when every fit of that law in the
-logged session printed ``LAW NOT ESTABLISHED``. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
+logged session printed ``LAW NOT ESTABLISHED``, and names a relation a command
+printed beside a quantity the draft quotes without it (the muon hyperfine
+coupling from ``fourier --correlation``, which is the sum of the radical's two
+lines, A_μ = ν₁ + ν₂). Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
 left out of the match, since a rounded sum would otherwise find one of their
 elements by chance.
 

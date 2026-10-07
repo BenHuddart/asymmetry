@@ -1702,6 +1702,30 @@ gap); fit commands do not print the fitted window and `fit-global` takes no
 `--tmin/--tmax`; SKILL.md names `StaticGaussianKT` (the CLI's is
 `StaticGKT_ZF`).
 
+#### Wave 2 — the audit fix (`fix/audit-derived-numbers`)
+
+12/24: Tier A 3/4, trend-fit 1/4, hold-out 2/2, workflow 4/4, tier-b 1/2,
+corpus-2026 1/8. Nickel, spin glass and Sn flipped to pass on numbers the new
+rules listed; every run that skipped the audit (fmuf, plateau, basics, AFM)
+failed. LiFeAs, corannulene and maleic regressed on analysis, two of them by
+taking the audit's "or say in the summary which runs cannot be fitted"
+escape. Scorers found the audit's remaining holes ("a margin of 3.6", "a shift
+of about 0.03", "±0.2 MHz", "a factor of six", "4,200") and false positives
+(table error columns, "×" against a printed "x", "by 5000 G" meaning *at*,
+a run number before "discrepancy").
+
+#### Pass 3 — on `feat/haiku-cli-loop` (overnight loop)
+
+Result commands end with the audit step; `audit` no longer takes a sentence in
+place of a fit; context-derived numbers verify only as verbatim tokens of three
+or more significant digits; noun differences, bare-`±` spreads, ratio words,
+separators and powers of ten; `trend` prints a held line's shift with its
+error; `reduce`, `survey` and `alpha` say which counts alpha was measured on
+(the "mismatch" was `reduce` re-measuring on deadtime-corrected counts);
+`audit` names a hyperfine coupling quoted without A_μ = ν₁ + ν₂ when `fourier`
+printed it. Misfire check: on the 48 summaries of waves 1–2 the new matcher
+adds only real derived numbers and drops the false positives above.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

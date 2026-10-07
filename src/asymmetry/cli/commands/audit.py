@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from asymmetry.cli._numbers import unsupported_laws, unverified_numbers
+from asymmetry.cli._numbers import unstated_relations, unsupported_laws, unverified_numbers
 from asymmetry.cli._output import UserError, emit_json, payload
 from asymmetry.cli._runs import range_text
 from asymmetry.cli._workdir import OUTPUT_LOG, WORKDIR_NAME
@@ -58,6 +58,7 @@ def run(args: argparse.Namespace) -> None:
     text = draft.read_text(encoding="utf-8")
     found = unverified_numbers(text, log_text)
     laws = unsupported_laws(text, log_text)
+    relations = unstated_relations(text, log_text)
     workdirs = [WorkDir(root) for root in roots]
     fitted = set().union(*(workdir.fitted_runs() for workdir in workdirs))
     calibration = set().union(*(workdir.alpha_calibration_runs() for workdir in workdirs))
@@ -77,6 +78,7 @@ def run(args: argparse.Namespace) -> None:
                     scan.to_dict() | {"unfitted_runs": runs} for _, scan, runs in unfitted
                 ],
                 unsupported_laws=[{"law": law, "phrase": phrase} for law, phrase in laws],
+                unstated_relations=relations,
                 unverified=[
                     {"text": entry.text, "line_number": entry.line_number, "line": entry.line}
                     for entry in found
@@ -91,7 +93,9 @@ def run(args: argparse.Namespace) -> None:
             f"The draft says {phrase!r}, but every {law} fit this session printed LAW NOT "
             f"ESTABLISHED: describe that trend in plain words instead."
         )
-    if not found and not laws:
+    for message in relations:
+        print(message)
+    if not found and not laws and not relations:
         when = "Once every scan above is fitted, send" if unfitted else "Now send"
         print(
             f"No unprinted numbers found in {draft}. {when} its text as your whole final "

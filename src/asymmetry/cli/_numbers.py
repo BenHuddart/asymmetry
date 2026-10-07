@@ -230,10 +230,34 @@ def unsupported_laws(draft: str, log_text: str) -> list[tuple[str, str]]:
     ]
 
 
+#: Relations a command printed beside a quantity, which a summary quoting that
+#: quantity must state: ``(printed marker, quantity in the draft, the relation
+#: stated, what to write)``.
+_RELATIONS: tuple[tuple[str, re.Pattern[str], re.Pattern[str], str], ...] = (
+    (
+        "A_mu = nu_1 + nu_2",
+        re.compile(r"A_?\{?(?:μ|mu)\b|hyperfine coupling", re.IGNORECASE),
+        re.compile(r"\bsum\b|(?:ν|nu)_?₁?1?\s*\+\s*(?:ν|nu)_?₂?2?", re.IGNORECASE),
+        "The draft quotes the muon hyperfine coupling without its relation: say that A_μ is "
+        "the sum of the radical's two precession lines, A_μ = ν₁ + ν₂, as fourier printed.",
+    ),
+)
+
+
+def unstated_relations(draft: str, log_text: str) -> list[str]:
+    """What to add where the draft quotes a quantity without the relation a command printed."""
+    return [
+        message
+        for printed, quantity, relation, message in _RELATIONS
+        if printed in log_text and quantity.search(draft) and not relation.search(draft)
+    ]
+
+
 __all__ = [
     "LAW_VOCABULARY",
     "Unverified",
     "printed_values",
+    "unstated_relations",
     "unsupported_laws",
     "unverified_numbers",
 ]

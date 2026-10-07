@@ -288,3 +288,13 @@ Delta 0.3505 0.2706 0.08  frequency 0.0326399  AICc 4241.2 8423.2
 )
 def test_wave2_notation_and_contexts(draft: str, flagged: list[str]) -> None:
     assert [entry.text for entry in unverified_numbers(draft, _WAVE2_LOG)] == flagged
+
+
+def test_a_coupling_quoted_without_its_printed_relation_is_named() -> None:
+    from asymmetry.cli._numbers import unstated_relations
+
+    log = "The correlation peak is the muon hyperfine coupling A_mu = nu_1 + nu_2, the sum\n"
+    bare = "The correlation peak gives A_μ ≈ 514 MHz."
+    assert unstated_relations(bare, log) and not unstated_relations(bare, "no fourier here\n")
+    for stated in ("A_μ = ν₁ + ν₂ ≈ 514 MHz", "A_mu, the sum of the two lines, is 514 MHz"):
+        assert unstated_relations(stated, log) == []
