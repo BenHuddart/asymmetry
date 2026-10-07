@@ -5434,8 +5434,13 @@ class DataBrowserPanel(QWidget):
         *,
         sign: int = 1,
         operation: str | None = None,
+        combined_run_number: int,
     ) -> int | None:
         """Recreate a combined row programmatically (``.asymp`` load).
+
+        The row keeps *combined_run_number*, the number it was saved under, so
+        everything the project keys by run still names it; later combinations
+        are numbered below every restored one.
 
         ``sign=+1`` co-adds; ``sign=-1`` subtracts. ``operation`` disambiguates
         the subtractions: ``"subtract_signed"`` is the symmetric N-run signed
@@ -5472,7 +5477,7 @@ class DataBrowserPanel(QWidget):
             builder = self._signed_subtract_datasets
         else:
             builder = self._subtract_datasets
-        combined_rn = self._next_combined_id
+        combined_rn = combined_run_number
         source_datasets = [self._datasets[rn] for rn in source_run_numbers if rn in self._datasets]
         try:
             combined_dataset = builder(
@@ -5483,7 +5488,7 @@ class DataBrowserPanel(QWidget):
         except CombineError:
             return None
 
-        self._next_combined_id -= 1
+        self._next_combined_id = min(self._next_combined_id, combined_rn - 1)
         self._datasets[combined_rn] = combined_dataset
         self._combined_datasets[combined_rn] = source_run_numbers
         self._combined_source_datasets[combined_rn] = source_datasets

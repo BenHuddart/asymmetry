@@ -1107,7 +1107,7 @@ class TestDataBrowserPanelState:
         panel.add_dataset(ds1)
         panel.add_dataset(ds2)
 
-        combined_rn = panel.add_combined_dataset([10, 11])
+        combined_rn = panel.add_combined_dataset([10, 11], combined_run_number=-1)
         assert combined_rn is not None
         assert combined_rn < 0  # Combined IDs are always negative
         assert combined_rn in panel._combined_datasets
@@ -1133,7 +1133,7 @@ class TestDataBrowserPanelState:
         }
         panel.add_dataset(ds1)
         # Run 99 doesn't exist
-        result = panel.add_combined_dataset([10, 99])
+        result = panel.add_combined_dataset([10, 99], combined_run_number=-1)
         assert result is None
 
     def test_extra_column_header_uses_run_info_label_for_known_field(self, qapp):
@@ -3142,7 +3142,9 @@ class TestRestoreChunkedProgress:
         window1 = mw_module.MainWindow()
         window1._data_browser.add_dataset(_make_run(6001))
         window1._data_browser.add_dataset(_make_run(6002))
-        combined_id = window1._data_browser.add_combined_dataset([6001, 6002], sign=1)
+        combined_id = window1._data_browser.add_combined_dataset(
+            [6001, 6002], sign=1, combined_run_number=-1
+        )
         assert combined_id is not None
         state = window1.collect_project_state()
         window1.close()

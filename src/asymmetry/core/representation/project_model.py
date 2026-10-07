@@ -43,8 +43,8 @@ def _axis_value(run_number: int, order_key: str, runs_by_number: dict[int, Run])
 def _run_entries(project: dict) -> list[tuple[int, dict]]:
     """Each run entry of a project dict with its run number, combined rows included.
 
-    A combined row is saved under the run number the host remaps on load
-    (:meth:`ProjectModel.renumber_runs`); its per-run facts ride with it.
+    A combined row is saved and restored under its own run number, so its
+    per-run facts ride with it like a dataset's.
     """
     loaded = [
         (int(entry.get("run_number", 0)), entry)
@@ -623,69 +623,40 @@ class ProjectModel:
         series.label = str(label).strip() or None if label else None
         return True
 
-    # ── run renumbering ────────────────────────────────────────────────────────
+    # ── lost runs ──────────────────────────────────────────────────────────────
 
-    def renumber_runs(self, mapping: dict[int, int | None]) -> None:
-        """Move every run-keyed fact from each old run number in *mapping* to its new one.
+    def forget_runs(self, runs: set[int]) -> None:
+        """Drop every run-keyed fact of *runs*, which are gone for good.
 
-        The mapping is applied simultaneously, so it may shift or swap numbers.
-        A run mapped to ``None`` is gone for good (a combined run that could not
-        be rebuilt): its facts are dropped, so they cannot attach to whichever
-        run is later given its number. A group series' member keys are
-        synthetic, so only its source runs move.
+        A combined run that could not be rebuilt on load is one: left in place,
+        its facts would attach to whichever combined run is later given its
+        number. A group series' members go with their source run.
         """
-
-        def new(run: int) -> int | None:
-            return mapping.get(run, run)
-
-        def runs(numbers: list[int]) -> list[int]:
-            return [n for n in map(new, numbers) if n is not None]
-
-        def keyed(by_run: dict) -> dict:
-            return {n: value for r, value in by_run.items() if (n := new(r)) is not None}
-
-        self.datasets = keyed(self.datasets)
-        for run_number, container in self.datasets.items():
-            container.run_number = run_number
-        self.rotating_frames = keyed(self.rotating_frames)
+        self.datasets = {r: c for r, c in self.datasets.items() if r not in runs}
+        self.rotating_frames = {r: f for r, f in self.rotating_frames.items() if r not in runs}
         for group in self.data_groups.values():
-            group.member_run_numbers = runs(group.member_run_numbers)
+            group.member_run_numbers = [r for r in group.member_run_numbers if r not in runs]
             if group.is_phase and group.order_key == "run":
                 # A run-ordered phase spans its members' run numbers.
-                group.member_run_numbers.sort()
                 members = group.member_run_numbers
                 group.phase_range = (float(members[0]), float(members[-1])) if members else None
         for series in self.batches.values():
-            if series.member_kind == "groups":
-                gone = {
-                    key
-                    for key in (
-                        *series.member_run_numbers,
-                        *series.last_fitted_members,
-                        *series.excluded_run_numbers,
-                    )
-                    if new(series.source_run_for(key)) is None
-                }
-                for key in gone:
-                    series.remove_member(key)
-                series.last_fitted_members = [
-                    key for key in series.last_fitted_members if key not in gone
-                ]
-                series.excluded_run_numbers = [
-                    key for key in series.excluded_run_numbers if key not in gone
-                ]
-                series.member_source_run = {
-                    key: n
-                    for key, source in series.member_source_run.items()
-                    if (n := new(source)) is not None
-                }
-            else:
-                series.member_run_numbers = runs(series.member_run_numbers)
-                series.results_by_run = keyed(series.results_by_run)
-                series.member_frames = keyed(series.member_frames)
-                series.excluded_run_numbers = sorted(runs(series.excluded_run_numbers))
-                series.last_fitted_members = runs(series.last_fitted_members)
-                series.trend_excluded_runs = sorted(runs(series.trend_excluded_runs))
+            gone = {
+                key
+                for key in (
+                    *series.member_run_numbers,
+                    *series.results_by_run,
+                    *series.member_frames,
+                    *series.trend_excluded_runs,
+                    *series.last_fitted_members,
+                    *series.excluded_run_numbers,
+                )
+                if series.source_run_for(key) in runs
+            }
+            for key in gone:
+                series.remove_member(key)
+            series.last_fitted_members = [k for k in series.last_fitted_members if k not in gone]
+            series.excluded_run_numbers = [k for k in series.excluded_run_numbers if k not in gone]
 
     # ── recompute-on-load ──────────────────────────────────────────────────────
 

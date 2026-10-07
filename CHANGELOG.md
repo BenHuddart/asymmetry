@@ -37,14 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A combined run keeps its fits when a project reopens under a new run
-  number.** Combined runs are rebuilt as −1, −2, … on load, so one saved after
+- **A combined run reopens under its saved run number, with its fits.**
+  Combined runs used to be rebuilt as −1, −2, … on load, so one saved after
   another combination was separated came back under a different number and
-  dropped out of its series, its data group and its trend. Its series results,
-  exclusions, data-group membership and rotating frame now follow it, and its
+  dropped out of its series, its data group, its trend and its per-run panel
+  settings. Each combined run now keeps the number it was saved under, and its
   saved single fits are kept in the project (they were not saved before). A
   combined run that cannot be rebuilt takes its per-run results with it rather
-  than leaving them to attach to another combined run.
+  than leaving them to attach to the next combination.
 - **New Project starts with no series or joint fits.** In single-window mode,
   **New Project** kept the previous project's fit series and joint fits, which
   are keyed by run number, so they reappeared against the next project's runs.
