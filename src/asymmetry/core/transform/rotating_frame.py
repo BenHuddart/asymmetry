@@ -38,9 +38,11 @@ from asymmetry.core.data.dataset import MuonDataset
 
 __all__ = [
     "FRAME_FIELDS",
+    "FrameSnapshot",
     "MIN_CONTRAST",
     "PeriodBaseline",
     "ROTATED_LABELS",
+    "ROTATED_PROJECTIONS",
     "RUN_FIELDS",
     "SETUP_FIELDS",
     "B1Axis",
@@ -55,6 +57,8 @@ __all__ = [
 
 #: The rotated projections' labels, by the lab projection each replaces.
 ROTATED_LABELS: dict[str, str] = {"P_x": "P′_x", "P_y": "P′_y"}
+#: The rotated projections, which exist only for runs with a frame.
+ROTATED_PROJECTIONS: frozenset[str] = frozenset(ROTATED_LABELS.values())
 
 #: How a two-period run's display combines its periods (red is period 1).
 _TWO_PERIOD_WEIGHTS: dict[str, tuple[float, float]] = {
@@ -212,6 +216,58 @@ class RotatingFrame:
             ),
             provenance=data["provenance"],
         )
+
+
+@dataclass(frozen=True)
+class FrameSnapshot:
+    """The frame a rotated curve was made in: its run's frame and its period weights.
+
+    A fit on P′_x or P′_y records the snapshot of the data it fitted, and is
+    stale once the run's current snapshot no longer rotates alike (D7).
+    """
+
+    frame: RotatingFrame
+    weights: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        weights = tuple(_finite("Period weight", weight) for weight in self.weights)
+        if len(weights) != len(self.frame.baselines):
+            raise ValueError(
+                f"{len(weights)} period weights for a frame of {len(self.frame.baselines)} periods."
+            )
+        object.__setattr__(self, "weights", weights)
+
+    @property
+    def rotation(self) -> tuple[Any, ...]:
+        """The values that make the rotated curves, provenance left out.
+
+        The B₁ axis does not enter the arithmetic but says what P′_x and P′_y
+        mean (∥ or ⊥ B₁), so it is part of the rotation. Only the baseline
+        combination the weights select counts: a period they leave out changes
+        nothing.
+        """
+        frame = self.frame
+        return (
+            frame.frequency_mhz,
+            frame.b1_axis,
+            frame.rf_phase_deg,
+            frame.sense,
+            frame.gain,
+            frame.combined_baseline(self.weights),
+            self.weights,
+        )
+
+    def same_rotation(self, other: FrameSnapshot) -> bool:
+        """Whether *other* rotates the run's data exactly as this snapshot did."""
+        return self.rotation == other.rotation
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"frame": self.frame.to_dict(), "weights": list(self.weights)}
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> FrameSnapshot:
+        """Inverse of :meth:`to_dict`; raises ``ValueError`` naming the bad field."""
+        return cls(RotatingFrame.from_dict(data["frame"]), tuple(data["weights"]))
 
 
 def rotate_transverse(

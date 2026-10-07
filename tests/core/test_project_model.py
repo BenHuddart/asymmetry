@@ -16,7 +16,7 @@ from asymmetry.core.representation import (
     make_representation,
 )
 from asymmetry.core.representation.project_model import ProjectModel
-from asymmetry.core.transform.rotating_frame import Provenance, RotatingFrame
+from asymmetry.core.transform.rotating_frame import FrameSnapshot, Provenance, RotatingFrame
 
 _FB = RepresentationType.TIME_FB_ASYMMETRY
 
@@ -782,3 +782,31 @@ def test_rotating_frames_round_trip_on_their_dataset_entries():
     model.write_to_project_state(project)
     assert "rotating_frame" not in project["datasets"][0]
     assert ProjectModel.from_project_state(project).rotating_frames == {2: frame}
+
+
+def test_rotated_fits_keep_their_frames_through_project_state():
+    frame = RotatingFrame.typed_frequency(1.49, 2).with_values(Provenance.TYPED, rf_phase_deg=30.0)
+    snapshot = FrameSnapshot(frame, (-1.0, 1.0))
+    model = ProjectModel(rotating_frames={2: frame})
+    rep = model.ensure_dataset(2).ensure(_FB)
+    rep.record_single_fit(
+        "P′_y", FitSlot(provenance="single", result={}, frame_snapshot=snapshot), detached=False
+    )
+    rep.record_single_fit("P_z", FitSlot(provenance="single", result={}), detached=False)
+    model.add_batch(
+        FitSeries("b1", _FB, member_run_numbers=[2], projection="P′_y", member_frames={2: snapshot})
+    )
+    project = {"datasets": [{"run_number": 2}]}
+    model.write_to_project_state(project)
+
+    rebuilt = ProjectModel.from_project_state(project)
+    restored = rebuilt.representation(2, _FB)
+    assert restored.fit_for("P′_y").frame_snapshot == snapshot
+    assert restored.fit_for("P_z").frame_snapshot is None
+    series = rebuilt.batch("b1")
+    assert (series.projection, series.member_frames) == ("P′_y", {2: snapshot})
+    # A series on a different projection is a different analysis.
+    lab = FitSeries("b2", _FB, member_run_numbers=[2])
+    assert lab.recipe_identity() != series.recipe_identity()
+    series.remove_member(2)
+    assert series.member_frames == {}

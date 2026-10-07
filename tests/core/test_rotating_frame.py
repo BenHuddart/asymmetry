@@ -12,6 +12,7 @@ from asymmetry.core.transform.projections import reduce_run_projections
 from asymmetry.core.transform.rotating_frame import (
     FRAME_FIELDS,
     B1Axis,
+    FrameSnapshot,
     PeriodBaseline,
     Provenance,
     RotatingFrame,
@@ -258,3 +259,58 @@ def test_a_window_shorter_than_two_turns_is_refused():
     short = [d.time_range(0.0, 1.0 / NU) for d in (px, py)]
     with pytest.raises(ValueError, match="two turns"):
         estimate_frame([(900, [tuple(short)])], frequency_mhz=NU, b1_axis=B1Axis.X)
+
+
+def _snapshot(frame: RotatingFrame, weights=(1.0, 0.0)) -> FrameSnapshot:
+    return FrameSnapshot(frame, weights)
+
+
+#: A two-period frame as estimated: every field from the estimator.
+_ESTIMATED = (
+    RotatingFrame.typed_frequency(NU, 2)
+    .with_values(Provenance.ESTIMATED, rf_phase_deg=PHI, gain=0.95, sense=-1)
+    .with_baseline(0, Provenance.ESTIMATED, *BASELINES)
+    .with_baseline(1, Provenance.ESTIMATED, *OTHER_BASELINES)
+)
+
+
+def test_a_snapshot_round_trips_and_refuses_weights_for_other_periods():
+    snapshot = _snapshot(_ESTIMATED, (-1.0, 1.0))
+    assert FrameSnapshot.from_dict(snapshot.to_dict()) == snapshot
+    with pytest.raises(ValueError, match="period weights"):
+        FrameSnapshot(_ESTIMATED, (1.0,))
+    with pytest.raises(ValueError, match="Period weight"):
+        FrameSnapshot(_ESTIMATED, (1.0, float("nan")))
+
+
+def test_provenance_alone_never_changes_the_rotation():
+    fitted = _snapshot(_ESTIMATED)
+    retyped = _ESTIMATED.with_values(Provenance.TYPED, rf_phase_deg=PHI, gain=0.95)
+    retyped = retyped.with_baseline(0, Provenance.TYPED, *BASELINES)
+    assert fitted.same_rotation(_snapshot(retyped))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda f: f.with_values(Provenance.TYPED, rf_phase_deg=PHI + 1.0),
+        lambda f: f.with_values(Provenance.TYPED, gain=1.0),
+        lambda f: f.with_values(Provenance.TYPED, frequency_mhz=NU + 0.01),
+        lambda f: f.with_values(Provenance.TYPED, sense=1),
+        lambda f: f.with_values(Provenance.TYPED, b1_axis=B1Axis.Y),
+        lambda f: f.with_baseline(0, Provenance.TYPED, BASELINES[0] + 0.05, BASELINES[1]),
+    ],
+)
+def test_a_changed_value_the_rotation_uses_makes_a_fit_stale(change):
+    assert not _snapshot(_ESTIMATED).same_rotation(_snapshot(change(_ESTIMATED)))
+
+
+def test_the_period_mode_is_part_of_the_rotation():
+    assert not _snapshot(_ESTIMATED, (1.0, 0.0)).same_rotation(_snapshot(_ESTIMATED, (0.0, 1.0)))
+    assert not _snapshot(_ESTIMATED, (-1.0, 1.0)).same_rotation(_snapshot(_ESTIMATED, (1.0, 1.0)))
+
+
+def test_a_baseline_of_a_period_the_curve_leaves_out_changes_nothing():
+    green_moved = _ESTIMATED.with_baseline(1, Provenance.TYPED, 0.9, 0.9)
+    assert _snapshot(_ESTIMATED, (1.0, 0.0)).same_rotation(_snapshot(green_moved, (1.0, 0.0)))
+    assert not _snapshot(_ESTIMATED, (-1.0, 1.0)).same_rotation(_snapshot(green_moved, (-1.0, 1.0)))
