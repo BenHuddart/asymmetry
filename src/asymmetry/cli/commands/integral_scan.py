@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import math
 from pathlib import Path
 
 from asymmetry.cli._output import (
@@ -246,6 +248,14 @@ def run(args: argparse.Namespace) -> None:
         if run_geometry(dataset.metadata) == "TF"
     }
     notes = _notes(result_payload, free_offsets, summed, contradicted_tf_stamps(scan, stamped_tf))
+    if fit_payload is not None:
+        stored = {
+            path.stem: stored_fit
+            for path in sorted(workdir.scans_dir.glob("*.json"))
+            if path.stem != name
+            and (stored_fit := json.loads(path.read_text(encoding="utf-8"))["fit"]) is not None
+        }
+        notes.extend(_line_comparisons(fit_payload, stored))
     if args.json:
         emit_json(payload(**result_payload, notes=notes))
         return
@@ -371,9 +381,88 @@ _POOR_SCAN_FIT = 2.0
 _RESOLVED_DEPTH = 5.0
 _RESOLVED_FIT = 4.0
 
+#: Centres or widths closer than this many combined errors are the same.
+_DISTINCT_ERRORS = 2.0
+
 #: Half-widths of a window around a fitted line: room for both flanks and some
 #: background on each side.
 _WINDOW_WIDTHS = 4.0
+
+
+def _resolved_lines(fit: dict, fit_limit: float = _RESOLVED_FIT) -> list[str]:
+    """The ``B0`` of each windowed line with both flanks in range, deep, fitted within *fit_limit*."""
+    from asymmetry.core.workflow.integral_scan import DIP_FLANK_WIDTHS
+
+    if fit["x_min"] is None and fit["x_max"] is None:
+        return []
+    if not fit["success"] or fit["params_at_bound"] or fit["reduced_chi_squared"] > fit_limit:
+        return []
+    low, high = fit["x_range"]
+    resolved = []
+    for name, centre in fit["parameters"].items():
+        if name.split("_")[0] != "B0":
+            continue
+        width = abs(fit["parameters"][name.replace("B0", "Bwid", 1)])
+        amplitude = name.replace("B0", "f", 1)
+        if (
+            low <= centre - DIP_FLANK_WIDTHS * width
+            and centre + DIP_FLANK_WIDTHS * width <= high
+            and abs(fit["parameters"][amplitude])
+            >= _RESOLVED_DEPTH * fit["uncertainties"][amplitude]
+        ):
+            resolved.append(name)
+    return resolved
+
+
+def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
+    """Each resolved line beside the same line resolved in another stored scan, with directions."""
+
+    def described(scan_fit: dict, line: str) -> tuple[float, float, float, float]:
+        """Centre, error, width, error — errors scaled by √chi2_red where it exceeds 1."""
+        width = line.replace("B0", "Bwid", 1)
+        scale = math.sqrt(max(scan_fit["reduced_chi_squared"], 1.0))
+        return (
+            scan_fit["parameters"][line],
+            scale * scan_fit["uncertainties"][line],
+            abs(scan_fit["parameters"][width]),
+            scale * scan_fit["uncertainties"][width],
+        )
+
+    def direction(a: float, a_err: float, b: float, b_err: float, words: tuple[str, ...]) -> str:
+        if abs(a - b) <= _DISTINCT_ERRORS * math.hypot(a_err, b_err):
+            return words[2]
+        return words[0] if a > b else words[1]
+
+    notes = []
+    # A poor chi2_red only widens the errors here: the comparison is of two lines
+    # each fitted with both flanks, not a verdict that either is a resonance.
+    for line in _resolved_lines(fit, math.inf):
+        centre, centre_err, width, width_err = described(fit, line)
+        for other, other_fit in stored.items():
+            for other_line in _resolved_lines(other_fit, math.inf):
+                c2, c2_err, w2, w2_err = described(other_fit, other_line)
+                if abs(centre - c2) > width + w2:
+                    continue
+                notes.append(
+                    f"COMPARE: this line at {centre:g} ± {centre_err:.3g} (width {width:g} ± "
+                    f"{width_err:.3g}) and scan {other}'s at {c2:g} ± {c2_err:.3g} (width {w2:g} ± "
+                    f"{w2_err:.3g}), errors scaled by √chi2_red, are one line in two scans: this "
+                    f"one is "
+                    + direction(
+                        width, width_err, w2, w2_err, ("broader", "narrower", "of the same width")
+                    )
+                    + " and "
+                    + direction(
+                        centre,
+                        centre_err,
+                        c2,
+                        c2_err,
+                        ("higher in field", "lower in field", "at the same field"),
+                    )
+                    + ". Report both and that direction — a width or field changing between "
+                    "conditions is the physics (motional narrowing, a changing coupling)."
+                )
+    return notes
 
 
 def _poor_fit_note(fit: dict) -> list[str]:
@@ -388,7 +477,7 @@ def _poor_fit_note(fit: dict) -> list[str]:
     # Only a chosen --xmin/--xmax window can cut a line's flank off; a whole
     # scan narrower than its line just leaves the width unmeasured.
     windowed = fit["x_min"] is not None or fit["x_max"] is not None
-    resolved = []
+    resolved = _resolved_lines(fit)
     for name, centre in lines.items() if windowed else ():
         width = abs(fit["parameters"][name.replace("B0", "Bwid", 1)])
         if centre - DIP_FLANK_WIDTHS * width < low or centre + DIP_FLANK_WIDTHS * width > high:
@@ -398,16 +487,9 @@ def _poor_fit_note(fit: dict) -> list[str]:
                 f"or the background's edge, not a resonance. Widen the window and look at the "
                 f"plot before reporting it."
             )
-            continue
-        amplitude = name.replace("B0", "f", 1)
-        depth = abs(fit["parameters"][amplitude]) / fit["uncertainties"][amplitude]
-        if (
-            fit["success"]
-            and not fit["params_at_bound"]
-            and depth >= _RESOLVED_DEPTH
-            and fit["reduced_chi_squared"] <= _RESOLVED_FIT
-        ):
-            resolved.append(name)
+        elif name in resolved:
+            amplitude = name.replace("B0", "f", 1)
+            depth = abs(fit["parameters"][amplitude]) / fit["uncertainties"][amplitude]
             notes.append(
                 f"RESONANCE: the line at {centre:g} ± {fit['uncertainties'][name]:g} (width "
                 f"{width:g}) sits inside the window {low:g}–{high:g} with data on both flanks, "

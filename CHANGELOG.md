@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TF at 1 kG or more whose integral asymmetry stays well away from zero —
   which a transverse field that strong cannot leave — is named as
   longitudinal, with the reason.
+- **``integral-scan`` compares one line across scans.** A windowed line that
+  another stored scan also resolved near the same field prints a ``COMPARE``
+  line with both centres and widths and which is broader and higher in field.
 - **A poor whole-scan resonance fit prints its window commands** — one
   ``--xmin``/``--xmax`` refit per fitted line — rather than describing them.
 - **``integral-scan`` calls a clean windowed line a resonance.** A line fitted

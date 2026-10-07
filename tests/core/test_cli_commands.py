@@ -3215,6 +3215,9 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
     ]
     fit = {
         "parameters": {"f": -0.01, "B0": 19480.0, "Bwid": 150.0},
+        "uncertainties": {"f": 0.001, "B0": 10.0, "Bwid": 20.0},
+        "success": True,
+        "params_at_bound": [],
         "reduced_chi_squared": 12.6,
         "x_range": [17000.0, 23000.0],
         "x_min": None,
@@ -3346,3 +3349,27 @@ def test_a_result_command_ends_with_the_audit_step_and_a_reduction_does_not(
     assert capsys.readouterr().out.rstrip().endswith(AUDIT_STEP)
     cli.main(["reduce", folder, "--runs", str(SCAN_RUNS[0]), "--workdir", workdir])
     assert AUDIT_STEP not in capsys.readouterr().out
+
+
+def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
+    from asymmetry.cli.commands.integral_scan import _line_comparisons
+
+    def fit(centre: float, width: float, chi2: float) -> dict:
+        return {
+            "parameters": {"f": -0.01, "B0": centre, "Bwid": width, "m": 0.0, "b": 0.1},
+            "uncertainties": {"f": 0.0005, "B0": 15.0, "Bwid": 30.0, "m": 0.0, "b": 0.001},
+            "success": True,
+            "params_at_bound": [],
+            "reduced_chi_squared": chi2,
+            "x_range": [12000.0, 18000.0],
+            "x_min": 12000.0,
+            "x_max": 18000.0,
+        }
+
+    hot, cold, far = fit(14940.0, 680.0, 1.0), fit(15400.0, 1160.0, 1.0), fit(7080.0, 390.0, 1.0)
+    (note,) = _line_comparisons(hot, {"cold": cold, "other": far | {"x_range": [5000.0, 9000.0]}})
+    assert "and scan cold's at 15400" in note
+    assert "this one is narrower and lower in field" in note
+    # Within two combined errors there is no direction to report.
+    (same,) = _line_comparisons(fit(15390.0, 1150.0, 1.0), {"cold": cold})
+    assert "of the same width and at the same field" in same
