@@ -478,6 +478,20 @@ are different set-ups and never share a scan; a scan of two-period (red/green)
 runs says so on its line and, for a field scan, names ``integral-scan
 --period green-red``.
 
+The survey also finds scans the files do not record in any field. Among runs
+that share instrument, set-up, sample, temperature setpoint and field, a note
+(or title) that reads the same once its numbers are masked, with one number
+stepping through at least three values on at least three runs, is a scan of
+that quantity — a steering current, a degrader foil count, a slit width. Each
+prints under ``NOTES SCANS:`` with its template (``Steering <x> A``), the value
+range and the commands that fit it (``asymmetry wizard`` on its first run,
+then ``asymmetry fit-series … --order steering --x RUN=VALUE,…``). A run whose
+note leaves words out of the template, with its one number where the step is
+(``0 foils`` beside ``4 (30um) foils``), is a point of the scan; a number that
+steps 1, 2, 3 with the runs counts repeats, and dates, times and ranges are not
+numbers, so neither is reported. The scans are stored in ``survey.json`` as
+``notes_scans``, and ``audit`` lists one whose runs no fit holds.
+
 Each scan line also names its members' samples — the file's own sample name,
 or the run title before its ``T=``/``F=`` fields — so a folder holding several
 samples scanned on the same fields reads as several measurements, and a scan

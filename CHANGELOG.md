@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **``survey`` finds scans written only in the run notes or title.** A
+  steering current or a degrader foil count stepped in each run's notes prints
+  under ``NOTES SCANS:`` with the ``fit-series --order <name> --x RUN=V,…``
+  command that fits it, is stored as ``notes_scans`` in ``survey.json``, and
+  is listed by ``audit`` until a fit covers it.
+
 ### Changed
 
 - **Commands that produce results end with the audit step.** ``fit``,

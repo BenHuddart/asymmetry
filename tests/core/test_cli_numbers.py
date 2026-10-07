@@ -298,3 +298,29 @@ def test_a_coupling_quoted_without_its_printed_relation_is_named() -> None:
     assert unstated_relations(bare, log) and not unstated_relations(bare, "no fourier here\n")
     for stated in ("A_μ = ν₁ + ν₂ ≈ 514 MHz", "A_mu, the sum of the two lines, is 514 MHz"):
         assert unstated_relations(stated, log) == []
+
+
+def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    workdir = tmp_path / "asymmetry-work"
+    workdir.mkdir()
+    (workdir / "cli-output.log").write_text("$ asymmetry survey data\n", encoding="utf-8")
+    scan = {
+        "instrument": "SIM",
+        "temperature": 295.0,
+        "field": 100.0,
+        "source": "notes",
+        "template": "Steering <x> A",
+        "quantity": "steering",
+        "runs": [11, 12, 13],
+        "values": [-1.0, 0.0, 1.0],
+    }
+    survey = {"folder": "data", "scans": [], "notes_scans": [scan]}
+    (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    draft = tmp_path / "summary.md"
+    draft.write_text("A draft.\n", encoding="utf-8")
+
+    cli.main(["audit", str(draft)])
+    out = capsys.readouterr().out
+    assert 'SIM runs 11-13, notes "Steering <x> A" (steering): not fitted: runs 11-13' in out
+    assert "Once every scan above is fitted, send" in out

@@ -69,6 +69,12 @@ def run(args: argparse.Namespace) -> None:
         for scan in (ScanGroup(**entry) for entry in survey["scans"])
         if set(scan.runs) - fitted
     ]
+    unfitted_notes = [
+        (scan, sorted(set(scan["runs"]) - fitted))
+        for survey in surveys
+        for scan in survey["notes_scans"]
+        if set(scan["runs"]) - fitted
+    ]
 
     if args.json:
         emit_json(
@@ -76,6 +82,9 @@ def run(args: argparse.Namespace) -> None:
                 logs=[str(log) for log in logs],
                 unfitted_scans=[
                     scan.to_dict() | {"unfitted_runs": runs} for _, scan, runs in unfitted
+                ],
+                unfitted_notes_scans=[
+                    scan | {"unfitted_runs": runs} for scan, runs in unfitted_notes
                 ],
                 unsupported_laws=[{"law": law, "phrase": phrase} for law, phrase in laws],
                 unstated_relations=relations,
@@ -88,6 +97,16 @@ def run(args: argparse.Namespace) -> None:
         return
     if unfitted:
         print(_unfitted_report(unfitted, calibration))
+    if unfitted_notes:
+        print(
+            "Scans the run notes define (survey NOTES SCANS) with runs no fit holds — fit each "
+            "against its own quantity with the fit-series command the survey printed:"
+        )
+        for scan, runs in unfitted_notes:
+            print(
+                f"  {scan['instrument']} {range_text(scan['runs'])}, {scan['source']} "
+                f'"{scan["template"]}" ({scan["quantity"]}): not fitted: {range_text(runs)}'
+            )
     for law, phrase in laws:
         print(
             f"The draft says {phrase!r}, but every {law} fit this session printed LAW NOT "
@@ -96,7 +115,7 @@ def run(args: argparse.Namespace) -> None:
     for message in relations:
         print(message)
     if not found and not laws and not relations:
-        when = "Once every scan above is fitted, send" if unfitted else "Now send"
+        when = "Once every scan above is fitted, send" if unfitted or unfitted_notes else "Now send"
         print(
             f"No unprinted numbers found in {draft}. {when} its text as your whole final "
             f"message, starting at its title — the user sees neither this output nor the "
