@@ -104,19 +104,22 @@ engine, RF settings, RF vector fit window) is parked for a later revisit.
       to about 0.08 %.
     - A whole-turn average leaks a nutation's ν ± ν₁ sidebands.
 
-## Estimation (D6)
+## Estimation (D6, D9)
 
-- **Baselines:** each run's b_x and b_y are the inverse-variance means over the
-  window, since whole turns average to the baseline.
+- **Periods:** Auto-detect reads every DAE period of each run on its own,
+  never the displayed combination.
+- **Baselines:** each period's b_x and b_y are fitted beside its signal, as
+  b + c(t)·cos 2πνt + d(t)·sin 2πνt with cubic-spline envelopes c and d at
+  0.8 turns per knot (D9).
 - **Gain:** g is the ratio of the RMS transverse swings. The lab-frame
   transverse polarisation is circular, so x and y swing equally.
-- **ν and s:** the complex periodogram of (P_x − b_x) + i(P_y − b_y)/g, summed
-  in power over the runs, peaks at s·ν. A positive peak means s = +1. Contrast
-  is the peak over its mirror at −s·ν.
-- **φ_RF:** the argument α of Σ z_phys e^{+i2πνt} is the direction of the
-  transverse polarisation in the frame with φ = 0. A nutation from +z lies
-  perpendicular to B₁, so φ_RF = target − α, with target 90° for B₁ ∥ x′ and
-  180° for B₁ ∥ y′.
+- **Sense:** s is the side, ±ν, whose band (±25 % of the typed ν_RF) holds more
+  power over every period, inverse-variance weighted. Contrast is the ratio
+  of the two bands. ν_RF itself is never estimated.
+- **φ_RF:** the principal direction of z_phys e^{+i2πνt} gives the transverse
+  axis, known modulo 180°; the early-time sign picks the direction, because a
+  spin leaving +z first moves towards ẑ × B̂₁. φ_RF puts that direction on
+  +y′ (B₁ ∥ x′) or −x′ (B₁ ∥ y′).
 
 ## Phases
 

@@ -13,7 +13,7 @@ from typing import Any
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.instrument import CANONICAL_VECTOR_AXES, derive_projection_pairs
-from asymmetry.core.io.periods import period_count, period_run
+from asymmetry.core.io.periods import held_period_count, period_run
 from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.transform.reduce import (
     correction_flags_from_grouping,
@@ -55,7 +55,7 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
     corrections and the binning; each dataset's metadata records its
     ``projection`` and ``period_index``.
     """
-    count = period_count(run)
+    count = held_period_count(run)
     if not 0 <= period_index < count:
         raise ValueError(
             f"Run {run.run_number} has {count} period(s); got period index {period_index}."

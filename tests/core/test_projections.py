@@ -55,3 +55,13 @@ def test_a_period_outside_the_run_or_a_grouping_without_projections_is_refused()
     run.grouping["group_names"] = {}
     with pytest.raises(ValueError, match="no asymmetry projections"):
         reduce_run_projections(run, 0)
+
+
+def test_a_period_split_off_a_many_period_file_is_a_one_period_run():
+    # Files of three or more periods load as one dataset per period, each
+    # naming the file's period count in its metadata while holding one period.
+    run = synthetic_vector_run([_static], seed=None)
+    run.metadata["period_count"] = 4
+    assert list(reduce_run_projections(run, 0)) == ["P_x", "P_y", "P_z"]
+    with pytest.raises(ValueError, match="1 period"):
+        reduce_run_projections(run, 1)

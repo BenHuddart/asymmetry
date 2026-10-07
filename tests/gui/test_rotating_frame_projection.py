@@ -332,6 +332,16 @@ def test_auto_detect_reads_every_period_whatever_the_display_combines(mainwindow
         assert baseline.provenance is Provenance.ESTIMATED
 
 
+def test_a_period_split_off_a_many_period_file_gets_a_one_period_frame(mainwindow):
+    dataset = _vector(916)
+    dataset.run.metadata["period_count"] = 4
+    panel = _show(mainwindow, dataset)
+    _rotate(panel)
+    _type(panel, "frequency_mhz", str(NU))
+    assert len(mainwindow._project_model.rotating_frames[916].baselines) == 1
+    assert list(panel._subplot_axes_by_polarization) == ["P′_x", "P′_y", "P_z"]
+
+
 def test_the_filtered_rrf_bar_stays_out_of_vector_mode(mainwindow):
     panel = _show(mainwindow, _vector(910))
     panel.set_rrf_feature_enabled(True)

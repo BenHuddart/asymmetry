@@ -378,8 +378,9 @@ Assumptions and limitations
   :math:`\hat z \times \hat B_1`, which is right for a spin starting along
   :math:`z` and driven about :math:`B_1`. For other preparations, type
   :math:`\varphi_\mathrm{RF}` from a reference run measured that way.
-- **One or two periods.** A frame describes a run of one or two periods;
-  runs recorded with more periods are not supported.
+- **One frame per loaded run.** A two-period run (red and green) keeps a
+  baseline pair for each period. A file of three or more periods loads as one
+  run per period, and each gets its own one-period frame.
 - **The rotated components share noise within a bin** (see the error
   propagation above), so fit them one at a time; this is one reason rotated
   series are not yet offered to joint fits.

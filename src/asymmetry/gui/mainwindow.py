@@ -198,7 +198,7 @@ from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
     combine_period_asymmetry,
-    period_count,
+    held_period_count,
     select_period_histograms,
 )
 from asymmetry.core.maxent import (
@@ -3396,7 +3396,7 @@ class MainWindow(QMainWindow):
         """How *dataset*'s displayed curve combines its run's periods."""
         run = dataset.run
         return period_weights(
-            str(run.grouping.get("period_mode", PeriodMode.RED)), period_count(run)
+            str(run.grouping.get("period_mode", PeriodMode.RED)), held_period_count(run)
         )
 
     def _on_frame_field_edited(self, runs: list[int], name: str, value: object) -> None:
@@ -3411,7 +3411,9 @@ class MainWindow(QMainWindow):
             if frame is None:
                 # The bar enables only ν_RF while a run has no frame (D6).
                 dataset = self._data_browser.get_dataset(run)
-                frames[run] = RotatingFrame.typed_frequency(float(value), period_count(dataset.run))
+                frames[run] = RotatingFrame.typed_frequency(
+                    float(value), held_period_count(dataset.run)
+                )
             elif name in ("baseline_x", "baseline_y"):
                 period = self._plot_panel.frame_bar.shown_period()
                 current = frame.baselines[period]
@@ -3477,7 +3479,7 @@ class MainWindow(QMainWindow):
                         label: curve.time_range(x_min, x_max)
                         for label, curve in reduce_run_projections(source, index).items()
                     }
-                    for index in range(period_count(source))
+                    for index in range(held_period_count(source))
                 ]
                 for run, source in sources
             }
