@@ -1422,6 +1422,17 @@ for _name, _category in _PARAMETER_MODEL_CATEGORIES.items():
             PARAMETER_MODEL_COMPONENTS[_name], category=_category
         )
 
+#: Each superconducting gap law in temperature, with its normal-state width
+#: (``sigma_bg``, or ``sigma_nm`` in quadrature): the level σ(T) settles at
+#: above Tc, so only points above the transition determine it.
+SUPERCONDUCTING_GAP_LAWS: dict[str, str] = {
+    name: width
+    for name, definition in PARAMETER_MODEL_COMPONENTS.items()
+    if definition.category == "Superconducting gap" and "temperature" in definition.scopes
+    for width in ("sigma_bg", "sigma_nm")
+    if width in definition.param_names
+}
+
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
 #: The parameter-vs-x grammar additionally supports the quadrature combinator
 #: ``f ⊕ g = √(f² + g²)`` (binary, same precedence as ``+``/``-``, associative),

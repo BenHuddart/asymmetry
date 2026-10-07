@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import math
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -351,7 +352,17 @@ def _render(
         *_frequency_response(series, trend),
     ]
     if fit is not None:
-        lines.extend(["", *_render_fit(fit, series["free_params"]), *readings])
+        lines.extend(
+            [
+                "",
+                *_render_fit(
+                    fit,
+                    series["free_params"],
+                    _gap_law_steps(series["name"], trend, fit, plot_paths),
+                ),
+                *readings,
+            ]
+        )
     else:
         lines.extend(
             [
@@ -808,8 +819,14 @@ _LAW_AXES: dict[str, frozenset[str]] = {
 }
 
 
-def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
-    """The fit block: model, range, parameters with errors, verdict and what was left out."""
+def _render_fit(
+    fit: dict[str, Any], free_params: list[str], law_steps: Sequence[str] = ()
+) -> list[str]:
+    """The fit block: model, range, parameters with errors, verdict and what was left out.
+
+    *law_steps* — what this law asks next — follow the verdict and replace the generic
+    advice to hold an undetermined parameter.
+    """
     lo, hi = fit["x_fitted"]
     lines = [
         f"Fit of {fit['expression']} to {fit['param']} against {fit['order_key']}, over the "
@@ -886,6 +903,7 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
             f"LAW NOT ESTABLISHED ({'; '.join(reasons)}): {fit['expression']} does not describe "
             f"this trend. Describe the trend in plain words and do not use this law's physics."
         )
+        lines.extend(law_steps)
         determined = [name for name in physical if name not in undetermined + pinned]
         if shapes:
             lines.append(
@@ -896,7 +914,7 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
                 )
                 + ", and report the law with that value stated as fixed."
             )
-        elif fit["success"] and determined and undetermined:
+        elif fit["success"] and determined and undetermined and not law_steps:
             lines.append(
                 f"Next: {', '.join(determined)} {'is' if len(determined) == 1 else 'are'} "
                 f"determined and {', '.join(undetermined)} not. Hold "
@@ -915,6 +933,7 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
                 else "."
             )
         )
+        lines.extend(law_steps)
         if fit["expression"].strip() == "Linear" and fit["order_key"] not in _FILE_AXES:
             lines.append(
                 f"The slope m is the change in {fit['param']} per unit {fit['order_key']}: for a "
@@ -953,5 +972,75 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
         lines.append(
             "flagged but fitted: "
             + "; ".join(f"{entry['key']} ({', '.join(entry['flags'])})" for entry in fit["flagged"])
+        )
+    return lines
+
+
+def _gap_law_steps(name: str, trend, fit: dict[str, Any], plot_paths: list[Path]) -> list[str]:
+    """What a superconducting gap law's fit asks next: the normal state, a verdict, its rivals."""
+    from asymmetry.core.fitting.parameter_models import (
+        SUPERCONDUCTING_GAP_LAWS,
+        ParameterCompositeModel,
+    )
+
+    model = ParameterCompositeModel.from_expression(fit["expression"])
+    gaps = [
+        (index, law)
+        for index, law in enumerate(model.component_names)
+        if law in SUPERCONDUCTING_GAP_LAWS
+    ]
+    if not gaps:
+        return []
+    index, law = gaps[0]
+    tc = fit["parameters"][model.component_param_name(index, "Tc")]
+    width = model.component_param_name(index, SUPERCONDUCTING_GAP_LAWS[law])
+    warm = sum(row["x"] > tc for row in trend.rows if row["key"] in fit["keys"])
+    excluded = [entry["key"] for entry in fit["excluded"] if entry["reason"] == "excluded"]
+
+    def command(expression: str, *, warm_side: bool = False) -> str:
+        """``trend`` with *expression* on the same points — past any --xmax when *warm_side*."""
+        ranges = (("--xmin", fit["x_min"]), ("--xmax", None if warm_side else fit["x_max"]))
+        fixes = [held for held in fit["fixed"] if not (warm_side and held == width)]
+        return (
+            f"asymmetry trend <folder> --series {name} --model "
+            + (f"'{expression}'" if " " in expression else expression)
+            + f" --param {fit['param']}"
+            + "".join(f" {flag} {value:g}" for flag, value in ranges if value is not None)
+            + "".join(f" --fix {held}={fit['parameters'][held]:g}" for held in fixes)
+            + (f" --exclude {','.join(excluded)}" if excluded else "")
+        )
+
+    lines: list[str] = []
+    if warm < 2:
+        coverage = (
+            f"NOTE: {warm} of the fitted points {'lies' if warm == 1 else 'lie'} above the "
+            f"fitted Tc = {format_number(tc, 4)}. {law} settles at {width} above Tc, so only "
+            f"normal-state points determine {width}; with fewer than two it is not set by the "
+            f"data."
+        )
+        if fit["x_max"] is not None:
+            return [
+                f"{coverage} Next: refit with the warm points in, rather than holding {width} "
+                f"at a chosen value — no --xmax, or one above the transition: "
+                f"{command(fit['expression'], warm_side=True)}. The verdict on "
+                f"the law, and its comparison with the other gap laws, follow from that refit."
+            ]
+        lines.append(
+            f"{coverage} The scan holds no more above Tc: hold {width} at the width measured "
+            f"in the normal state with --fix {width}=VALUE, and say it was held."
+        )
+    plot = str(plot_paths[0]) if plot_paths else "the plot (rerun with --plot)"
+    lines.append(
+        f"Verdict due: say in the report whether {law} describes {fit['param']}(T) — yes when "
+        f"chi2_red ({format_number(fit['reduced_chi_squared'], 3)}) is near 1 and the curve on "
+        f"{plot} follows the points below and above Tc, no otherwise."
+    )
+    if law == "SC_SWave":
+        nodal = re.sub(r"\bSC_SWave\b", "SC_DWave", fit["expression"])
+        others = [other for other in SUPERCONDUCTING_GAP_LAWS if other not in (law, "SC_DWave")]
+        lines.append(
+            f"SC_SWave is the fully gapped law; a gap with line nodes is its rival. Fit SC_DWave "
+            f"to the same points and compare chi2_red: {command(nodal)}. The other gap laws "
+            f"({', '.join(others)}) fit the same way with --model swapped."
         )
     return lines

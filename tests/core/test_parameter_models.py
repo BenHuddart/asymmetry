@@ -1986,6 +1986,26 @@ def test_parameter_model_categories_cover_registry() -> None:
     )
 
 
+def test_every_superconducting_gap_law_names_its_tc_and_normal_state_width() -> None:
+    from asymmetry.core.fitting.parameter_models import (
+        PARAMETER_MODEL_COMPONENTS,
+        SUPERCONDUCTING_GAP_LAWS,
+    )
+
+    gap_laws = {
+        name
+        for name, definition in PARAMETER_MODEL_COMPONENTS.items()
+        if definition.category == "Superconducting gap" and "temperature" in definition.scopes
+    }
+    # No temperature gap law is left without the width only the warm points fix.
+    assert set(SUPERCONDUCTING_GAP_LAWS) == gap_laws
+    assert {"SC_SWave", "SC_DWave"} <= gap_laws
+    for name, width in SUPERCONDUCTING_GAP_LAWS.items():
+        assert {"Tc", width} <= set(PARAMETER_MODEL_COMPONENTS[name].param_names)
+    # The field-dependent vortex-lattice widths are not gap laws in temperature.
+    assert "SC_Brandt_VortexLattice" not in SUPERCONDUCTING_GAP_LAWS
+
+
 @pytest.mark.parametrize("sign", [-1.0, 1.0])
 def test_suggest_model_seeds_puts_a_differential_pair_on_its_line_not_its_copy(
     sign: float,

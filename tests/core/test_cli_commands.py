@@ -2708,6 +2708,72 @@ def test_a_failed_order_parameter_fit_is_pointed_at_its_shape_exponent() -> None
     assert "--fix alpha" not in "\n".join(_render_fit(held, ["frequency"]))
 
 
+def _gap_trend():
+    """A synthetic σ(T) scan through Tc = 7 K: an s-wave rise on a 0.1 μs⁻¹ normal-state width."""
+    import numpy as np
+
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+    from asymmetry.core.workflow.series import TrendTable
+
+    x = np.arange(0.5, 12.5, 0.75)
+    law = ParameterCompositeModel.from_expression("SC_SWave").function
+    sigma = law(x, sigma_0=0.4, Tc=7.0, gap_ratio=1.764, sigma_bg=0.1)
+    noise = np.random.default_rng(3).normal(0.0, 0.004, x.size)
+    rows = [
+        {"key": str(run), "x": float(t), "sigma": float(s), "sigma_err": 0.004, "flags": []}
+        for run, (t, s) in enumerate(zip(x, sigma + noise, strict=True), start=1)
+    ]
+    return TrendTable("temperature", ["key", "x", "sigma", "sigma_err", "flags"], rows)
+
+
+def test_a_gap_law_fit_asks_for_a_verdict_and_offers_the_nodal_rival() -> None:
+    from asymmetry.cli.commands.trend import _gap_law_steps
+    from asymmetry.core.workflow.trend_fit import fit_trend
+
+    trend = _gap_trend()
+    fit = fit_trend(trend, "sigma", "SC_SWave", initial={"Tc": 6.0}).to_dict()
+    text = "\n".join(_gap_law_steps("tf", trend, fit, []))
+    # The normal state is in the fit, so no coverage note: a verdict on the law ...
+    assert "NOTE" not in text
+    assert "Verdict due: say in the report whether SC_SWave describes sigma(T)" in text
+    assert "the plot (rerun with --plot)" in text
+    # ... and the ready command for the nodal rival on the same points.
+    assert (
+        "Fit SC_DWave to the same points and compare chi2_red: asymmetry trend <folder> "
+        "--series tf --model SC_DWave --param sigma."
+    ) in text
+    assert "SC_TwoGap_SS" in text
+    # A nodal law gets the verdict prompt but no rival of its own.
+    nodal = fit_trend(trend, "sigma", "SC_DWave", initial={"Tc": 6.0}).to_dict()
+    text = "\n".join(_gap_law_steps("tf", trend, nodal, [Path("plots/tf-trend-sigma.png")]))
+    assert "whether SC_DWave describes sigma(T)" in text
+    assert "the curve on plots/tf-trend-sigma.png" in text
+    assert "rival" not in text
+
+
+def test_a_gap_law_cut_off_below_the_normal_state_is_sent_back_for_the_warm_points() -> None:
+    from asymmetry.cli.commands.trend import _gap_law_steps, _render_fit
+    from asymmetry.core.workflow.trend_fit import fit_trend
+
+    trend = _gap_trend()
+    for fixed in ({}, {"sigma_bg": 0.1}):
+        fit = fit_trend(trend, "sigma", "SC_SWave", x_min=1.0, x_max=6.5, fixed=fixed).to_dict()
+        (note,) = _gap_law_steps("tf", trend, fit, [])
+        assert note.startswith("NOTE: 0 of the fitted points lie above the fitted Tc")
+        assert "only normal-state points determine sigma_bg" in note
+        # The refit keeps the cold-side range and drops --xmax and a held width.
+        assert (
+            "asymmetry trend <folder> --series tf --model SC_SWave --param sigma --xmin 1."
+        ) in note
+        assert "follow from that refit" in note
+        # It follows the verdict and replaces the generic advice to hold the width.
+        block = _render_fit(fit, ["sigma"], [note])
+        assert block[block.index(note) - 1].startswith(("LAW NOT ESTABLISHED", "Converged"))
+        assert "textbook value" not in "\n".join(block)
+    # An order parameter is fitted below its transition: nothing to add.
+    assert _gap_law_steps("tf", trend, fit | {"expression": "OrderParameter"}, []) == []
+
+
 def test_a_fit_on_a_windowed_reduction_says_so_and_plot_tmax_keeps_the_record(
     workflow_folder: Path, tmp_path: Path, capsys
 ) -> None:

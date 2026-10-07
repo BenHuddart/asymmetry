@@ -989,7 +989,9 @@ asymmetry trend <folder> --series zf-scan --model OrderParameter \
   relaxation between them because AICc preferred it, refit the series with a
   single-rate recipe first — the law describes the one rate.
 - `--xmin`/`--xmax` set the fit range in the trend's x units. An order
-  parameter is fitted **below** the transition, a Redfield law over the field
+  parameter (`OrderParameter`) is fitted **below** the transition; an `SC_*`
+  gap law needs the normal-state points above Tc too, which fix its σ_bg, so
+  give it no `--xmax` below them. A Redfield law is fitted over the field
   range where one process dominates. Compare points measured under matched
   conditions (one temperature for a concentration series). State the range in
   the summary.
