@@ -372,12 +372,20 @@ Assumptions and limitations
   field is static in the frame. The counter-rotating half turns at
   :math:`2\nu_\mathrm{RF}` in it, and its small effect on the spin dynamics
   (the Bloch–Siegert shift [4]_) is not part of the picture of a static
-  :math:`B_1`; it is negligible when :math:`B_1 \ll B_0`.
+  :math:`B_1`. It is negligible when :math:`B_1 \ll B_0`; at :math:`B_1/B_0`
+  of a few tenths it leaves a small ripple at :math:`2\nu_\mathrm{RF}` on the
+  rotated components and shifts the resonance slightly.
 - **Auto-detect assumes a nutation from** :math:`+z`. Its
   :math:`\varphi_\mathrm{RF}` puts the transverse polarisation on
   :math:`\hat z \times \hat B_1`, which is right for a spin starting along
   :math:`z` and driven about :math:`B_1`. For other preparations, type
   :math:`\varphi_\mathrm{RF}` from a reference run measured that way.
+- **One phase for the whole run.** :math:`\varphi_\mathrm{RF}` is the drive's
+  phase at :math:`t_0`, which holds for every pulse only if the RF source runs
+  continuously and is gated. A source that restarts its phase at each gate
+  drives later pulses about other axes of the frame — a second pulse that
+  turns the spin about :math:`y'` instead of :math:`x'`, for example — and the
+  frame cannot show both at once.
 - **One frame per loaded run.** A two-period run (red and green) keeps a
   baseline pair for each period. A file of three or more periods loads as one
   run per period, and each gets its own one-period frame.
