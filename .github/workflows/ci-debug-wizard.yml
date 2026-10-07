@@ -1,0 +1,27 @@
+name: CI debug (temporary) — wizard result flake
+on:
+  push:
+    branches: [fix/wizard-result-scenario-determinism]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e .
+      - run: |
+          lscpu | grep -E "Model name|^CPU\(s\)|Flags" | cut -c1-200
+          python -c "import numpy; numpy.show_config()" | grep -iA3 "blas\|simd" | head -40
+      - run: |
+          for i in 1 2 3; do python tools/_ci_debug/wizard_result_repro.py; done
