@@ -52,7 +52,7 @@ class GlobalFitWizardResultScenario(Scenario):
         # Default noise seed. At 100 G, with B_L free (field recorded, geometry
         # not), Delta and B_L trade off, so on some seeds a per-run Delta scores
         # better; on this one the shared Delta wins (AICc 1964 against 1998).
-        datasets = make_ag_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
+        datasets = make_ag_lf_decoupling(fields_g=(0.0, 5.0, 10.0, 25.0))
 
         # Keep the screening portfolio small so the build is fast: LF dynamics
         # and magnetism with the competing relaxation leaves excluded leaves the

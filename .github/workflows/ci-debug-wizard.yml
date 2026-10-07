@@ -23,5 +23,13 @@ jobs:
       - run: |
           lscpu | grep -E "Model name|^CPU\(s\)"
           python -c "import numpy._core._multiarray_umath as m; print('NUMPY_FEATURES', sorted(k for k, v in m.__cpu_features__.items() if v))"
-      - run: |
-          python tools/_ci_debug/anchor_probe.py
+      - name: new fields (0,5,10,25)
+        run: python tools/_ci_debug/wizard_result_repro.py | grep -E "RANK|RESULT"
+      - name: old fields (0,15,50,100), native dispatch
+        run: PROBE_FIELDS=0,15,50,100 python tools/_ci_debug/wizard_result_repro.py | grep -E "RESULT"
+      - name: old fields (0,15,50,100), AVX-512 dispatch disabled
+        run: |
+          OFF=$(python -c "import numpy._core._multiarray_umath as m; print(' '.join(k for k, v in m.__cpu_features__.items() if v and k.startswith('AVX512')))")
+          echo "disabling: $OFF"
+          if [ -n "$OFF" ]; then export NPY_DISABLE_CPU_FEATURES="$OFF"; fi
+          PROBE_FIELDS=0,15,50,100 python tools/_ci_debug/wizard_result_repro.py | grep -E "RESULT"

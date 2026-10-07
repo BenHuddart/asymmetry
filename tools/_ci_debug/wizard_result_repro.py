@@ -43,7 +43,9 @@ def main() -> None:
         physics=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}),
         exclude_components=exclude,
     )
-    ds = make_ag_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
+    import os
+    fields = tuple(float(f) for f in os.environ.get("PROBE_FIELDS", "0,5,10,25").split(","))
+    ds = make_ag_lf_decoupling(fields_g=fields)
     print("data digest", float(np.sum([d.asymmetry.sum() for d in ds])).hex())
     inst: dict = {}
     t = time.monotonic()
