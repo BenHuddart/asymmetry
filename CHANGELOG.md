@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`asymmetry audit` catches more arithmetic written into a summary.** A
+  number after a change verb's "by" ("falls by about 0.03 MHz") or an
+  agreement's "to" ("agree with the survey lines to about 0.02 MHz"), a number
+  named as a comparison ("4 points better", "a 1.2–1.3 % spread"), a relative
+  ``±`` percentage and a Δ-quantity no command printed verbatim (``ΔAICc 11``)
+  are now listed; each had passed a clean audit in agent evaluations.
+
 ## [0.26.0] - 2026-10-07
 
 ### Added

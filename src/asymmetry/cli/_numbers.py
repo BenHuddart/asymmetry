@@ -8,10 +8,12 @@ a command's output. Every command's printed output is appended to
 A match is deliberately loose — a number written with *d* decimals matches any
 printed value it rounds from — so a match says only that the number appears in
 some output, not that it is the right one. Numbers written as a multiple or a
-significance or a whole-number percentage (``10×``, ``4.3σ``, ``32 %``) are almost always
-arithmetic on printed values, so they match only when a command printed that
-exact token, and a number after "a factor of" or a difference phrase ("agree to
-within 2 G", "differ by 0.6") is always listed.
+significance or a whole-number or ``±`` percentage (``10×``, ``4.3σ``, ``32 %``,
+``±0.6 %``), or named as a difference (``ΔAICc 11``), match only when a command
+printed that exact token. A number after "a factor of" or a difference phrase
+("agree to about 0.02 MHz", "falls by 0.03 MHz"), or named as a comparison ("4
+points better", "a 1.2–1.3 % spread"), is always listed. A range ``a–b`` takes
+the comparison after ``b`` for both ends.
 """
 
 from __future__ import annotations
@@ -24,17 +26,47 @@ from dataclasses import dataclass
 #: left, so a run range ``9031-9051`` reads as two numbers, not a negative one.
 _NUMBER = re.compile(r"(?<![\w.])[-+−]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
+#: The second end of a range ``a–b`` (or ``a to b``) after a number.
+_RANGE_END = re.compile(r"\s?(?:[–-]|to)\s?[-+−]?\d+(?:\.\d+)?")
+
 #: Suffixes that make a number a derived multiple, significance or percentage.
 _DERIVED_SUFFIX = re.compile(
     r"\s?(?:×|x|σ|sigma|%|percent|-fold|fold|\s?times"
     r"|\s?(?:standard|combined) errors?|\s?error bars?)(?![a-zA-Z])"
 )
 
+_HEDGE = r"(?:about|roughly|approximately|around|some|only|up to|~|≈)?"
+
+#: Verbs whose "by N" is a change, not a time ("falls by 0.03" against
+#: "disappears by 6 K").
+_CHANGE_VERB = (
+    r"(?:differ|fall|fell|rise|rose|drop|shift|move|change|var(?:y|ie)|increase|decrease"
+    r"|grow|grew|exceed|prefer|depart|deviate|disagree|offset|apart|separat|split)"
+)
+
+#: The rest of one clause: no punctuation and no second verb joined by "and".
+_CLAUSE = r"(?:(?!\band\b)[^.,;:])*?"
+
 #: Phrases that make the number after them a ratio ("a factor of ~3") or a
-#: difference ("within about 2 G", "differ by 0.6"), hedged or not.
+#: difference ("within about 2 G", "falls by 0.03", "agree with the survey to
+#: about 0.02 MHz"), hedged or not.
 _DERIVED_PREFIX = re.compile(
-    r"(?:factor of|times|fold|within|differ(?:s|ed|ing)? by|apart by|offset by)"
-    r"\s*(?:about|roughly|approximately|around|some|~|≈)?\s*$",
+    rf"(?:factor of|times|fold|within|\b{_CHANGE_VERB}\w*\b{_CLAUSE},?\s*\bby"
+    rf"|agree\w*\b{_CLAUSE}\bto)\s*{_HEDGE}\s*$",
+    re.IGNORECASE,
+)
+
+#: A quantity named as a difference (``ΔAICc``, ``Δf =``): arithmetic unless printed.
+_DELTA_PREFIX = re.compile(rf"Δ[A-Za-zχν]\S*\s*(?:=|:|of|is)?\s*{_HEDGE}\s*$")
+
+#: A ``±`` with no value before it: what follows is a relative error (``±0.6 %``).
+_RELATIVE_ERROR = re.compile(r"(?:^|[^\d\s])\s*±\s*$")
+
+#: Words after a number (and its unit) that name it a comparison of two values.
+_COMPARISON_SUFFIX = re.compile(
+    r"\s?(?:%|[^\W\d][^\s,;.]*)?\s(?:better|worse|lower|higher|larger|smaller|faster"
+    r"|slower|spread|difference|discrepancy|mismatch|disagreement|scatter)\b"
+    r"(?!\s+(?:bound|limit|edge))",
     re.IGNORECASE,
 )
 
@@ -76,14 +108,27 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
     for line_number, line in enumerate(draft.splitlines(), start=1):
         for match in _NUMBER.finditer(line):
             token = match.group()
+            before = line[: match.start()]
+            range_end = _RANGE_END.match(line, match.end())
+            after = match.end() if range_end is None else range_end.end()
             suffix = _DERIVED_SUFFIX.match(line, match.end())
-            if _DERIVED_PREFIX.search(line[: match.start()]):
+            if _DERIVED_PREFIX.search(before) or _COMPARISON_SUFFIX.match(line, after):
                 text = token if suffix is None else token + suffix.group()
                 found.append(Unverified(text, line_number, line.strip()))
                 continue
+            if _DELTA_PREFIX.search(before):
+                printed = re.escape(token.replace("−", "-"))
+                if re.search(rf"(?<![\w.-]){printed}(?!\.?\d)", log_text) is None:
+                    found.append(Unverified(token, line_number, line.strip()))
+                continue
             # A decimal percentage ("A(0) 16.42 %") is a printed asymmetry in
-            # its unit; a whole-number one ("32 %") is almost always a ratio.
-            if suffix is not None and "%" in suffix.group() and "." in token:
+            # its unit; a whole-number or ± one ("32 %", "±0.6 %") is a ratio.
+            if (
+                suffix is not None
+                and "%" in suffix.group()
+                and "." in token
+                and _RELATIVE_ERROR.search(before) is None
+            ):
                 suffix = None
             if suffix is not None:
                 if token + suffix.group() not in log_text:

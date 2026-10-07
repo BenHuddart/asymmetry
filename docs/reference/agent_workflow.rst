@@ -1032,10 +1032,13 @@ the default one when it exists). ``audit`` extracts each number from the draft
 and reports the ones that appear in none of those logs, with the line they sit
 on. A number written with *d* decimals matches any printed value it rounds
 from, so a clean audit means every number appears in *some* output, not that it
-is the right one; a multiple, a significance or a whole-number percentage
-(``10×``, ``4.3σ``, ``32 %``) matches only when a command printed that exact
-token, and a number after "a factor of" or a difference phrase ("within
-about 2 G", "differ by 0.6"), hedged or not, is always listed. What it catches is the arithmetic an
+is the right one; a multiple, a significance, a whole-number or ``±``
+percentage, or a Δ-quantity (``10×``, ``4.3σ``, ``32 %``, ``±0.6 %``,
+``ΔAICc 11``) matches only when a command printed that exact token. A number
+after "a factor of" or a difference phrase ("within about 2 G", "differ by
+0.6", "falls by about 0.03 MHz", "agree with the survey to about 0.02 MHz"),
+or named as a comparison ("4 points better", "a 1.2–1.3 % spread"), hedged or
+not, is always listed. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions,
 differences between printed columns — which the agent skill's number rule
 forbids. It also lists a law's vocabulary ("critical slowing",

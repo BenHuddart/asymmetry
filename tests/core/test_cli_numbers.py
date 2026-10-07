@@ -213,3 +213,46 @@ def test_a_run_fitted_on_its_own_counts_as_fitted(
 
     cli.main(["audit", str(draft), "--json"])
     assert json.loads(capsys.readouterr().out)["unfitted_scans"] == []
+
+
+_WAVE_LOG = """AICc 2073.4  2035.8  37.441
+frequency_1 moves from 813.57601 to 813.54580 MHz
+frequency 1.92645  survey_line_mhz 1.94529  sigma 0.020831
+alpha 1.2373 (estimated:24563)  alpha 1.2320  0.50 0.52
+r_muF 1.22 1.25  A(0) 16.42 0.05  bound 0.1
+series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
+(Δt = 0.0123 µs); runs 9031 9051; nu 16.3 3.8 MHz
+"""
+
+
+@pytest.mark.parametrize(
+    ("draft", "flagged"),
+    [
+        # Differences written in prose, hedged or not (Haiku 5.5 wave 1, 2026-10-07).
+        ("prefers the two-line model by about 37", ["37"]),
+        ("the line falls by 0.03 MHz on warming", ["0.03"]),
+        ("they agree with these survey lines to about 0.02 MHz", ["0.02"]),
+        ("the alphas differ by about 0.5 %", ["0.5 %"]),
+        # A comparison named after the number, over a whole range.
+        ("about 4 points better on AICc", ["4"]),
+        ("values 1.22–1.25 Å, a 1.2–1.3% spread", ["1.2", "1.3%"]),
+        ("the 0.2–0.3 % difference is unresolved", ["0.2", "0.3 %"]),
+        # A relative error is a ratio; an absolute error on an asymmetry is not.
+        ("stable to ±0.6 %", ["0.6 %"]),
+        ("A(0) = 16.42 ± 0.05 %", []),
+        # A Δ-quantity verifies only as printed.
+        ("ΔAICc about 11", ["11"]),
+        ("a timing offset Δt = 0.0123 µs", []),
+        # Ordinary values, ranges and bounds stay quiet.
+        ("runs 9031–9051", []),
+        ("ν falls from 16.3 to 3.8 MHz", []),
+        ("they agree, and ν reaches 16.3 MHz", []),
+        # "By" a temperature is a time, not a change.
+        ("the line disappears by 16.3 K", []),
+        ("it falls only slightly, by about 0.03 MHz", ["0.03"]),
+        ("Delta falls and reaches its plateau by about 16.3 K", []),
+        ("Lambda sits at its 0.1 lower bound", []),
+    ],
+)
+def test_wave_derived_numbers_are_flagged(draft: str, flagged: list[str]) -> None:
+    assert [entry.text for entry in unverified_numbers(draft, _WAVE_LOG)] == flagged

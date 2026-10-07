@@ -1667,6 +1667,41 @@ and the recipe. Open maintainer question: `spurious_reseeded` flags every
 reseeded run even when the reseed rescued it (GUI rule since #167); one
 copper run discarded a real 1 K ν upturn because of it.
 
+### Haiku 5.5 — 2026-10-07, on main 0.26.0
+
+Host Claude Code 2.1.293 (2.1.291 ran `claude-haiku-5-5` but warned
+`unrecognized_model`), model `claude-haiku-5-5`, all 24 cases once from a
+snapshot of main. $5.13 for the wave ($0.03–0.55 and 1–8 min a case), against
+about $30 for a Sonnet 5.5 wave. Scored per wave with `scoring_brief.md`.
+
+| Set | Haiku 5.5 | Passed |
+|---|---|---|
+| Tier A | 0/4 | — (nickel and spin glass fail on one derived number each) |
+| trend-fit | 2/4 | plateau, maleic |
+| hold-out | 2/2 | copper, molecular AFM |
+| workflow | 0/4 | — (TCNQ, LLZ on one derived number; silicon on an unstated window) |
+| tier-b | 1/2 | spin-Peierls |
+| corpus-2026 | 3/8 | LiFeAs, corannulene, benzene RF |
+
+8/24 strict; 13–16/24 with the judgement-call fails relaxed. Haiku skips
+Step 7 (no `summary.md`, no `audit`) in five runs, files the next command a
+CLI note prints under "Not done", rarely opens a plot, and writes small
+arithmetic into prose. It follows printed CLI output far more than skill text:
+several passes reached the fit `audit` listed.
+
+Most number-rule fails passed a clean `audit`: "by about N" and "agree … to
+about N" were not difference phrases, decimal percentages ("0.5 %", "1.2–1.3 %
+spread", "±0.6 %") were exempt as asymmetries, and "ΔAICc about 11" matched a
+`ionic-11` name. The audit now lists numbers after a change verb's "by" and an
+agreement's "to", numbers named as a comparison ("4 points better", "a … %
+spread"), relative `±` percentages, and Δ-quantities not printed verbatim; on
+the wave's 24 summaries it newly flags every such number, and one ambiguous
+"falls by 3500 G". Open, model-agnostic: `alpha --run N` and `reduce
+--alpha-from N` print different alphas for one run (five cases discussed the
+gap); fit commands do not print the fitted window and `fit-global` takes no
+`--tmin/--tmax`; SKILL.md names `StaticGaussianKT` (the CLI's is
+`StaticGKT_ZF`).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
