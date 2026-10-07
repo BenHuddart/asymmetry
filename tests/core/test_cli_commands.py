@@ -2926,7 +2926,7 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
         "scan_path": str(tmp_path / "scan.json"),
         "plot": None,
     }
-    text = _render(result, ReductionSettings(), _notes(result, [], []))
+    text = _render(result, ReductionSettings(), _notes(result, [], [], []))
     assert "FAILED (Fit failed: call limit reached, hesse failed; at a bound: B0_2)" in text
     assert (
         "Next: the scan's own largest dips are at B0_1 1200, B0_2 1800. The fit already "
@@ -2941,10 +2941,10 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
 
     # A start inside its dip's window is where the fit already began ...
     result["fit"] = _failed_resonance_fit(initial={"B0_1": 1250.0})
-    assert "--initial" not in _render(result, ReductionSettings(), _notes(result, [], []))
+    assert "--initial" not in _render(result, ReductionSettings(), _notes(result, [], [], []))
     # ... and one away from it is pointed back at the dips.
     result["fit"] = _failed_resonance_fit(initial={"B0_1": 1500.0})
-    text = _render(result, ReductionSettings(), _notes(result, [], []))
+    text = _render(result, ReductionSettings(), _notes(result, [], [], []))
     assert (
         "The fit started away from them: refit with --initial B0_1=1200 --initial "
         "B0_2=1800, or fit one resonance per window on its own local background"

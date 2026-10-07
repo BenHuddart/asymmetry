@@ -1153,7 +1153,10 @@ errors, that window is named with the command that fits it. A line fitted
 inside an ``--xmin``/``--xmax`` window with data on both flanks, an amplitude
 five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 4 is
 called a resolved ``RESONANCE`` to report, with its errors qualified when
-χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. An LCR fit notes
+χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. A run stamped TF at a kilogauss or more whose integral
+asymmetry stays at least 0.02 and five errors from zero is named as
+longitudinal: a transverse field that strong precesses the polarisation
+through many periods within the window and integrates to near zero. An LCR fit notes
 that no radical ALC or hyperfine model is available, so its fields are not
 converted into couplings. Without ``--period``, a scan of two-period runs
 notes that it summed the periods. With ``--json`` every NOTE and Next line is

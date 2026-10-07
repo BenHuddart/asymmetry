@@ -99,6 +99,7 @@ def run(args: argparse.Namespace) -> None:
     from asymmetry.core.io.periods import period_count
     from asymmetry.core.workflow.integral_scan import (
         build_integral_scan,
+        contradicted_tf_stamps,
         field_scan_payload,
         fit_integral_scan,
         period_field_offset_gauss,
@@ -237,7 +238,14 @@ def run(args: argparse.Namespace) -> None:
             if period_count(dataset) == 2
         ]
     )
-    notes = _notes(result_payload, free_offsets, summed)
+    from asymmetry.core.workflow.survey import run_geometry
+
+    stamped_tf = {
+        run_number: abs(float(dataset.metadata["field"]))
+        for (run_number, _prefix, _path), dataset in zip(targets, datasets, strict=True)
+        if run_geometry(dataset.metadata) == "TF"
+    }
+    notes = _notes(result_payload, free_offsets, summed, contradicted_tf_stamps(scan, stamped_tf))
     if args.json:
         emit_json(payload(**result_payload, notes=notes))
         return
@@ -306,11 +314,21 @@ def _render(result: dict, settings, notes: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _notes(result: dict, free_offsets: list[str], summed: list[int]) -> list[str]:
+def _notes(
+    result: dict, free_offsets: list[str], summed: list[int], longitudinal: list[int]
+) -> list[str]:
     """Every NOTE and Next line the scan calls for — printed, and kept in --json."""
     fit = result["fit"]
     offset = result["period_field_offset"]
     lines: list[str] = []
+    if longitudinal:
+        lines.append(
+            f"NOTE: {range_text(longitudinal)} are stamped TF, but at fields of a kilogauss "
+            f"and more a transverse field precesses the polarisation through many periods "
+            f"within the window, so its integral asymmetry would sit near zero; these keep a "
+            f"large one. They are longitudinal and the stamp is wrong: keep them in the scan, "
+            f"and say so — with this reason — in the summary."
+        )
     if offset is not None and free_offsets:
         # A differential pair's dB is the green field less the red: the offset, negated.
         fixes = " ".join(
