@@ -21,7 +21,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -c constraints.txt -e .
       - run: |
-          lscpu | grep -E "Model name|^CPU\(s\)|Flags" | cut -c1-200
-          python -c "import numpy; numpy.show_config()" | grep -iA3 "blas\|simd" | head -40
+          lscpu | grep -E "Model name|^CPU\(s\)"
+          python -c "import numpy._core._multiarray_umath as m; print('NUMPY_FEATURES', sorted(k for k, v in m.__cpu_features__.items() if v))"
       - run: |
-          for i in 1 2 3; do python tools/_ci_debug/wizard_result_repro.py; done
+          python tools/_ci_debug/anchor_probe.py
