@@ -3141,6 +3141,33 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
     assert _poor_fit_note(fit | {"reduced_chi_squared": 1.5, "next_dip_windows": []} | whole) == []
 
 
+def test_a_windowed_line_with_both_flanks_and_depth_is_called_a_resonance() -> None:
+    from asymmetry.cli.commands.integral_scan import _poor_fit_note
+
+    fit = {
+        "parameters": {"f": -0.008, "B0": 19475.5, "Bwid": 232.5},
+        "uncertainties": {"f": 0.0005, "B0": 6.5, "Bwid": 12.0},
+        "success": True,
+        "params_at_bound": [],
+        "reduced_chi_squared": 3.143,
+        "x_range": [18700.0, 20200.0],
+        "x_min": 18700.0,
+        "x_max": 20200.0,
+        "next_dip_windows": [],
+    }
+    # Resolved even at a poor chi2_red, which then qualifies its errors instead of
+    # sending the agent off to look for a background it does not need.
+    (note,) = _poor_fit_note(fit)
+    assert note.startswith("RESONANCE: the line at 19475.5 ± 6.5 (width 232.5)")
+    assert "16.0 errors from zero" in note and "chi2_red of 3.143" in note
+    # A shallow line is no resonance, and the poor fit's note returns.
+    (poor,) = _poor_fit_note(fit | {"uncertainties": fit["uncertainties"] | {"f": 0.004}})
+    assert poor.startswith("NOTE: the fit converged at chi2_red 3.143")
+    # Nor is a deep "line" whose fit sits far above its errors: a background step.
+    (step,) = _poor_fit_note(fit | {"reduced_chi_squared": 7.7})
+    assert step.startswith("NOTE: the fit converged at chi2_red 7.700")
+
+
 def test_a_mistyped_folder_is_named_as_missing_with_the_folder_the_session_holds(
     workflow_folder: Path, tmp_path: Path, capsys
 ) -> None:

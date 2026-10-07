@@ -1122,7 +1122,11 @@ around the scan's own dips. A fit that converges with a χ²\ :sub:`r` above 2
 is told why that may be — a background no polynomial can follow across a long
 scan, or a dip the model leaves out — and, when a single line fitted inside the
 seeder's window for one more resonance falls below its background by five
-errors, that window is named with the command that fits it. An LCR fit notes
+errors, that window is named with the command that fits it. A line fitted
+inside an ``--xmin``/``--xmax`` window with data on both flanks, an amplitude
+five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 4 is
+called a resolved ``RESONANCE`` to report, with its errors qualified when
+χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. An LCR fit notes
 that no radical ALC or hyperfine model is available, so its fields are not
 converted into couplings. Without ``--period``, a scan of two-period runs
 notes that it summed the periods. With ``--json`` every NOTE and Next line is

@@ -347,6 +347,12 @@ def _notes(result: dict, free_offsets: list[str], summed: list[int]) -> list[str
 #: A converged fit this far above its errors has left structure unfitted.
 _POOR_SCAN_FIT = 2.0
 
+#: A windowed line's amplitude this many errors from zero is a resonance, not
+#: noise, when its fit stays within this chi2_red: a background step read as a
+#: dip leaves the residuals far above their errors.
+_RESOLVED_DEPTH = 5.0
+_RESOLVED_FIT = 4.0
+
 
 def _poor_fit_note(fit: dict) -> list[str]:
     """Notes on what a converged resonance fit left out or cannot vouch for."""
@@ -360,6 +366,7 @@ def _poor_fit_note(fit: dict) -> list[str]:
     # Only a chosen --xmin/--xmax window can cut a line's flank off; a whole
     # scan narrower than its line just leaves the width unmeasured.
     windowed = fit["x_min"] is not None or fit["x_max"] is not None
+    resolved = []
     for name, centre in lines.items() if windowed else ():
         width = abs(fit["parameters"][name.replace("B0", "Bwid", 1)])
         if centre - DIP_FLANK_WIDTHS * width < low or centre + DIP_FLANK_WIDTHS * width > high:
@@ -368,6 +375,28 @@ def _poor_fit_note(fit: dict) -> list[str]:
                 f"{low:g}–{high:g}: without data rising again on both sides it may be a step "
                 f"or the background's edge, not a resonance. Widen the window and look at the "
                 f"plot before reporting it."
+            )
+            continue
+        amplitude = name.replace("B0", "f", 1)
+        depth = abs(fit["parameters"][amplitude]) / fit["uncertainties"][amplitude]
+        if (
+            fit["success"]
+            and not fit["params_at_bound"]
+            and depth >= _RESOLVED_DEPTH
+            and fit["reduced_chi_squared"] <= _RESOLVED_FIT
+        ):
+            resolved.append(name)
+            notes.append(
+                f"RESONANCE: the line at {centre:g} ± {fit['uncertainties'][name]:g} (width "
+                f"{width:g}) sits inside the window {low:g}–{high:g} with data on both flanks, "
+                f"its amplitude {depth:.1f} errors from zero: a resolved resonance — report "
+                f"its centre and width"
+                + (
+                    f", with errors understated by the chi2_red of "
+                    f"{format_number(fit['reduced_chi_squared'], 3)}."
+                    if fit["reduced_chi_squared"] > _POOR_SCAN_FIT
+                    else "."
+                )
             )
     unfitted = [
         window
@@ -385,7 +414,7 @@ def _poor_fit_note(fit: dict) -> list[str]:
             )
             + " — and report every dip the scan shows."
         )
-    if fit["reduced_chi_squared"] > _POOR_SCAN_FIT:
+    if fit["reduced_chi_squared"] > _POOR_SCAN_FIT and len(resolved) < len(lines):
         notes.append(
             f"NOTE: the fit converged at chi2_red {format_number(fit['reduced_chi_squared'], 3)}: "
             "over a long range the background may rise or step where no polynomial can "

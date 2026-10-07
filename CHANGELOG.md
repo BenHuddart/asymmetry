@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value; the survey's candidate list and ``alpha`` say so too.
 - **``trend`` prints the size of a held line's shift** with its error, beside
   the two end values.
+- **``integral-scan`` calls a clean windowed line a resonance.** A line fitted
+  inside ``--xmin``/``--xmax`` with data on both flanks, an amplitude five
+  errors from zero and χ²ᵣ ≤ 4 prints ``RESONANCE: … report its centre and
+  width``.
+- **``audit`` names a hyperfine coupling quoted without its relation** when
+  ``fourier --correlation`` printed A_μ = ν₁ + ν₂.
 
 ### Fixed
 
