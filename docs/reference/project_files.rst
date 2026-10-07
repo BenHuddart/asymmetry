@@ -352,16 +352,21 @@ Schema v26 records the :doc:`rotating-frame projection
 
 ``frame_snapshot`` on a single fit
     A *FitSlot* fitted on ``P′_x`` or ``P′_y`` stores the frame its data were
-    rotated in: ``{"frame": <rotating_frame as above>, "weights": [...]}``,
-    the weights saying how the fitted curve combined the run's periods
-    (``[1, 0]`` for red, ``[-1, 1]`` for green − red). A fit whose run now
-    rotates differently is shown as stale. The snapshot is the data's
+    rotated in: ``{"frame": <rotating_frame as above>, "weights": [...],
+    "reduction": "<sha256 hex>"}``. The weights say how the fitted curve
+    combined the run's periods (``[1, 0]`` for red, ``[-1, 1]`` for
+    green − red); ``reduction`` is a digest of the grouping settings that shape
+    :math:`P_x` and :math:`P_y` (groups, α, binning, t0, deadtime and the
+    like), leaving out which projection or period is displayed. A fit whose run
+    now rotates differently, or whose pair is reduced differently, is shown as
+    stale. The snapshot is the data's
     provenance, not part of the fit's identity, and every other fit omits it.
 
 ``projection`` and ``member_frames`` on a ``batches`` entry
     ``projection`` is the rotated projection every member was fitted on
-    (``"P′_x"`` or ``"P′_y"``), or ``null`` for a series on its members' own
-    axis; it is part of ``FitSeries.recipe_identity()``, so a rotated series
+    (``"P′_x"`` or ``"P′_y"``), the lab axis of a vector-polarisation series
+    (``"P_x"``, ``"P_y"`` or ``"P_z"``), or ``null`` for a series without
+    projections; it is part of ``FitSeries.recipe_identity()``, so a rotated series
     and a lab-frame one are never merged. ``member_frames`` maps each member's
     run number (as a string) to the snapshot it was fitted in, and is empty
     for every other series.
