@@ -372,7 +372,7 @@ def test_saved_project_carries_data_groups_and_reload_relinks_provenance(win: Ma
     win._data_browser.restore_state(state["browser_state"])
     # The registry is canonical (D6): _restore_frequency_representations rebinds
     # the freshly loaded ProjectModel into the browser; no mirror step needed.
-    win._restore_frequency_representations(state)
+    win._restore_frequency_representations(state, set())
 
     assert win._project_model.data_group(gid) is not None
     reloaded_series = win._project_model.batch(batch_id)
@@ -409,7 +409,7 @@ def test_core_only_data_group_survives_reload_without_browser_state_twin(
         ],
     }
     win._data_browser.restore_state(state["browser_state"])
-    win._restore_frequency_representations(state)
+    win._restore_frequency_representations(state, set())
 
     assert win._data_browser.get_group_name("core-only-grp") == "Core-only group"
     assert sorted(win._data_browser.get_group_member_run_numbers("core-only-grp")) == [

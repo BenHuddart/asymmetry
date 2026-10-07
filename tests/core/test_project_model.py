@@ -820,3 +820,96 @@ def test_a_combined_runs_frame_rides_with_its_combined_entry():
     model.write_to_project_state(project)
     assert project["combined_datasets"][0]["rotating_frame"] == frame.to_dict()
     assert ProjectModel.from_project_state(project).rotating_frames == {-7: frame}
+
+
+def test_a_combined_runs_fits_ride_with_its_combined_entry():
+    model = ProjectModel()
+    model.ensure_dataset(-7).ensure(_FB).record_single_fit(
+        None, FitSlot(provenance="single", result={"chi2": 1.0}), detached=False
+    )
+    project = {"datasets": [], "combined_datasets": [{"combined_run_number": -7}]}
+    model.write_to_project_state(project)
+    restored = ProjectModel.from_project_state(project).representation(-7, _FB)
+    assert restored.fit.result == {"chi2": 1.0}
+
+
+def _model_over_lost_run() -> ProjectModel:
+    """Run 5 and the combined runs -1/-2 behind every run-keyed fact."""
+    frame = RotatingFrame.typed_frequency(1.355, 1)
+    snapshot = FrameSnapshot(frame, (1.0,), "reduced")
+    model = ProjectModel(rotating_frames={-1: frame, -2: frame})
+    for run in (5, -1, -2):
+        model.ensure_dataset(run).ensure(_FB).record_single_fit(
+            None, FitSlot(provenance="single", result={"run": run}), detached=False
+        )
+    group = model.create_data_group("scan", [5, -1, -2], group_id="g")
+    model.add_batch(
+        FitSeries(
+            "runs",
+            _FB,
+            member_run_numbers=[5, -1, -2],
+            results_by_run={run: {"run": run} for run in (5, -1, -2)},
+            group_id=group.group_id,
+            excluded_run_numbers=[-1],
+            last_fitted_members=[5, -2],
+            trend_excluded_runs=[-2],
+            member_frames={-1: snapshot, -2: snapshot},
+        )
+    )
+    model.add_batch(
+        FitSeries(
+            "groups",
+            _FB,
+            member_kind="groups",
+            member_run_numbers=[-5001, -1001, -2001],
+            member_source_run={-5001: 5, -1001: -1, -2001: -2},
+            results_by_run={-5001: {}, -1001: {}, -2001: {}},
+            excluded_run_numbers=[-1001],
+            last_fitted_members=[-5001, -1001, -2001],
+        )
+    )
+    return model
+
+
+def test_forget_runs_drops_every_run_keyed_fact_of_a_lost_run():
+    model = _model_over_lost_run()
+
+    model.forget_runs({-1})
+
+    assert set(model.datasets) == {5, -2}
+    assert model.representation(-2, _FB).fit.result == {"run": -2}
+    assert set(model.rotating_frames) == {-2}
+    assert model.data_group("g").member_run_numbers == [5, -2]
+    series = model.batch("runs")
+    assert series.member_run_numbers == [5, -2]
+    assert series.results_by_run == {5: {"run": 5}, -2: {"run": -2}}
+    assert series.excluded_run_numbers == []
+    assert series.last_fitted_members == [5, -2]
+    assert series.trend_excluded_runs == [-2]
+    assert set(series.member_frames) == {-2}
+    assert not series.is_stale(model.data_group("g"))
+    groups = model.batch("groups")
+    assert groups.member_run_numbers == [-5001, -2001]
+    assert groups.results_by_run == {-5001: {}, -2001: {}}
+    assert groups.member_source_run == {-5001: 5, -2001: -2}
+    assert groups.last_fitted_members == [-5001, -2001]
+    assert groups.excluded_run_numbers == []
+
+
+def test_forget_runs_keeps_a_run_ordered_phase_spanning_its_members():
+    model = ProjectModel()
+    model.create_data_group("scan", [-3, -2, 5], group_id="g")
+    spec = PhaseSpec(
+        ordinal=1,
+        name="I",
+        member_run_numbers=(-3, -2),
+        phase_range=(-3.0, -2.0),
+        phase_boundaries={},
+        phase_color=None,
+    )
+    (phase_id,) = model.create_phase_groups("g", [spec])
+
+    model.forget_runs({-3})
+
+    phase = model.data_group(phase_id)
+    assert (phase.member_run_numbers, phase.phase_range) == ([-2], (-2.0, -2.0))

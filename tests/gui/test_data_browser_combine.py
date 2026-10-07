@@ -60,7 +60,7 @@ def test_coadd_row_is_histogram_backed():
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(401, frames=1000, seed=1))
     panel.add_dataset(_dataset(402, frames=1000, seed=2))
-    crn = panel.add_combined_dataset([401, 402], sign=1)
+    crn = panel.add_combined_dataset([401, 402], sign=1, combined_run_number=-1)
     assert crn is not None
     combined = panel.get_dataset(crn)
     # The correctness fix: a combined row now carries real summed histograms.
@@ -84,7 +84,7 @@ def test_custom_values_by_run_survives_combined_dataset():
 
     # Co-add consumes the source rows: 401/402 leave _datasets, only the
     # combined row remains.
-    crn = panel.add_combined_dataset([401, 402], sign=1)
+    crn = panel.add_combined_dataset([401, 402], sign=1, combined_run_number=-1)
     assert crn is not None
     assert 401 not in panel._datasets and 402 not in panel._datasets
 
@@ -105,7 +105,7 @@ def test_subtract_reference_row():
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(301, frames=1000, seed=1))
     panel.add_dataset(_dataset(302, frames=2000, seed=2))
-    crn = panel.add_combined_dataset([301, 302], sign=-1)
+    crn = panel.add_combined_dataset([301, 302], sign=-1, combined_run_number=-1)
     assert crn is not None
     assert panel._combined_signs[crn] == -1
     combined = panel.get_dataset(crn)
@@ -161,7 +161,7 @@ def test_rebuild_combined_dataset_preserves_sign():
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(301, frames=1000, seed=1))
     panel.add_dataset(_dataset(302, frames=2000, seed=2))
-    crn = panel.add_combined_dataset([301, 302], sign=-1)
+    crn = panel.add_combined_dataset([301, 302], sign=-1, combined_run_number=-1)
     rebuilt = panel.rebuild_combined_dataset(crn)
     assert rebuilt is not None
     assert rebuilt.metadata["combination"]["method"] == "subtract_reference"
@@ -238,7 +238,7 @@ def test_refit_coadded_ignores_combined_rows(monkeypatch):
     panel = DataBrowserPanel()
     panel.add_dataset(_dataset(601, frames=1000, seed=1))
     panel.add_dataset(_dataset(602, frames=1000, seed=2))
-    crn = panel.add_combined_dataset([601, 602], sign=1)
+    crn = panel.add_combined_dataset([601, 602], sign=1, combined_run_number=-1)
     panel.select_runs({crn})
     emitted: list[list[int]] = []
     panel.refit_coadded_requested.connect(emitted.append)
@@ -251,7 +251,9 @@ def test_signed_subtract_restores_via_add_combined_dataset():
     panel = DataBrowserPanel()
     for rn in (501, 502, 503):
         panel.add_dataset(_dataset(rn, frames=1000, seed=rn))
-    crn = panel.add_combined_dataset([501, 502, 503], sign=-1, operation="subtract_signed")
+    crn = panel.add_combined_dataset(
+        [501, 502, 503], sign=-1, operation="subtract_signed", combined_run_number=-1
+    )
     assert crn is not None
     assert panel._combined_methods[crn] == "subtract_signed"
     assert panel.get_dataset(crn).metadata["combination"]["method"] == "subtract_signed"

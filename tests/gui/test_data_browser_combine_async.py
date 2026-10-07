@@ -157,7 +157,7 @@ def test_add_combined_dataset_restore_path_stays_synchronous(monkeypatch):
 
     monkeypatch.setattr(combine_module, "combine_runs", spy)
 
-    crn = panel.add_combined_dataset([401, 402], sign=1)
+    crn = panel.add_combined_dataset([401, 402], sign=1, combined_run_number=-1)
 
     # Completed-when-returned on the GUI thread itself: no worker, no event
     # pumping — project restore's chunked runner depends on this.

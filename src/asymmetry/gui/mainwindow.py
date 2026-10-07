@@ -7626,10 +7626,11 @@ class MainWindow(QMainWindow):
                 "pole range for a reliable order estimate."
             )
 
-    def _restore_frequency_representations(self, state: dict) -> None:
+    def _restore_frequency_representations(self, state: dict, lost_runs: set[int]) -> None:
         """Load recipe state; spectra are recomputed lazily on first view.
 
-        Reads the v6 ``representations``/``batches`` into the project model.
+        Reads the v6 ``representations``/``batches`` into the project model,
+        less the records of *lost_runs* (:meth:`ProjectModel.forget_runs`).
         Recipes are *not* recomputed here: a project with many runs used to
         recompute every FFT before the window became responsive, almost all of
         it for runs the user may never view this session.
@@ -7638,6 +7639,7 @@ class MainWindow(QMainWindow):
         recomputed keep whatever the legacy array fallback restored.
         """
         self._project_model = ProjectModel.from_project_state(state)
+        self._project_model.forget_runs(lost_runs)
         # Rebind the browser to the freshly loaded registry (D6): the panel is a
         # view/controller over ``ProjectModel.data_groups`` and must follow the
         # model that replaced the one its earlier ``restore_state`` seeded. This
@@ -17826,7 +17828,7 @@ class MainWindow(QMainWindow):
         for message in heal_t0_policies(self._grouping_profiles, runs_by_number):
             logging.getLogger(__name__).info(message)
             self._log_panel.log(message, tag="grouping")
-        combined_id_map: dict[int, int] = {}
+        combined_datasets_info = state.get("combined_datasets", [])
         with self._browser_batch():
             # Each dataset's re-application (profile resolve + grouping apply +
             # asymmetry reduction) is bounded but the loop is O(project size);
@@ -17985,21 +17987,20 @@ class MainWindow(QMainWindow):
                     self._log_panel.log(f"ERROR loading {source_file}: {e}")
 
             # ── recreate combined datasets ─────────────────────────────
-            # Map saved combined IDs to restored IDs so selection can be
-            # adjusted. Runs after every source dataset's item so the
-            # membership checks below see the complete restored set.
+            # Runs after every source dataset's item so the membership
+            # checks below see the complete restored set.
             def _restore_one_combined(combined_info: dict) -> None:
-                old_id = combined_info.get("combined_run_number")
                 src_runs = combined_info.get("source_run_numbers", [])
                 operation = combined_info.get("operation")
                 sign = -1 if operation in ("subtract_reference", "subtract_signed") else 1
                 if all(rn in loaded_run_numbers for rn in src_runs):
-                    new_id = self._data_browser.add_combined_dataset(
-                        src_runs, sign=sign, operation=operation
+                    restored_id = self._data_browser.add_combined_dataset(
+                        src_runs,
+                        sign=sign,
+                        operation=operation,
+                        combined_run_number=int(combined_info["combined_run_number"]),
                     )
-                    if new_id is not None and old_id is not None:
-                        combined_id_map[int(old_id)] = new_id
-                    elif new_id is None:
+                    if restored_id is None:
                         self._log_panel.log(
                             f"WARNING: Could not recreate combined dataset {src_runs}; "
                             "the source runs are no longer compatible "
@@ -18024,7 +18025,7 @@ class MainWindow(QMainWindow):
                     "Combined " + "+".join(str(rn) for rn in ci.get("source_run_numbers", [])),
                     functools.partial(_restore_one_combined, ci),
                 )
-                for ci in state.get("combined_datasets", [])
+                for ci in combined_datasets_info
             ]
             completed = self._apply_items_with_progress("Restoring project", items)
             if not completed:
@@ -18036,23 +18037,20 @@ class MainWindow(QMainWindow):
                     "missing runs."
                 )
 
-        # ── fix up browser state: remap old combined IDs ───────────────
-        browser_state = dict(state.get("browser_state", {}))
-        if combined_id_map and "selected_run_numbers" in browser_state:
-            browser_state["selected_run_numbers"] = [
-                combined_id_map.get(rn, rn) for rn in browser_state["selected_run_numbers"]
-            ]
-        self._data_browser.restore_state(browser_state)
+        # A combined run that was not rebuilt is gone for good: the next save
+        # drops its row, so its run-keyed records go with it.
+        lost_combined_runs = {
+            int(ci["combined_run_number"]) for ci in combined_datasets_info
+        } - set(self._data_browser._combined_datasets)
+        self._data_browser.restore_state(dict(state.get("browser_state", {})))
         self._sync_temperature_log_option_action()
         self._sync_field_log_option_action()
 
         # ── restore plot state ─────────────────────────────────────────
         plot_state = state.get("plot_state", {})
         current_run = plot_state.get("current_run_number")
-        if current_run is not None:
-            current_run = combined_id_map.get(int(current_run), int(current_run))
         current_dataset = (
-            self._data_browser.get_dataset(current_run) if current_run is not None else None
+            self._data_browser.get_dataset(int(current_run)) if current_run is not None else None
         )
         if current_dataset is not None:
             self._current_dataset = current_dataset
@@ -18066,12 +18064,7 @@ class MainWindow(QMainWindow):
             self._snapshot_active_view_mode()
         self._plot_workspace.restore_state(plot_state.get("workspace_state"))
         self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))
-        self._restore_frequency_representations(state)
-        # A combined run is restored under a new run number; its frame follows it.
-        self._project_model.rotating_frames = {
-            combined_id_map.get(run, run): frame
-            for run, frame in self._project_model.rotating_frames.items()
-        }
+        self._restore_frequency_representations(state, lost_combined_runs)
         if self._plot_workspace.active_domain() == "frequency":
             self._sync_frequency_plot_for_current_dataset()
         if (

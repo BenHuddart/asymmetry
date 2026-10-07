@@ -968,7 +968,7 @@ def test_coadded_temperature_from_log_uses_event_weighted_average(
 
     panel.add_dataset(ds1)
     panel.add_dataset(ds2)
-    combined_rn = panel.add_combined_dataset([611, 612])
+    combined_rn = panel.add_combined_dataset([611, 612], combined_run_number=-1)
 
     assert combined_rn is not None
     assert panel._table.item(0, 2).text() == "60.00"

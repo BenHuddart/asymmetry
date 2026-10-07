@@ -152,7 +152,7 @@ def test_batch_combined_dataset_single_flush(monkeypatch):
     with panel.batch_updates():
         panel.add_dataset(_dataset(401))
         panel.add_dataset(_dataset(402))
-        crn = panel.add_combined_dataset([401, 402], sign=1)
+        crn = panel.add_combined_dataset([401, 402], sign=1, combined_run_number=-1)
         assert crn is not None
 
     # Sources fold under the combined row exactly as in the unbatched path.
