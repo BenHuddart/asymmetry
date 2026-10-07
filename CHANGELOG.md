@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TF at 1 kG or more whose integral asymmetry stays well away from zero —
   which a transverse field that strong cannot leave — is named as
   longitudinal, with the reason.
+- **A poor whole-scan resonance fit prints its window commands** — one
+  ``--xmin``/``--xmax`` refit per fitted line — rather than describing them.
 - **``integral-scan`` calls a clean windowed line a resonance.** A line fitted
   inside ``--xmin``/``--xmax`` with data on both flanks, an amplitude five
   errors from zero and χ²ᵣ ≤ 4 prints ``RESONANCE: … report its centre and

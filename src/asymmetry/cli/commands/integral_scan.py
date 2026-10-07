@@ -371,6 +371,10 @@ _POOR_SCAN_FIT = 2.0
 _RESOLVED_DEPTH = 5.0
 _RESOLVED_FIT = 4.0
 
+#: Half-widths of a window around a fitted line: room for both flanks and some
+#: background on each side.
+_WINDOW_WIDTHS = 4.0
+
 
 def _poor_fit_note(fit: dict) -> list[str]:
     """Notes on what a converged resonance fit left out or cannot vouch for."""
@@ -438,7 +442,21 @@ def _poor_fit_note(fit: dict) -> list[str]:
             "over a long range the background may rise or step where no polynomial can "
             "follow — a fit that cannot is not a result, and the summary should say that is "
             "why — or the range holds more dips than the model. Look at the plot (--plot) "
-            "and fit one resonance per --xmin/--xmax window on its own local background."
+            "and fit one resonance per --xmin/--xmax window on its own local background"
+            + (
+                ": "
+                + "; ".join(
+                    f"--model 'LorentzianLCR + Linear' --xmin {centre - _WINDOW_WIDTHS * width:.0f}"
+                    f" --xmax {centre + _WINDOW_WIDTHS * width:.0f}"
+                    for centre, width in (
+                        (centre, abs(fit["parameters"][name.replace("B0", "Bwid", 1)]))
+                        for name, centre in lines.items()
+                    )
+                )
+                + "."
+                if not windowed
+                else "."
+            )
         )
     return notes
 
