@@ -820,3 +820,97 @@ def test_a_combined_runs_frame_rides_with_its_combined_entry():
     model.write_to_project_state(project)
     assert project["combined_datasets"][0]["rotating_frame"] == frame.to_dict()
     assert ProjectModel.from_project_state(project).rotating_frames == {-7: frame}
+
+
+def test_a_combined_runs_fits_ride_with_its_combined_entry():
+    model = ProjectModel()
+    model.ensure_dataset(-7).ensure(_FB).record_single_fit(
+        None, FitSlot(provenance="single", result={"chi2": 1.0}), detached=False
+    )
+    project = {"datasets": [], "combined_datasets": [{"combined_run_number": -7}]}
+    model.write_to_project_state(project)
+    restored = ProjectModel.from_project_state(project).representation(-7, _FB)
+    assert restored.fit.result == {"chi2": 1.0}
+
+
+def _renumbering_model() -> ProjectModel:
+    """Runs 5 and the combined runs -1/-2 behind every run-keyed fact."""
+    frame = RotatingFrame.typed_frequency(1.355, 1)
+    snapshot = FrameSnapshot(frame, (1.0,), "reduced")
+    model = ProjectModel(rotating_frames={-1: frame, -2: frame.with_values(Provenance.TYPED)})
+    for run in (5, -1, -2):
+        model.ensure_dataset(run).ensure(_FB).record_single_fit(
+            None, FitSlot(provenance="single", result={"run": run}), detached=False
+        )
+    group = model.create_data_group("scan", [5, -1, -2], group_id="g")
+    model.add_batch(
+        FitSeries(
+            "runs",
+            _FB,
+            member_run_numbers=[5, -1, -2],
+            results_by_run={run: {"run": run} for run in (5, -1, -2)},
+            group_id=group.group_id,
+            excluded_run_numbers=[-1],
+            last_fitted_members=[5, -2],
+            trend_excluded_runs=[-2],
+            member_frames={-1: snapshot, -2: snapshot},
+        )
+    )
+    model.add_batch(
+        FitSeries(
+            "groups",
+            _FB,
+            member_kind="groups",
+            member_run_numbers=[-5001, -1001, -2001],
+            member_source_run={-5001: 5, -1001: -1, -2001: -2},
+            results_by_run={-5001: {}, -1001: {}, -2001: {}},
+        )
+    )
+    return model
+
+
+def test_renumber_runs_moves_every_run_keyed_fact_at_once():
+    model = _renumbering_model()
+    frames = dict(model.rotating_frames)
+
+    model.renumber_runs({-1: -2, -2: -1})
+
+    assert {run: c.run_number for run, c in model.datasets.items()} == {5: 5, -2: -2, -1: -1}
+    assert model.representation(-2, _FB).fit.result == {"run": -1}
+    assert model.representation(-1, _FB).fit.result == {"run": -2}
+    assert model.rotating_frames == {-2: frames[-1], -1: frames[-2]}
+    assert model.data_group("g").member_run_numbers == [5, -2, -1]
+    series = model.batch("runs")
+    assert series.member_run_numbers == [5, -2, -1]
+    assert series.results_by_run == {5: {"run": 5}, -2: {"run": -1}, -1: {"run": -2}}
+    assert series.excluded_run_numbers == [-2]
+    assert series.last_fitted_members == [5, -1]
+    assert series.trend_excluded_runs == [-1]
+    assert set(series.member_frames) == {-2, -1}
+    assert not series.is_stale(model.data_group("g"))
+    groups = model.batch("groups")
+    assert groups.member_run_numbers == [-5001, -1001, -2001]
+    assert groups.member_source_run == {-5001: 5, -1001: -2, -2001: -1}
+
+
+def test_renumber_runs_drops_the_facts_of_a_run_mapped_to_none():
+    model = _renumbering_model()
+
+    # -1 was never rebuilt and -2 came back under its number.
+    model.renumber_runs({-1: None, -2: -1})
+
+    assert model.representation(-1, _FB).fit.result == {"run": -2}
+    assert set(model.datasets) == {5, -1}
+    assert set(model.rotating_frames) == {-1}
+    assert model.data_group("g").member_run_numbers == [5, -1]
+    series = model.batch("runs")
+    assert series.member_run_numbers == [5, -1]
+    assert series.results_by_run == {5: {"run": 5}, -1: {"run": -2}}
+    assert series.excluded_run_numbers == []
+    assert series.last_fitted_members == [5, -1]
+    assert series.trend_excluded_runs == [-1]
+    assert set(series.member_frames) == {-1}
+    groups = model.batch("groups")
+    assert groups.member_run_numbers == [-5001, -2001]
+    assert groups.results_by_run == {-5001: {}, -2001: {}}
+    assert groups.member_source_run == {-5001: 5, -2001: -1}

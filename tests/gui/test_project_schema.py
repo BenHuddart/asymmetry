@@ -2488,9 +2488,14 @@ class TestMainWindowProjectState:
         saved_runs = {entry["run_number"] for entry in state["datasets"]}
         assert 3039 in saved_runs
         assert 3040 in saved_runs
-        # Combined dataset definitions are still persisted separately.
+        # Combined dataset definitions are still persisted separately, with
+        # their own (here empty) representations.
         assert state["combined_datasets"] == [
-            {"combined_run_number": -1, "source_run_numbers": [3039, 3040]}
+            {
+                "combined_run_number": -1,
+                "source_run_numbers": [3039, 3040],
+                "representations": {},
+            }
         ]
 
     def test_collect_project_state_includes_grouping_overrides(

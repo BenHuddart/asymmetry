@@ -79,6 +79,12 @@ Project files store:
   the form verbatim (see `Saved single fits (schema v25)`_). Fourier spectra
   are re-generated from the recipe on load; time-domain asymmetry is
   re-computed from the raw data.
+* **Combined runs** — each ``combined_datasets`` row names its source runs and
+  carries the combined run's ``representations`` and ``rotating_frame`` like a
+  dataset entry. Combined runs are rebuilt as −1, −2, … on load, so one can
+  come back under a different number; every per-run record — its fits, frame,
+  series membership and results, exclusions and data-group membership — moves
+  with it. A combined run that cannot be rebuilt has those records dropped.
 * **Fit series (batches)** — each batch, global, grouped or scan fit over
   multiple runs (or multiple runs' detector groups) is recorded as a
   ``FitSeries`` that carries the member list, parameter roles, per-member
