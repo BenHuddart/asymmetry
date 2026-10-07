@@ -635,8 +635,8 @@ def _frequency_response(series: dict[str, Any], trend) -> list[str]:
 _SHIFT_SIGNIFICANCE = 5.0
 
 
-def _frequency_shift(trend, param: str) -> tuple[float, float] | None:
-    """The coldest and warmest ``(value, value)`` of a held frequency that still moved."""
+def _frequency_shift(trend, param: str) -> tuple[float, float, float] | None:
+    """The first and last values of a held frequency that still moved, and the shift's error."""
     rows = _measured(trend, param)
     if len(rows) < 2:
         return None
@@ -644,7 +644,7 @@ def _frequency_shift(trend, param: str) -> tuple[float, float] | None:
     error = math.hypot(first[f"{param}_err"], last[f"{param}_err"])
     if abs(last[param] - first[param]) <= _SHIFT_SIGNIFICANCE * error:
         return None
-    return first[param], last[param]
+    return first[param], last[param], error
 
 
 #: A held line above this frequency (MHz) sits in a field of tesla order,
@@ -749,9 +749,10 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
             if shift is not None:
                 hints.append(
                     f"{frequencies[0]} moves from {format_number(shift[0], 5)} to "
-                    f"{format_number(shift[1], 5)} MHz, many times its error, while staying "
-                    f"near one field: a shift of the line (a Knight shift, or a "
-                    f"superconductor's diamagnetic shift below Tc). Report it."
+                    f"{format_number(shift[1], 5)} MHz, a shift of "
+                    f"{format_number(shift[1] - shift[0], 5)} ± {format_number(shift[2], 5)} "
+                    f"MHz, while staying near one field: a shift of the line (a Knight shift, "
+                    f"or a superconductor's diamagnetic shift below Tc). Report it."
                 )
             hints.append(
                 f"{frequencies[0]} stays near {format_number(held, 4)} MHz along the scan (within 10 %): the "

@@ -1030,8 +1030,8 @@ Every command's printed output is logged in the work directory, and `audit`
 lists each number in the draft that no command printed. It first lists every
 scan the survey found whose runs no `fit-series`, `fit-global` or
 `integral-scan` (or single `fit`) covered — a TF scan used only for alpha, the far side of a
-transition. Fit those runs, or say in the draft which cannot be fitted and
-why. Each number it lists is
+transition. Fit those runs: a run counts once a fit was tried on it, so a
+run you believe unusable is fitted and its failed fit reported. Each number it lists is
 almost always arithmetic on printed values — a percentage change, a ratio, a
 difference of two columns, a unit conversion (MHz to gauss, relative to molar),
 a significance in σ — or a value from memory. Remove it, quote the printed
@@ -1069,7 +1069,7 @@ below), and say in the summary which you chose and why:
   a second physics choice the ranking cannot make for you. A **dense** array
   of nuclear moments — the ordinary case for a stoichiometric compound, where
   every muon site has many comparable neighbours (H, Li, F, Al, La, V, Nb,
-  Cu …) — gives a **Gaussian** field distribution: `StaticGaussianKT`,
+  Cu …) — gives a **Gaussian** field distribution: `StaticGKT_ZF`,
   `DynamicGaussianKT`, or `Keren` for a run in a longitudinal field. The
   **Lorentzian** KT describes *dilute*, randomly sited moments — a few percent
   of impurity or defect spins in an otherwise moment-free host — and its
@@ -1457,7 +1457,7 @@ run  T/K    B/G     geom  prec    orient        hist  points  dt   title
 107  60.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=60.0 K B=0.0 G
 108  2.00   110.00  -     none    Longitudinal  8     500     no   Sample T=2.0 K B=110.0 G (decoupling)
 
-Alpha-calibration candidates:
+Alpha-calibration candidates (alpha on raw counts: deadtime off, background none; `reduce --alpha-from` re-measures under its own corrections, and applies that):
   run 101 (best) [measured]: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
 Scans:

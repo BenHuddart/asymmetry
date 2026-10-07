@@ -284,7 +284,10 @@ def _render(survey, survey_path: Path) -> str:
         lines.append("")
 
     if survey.calibration_candidates:
-        lines.append("Alpha-calibration candidates:")
+        lines.append(
+            "Alpha-calibration candidates (alpha on raw counts: deadtime off, background none; "
+            "`reduce --alpha-from` re-measures under its own corrections, and applies that):"
+        )
         for candidate in survey.calibration_candidates:
             marker = " (best)" if candidate.best else ""
             # The SNR of a measured candidate is already in its reason.

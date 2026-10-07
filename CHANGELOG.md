@@ -7,14 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Commands that produce results end with the audit step.** ``fit``,
+  ``fit-series``, ``fit-global``, ``trend``, ``integral-scan`` and ``fourier``
+  close their text output with "write the summary to summary.md and run
+  `asymmetry audit summary.md`", and ``audit`` no longer accepts a sentence in
+  the summary in place of fitting a surveyed scan: a run counts once a fit was
+  tried on it.
+- **Alpha says what counts it was measured on.** ``reduce --alpha-from`` notes
+  when its alpha was measured on deadtime-corrected or background-subtracted
+  counts, which is why it differs from the survey's and ``alpha``'s raw-count
+  value; the survey's candidate list and ``alpha`` say so too.
+- **``trend`` prints the size of a held line's shift** with its error, beside
+  the two end values.
+
 ### Fixed
 
 - **`asymmetry audit` catches more arithmetic written into a summary.** A
   number after a change verb's "by" ("falls by about 0.03 MHz") or an
   agreement's "to" ("agree with the survey lines to about 0.02 MHz"), a number
-  named as a comparison ("4 points better", "a 1.2–1.3 % spread"), a relative
-  ``±`` percentage and a Δ-quantity no command printed verbatim (``ΔAICc 11``)
-  are now listed; each had passed a clean audit in agent evaluations.
+  named as a comparison ("4 points better", "a 1.2–1.3 % spread", "a margin
+  of 3.6"), a spread after a bare ``±``, "a factor of six", and a Δ-quantity no
+  command printed verbatim (``ΔAICc 11``) are now listed; each had passed a
+  clean audit in agent evaluations. Such a number still verifies when a command
+  printed it verbatim to three or more significant digits (a run number, a
+  grid field), ``×``, ``x`` and "times" count as one multiple sign, and
+  ``4,200`` and ``3.2 × 10⁻⁸`` read as one number.
 
 ## [0.26.0] - 2026-10-07
 

@@ -92,11 +92,7 @@ def run(args: argparse.Namespace) -> None:
             f"ESTABLISHED: describe that trend in plain words instead."
         )
     if not found and not laws:
-        when = (
-            "Once every scan above is fitted (and any run that cannot be is accounted for in it), send"
-            if unfitted
-            else "Now send"
-        )
+        when = "Once every scan above is fitted, send" if unfitted else "Now send"
         print(
             f"No unprinted numbers found in {draft}. {when} its text as your whole final "
             f"message, starting at its title — the user sees neither this output nor the "
@@ -162,7 +158,9 @@ def _unfitted_report(
         else:
             lines.append(
                 f"      {verdict}. Fit it — a scan crossing a transition needs a series on each "
-                f"side — or say in the summary which runs cannot be fitted and why."
+                f"side. A run counts once a fit was tried on it, failed or not: a survey 'none' "
+                f"means no Fourier line, not no signal, so fit it before calling it unusable "
+                f"and report what the fit shows."
             )
     if short:
         lines.append(

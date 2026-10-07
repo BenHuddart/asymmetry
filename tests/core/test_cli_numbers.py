@@ -256,3 +256,35 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
 )
 def test_wave_derived_numbers_are_flagged(draft: str, flagged: list[str]) -> None:
     assert [entry.text for entry in unverified_numbers(draft, _WAVE_LOG)] == flagged
+
+
+_WAVE2_LOG = """rate 3.2e-08  candidate 3.3x the noise floor  2.9x
+field 5000 G  run 91500  A_bg 3.56102  dchi2 274.851 480.2
+Delta 0.3505 0.2706 0.08  frequency 0.0326399  AICc 4241.2 8423.2
+"""
+
+
+@pytest.mark.parametrize(
+    ("draft", "flagged"),
+    [
+        # Notation: separators, powers of ten and multiple signs (Haiku 5.5 wave 2).
+        ("a rate of 3.2 × 10⁻⁸ s", []),
+        ("SNR 3.3× and 2.9 times the noise floor", []),
+        ("beats the Gaussian by about 4,200 in AICc", ["4,200"]),
+        # A context-derived number verifies only as a long verbatim token.
+        ("the asymmetry falls by 5000 G", []),
+        ("the 91500 discrepancy is the only one", []),
+        ("by a margin of 3.6 AICc", ["3.6"]),
+        ("the frequency shift of about 0.03 MHz", ["0.03"]),
+        ("preferred by 274–480 in chi2", ["274", "480"]),
+        ("Delta at 0.3505 drops by about 0.08", ["0.08"]),
+        ("Lambda falls to 0.2706 by 5000 G", []),
+        ("| Tc (K) | 0.3505 | ± 0.08 |", []),
+        ("| T_c | 0.3505 K | ± 0.08 |", []),
+        ("not reliable to better than ±0.2 MHz", ["0.2"]),
+        # Ratios in words.
+        ("the rate falls by roughly a factor of six", ["factor of six"]),
+    ],
+)
+def test_wave2_notation_and_contexts(draft: str, flagged: list[str]) -> None:
+    assert [entry.text for entry in unverified_numbers(draft, _WAVE2_LOG)] == flagged

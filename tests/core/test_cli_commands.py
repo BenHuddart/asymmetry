@@ -408,7 +408,7 @@ def test_survey_candidate_block_names_the_source_of_each_candidate(
     out = capsys.readouterr().out
     assert f"run {CALIBRATION_RUN} (best) [measured]" in out
     assert "Larmor frequency" in out
-    assert f"run {DECOUPLING_RUN}" not in out.split("Alpha-calibration candidates:")[1]
+    assert f"run {DECOUPLING_RUN}" not in out.split("Alpha-calibration candidates")[1]
 
 
 def test_survey_defaults_its_workdir_into_the_current_directory(
@@ -2600,7 +2600,11 @@ def test_trend_names_the_law_its_axis_and_parameters_call_for(
         # One held at the applied field's Larmor frequency is not.
         ([0.285, 0.280, 0.273], "frequency stays near 0.2800 MHz"),
         # A held line that still moves by many errors is a shift to report.
-        ([5.3735, 5.385, 5.3977], "frequency moves from 5.37350 to 5.39770 MHz"),
+        # ... with the shift and its error printed, so no one subtracts them by hand.
+        (
+            [5.3735, 5.385, 5.3977],
+            "frequency moves from 5.37350 to 5.39770 MHz, a shift of 0.02420 ± 0.00141 MHz",
+        ),
     ],
 )
 def test_a_frequency_held_along_the_scan_is_not_called_an_order_parameter(
@@ -3186,3 +3190,25 @@ def test_readings_leave_out_unreliable_rows_and_small_frequency_drifts() -> None
         "free_params": ["A_1", "frequency"],
     }
     assert _frequency_response(series, TrendTable("temperature", columns, held)) == []
+
+
+def test_an_alpha_measured_on_corrected_counts_says_it_differs_from_the_survey() -> None:
+    from asymmetry.cli._reduction import describe
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    raw = ReductionSettings(alpha=1.232, alpha_source="estimated:7")
+    corrected = ReductionSettings(alpha=1.2373, alpha_source="estimated:7", deadtime="from_file")
+    assert describe(raw).startswith("alpha 1.2320 (estimated:7), deadtime off")
+    assert "survey and `alpha` measure raw counts" in describe(corrected)
+
+
+def test_a_result_command_ends_with_the_audit_step_and_a_reduction_does_not(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    from asymmetry.cli import AUDIT_STEP
+
+    folder, workdir = str(workflow_folder), str(fitting_workdir)
+    cli.main(["fourier", folder, "--run", str(SCAN_RUNS[0]), "--fmax", "10", "--workdir", workdir])
+    assert capsys.readouterr().out.rstrip().endswith(AUDIT_STEP)
+    cli.main(["reduce", folder, "--runs", str(SCAN_RUNS[0]), "--workdir", workdir])
+    assert AUDIT_STEP not in capsys.readouterr().out

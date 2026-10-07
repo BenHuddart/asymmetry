@@ -183,8 +183,18 @@ def describe(settings: ReductionSettings) -> str:
     background = settings.background
     if settings.background_range is not None:
         background += f" {settings.background_range[0]}:{settings.background_range[1]}"
+    from asymmetry.core.workflow.reduction import ALPHA_ESTIMATED_PREFIX
+
+    alpha = f"alpha {settings.alpha:.4f} ({settings.alpha_source}"
+    if settings.alpha_source.startswith(ALPHA_ESTIMATED_PREFIX) and (
+        settings.deadtime != "off" or settings.background != "none"
+    ):
+        alpha += (
+            " on these corrected counts — survey and `alpha` measure raw counts, so their "
+            "value differs; this is the one applied"
+        )
     parts = [
-        f"alpha {settings.alpha:.4f} ({settings.alpha_source})",
+        alpha + ")",
         f"deadtime {settings.deadtime}",
         f"background {background}",
         f"pair {'/'.join(settings.pair) if settings.pair else 'file'}",

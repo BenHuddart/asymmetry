@@ -163,6 +163,18 @@ def main(argv: list[str] | None = None) -> None:
 #: summary against its own report, and the skill installer prints paths.
 _UNLOGGED = frozenset({"audit", "skill"})
 
+#: Commands that produce results a summary quotes, each closed by the audit step.
+_RESULT_COMMANDS = frozenset(
+    {"fit", "fit-series", "fit-global", "trend", "integral-scan", "fourier"}
+)
+
+#: The closing step a result command names, so an agent that stops after one still audits.
+AUDIT_STEP = (
+    "Before you reply: write the summary to summary.md and run `asymmetry audit summary.md` "
+    "— it lists the numbers no command printed and the scans no fit covers; the reply is "
+    "that file's text."
+)
+
 
 class _Tee(io.TextIOBase):
     """Write to the real stdout and keep a copy."""
@@ -194,6 +206,8 @@ def _logged(args: argparse.Namespace, argv: list[str] | None) -> None:
         args.func(args)
     finally:
         sys.stdout = tee._stream
+    if args.command in _RESULT_COMMANDS and not args.json:
+        print(AUDIT_STEP)
     root = Path(args.workdir or WORKDIR_NAME)
     if root.is_dir():
         command = " ".join(shlex.quote(part) for part in (sys.argv[1:] if argv is None else argv))

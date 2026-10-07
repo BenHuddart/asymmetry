@@ -294,7 +294,7 @@ leave the two several kelvin apart, and a series can be ordered by either:
    107  60.00  -        0.00    ZF    -       Longitudinal  8     1        500     2000456  no   Sample T=60.0 K B=0.0 G
    108  2.00   -        110.00  -     none    Longitudinal  8     1        500     1999544  no   Sample T=2.0 K B=110.0 G (decoupling)
 
-   Alpha-calibration candidates:
+   Alpha-calibration candidates (alpha on raw counts: deadtime off, background none; `reduce --alpha-from` re-measures under its own corrections, and applies that):
      run 101 (best) [measured] alpha 1.2500: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
    Scans:
@@ -1032,13 +1032,19 @@ the default one when it exists). ``audit`` extracts each number from the draft
 and reports the ones that appear in none of those logs, with the line they sit
 on. A number written with *d* decimals matches any printed value it rounds
 from, so a clean audit means every number appears in *some* output, not that it
-is the right one; a multiple, a significance, a whole-number or ``±``
-percentage, or a Δ-quantity (``10×``, ``4.3σ``, ``32 %``, ``±0.6 %``,
-``ΔAICc 11``) matches only when a command printed that exact token. A number
-after "a factor of" or a difference phrase ("within about 2 G", "differ by
-0.6", "falls by about 0.03 MHz", "agree with the survey to about 0.02 MHz"),
-or named as a comparison ("4 points better", "a 1.2–1.3 % spread"), hedged or
-not, is always listed. What it catches is the arithmetic an
+is the right one; a multiple, a significance, a whole-number percentage or a
+Δ-quantity (``10×``, ``4.3σ``, ``32 %``, ``ΔAICc 11``) matches only when a
+command printed that exact token (``×``, ``x`` and "times" alike). A number its
+context makes arithmetic — after "a factor of" or a difference phrase ("within
+about 2 G", "differ by 0.6", "falls by about 0.03 MHz", "agree with the survey
+to about 0.02 MHz", "a margin of 3.6"), named as a comparison ("4 points
+better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` (``±0.2 MHz``) —
+is listed unless a command printed it verbatim to three or more significant
+digits, as a run number or a field on the scan's grid is; "a factor of six" is
+listed too. ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. Every command
+that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
+``integral-scan``, ``fourier``) ends its text output with the step: write
+``summary.md`` and run ``asymmetry audit summary.md`` before replying. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions,
 differences between printed columns — which the agent skill's number rule
 forbids. It also lists a law's vocabulary ("critical slowing",
@@ -1055,7 +1061,7 @@ the runs left out:
 
    Scans the survey found with runs that no fit, fit-series, fit-global or integral-scan fitted. Each scan is a measurement:
      temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
-         not fitted: runs 105-107. Fit it — a scan crossing a transition needs a series on each side — or say in the summary which runs cannot be fitted and why.
+         not fitted: runs 105-107. Fit it — a scan crossing a transition needs a series on each side. A run counts once a fit was tried on it, failed or not: a survey 'none' means no Fourier line, not no signal, so fit it before calling it unusable and report what the fit shows.
 
 The far side of a transition that one series stopped short of is still a
 measurement, and so is a temperature scan whose runs served to measure alpha:
