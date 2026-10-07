@@ -257,6 +257,7 @@ def test_survey_json_payload_and_written_file(
     stored = json.loads((workdir / "survey.json").read_text(encoding="utf-8"))
     assert stored["schema"] == WORKDIR_SCHEMA
     assert stored["best_calibration_run"] == CALIBRATION_RUN
+    assert survey["notes_scans"] == stored["notes_scans"] == []
 
 
 def test_survey_measures_precession_on_the_named_pair(
@@ -366,6 +367,38 @@ def test_survey_names_repeats_to_co_add_and_a_scan_the_files_do_not_record(
         "but their note names a scan"
     ) in text
     assert "REPEATS" not in _render(survey, tmp_path / "survey.json")
+
+
+def test_survey_names_a_scan_written_in_the_notes_with_the_command_to_fit_it(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import NotesScan, survey_folder
+
+    survey = survey_folder(workflow_folder)
+    scan = NotesScan(
+        instrument="SIM",
+        temperature=295.0,
+        field=100.0,
+        source="notes",
+        template="Steering <x> A",
+        runs=[803, 801, 802],
+        values=[-0.5, 0.0, 0.5],
+    )
+    text = _render(replace(survey, notes_scans=[scan]), tmp_path / "survey.json")
+    assert "NOTES SCANS: each set of runs below holds one temperature and field" in text
+    assert "fit the series against that quantity, not against temperature" in text
+    assert (
+        '  runs 801-803 (295 K, 100 G), notes "Steering <x> A": steering from -0.5 to 0.5 on 3 runs'
+    ) in text
+    assert f"      asymmetry wizard {workflow_folder} --run 801\n" in text
+    assert (
+        f"      asymmetry fit-series {workflow_folder} --runs 801-803 --recipe wizard-801 "
+        "--order steering --x 801=0,802=0.5,803=-0.5 --start 801\n"
+    ) in text
+    assert "NOTES SCANS" not in _render(survey, tmp_path / "survey.json")
 
 
 def test_survey_points_a_red_green_field_scan_at_the_period_difference(

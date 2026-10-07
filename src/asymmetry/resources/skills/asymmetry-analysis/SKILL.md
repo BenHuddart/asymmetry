@@ -166,7 +166,9 @@ below.
   steering scan, a weak-field scan). Analyse **each** exercise to its result —
   never stop at listing them for the user to choose. A quantity varied only in
   the titles or notes (a steering current, a degrader foil count) is a scan
-  like any other: fit it with `--order <name> --x <run>=<value>,…`.
+  like any other: fit it with `--order <name> --x <run>=<value>,…`. The survey
+  lists each such scan it finds under `NOTES SCANS:` with its `fit-series`
+  command; fit every one, even when its runs also appear in a scan above.
 
 For a folder of more than a hundred runs the survey prints its findings first
 and the run table last. If any command's output is cut off, read what it

@@ -145,6 +145,7 @@ def _selection_options(survey, instrument: str, clashes: dict[int, list[Path]]) 
 def _render(survey, survey_path: Path) -> str:
     """The human-readable survey: the run table, then candidates and scans."""
     from asymmetry.core.io.psi import PSI_HEADER_SAMPLE_SENSOR
+    from asymmetry.core.workflow.survey import NOTES_PLACEHOLDER
     from asymmetry.core.workflow.workdir import instrument_name
 
     clashes = run_clashes([(row.prefix, row.run_number, Path(row.file)) for row in survey.runs])
@@ -331,8 +332,38 @@ def _render(survey, survey_path: Path) -> str:
             )
     else:
         lines.append("Scans: none — no two runs share a geometry and a held quantity.")
-
     lines.append("")
+
+    if survey.notes_scans:
+        lines.append(
+            f"NOTES SCANS: each set of runs below holds one temperature and field while its "
+            f"notes or title step a number the files do not record ({NOTES_PLACEHOLDER} in "
+            f"the text). It is a separate measurement of that quantity, not a point of a "
+            f"temperature or field scan above: reduce its runs, screen one, and fit the series "
+            f"against that quantity, not against temperature."
+        )
+        for scan in survey.notes_scans:
+            runs = range_text(sorted(scan.runs))
+            if clashes:
+                runs = f"{scan.instrument} {runs}"
+            start = min(scan.runs)
+            folder = shlex.quote(survey.folder)
+            options = f" --instrument {scan.instrument}" if clashes else ""
+            supplied = ",".join(
+                f"{run}={value:g}" for run, value in sorted(zip(scan.runs, scan.values))
+            )
+            lines.append(
+                f"  {runs} ({scan.temperature:g} K, {scan.field:g} G), {scan.source} "
+                f'"{scan.template}": {scan.quantity} from {scan.values[0]:g} to '
+                f"{scan.values[-1]:g} on {len(scan.runs)} runs"
+            )
+            lines.append(f"      asymmetry wizard {folder} --run {start}{options}")
+            lines.append(
+                f"      asymmetry fit-series {folder} --runs {run_spec(scan.runs)} "
+                f"--recipe wizard-{start} --order {scan.quantity} --x {supplied} "
+                f"--start {start}{options}"
+            )
+        lines.append("")
     if long:
         lines.extend(["Runs:", *table])
     lines.append(f"Survey written to {survey_path}")
