@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.simulate import (
@@ -856,3 +856,102 @@ def make_silicon_photomusr_periods(
     )
     combined = reduce_run_to_dataset(run)
     return [select_period(combined, "red"), select_period(combined, "green")]
+
+
+# ---------------------------------------------------------------------------
+# Rotating-frame projection: RF nutation seen by a vector polarimeter
+# ---------------------------------------------------------------------------
+
+#: Six ideal detectors looking along ±z, ±y, ±x (groups 1–6, in that order).
+_VECTOR_DIRECTIONS = np.array(
+    [[0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0]], dtype=float
+)
+
+
+def make_rf_nutation_vector(seed: int = 151) -> MuonDataset:
+    """Two-period RF run in B₀ = 100 G ∥ z on an idealised six-detector vector polarimeter.
+
+    Invented numbers, no real sample. Period 1 (red) has the RF on at the Larmor
+    frequency ν₀ = (γ_μ/2π)B₀ ≈ 1.355 MHz with B₁ ∥ x: in the frame turning at
+    ν₀ the spin leaves +z and nutates about x′ into +y′ at ν₁ = 0.2 MHz
+    (a co-rotating B₁ ≈ 15 G), damped at 0.2 μs⁻¹ as B₁ inhomogeneity would.
+    Period 2 (green) has the RF off: the spin stays on z and relaxes slowly.
+    In the lab the transverse pair turns at ν₀ with φ_RF = 40° at t0, the
+    labels have sense s = −1, P_y's amplitude is 0.92 of P_x's, and each
+    period has its own transverse baselines, so Auto-detect has every frame
+    field to recover.
+    """
+    rng = np.random.default_rng(seed)
+    nu, nu_1, damping, phase = 100.0 * GAMMA_MU_MHZ_PER_G, 0.2, 0.2, np.radians(40.0)
+    amplitudes = np.array([0.10, 0.092, 0.18])  # a_x, a_y, a_z (fraction)
+    baselines = {"red": (0.0025, -0.0010), "green": (0.0010, -0.0015)}  # (b_x, b_y)
+    t0_bin, bin_width, n_bins, rate = 10, 0.016, 625, 2.0e5
+    t = (np.arange(n_bins) - t0_bin) * bin_width
+    tc = np.clip(t, 0.0, None)
+
+    envelope = np.exp(-damping * tc)
+    # z′ = i·sin(2πν₁t): the nutation into +y′; the lab sees z_phys = z′·e^{−iθ}.
+    z_phys = (
+        1j * np.sin(2 * np.pi * nu_1 * tc) * envelope * np.exp(-1j * (2 * np.pi * nu * tc + phase))
+    )
+    sense = -1
+    polarisation = {
+        # Labelled (P_x, P_y, P_z): P_y = −s·Im z_phys for the physical y.
+        "red": np.stack(
+            [z_phys.real, -sense * z_phys.imag, np.cos(2 * np.pi * nu_1 * tc) * envelope]
+        ),
+        "green": np.stack([np.zeros_like(tc), np.zeros_like(tc), np.exp(-0.05 * tc)]),
+    }
+    periods = []
+    for name in ("red", "green"):
+        asymmetry = amplitudes[:, None] * polarisation[name]
+        asymmetry[:2] += np.array(baselines[name])[:, None]
+        decay = rate * np.exp(-tc / MUON_LIFETIME_US)
+        periods.append(
+            [
+                Histogram(
+                    counts=rng.poisson(decay * (1.0 + direction @ asymmetry)).astype(float),
+                    bin_width=bin_width,
+                    t0_bin=t0_bin,
+                )
+                for direction in _VECTOR_DIRECTIONS
+            ]
+        )
+    grouping = {
+        "groups": {gid: [gid] for gid in range(1, 7)},
+        "group_names": {1: "Forward", 2: "Backward", 3: "Top", 4: "Bottom", 5: "Left", 6: "Right"},
+        "projections": [
+            {"label": "P_x", "forward_group": 5, "backward_group": 6},
+            {"label": "P_y", "forward_group": 3, "backward_group": 4},
+            {"label": "P_z", "forward_group": 1, "backward_group": 2},
+        ],
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "alpha_x": 1.0,
+        "alpha_y": 1.0,
+        "alpha_z": 1.0,
+        "t0_bin": t0_bin,
+        "first_good_bin": t0_bin + 2,
+        "last_good_bin": n_bins - 1,
+        "deadtime_correction": False,
+        "period_histograms": periods,
+        "period_reduced": [(t, np.zeros_like(t), np.ones_like(t)) for _ in periods],
+    }
+    metadata = {
+        "run_number": 9601,
+        "title": "Synthetic RF nutation, B0 = 100 G",
+        "field": 100.0,
+        "temperature": 10.0,
+        "period_count": 2,
+    }
+    run = Run(
+        run_number=9601,
+        histograms=periods[0],
+        metadata=metadata,
+        grouping=grouping,
+        source_file="synthetic",
+    )
+    return MuonDataset(
+        time=np.zeros(1), asymmetry=np.zeros(1), error=np.ones(1), metadata={}, run=run
+    )

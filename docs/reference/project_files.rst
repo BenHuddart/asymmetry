@@ -59,8 +59,11 @@ Project files store:
 
 * Loaded dataset references (source file paths)
 * Browser state (sorting, filters, selected runs, dynamic columns)
-* Plot state (ranges, selected run, bunch factor, overlay mode, and waterfall
-  stacking — see :ref:`waterfall stacking <waterfall-stacking>`)
+* Plot state (ranges, selected run, bunch factor, overlay mode, waterfall
+  stacking — see :ref:`waterfall stacking <waterfall-stacking>` — and the
+  **Lab | Rotating** switch with the ν_RF unit, under ``rotating_frame``)
+* Each run's rotating frame, on its dataset entry (see `Rotating frames
+  (schema v26)`_)
 * Fit-panel and Fourier-panel state
 * Separate frequency-fit state for displayed Fourier spectra
 * Per-run Fourier group-phase tables, included groups, and auto-estimated
@@ -330,6 +333,42 @@ single fit but a series result still shows fitted state on the Single tab —
 reconstructed from the active series' recorded result for that run, not
 stored on the slot itself (:doc:`gui_usage`, "Carrying a model forward
 between runs").
+
+Rotating frames (schema v26)
+----------------------------
+
+Schema v26 records the :doc:`rotating-frame projection
+<rotating_frame_projection>` in three places, all optional and additive.
+
+``rotating_frame`` on a dataset entry
+    The run's frame, serialised from
+    :class:`~asymmetry.core.transform.rotating_frame.RotatingFrame`:
+    ``frequency_mhz`` (ν_RF in MHz), ``b1_axis`` (``"x"`` or ``"y"``),
+    ``rf_phase_deg`` (φ_RF in degrees), ``sense`` (``1`` or ``-1``), ``gain``
+    (a_y/a_x), ``baselines`` — one ``{"x", "y", "provenance"}`` per period, in
+    per cent, red first — and ``provenance``, mapping each of the five scalar
+    fields to ``"default"``, ``"estimated"`` or ``"typed"``. A run never shown
+    in the rotating frame has no key.
+
+``frame_snapshot`` on a single fit
+    A *FitSlot* fitted on ``P′_x`` or ``P′_y`` stores the frame its data were
+    rotated in: ``{"frame": <rotating_frame as above>, "weights": [...]}``,
+    the weights saying how the fitted curve combined the run's periods
+    (``[1, 0]`` for red, ``[-1, 1]`` for green − red). A fit whose run now
+    rotates differently is shown as stale. The snapshot is the data's
+    provenance, not part of the fit's identity, and every other fit omits it.
+
+``projection`` and ``member_frames`` on a ``batches`` entry
+    ``projection`` is the rotated projection every member was fitted on
+    (``"P′_x"`` or ``"P′_y"``), or ``null`` for a series on its members' own
+    axis; it is part of ``FitSeries.recipe_identity()``, so a rotated series
+    and a lab-frame one are never merged. ``member_frames`` maps each member's
+    run number (as a string) to the snapshot it was fitted in, and is empty
+    for every other series.
+
+``_migrate_v25_to_v26`` only moves the version: a pre-v26 project has no
+frames, no rotated fits and no rotated series, and each reader takes an absent
+key as none.
 
 Wizard cache state
 ------------------

@@ -48,6 +48,7 @@ import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
+from types import MappingProxyType
 
 import numpy as np
 from PySide6.QtCore import QSettings, QSize, Qt, Signal
@@ -271,6 +272,9 @@ _MEMBERS_LIST_MAX_ROWS = 3
 #: rule): the full ``<group> · <model> · <range>`` is on the tooltip, and a
 #: button that grew with it would set the Batch tab's minimum width.
 _SERIES_SELECTOR_MAX_CHARS = 34
+
+#: No member of the pool is listed as unable to join.
+NO_UNAVAILABLE: Mapping[int, str] = MappingProxyType({})
 
 #: Hand-off labels on the results card. Named so the construction and the
 #: ``action_triggered`` router cannot drift apart.
@@ -539,6 +543,9 @@ class GlobalFitTab(FitTabBase):
         # the groups surface (D8) ignores them entirely.
         self._member_pool: list[MuonDataset] = []
         self._excluded_runs: set[int] = set()
+        #: Runs listed in the member list but unable to join, by why — a run
+        #: without a rotating frame in a series on P′_x or P′_y. Never in the pool.
+        self._unavailable_members: Mapping[int, str] = NO_UNAVAILABLE
         self._suppress_member_signals = False
         # The DataGroup this Batch tab is bound to ("Fit this group…"): set when the
         # batch was launched from a group header, ``None`` for an ad-hoc selection
@@ -1330,16 +1337,18 @@ class GlobalFitTab(FitTabBase):
         excluded_runs: Sequence[int] = (),
         group_id: str | None = None,
         group_name: str | None = None,
+        unavailable: Mapping[int, str] = NO_UNAVAILABLE,
     ) -> None:
         """Make *series* the series this tab edits, restoring its whole recipe (D1).
 
         Members come from the owning group (*datasets*) with the series'
-        *excluded_runs* unticked; the model, parameter rows, fit window, seeding
-        and co-add come from ``series.recipe``; the results card replays the
-        series' last recorded outcome. The form is left exactly where the run
-        that recorded it stood, so re-running it without an edit replaces it.
+        *excluded_runs* unticked and the *unavailable* runs listed disabled; the
+        model, parameter rows, fit window, seeding and co-add come from
+        ``series.recipe``; the results card replays the series' last recorded
+        outcome. The form is left exactly where the run that recorded it stood,
+        so re-running it without an edit replaces it.
         """
-        self._set_member_pool(datasets, excluded_runs)
+        self._set_member_pool(datasets, excluded_runs, unavailable)
         self.set_bound_group(group_id, group_name)
         self._apply_recipe(series.canonical_model, series.recipe)
         self._open_series_id = series.batch_id
@@ -1359,6 +1368,7 @@ class GlobalFitTab(FitTabBase):
         group_name: str | None = None,
         seed_from: FitSeries | None = None,
         label: str = "",
+        unavailable: Mapping[int, str] = NO_UNAVAILABLE,
     ) -> None:
         """Drop the tab to a draft over *datasets* — a series that has never run.
 
@@ -1367,8 +1377,9 @@ class GlobalFitTab(FitTabBase):
         natural next run is either an identical re-run or a deliberate
         variation; without it the tab keeps whatever it currently shows.
         *label* names the draft in the selector (``"<source> (copy)"``).
+        *unavailable* runs are listed disabled, with the reason.
         """
-        self._set_member_pool(datasets, excluded_runs)
+        self._set_member_pool(datasets, excluded_runs, unavailable)
         self.set_bound_group(group_id, group_name)
         if seed_from is not None:
             self._apply_recipe(seed_from.canonical_model, seed_from.recipe)
@@ -1428,7 +1439,12 @@ class GlobalFitTab(FitTabBase):
 
     # ── Restoring a recipe into the form ───────────────────────────────────
 
-    def _set_member_pool(self, datasets: list[MuonDataset], excluded_runs: Sequence[int]) -> None:
+    def _set_member_pool(
+        self,
+        datasets: list[MuonDataset],
+        excluded_runs: Sequence[int],
+        unavailable: Mapping[int, str],
+    ) -> None:
         """Take *datasets* as the member pool with *excluded_runs* unticked.
 
         The membership half of :meth:`set_datasets`, without its "a new member
@@ -1437,11 +1453,26 @@ class GlobalFitTab(FitTabBase):
         """
         self._member_pool = list(datasets or [])
         self._excluded_runs = {int(run) for run in excluded_runs}
+        self._unavailable_members = dict(unavailable)
         self._datasets = [
             ds for ds in self._member_pool if int(ds.run_number) not in self._excluded_runs
         ]
         self._populate_members_list()
         self._invalidate_wizard_cache_if_stale()
+
+    def member_pool_runs(self) -> list[int]:
+        """Every run the member list shows, joinable or not, in order."""
+        return [int(ds.run_number) for ds in self._member_pool] + list(self._unavailable_members)
+
+    def replace_member_datasets(
+        self, datasets: list[MuonDataset], unavailable: Mapping[int, str]
+    ) -> None:
+        """Re-read the pool's runs as *datasets*, keeping exclusions, binding and form.
+
+        What the host calls when the members' data change under the tab — a new
+        fit target, or a run's rotating frame — rather than the member set.
+        """
+        self._set_member_pool(datasets, self._excluded_runs, unavailable)
 
     def _apply_recipe(self, canonical_model: dict | None, recipe: dict) -> None:
         """Replay a series' model and recipe into the form (D2)."""
@@ -1782,17 +1813,23 @@ class GlobalFitTab(FitTabBase):
         }
         self._refresh_inherited_single_fit_defaults()
 
-    def set_datasets(self, datasets: list[MuonDataset]) -> None:
+    def set_datasets(
+        self,
+        datasets: list[MuonDataset],
+        unavailable: Mapping[int, str] = NO_UNAVAILABLE,
+    ) -> None:
         """Set the datasets for global fitting.
 
         On the runs surface this becomes the batch-member *pool*: every member
         starts included, prior exclusions are cleared (a new member set is a fresh
-        ad-hoc batch), and the include-checkbox list is repopulated.
+        ad-hoc batch), and the include-checkbox list is repopulated, with the
+        *unavailable* runs listed disabled.
         """
         self._datasets = list(datasets or [])
         if self._member_kind == "runs":
             self._member_pool = list(self._datasets)
             self._excluded_runs = set()
+            self._unavailable_members = dict(unavailable)
             self._populate_members_list()
         self._invalidate_wizard_cache_if_stale()
         self._reseed_batch_parameter_table()
@@ -1865,6 +1902,14 @@ class GlobalFitTab(FitTabBase):
                     else Qt.CheckState.Checked
                 )
                 self._members_list.addItem(item)
+            for run_number, reason in self._unavailable_members.items():
+                # No run number in UserRole: the row is never read as a member.
+                item = QListWidgetItem(str(run_number))
+                item.setSizeHint(QSize(0, row_height()))
+                item.setFlags(Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setToolTip(reason)
+                self._members_list.addItem(item)
         finally:
             self._suppress_member_signals = False
         self._size_members_list()
@@ -1888,7 +1933,7 @@ class GlobalFitTab(FitTabBase):
         """Show the members section only when there is a batch to filter."""
         if self._members_group is None:
             return
-        self._members_group.setVisible(len(self._member_pool) >= 2)
+        self._members_group.setVisible(len(self._member_pool) + len(self._unavailable_members) >= 2)
 
     def _on_member_check_changed(self, item: QListWidgetItem) -> None:
         """Recompute the included member set when a member checkbox toggles."""
@@ -4664,6 +4709,7 @@ class GlobalFitTab(FitTabBase):
                 for dataset in pool
                 if int(dataset.run_number) not in coupled_runs
             ],
+            self._unavailable_members,
         )
 
         self._set_composite_model(assessment.template.model)

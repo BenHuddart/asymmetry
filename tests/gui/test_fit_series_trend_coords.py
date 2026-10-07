@@ -87,6 +87,9 @@ def _run_batch(win: MainWindow, coords: dict[int, tuple[float, float]]) -> str:
     }
     # The fit panel's launch signal, as in production: the recorder reads the
     # representation the fit was started against, not the live view.
+    win._fit_panel.replace_member_datasets(
+        [win._data_browser.get_dataset(run) for run in coords], {}
+    )
     win._on_global_fit_started()
     batch_id = win._record_global_fit_batch(payloads, None, win._global_fit_launch)
     assert batch_id is not None
@@ -440,6 +443,7 @@ def _record_over(win: MainWindow, runs: list[int]) -> str:
     }
     # The fit panel's launch signal, as in production: the recorder reads the
     # representation the fit was started against, not the live view.
+    win._fit_panel.replace_member_datasets([win._data_browser.get_dataset(run) for run in runs], {})
     win._on_global_fit_started()
     batch_id = win._record_global_fit_batch(payloads, None, win._global_fit_launch)
     assert batch_id is not None
@@ -524,17 +528,17 @@ def test_group_membership_edit_marks_series_stale_and_rerun_clears(win: MainWind
     batch_id = _record_over(win, list(coords))
     assert win._project_model.batch(batch_id).group_id == gid
     win._refresh_trend_panel()
-    assert batch_id not in win._fit_parameters_panel._stale_series_ids
+    assert batch_id not in win._fit_parameters_panel._stale_series_reasons
 
     # Add a run to the group → live membership no longer matches the last fit.
     win._data_browser.add_runs_to_group([1281], gid)
     win._refresh_trend_panel()
-    assert batch_id in win._fit_parameters_panel._stale_series_ids
+    assert batch_id in win._fit_parameters_panel._stale_series_reasons
 
     # Re-running over the new membership clears staleness (last-fitted updated).
     new_id = _record_over(win, [1277, 1280, 1281])
     win._refresh_trend_panel()
-    assert new_id not in win._fit_parameters_panel._stale_series_ids
+    assert new_id not in win._fit_parameters_panel._stale_series_reasons
 
 
 def test_ungroup_keep_fits_freezes_owned_series(win: MainWindow, monkeypatch) -> None:

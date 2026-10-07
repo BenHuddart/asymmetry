@@ -89,13 +89,14 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fourier.spectrum import reference_field_gauss
-from asymmetry.core.fourier.units import convert as convert_field_unit
 from asymmetry.core.fourier.units import (
+    FieldUnit,
     gauss_to_mhz,
     relative_shift_axis_label,
     relative_shift_ppm,
     shift_axis_label,
 )
+from asymmetry.core.fourier.units import convert as convert_field_unit
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     available_background_modes,
@@ -111,6 +112,7 @@ from asymmetry.core.transform.grouping import (
 from asymmetry.core.transform.integral import integrate_curve
 from asymmetry.core.transform.peakfit import parabolic_peak
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
+from asymmetry.core.transform.rotating_frame import ROTATED_LABELS
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import (
     PeriodMode,
@@ -149,9 +151,17 @@ from asymmetry.gui.widgets.axis_limits import (
     AxisLimitPolicy,
     FloatLimitField,
 )
+from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
+from asymmetry.gui.widgets.rotating_frame_bar import (
+    FRAME_METADATA_KEY,
+    FREQUENCY_UNITS,
+    RotatingFrameBar,
+    frame_badge_text,
+    rotated_ylabel,
+)
 from asymmetry.gui.widgets.rrf_controls import (
     install_rrf_controls,
     rrf_display_dataset,
@@ -390,6 +400,8 @@ class PlotPanel(QWidget):
     #: The user dismissed the grouping-hint bar (the ✕ button); the host records
     #: the dismissal so the nudge stays hidden for that run.
     grouping_hint_dismissed = Signal()
+    #: The projection chips switched frame: ``True`` for rotating, ``False`` for Lab.
+    frame_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
@@ -545,6 +557,7 @@ class PlotPanel(QWidget):
 
             self._projection_bar = ProjectionChipBar()
             self._projection_bar.selection_changed.connect(self._on_projection_selection_changed)
+            self._projection_bar.frame_changed.connect(self._on_frame_changed)
 
             nav_row = QHBoxLayout()
             nav_row.setContentsMargins(4, 0, 4, 0)
@@ -592,6 +605,10 @@ class PlotPanel(QWidget):
             layout.addLayout(nav_row)
 
             layout.addWidget(install_rrf_controls(self))
+            # The same slot as the filtered RRF bar, which vector projections hide (D2).
+            self.frame_bar = RotatingFrameBar(self)
+            self.frame_bar.hide()
+            layout.addWidget(self.frame_bar)
 
             self._plot_header = self._create_plot_header()
             layout.addWidget(self._plot_header)
@@ -965,6 +982,14 @@ class PlotPanel(QWidget):
         self._header_title_label.setFont(title_font)
         self._header_title_label.setStyleSheet(f"color: {tokens.TEXT};")
         row.addWidget(self._header_title_label, 1)
+
+        # Elides rather than widen the panel: the title strip holds no minimum.
+        self._frame_status_label = ElidedLabel()
+        self._frame_status_label.set_pen_color(tokens.OK)
+        self._frame_status_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        row.addWidget(self._frame_status_label)
 
         self._header_meta_label = QLabel()
         self._header_meta_label.setFont(mono_font(10.5))
@@ -2869,7 +2894,12 @@ class PlotPanel(QWidget):
         if bunch_factor <= 1:
             return dataset
 
-        rebunched = self._counts_first_rebunched(dataset, bunch_factor)
+        # A rotated projection mixes two reductions, so its values are bunched (D8).
+        rebunched = (
+            None
+            if FRAME_METADATA_KEY in dataset.metadata
+            else self._counts_first_rebunched(dataset, bunch_factor)
+        )
         if rebunched is not None:
             time, asymmetry, error = rebunched
         else:
@@ -3497,7 +3527,9 @@ class PlotPanel(QWidget):
         if self._grouped_time_subplot_datasets:
             self.plot_grouped_time_domain_subplots(self._grouped_time_subplot_datasets)
             return
-        if self._current_polarization_axis == "ALL" and self._vector_subplot_datasets:
+        if self._vector_subplot_datasets and (
+            self._current_polarization_axis == "ALL" or self.frame_rotating()
+        ):
             self.plot_vector_subplots(self._vector_subplot_datasets)
             return
         # Preserve explicit multi-dataset views (for example, after
@@ -3659,14 +3691,23 @@ class PlotPanel(QWidget):
         axis_override: str | None = None,
         fit_id: str = SINGLE_FIT_ID,
     ) -> tuple[int, str | None, str] | None:
-        """Return axis-aware fit storage key for *dataset* under *fit_id*."""
+        """Return axis-aware fit storage key for *dataset* under *fit_id*.
+
+        A rotated projection keys on its own label (P′_x, P′_y), never the lab
+        axis its clone was reduced on, so lab and rotated fits never overlay
+        each other's subplots.
+        """
         if dataset is None:
             return None
         try:
             run_number = int(dataset.run_number)
         except (TypeError, ValueError):
             return None
-        axis_key = self._axis_key_for_dataset(dataset, axis_override=axis_override)
+        axis_key = (
+            dataset.metadata["projection"]
+            if FRAME_METADATA_KEY in dataset.metadata
+            else self._axis_key_for_dataset(dataset, axis_override=axis_override)
+        )
         return run_number, axis_key, fit_id
 
     @staticmethod
@@ -4042,7 +4083,7 @@ class PlotPanel(QWidget):
         """
         if not self._subplot_axes_by_polarization:
             return []
-        spec_order = [str(p["label"]) for p in self._projection_specs]
+        spec_order = self._displayed_projection_labels()
         ordered = [a for a in spec_order if a in self._subplot_axes_by_polarization]
         if ordered:
             return ordered
@@ -4114,6 +4155,7 @@ class PlotPanel(QWidget):
             self._selected_projection_labels = []
             self._vector_subplot_datasets = {}
             self._projection_bar.set_projections([])
+            self._sync_frame_slot()
             self._update_y_limit_controls_for_axis(None)
             # Replot only on the vector → non-vector transition. With the vector
             # state cleared, _redraw_current_view falls through to the single-pane
@@ -4126,6 +4168,12 @@ class PlotPanel(QWidget):
 
         self._projection_specs = specs
         self._tint_by_label = {str(p["label"]): str(p["tint"]) for p in specs if p.get("tint")}
+        # A rotated projection keeps its lab projection's identity tint.
+        self._tint_by_label |= {
+            ROTATED_LABELS[label]: tint
+            for label, tint in self._tint_by_label.items()
+            if label in ROTATED_LABELS
+        }
         labels = [str(p["label"]) for p in specs]
         wanted = set(selected) if selected else set(labels)
         chosen = [lbl for lbl in labels if lbl in wanted] or list(labels)
@@ -4134,6 +4182,7 @@ class PlotPanel(QWidget):
         self._projection_bar.set_projections(specs, chosen)
         self._selected_projection_labels = self._projection_bar.selected_labels()
         self._remember_projection_selection()
+        self._sync_frame_slot()
 
         new_axis = self._axis_for_selection(self._selected_projection_labels)
         previous_axis = self._current_polarization_axis
@@ -4142,6 +4191,47 @@ class PlotPanel(QWidget):
             self._mirror_y_fields_for_axis(new_axis)
             self._sync_y_controls_with_visible_axis()
         self._update_y_limit_controls_for_axis(new_axis)
+
+    def offers_rotating_frame(self) -> bool:
+        """True while the displayed projections include the transverse pair P_x, P_y."""
+        return self._projection_bar.frame_available()
+
+    def frame_rotating(self) -> bool:
+        """True while the projection chips show the rotating frame."""
+        return self._projection_bar.is_rotating()
+
+    def _on_frame_changed(self, rotating: bool) -> None:
+        self._sync_frame_slot()
+        self.frame_changed.emit(rotating)
+
+    def _sync_frame_slot(self) -> None:
+        """Fill the slot above the title: the frame bar while rotating, else RRF's (D2)."""
+        rotating = self.frame_rotating()
+        self.frame_bar.setVisible(rotating)
+        if not rotating:
+            self.set_frame_status(None)
+        self._rrf_controls.refresh_visibility()
+
+    def set_frame_status(self, text: str | None) -> None:
+        """Show (or clear) the rotating frame's last change on the title strip."""
+        self._frame_status_label.setText(text or "")
+
+    def show_message(self, message: str) -> None:
+        """Replace the plot with a centred *message* (the rotating frame awaiting ν_RF)."""
+        self._grouped_time_subplot_datasets = []
+        self._maxent_reconstruction = None
+        self._current_datasets = []
+        self._current_dataset = None
+        self._ensure_single_axis_mode()
+        self._vector_subplot_datasets = {}
+        self._set_canvas_minimum_height_for_axes(1)
+        self._set_alpha_label(None)
+        self._ax.clear()
+        style_axes(self._ax)
+        draw_empty_state_message(self._ax, message)
+        self._update_plot_header()
+        self._refresh_fits_button()
+        self._canvas.draw_idle()
 
     def _remember_projection_selection(self) -> None:
         self._projection_memory[self._projection_memory_key] = list(
@@ -4441,13 +4531,24 @@ class PlotPanel(QWidget):
                     fit_legend = fit_label
                 ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label=fit_legend)
 
-        _, y_label = self._axis_labels_for_dataset(
-            entries[0].dataset if entries else None, axis_key
+        frames = [
+            entry.dataset.metadata[FRAME_METADATA_KEY].frame
+            for entry in entries
+            if FRAME_METADATA_KEY in entry.dataset.metadata
+        ]
+        y_label = (
+            rotated_ylabel(str(axis_key), frames)
+            if frames
+            else self._axis_labels_for_dataset(entries[0].dataset if entries else None, axis_key)[1]
         )
         ax.set_ylabel(y_label)
         # Decimation chip: applied by the caller once every axis is drawn —
         # the chip counters are still accumulating while subplots render.
         rrf_draw_badge(self, ax)
+
+    def _displayed_projection_labels(self) -> list[str]:
+        """The declared projections as their subplots are keyed: rotated names while rotating."""
+        return [self._projection_bar.display_label(str(p["label"])) for p in self._projection_specs]
 
     def _projection_subplot_order(
         self, datasets_by_axis: dict[str, list[MuonDataset]]
@@ -4457,7 +4558,7 @@ class PlotPanel(QWidget):
         Prefers the declared projection order, falling back to the canonical
         vector order and finally to the dict's own order.
         """
-        spec_order = [str(p["label"]) for p in self._projection_specs]
+        spec_order = self._displayed_projection_labels()
         order = [a for a in spec_order if datasets_by_axis.get(a)]
         if not order:
             order = [a for a in ("P_x", "P_y", "P_z") if datasets_by_axis.get(a)]
@@ -4587,6 +4688,18 @@ class PlotPanel(QWidget):
         self._last_plot_asymmetry = last_arrays[1]
         self._last_plot_error = last_arrays[2]
         self._last_low_count_mask = last_arrays[3]
+
+        frames = [
+            dataset.metadata[FRAME_METADATA_KEY].frame
+            for members in self._vector_subplot_datasets.values()
+            for dataset in members
+            if FRAME_METADATA_KEY in dataset.metadata
+        ]
+        if frames:
+            # Above the top subplot: inside it the fit-target pill holds the corner.
+            self._subplot_axes_by_polarization[order[0]].set_title(
+                frame_badge_text(frames), loc="right", fontsize=8, color=tokens.PLOT_TICK_LABEL
+            )
 
         if vector_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
             seed = self._raw_fit_seed_range(
@@ -9177,6 +9290,10 @@ class PlotPanel(QWidget):
                 str(group_id): self._serialize_annotations(annotations)
                 for group_id, annotations in self._annotations_by_group.items()
             }
+            state["rotating_frame"] = {
+                "rotating": self._projection_bar.rotating_chosen(),
+                "frequency_unit": self.frame_bar.frequency_unit().value,
+            }
             state["fit_metadata"] = {str(rn): meta for rn, meta in self._fit_metadata.items()}
             state["fit_metadata_by_key"] = {
                 self._encode_fit_storage_key(*key): meta
@@ -9208,6 +9325,12 @@ class PlotPanel(QWidget):
 
         if hasattr(self, "_rrf_controls"):
             self._rrf_controls.set_state(state.get("rrf"))
+        # Display state, additive: a state saved without it shows the lab frame.
+        frame_state = state.get("rotating_frame", {})
+        self._projection_bar.set_rotating(bool(frame_state.get("rotating", False)))
+        unit = FieldUnit.coerce(frame_state.get("frequency_unit"), default=FieldUnit.MHZ)
+        self.frame_bar.set_frequency_unit(unit if unit in FREQUENCY_UNITS else FieldUnit.MHZ)
+        self._sync_frame_slot()
 
         default_label_field = state.get("default_label_field", state.get("label_field", "run"))
         if not self._is_restorable_label_field(default_label_field):

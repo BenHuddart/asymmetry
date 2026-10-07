@@ -274,6 +274,27 @@ def _process_events_for(milliseconds: int) -> None:
     QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, milliseconds)
 
 
+def pump_until(predicate, timeout_ms: int = 10_000) -> None:
+    """Run a nested event loop until *predicate* holds (or the timeout lapses).
+
+    Worker results land through queued cross-thread signals, so the loop must
+    be entered for their callbacks to run; the timeout is only a backstop.
+    """
+    if predicate():
+        return
+    loop = QEventLoop()
+    check = QTimer()
+    check.timeout.connect(lambda: loop.quit() if predicate() else None)
+    check.start(10)
+    guard = QTimer()
+    guard.setSingleShot(True)
+    guard.timeout.connect(loop.quit)
+    guard.start(int(timeout_ms))
+    loop.exec()
+    check.stop()
+    guard.stop()
+
+
 def _optimize_png(path: Path) -> None:
     """Losslessly re-encode ``path`` in place with ``oxipng``, if available.
 
