@@ -2742,7 +2742,7 @@ def test_a_gap_law_fit_asks_for_a_verdict_and_offers_the_nodal_rival() -> None:
         "Fit SC_DWave to the same points and compare chi2_red: asymmetry trend <folder> "
         "--series tf --model SC_DWave --param sigma."
     ) in text
-    assert "SC_TwoGap_SS" in text
+    assert "SC_TwoGap_SS" not in text
     # A nodal law gets the verdict prompt but no rival of its own.
     nodal = fit_trend(trend, "sigma", "SC_DWave", initial={"Tc": 6.0}).to_dict()
     text = "\n".join(_gap_law_steps("tf", trend, nodal, [Path("plots/tf-trend-sigma.png")]))

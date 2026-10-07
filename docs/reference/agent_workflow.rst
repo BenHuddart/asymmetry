@@ -978,6 +978,14 @@ fitted to the same column coexist instead of one overwriting the other, and
 draws the curve over the points it rests on. On the simulated scan, whose rate
 was generated as 0.10 + 0.004 T:
 
+After a superconducting gap-law fit (``SC_SWave``, ``SC_DWave`` and the other
+``SC_*`` σ(T) laws), ``trend`` asks for an explicit verdict — does the law
+describe σ(T), judged by χ²\ :sub:`r` and the trend plot — and after
+``SC_SWave`` prints the ready ``SC_DWave`` command on the same points. When the
+fitted range leaves fewer than two points above the fitted Tc, the
+normal-state width (``sigma_bg``) is not set by the data; ``trend`` says so and
+gives the refit without ``--xmax``, rather than advising a held value.
+
 .. code-block:: console
 
    $ asymmetry trend runs --series scan --model Linear --param Lambda

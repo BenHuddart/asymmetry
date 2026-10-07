@@ -1037,10 +1037,8 @@ def _gap_law_steps(name: str, trend, fit: dict[str, Any], plot_paths: list[Path]
     )
     if law == "SC_SWave":
         nodal = re.sub(r"\bSC_SWave\b", "SC_DWave", fit["expression"])
-        others = [other for other in SUPERCONDUCTING_GAP_LAWS if other not in (law, "SC_DWave")]
         lines.append(
             f"SC_SWave is the fully gapped law; a gap with line nodes is its rival. Fit SC_DWave "
-            f"to the same points and compare chi2_red: {command(nodal)}. The other gap laws "
-            f"({', '.join(others)}) fit the same way with --model swapped."
+            f"to the same points and compare chi2_red: {command(nodal)}."
         )
     return lines
