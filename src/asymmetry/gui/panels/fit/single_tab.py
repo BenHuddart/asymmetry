@@ -146,6 +146,8 @@ class SavedFitEntry:
     detail: str
     #: :meth:`FitSlot.identity`, so the row can say what the next Fit will do.
     identity: str
+    #: Why the fit no longer describes its run's data, or ``""`` while it does.
+    stale_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -499,14 +501,18 @@ class SingleFitTab(FitTabBase):
         self._compare_fits_btn.setEnabled(len(catalogue.entries) > 1)
 
     def _next_fit_hint(self, open_entry: SavedFitEntry | None) -> str:
-        """What the next Fit does with the form, when that is not "re-fit the open fit" (D1)."""
+        """What the next Fit does with the form, when that is not "re-fit the open fit" (D1).
+
+        Re-fitting a stale open fit is what refreshes it, so its staleness is
+        the hint while the form still describes it.
+        """
         if open_entry is None:
             return ""
         if self._records_new_fit:
             return "New fit: the next Fit is saved beside this run's other fits."
         identity = self._form_identity()
         if identity == open_entry.identity:
-            return ""
+            return open_entry.stale_reason
         matches = [entry for entry in self._saved_fits.entries if entry.identity == identity]
         if matches:
             return f"Edited: the next Fit replaces “{matches[-1].name}”."
@@ -517,7 +523,8 @@ class SingleFitTab(FitTabBase):
         menu = QMenu(self)
         actions: dict[object, str] = {}
         for entry in self._saved_fits.entries:
-            action = menu.addAction(f"{entry.name} · {entry.detail}")
+            stale = " ⚠" if entry.stale_reason else ""
+            action = menu.addAction(f"{entry.name} · {entry.detail}{stale}")
             action.setCheckable(True)
             action.setChecked(entry.fit_id == self._saved_fits.open_id)
             actions[action] = entry.fit_id

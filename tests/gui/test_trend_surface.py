@@ -224,6 +224,9 @@ class TestRefreshTrendPanel:
             },
         )
         payloads = {rn: (_result(), _CURVE, []) for rn in (10, 11)}
+        mw._fit_panel.replace_member_datasets(
+            [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
+        )
         mw._on_global_fit_started()  # the fit panel's launch signal, as in production
         mw._on_global_fit_completed(payloads, ParameterSet())
 
@@ -249,6 +252,9 @@ class TestRefreshTrendPanel:
                 "parameters": [{"name": "A", "type": "Local"}],
                 "result_html": "",
             },
+        )
+        mw._fit_panel.replace_member_datasets(
+            [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
         )
         mw._on_global_fit_started()  # the fit panel's launch signal, as in production
         mw._on_global_fit_completed(
@@ -466,6 +472,9 @@ class TestRefreshTrendPanel:
                 "result_html": "",
             },
         )
+        mw._fit_panel.replace_member_datasets(
+            [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
+        )
         mw._on_global_fit_started()  # the fit panel's launch signal, as in production
         mw._on_global_fit_completed(
             {rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet()
@@ -527,6 +536,9 @@ class TestDataBrowserHighlighting:
                 "result_html": "",
             },
         )
+        mw._fit_panel.replace_member_datasets(
+            [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
+        )
         mw._on_global_fit_started()  # the fit panel's launch signal, as in production
         mw._on_global_fit_completed(
             {rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet()
@@ -570,6 +582,9 @@ class TestDataBrowserHighlighting:
         # Reset any pre-existing highlights.
         mw._data_browser.set_highlighted_runs(set())
 
+        mw._fit_panel.replace_member_datasets(
+            [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
+        )
         mw._on_global_fit_started()  # the fit panel's launch signal, as in production
         mw._on_global_fit_completed(
             {rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet()
@@ -639,6 +654,9 @@ def _setup_one_series(mw, monkeypatch, model="Exponential"):
             "parameters": [{"name": "A", "type": "Local"}],
             "result_html": "",
         },
+    )
+    mw._fit_panel.replace_member_datasets(
+        [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
     )
     mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())

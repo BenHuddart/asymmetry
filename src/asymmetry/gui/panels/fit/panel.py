@@ -15,7 +15,7 @@ serialize each tab for project persistence.
 """
 
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import numpy as np
 from PySide6.QtCore import QSize, Signal
@@ -42,7 +42,7 @@ from asymmetry.core.fitting.spectral import (
 from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 
-from .global_tab import GlobalFitTab
+from .global_tab import NO_UNAVAILABLE, GlobalFitTab
 from .single_tab import SavedFitCatalogue, SingleFitTab
 from .wizard_cache import (
     WizardCacheEntry,
@@ -684,9 +684,28 @@ class FitPanel(QWidget):
         else:
             self._reset_single_fit_form()
 
-    def set_datasets(self, datasets: list[MuonDataset]) -> None:
-        """Set the Batch tab's member pool, dropping it to a draft over them (D7)."""
-        self._global_tab.set_datasets(datasets)
+    def set_datasets(
+        self, datasets: list[MuonDataset], unavailable: Mapping[int, str] = NO_UNAVAILABLE
+    ) -> None:
+        """Set the Batch tab's member pool, dropping it to a draft over them (D7).
+
+        *unavailable* runs are listed beside the pool, disabled with the reason.
+        """
+        self._global_tab.set_datasets(datasets, unavailable)
+
+    def member_pool_runs(self) -> list[int]:
+        """Every run the Batch tab's member list shows (``GlobalFitTab.member_pool_runs``)."""
+        return self._global_tab.member_pool_runs()
+
+    def replace_member_datasets(
+        self, datasets: list[MuonDataset], unavailable: Mapping[int, str]
+    ) -> None:
+        """Re-read the Batch tab's members (``GlobalFitTab.replace_member_datasets``)."""
+        self._global_tab.replace_member_datasets(datasets, unavailable)
+
+    def single_dataset(self) -> MuonDataset | None:
+        """The record the Single tab fits."""
+        return self._single_tab._current_dataset
 
     def batch_datasets(self) -> list[MuonDataset]:
         """Return the datasets configured for the batch/integral-scan."""

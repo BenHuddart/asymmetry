@@ -126,7 +126,7 @@ class _StubFitPanel(QWidget):
     def clear_bound_group(self):
         return
 
-    def set_datasets(self, datasets):
+    def set_datasets(self, datasets, unavailable=None):
         self.last_datasets = datasets
         return
 
@@ -153,6 +153,10 @@ class _StubPlotPanel(QWidget):
         # window reports it here rather than moving the project range.
         self.fit_range_guide_changed = _DummySignal()
         self.time_view_changed = _DummySignal()
+        self.frame_changed = _DummySignal()
+        self.frame_bar = SimpleNamespace(
+            field_edited=_DummySignal(), auto_detect_requested=_DummySignal()
+        )
         self.factor = 1
         self.last_plotted_dataset = None
         self.last_grouped_datasets = None
@@ -161,6 +165,9 @@ class _StubPlotPanel(QWidget):
 
     def set_fit_range_guide(self, _x_min, _x_max):
         return
+
+    def frame_rotating(self):
+        return False
 
     def set_fit_labels(self, _labels):
         return

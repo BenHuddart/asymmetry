@@ -1100,7 +1100,11 @@ listed with Δ "—" and no weight. Compare fits over different windows by their
 residuals and parameter values instead.
 
 Saved fits are written into the project file, and **Analysis ▸ Export fit report…**
-lists every saved fit by name.
+lists every saved fit by name. A fit of a rotated projection (``P′_x``,
+``P′_y``) records the rotating frame it was fitted in; once that frame changes,
+its menu entry carries ⚠ and the line under its name reads "Fitted in a
+different rotating frame — re-run the fit to update it." (see
+:doc:`rotating_frame_projection`).
 
 **Carrying a model forward between runs**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1162,6 +1166,13 @@ with **New series from selection**, **Open a series for these runs ▾** and
 Single tab keeps the plot-owned, project-wide range, since a single fit is
 exploration and a batch is production. A fresh draft with no prior series
 inherits the project's current range once.
+
+A draft fits what the plot's fit target shows. On a grouping with several
+projections, clicking another subplot moves the draft's members to that
+projection — including the rotated ``P′_x`` and ``P′_y`` of the
+:doc:`rotating-frame projection <rotating_frame_projection>`, where runs
+without a frame are listed disabled. A recorded series keeps the projection it
+was fitted on.
 
 1. **Select multiple datasets** in the data browser (Ctrl+Click or Shift+Click)
 2. Switch to the **Batch** tab in the fit panel

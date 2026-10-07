@@ -112,6 +112,7 @@ def _set_batch_range(mw: MainWindow, low: float, high: float) -> None:
 
 
 def _run_batch(mw: MainWindow, runs: list[int], value: float = 0.2) -> str:
+    mw._fit_panel.replace_member_datasets([mw._data_browser.get_dataset(run) for run in runs], {})
     mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({run: (_result(value), _CURVE, []) for run in runs}, ParameterSet())
     return mw._project_model.active_series_id(_FB)
@@ -515,6 +516,9 @@ def test_opening_a_frequency_series_rebuilds_its_members_from_the_spectra(mw, mo
     _stub_batch_form(mw, monkeypatch)
     _set_batch_range(mw, 0.0, 40.0)  # MHz — a frequency series' recipe window
 
+    mw._fit_panel.replace_member_datasets(
+        [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
+    )
     mw._on_global_fit_started()
     mw._on_global_fit_completed({run: (_result(), _CURVE, []) for run in (10, 11)}, ParameterSet())
     batch_id = mw._project_model.active_series_id(_FREQ)
@@ -539,6 +543,9 @@ def test_a_batch_records_under_the_view_it_was_launched_from(mw, monkeypatch):
     _stub_batch_form(mw, monkeypatch)
     _set_batch_range(mw, 0.0, 8.0)
 
+    mw._fit_panel.replace_member_datasets(
+        [mw._data_browser.get_dataset(run) for run in (10, 11)], {}
+    )
     mw._on_global_fit_started()  # launched from the time-domain F-B view
     _enter_frequency_domain(mw, [10, 11])  # …and the user wanders off mid-fit
     mw._on_global_fit_completed({run: (_result(), _CURVE, []) for run in (10, 11)}, ParameterSet())
