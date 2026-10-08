@@ -289,6 +289,9 @@ Delta 0.3505 0.2706 0.08  frequency 0.0326399  AICc 4241.2 8423.2
         ("amplitudes 4 to 6 times their errors", ["4 times", "6 times"]),
         ("SNR 3.3 to 2.9 times the noise floor", []),
         ("one condition repeated five times.", []),
+        ("the scan drifted by about 3 K", ["3"]),
+        ("amplitudes add up to several times the asymmetry", []),
+        ("lines 2.5 resolution elements apart", ["2.5 resolution elements"]),
     ],
 )
 def test_wave2_notation_and_contexts(draft: str, flagged: list[str]) -> None:

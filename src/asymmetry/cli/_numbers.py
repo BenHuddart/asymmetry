@@ -42,7 +42,7 @@ _RANGE_END = re.compile(r"\s?(?:[–-]|to)\s?[-+−]?\d+(?:\.\d+)?")
 #: Suffixes that make a number a derived multiple, significance or percentage.
 _DERIVED_SUFFIX = re.compile(
     r"\s?(?:×|x|σ|sigma|%|percent|-fold|fold|\s?times"
-    r"|\s?(?:standard|combined) errors?|\s?error bars?)(?![a-zA-Z])"
+    r"|\s?(?:standard|combined) errors?|\s?error bars?|\s?resolution elements?)(?![a-zA-Z])"
 )
 
 _HEDGE = r"(?:about|roughly|approximately|around|some|only|up to|~|≈)?"
@@ -52,7 +52,7 @@ _HEDGE = r"(?:about|roughly|approximately|around|some|only|up to|~|≈)?"
 _CHANGE_VERB = (
     r"(?:differ|fall|fell|rise|rose|drop|shift|move|change|var(?:y|ie)|increase|decrease"
     r"|grow|grew|exceed|prefer|depart|deviate|disagree|offset|apart|separat|split|beat"
-    r"|outperform|improv|lower|rais|reduc|narrow|broaden|widen)"
+    r"|outperform|improv|lower|rais|reduc|narrow|broaden|widen|drift|climb|sank|sink)"
 )
 
 #: The rest of one clause: no punctuation but a decimal point, no second verb
