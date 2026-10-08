@@ -107,6 +107,13 @@ Converged, with its physical parameters determined: report them.
     assert unsupported_laws("an activation energy", log) == []
 
 
+def test_a_multiple_verifies_only_as_a_whole_printed_token() -> None:
+    log = "candidate 13x the noise floor"
+    assert [entry.text for entry in unverified_numbers("a rate 3× the warm value", log)] == ["3×"]
+    assert unverified_numbers("a candidate 13× the noise floor", log) == []
+    assert unverified_numbers("62 % of the amplitude", "relaxing 62% of it") == []
+
+
 def test_hedged_ratios_and_differences_are_always_listed() -> None:
     log = "B0 78.18 G\nB0 80.09 G\nBwid 12.25\nBwid 12.83\nnu 2\n"
     draft = (
@@ -276,6 +283,9 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         ("a 2× LorentzianLCR + Cubic fit", []),
         ("the line sits at about 9030 G", []),
         ("the total is about 16.6", ["16.6"]),
+        # Stacked hedges (wave 16).
+        ("the lines differ from the survey by up to about 0.02 MHz", ["0.02"]),
+        ("the shift is about 1.3 %", ["1.3 %"]),
         ("the line sits at 9.03 kG", []),
         ("the line sits at 9030 G", ["9030"]),
         ("a 2× faster rate", ["2×"]),

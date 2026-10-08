@@ -1986,6 +1986,19 @@ replies of waves 13–15 are unchanged. A first version also widened hedged
 decimals ("about 11.6" for a sum of two printed amplitudes); the replay caught
 it and the rounding is limited to integers.
 
+#### Pass 3
+
+Wave 16's number slips, all passed by the audit: nickel's "3×" (the log held
+"13x", and a multiple was matched as a substring), EuO's "differs … by up to
+about 0.06 MHz" (two stacked hedges hid the "by"), copper's "the shift is
+about 2.7 %". A multiple now verifies only as a whole printed token, hedges
+stack, a difference noun followed by a hedged "is"/"was" makes the number
+derived (an unhedged "the printed shift is −0.050" quotes a printed value and
+stays quiet), and "62 %" matches a printed "62%". Replay over waves 9–16: the
+four wave-16 slips, copper's wave-12 "difference is about 17 meV", the
+cuprate's wave-14 "up to about 12 K", and two more setpoint-offset
+differences; nothing else.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

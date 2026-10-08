@@ -49,7 +49,10 @@ _DERIVED_SUFFIX = re.compile(
     r"|\s?(?:standard|combined) errors?|\s?error bars?|\s?resolution elements?)(?![a-zA-Z])"
 )
 
-_HEDGE = r"(?:about|roughly|approximately|around|some|only|up to|~|≈)?"
+#: A hedge that makes "the shift is about N" an estimate, where "the shift is N" quotes one.
+_APPROXIMATE = r"(?:about|roughly|approximately|around|~|≈)"
+
+_HEDGE = r"(?:(?:about|roughly|approximately|around|some|only|up to|~|≈)\s*)*"
 
 #: Verbs whose "by N" is a change, not a time ("falls by 0.03" against
 #: "disappears by 6 K").
@@ -73,7 +76,8 @@ _DERIVED_PREFIX = re.compile(
     rf"|\b(?:correspond\w*\s+to|equivalent\s+(?:to|of)|amounts?\s+to|converts?\s+to"
     rf"|translat\w*\s+(?:in)?to|would\s+be){_CLAUSE}"
     rf"|\b(?:margin|difference|gap|shift|drop|rise|increase|decrease|change|offset"
-    rf"|discrepancy|spread|scatter|deviation)s?\s+of)\s*{_HEDGE}\s*$",
+    rf"|discrepancy|spread|scatter|deviation)s?\s+(?:of|(?:is|was|are|were)\s+{_APPROXIMATE}))"
+    rf"\s*{_HEDGE}\s*$",
     re.IGNORECASE,
 )
 
@@ -144,8 +148,8 @@ def _decimals(token: str) -> int:
 
 
 def _multiples(text: str) -> str:
-    """*text* with every multiple sign written as ``x`` (``3.3×``, ``3.3 times``)."""
-    return re.sub(r"\s?(?:×|times\b)", "x", text)
+    """*text* with every multiple sign written as ``x`` and no space before ``%``."""
+    return re.sub(r"\s?(?:×|times\b)", "x", re.sub(r"\s+%", "%", text))
 
 
 #: A JSON array of ten or more numbers — a time axis, a histogram, a spectrum
@@ -227,7 +231,7 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             ):
                 continue
             if suffix is not None:
-                if _multiples(token + suffix.group()) not in multiples:
+                if not _printed_verbatim(_multiples(token + suffix.group()), multiples):
                     found.append(Unverified(text, line_number, line.strip()))
                 continue
             exponent = match.group("exponent")
