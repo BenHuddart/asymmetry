@@ -712,3 +712,24 @@ def test_fit_series_holds_the_background_on_the_runs_that_ran_off() -> None:
     held = [entry for entry in outcome.results if entry["background_held"]]
     assert held
     assert all(entry["parameters"]["A_bg"] == 0.0 for entry in held)
+
+
+def test_fit_one_keeps_a_negative_background_the_data_need() -> None:
+    from asymmetry.core.workflow.series import fit_one
+
+    # Slow enough to be checked (0.04 µs⁻¹ over 12 µs), but the 0.05 % errors
+    # resolve the curvature a held background cannot reproduce.
+    time = np.linspace(0.1, 12.0, 400)
+    noise = np.random.default_rng(7).normal(0.0, 0.05, time.size)
+    record = MuonDataset(
+        time=time,
+        asymmetry=33.0 * np.exp(-0.04 * time) - 10.0 + noise,
+        error=np.full_like(time, 0.05),
+        metadata={"run_number": 9, "temperature": 370.0},
+    )
+    recipe = FitRecipe.from_expression("Exponential + Constant", dataset=record).with_overrides(
+        initial={"A_1": 33.0, "Lambda": 0.04, "A_bg": -10.0}
+    )
+    result = fit_one(record, recipe)
+    assert not result["background_held"]
+    assert result["parameters"]["A_bg"] == pytest.approx(-10.0, abs=0.5)

@@ -78,11 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saying no hyperfine model exists, and ``fit``'s two-line note says to compare
   χ², not χ²ᵣ, with the degrees of freedom that make a small χ²ᵣ drop large.
 - **``fit`` and ``fit-series`` hold ``A_bg`` at 0 for a slow relaxation that
-  ran off against it.** When a converged fit's amplitudes exceed the data, an
-  amplitude and a free ``A_bg`` cancel in opposite signs, and the relaxing term
-  decays by less than half over the fitted window, the fit is repeated with
-  ``A_bg`` held at 0. The result carries ``background_held`` and the command
-  ends with a NOTE naming the held runs.
+  ran off against it.** When a fit's amplitudes exceed the data, an amplitude
+  and a free ``A_bg`` have opposite signs, and the relaxing term decays by less
+  than half over the fitted window, the fit is repeated with ``A_bg`` held at 0
+  and kept if it converges inside the data at a χ² cost under 25 χ²ᵣ. The
+  result carries ``background_held`` and the command ends with a NOTE naming
+  the held runs.
 - **``fit`` notes a fitted pair of lines** within 2 % of each other: a split
   below the FFT resolution is still two lines to report when it lowers χ²ᵣ.
 - **``audit`` names a correlation spectrum with no plain transform** of the

@@ -782,13 +782,17 @@ on it (see `Hand-editing a recipe`_).
 A relaxation too slow to tell from a constant over the fitted window lets its
 amplitude and ``A_bg`` run off in opposite signs: χ² barely changes as the
 amplitude grows, the rate falls and the background goes negative to cancel it.
-When a converged fit has fitted amplitudes above the record's early-time
-asymmetry (``amplitude_exceeds_data``), an amplitude and a free ``A_bg`` of
-opposite sign larger than twice their sum, and a rate (or static width) that
-decays by less than half over the window, ``fit`` holds ``A_bg`` at 0 and
-repeats the fit from the recipe's starting values. The stored fit carries
+When a fit — converged or not, since a runaway often stops at the call limit
+— has fitted amplitudes above the record's early-time asymmetry
+(``amplitude_exceeds_data``), an amplitude of opposite sign to a free
+``A_bg``, and a rate (or static width) that decays by less than half over the
+window, ``fit`` repeats it from its own values with ``A_bg`` held at 0. The
+held fit is kept when it converges, its amplitudes fit inside the record, and
+it costs less than 25 χ²ᵣ in χ² (under 5σ for the one parameter dropped:
+the data do not need the background). The stored fit then carries
 ``background_held: true`` and the command ends with a NOTE saying so; the
-summary should say ``A_bg`` was held. ``fit-series`` applies the same rule to
+summary should say ``A_bg`` was held. A background the data do need, or a
+model the hold cannot rescue, keeps its free fit and its flags. ``fit-series`` applies the same rule to
 each run after the chains (a ``--global`` background is left alone) and names
 the held runs in one NOTE.
 

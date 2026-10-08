@@ -1848,6 +1848,23 @@ Next targets, in order of how often they cost a wave:
 - the matcher should catch small-number differences ("0.04 MHz apart");
 - the final reply should be held to the audited file.
 
+#### Wave 12 — the held background — 2026-10-08
+
+Wave 12 (the first held-background rule): 18/24 — Tier A and trend-fit 8/8
+(maleic passed: a hand-written Mu + diamagnetic recipe and an
+`--order concentration` series), tier-b and workflow 6/8, corpus-2026 4/8.
+Benzene ALC and basics passed; the failures were LiFeAs (trusted the
+coarse `survey_line_mhz` column over a 6σ fitted shift), TRSB (LF decoupling
+again), corannulene, benzene high-TF ("hyperfine coupling" for A_μ without
+"sum", so the A_mu check never keyed), AFM (vortex-lattice reading only) and
+copper (an unprinted "difference is about 17 meV").
+
+The hold fired on one run each in copper, TCNQ and spin-Peierls, and missed
+the runaways it was written for: nickel's paramagnetic series sat at
+A_1 ≈ 74, A_bg ≈ −41 (below the cancelling ratio), and most other runaways
+(spin glass, plateau, Sn, photo-Si, copper ARGUS) had stopped mid-run with
+`failed`. The rule was reworked as recorded under "Open questions".
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
@@ -1931,10 +1948,14 @@ None outstanding (both resolved 2026-09-14, see "Decisions recorded").
 
 The amplitude/constant degeneracy raised on PR #361 was resolved 2026-10-08:
 Ben chose to hold `A_bg` at zero for slow relaxations. `fit` and `fit-series`
-refit with `A_bg = 0` when a converged fit is `amplitude_exceeds_data`, an
-amplitude and a free `A_bg` cancel (opposite signs, the smaller more than twice
-their sum) and a rate or static width decays by less than half over the fitted
-window, and say so in a NOTE. On the nickel scan this held 12 of 15 runs at a
-physical amplitude; one run with a weaker cancelling ratio and one on the
-ordered side were left as fitted. Over the stored wave 9–11 series it fires
-only on runs already flagged `amplitude_exceeds_data`.
+refit with `A_bg = 0` when a fit is `amplitude_exceeds_data`, an amplitude
+and a free `A_bg` have opposite signs and a rate or static width decays by
+less than half over the fitted window, and keep the held fit when it converges
+inside the data at a χ² cost under 25 χ²ᵣ; a NOTE says so. The first version
+also required a converged free fit and a cancelling ratio of 2; wave 12 showed
+it held nothing in nickel's paramagnetic series (A_1 ≈ 74, A_bg ≈ −41, many
+runs `failed` mid-runaway). Replayed over the stored wave 9–12 series, the
+χ² cost separates cleanly: genuine flat valleys (nickel, Sn, spin glass,
+plateau, photo-Si, slow copper) cost under ~15 and come back at physical
+amplitudes; wrong models (maleic's muonium fitted as relaxation, the
+molecular antiferromagnet) cost thousands and keep their free fits.

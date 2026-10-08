@@ -83,7 +83,7 @@ from typing import Any, Generic, TypeVar
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.engine import AsymmetryScaleWarning, FitEngine
+from asymmetry.core.fitting.engine import AsymmetryScaleWarning, FitEngine, FitResult
 from asymmetry.core.fitting.models import LINEAR_PARAM_ROLE_NAMES
 from asymmetry.core.fitting.parameters import ParameterSet, split_parameter_name
 from asymmetry.core.fitting.result_summary import fit_result_summary
@@ -583,9 +583,10 @@ def _workflow_flags(
 #: a free fit runs off along that line.
 _SLOW_DECAY = 0.5
 
-#: The runaway's signature: amplitude and background opposite in sign, each this
-#: many times larger than the asymmetry they sum to.
-_CANCELLING = 2.0
+#: The held fit replaces the free one when it costs χ² less than this many
+#: units of the free fit's χ²ᵣ: under 5σ for the one parameter dropped, so the
+#: data do not need the background the free fit ran off with.
+_UNNEEDED_CHI2 = 25.0
 
 
 def slow_relaxation_runaway(
@@ -593,10 +594,10 @@ def slow_relaxation_runaway(
 ) -> str | None:
     """The free background a slow relaxing term ran off against, or ``None``.
 
-    A term counts when the fitted amplitudes exceed what the record holds,
-    its amplitude and the background cancel (see :data:`_CANCELLING`), and its
-    rate or width times *window_us* is below :data:`_SLOW_DECAY`. The cure is
-    the model with that background held at zero.
+    A term counts when the fitted amplitudes exceed what the record holds, its
+    amplitude and the background have opposite signs, and its rate or width
+    times *window_us* is below :data:`_SLOW_DECAY`. The fit need not have
+    converged: a runaway often stops at the call limit.
     """
     if not amplitude_exceeds_data(record, parameters):
         return None
@@ -615,11 +616,7 @@ def slow_relaxation_runaway(
             if kinds[name] in (ParameterKind.RATE, ParameterKind.STATIC_WIDTH)
         ]
         for amplitude in amplitudes:
-            value = parameters[amplitude]
-            cancelling = value * background < 0 and min(abs(value), abs(background)) > (
-                _CANCELLING * abs(value + background)
-            )
-            if cancelling and any(
+            if parameters[amplitude] * background < 0 and any(
                 abs(parameters[rate]) * window_us < _SLOW_DECAY for rate in rates
             ):
                 return backgrounds[0]
@@ -630,13 +627,23 @@ def _held_background_fit(
     record: MuonDataset,
     recipe: FitRecipe,
     model: CompositeModel,
+    free: FitResult,
     start: ParameterSet,
     background: str,
-):
-    """The fit from *start* with *background* held at zero (see :func:`slow_relaxation_runaway`)."""
+) -> FitResult | None:
+    """*free* refitted with *background* held at zero, or ``None`` when that is no cure.
+
+    Kept only when it converges, its amplitudes fit inside the record, and the
+    data do not need the background (:data:`_UNNEEDED_CHI2`). Starts from
+    *free*'s values on *start*'s bounds and fixings.
+    """
+    start.update_values(_parameter_values(free.parameters))
     start[background].value = 0.0
     start[background].fixed = True
-    return FitEngine().fit(record, model.function, start, t_min=recipe.t_min, t_max=recipe.t_max)
+    held = FitEngine().fit(record, model.function, start, t_min=recipe.t_min, t_max=recipe.t_max)
+    cured = held.success and not amplitude_exceeds_data(record, _parameter_values(held.parameters))
+    cost = held.chi_squared - free.chi_squared
+    return held if cured and cost < _UNNEEDED_CHI2 * free.reduced_chi_squared else None
 
 
 def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
@@ -668,24 +675,22 @@ def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
     result = FitEngine().fit(
         record, model.function, recipe.parameter_set(), t_min=recipe.t_min, t_max=recipe.t_max
     )
-    background = (
-        slow_relaxation_runaway(
-            model, _parameter_values(result.parameters), record, _window_us(record, recipe)
-        )
-        if result.success
-        else None
+    background = slow_relaxation_runaway(
+        model, _parameter_values(result.parameters), record, _window_us(record, recipe)
     )
-    held = None
-    if background is not None and background in recipe.free_parameter_names():
-        held = _held_background_fit(record, recipe, model, recipe.parameter_set(), background)
-    if held is not None and held.success:
+    held = (
+        None
+        if background not in recipe.free_parameter_names()
+        else _held_background_fit(record, recipe, model, result, recipe.parameter_set(), background)
+    )
+    if held is not None:
         result = held
     summary = fit_result_summary(result)
     summary["quality_flags"] = _workflow_flags(record, summary, recipe.free_parameter_names())
     return {
         "run": int(dataset.run_number),
         "free_params": recipe.free_parameter_names(),
-        "background_held": held is not None and held.success,
+        "background_held": held is not None,
         **summary,
     }
 
@@ -817,21 +822,17 @@ def fit_series(
 
     held_runs: set[int] = set()
     for run in runs:
-        background = (
-            slow_relaxation_runaway(
-                model,
-                _parameter_values(fitted[run].parameters),
-                records[run],
-                _window_us(records[run], recipe),
-            )
-            if fitted[run].success
-            else None
+        background = slow_relaxation_runaway(
+            model,
+            _parameter_values(fitted[run].parameters),
+            records[run],
+            _window_us(records[run], recipe),
         )
         if background not in free_params:
             continue
         start = _run_parameter_set(recipe, model, records[run], global_params=global_params)
-        held = _held_background_fit(records[run], recipe, model, start, background)
-        if held.success:
+        held = _held_background_fit(records[run], recipe, model, fitted[run], start, background)
+        if held is not None:
             fitted[run] = held
             held_runs.add(run)
 
