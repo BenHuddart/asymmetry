@@ -2025,6 +2025,17 @@ nowhere else; a muonium relaxation template is not counted as precession. The
 decoupling note also asks for a static Kubo–Toyabe refit when the zero-field
 series has no static-width term (TRSB only, 7 stored series).
 
+#### Pass 5
+
+The audit matches a written number to any printed value within one unit of
+its last digit, not half: Haiku truncates as often as it rounds ("−0.0353" for
+−0.03537). Replay over the audit outputs of waves 12–15: 171 more intermediate
+flags go; the final replies change only where a printed value was truncated
+(event counts, a field) and on one textbook constant quoted as background.
+When the audit lists numbers and holds nothing else, it now ends "Then run
+audit again: reply only once it prints 'No unprinted numbers found'" — about
+one run a wave replied after an audit that still listed numbers.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

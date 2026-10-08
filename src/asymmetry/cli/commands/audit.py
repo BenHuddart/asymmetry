@@ -188,6 +188,11 @@ def run(args: argparse.Namespace) -> None:
         print(f"  line {entry.line_number}: {entry.text!r} in: {entry.line}")
     if held:
         print("And do not reply yet: act on each item listed above as well, then run audit again.")
+    else:
+        print(
+            f"Then run audit again: reply only once it prints 'No unprinted numbers found in "
+            f"{draft}'."
+        )
 
 
 #: A scan of at most this many runs is listed on one shared line: a setpoint's

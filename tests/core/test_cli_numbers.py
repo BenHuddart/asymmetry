@@ -64,6 +64,7 @@ def test_audit_reads_the_output_every_command_logged(
     out = capsys.readouterr().out
     assert "'999.25'" in out
     assert f"'{SCAN_RUNS[0]}'" not in out
+    assert "Then run audit again" in out
     # The audit's own report is not logged, so it can never verify itself.
     assert "999.25" not in (tmp_path / "asymmetry-work" / "cli-output.log").read_text(
         encoding="utf-8"
@@ -287,7 +288,7 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         ("the lines differ from the survey by up to about 0.02 MHz", ["0.02"]),
         ("the shift is about 1.3 %", ["1.3 %"]),
         ("the line sits at 9.03 kG", []),
-        ("the line sits at 9030 G", ["9030"]),
+        ("the line sits at 9028 G", ["9028"]),
         ("a 2× faster rate", ["2×"]),
     ],
 )

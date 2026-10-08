@@ -6,8 +6,9 @@ a command's output. Every command's printed output is appended to
 :func:`unverified_numbers` holds a draft against it.
 
 A match is deliberately loose — a number written with *d* decimals matches any
-printed value it rounds from — so a match says only that the number appears in
-some output, not that it is the right one. Numbers written as a multiple or a
+printed value within one unit of its last digit (rounded or truncated) — so a
+match says only that the number appears in some output, not that it is the
+right one. Numbers written as a multiple or a
 significance or a whole-number percentage (``10×``, ``4.3σ``, ``32 %``), or named
 as a difference (``ΔAICc 11``), match only when a command printed that exact
 token (``×``, ``x`` and "times" alike). A number whose context makes it
@@ -244,7 +245,8 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
                 and _ROUNDED_HEDGE.search(before)
             )
             step = 10.0**zeros if rounded else 10.0 ** -_decimals(token)
-            tolerance = (0.5 * step + 1e-12) * scale
+            # One unit in the last written digit: agents truncate as often as they round.
+            tolerance = (step + 1e-12) * scale
             # A field in kilogauss restates a printed one in gauss.
             multipliers = (1.0, 1000.0) if _KILO_UNIT.match(line, match.end()) else (1.0,)
             if not any(

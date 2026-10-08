@@ -1132,7 +1132,8 @@ is listed unless a command printed it verbatim to three or more significant
 digits, as a run number or a field on the scan's grid is; a ratio in words
 ("a factor of six", "five and a half times its error", "three times broader")
 is listed too. While a surveyed scan is unfitted, a clean audit says not to
-reply yet. ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
+reply yet. A written number matches a printed value within one unit of its
+last digit (rounded or truncated). ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
 ("about 20740 G") may round away its trailing zeros, a field in kG verifies
 against one printed in G, an error in parentheses after its value
 ("2.91 (±0.12)") is that value's error, and "1σ errors", "> 3σ" and
