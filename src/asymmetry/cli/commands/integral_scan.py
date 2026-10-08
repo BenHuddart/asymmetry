@@ -17,7 +17,12 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._recipes import parse_fix
-from asymmetry.cli._reduction import add_reduction_arguments, describe, reduction_settings
+from asymmetry.cli._reduction import (
+    add_reduction_arguments,
+    deadtime_note,
+    describe,
+    reduction_settings,
+)
 from asymmetry.cli._runs import range_text, resolve_runs
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
@@ -266,6 +271,11 @@ def run(args: argparse.Namespace) -> None:
     )
     if fit_payload is not None:
         notes.extend(_line_comparisons(fit_payload, stored))
+    from asymmetry.core.workflow.survey import has_file_deadtime
+
+    notes.extend(
+        deadtime_note(settings, any(has_file_deadtime(dataset.run) for dataset in datasets))
+    )
     if args.json:
         emit_json(payload(**result_payload, notes=notes))
         return

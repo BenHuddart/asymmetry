@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **``survey`` lists each scan's runs**, in run order (``runs 29592-29721``),
   instead of the two runs at its axis ends, which read as a range that left
   runs out.
+- **``reduce`` and ``integral-scan`` note deadtimes left off.** When the files
+  carry per-detector deadtimes and the reduction leaves deadtime off, a NOTE
+  says to pass ``--deadtime from_file`` before fitting further.
 - **``trend`` offers a gap law for a vortex lattice**: when a held TF line falls
   below its warm frequency on cooling while its width grows, it prints the
   ``SC_SWave`` (then ``SC_DWave``) command for the width, if the sample is a

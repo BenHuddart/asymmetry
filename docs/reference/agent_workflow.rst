@@ -566,6 +566,10 @@ directory.
                     [--instrument NAME]
                     folder
 
+When the files carry per-detector deadtimes and the reduction leaves deadtime
+off, ``reduce`` (and ``integral-scan``) end with a NOTE to pass ``--deadtime
+from_file`` before fitting further.
+
 ``--runs`` takes ranges and commas (``102-107``, ``102-105,107``). The
 alpha, deadtime, pair, background, t0 and period choices are the
 `Reduction options`_; without ``--alpha`` or ``--alpha-from``, alpha defaults

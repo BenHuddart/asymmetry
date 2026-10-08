@@ -178,6 +178,17 @@ def reduction_settings(
     )
 
 
+def deadtime_note(settings: ReductionSettings, carries_deadtime: bool) -> list[str]:
+    """The NOTE for a reduction that leaves off the deadtimes its files carry."""
+    if settings.deadtime != "off" or not carries_deadtime:
+        return []
+    return [
+        "NOTE: these files carry per-detector deadtimes and this reduction leaves deadtime "
+        "off. Pass --deadtime from_file before fitting further — it matters most at a pulsed "
+        "source's high early count rates — and say in the summary which you used."
+    ]
+
+
 def describe(settings: ReductionSettings) -> str:
     """The one-line account of *settings* printed under a reduction's table."""
     background = settings.background
@@ -211,6 +222,7 @@ __all__ = [
     "GREEN_RED",
     "add_pair_argument",
     "add_reduction_arguments",
+    "deadtime_note",
     "describe",
     "parse_pair",
     "reduction_settings",

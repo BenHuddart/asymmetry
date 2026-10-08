@@ -3475,3 +3475,24 @@ def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
         _law_hints("tf", TrendTable("temperature", columns, flipped), ["frequency", "sigma"])
     )
     assert "SC_SWave" not in text
+
+
+def test_a_reduction_leaving_off_the_files_deadtimes_says_so(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    folder, workdir = str(workflow_folder), str(tmp_path / "wd")
+    cli.main(["reduce", folder, "--runs", str(DEADTIME_RUN), "--workdir", workdir])
+    assert "carry per-detector deadtimes and this reduction leaves" in capsys.readouterr().out
+    cli.main(
+        [
+            "reduce",
+            folder,
+            "--runs",
+            str(DEADTIME_RUN),
+            "--deadtime",
+            "from_file",
+            "--workdir",
+            workdir,
+        ]
+    )
+    assert "carry per-detector deadtimes" not in capsys.readouterr().out
