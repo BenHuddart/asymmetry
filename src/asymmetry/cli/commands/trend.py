@@ -209,7 +209,13 @@ def run(args: argparse.Namespace) -> None:
         )
         return
 
-    print(_render(series, trend, fit, csv_path, plot_paths))
+    decoupling = None
+    if series["kind"] == "series" and workdir.survey_path.is_file():
+        from asymmetry.core.workflow.decoupling import decoupling_note
+
+        survey_runs = {entry["run_number"]: entry for entry in workdir.read_survey()["runs"]}
+        decoupling = decoupling_note(name, workdir.fit_series(), survey_runs)
+    print(_render(series, trend, fit, csv_path, plot_paths, decoupling))
 
 
 def _stored_series(workdir, name: str) -> dict[str, Any]:
@@ -333,6 +339,7 @@ def _render(
     fit: dict | None,
     csv_path: Path | None,
     plot_paths: list[Path],
+    decoupling: str | None,
 ) -> str:
     """The human-readable trend table, then the fit when there is one."""
     lines = [
@@ -350,6 +357,7 @@ def _render(
         *_rate_steps(trend, series["free_params"]),
         *_phase_drift(trend, series["free_params"]),
         *_frequency_response(series, trend),
+        *([decoupling] if decoupling is not None else []),
     ]
     if fit is not None:
         lines.extend(

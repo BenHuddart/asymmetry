@@ -332,6 +332,16 @@ _SAY_SO: tuple[_SaySo, ...] = (
         "report the change of relaxation shape along the scan, with the runs on each side",
     ),
     _SaySo(
+        _pattern(r"decoupled as a static distribution is"),
+        # The link, not the model's name: "static" alone is in every Kubo–Toyabe reply.
+        _pattern(
+            r"(?:decoupl|longitudinal field|\bLF\b)[^.\n]{0,120}static"
+            r"|static[^.\n]{0,120}(?:decoupl|longitudinal field|\bLF\b)"
+        ),
+        "say that the longitudinal field decouples the zero-field relaxation, so its fields "
+        "are static on the muon time scale",
+    ),
+    _SaySo(
         _pattern(r"averages two regimes: say so"),
         _pattern(r"extrem|maximum|minimum|peak|turn|two regimes|non-?monoton"),
         "say that the fitted points turn through an extremum, so one monotonic law averages "

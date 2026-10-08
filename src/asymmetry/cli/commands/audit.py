@@ -339,13 +339,14 @@ def _unfitted_dips(roots: list[Path]) -> list[tuple[Path, str, dict]]:
 
 def _untrended_series(roots: list[Path], log_text: str) -> list[tuple[Path, str]]:
     """``(work directory, name)`` for each ``fit-series`` series no logged ``trend`` command read."""
+    from asymmetry.core.workflow.workdir import WorkDir
+
     return [
-        (root, path.stem)
+        (root, name)
         for root in roots
-        for path in sorted((root / "series").glob("*.json"))
-        if json.loads(path.read_text(encoding="utf-8"))["kind"] == "series"
-        and re.search(
-            rf"^\$ asymmetry trend .*--series {re.escape(path.stem)}(?:\s|$)",
+        for name in WorkDir(root).fit_series()
+        if re.search(
+            rf"^\$ asymmetry trend .*--series {re.escape(name)}(?:\s|$)",
             log_text,
             re.MULTILINE,
         )

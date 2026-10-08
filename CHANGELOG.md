@@ -52,6 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside ``--xmin``/``--xmax`` with data on both flanks, an amplitude five
   errors from zero and χ²ᵣ ≤ 4 prints ``RESONANCE: … report its centre and
   width``.
+- **``trend`` reads a decoupled relaxation as static fields.** When a series
+  fitted in a longitudinal field (no Larmor line in the survey) has its rates
+  collapse below a tenth of a zero-field series' width, at a field well above
+  that width over γ_μ, reading either series notes that the zero-field
+  relaxation is from static fields and that a rate pinned at zero there is the
+  result, not a failed fit; ``audit`` holds a draft that does not say so.
 - **``audit`` holds the reply when the draft leaves out what a command asked the
   summary to say**, quoting the printed line back: a held ``A_bg``, the deadtime
   used, why a long-range resonance fit is not a result, a return pass, the

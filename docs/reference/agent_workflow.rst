@@ -984,7 +984,13 @@ a field scan it names a phase that runs linearly with field as a t0 offset
 amplitude that falls as its frequency rises as the instrument's frequency
 response; a line held near a high field, or with an exponential envelope on
 its cold side, is offered a ready two-line ``recipe``, since an unresolved
-pair fits as one line. A fitted law's
+pair fits as one line. A series fitted in a field the survey found no Larmor
+line at (longitudinal, whatever the file's stamp), whose rates and widths
+stay below a tenth of a zero-field series' width in the same work directory on
+most runs, at a field at least ten times that width over γ\ :sub:`μ`, is read as
+decoupled: the note says the zero-field relaxation is from fields static on
+the muon time scale, and that a rate pinned at zero there is that result, not
+a failed fit. Reading either series of the pair prints it. A fitted law's
 report states the x span of the points it rests on and each parameter's unit,
 and judges the law on the √χ²\ :sub:`r`-scaled errors of its physical
 parameters (a prefactor or offset — ``a``, ``b``, ``c`` — that the data leave
@@ -1114,8 +1120,9 @@ summary to say something the draft leaves out: that ``A_bg`` was held at 0
 fit is not a result (a background no polynomial can follow); that the scan
 measures some points twice; that no radical ALC or hyperfine model converts
 the resonance fields; a ``trend`` step and its span, a line's frequency shift,
-the instrument's frequency response, a change of relaxation shape, or an
-extremum a monotonic law averages over; and, for a draft quoting the muon
+the instrument's frequency response, a change of relaxation shape, an
+extremum a monotonic law averages over, or a longitudinal field decoupling the
+zero-field relaxation (the fields are static); and, for a draft quoting the muon
 hyperfine coupling, that A_μ = ν₁ + ν₂ is the sum of the radical's two lines.
 The check reads keywords, so it catches a point left out, not one stated
 badly. It also

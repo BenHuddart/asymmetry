@@ -339,6 +339,13 @@ _BACKGROUND_NOTE = (
 @pytest.mark.parametrize(
     ("log", "silent", "stated"),
     [
+        (
+            "NOTE: … the zero-field relaxation is from fields static on the muon time scale, "
+            "decoupled as a static distribution is. A rate pinned at zero here is that result\n",
+            # The model's name is not the link the longitudinal field makes.
+            "The zero-field data fit a static Kubo–Toyabe; the 100 G rates are pinned.",
+            "The 100 G longitudinal field decouples the relaxation: the fields are static.",
+        ),
         (_HELD_NOTE, "Runs 20888-20897 give A_1 near 24 %.", "A_bg was held at 0 on 20888."),
         (
             _BACKGROUND_NOTE,

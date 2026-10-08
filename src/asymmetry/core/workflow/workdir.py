@@ -679,6 +679,18 @@ class WorkDir:
         """The names of every stored series, sorted."""
         return sorted(path.stem for path in self.series_dir.glob("*.json"))
 
+    def fit_series(self) -> dict[str, dict[str, Any]]:
+        """Every stored ``fit-series`` payload of the current schema, by name."""
+        payloads = {
+            path.stem: json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(self.series_dir.glob("*.json"))
+        }
+        return {
+            name: data
+            for name, data in payloads.items()
+            if data["kind"] == "series" and data["schema"] == SCHEMA
+        }
+
     def write_fit(self, run_number: int, recipe_name: str, payload: dict[str, Any]) -> Path:
         """Write one run's fit to ``fits/<recipe>-<run>.json`` and return its path."""
         self.ensure()
