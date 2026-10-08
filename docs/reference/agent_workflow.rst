@@ -1168,7 +1168,10 @@ errors, that window is named with the command that fits it. A line fitted
 inside an ``--xmin``/``--xmax`` window with data on both flanks, an amplitude
 five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 4 is
 called a resolved ``RESONANCE`` to report, with its errors qualified when
-χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. When a windowed line (both flanks in range, five errors deep) matches one
+χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. A scan that measures one field (or other x) more than once is noted with the
+runs and whether each repeat came back within three errors — a return pass to
+report — and a dip another stored scan in the work directory already fitted is
+not announced again. When a windowed line (both flanks in range, five errors deep) matches one
 another scan in the work directory fitted near the same field, a ``COMPARE``
 line prints both centres and widths, with errors scaled by
 √χ²\ :sub:`r`, and says which is broader and which higher in field — the

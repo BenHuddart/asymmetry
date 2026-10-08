@@ -2926,7 +2926,7 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
         "scan_path": str(tmp_path / "scan.json"),
         "plot": None,
     }
-    text = _render(result, ReductionSettings(), _notes(result, [], [], []))
+    text = _render(result, ReductionSettings(), _notes(result, [], [], [], []))
     assert "FAILED (Fit failed: call limit reached, hesse failed; at a bound: B0_2)" in text
     assert (
         "Next: the scan's own largest dips are at B0_1 1200, B0_2 1800. The fit already "
@@ -2941,10 +2941,10 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
 
     # A start inside its dip's window is where the fit already began ...
     result["fit"] = _failed_resonance_fit(initial={"B0_1": 1250.0})
-    assert "--initial" not in _render(result, ReductionSettings(), _notes(result, [], [], []))
+    assert "--initial" not in _render(result, ReductionSettings(), _notes(result, [], [], [], []))
     # ... and one away from it is pointed back at the dips.
     result["fit"] = _failed_resonance_fit(initial={"B0_1": 1500.0})
-    text = _render(result, ReductionSettings(), _notes(result, [], [], []))
+    text = _render(result, ReductionSettings(), _notes(result, [], [], [], []))
     assert (
         "The fit started away from them: refit with --initial B0_1=1200 --initial "
         "B0_2=1800, or fit one resonance per window on its own local background"
@@ -3409,3 +3409,35 @@ def test_relaxing_amplitude_moving_between_shapes_is_named() -> None:
     # One shape throughout says nothing.
     flat = [row(t, 10.0, 3.0, 4.0, 0.5) for t in range(10, 90, 10)]
     assert _weight_shift(series, TrendTable("temperature", columns, flat)) == []
+
+
+def test_repeated_scan_points_are_named_with_whether_they_came_back() -> None:
+    from asymmetry.cli.commands.integral_scan import _repeated_points
+
+    points = [
+        {"run": 1, "x": 100.0, "value": 0.0590, "error": 0.0004},
+        {"run": 2, "x": 500.0, "value": 0.1109, "error": 0.0004},
+        {"run": 3, "x": 100.0, "value": 0.0595, "error": 0.0004},
+        {"run": 4, "x": 500.0, "value": 0.1131, "error": 0.0004},
+    ]
+    (low, low_runs, low_differ), (high, high_runs, high_differ) = _repeated_points(points)
+    assert (low, [p["run"] for p in low_runs], low_differ) == (100.0, [1, 3], False)
+    assert (high, high_differ) == (500.0, True)
+
+
+def test_a_dip_another_scan_already_fitted_is_not_announced_again() -> None:
+    from asymmetry.cli.commands.integral_scan import _poor_fit_note
+
+    fit = {
+        "parameters": {"f": -0.01, "B0": 21474.0, "Bwid": 255.0},
+        "uncertainties": {"f": 0.001, "B0": 8.0, "Bwid": 20.0},
+        "success": True,
+        "params_at_bound": [],
+        "reduced_chi_squared": 1.9,
+        "x_range": [19950.0, 22950.0],
+        "x_min": 19950.0,
+        "x_max": 22950.0,
+        "next_dip_windows": [{"x_min": 17950.0, "x_max": 19950.0}],
+    }
+    assert any("another dip" in note for note in _poor_fit_note(fit))
+    assert not any("another dip" in note for note in _poor_fit_note(fit, [19481.4]))

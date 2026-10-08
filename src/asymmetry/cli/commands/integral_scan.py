@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+from collections.abc import Sequence
 from pathlib import Path
 
 from asymmetry.cli._output import (
@@ -247,14 +248,23 @@ def run(args: argparse.Namespace) -> None:
         for (run_number, _prefix, _path), dataset in zip(targets, datasets, strict=True)
         if run_geometry(dataset.metadata) == "TF"
     }
-    notes = _notes(result_payload, free_offsets, summed, contradicted_tf_stamps(scan, stamped_tf))
+    stored = {
+        path.stem: stored_fit
+        for path in sorted(workdir.scans_dir.glob("*.json"))
+        if path.stem != name
+        and (stored_fit := json.loads(path.read_text(encoding="utf-8"))["fit"]) is not None
+    }
+    elsewhere = [
+        value
+        for stored_fit in stored.values()
+        if stored_fit["success"]
+        for parameter, value in stored_fit["parameters"].items()
+        if parameter.split("_")[0] == "B0"
+    ]
+    notes = _notes(
+        result_payload, free_offsets, summed, contradicted_tf_stamps(scan, stamped_tf), elsewhere
+    )
     if fit_payload is not None:
-        stored = {
-            path.stem: stored_fit
-            for path in sorted(workdir.scans_dir.glob("*.json"))
-            if path.stem != name
-            and (stored_fit := json.loads(path.read_text(encoding="utf-8"))["fit"]) is not None
-        }
         notes.extend(_line_comparisons(fit_payload, stored))
     if args.json:
         emit_json(payload(**result_payload, notes=notes))
@@ -325,12 +335,32 @@ def _render(result: dict, settings, notes: list[str]) -> str:
 
 
 def _notes(
-    result: dict, free_offsets: list[str], summed: list[int], longitudinal: list[int]
+    result: dict,
+    free_offsets: list[str],
+    summed: list[int],
+    longitudinal: list[int],
+    elsewhere: list[float],
 ) -> list[str]:
-    """Every NOTE and Next line the scan calls for — printed, and kept in --json."""
+    """Every NOTE and Next line the scan calls for — printed, and kept in --json.
+
+    *elsewhere* holds the line centres other stored scans in the work directory fitted.
+    """
     fit = result["fit"]
     offset = result["period_field_offset"]
     lines: list[str] = []
+    repeats = _repeated_points(result["scan"]["points"])
+    if repeats:
+        lines.append(
+            f"NOTE: the scan measures {result['scan']['order_key']} "
+            + "; ".join(
+                f"{x:g} more than once (runs {', '.join(str(p['run']) for p in group)}: "
+                + ("they differ by more than three errors" if differ else "they agree")
+                + ")"
+                for x, group, differ in repeats
+            )
+            + ". Say so: a return pass or repeated points, and whether the curve came back to "
+            "itself."
+        )
     if longitudinal:
         lines.append(
             f"NOTE: the files stamp {range_text(longitudinal)} TF, but at fields of a kilogauss "
@@ -351,7 +381,7 @@ def _notes(
     if fit is not None and fit["resonance_windows"]:
         lines.append(_failed_fit_next(fit))
     elif fit is not None:
-        lines.extend(_poor_fit_note(fit))
+        lines.extend(_poor_fit_note(fit, elsewhere))
     if summed:
         lines.append(
             f"NOTE: {range_text(summed)} are two-period (red/green) runs, and without --period "
@@ -465,8 +495,35 @@ def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
     return notes
 
 
-def _poor_fit_note(fit: dict) -> list[str]:
-    """Notes on what a converged resonance fit left out or cannot vouch for."""
+def _repeated_points(points: list[dict]) -> list[tuple[float, list[dict], bool]]:
+    """``(x, points, differ)`` for each x measured more than once, *differ* past three errors."""
+    groups: dict[float, list[dict]] = {}
+    for point in points:
+        groups.setdefault(point["x"], []).append(point)
+    return [
+        (
+            x,
+            group,
+            any(
+                abs(a["value"] - b["value"]) > _DISTINCT_REPEAT * math.hypot(a["error"], b["error"])
+                for a in group
+                for b in group
+            ),
+        )
+        for x, group in sorted(groups.items())
+        if len(group) > 1
+    ]
+
+
+#: Repeated points further apart than this many combined errors did not come back.
+_DISTINCT_REPEAT = 3.0
+
+
+def _poor_fit_note(fit: dict, elsewhere: Sequence[float] = ()) -> list[str]:
+    """Notes on what a converged resonance fit left out or cannot vouch for.
+
+    A dip another stored scan already fitted (a centre in *elsewhere*) is not announced again.
+    """
     from asymmetry.core.workflow.integral_scan import DIP_FLANK_WIDTHS
 
     lines = {name: value for name, value in fit["parameters"].items() if name.split("_")[0] == "B0"}
@@ -505,7 +562,9 @@ def _poor_fit_note(fit: dict) -> list[str]:
     unfitted = [
         window
         for window in fit["next_dip_windows"]
-        if not any(window["x_min"] <= centre <= window["x_max"] for centre in lines.values())
+        if not any(
+            window["x_min"] <= centre <= window["x_max"] for centre in [*lines.values(), *elsewhere]
+        )
     ]
     if unfitted:
         notes.append(

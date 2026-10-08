@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TF at 1 kG or more whose integral asymmetry stays well away from zero —
   which a transverse field that strong cannot leave — is named as
   longitudinal, with the reason.
+- **``integral-scan`` names repeated points** (a return pass) and whether each
+  came back within three errors, and no longer announces a dip another stored
+  scan in the work directory has already fitted.
 - **``integral-scan`` compares one line across scans.** A windowed line that
   another stored scan also resolved near the same field prints a ``COMPARE``
   line with both centres and widths and which is broader and higher in field.
