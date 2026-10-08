@@ -60,7 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flagged as not describing it — with the relaxation-only commands to fit it
   (a two-line test counts only a fit with two frequencies within 2 %, not a
   line and its harmonic; only ``fit-series`` series need a ``trend``);
-  and a dip an ``integral-scan`` fit announced that no fit holds.
+  and a dip an ``integral-scan`` fit announced that no fit holds. Every hold
+  ends "do not reply yet"; a short scan of two or three runs is listed for the
+  summary to account for, not held on, and a failed two-line fit is no test.
+- **``fourier``'s note on two barely separated lines prints the two-line
+  recipe** started at both peaks.
 - **``audit`` names a correlation spectrum with no plain transform** of the
   same run: the two lines whose sum its peak is are in the plain FFT.
 - **``audit`` prints the commands that fit each unfitted scan** — ``wizard``

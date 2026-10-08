@@ -3496,3 +3496,31 @@ def test_a_reduction_leaving_off_the_files_deadtimes_says_so(
         ]
     )
     assert "carry per-detector deadtimes" not in capsys.readouterr().out
+
+
+def test_two_close_fourier_peaks_get_the_two_line_recipe() -> None:
+    from asymmetry.cli.commands.fourier import _render
+
+    result = {
+        "run": 693,
+        "field_gauss": None,
+        "axis": "frequency",
+        "n_points": 1000,
+        "resolution_mhz": 0.105,
+        "settings": {"window": "none"},
+        "peak_analysis": {
+            "peaks": [
+                {"frequency_mhz": f, "amplitude": 1.0, "width_mhz": 0.1, "snr": 90.0}
+                for f in (813.497, 813.595)
+            ]
+        },
+        "candidate_maxima": [],
+        "frequency_min_mhz": 812.0,
+        "frequency_max_mhz": 816.0,
+        "full_band_mhz": [0.0, 900.0],
+        "outside_band": [],
+        "array_path": "a.npz",
+        "metadata_path": "a.json",
+        "plot": None,
+    }
+    assert "--initial frequency_1=813.595 --initial frequency_3=813.497" in _render(result)

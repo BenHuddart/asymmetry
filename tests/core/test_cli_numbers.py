@@ -350,7 +350,7 @@ def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch
         "asymmetry fit-series data --runs 11-13 --recipe wizard-11 --order steering "
         "--x 11=-1,12=0,13=1 --start 11"
     ) in out
-    assert "do not reply yet: fit every scan listed above" in out
+    assert "do not reply yet: act on each item above" in out
 
 
 def test_a_correlation_spectrum_without_its_plain_transform_is_named(tmp_path: Path) -> None:
@@ -382,7 +382,9 @@ def test_a_tesla_field_line_without_a_two_line_fit_is_named(tmp_path: Path) -> N
     (root / "spectra" / "run-686.json").write_text(json.dumps(spectrum))
 
     def fit(**frequencies: float) -> str:
-        return json.dumps({"expression": "...", "fit": {"parameters": frequencies}})
+        return json.dumps(
+            {"expression": "...", "fit": {"success": True, "parameters": frequencies}}
+        )
 
     (root / "fits" / "one-686.json").write_text(fit(frequency=813.59))
     assert _untested_doublets([root]) == [(root, 686, 813.59)]

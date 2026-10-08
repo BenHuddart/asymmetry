@@ -290,7 +290,11 @@ def _render(result: dict) -> str:
             + "; ".join(f"{low:.6g} and {high:.6g} MHz" for low, high in pairs)
             + f" lie within {_CLOSE_PEAKS} resolution elements of each other: two lines "
             "the FFT barely separates. Report both frequencies (a splitting, not one line), "
-            "and fit them in the time domain with two lines started there."
+            "and fit them in the time domain with two lines started there: asymmetry recipe "
+            f"<folder> --run {result['run']} --name two-line --expression 'Oscillatory * "
+            "Exponential + Oscillatory * Exponential + Constant' --initial "
+            f"frequency_1={pairs[0][1]:.6g} --initial frequency_3={pairs[0][0]:.6g}, then "
+            f"asymmetry fit <folder> --run {result['run']} --recipe two-line."
         )
     paired = {frequency for pair in pairs for frequency in pair}
     high = [peak for peak in tesla_field_lines(result) if peak["frequency_mhz"] not in paired]

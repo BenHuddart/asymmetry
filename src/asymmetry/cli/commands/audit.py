@@ -157,22 +157,24 @@ def run(args: argparse.Namespace) -> None:
             f"--xmin {window['x_min']:g} --xmax {window['x_max']:g} --workdir {root}, and report "
             f"what it shows."
         )
-    ready = not (found or laws or relations or unpaired or untested or untrended or dips)
-    if ready:
-        if unfitted or unfitted_notes:
-            print(
-                f"No unprinted numbers found in {draft}, but do not reply yet: fit every scan "
-                f"listed above (a measurement left unfitted is a result missing from the "
-                f"summary), add what each shows to {draft}, and run audit again."
-            )
-            return
+    # A short scan (a calibration pair, a setpoint's two or three fields) is
+    # listed for the summary to account for; only a longer one holds the reply.
+    held_scans = [entry for entry in unfitted if len(entry[1].runs) > _SHORT_SCAN_RUNS]
+    held = held_scans or unfitted_notes or laws or relations or unpaired or untested
+    held = held or untrended or dips
+    if not found and held:
+        print(
+            f"No unprinted numbers found in {draft}, but do not reply yet: act on each item "
+            f"above (a measurement left unfitted or unread is a result missing from the "
+            f"summary), add what each shows to {draft}, and run audit again."
+        )
+        return
+    if not found:
         print(
             f"No unprinted numbers found in {draft}. Now send its text as your whole final "
             f"message, starting at its title — the user sees neither this output nor the "
             f"file, and the reply says nothing about this check."
         )
-        return
-    if not found:
         return
     print(
         f"{len(found)} number(s) in {draft} appear in no logged command output — "
@@ -283,15 +285,17 @@ def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
 
     found = []
     for root in roots:
-        fitted = [
-            json.loads(path.read_text(encoding="utf-8"))["fit"]["parameters"]
+        fits = [
+            json.loads(path.read_text(encoding="utf-8"))["fit"]
             for path in (root / "fits").glob("*.json")
-        ] + [
+        ]
+        fitted = [fit["parameters"] for fit in fits if fit["success"]] + [
             row
             for path in (root / "series").glob("*.json")
             for row in json.loads(path.read_text(encoding="utf-8")).get("trend", {"rows": []})[
                 "rows"
             ]
+            if "failed" not in row["flags"]
         ]
         if any(paired(values) for values in fitted):
             continue
