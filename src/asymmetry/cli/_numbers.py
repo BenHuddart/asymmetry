@@ -177,7 +177,10 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             if derived:
                 shared_until = after
                 significant = len(re.sub(r"\D", "", token).lstrip("0"))
-                if significant < _VERBATIM_DIGITS or not _printed_verbatim(token, log_text):
+                printed = _printed_verbatim(token, log_text) or _printed_verbatim(
+                    match.group("mantissa"), log_text
+                )
+                if significant < _VERBATIM_DIGITS or not printed:
                     found.append(Unverified(text, line_number, line.strip()))
                 continue
             if _DELTA_PREFIX.search(before):
@@ -200,7 +203,11 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             hi = bisect.bisect_right(values, abs(value) + tolerance)
             neg_lo = bisect.bisect_left(values, -abs(value) - tolerance)
             neg_hi = bisect.bisect_right(values, -abs(value) + tolerance)
-            if lo == hi and neg_lo == neg_hi:
+            if (
+                lo == hi
+                and neg_lo == neg_hi
+                and not _printed_verbatim(match.group("mantissa"), log_text)
+            ):
                 found.append(Unverified(match.group(), line_number, line.strip()))
     return found
 

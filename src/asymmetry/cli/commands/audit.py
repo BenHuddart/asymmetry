@@ -7,7 +7,7 @@ import json
 import re
 import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from asymmetry.cli._numbers import unstated_relations, unsupported_laws, unverified_numbers
 from asymmetry.cli._output import UserError, emit_json, payload
@@ -66,19 +66,28 @@ def run(args: argparse.Namespace) -> None:
     untested = _untested_doublets(roots)
     untrended = _untrended_series(roots, log_text)
     dips = _unfitted_dips(roots)
-    workdirs = [WorkDir(root) for root in roots]
-    fitted = set().union(*(workdir.fitted_runs() for workdir in workdirs))
-    calibration = set().union(*(workdir.alpha_calibration_runs() for workdir in workdirs))
-    surveys = [workdir.read_survey() for workdir in workdirs if workdir.survey_path.is_file()]
+    # Run numbers identify runs only within one work directory's folder, so each
+    # survey is held against its own directory's fits, calibrators and lines.
+    surveyed = [
+        (workdir.read_survey(), workdir.fitted_runs(), workdir.alpha_calibration_runs())
+        for workdir in (WorkDir(root) for root in roots)
+        if workdir.survey_path.is_file()
+    ]
     unfitted = [
-        (survey["folder"], scan, sorted(set(scan.runs) - fitted))
-        for survey in surveys
+        _UnfittedScan(
+            survey["folder"],
+            scan,
+            sorted(set(scan.runs) - fitted),
+            calibration,
+            {int(run["run_number"]) for run in survey["runs"] if run["precession"] == "none"},
+        )
+        for survey, fitted, calibration in surveyed
         for scan in (ScanGroup(**entry) for entry in survey["scans"])
         if set(scan.runs) - fitted
     ]
     unfitted_notes = [
         (survey["folder"], scan, sorted(set(scan["runs"]) - fitted))
-        for survey in surveys
+        for survey, fitted, _ in surveyed
         for scan in survey["notes_scans"]
         if set(scan["runs"]) - fitted
     ]
@@ -88,7 +97,7 @@ def run(args: argparse.Namespace) -> None:
             payload(
                 logs=[str(log) for log in logs],
                 unfitted_scans=[
-                    scan.to_dict() | {"unfitted_runs": runs} for _, scan, runs in unfitted
+                    entry.scan.to_dict() | {"unfitted_runs": entry.runs} for entry in unfitted
                 ],
                 unfitted_notes_scans=[
                     scan | {"unfitted_runs": runs} for _, scan, runs in unfitted_notes
@@ -103,13 +112,7 @@ def run(args: argparse.Namespace) -> None:
         )
         return
     if unfitted:
-        lineless = {
-            int(run["run_number"])
-            for survey in surveys
-            for run in survey["runs"]
-            if run["precession"] == "none"
-        }
-        print(_unfitted_report(unfitted, calibration, lineless))
+        print(_unfitted_report(unfitted))
     if unfitted_notes:
         print(
             "Scans the run notes define (survey NOTES SCANS) with runs no fit holds — fit each "
@@ -159,7 +162,7 @@ def run(args: argparse.Namespace) -> None:
         )
     # A short scan (a calibration pair, a setpoint's two or three fields) is
     # listed for the summary to account for; only a longer one holds the reply.
-    held_scans = [entry for entry in unfitted if len(entry[1].runs) > _SHORT_SCAN_RUNS]
+    held_scans = [entry for entry in unfitted if len(entry.scan.runs) > _SHORT_SCAN_RUNS]
     held = held_scans or unfitted_notes or laws or relations or unpaired or untested
     held = held or untrended or dips
     if not found and held:
@@ -192,11 +195,17 @@ def run(args: argparse.Namespace) -> None:
 _SHORT_SCAN_RUNS = 3
 
 
-def _unfitted_report(
-    unfitted: list[tuple[str, ScanGroup, list[int]]],
-    calibration: set[int],
-    lineless: set[int],
-) -> str:
+class _UnfittedScan(NamedTuple):
+    """A surveyed scan with runs no fit holds, and its own directory's calibrators and lines."""
+
+    folder: str
+    scan: ScanGroup
+    runs: list[int]
+    calibration: set[int]
+    lineless: set[int]
+
+
+def _unfitted_report(unfitted: list[_UnfittedScan]) -> str:
     """The surveyed scans whose runs no stored fit holds, with what to do about each."""
     from asymmetry.cli.commands.survey import scan_label
 
@@ -204,13 +213,18 @@ def _unfitted_report(
         "Scans the survey found with runs that no fit, fit-series, fit-global or integral-scan "
         "fitted. Each scan is a measurement:"
     ]
-    long_scans = [entry for entry in unfitted if len(entry[1].runs) > _SHORT_SCAN_RUNS]
-    listed = {run for _, _, runs in long_scans for run in runs}
+    long_scans = [entry for entry in unfitted if len(entry.scan.runs) > _SHORT_SCAN_RUNS]
+    listed = {(entry.folder, run) for entry in long_scans for run in entry.runs}
     short = sorted(
-        {run for _, scan, runs in unfitted if len(scan.runs) <= _SHORT_SCAN_RUNS for run in runs}
-        - listed
+        {
+            run
+            for entry in unfitted
+            if len(entry.scan.runs) <= _SHORT_SCAN_RUNS
+            for run in entry.runs
+            if (entry.folder, run) not in listed
+        }
     )
-    for folder, scan, runs in long_scans:
+    for folder, scan, runs, calibration, lineless in long_scans:
         lines.append(f"  {scan_label(scan)}")
         calibrators = sorted(calibration & set(runs))
         verdict = (
@@ -292,7 +306,8 @@ def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
             spectrum = json.loads(path.read_text(encoding="utf-8"))
             found.extend(
                 (root, int(spectrum["run"]), peak["frequency_mhz"])
-                for peak in tesla_field_lines(spectrum)[:1]
+                # Spectra stored before field_gauss was recorded carry no field.
+                for peak in tesla_field_lines({"field_gauss": None} | spectrum)[:1]
             )
     return found
 

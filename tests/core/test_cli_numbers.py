@@ -159,7 +159,7 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
 
 
 def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> None:
-    from asymmetry.cli.commands.audit import _unfitted_report
+    from asymmetry.cli.commands.audit import _unfitted_report, _UnfittedScan
     from asymmetry.core.workflow.survey import ScanGroup
 
     def scan(axis: str, runs: list[int]) -> ScanGroup:
@@ -176,21 +176,19 @@ def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> Non
 
     report = _unfitted_report(
         [
-            ("data", scan("temperature", [11, 12, 13, 14]), [11, 12, 13, 14]),
-            ("data", scan("field", [21, 22]), [21, 22]),
-            ("data", scan("field", [13, 31]), [13]),
-        ],
-        calibration={12},
-        lineless=set(),
+            _UnfittedScan(
+                "data", scan("temperature", [11, 12, 13, 14]), [11, 12, 13, 14], {12}, set()
+            ),
+            _UnfittedScan("data", scan("field", [21, 22]), [21, 22], {12}, set()),
+            _UnfittedScan("data", scan("field", [13, 31]), [13], {12}, set()),
+        ]
     )
 
     assert "never fitted. Alpha was measured on run 12" in report
     assert "asymmetry fit-series data --runs 11-14 --recipe wizard-12" in report
     # Runs the survey found no line in are sent to a relaxation fit, not the wizard.
     lineless = _unfitted_report(
-        [("data", scan("temperature", [41, 42, 43, 44]), [43, 44])],
-        calibration=set(),
-        lineless={43, 44},
+        [_UnfittedScan("data", scan("temperature", [41, 42, 43, 44]), [43, 44], set(), {43, 44})]
     )
     assert "asymmetry recipe data --expression 'Exponential + Constant' --run 43" in lineless
     assert "wizard" not in lineless
@@ -435,3 +433,74 @@ def test_a_hold_is_restated_when_unprinted_numbers_are_listed_too(
     out = capsys.readouterr().out
     assert "'999.25'" in out
     assert out.rstrip().endswith("then run audit again.")
+
+
+def test_each_survey_is_held_against_its_own_work_directory(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # Run 11 is fitted in one folder's work directory; the other folder's run 11
+    # is a different run, and its notes scan is still unfitted.
+    monkeypatch.chdir(tmp_path)
+    scan = {
+        "instrument": "SIM",
+        "temperature": 295.0,
+        "field": 100.0,
+        "source": "notes",
+        "template": "Steering <x> A",
+        "quantity": "steering",
+        "runs": [11, 12, 13],
+        "values": [-1.0, 0.0, 1.0],
+    }
+    for name, notes in (("asymmetry-work", []), ("asymmetry-work-b", [scan])):
+        root = tmp_path / name
+        (root / "fits").mkdir(parents=True)
+        (root / "cli-output.log").write_text("$ asymmetry survey data\n", encoding="utf-8")
+        survey = {"folder": name, "runs": [], "scans": [], "notes_scans": notes}
+        (root / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    for run in (11, 12, 13):
+        (tmp_path / "asymmetry-work" / "fits" / f"x-{run}.json").write_text(
+            json.dumps(
+                {
+                    "run": run,
+                    "expression": "Exponential",
+                    "fit": {"success": True, "parameters": {}},
+                }
+            ),
+            encoding="utf-8",
+        )
+    draft = tmp_path / "summary.md"
+    draft.write_text("A draft.\n", encoding="utf-8")
+
+    cli.main(["audit", str(draft)])
+    assert 'notes "Steering <x> A" (steering): not fitted: runs 11-13' in capsys.readouterr().out
+
+
+def test_review_edge_cases_of_the_audit(tmp_path: Path) -> None:
+    from asymmetry.cli.commands.audit import _untested_doublets
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    # A spectrum stored before field_gauss was recorded has no tesla-field line to test.
+    spectra = tmp_path / "old" / "spectra"
+    spectra.mkdir(parents=True)
+    old = {"axis": "frequency", "run": 5, "peak_analysis": {"peaks": [{"frequency_mhz": 813.6}]}}
+    (spectra / "run-5.json").write_text(json.dumps(old))
+    assert _untested_doublets([tmp_path / "old"]) == []
+
+    # A comma-grouped number a command printed in that form verifies.
+    assert unverified_numbers("beats it by about 4,200 in AICc", "AICc gap 4,200\n") == []
+    assert unverified_numbers("an AICc gap of 4,200", "AICc gap 4,200\n") == []
+    assert unverified_numbers("ahead with 4,200 events", "AICc gap 4,200\n") == []
+
+    # A precession series with a held frequency does not fit a lineless run it failed on.
+    root = tmp_path / "wd"
+    (root / "series").mkdir(parents=True)
+    survey = {"runs": [{"run_number": 7, "precession": "none"}]}
+    (root / "survey.json").write_text(json.dumps(survey))
+    series = {
+        "kind": "series",
+        "expression": "Oscillatory * Exponential + Constant",
+        "free_params": ["A_1", "phase", "Lambda", "A_bg"],
+        "trend": {"rows": [{"key": "7", "flags": ["amplitude_exceeds_data"]}]},
+    }
+    (root / "series" / "held.json").write_text(json.dumps(series))
+    assert WorkDir(root).fitted_runs() == set()
