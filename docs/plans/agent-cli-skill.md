@@ -1826,6 +1826,28 @@ which is false for an RF scan. Pass 14: a green-red scan names
 `RFResonanceMuP`, and `fit`'s pair note says to compare χ², not χ²ᵣ, with the
 degrees of freedom.
 
+#### Wave 11 and where the overnight loop ended — 2026-10-08 05:40
+
+Wave 11 (pass 13): 17/24 — Tier A and trend-fit 7/8 (maleic tried relaxation
+fits on Mu-precessing 2 G runs), tier-b and workflow 6/8 (an AFM agent declined
+the whole 8-group HIFI folder as "multi-group", fixed in the skill's decline
+row; TCNQ quoted a "0.04 MHz apart" difference of printed values), corpus-2026
+4/8. Haiku 5.5 across the night: 8, 12, 14, 16, 19, 17, 20, 19, 17, 18, 17 of
+24; Sonnet 5.5 on pass 9: 21/24. Tier A, trend-fit and workflow pass almost
+every wave from wave 4 on; the misses rotate among basics (stops early),
+corannulene (the hot 14.8 kG dip), TRSB (LF decoupling from an all-flagged
+series), benzene ALC (an agent overriding RESONANCE), AFM and Sn.
+
+Next targets, in order of how often they cost a wave:
+- an all-flagged LF series should print the relaxation-only comparison with
+  ZF (TRSB);
+- the frequency-response note should fire on `A_n`/`frequency_n` pairs
+  (basics' muonium amplitudes);
+- `frequency_unresolved` should print the `--fix frequency_N=` command, and a
+  mixed-sample scan the `--order concentration --x` template (maleic);
+- the matcher should catch small-number differences ("0.04 MHz apart");
+- the final reply should be held to the audited file.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
