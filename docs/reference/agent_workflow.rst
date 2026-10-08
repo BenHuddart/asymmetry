@@ -1123,7 +1123,11 @@ is listed unless a command printed it verbatim to three or more significant
 digits, as a run number or a field on the scan's grid is; a ratio in words
 ("a factor of six", "five and a half times its error", "three times broader")
 is listed too. While a surveyed scan is unfitted, a clean audit says not to
-reply yet. ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. Every command
+reply yet. ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
+("about 20740 G") may round away its trailing zeros, a field in kG verifies
+against one printed in G, an error in parentheses after its value
+("2.91 (±0.12)") is that value's error, and "1σ errors", "> 3σ" and
+"2× LorentzianLCR" are a convention, a threshold and a count, not results. Every command
 that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
 ``integral-scan``, ``fourier``) ends its text output with the step: write
 ``summary.md`` and run ``asymmetry audit summary.md`` before replying. What it catches is the arithmetic an

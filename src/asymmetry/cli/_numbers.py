@@ -17,7 +17,10 @@ about 21 G"), named as a comparison ("4 points
 better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` — is listed unless
 a command printed it verbatim to three or more significant digits (a run number,
 a field on the scan's grid). A range ``a–b`` shares its context between both
-ends, and ``4,200`` and ``3.2 × 10⁻⁸`` read as one number.
+ends, and ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
+("about 20740 G") may round away its trailing zeros, a field in kG restates
+one printed in G, and "1σ errors", "> 3σ" and "2× LorentzianLCR" are
+conventions, thresholds and counts, not derived numbers.
 """
 
 from __future__ import annotations
@@ -95,7 +98,7 @@ _DELTA_PREFIX = re.compile(rf"Δ[A-Za-zχν]\S*\s*(?:=|:|of|is)?\s*{_HEDGE}\s*$"
 #: A ``±`` after a value, its unit and a table's cell border (``| 85.95 K | ±``):
 #: a ``±`` without one is a spread or a relative error (``±0.2 MHz``, ``±0.6 %``),
 #: not a printed value's error.
-_VALUE_PLUS_MINUS = re.compile(r"\d(?:\s*[^\W\d][^\s|±]*)?[\s|]*±\s*$")
+_VALUE_PLUS_MINUS = re.compile(r"\d(?:\s*[^\W\d][^\s|±(]*)?[\s|(]*±\s*$")
 
 #: Words after a number (and its unit) that name it a comparison of two values.
 _COMPARISON_SUFFIX = re.compile(
@@ -104,6 +107,18 @@ _COMPARISON_SUFFIX = re.compile(
     r"(?!\s+(?:bound|limit|edge))",
     re.IGNORECASE,
 )
+
+#: A comparison sign before a significance makes it a threshold ("> 3σ"), not a result.
+_THRESHOLD = re.compile(r"[<>≤≥]\s*$")
+
+#: A multiple that counts a model's components ("2× LorentzianLCR"), not a ratio.
+_COMPONENT_COUNT = re.compile(r"\s*[A-Z][a-z]+[A-Z]")
+
+#: A hedge right before a number: an integer it rounds may drop its trailing digits.
+_ROUNDED_HEDGE = re.compile(r"(?:about|roughly|approximately|around|near|~|≈)\s*$", re.IGNORECASE)
+
+#: A kilo-unit a printed field in gauss (or oersted) is restated in.
+_KILO_UNIT = re.compile(r"\s?(?:kG|kOe)\b")
 
 #: Significant digits a printed token needs to verify a number its context makes
 #: arithmetic: a run number or a grid field, not a small value printed by chance.
@@ -137,6 +152,15 @@ def _multiples(text: str) -> str:
 #: dumped by ``--json``. Its values were never read by anyone, and a rounded
 #: sum or ratio would match one of its thousands of elements by chance.
 _NUMBER_ARRAY = re.compile(r"\[(?:\s*[-+\deE.]+\s*,){9,}\s*[-+\deE.]+\s*\]")
+
+
+def _within(values: list[float], value: float, tolerance: float) -> bool:
+    """Whether a printed value of either sign lies within *tolerance* of ``|value|``."""
+    return any(
+        bisect.bisect_left(values, centre - tolerance)
+        < bisect.bisect_right(values, centre + tolerance)
+        for centre in (abs(value), -abs(value))
+    )
 
 
 def printed_values(log_text: str) -> list[float]:
@@ -195,23 +219,34 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             # its unit; a whole-number one ("32 %") is almost always a ratio.
             if suffix is not None and "%" in suffix.group() and "." in token:
                 suffix = None
+            if suffix is not None and (
+                ("σ" in suffix.group() or "sigma" in suffix.group())
+                and (token == "1" or _THRESHOLD.search(before))
+                or suffix.group().strip() in ("×", "x")
+                and _COMPONENT_COUNT.match(line, suffix.end())
+            ):
+                continue
             if suffix is not None:
                 if _multiples(token + suffix.group()) not in multiples:
                     found.append(Unverified(text, line_number, line.strip()))
                 continue
             exponent = match.group("exponent")
             scale = 10.0 ** int(exponent.translate(_SUPERSCRIPT)) if exponent else 1.0
-            value = _value(token) * scale
-            tolerance = 0.5 * 10.0 ** -_decimals(token) * scale + 1e-12 * scale
-            lo = bisect.bisect_left(values, abs(value) - tolerance)
-            hi = bisect.bisect_right(values, abs(value) + tolerance)
-            neg_lo = bisect.bisect_left(values, -abs(value) - tolerance)
-            neg_hi = bisect.bisect_right(values, -abs(value) + tolerance)
-            if (
-                lo == hi
-                and neg_lo == neg_hi
-                and not _printed_verbatim(match.group("mantissa"), log_text)
-            ):
+            # "about 20740 G" for a printed 20740.6: a hedged integer's trailing zeros are not digits.
+            zeros = 0 if "." in token else len(token) - len(token.rstrip("0"))
+            rounded = (
+                zeros
+                and len(token.lstrip("-+")) >= _VERBATIM_DIGITS
+                and _ROUNDED_HEDGE.search(before)
+            )
+            step = 10.0**zeros if rounded else 10.0 ** -_decimals(token)
+            tolerance = (0.5 * step + 1e-12) * scale
+            # A field in kilogauss restates a printed one in gauss.
+            multipliers = (1.0, 1000.0) if _KILO_UNIT.match(line, match.end()) else (1.0,)
+            if not any(
+                _within(values, _value(token) * scale * factor, tolerance * factor)
+                for factor in multipliers
+            ) and not _printed_verbatim(match.group("mantissa"), log_text):
                 found.append(Unverified(match.group(), line_number, line.strip()))
     return found
 

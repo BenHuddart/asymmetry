@@ -1975,6 +1975,17 @@ pushed commit, scored by three Sonnet scorers.
   `fourier`: one peak does not exclude a doublet below the resolution (AFM,
   wave 15).
 
+#### Pass 2
+
+The audit's false positives on printed values, mined from the audit outputs in
+the transcripts of waves 9–15: a hedged integer that rounds away trailing zeros
+("about 20740 G" for 20740.6), a field in kG for one printed in G, an error in
+parentheses ("2.91 (±0.12)"), "1σ errors", "> 3σ" and "2× LorentzianLCR". Of
+the lines those audits flagged, 167 flags go and none is added; the final
+replies of waves 13–15 are unchanged. A first version also widened hedged
+decimals ("about 11.6" for a sum of two printed amplitudes); the replay caught
+it and the rounding is limited to integers.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

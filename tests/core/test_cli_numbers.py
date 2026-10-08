@@ -270,6 +270,15 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         ("a line at 3.8 MHz, which would be a field of about 16 G", ["16"]),
         ("3.8 MHz corresponds to roughly 16 G", ["16"]),
         ("this corresponds to run 9031", []),
+        # Roundings and restatements of printed values (round 2, waves 11-15).
+        ("A(0) 16.42 (±0.05) at 16.3 K", []),
+        ("errors are 1σ; none differ at > 3σ", []),
+        ("a 2× LorentzianLCR + Cubic fit", []),
+        ("the line sits at about 9030 G", []),
+        ("the total is about 16.6", ["16.6"]),
+        ("the line sits at 9.03 kG", []),
+        ("the line sits at 9030 G", ["9030"]),
+        ("a 2× faster rate", ["2×"]),
     ],
 )
 def test_wave_derived_numbers_are_flagged(draft: str, flagged: list[str]) -> None:
