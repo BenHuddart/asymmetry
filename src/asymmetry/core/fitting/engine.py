@@ -70,6 +70,10 @@ _MIN_REFERENCE_MHZ = 0.1
 #: ~100× percent-vs-fraction trap.
 _SCALE_MISMATCH_RATIO = 10.0
 
+#: Span (max − min) of a seeded curve over the window, relative to its peak,
+#: below which the curve is flat and carries no amplitude to compare.
+_FLAT_SEED_RELATIVE_SPAN = 1e-6
+
 #: ``stacklevel`` for the pre-fit advisory guards, so each warning is attributed
 #: to the *user's* call site rather than to engine internals. Counts three frames
 #: of engine: the guard helper itself, :meth:`FitEngine._fit_core`, and the
@@ -94,7 +98,11 @@ def _warn_on_scale_mismatch(
     fraction-scale (``≤ 1.5`` — a true ``|A| ≤ 1`` cannot be more) while the
     other can only be percent. An on-scale-but-poorly-guessed amplitude (both
     peaks clearly percent) is deliberately NOT flagged, however far apart they
-    are — this guard is about scale confusion, not seed quality. Advisory only:
+    are — this guard is about scale confusion, not seed quality. A seeded curve
+    flat across the window (a constant-only baseline, or a term whose rate is
+    pinned so fast it has decayed before the first bin) is not judged: its level
+    is a background, which a percent-scale record's tail can hold below 1.5, and
+    it has no amplitude whose scale could be confused. Advisory only:
     it never raises and never blocks the fit; any evaluation failure is swallowed
     so the guard cannot change fit outcomes.
     """
@@ -110,6 +118,8 @@ def _warn_on_scale_mismatch(
         data_mag = float(np.max(np.abs(data_finite)))
         model_mag = float(np.max(np.abs(model_finite)))
         if data_mag <= 0.0 or model_mag <= 0.0:
+            return
+        if float(np.ptp(model_finite)) <= _FLAT_SEED_RELATIVE_SPAN * model_mag:
             return
         low, high = sorted((data_mag, model_mag))
         straddles_scale = low <= _FRACTION_SCALE_CEILING < high
