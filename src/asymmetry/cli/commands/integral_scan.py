@@ -413,7 +413,13 @@ def _notes(
             f"held at the value that command's Next line gives (the printed red - green "
             f"offset, negated)."
         )
-    if fit is not None and any(
+    if offset is not None:
+        lines.append(
+            "NOTE: a green-red (RF) resonance scan: RFResonanceMuP converts its lines into the "
+            "muon and proton couplings — --model RFResonanceMuP --fix nu_RF=<the RF frequency "
+            "in MHz, from the run notes or title> — rather than a pair of Lorentzians."
+        )
+    elif fit is not None and any(
         term.strip() in ("LorentzianLCR", "GaussianLCR") for term in fit["expression"].split("+")
     ):
         lines.append(

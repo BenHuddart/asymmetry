@@ -84,6 +84,7 @@ def run(args: argparse.Namespace) -> None:
 
     pair = close_pair(result["parameters"]) if result["success"] else None
     if pair is not None:
+        dof = result["chi_squared"] / result["reduced_chi_squared"]
         errors = [
             result["uncertainties"][name]
             for name, value in result["parameters"].items()
@@ -92,9 +93,11 @@ def run(args: argparse.Namespace) -> None:
         print(
             f"NOTE: this fit holds two lines, at {pair[1]:.6g} and {pair[0]:.6g} MHz, "
             f"{pair[1] - pair[0]:.4g} ± {math.hypot(*errors):.2g} MHz apart. A split below the "
-            f"FFT resolution is still two lines: compare this chi2_red with the one-line fit's, "
-            f"and if it is lower report both frequencies, their separation and amplitudes, not "
-            f"a single line."
+            f"FFT resolution is still two lines: compare chi2, not chi2_red, with the one-line "
+            f"fit's — on {dof:.0f} degrees of freedom a chi2_red lower by 0.001 is a chi2 lower "
+            f"by {dof * 0.001:.0f}, far more than the few extra parameters cost — and if it is "
+            f"lower report both frequencies, their separation and amplitudes, not a single "
+            f"line."
         )
     note = window_note(workdir, [args.run])
     if note is not None:

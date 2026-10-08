@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a different measurement, never quoted at its setpoints) from an impossible
   reading (the sensor); the audit restates its hold when it also lists numbers;
   ``integral-scan``'s off-range note no longer only says to widen the window.
+- **A green-red (RF) ``integral-scan`` names ``RFResonanceMuP``** instead of
+  saying no hyperfine model exists, and ``fit``'s two-line note says to compare
+  χ², not χ²ᵣ, with the degrees of freedom that make a small χ²ᵣ drop large.
 - **``fit`` notes a fitted pair of lines** within 2 % of each other: a split
   below the FFT resolution is still two lines to report when it lowers χ²ᵣ.
 - **``audit`` names a correlation spectrum with no plain transform** of the

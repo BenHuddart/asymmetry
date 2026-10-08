@@ -935,6 +935,8 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     out = capsys.readouterr().out
     assert "period field offset (red - green): -44.00 G, mean of 2 run(s)" in out
     assert "--fix dB=44.00" in out
+    assert "RFResonanceMuP converts its lines" in out
+    assert "no radical ALC or hyperfine model" not in out
     # Each fitted parameter is printed with its unit and error; a held one says so.
     bwid = next(line.split() for line in out.splitlines() if line.startswith("Bwid "))
     assert bwid[1:] == ["1.000000", "G", "fixed"]
