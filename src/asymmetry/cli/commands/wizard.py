@@ -166,6 +166,38 @@ def run(args: argparse.Namespace) -> None:
     note = window_note(workdir, [args.run])
     if note is not None:
         print(note)
+    if result.recipe is not None:
+        harmonic = _harmonic_pair(
+            [p.value for p in result.recipe.parameters if p.name.startswith("frequency")]
+        )
+        if harmonic is not None:
+            line, double = harmonic
+            print(
+                f"NOTE: the recommendation's line at {double:.6g} MHz is twice the one at "
+                f"{line:.6g} MHz — a harmonic of that line, not a second line. In a field of "
+                f"tesla order a second line sits within about the FFT resolution of the first: "
+                f"look for it with asymmetry fourier {shlex.quote(args.folder)} --run {args.run} "
+                f"--window none --fmin {line - 1:.6g} --fmax {line + 1:.6g}, which prints the "
+                f"two-line test."
+            )
+
+
+#: How close to twice a line's frequency a component counts as its harmonic.
+_HARMONIC_TOLERANCE = 0.01
+
+
+def _harmonic_pair(frequencies: list[float]) -> tuple[float, float] | None:
+    """A tesla-field line and a fitted component at twice its frequency, if the model holds both."""
+    from asymmetry.cli.commands.trend import HIGH_FIELD_LINE_MHZ
+
+    for line in frequencies:
+        for double in frequencies:
+            if (
+                line >= HIGH_FIELD_LINE_MHZ
+                and abs(double / (2.0 * line) - 1.0) <= _HARMONIC_TOLERANCE
+            ):
+                return line, double
+    return None
 
 
 def _spectral_lines(result, duration_us: float) -> tuple[list[dict], list[float]]:

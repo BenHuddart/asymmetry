@@ -1263,7 +1263,9 @@ spectrum it points at the plain transform of the same run, whose radical
 lines belong beside :math:`A_\mu` in a summary; it states that the peak is
 :math:`A_\mu = \nu_1 + \nu_2`, the sum of the radical's two lines. The header
 also gives the band searched against the whole transform, and a note names the
-strongest lines detected outside a ``--fmin``/``--fmax`` band. A line near the
+strongest lines detected outside a ``--fmin``/``--fmax`` band. (``wizard``,
+for its part, names a recommended component at twice a tesla-field line's
+frequency as that line's harmonic and points here.) A line near the
 Larmor frequency of a field above about 0.74 T (100 MHz) gets a note that
 inequivalent sites or sublattices split a line by about the resolution there,
 with the ``recipe`` and ``fit`` commands that test two lines started either

@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value; the survey's candidate list and ``alpha`` say so too.
 - **``trend`` prints the size of a held line's shift** with its error, beside
   the two end values.
+- **``wizard`` names a harmonic as one.** A recommended component at twice a
+  tesla-field line's frequency is called a harmonic, not a second line, with
+  the ``fourier`` command that looks for the real second line beside it.
 - **``fourier`` offers a two-line test for a tesla-field line** — the recipe
   and fit commands for two lines started either side of a peak near the
   applied field's Larmor frequency above 100 MHz — and says MaxEnt and

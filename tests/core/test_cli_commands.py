@@ -3373,3 +3373,12 @@ def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
     # Within two combined errors there is no direction to report.
     (same,) = _line_comparisons(fit(15390.0, 1150.0, 1.0), {"cold": cold})
     assert "of the same width and at the same field" in same
+
+
+def test_a_wizard_component_at_twice_a_tesla_line_is_named_a_harmonic() -> None:
+    from asymmetry.cli.commands.wizard import _harmonic_pair
+
+    assert _harmonic_pair([813.6, 1627.1]) == (813.6, 1627.1)
+    # Two lines near each other, or a low-field pair, are not a harmonic.
+    assert _harmonic_pair([813.6, 813.5]) is None
+    assert _harmonic_pair([1.36, 2.72]) is None
