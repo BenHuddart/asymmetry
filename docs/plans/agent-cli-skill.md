@@ -1726,6 +1726,31 @@ error; `reduce`, `survey` and `alpha` say which counts alpha was measured on
 printed it. Misfire check: on the 48 summaries of waves 1–2 the new matcher
 adds only real derived numbers and drops the false positives above.
 
+#### Waves 3–4 and passes 4–6 — overnight, 2026-10-08
+
+Wave 3 (pass 3): the audit ran in 23 of 24 runs (it ran in 20 in wave 2, fewer
+in wave 1), and lifeas, plateau and maleic recovered by fitting the runs the
+audit listed. Wave 4 (pass 4): **16/24** — Tier A, trend-fit and workflow each
+4/4 (fmuf and EuO pass for the first time; EuO fitted its paramagnetic side),
+hold-out 2/2 (copper, molecular AFM), tier-b 0/2, corpus-2026 2/8 (LiFeAs,
+benzene RF).
+
+Pass 4 added `audit`'s A_μ = ν₁ + ν₂ relation check, the `integral-scan`
+RESONANCE verdict for a clean windowed line, the whole lineless block in the
+`fit-series` note, gap-law verdict/rival/normal-state prompts in `trend`, and
+`NOTES SCANS:` in `survey` (scans stepped only in run notes). Pass 5: gap-law
+Tc seeded from the data (a 20 K default could pin σ_bg at zero); ratio words,
+drifts and resolution-element counts in the matcher; "do not reply yet" while
+scans are unfitted; survey scan lines list their runs (benzene-alc fitted 16 of
+76 runs twice from "(run A -> B)"). Pass 6: `integral-scan` names TF stamps a
+kilogauss integral contradicts (repolarisation, TCNQ ALC); `fourier` offers a
+two-line test for a tesla-field line and names MaxEnt as unavailable; `wizard`
+names a component at twice that line a harmonic; a poor whole-scan resonance
+fit prints window commands; `COMPARE` sets one line resolved in two scans side
+by side with which is broader; `audit` prints the commands for each unfitted
+scan. Rejected after replaying it on the stored series of waves 1–3: a
+"recipe overreaches" note (it fired only on cases that already passed).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
