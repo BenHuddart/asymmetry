@@ -64,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error", "three times broader"), drifts ("drifted by about 3 K") and
   resolution-element counts, and, while a surveyed scan is unfitted, says not
   to reply yet.
+- **``trend`` names a change of relaxation shape** in a series fitted with
+  differently shaped terms, when the relaxing amplitude moves from one shape to
+  the other between the scan's ends.
 - **Gap-law trend fits ask for a verdict.** ``trend --model SC_*`` asks
   whether the law describes σ(T), prints the ready ``SC_DWave`` comparison
   after ``SC_SWave``, and, when ``--xmax`` leaves fewer than two normal-state

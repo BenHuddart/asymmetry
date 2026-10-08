@@ -992,6 +992,12 @@ fitted to the same column coexist instead of one overwriting the other, and
 draws the curve over the points it rests on. On the simulated scan, whose rate
 was generated as 0.10 + 0.004 T:
 
+For a series fitted with differently shaped relaxation terms (an
+``Exponential`` beside a ``Gaussian``), ``trend`` notes when the relaxing
+amplitude — counting only terms whose rate stands above its error — moves
+from one shape to the other between the scan's ends, and asks for that change
+of shape to be reported.
+
 After a superconducting gap-law fit (``SC_SWave``, ``SC_DWave`` and the other
 ``SC_*`` σ(T) laws), ``trend`` asks for an explicit verdict — does the law
 describe σ(T), judged by χ²\ :sub:`r` and the trend plot — and after

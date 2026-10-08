@@ -370,6 +370,7 @@ def _render(
                 *readings,
                 *_law_hints(series["name"], trend, series["free_params"]),
                 *_doublet_hint(series, trend),
+                *_weight_shift(series, trend),
             ]
         )
     if csv_path is not None:
@@ -715,6 +716,63 @@ def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
         f"--expression '{two_line}'{initial}, then asymmetry fit <folder> --run "
         f"{coldest['key']} --recipe two-line."
     ]
+
+
+#: The share of the relaxing amplitude one term must gain or lose between the
+#: scan's two ends before the relaxation is called a different shape.
+_WEIGHT_SHIFT = 0.5
+
+
+def _weight_shift(series: dict[str, Any], trend) -> list[str]:
+    """A NOTE when the relaxing amplitude moves between differently shaped terms along the scan."""
+    from asymmetry.core.fitting.composite import CompositeModel
+    from asymmetry.core.workflow.workdir import DERIVED_SERIES_KINDS
+
+    terms = series["expression"].split(" + ")
+    if series["kind"] in DERIVED_SERIES_KINDS or any("*" in term for term in terms):
+        return []
+    model = CompositeModel.from_expression(series["expression"])
+    # (shape, amplitude, rate) per relaxing term: a term whose rate is zero
+    # within its error relaxes nothing, whatever amplitude it carries.
+    shaped = [
+        (
+            component.name,
+            mapping["A"],
+            next(name for local, name in mapping.items() if local != "A"),
+        )
+        for component, mapping in zip(model.components, model.parameter_mapping(), strict=True)
+        if component.name != "Constant" and "A" in mapping and len(mapping) == 2
+    ]
+    if len({shape for shape, _, _ in shaped}) < 2:
+        return []
+    columns = [name for _, amp, rate in shaped for name in (amp, rate, f"{rate}_err")]
+    rows = [row for row in trend.rows if all(row[name] is not None for name in columns)]
+    if len(rows) < 4:
+        return []
+    end = max(2, len(rows) // 4)
+
+    def share(block: list[dict[str, Any]], shape: str) -> float:
+        weights = {
+            amp: sum(abs(row[amp]) for row in block if row[rate] > 2.0 * row[f"{rate}_err"])
+            for _, amp, rate in shaped
+        }
+        total = sum(weights.values())
+        return (
+            sum(weights[amp] for name, amp, _ in shaped if name == shape) / total if total else 0.0
+        )
+
+    for shape in dict.fromkeys(name for name, _, _ in shaped):
+        low, high = share(rows[:end], shape), share(rows[-end:], shape)
+        if abs(high - low) >= _WEIGHT_SHIFT:
+            first, last = rows[end - 1]["x"], rows[-end]["x"]
+            return [
+                f"NOTE: the relaxation changes shape along the scan: the {shape} terms carry "
+                f"{low:.0%} of the relaxing amplitude over the first {end} runs ({trend.order_key} "
+                f"up to {first:g}) and {high:.0%} over the last {end} (from {last:g}). Report that "
+                f"change of shape and where it happens, whatever the flags say about the "
+                f"individual terms."
+            ]
+    return []
 
 
 def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:

@@ -3382,3 +3382,30 @@ def test_a_wizard_component_at_twice_a_tesla_line_is_named_a_harmonic() -> None:
     # Two lines near each other, or a low-field pair, are not a harmonic.
     assert _harmonic_pair([813.6, 813.5]) is None
     assert _harmonic_pair([1.36, 2.72]) is None
+
+
+def test_relaxing_amplitude_moving_between_shapes_is_named() -> None:
+    from asymmetry.cli.commands.trend import _weight_shift
+    from asymmetry.core.workflow.series import TrendTable
+
+    names = ["A_1", "Lambda", "A_2", "sigma"]
+    columns = ["key", "x", *[c for n in names for c in (n, f"{n}_err")], "flags"]
+
+    def row(t: float, a1: float, lam: float, a2: float, sig: float) -> dict:
+        values = dict(zip(names, (a1, lam, a2, sig), strict=True))
+        return (
+            {"key": str(int(t)), "x": t, "flags": []} | values | {f"{n}_err": 0.05 for n in names}
+        )
+
+    # Cold: an exponential carries the relaxation; warm: its rate is zero and a
+    # Gaussian relaxes — a change of shape, whatever the amplitudes alone say.
+    rows = [row(t, 10.0, 3.0, 4.0, 0.5) for t in (10, 20, 30, 40)] + [
+        row(t, 10.0, 0.0, 15.0, 0.2) for t in (50, 60, 70, 80)
+    ]
+    series = {"kind": "series", "expression": "Exponential + Gaussian + Constant"}
+    (note,) = _weight_shift(series, TrendTable("temperature", columns, rows))
+    assert note.startswith("NOTE: the relaxation changes shape along the scan: the Exponential")
+    assert "71% of the relaxing amplitude over the first 2 runs" in note
+    # One shape throughout says nothing.
+    flat = [row(t, 10.0, 3.0, 4.0, 0.5) for t in range(10, 90, 10)]
+    assert _weight_shift(series, TrendTable("temperature", columns, flat)) == []
