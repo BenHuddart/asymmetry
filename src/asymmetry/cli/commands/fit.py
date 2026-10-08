@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 from typing import Any
 
@@ -83,11 +84,17 @@ def run(args: argparse.Namespace) -> None:
 
     pair = close_pair(result["parameters"]) if result["success"] else None
     if pair is not None:
+        errors = [
+            result["uncertainties"][name]
+            for name, value in result["parameters"].items()
+            if name.split("_")[0] == "frequency" and abs(value) in pair
+        ]
         print(
-            f"NOTE: this fit holds two lines, at {pair[1]:.6g} and {pair[0]:.6g} MHz. A split "
-            f"below the FFT resolution is still two lines: compare this chi2_red with the "
-            f"one-line fit's, and if it is lower report both frequencies and amplitudes, not a "
-            f"single line."
+            f"NOTE: this fit holds two lines, at {pair[1]:.6g} and {pair[0]:.6g} MHz, "
+            f"{pair[1] - pair[0]:.4g} ± {math.hypot(*errors):.2g} MHz apart. A split below the "
+            f"FFT resolution is still two lines: compare this chi2_red with the one-line fit's, "
+            f"and if it is lower report both frequencies, their separation and amplitudes, not "
+            f"a single line."
         )
     note = window_note(workdir, [args.run])
     if note is not None:
