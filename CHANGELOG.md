@@ -84,6 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The fit wizard no longer prints a false ``AsymmetryScaleWarning``** ("seeds
+  look fraction-scale") for its constant-only baseline and resolution probes on
+  percent-scale data: a seeded curve flat across the window has no amplitude
+  scale to mismatch.
+
 - **`asymmetry audit` catches more arithmetic written into a summary.** A
   number after a change verb's "by" ("falls by about 0.03 MHz") or an
   agreement's "to" ("agree with the survey lines to about 0.02 MHz"), a number
