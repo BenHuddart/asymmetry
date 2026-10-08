@@ -40,9 +40,6 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def run(args: argparse.Namespace) -> None:
     """Print each surveyed scan no fit covers, then each unverified number with its line."""
-    from asymmetry.core.workflow.survey import ScanGroup
-    from asymmetry.core.workflow.workdir import WorkDir
-
     draft = Path(args.draft)
     if not draft.is_file():
         raise UserError(f"No draft at {draft}.")
@@ -66,31 +63,7 @@ def run(args: argparse.Namespace) -> None:
     untested = _untested_doublets(roots)
     untrended = _untrended_series(roots, log_text)
     dips = _unfitted_dips(roots)
-    # Run numbers identify runs only within one work directory's folder, so each
-    # survey is held against its own directory's fits, calibrators and lines.
-    surveyed = [
-        (workdir.read_survey(), workdir.fitted_runs(), workdir.alpha_calibration_runs())
-        for workdir in (WorkDir(root) for root in roots)
-        if workdir.survey_path.is_file()
-    ]
-    unfitted = [
-        _UnfittedScan(
-            survey["folder"],
-            scan,
-            sorted(set(scan.runs) - fitted),
-            calibration,
-            {int(run["run_number"]) for run in survey["runs"] if run["precession"] == "none"},
-        )
-        for survey, fitted, calibration in surveyed
-        for scan in (ScanGroup(**entry) for entry in survey["scans"])
-        if set(scan.runs) - fitted
-    ]
-    unfitted_notes = [
-        (survey["folder"], scan, sorted(set(scan["runs"]) - fitted))
-        for survey, fitted, _ in surveyed
-        for scan in survey["notes_scans"]
-        if set(scan["runs"]) - fitted
-    ]
+    unfitted, unfitted_notes = unfitted_scans(roots)
 
     if args.json:
         emit_json(
@@ -173,11 +146,15 @@ def run(args: argparse.Namespace) -> None:
         )
         return
     if not found:
+        # Agents retype a passed draft and add to it; the text to send is printed whole.
         print(
             f"No unprinted numbers found in {draft}. Now send its text as your whole final "
-            f"message, starting at its title — the user sees neither this output nor the "
-            f"file, and the reply says nothing about this check."
+            f"message: copy everything between the two marker lines below exactly — do not "
+            f"retype, shorten or add to it (edit the file and audit again instead). The user "
+            f"sees neither this output nor the file, and the reply says nothing about this "
+            f"check."
         )
+        print(f"{_REPLY_MARK} BEGIN {_REPLY_MARK}\n{text.strip()}\n{_REPLY_MARK} END {_REPLY_MARK}")
         return
     print(
         f"{len(found)} number(s) in {draft} appear in no logged command output — "
@@ -195,6 +172,9 @@ def run(args: argparse.Namespace) -> None:
         )
 
 
+#: The marker framing the passed draft, which the reply copies.
+_REPLY_MARK = "-----"
+
 #: A scan of at most this many runs is listed on one shared line: a setpoint's
 #: two or three fields, a calibration pair — rarely the experiment's question.
 _SHORT_SCAN_RUNS = 3
@@ -208,6 +188,60 @@ class _UnfittedScan(NamedTuple):
     runs: list[int]
     calibration: set[int]
     lineless: set[int]
+
+
+def unfitted_scans(
+    roots: list[Path],
+) -> tuple[list[_UnfittedScan], list[tuple[str, dict, list[int]]]]:
+    """The surveyed scans, and the scans the run notes define, with runs no fit holds."""
+    from asymmetry.core.workflow.survey import ScanGroup
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    # Run numbers identify runs only within one work directory's folder, so each
+    # survey is held against its own directory's fits, calibrators and lines.
+    surveyed = [
+        (workdir.read_survey(), workdir.fitted_runs(), workdir.alpha_calibration_runs())
+        for workdir in (WorkDir(root) for root in roots)
+        if workdir.survey_path.is_file()
+    ]
+    unfitted = [
+        _UnfittedScan(
+            survey["folder"],
+            scan,
+            sorted(set(scan.runs) - fitted),
+            calibration,
+            {int(run["run_number"]) for run in survey["runs"] if run["precession"] == "none"},
+        )
+        for survey, fitted, calibration in surveyed
+        for scan in (ScanGroup(**entry) for entry in survey["scans"])
+        if set(scan.runs) - fitted
+    ]
+    unfitted_notes = [
+        (survey["folder"], scan, sorted(set(scan["runs"]) - fitted))
+        for survey, fitted, _ in surveyed
+        for scan in survey["notes_scans"]
+        if set(scan["runs"]) - fitted
+    ]
+    return unfitted, unfitted_notes
+
+
+def still_unfitted(root: Path) -> str | None:
+    """One line naming the measurements in *root* no fit holds yet, for a result command's close."""
+    unfitted, unfitted_notes = unfitted_scans([root])
+    names = [
+        f"{entry.scan.instrument} {range_text(entry.runs)} ({entry.scan.axis})"
+        for entry in unfitted
+        if len(entry.scan.runs) > _SHORT_SCAN_RUNS
+    ] + [
+        f"{scan['instrument']} {range_text(runs)} ({scan['quantity']})"
+        for _, scan, runs in unfitted_notes
+    ]
+    if not names:
+        return None
+    return (
+        f"Still unfitted: {len(names)} measurement(s) the survey found — {'; '.join(names)}. "
+        f"Fit each before you write the summary: the audit holds the reply until they are."
+    )
 
 
 def _unfitted_report(unfitted: list[_UnfittedScan]) -> str:

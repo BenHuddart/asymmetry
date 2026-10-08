@@ -206,9 +206,14 @@ def _logged(args: argparse.Namespace, argv: list[str] | None) -> None:
         args.func(args)
     finally:
         sys.stdout = tee._stream
-    if args.command in _RESULT_COMMANDS and not args.json:
-        print(AUDIT_STEP)
     root = Path(args.workdir or WORKDIR_NAME)
+    if args.command in _RESULT_COMMANDS and not args.json:
+        from asymmetry.cli.commands.audit import still_unfitted
+
+        remaining = still_unfitted(root)
+        if remaining is not None:
+            print(remaining)
+        print(AUDIT_STEP)
     if root.is_dir():
         command = " ".join(shlex.quote(part) for part in (sys.argv[1:] if argv is None else argv))
         with (root / OUTPUT_LOG).open("a", encoding="utf-8") as log:

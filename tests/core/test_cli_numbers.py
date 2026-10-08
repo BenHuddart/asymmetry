@@ -145,7 +145,10 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     )
     cold, warm = ZF_RUNS[:3], ZF_RUNS[3:]
     series = ["--recipe", "relax", "--order", "temperature"]
+    capsys.readouterr()
     cli.main(["fit-series", folder, "--runs", ",".join(map(str, cold)), *series, "--name", "cold"])
+    # A result command closes by naming what is still unfitted, before the audit step.
+    assert "Still unfitted: 1 measurement(s)" in capsys.readouterr().out
     draft = tmp_path / "summary.md"
     # The folder's files carry deadtimes this reduction left off, which a draft must say.
     draft.write_text("A draft; the reduction left deadtime off.\n", encoding="utf-8")
@@ -156,7 +159,7 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     assert scan["unfitted_runs"] == list(warm)
 
     cli.main(["fit-series", folder, "--runs", ",".join(map(str, warm)), *series, "--name", "warm"])
-    capsys.readouterr()
+    assert "Still unfitted" not in capsys.readouterr().out
     cli.main(["audit", str(draft)])
     # Every scan is fitted, but neither series has been read with trend yet.
     assert "Series no trend command has read: cold" in capsys.readouterr().out
@@ -164,7 +167,10 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
         cli.main(["trend", folder, "--series", name])
     capsys.readouterr()
     cli.main(["audit", str(draft)])
-    assert "Now send its text" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Now send its text" in out
+    # The passed text is printed whole, for the reply to copy rather than retype.
+    assert "----- BEGIN -----\nA draft; the reduction left deadtime off.\n----- END -----" in out
 
 
 def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> None:

@@ -1140,7 +1140,12 @@ against one printed in G, an error in parentheses after its value
 "2× LorentzianLCR" are a convention, a threshold and a count, not results. Every command
 that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
 ``integral-scan``, ``fourier``) ends its text output with the step: write
-``summary.md`` and run ``asymmetry audit summary.md`` before replying. What it catches is the arithmetic an
+``summary.md`` and run ``asymmetry audit summary.md`` before replying, preceded
+by a "Still unfitted:" line naming the surveyed measurements no fit holds yet.
+A clean audit prints the passed draft between ``----- BEGIN -----`` and
+``----- END -----`` lines for the reply to copy whole, since agents that retype
+it add unaudited text; a report listing only numbers ends by asking for
+another audit before replying. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions ("which
 would be a field of about 21 G", "corresponds to roughly 16 G"),
 differences between printed columns — which the agent skill's number rule

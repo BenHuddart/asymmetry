@@ -2036,6 +2036,25 @@ When the audit lists numbers and holds nothing else, it now ends "Then run
 audit again: reply only once it prints 'No unprinted numbers found'" — about
 one run a wave replied after an audit that still listed numbers.
 
+#### Wave 17 and pass 6
+
+Wave 17 (passes 2–3) — Tier A and trend-fit 7/8 (fmuf screened with
+`zf-static-magnetism`, which leaves out the F-μ-F family; it had passed every
+wave from 4 to 16, and recognising the sample by name would put a corpus
+sample name in the code), tier-b and workflow 8/8 (copper's slip gone, AFM a
+second straight pass). Rounding false positives fell (about 9 in the second
+group against many in wave 16), and the new catches fired ("1.5σ", "about
+2 errors", "1.0 AICc behind") and were fixed by the agents.
+
+Pass 6, for the two habits that remain: stopping early and retyping. Every
+result command now ends, before the audit step, with "Still unfitted:" and the
+surveyed measurements no fit holds (the audit's own list). Replayed on the
+final state of waves 16–17 it names something only in the three runs that
+stopped short (maleic and TRSB in wave 16, basics in wave 17, which stopped
+after six commands without an audit). A clean audit prints the passed draft
+between marker lines for the reply to copy whole: six of eight replies in one
+wave-17 group were retyped, one with an unaudited garbled clause.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
