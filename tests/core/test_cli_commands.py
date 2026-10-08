@@ -3372,7 +3372,7 @@ def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
     assert "this one is narrower and lower in field" in note
     # Within two combined errors there is no direction to report.
     (same,) = _line_comparisons(fit(15390.0, 1150.0, 1.0), {"cold": cold})
-    assert "of the same width and at the same field" in same
+    assert "of a width these errors cannot tell apart and at a field these errors" in same
 
 
 def test_a_wizard_component_at_twice_a_tesla_line_is_named_a_harmonic() -> None:

@@ -479,7 +479,11 @@ def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
                     f"{w2_err:.3g}), errors scaled by √chi2_red, are one line in two scans: this "
                     f"one is "
                     + direction(
-                        width, width_err, w2, w2_err, ("broader", "narrower", "of the same width")
+                        width,
+                        width_err,
+                        w2,
+                        w2_err,
+                        ("broader", "narrower", "of a width these errors cannot tell apart"),
                     )
                     + " and "
                     + direction(
@@ -487,7 +491,11 @@ def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
                         centre_err,
                         c2,
                         c2_err,
-                        ("higher in field", "lower in field", "at the same field"),
+                        (
+                            "higher in field",
+                            "lower in field",
+                            "at a field these errors cannot tell apart",
+                        ),
                     )
                     + ". Report both and that direction — a width or field changing between "
                     "conditions is the physics (motional narrowing, a changing coupling)."
