@@ -1797,6 +1797,25 @@ search), each a case that was already unreliable for Sonnet; no fail traced to
 an overnight line. The holds cost Sonnet 1–3 turns a case (13 `trend` calls on
 `fit-global` children in LLZ — fixed in pass 10).
 
+#### Waves 8–9 and passes 12–13 — 2026-10-08
+
+Wave 8 (pass 9): 19/24; wave 9 (pass 11): 17/24. Across waves 4–9 Haiku
+scores 16–20/24: Tier A, trend-fit and workflow pass almost every wave, and
+the misses rotate among basics, AFM, corannulene, TRSB, Sn and benzene ALC.
+In wave 9 AFM passed every physics Must for the first time (both pairs fitted,
+the harmonic rejected, MaxEnt named) and failed only on a hand-computed line
+separation.
+
+Pass 12: `fit` notes a fitted pair within 2 % is still two lines (AFM had
+fitted 813.601/813.542 MHz and reported one); `integral-scan`'s fit table
+gives fields and couplings their units (benzene RF quoted A_μ in gauss); window
+commands stay inside the scan. Pass 13: the audit restates its hold when it
+also lists numbers (basics and benzene ALC replied over unfitted scans because
+the hold printed only on the numbers-clean branch); the survey's TEMPERATURE
+note separates a block the apparatus could reach — a different measurement,
+never quoted at its setpoints (Sn, twice) — from an impossible reading;
+`fit`'s pair note prints the separation with its error.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
