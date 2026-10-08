@@ -71,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a different measurement, never quoted at its setpoints) from an impossible
   reading (the sensor); the audit restates its hold when it also lists numbers;
   ``integral-scan``'s off-range note no longer only says to widen the window.
+- **The skill's multi-group decline row** now says a many-group file is still
+  analysed through its default pair; only the joint or angular step is out of
+  scope (a Haiku run declined a whole 8-group HIFI folder).
 - **A green-red (RF) ``integral-scan`` names ``RFResonanceMuP``** instead of
   saying no hyperfine model exists, and ``fit``'s two-line note says to compare
   χ², not χ²ᵣ, with the degrees of freedom that make a small χ²ᵣ drop large.

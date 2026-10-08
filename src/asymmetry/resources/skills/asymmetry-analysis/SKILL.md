@@ -45,7 +45,7 @@ do it*, and stop without producing fit numbers.
 | Case | How the survey shows it |
 |---|---|
 | Count-domain fitting | You need per-detector counts with N₀ and a relaxation term, not asymmetry. `reduce` only produces asymmetry. |
-| Multi-group / orientation-resolved analysis | The run has many detector groups that must be fit together (angle-dependent Knight shift, crystal rotations). This CLI reduces one forward/backward pair at a time (`--pair` picks which). |
+| Multi-group / orientation-resolved analysis | The run has many detector groups that must be fit together (angle-dependent Knight shift, crystal rotations). This CLI reduces one forward/backward pair at a time (`--pair` picks which): a many-group file is still analysed through that pair — lines, shifts, widths — and only the joint or angular step is declined. |
 | Maximum-entropy spectra | `fourier` provides an FFT and peak table, not maximum entropy reconstruction. Do not describe its output as MaxEnt. |
 | Negative-muon (μ⁻) elemental analysis | Gamma spectra, elemental lines. Not asymmetry data. |
 | Rotating-reference-frame analysis | Titles or notes naming a rotating reference frame; data demodulated at a reference frequency. (An RF-*resonance* field scan is in scope: Step 5b.) |
