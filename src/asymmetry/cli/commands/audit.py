@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import json
+import re
+import shlex
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
-from asymmetry.cli._numbers import unsupported_laws, unverified_numbers
+from asymmetry.cli._numbers import unstated, unsupported_laws, unverified_numbers
 from asymmetry.cli._output import UserError, emit_json, payload
-from asymmetry.cli._runs import range_text
+from asymmetry.cli._runs import range_text, run_spec
 from asymmetry.cli._workdir import OUTPUT_LOG, WORKDIR_NAME
 
 if TYPE_CHECKING:
@@ -58,15 +61,35 @@ def run(args: argparse.Namespace) -> None:
     text = draft.read_text(encoding="utf-8")
     found = unverified_numbers(text, log_text)
     laws = unsupported_laws(text, log_text)
-    workdirs = [WorkDir(root) for root in roots]
-    fitted = set().union(*(workdir.fitted_runs() for workdir in workdirs))
-    calibration = set().union(*(workdir.alpha_calibration_runs() for workdir in workdirs))
-    surveys = [workdir.read_survey() for workdir in workdirs if workdir.survey_path.is_file()]
+    relations = unstated(text, log_text)
+    unpaired = _correlations_without_lines(roots)
+    untested = _untested_doublets(roots)
+    untrended = _untrended_series(roots, log_text)
+    dips = _unfitted_dips(roots)
+    # Run numbers identify runs only within one work directory's folder, so each
+    # survey is held against its own directory's fits, calibrators and lines.
+    surveyed = [
+        (workdir.read_survey(), workdir.fitted_runs(), workdir.alpha_calibration_runs())
+        for workdir in (WorkDir(root) for root in roots)
+        if workdir.survey_path.is_file()
+    ]
     unfitted = [
-        (survey["folder"], scan, sorted(set(scan.runs) - fitted))
-        for survey in surveys
+        _UnfittedScan(
+            survey["folder"],
+            scan,
+            sorted(set(scan.runs) - fitted),
+            calibration,
+            {int(run["run_number"]) for run in survey["runs"] if run["precession"] == "none"},
+        )
+        for survey, fitted, calibration in surveyed
         for scan in (ScanGroup(**entry) for entry in survey["scans"])
         if set(scan.runs) - fitted
+    ]
+    unfitted_notes = [
+        (survey["folder"], scan, sorted(set(scan["runs"]) - fitted))
+        for survey, fitted, _ in surveyed
+        for scan in survey["notes_scans"]
+        if set(scan["runs"]) - fitted
     ]
 
     if args.json:
@@ -74,9 +97,13 @@ def run(args: argparse.Namespace) -> None:
             payload(
                 logs=[str(log) for log in logs],
                 unfitted_scans=[
-                    scan.to_dict() | {"unfitted_runs": runs} for _, scan, runs in unfitted
+                    entry.scan.to_dict() | {"unfitted_runs": entry.runs} for entry in unfitted
+                ],
+                unfitted_notes_scans=[
+                    scan | {"unfitted_runs": runs} for _, scan, runs in unfitted_notes
                 ],
                 unsupported_laws=[{"law": law, "phrase": phrase} for law, phrase in laws],
+                unstated=relations,
                 unverified=[
                     {"text": entry.text, "line_number": entry.line_number, "line": entry.line}
                     for entry in found
@@ -85,25 +112,72 @@ def run(args: argparse.Namespace) -> None:
         )
         return
     if unfitted:
-        print(_unfitted_report(unfitted, calibration))
+        print(_unfitted_report(unfitted))
+    if unfitted_notes:
+        print(
+            "Scans the run notes define (survey NOTES SCANS) with runs no fit holds — fit each "
+            "against its own quantity with the fit-series command the survey printed:"
+        )
+        for folder, scan, runs in unfitted_notes:
+            print(
+                f"  {scan['instrument']} {range_text(scan['runs'])}, {scan['source']} "
+                f'"{scan["template"]}" ({scan["quantity"]}): not fitted: {range_text(runs)}'
+            )
+            values = dict(zip(scan["runs"], scan["values"], strict=True))
+            x = " --x " + ",".join(f"{run}={values[run]:g}" for run in runs)
+            print("\n".join(_fit_commands(folder, runs, scan["quantity"], start=runs[0], x=x)))
     for law, phrase in laws:
         print(
             f"The draft says {phrase!r}, but every {law} fit this session printed LAW NOT "
             f"ESTABLISHED: describe that trend in plain words instead."
         )
-    if not found and not laws:
-        when = (
-            "Once every scan above is fitted (and any run that cannot be is accounted for in it), send"
-            if unfitted
-            else "Now send"
-        )
+    for message in relations:
+        print(message)
+    for root, run in unpaired:
         print(
-            f"No unprinted numbers found in {draft}. {when} its text as your whole final "
-            f"message, starting at its title — the user sees neither this output nor the "
-            f"file, and the reply says nothing about this check."
+            f"Run {run} in {root} has a correlation spectrum but no plain transform: its peak "
+            f"is the sum of two lines that only the plain FFT shows. Run asymmetry fourier "
+            f"<folder> --run {run} --window none --workdir {root} and report those lines."
+        )
+    for root, run, frequency in untested:
+        print(
+            f"Run {run} in {root}: fourier found a line at {frequency:.6g} MHz in a field of "
+            f"tesla order and printed a two-line test, but no fit here has two lines. Run that "
+            f"test (asymmetry fourier <folder> --run {run} --window none --workdir {root} prints "
+            f"it) before calling the line single."
+        )
+    if untrended:
+        print(
+            "Series no trend command has read: "
+            + ", ".join(f"{name} ({root})" for root, name in untrended)
+            + ". Run asymmetry trend <folder> --series NAME --workdir ROOT on each: its table "
+            "and notes say what the series shows (a shift, a change of shape, a law to fit)."
+        )
+    for root, name, window in dips:
+        print(
+            f"integral-scan {name} ({root}) announced another dip near {window['centre']:g} that no "
+            f"fit holds: fit it with the same options and --model 'LorentzianLCR + Linear' "
+            f"--xmin {window['x_min']:g} --xmax {window['x_max']:g} --workdir {root}, and report "
+            f"what it shows."
+        )
+    # A short scan (a calibration pair, a setpoint's two or three fields) is
+    # listed for the summary to account for; only a longer one holds the reply.
+    held_scans = [entry for entry in unfitted if len(entry.scan.runs) > _SHORT_SCAN_RUNS]
+    held = held_scans or unfitted_notes or laws or relations or unpaired or untested
+    held = held or untrended or dips
+    if not found and held:
+        print(
+            f"No unprinted numbers found in {draft}, but do not reply yet: act on each item "
+            f"above (a measurement left unfitted or unread is a result missing from the "
+            f"summary), add what each shows to {draft}, and run audit again."
         )
         return
     if not found:
+        print(
+            f"No unprinted numbers found in {draft}. Now send its text as your whole final "
+            f"message, starting at its title — the user sees neither this output nor the "
+            f"file, and the reply says nothing about this check."
+        )
         return
     print(
         f"{len(found)} number(s) in {draft} appear in no logged command output — "
@@ -112,6 +186,8 @@ def run(args: argparse.Namespace) -> None:
     )
     for entry in found:
         print(f"  line {entry.line_number}: {entry.text!r} in: {entry.line}")
+    if held:
+        print("And do not reply yet: act on each item listed above as well, then run audit again.")
 
 
 #: A scan of at most this many runs is listed on one shared line: a setpoint's
@@ -119,10 +195,17 @@ def run(args: argparse.Namespace) -> None:
 _SHORT_SCAN_RUNS = 3
 
 
-def _unfitted_report(
-    unfitted: list[tuple[str, ScanGroup, list[int]]],
-    calibration: set[int],
-) -> str:
+class _UnfittedScan(NamedTuple):
+    """A surveyed scan with runs no fit holds, and its own directory's calibrators and lines."""
+
+    folder: str
+    scan: ScanGroup
+    runs: list[int]
+    calibration: set[int]
+    lineless: set[int]
+
+
+def _unfitted_report(unfitted: list[_UnfittedScan]) -> str:
     """The surveyed scans whose runs no stored fit holds, with what to do about each."""
     from asymmetry.cli.commands.survey import scan_label
 
@@ -130,13 +213,18 @@ def _unfitted_report(
         "Scans the survey found with runs that no fit, fit-series, fit-global or integral-scan "
         "fitted. Each scan is a measurement:"
     ]
-    long_scans = [entry for entry in unfitted if len(entry[1].runs) > _SHORT_SCAN_RUNS]
-    listed = {run for _, _, runs in long_scans for run in runs}
+    long_scans = [entry for entry in unfitted if len(entry.scan.runs) > _SHORT_SCAN_RUNS]
+    listed = {(entry.folder, run) for entry in long_scans for run in entry.runs}
     short = sorted(
-        {run for _, scan, runs in unfitted if len(scan.runs) <= _SHORT_SCAN_RUNS for run in runs}
-        - listed
+        {
+            run
+            for entry in unfitted
+            if len(entry.scan.runs) <= _SHORT_SCAN_RUNS
+            for run in entry.runs
+            if (entry.folder, run) not in listed
+        }
     )
-    for folder, scan, runs in long_scans:
+    for folder, scan, runs, calibration, lineless in long_scans:
         lines.append(f"  {scan_label(scan)}")
         calibrators = sorted(calibration & set(runs))
         verdict = (
@@ -148,28 +236,145 @@ def _unfitted_report(
                 f"of each sample that form a measurement, or say in the summary why not."
             )
         elif calibrators and scan.axis == "temperature":
-            start = calibrators[0]
             lines.append(
                 f"      {verdict}. Alpha was measured on {range_text(calibrators)}, and that "
                 f"does not account for the scan: its runs are a temperature scan of the line's "
                 f"width and envelope shape, which fit-series weighs run by run. Fit it:"
             )
-            lines.append(f"        asymmetry wizard {folder} --run {start}")
-            lines.append(
-                f"        asymmetry fit-series {folder} --runs {','.join(map(str, runs))} "
-                f"--recipe wizard-{start} --order temperature --start {start}"
-            )
+            lines.extend(_fit_commands(folder, runs, scan.axis, start=calibrators[0]))
         else:
             lines.append(
                 f"      {verdict}. Fit it — a scan crossing a transition needs a series on each "
-                f"side — or say in the summary which runs cannot be fitted and why."
+                f"side. A run counts once a fit was tried on it, failed or not: a survey 'none' "
+                f"means no Fourier line, not no signal, so fit it before calling it unusable "
+                f"and report what the fit shows:"
             )
+            if set(runs) <= lineless:
+                lines.append(
+                    "        The survey finds no line in these runs, so a precession model does not "
+                    "describe them: fit their relaxation."
+                )
+                lines.append(
+                    f"        asymmetry recipe {shlex.quote(folder)} --expression 'Exponential + "
+                    f"Constant' --run {runs[0]} --name relax-{runs[0]}"
+                )
+                lines.append(
+                    f"        asymmetry fit-series {shlex.quote(folder)} --runs {run_spec(runs)} "
+                    f"--recipe relax-{runs[0]} --order {scan.axis} --name relax-{runs[0]}"
+                )
+            elif scan.axis == "field" and scan.geometry != "TF":
+                lines.append(
+                    f"        asymmetry integral-scan {shlex.quote(folder)} --runs "
+                    f"{run_spec(runs)} --plot  (then --model for the curve it shows)"
+                )
+            else:
+                lines.extend(_fit_commands(folder, runs, scan.axis, start=runs[0]))
     if short:
         lines.append(
             f"  and short scans of 2-{_SHORT_SCAN_RUNS} runs, not fitted: {range_text(short)} "
             f"— fit them where they bear on the question."
         )
     return "\n".join(lines)
+
+
+def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
+    """``(work directory, run, MHz)`` for a tesla-field line no two-line fit there tested.
+
+    A fit tests the pair only when two of its frequencies lie within
+    :data:`~asymmetry.cli.commands.fourier.PAIR_SPLIT` of each other; a wizard recipe whose second line is the
+    first's harmonic does not.
+    """
+    from asymmetry.cli.commands.fourier import close_pair, tesla_field_lines
+
+    found = []
+    for root in roots:
+        fits = [
+            json.loads(path.read_text(encoding="utf-8"))["fit"]
+            for path in (root / "fits").glob("*.json")
+        ]
+        fitted = [fit["parameters"] for fit in fits if fit["success"]] + [
+            row
+            for path in (root / "series").glob("*.json")
+            for row in json.loads(path.read_text(encoding="utf-8")).get("trend", {"rows": []})[
+                "rows"
+            ]
+            if "failed" not in row["flags"]
+        ]
+        if any(close_pair(values) is not None for values in fitted):
+            continue
+        for path in sorted((root / "spectra").glob("*.json")):
+            spectrum = json.loads(path.read_text(encoding="utf-8"))
+            found.extend(
+                (root, int(spectrum["run"]), peak["frequency_mhz"])
+                # Spectra stored before field_gauss was recorded carry no field.
+                for peak in tesla_field_lines({"field_gauss": None} | spectrum)[:1]
+            )
+    return found
+
+
+def _unfitted_dips(roots: list[Path]) -> list[tuple[Path, str, dict]]:
+    """``(work directory, scan, window)`` for each dip a scan's fit announced and no fit holds."""
+    found = []
+    for root in roots:
+        fits = {
+            path.stem: fit
+            for path in sorted((root / "scans").glob("*.json"))
+            if (fit := json.loads(path.read_text(encoding="utf-8"))["fit"]) is not None
+        }
+        centres = [
+            value
+            for fit in fits.values()
+            if fit["success"]
+            for name, value in fit["parameters"].items()
+            if name.split("_")[0] == "B0"
+        ]
+        found.extend(
+            (root, name, window)
+            for name, fit in fits.items()
+            for window in fit["next_dip_windows"]
+            if not any(window["x_min"] <= centre <= window["x_max"] for centre in centres)
+        )
+    return found
+
+
+def _untrended_series(roots: list[Path], log_text: str) -> list[tuple[Path, str]]:
+    """``(work directory, name)`` for each ``fit-series`` series no logged ``trend`` command read."""
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    return [
+        (root, name)
+        for root in roots
+        for name in WorkDir(root).fit_series()
+        if re.search(
+            rf"^\$ asymmetry trend .*--series {re.escape(name)}(?:\s|$)",
+            log_text,
+            re.MULTILINE,
+        )
+        is None
+    ]
+
+
+def _correlations_without_lines(roots: list[Path]) -> list[tuple[Path, int]]:
+    """``(work directory, run)`` for each correlation spectrum without a plain one beside it."""
+    found = []
+    for root in roots:
+        axes: dict[str, set[int]] = {"hyperfine_coupling": set(), "frequency": set()}
+        for path in sorted((root / "spectra").glob("*.json")):
+            spectrum = json.loads(path.read_text(encoding="utf-8"))
+            axes[spectrum["axis"]].add(int(spectrum["run"]))
+        found.extend((root, run) for run in sorted(axes["hyperfine_coupling"] - axes["frequency"]))
+    return found
+
+
+def _fit_commands(
+    folder: str, runs: list[int], order: str, *, start: int, x: str = ""
+) -> list[str]:
+    """The ``wizard`` and ``fit-series`` commands that fit *runs* as one series."""
+    return [
+        f"        asymmetry wizard {shlex.quote(folder)} --run {start}",
+        f"        asymmetry fit-series {shlex.quote(folder)} --runs {run_spec(runs)} "
+        f"--recipe wizard-{start} --order {order}{x} --start {start}",
+    ]
 
 
 __all__ = ["add_parser", "run"]

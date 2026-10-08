@@ -81,8 +81,10 @@ from dataclasses import dataclass, replace
 from typing import Any, Generic, TypeVar
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.engine import AsymmetryScaleWarning, FitEngine
+from asymmetry.core.fitting.engine import AsymmetryScaleWarning, FitEngine, FitResult
+from asymmetry.core.fitting.member_quality import assess_member_quality
 from asymmetry.core.fitting.models import LINEAR_PARAM_ROLE_NAMES
 from asymmetry.core.fitting.parameters import ParameterSet, split_parameter_name
 from asymmetry.core.fitting.result_summary import fit_result_summary
@@ -128,6 +130,9 @@ def amplitude_exceeds_data(dataset: MuonDataset, parameters: Mapping[str, float]
 
 
 FREQUENCY_UNRESOLVED = "frequency_unresolved"
+
+#: Flags saying a run's result does not describe that run.
+UNDESCRIBED_FLAGS = frozenset({"failed", AMPLITUDE_EXCEEDS_DATA, FREQUENCY_UNRESOLVED})
 
 
 def frequency_unresolved(
@@ -266,32 +271,23 @@ def envelope_change(trend: TrendTable) -> str | None:
     )
 
 
-#: Flags that say a fit did not describe its run.
-_UNDESCRIBED = frozenset({"failed", FREQUENCY_UNRESOLVED, AMPLITUDE_EXCEEDS_DATA})
+def lineless_end(trend: TrendTable) -> list[dict[str, Any]]:
+    """The rows at one end of a precession scan where the survey found no line.
 
-
-def lineless_end(trend: TrendTable) -> list[str]:
-    """The keys of the runs at one end of a precession scan that hold no line to fit.
-
-    A block of at least two runs, at the start or the end of the scan, where the
-    survey found no line and the fit is flagged as not describing the run: the
-    other side of a transition, which the precession model cannot follow. The
-    longer block when both ends qualify; empty for a series that fits no
-    frequency.
+    The contiguous rows, at the start or the end of the scan, whose survey found
+    no line, when at least two and some other run holds one: the side of a
+    transition with no precession, which the precession model cannot describe
+    whatever its fit flags say. The longer block when both ends qualify; empty
+    for a series that fits no frequency.
     """
     if "survey_line_mhz" not in trend.columns:
         return []
-
-    def block(rows: list[dict[str, Any]]) -> list[str]:
-        keys: list[str] = []
-        for row in rows:
-            if row["survey_line_mhz"] is not None or not _UNDESCRIBED & set(row["flags"]):
-                break
-            keys.append(row["key"])
-        return keys
-
-    ends = [block(list(reversed(trend.rows)))[::-1], block(trend.rows)]
-    longest = max(ends, key=len)
+    lined = [row["survey_line_mhz"] is not None for row in trend.rows]
+    if True not in lined:
+        return []
+    head = trend.rows[: lined.index(True)]
+    tail = trend.rows[len(lined) - lined[::-1].index(True) :]
+    longest = max(tail, head, key=len)
     return longest if len(longest) >= 2 else []
 
 
@@ -581,6 +577,87 @@ def _workflow_flags(
     return sorted(flags)
 
 
+#: A relaxing term whose rate times the fitted window is below this (it falls by
+#: less than about 40 % across it, and the late bins carry little weight) is hard
+#: to tell from the constant beside it: the record fixes their sum and the
+#: initial slope A·λ, so χ² is nearly flat along A → +∞, λ → 0, A_bg → −∞, and
+#: a free fit runs off along that line.
+_SLOW_DECAY = 0.5
+
+#: The held fit replaces the free one when it costs χ² less than this many
+#: units of the free fit's χ²ᵣ: under 5σ for the one parameter dropped, so the
+#: data do not need the background the free fit ran off with.
+_UNNEEDED_CHI2 = 25.0
+
+
+def slow_relaxation_runaway(
+    model: CompositeModel, parameters: Mapping[str, float], record: MuonDataset, window_us: float
+) -> str | None:
+    """The free background a slow relaxing term ran off against, or ``None``.
+
+    A term counts when the fitted amplitudes exceed what the record holds, its
+    amplitude and the background have opposite signs, and its rate or width
+    times *window_us* is below :data:`_SLOW_DECAY`. The fit need not have
+    converged: a runaway often stops at the call limit.
+    """
+    if not amplitude_exceeds_data(record, parameters):
+        return None
+    kinds = model.parameter_kinds()
+    backgrounds = [name for name, kind in kinds.items() if kind is ParameterKind.BACKGROUND]
+    if len(backgrounds) != 1:
+        return None
+    background = parameters[backgrounds[0]]
+    for mapping in model.parameter_mapping():
+        # A mapping can name internal placeholders that are not parameters.
+        names = [name for name in mapping.values() if name in kinds and name in parameters]
+        amplitudes = [name for name in names if kinds[name] is ParameterKind.AMPLITUDE]
+        rates = [
+            name
+            for name in names
+            if kinds[name] in (ParameterKind.RATE, ParameterKind.STATIC_WIDTH)
+        ]
+        for amplitude in amplitudes:
+            if parameters[amplitude] * background < 0 and any(
+                abs(parameters[rate]) * window_us < _SLOW_DECAY for rate in rates
+            ):
+                return backgrounds[0]
+    return None
+
+
+def _held_background_fit(
+    record: MuonDataset,
+    recipe: FitRecipe,
+    model: CompositeModel,
+    free: FitResult,
+    start: ParameterSet,
+    background: str,
+) -> FitResult | None:
+    """*free* refitted with *background* held at zero, or ``None`` when that is no cure.
+
+    Kept only when it converges, its amplitudes fit inside the record, and the
+    data do not need the background (:data:`_UNNEEDED_CHI2`). Starts from
+    *free*'s values on *start*'s bounds and fixings.
+    """
+    start.update_values(_parameter_values(free.parameters))
+    start[background].value = 0.0
+    start[background].fixed = True
+    held = FitEngine().fit(record, model.function, start, t_min=recipe.t_min, t_max=recipe.t_max)
+    cured = held.success and not amplitude_exceeds_data(record, _parameter_values(held.parameters))
+    cost = held.chi_squared - free.chi_squared
+    return held if cured and cost < _UNNEEDED_CHI2 * free.reduced_chi_squared else None
+
+
+def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
+    return {parameter.name: float(parameter.value) for parameter in parameters}
+
+
+def _window_us(record: MuonDataset, recipe: FitRecipe) -> float:
+    """The span of the record a recipe fits (µs)."""
+    start = record.time[0] if recipe.t_min is None else recipe.t_min
+    end = record.time[-1] if recipe.t_max is None else recipe.t_max
+    return float(end - start)
+
+
 def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
     """Fit one run with *recipe* and summarise the result.
 
@@ -595,18 +672,26 @@ def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
     free parameters alongside.
     """
     record = _prepared(dataset, recipe)
+    model = recipe.model()
     result = FitEngine().fit(
-        record,
-        recipe.model().function,
-        recipe.parameter_set(),
-        t_min=recipe.t_min,
-        t_max=recipe.t_max,
+        record, model.function, recipe.parameter_set(), t_min=recipe.t_min, t_max=recipe.t_max
     )
+    background = slow_relaxation_runaway(
+        model, _parameter_values(result.parameters), record, _window_us(record, recipe)
+    )
+    held = (
+        None
+        if background not in recipe.free_parameter_names()
+        else _held_background_fit(record, recipe, model, result, recipe.parameter_set(), background)
+    )
+    if held is not None:
+        result = held
     summary = fit_result_summary(result)
     summary["quality_flags"] = _workflow_flags(record, summary, recipe.free_parameter_names())
     return {
         "run": int(dataset.run_number),
         "free_params": recipe.free_parameter_names(),
+        "background_held": held is not None,
         **summary,
     }
 
@@ -736,6 +821,26 @@ def fit_series(
             )
         )
 
+    held_runs: set[int] = set()
+    for run in runs:
+        background = slow_relaxation_runaway(
+            model,
+            _parameter_values(fitted[run].parameters),
+            records[run],
+            _window_us(records[run], recipe),
+        )
+        if background not in free_params:
+            continue
+        start = _run_parameter_set(recipe, model, records[run], global_params=global_params)
+        held = _held_background_fit(records[run], recipe, model, fitted[run], start, background)
+        if held is not None:
+            fitted[run] = held
+            # The series' collapse and outlier checks judged the free fit.
+            quality_by_run[run] = assess_member_quality(
+                held, extra_flags=("spurious_reseeded",) if run in reseeded else ()
+            )
+            held_runs.add(run)
+
     rival = rival_envelope_model(model)
     results: list[dict[str, Any]] = []
     for run in runs:
@@ -750,6 +855,7 @@ def fit_series(
                 "run": int(run),
                 "x": order[run],
                 "reseeded": run in reseeded,
+                "background_held": run in held_runs,
                 "member_quality": quality.to_payload(),
                 **summary,
                 **(
@@ -848,6 +954,8 @@ def build_trend_table(
 
 
 __all__ = [
+    "slow_relaxation_runaway",
+    "UNDESCRIBED_FLAGS",
     "AMPLITUDE_EXCEEDS_DATA",
     "AMPLITUDE_EXCESS_FACTOR",
     "ENVELOPE_MARGIN",

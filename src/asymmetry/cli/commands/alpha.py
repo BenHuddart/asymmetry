@@ -78,6 +78,7 @@ def run(args: argparse.Namespace) -> None:
     print(f"Run {estimate.run_number} ({path.name})")
     print(f"  alpha           : {estimate.alpha:.4f}")
     print(f"  method          : {estimate.method}")
+    print(f"  counts          : deadtime {settings.deadtime}, background {settings.background}")
     print(f"  forward group   : {estimate.forward_group}")
     print(f"  backward group  : {estimate.backward_group}")
     print(f"  calibration run : {'yes' if source is not None else 'no'} — {reason}")

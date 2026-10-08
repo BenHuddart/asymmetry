@@ -21,6 +21,7 @@ from asymmetry.core.fitting import (
     Parameter,
     ParameterSet,
 )
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.transform import compute_asymmetry
 
@@ -129,3 +130,46 @@ def test_fit_does_not_warn_on_matching_percent_seed() -> None:
 
     scale_warnings = [w for w in caught if issubclass(w.category, AsymmetryScaleWarning)]
     assert not scale_warnings
+
+
+def _scale_warnings_for(model_fn, seed: ParameterSet) -> list[warnings.WarningMessage]:
+    """The scale warnings a fit of *seed* against a percent record with a ~1 % tail raises."""
+    time = np.linspace(0.1, 10.0, 200)
+    asymmetry = 31.0 * np.exp(-0.5 * time) + 1.0
+    ds = MuonDataset(time=time, asymmetry=asymmetry, error=np.full_like(asymmetry, 0.3))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        FitEngine().fit(ds, model_fn, seed)
+    return [w for w in caught if issubclass(w.category, AsymmetryScaleWarning)]
+
+
+def test_fit_does_not_warn_on_constant_seeded_at_a_percent_records_tail() -> None:
+    # The fit wizard's constant-only null baseline seeds A_bg at the record's
+    # tail, ~1 on this percent record: a flat curve has no amplitude whose scale
+    # could be confused with the data's.
+    seed = ParameterSet()
+    seed.add(Parameter(name="A_bg", value=1.03))
+
+    assert not _scale_warnings_for(CompositeModel.from_expression("Constant").function, seed)
+
+
+def test_fit_does_not_warn_on_term_decayed_before_the_first_bin() -> None:
+    # A resolution probe pins a rate at its fast edge: the term has decayed
+    # before the first bin, so the seeded curve is the background alone.
+    seed = ParameterSet()
+    seed.add(Parameter(name="A0", value=30.0))
+    seed.add(Parameter(name="Lambda", value=1.0e3, fixed=True))
+    seed.add(Parameter(name="baseline", value=1.16))
+
+    assert not _scale_warnings_for(MODELS["ExponentialRelaxation"].function, seed)
+
+
+def test_fit_warns_on_fraction_amplitude_with_tail_background_against_percent_data() -> None:
+    # The flat-curve exemption must not hide the trap itself: a fraction-scale
+    # amplitude still varies across the window.
+    seed = ParameterSet()
+    seed.add(Parameter(name="A0", value=0.3))
+    seed.add(Parameter(name="Lambda", value=0.5))
+    seed.add(Parameter(name="baseline", value=1.03))
+
+    assert _scale_warnings_for(MODELS["ExponentialRelaxation"].function, seed)

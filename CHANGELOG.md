@@ -7,6 +7,157 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **``survey`` finds scans written only in the run notes or title.** A
+  steering current or a degrader foil count stepped in each run's notes prints
+  under ``NOTES SCANS:`` with the ``fit-series --order <name> --x RUN=V,…``
+  command that fits it, is stored as ``notes_scans`` in ``survey.json``, and
+  is listed by ``audit`` until a fit covers it.
+
+### Changed
+
+- **Commands that produce results end with the audit step.** ``fit``,
+  ``fit-series``, ``fit-global``, ``trend``, ``integral-scan`` and ``fourier``
+  close their text output with "write the summary to summary.md and run
+  `asymmetry audit summary.md`", and ``audit`` no longer accepts a sentence in
+  the summary in place of fitting a surveyed scan: a run counts once a fit was
+  tried on it.
+- **Alpha says what counts it was measured on.** ``reduce --alpha-from`` notes
+  when its alpha was measured on deadtime-corrected or background-subtracted
+  counts, which is why it differs from the survey's and ``alpha``'s raw-count
+  value; the survey's candidate list and ``alpha`` say so too.
+- **``trend`` prints the size of a held line's shift** with its error, beside
+  the two end values.
+- **``wizard`` names a harmonic as one.** A recommended component at twice a
+  tesla-field line's frequency is called a harmonic, not a second line, with
+  the ``fourier`` command that looks for the real second line beside it.
+- **``fourier`` offers a two-line test for a tesla-field line** — the recipe
+  and fit commands for two lines started either side of a peak near the
+  applied field's Larmor frequency above 100 MHz — and says MaxEnt and
+  multi-group field-distribution analysis are not available.
+- **``integral-scan`` names TF stamps its own data contradict.** A run stamped
+  TF at 1 kG or more whose integral asymmetry stays well away from zero —
+  which a transverse field that strong cannot leave — is named as
+  longitudinal, with the reason.
+- **``integral-scan`` names repeated points** (a return pass) and whether each
+  came back within three errors, and no longer announces a dip another stored
+  scan in the work directory has already fitted.
+- **``integral-scan`` compares one line across scans.** A windowed line that
+  another stored scan also resolved near the same field prints a ``COMPARE``
+  line with both centres and widths and which is broader and higher in field.
+- **A poor whole-scan resonance fit prints its window commands** — one
+  ``--xmin``/``--xmax`` refit per fitted line — rather than describing them.
+- **``integral-scan`` calls a clean windowed line a resonance.** A line fitted
+  inside ``--xmin``/``--xmax`` with data on both flanks, an amplitude five
+  errors from zero and χ²ᵣ ≤ 4 prints ``RESONANCE: … report its centre and
+  width``.
+- **``survey`` names a composition series** in a scan that crosses samples:
+  three or more samples at one setpoint, two or more named by a leading
+  number, get a ready ``fit-series --order concentration --x`` command and the
+  ``trend --model Linear`` that gives a rate constant.
+- **``wizard`` sends a featureless screen to the scan's ends.** A
+  ``no_significant_structure`` verdict on a run inside a surveyed scan prints
+  the ``wizard`` commands for the scan's two ends: a recipe from the quiet end
+  fits the scan only if its ends are featureless too.
+- **``trend`` reads a decoupled relaxation as static fields.** When a series
+  fitted in a longitudinal field (no Larmor line in the survey) has its rates
+  collapse below a tenth of a zero-field series' width, at a field well above
+  that width over γ_μ, reading either series notes that the zero-field
+  relaxation is from static fields and that a rate pinned at zero there is the
+  result, not a failed fit; ``audit`` holds a draft that does not say so.
+- **``audit`` holds the reply when the draft leaves out what a command asked the
+  summary to say**, quoting the printed line back: a held ``A_bg``, the deadtime
+  used, why a long-range resonance fit is not a result, a return pass, the
+  missing radical ALC model, a ``trend`` step, shift, frequency response, shape
+  change or extremum, and A_μ = ν₁ + ν₂ for a quoted hyperfine coupling.
+- **``audit`` holds the reply for advice not yet taken**: a fitted series no
+  ``trend`` has read; a tesla-field line whose two-line test no fit has run;
+  and a run the survey found no line in, whose only fits are precession models
+  flagged as not describing it — with the relaxation-only commands to fit it
+  (a two-line test counts only a fit with two frequencies within 2 %, not a
+  line and its harmonic; only ``fit-series`` series need a ``trend``);
+  and a dip an ``integral-scan`` fit announced that no fit holds. Every hold
+  ends "do not reply yet"; a short scan of two or three runs is listed for the
+  summary to account for, not held on, and a failed two-line fit is no test.
+- **``fourier``'s note on two barely separated lines prints the two-line
+  recipe** started at both peaks.
+- **``integral-scan``'s fit table gives each field and coupling its unit** (G
+  or MHz): a hyperfine coupling was quoted in gauss.
+- **``survey``'s TEMPERATURE note separates a block the apparatus could reach**
+  (a different measurement, never quoted at its setpoints) from an impossible
+  reading (the sensor); the audit restates its hold when it also lists numbers;
+  ``integral-scan``'s off-range note no longer only says to widen the window.
+- **The skill's multi-group decline row** now says a many-group file is still
+  analysed through its default pair; only the joint or angular step is out of
+  scope (a Haiku run declined a whole 8-group HIFI folder).
+- **A green-red (RF) ``integral-scan`` names ``RFResonanceMuP``** instead of
+  saying no hyperfine model exists, and ``fit``'s two-line note says to compare
+  χ², not χ²ᵣ, with the degrees of freedom that make a small χ²ᵣ drop large.
+- **``fit`` and ``fit-series`` hold ``A_bg`` at 0 for a slow relaxation that
+  ran off against it.** When a fit's amplitudes exceed the data, an amplitude
+  and a free ``A_bg`` have opposite signs, and the relaxing term decays by less
+  than half over the fitted window, the fit is repeated with ``A_bg`` held at 0
+  and kept if it converges inside the data at a χ² cost under 25 χ²ᵣ. The
+  result carries ``background_held`` and the command ends with a NOTE naming
+  the held runs.
+- **``fit`` notes a fitted pair of lines** within 2 % of each other: a split
+  below the FFT resolution is still two lines to report when it lowers χ²ᵣ.
+- **``audit`` names a correlation spectrum with no plain transform** of the
+  same run: the two lines whose sum its peak is are in the plain FFT.
+- **``audit`` prints the commands that fit each unfitted scan** — ``wizard``
+  and ``fit-series`` (with ``--x`` for a notes scan), or ``integral-scan`` for
+  a longitudinal field scan — rather than only naming it.
+- **``survey`` lists each scan's runs**, in run order (``runs 29592-29721``),
+  instead of the two runs at its axis ends, which read as a range that left
+  runs out.
+- **``reduce`` and ``integral-scan`` note deadtimes left off.** When the files
+  carry per-detector deadtimes and the reduction leaves deadtime off, a NOTE
+  says to pass ``--deadtime from_file`` before fitting further.
+- **``trend`` offers a gap law for a vortex lattice**: when a held TF line falls
+  below its warm frequency on cooling while its width grows, it prints the
+  ``SC_SWave`` (then ``SC_DWave``) command for the width, if the sample is a
+  superconductor.
+- **Gap-law trend fits start at the data's Tc.** ``SC_*`` laws seed Tc where
+  σ(T) settles at its normal-state level, and the width and amplitude from the
+  two plateaus, instead of at 20 K, which could land on a false minimum.
+- **``audit`` lists ratios written in words** ("five and a half times its
+  error", "three times broader"), drifts ("drifted by about 3 K") and
+  resolution-element counts, and, while a surveyed scan is unfitted, says not
+  to reply yet.
+- **``trend``'s held-line note no longer reads as "no order"**: a frequency
+  that follows the applied field is not an order parameter, which says nothing
+  for or against order; the two-line hint for a tesla-field line also names
+  MaxEnt and multi-group analysis as beyond the CLI.
+- **``trend`` names a change of relaxation shape** in a series fitted with
+  differently shaped terms, when the relaxing amplitude moves from one shape to
+  the other between the scan's ends.
+- **Gap-law trend fits ask for a verdict.** ``trend --model SC_*`` asks
+  whether the law describes σ(T), prints the ready ``SC_DWave`` comparison
+  after ``SC_SWave``, and, when ``--xmax`` leaves fewer than two normal-state
+  points to fix ``sigma_bg``, says so with the refit command.
+- **``fit-series`` names the whole lineless end of a precession scan**, not
+  just the runs after the last one the fit flagged, and prints the
+  relaxation-only commands for all of it.
+
+### Fixed
+
+- **The fit wizard no longer prints a false ``AsymmetryScaleWarning``** ("seeds
+  look fraction-scale") for its constant-only baseline and resolution probes on
+  percent-scale data: a seeded curve flat across the window has no amplitude
+  scale to mismatch.
+
+- **`asymmetry audit` catches more arithmetic written into a summary.** A
+  number after a change verb's "by" ("falls by about 0.03 MHz") or an
+  agreement's "to" ("agree with the survey lines to about 0.02 MHz"), a number
+  named as a comparison ("4 points better", "a 1.2–1.3 % spread", "a margin
+  of 3.6"), a spread after a bare ``±``, "a factor of six", and a Δ-quantity no
+  command printed verbatim (``ΔAICc 11``) are now listed; each had passed a
+  clean audit in agent evaluations. Such a number still verifies when a command
+  printed it verbatim to three or more significant digits (a run number, a
+  grid field), ``×``, ``x`` and "times" count as one multiple sign, and
+  ``4,200`` and ``3.2 × 10⁻⁸`` read as one number.
+
 ## [0.26.0] - 2026-10-07
 
 ### Added

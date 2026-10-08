@@ -77,13 +77,55 @@ def scan_label(scan: ScanGroup) -> str:
     )
     if scan.n_periods > 1:
         notes += f", {scan.n_periods} periods" + (" (red/green)" if scan.n_periods == 2 else "")
-    # Runs are listed in axis order, which need not be run order, so the
-    # endpoints are shown with an arrow rather than as a range.
+    # The members in run order: axis order need not be run order, and its two
+    # endpoints read as a run range that leaves runs out.
     return (
         f"{scan.axis} scan, {instrument}{geometry}, {held}{notes}: {len(scan.runs)} runs, "
-        f"{scan.values[0]:g} to {scan.values[-1]:g} {unit} "
-        f"(run {scan.runs[0]} -> {scan.runs[-1]})"
+        f"{scan.values[0]:g} to {scan.values[-1]:g} {unit} ({range_text(sorted(scan.runs))})"
     )
+
+
+def _composition_lines(sets, rows, scan: ScanGroup, folder: str, options: str) -> list[str]:
+    """The composition series a scan crossing samples holds, with the commands that fit one."""
+    from asymmetry.core.workflow.survey import sample_name
+
+    if not sets:
+        return []
+    unit = "K" if scan.axis == "temperature" else "G"
+    shown = max(sets, key=lambda found: len(found.runs))
+    supplied = ",".join(
+        f"{run}={'<value>' if value is None else f'{value:g}'}"
+        for run, value in zip(shown.runs, shown.values, strict=True)
+    )
+    name = f"composition-{shown.setpoint:g}"
+    others = [found.setpoint for found in sets if found is not shown]
+    lines = [
+        f"      composition: at {shown.setpoint:g} {unit} these runs differ only in the "
+        f"sample, and two or more name its composition — a series along composition, "
+        f"whatever the logged temperatures do (state their spread; the setpoint is shared):"
+    ]
+    lines.extend(
+        f"        {run} {sample_name(rows[run])!r}"
+        + (f" — notes {rows[run].notes!r}" if rows[run].notes else "")
+        for run in shown.runs
+    )
+    lines.append(
+        f"        asymmetry fit-series {folder} --runs {run_spec(shown.runs)} --recipe <recipe> "
+        f"--order concentration --x {supplied} --name {name}{options}"
+    )
+    lines.append(
+        f"        then asymmetry trend {folder} --series {name} --model Linear --param <rate>"
+        f"{options} — a rate linear in concentration is a rate constant (its slope). Give "
+        f"each <value> from the run's title and notes (a pure solvent is 0), and drop a run "
+        f"neither gives one for."
+    )
+    if others:
+        lines.append(
+            "        The same holds at "
+            + ", ".join(f"{setpoint:g}" for setpoint in others)
+            + f" {unit}: one series per setpoint gives the rate constant against temperature."
+        )
+    return lines
 
 
 #: A survey of more runs than this prints its findings before the run table.
@@ -145,6 +187,7 @@ def _selection_options(survey, instrument: str, clashes: dict[int, list[Path]]) 
 def _render(survey, survey_path: Path) -> str:
     """The human-readable survey: the run table, then candidates and scans."""
     from asymmetry.core.io.psi import PSI_HEADER_SAMPLE_SENSOR
+    from asymmetry.core.workflow.survey import NOTES_PLACEHOLDER, composition_sets
     from asymmetry.core.workflow.workdir import instrument_name
 
     clashes = run_clashes([(row.prefix, row.run_number, Path(row.file)) for row in survey.runs])
@@ -243,11 +286,12 @@ def _render(survey, survey_path: Path) -> str:
         lines.append(
             "TEMPERATURE: the logged sample temperature (T log) and the setpoint (T/K) "
             "disagree on these runs, by the offset shown (T log - T/K). Decide which to trust "
-            "for each block and say why: a block sitting at a different temperature from its "
-            "neighbours (a cryostat still cooling or parked elsewhere) is a different "
-            "measurement — order it with --order sample_temperature_logged; a steady offset "
-            "a sample could not have had (a liquid logged above its boiling point) points to "
-            "the sensor. The scans below are grouped by setpoint:"
+            "for each block and say why: a logged value the apparatus could reach (a cryostat "
+            "still cooling or parked elsewhere, a block several kelvin off its neighbours) is a "
+            "different measurement — order it with --order sample_temperature_logged and never "
+            "quote those runs at their setpoints; only a value no sample here could have had "
+            "(hundreds of kelvin off, a liquid logged above its boiling point) points to the "
+            "sensor. The scans below are grouped by setpoint:"
         )
         for instrument, runs, lo, hi in _departure_blocks(survey):
             span = f"{lo:+.2f} K" if abs(hi - lo) < 0.005 else f"{lo:+.2f} to {hi:+.2f} K"
@@ -284,7 +328,10 @@ def _render(survey, survey_path: Path) -> str:
         lines.append("")
 
     if survey.calibration_candidates:
-        lines.append("Alpha-calibration candidates:")
+        lines.append(
+            "Alpha-calibration candidates (alpha on raw counts: deadtime off, background none; "
+            "`reduce --alpha-from` re-measures under its own corrections, and applies that):"
+        )
         for candidate in survey.calibration_candidates:
             marker = " (best)" if candidate.best else ""
             # The SNR of a measured candidate is already in its reason.
@@ -311,6 +358,19 @@ def _render(survey, survey_path: Path) -> str:
             lines.append(f"  {scan_label(scan)}")
             if scan.geometry_note:
                 lines.append(f"      geometry: {scan.geometry_note}")
+            if len(scan.samples) > 1:
+                rows = {
+                    row.run_number: row for row in survey.runs if row.instrument == scan.instrument
+                }
+                lines.extend(
+                    _composition_lines(
+                        composition_sets(scan, rows),
+                        rows,
+                        scan,
+                        shlex.quote(survey.folder),
+                        _selection_options(survey, scan.instrument, clashes),
+                    )
+                )
             if scan.axis == "field" and scan.n_periods == 2:
                 lines.append(
                     f"      red/green: a two-period scan is measured in the green - red "
@@ -328,8 +388,38 @@ def _render(survey, survey_path: Path) -> str:
             )
     else:
         lines.append("Scans: none — no two runs share a geometry and a held quantity.")
-
     lines.append("")
+
+    if survey.notes_scans:
+        lines.append(
+            f"NOTES SCANS: each set of runs below holds one temperature and field while its "
+            f"notes or title step a number the files do not record ({NOTES_PLACEHOLDER} in "
+            f"the text). It is a separate measurement of that quantity, not a point of a "
+            f"temperature or field scan above: reduce its runs, screen one, and fit the series "
+            f"against that quantity, not against temperature."
+        )
+        for scan in survey.notes_scans:
+            runs = range_text(sorted(scan.runs))
+            if clashes:
+                runs = f"{scan.instrument} {runs}"
+            start = min(scan.runs)
+            folder = shlex.quote(survey.folder)
+            options = f" --instrument {scan.instrument}" if clashes else ""
+            supplied = ",".join(
+                f"{run}={value:g}" for run, value in sorted(zip(scan.runs, scan.values))
+            )
+            lines.append(
+                f"  {runs} ({scan.temperature:g} K, {scan.field:g} G), {scan.source} "
+                f'"{scan.template}": {scan.quantity} from {scan.values[0]:g} to '
+                f"{scan.values[-1]:g} on {len(scan.runs)} runs"
+            )
+            lines.append(f"      asymmetry wizard {folder} --run {start}{options}")
+            lines.append(
+                f"      asymmetry fit-series {folder} --runs {run_spec(scan.runs)} "
+                f"--recipe wizard-{start} --order {scan.quantity} --x {supplied} "
+                f"--start {start}{options}"
+            )
+        lines.append("")
     if long:
         lines.extend(["Runs:", *table])
     lines.append(f"Survey written to {survey_path}")

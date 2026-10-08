@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import math
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -208,7 +209,13 @@ def run(args: argparse.Namespace) -> None:
         )
         return
 
-    print(_render(series, trend, fit, csv_path, plot_paths))
+    decoupling = None
+    if series["kind"] == "series" and workdir.survey_path.is_file():
+        from asymmetry.core.workflow.decoupling import decoupling_note
+
+        survey_runs = {entry["run_number"]: entry for entry in workdir.read_survey()["runs"]}
+        decoupling = decoupling_note(name, workdir.fit_series(), survey_runs)
+    print(_render(series, trend, fit, csv_path, plot_paths, decoupling))
 
 
 def _stored_series(workdir, name: str) -> dict[str, Any]:
@@ -332,6 +339,7 @@ def _render(
     fit: dict | None,
     csv_path: Path | None,
     plot_paths: list[Path],
+    decoupling: str | None,
 ) -> str:
     """The human-readable trend table, then the fit when there is one."""
     lines = [
@@ -349,9 +357,20 @@ def _render(
         *_rate_steps(trend, series["free_params"]),
         *_phase_drift(trend, series["free_params"]),
         *_frequency_response(series, trend),
+        *([decoupling] if decoupling is not None else []),
     ]
     if fit is not None:
-        lines.extend(["", *_render_fit(fit, series["free_params"]), *readings])
+        lines.extend(
+            [
+                "",
+                *_render_fit(
+                    fit,
+                    series["free_params"],
+                    _gap_law_steps(series["name"], trend, fit, plot_paths),
+                ),
+                *readings,
+            ]
+        )
     else:
         lines.extend(
             [
@@ -359,6 +378,7 @@ def _render(
                 *readings,
                 *_law_hints(series["name"], trend, series["free_params"]),
                 *_doublet_hint(series, trend),
+                *_weight_shift(series, trend),
             ]
         )
     if csv_path is not None:
@@ -635,8 +655,8 @@ def _frequency_response(series: dict[str, Any], trend) -> list[str]:
 _SHIFT_SIGNIFICANCE = 5.0
 
 
-def _frequency_shift(trend, param: str) -> tuple[float, float] | None:
-    """The coldest and warmest ``(value, value)`` of a held frequency that still moved."""
+def _frequency_shift(trend, param: str) -> tuple[float, float, float] | None:
+    """The first and last values of a held frequency that still moved, and the shift's error."""
     rows = _measured(trend, param)
     if len(rows) < 2:
         return None
@@ -644,12 +664,12 @@ def _frequency_shift(trend, param: str) -> tuple[float, float] | None:
     error = math.hypot(first[f"{param}_err"], last[f"{param}_err"])
     if abs(last[param] - first[param]) <= _SHIFT_SIGNIFICANCE * error:
         return None
-    return first[param], last[param]
+    return first[param], last[param], error
 
 
 #: A held line above this frequency (MHz) sits in a field of tesla order,
 #: where inequivalent sites or sublattices split it by about the resolution.
-_HIGH_FIELD_LINE_MHZ = 100.0
+HIGH_FIELD_LINE_MHZ = 100.0
 
 
 def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
@@ -677,7 +697,7 @@ def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
     cold_exponential = bool(decided) and min(decided, key=lambda row: row["x"])["envelope"] == (
         "Exponential"
     )
-    if held < _HIGH_FIELD_LINE_MHZ and not cold_exponential:
+    if held < HIGH_FIELD_LINE_MHZ and not cold_exponential:
         return []
     two_line = " + ".join([*terms[: lines[0] + 1], terms[lines[0]], *terms[lines[0] + 1 :]])
     new_frequencies = [
@@ -702,8 +722,66 @@ def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
         f"story — or the sample as unordered — fit the coldest run with two lines and "
         f"compare chi2_red: asymmetry recipe <folder> --run {coldest['key']} --name two-line "
         f"--expression '{two_line}'{initial}, then asymmetry fit <folder> --run "
-        f"{coldest['key']} --recipe two-line."
+        f"{coldest['key']} --recipe two-line. A field distribution beyond two lines needs "
+        f"MaxEnt or a multi-group analysis, which this CLI does not do: say so under Not done."
     ]
+
+
+#: The share of the relaxing amplitude one term must gain or lose between the
+#: scan's two ends before the relaxation is called a different shape.
+_WEIGHT_SHIFT = 0.5
+
+
+def _weight_shift(series: dict[str, Any], trend) -> list[str]:
+    """A NOTE when the relaxing amplitude moves between differently shaped terms along the scan."""
+    from asymmetry.core.fitting.composite import CompositeModel
+    from asymmetry.core.workflow.workdir import DERIVED_SERIES_KINDS
+
+    terms = series["expression"].split(" + ")
+    if series["kind"] in DERIVED_SERIES_KINDS or any("*" in term for term in terms):
+        return []
+    model = CompositeModel.from_expression(series["expression"])
+    # (shape, amplitude, rate) per relaxing term: a term whose rate is zero
+    # within its error relaxes nothing, whatever amplitude it carries.
+    shaped = [
+        (
+            component.name,
+            mapping["A"],
+            next(name for local, name in mapping.items() if local != "A"),
+        )
+        for component, mapping in zip(model.components, model.parameter_mapping(), strict=True)
+        if component.name != "Constant" and "A" in mapping and len(mapping) == 2
+    ]
+    if len({shape for shape, _, _ in shaped}) < 2:
+        return []
+    columns = [name for _, amp, rate in shaped for name in (amp, rate, f"{rate}_err")]
+    rows = [row for row in trend.rows if all(row[name] is not None for name in columns)]
+    if len(rows) < 4:
+        return []
+    end = max(2, len(rows) // 4)
+
+    def share(block: list[dict[str, Any]], shape: str) -> float:
+        weights = {
+            amp: sum(abs(row[amp]) for row in block if row[rate] > 2.0 * row[f"{rate}_err"])
+            for _, amp, rate in shaped
+        }
+        total = sum(weights.values())
+        return (
+            sum(weights[amp] for name, amp, _ in shaped if name == shape) / total if total else 0.0
+        )
+
+    for shape in dict.fromkeys(name for name, _, _ in shaped):
+        low, high = share(rows[:end], shape), share(rows[-end:], shape)
+        if abs(high - low) >= _WEIGHT_SHIFT:
+            first, last = rows[end - 1]["x"], rows[-end]["x"]
+            return [
+                f"NOTE: the relaxation changes shape along the scan: the {shape} terms carry "
+                f"{low:.0%} of the relaxing amplitude over the first {end} runs ({trend.order_key} "
+                f"up to {first:g}) and {high:.0%} over the last {end} (from {last:g}). Report that "
+                f"change of shape and where it happens, whatever the flags say about the "
+                f"individual terms."
+            ]
+    return []
 
 
 def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
@@ -746,16 +824,32 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
             )
         else:
             shift = _frequency_shift(trend, frequencies[0])
+            widths = [p for p in rates if re.sub(r"_\d+$", "", p) == "sigma"] or rates
+            # A line pulled below its normal-state frequency on cooling while its
+            # width grows is the vortex lattice's diamagnetic shift and field
+            # distribution: the width is a superfluid-density measure.
+            if shift is not None and shift[0] < shift[1] and widths:
+                cold = _measured(trend, widths[0])
+                if len(cold) >= 2 and cold[0][widths[0]] > cold[-1][widths[0]]:
+                    hints.append(
+                        f"{frequencies[0]} falls below its warm value on cooling while "
+                        f"{widths[0]} grows: if the sample is a superconductor, that is its "
+                        f"diamagnetic shift and vortex lattice — fit the width with a gap law and "
+                        f"say whether it describes it: {command} SC_SWave --param {widths[0]}, "
+                        f"then SC_DWave."
+                    )
             if shift is not None:
                 hints.append(
                     f"{frequencies[0]} moves from {format_number(shift[0], 5)} to "
-                    f"{format_number(shift[1], 5)} MHz, many times its error, while staying "
-                    f"near one field: a shift of the line (a Knight shift, or a "
-                    f"superconductor's diamagnetic shift below Tc). Report it."
+                    f"{format_number(shift[1], 5)} MHz, a shift of "
+                    f"{format_number(shift[1] - shift[0], 5)} ± {format_number(shift[2], 5)} "
+                    f"MHz, while staying near one field: a shift of the line (a Knight shift, "
+                    f"or a superconductor's diamagnetic shift below Tc). Report it."
                 )
             hints.append(
                 f"{frequencies[0]} stays near {format_number(held, 4)} MHz along the scan (within 10 %): the "
-                f"line follows a fixed field, not an order parameter. The physics is in the "
+                f"line follows a fixed field, so its frequency is not an order parameter — which "
+                f"says nothing for or against order in the sample. The physics is in the "
                 f"relaxation — its rate"
                 + (f" ({', '.join(rates)})" if rates else "")
                 + " and its shape"
@@ -807,8 +901,14 @@ _LAW_AXES: dict[str, frozenset[str]] = {
 }
 
 
-def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
-    """The fit block: model, range, parameters with errors, verdict and what was left out."""
+def _render_fit(
+    fit: dict[str, Any], free_params: list[str], law_steps: Sequence[str] = ()
+) -> list[str]:
+    """The fit block: model, range, parameters with errors, verdict and what was left out.
+
+    *law_steps* — what this law asks next — follow the verdict and replace the generic
+    advice to hold an undetermined parameter.
+    """
     lo, hi = fit["x_fitted"]
     lines = [
         f"Fit of {fit['expression']} to {fit['param']} against {fit['order_key']}, over the "
@@ -885,6 +985,7 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
             f"LAW NOT ESTABLISHED ({'; '.join(reasons)}): {fit['expression']} does not describe "
             f"this trend. Describe the trend in plain words and do not use this law's physics."
         )
+        lines.extend(law_steps)
         determined = [name for name in physical if name not in undetermined + pinned]
         if shapes:
             lines.append(
@@ -895,7 +996,7 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
                 )
                 + ", and report the law with that value stated as fixed."
             )
-        elif fit["success"] and determined and undetermined:
+        elif fit["success"] and determined and undetermined and not law_steps:
             lines.append(
                 f"Next: {', '.join(determined)} {'is' if len(determined) == 1 else 'are'} "
                 f"determined and {', '.join(undetermined)} not. Hold "
@@ -914,6 +1015,7 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
                 else "."
             )
         )
+        lines.extend(law_steps)
         if fit["expression"].strip() == "Linear" and fit["order_key"] not in _FILE_AXES:
             lines.append(
                 f"The slope m is the change in {fit['param']} per unit {fit['order_key']}: for a "
@@ -952,5 +1054,73 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
         lines.append(
             "flagged but fitted: "
             + "; ".join(f"{entry['key']} ({', '.join(entry['flags'])})" for entry in fit["flagged"])
+        )
+    return lines
+
+
+def _gap_law_steps(name: str, trend, fit: dict[str, Any], plot_paths: list[Path]) -> list[str]:
+    """What a superconducting gap law's fit asks next: the normal state, a verdict, its rivals."""
+    from asymmetry.core.fitting.parameter_models import (
+        SUPERCONDUCTING_GAP_LAWS,
+        ParameterCompositeModel,
+    )
+
+    model = ParameterCompositeModel.from_expression(fit["expression"])
+    gaps = [
+        (index, law)
+        for index, law in enumerate(model.component_names)
+        if law in SUPERCONDUCTING_GAP_LAWS
+    ]
+    if not gaps:
+        return []
+    index, law = gaps[0]
+    tc = fit["parameters"][model.component_param_name(index, "Tc")]
+    width = model.component_param_name(index, SUPERCONDUCTING_GAP_LAWS[law])
+    warm = sum(row["x"] > tc for row in trend.rows if row["key"] in fit["keys"])
+    excluded = [entry["key"] for entry in fit["excluded"] if entry["reason"] == "excluded"]
+
+    def command(expression: str, *, warm_side: bool = False) -> str:
+        """``trend`` with *expression* on the same points — past any --xmax when *warm_side*."""
+        ranges = (("--xmin", fit["x_min"]), ("--xmax", None if warm_side else fit["x_max"]))
+        fixes = [held for held in fit["fixed"] if not (warm_side and held == width)]
+        return (
+            f"asymmetry trend <folder> --series {name} --model "
+            + (f"'{expression}'" if " " in expression else expression)
+            + f" --param {fit['param']}"
+            + "".join(f" {flag} {value:g}" for flag, value in ranges if value is not None)
+            + "".join(f" --fix {held}={fit['parameters'][held]:g}" for held in fixes)
+            + (f" --exclude {','.join(excluded)}" if excluded else "")
+        )
+
+    lines: list[str] = []
+    if warm < 2:
+        coverage = (
+            f"NOTE: {warm} of the fitted points {'lies' if warm == 1 else 'lie'} above the "
+            f"fitted Tc = {format_number(tc, 4)}. {law} settles at {width} above Tc, so only "
+            f"normal-state points determine {width}; with fewer than two it is not set by the "
+            f"data."
+        )
+        if fit["x_max"] is not None:
+            return [
+                f"{coverage} Next: refit with the warm points in, rather than holding {width} "
+                f"at a chosen value — no --xmax, or one above the transition: "
+                f"{command(fit['expression'], warm_side=True)}. The verdict on "
+                f"the law, and its comparison with the other gap laws, follow from that refit."
+            ]
+        lines.append(
+            f"{coverage} The scan holds no more above Tc: hold {width} at the width measured "
+            f"in the normal state with --fix {width}=VALUE, and say it was held."
+        )
+    plot = str(plot_paths[0]) if plot_paths else "the plot (rerun with --plot)"
+    lines.append(
+        f"Verdict due: say in the report whether {law} describes {fit['param']}(T) — yes when "
+        f"chi2_red ({format_number(fit['reduced_chi_squared'], 3)}) is near 1 and the curve on "
+        f"{plot} follows the points below and above Tc, no otherwise."
+    )
+    if law == "SC_SWave":
+        nodal = re.sub(r"\bSC_SWave\b", "SC_DWave", fit["expression"])
+        lines.append(
+            f"SC_SWave is the fully gapped law; a gap with line nodes is its rival. Fit SC_DWave "
+            f"to the same points and compare chi2_red: {command(nodal)}."
         )
     return lines

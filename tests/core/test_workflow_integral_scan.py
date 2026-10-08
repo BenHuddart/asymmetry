@@ -358,3 +358,20 @@ def test_only_a_window_holding_a_line_is_named_as_another_dip() -> None:
     window = {"x_min": 1900.0, "x_max": 2500.0}
     assert _holds_a_line(scan(dip), window)
     assert not _holds_a_line(scan(step), window)
+
+
+def test_a_tf_stamp_on_a_kilogauss_run_that_keeps_its_integral_is_contradicted() -> None:
+    from types import SimpleNamespace
+
+    from asymmetry.core.workflow.integral_scan import contradicted_tf_stamps
+
+    def point(run: int, value: float) -> SimpleNamespace:
+        return SimpleNamespace(run_number=run, value=value, error=0.0004)
+
+    scan = SimpleNamespace(
+        points=[point(1, 0.002), point(2, 0.19), point(3, 0.20), point(4, 0.21), point(5, 0.18)]
+    )
+    # A kilogauss TF run keeping a large integral is longitudinal; a 100 G
+    # calibration run (too few periods to average) and an unstamped run are not judged.
+    stamped = {1: 3000.0, 2: 3000.0, 3: 4000.0, 4: 100.0}
+    assert contradicted_tf_stamps(scan, stamped) == [2, 3]

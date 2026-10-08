@@ -15,6 +15,7 @@ from asymmetry.cli._output import (
 )
 from asymmetry.cli._runs import reduced_datasets, resolve_run
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+from asymmetry.cli.commands.trend import HIGH_FIELD_LINE_MHZ
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -133,6 +134,7 @@ def run(args: argparse.Namespace) -> None:
     result = outcome.to_dict() | {
         "name": name,
         "run": args.run,
+        "field_gauss": workdir.entry(args.run).run["field"],
         "plot": None if plot_path is None else str(plot_path),
     }
     array_path, metadata_path = workdir.write_spectrum(
@@ -197,6 +199,41 @@ def _reduced_counts(workdir, selection, entry):
 #: Tabulated peaks closer than this many resolution elements are a pair the
 #: transform barely separates.
 _CLOSE_PEAKS = 2
+
+
+#: Two fitted frequencies this close (relative) are a resolved pair, not a line
+#: and its harmonic.
+PAIR_SPLIT = 0.02
+
+
+def close_pair(values: dict) -> tuple[float, float] | None:
+    """The first two fitted frequencies within :data:`PAIR_SPLIT` of each other, if any."""
+    lines = sorted(
+        abs(value)
+        for name, value in values.items()
+        if name.split("_")[0] == "frequency" and value is not None
+    )
+    return next(((a, b) for a, b in zip(lines, lines[1:]) if b - a <= PAIR_SPLIT * b), None)
+
+
+def tesla_field_lines(result: dict) -> list[dict]:
+    """Peaks of a plain transform near the Larmor frequency of a field of tesla order.
+
+    A diamagnetic line there can hold two (inequivalent sites, sublattices),
+    unlike a radical's hyperfine line far from the applied field's Larmor value.
+    """
+    from asymmetry.core.fitting.knight_shift import larmor_frequency_mhz
+
+    if result["axis"] != "frequency" or result["field_gauss"] is None:
+        return []
+    larmor = larmor_frequency_mhz(abs(result["field_gauss"]))
+    if larmor < HIGH_FIELD_LINE_MHZ:
+        return []
+    return [
+        peak
+        for peak in result["peak_analysis"]["peaks"]
+        if abs(peak["frequency_mhz"] - larmor) <= 0.1 * larmor
+    ]
 
 
 def _render(result: dict) -> str:
@@ -268,7 +305,33 @@ def _render(result: dict) -> str:
             + "; ".join(f"{low:.6g} and {high:.6g} MHz" for low, high in pairs)
             + f" lie within {_CLOSE_PEAKS} resolution elements of each other: two lines "
             "the FFT barely separates. Report both frequencies (a splitting, not one line), "
-            "and fit them in the time domain with two lines started there."
+            "and fit them in the time domain with two lines started there: asymmetry recipe "
+            f"<folder> --run {result['run']} --name two-line --expression 'Oscillatory * "
+            "Exponential + Oscillatory * Exponential + Constant' --initial "
+            f"frequency_1={pairs[0][1]:.6g} --initial frequency_3={pairs[0][0]:.6g}, then "
+            f"asymmetry fit <folder> --run {result['run']} --recipe two-line."
+        )
+    paired = {frequency for pair in pairs for frequency in pair}
+    high = [peak for peak in tesla_field_lines(result) if peak["frequency_mhz"] not in paired]
+    if high and not coupling:
+        line = max(high, key=lambda peak: peak["snr"])
+        centre, width = line["frequency_mhz"], line["width_mhz"]
+        lines.append(
+            f"NOTE: the line at {centre:.6g} MHz (width {width:.4g} MHz, "
+            f"{width / resolution:.1f} resolution elements) sits in a field of tesla order, "
+            f"where inequivalent muon sites or magnetic sublattices split a line by about the "
+            f"resolution, so one FFT peak can hold two. Fit two lines started either side of it "
+            f"and compare chi2_red with one before reporting a single line: asymmetry recipe "
+            f"<folder> --run {result['run']} --name two-line --expression 'Oscillatory * "
+            f"Exponential + Oscillatory * Exponential + Constant' --initial "
+            f"frequency_1={centre + width / 2:.6g} --initial frequency_3={centre - width / 2:.6g}"
+            f", then asymmetry fit <folder> --run {result['run']} --recipe two-line."
+        )
+    if not coupling:
+        lines.append(
+            "This is an FFT: maximum-entropy (MaxEnt) spectra and multi-group "
+            "field-distribution analysis are not available here — where the field "
+            "distribution is part of the question, say so under Not done."
         )
     if coupling:
         lines.append(

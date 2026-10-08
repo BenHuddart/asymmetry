@@ -178,13 +178,34 @@ def reduction_settings(
     )
 
 
+def deadtime_note(settings: ReductionSettings, carries_deadtime: bool) -> list[str]:
+    """The NOTE for a reduction that leaves off the deadtimes its files carry."""
+    if settings.deadtime != "off" or not carries_deadtime:
+        return []
+    return [
+        "NOTE: these files carry per-detector deadtimes and this reduction leaves deadtime "
+        "off. Pass --deadtime from_file before fitting further — it matters most at a pulsed "
+        "source's high early count rates — and say in the summary which you used."
+    ]
+
+
 def describe(settings: ReductionSettings) -> str:
     """The one-line account of *settings* printed under a reduction's table."""
     background = settings.background
     if settings.background_range is not None:
         background += f" {settings.background_range[0]}:{settings.background_range[1]}"
+    from asymmetry.core.workflow.reduction import ALPHA_ESTIMATED_PREFIX
+
+    alpha = f"alpha {settings.alpha:.4f} ({settings.alpha_source}"
+    if settings.alpha_source.startswith(ALPHA_ESTIMATED_PREFIX) and (
+        settings.deadtime != "off" or settings.background != "none"
+    ):
+        alpha += (
+            " on these corrected counts — survey and `alpha` measure raw counts, so their "
+            "value differs; this is the one applied"
+        )
     parts = [
-        f"alpha {settings.alpha:.4f} ({settings.alpha_source})",
+        alpha + ")",
         f"deadtime {settings.deadtime}",
         f"background {background}",
         f"pair {'/'.join(settings.pair) if settings.pair else 'file'}",
@@ -201,6 +222,7 @@ __all__ = [
     "GREEN_RED",
     "add_pair_argument",
     "add_reduction_arguments",
+    "deadtime_note",
     "describe",
     "parse_pair",
     "reduction_settings",
