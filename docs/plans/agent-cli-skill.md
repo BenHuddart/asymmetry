@@ -1938,6 +1938,43 @@ reported both lines of its two-line fit yet headlined "a single line". All
 three say-so holds were satisfied at the next audit and each statement was
 right for the data.
 
+### Haiku 5.5, round 2 — 2026-10-08/09, on `feat/haiku-cli-loop-2`
+
+A second overnight loop on the same 24 cases, from main after #361 (wave 15:
+18/24). Same rules: printed CLI output before skill prose, every note, hold and
+matcher change replayed over the stored outputs of waves 1–15 (and the Sonnet
+5.5 regression wave) before it ships, waves run from a snapshot worktree of the
+pushed commit, scored by three Sonnet scorers.
+
+#### Pass 1
+
+- The decoupling note reads the fitted curves, not a rate: each side's loss of
+  asymmetry by 8 µs, against zero-field runs within the field series' own
+  temperature span. Wave 15's TRSB fitted the 100 G scan with the wizard's
+  Kubo–Toyabe, whose width the field leaves unconstrained rather than small,
+  so the rate-based note never fired there. Replay: it now fires on every TRSB
+  wave with a field scan, and on copper only where a zero-field run shares the
+  field scan's 40 K (where the nuclear fields are indeed static).
+- For a relaxation recommendation the wizard also writes `wizard-<run>-alt`,
+  the best other relaxation model within 10 AICc with at most one more
+  parameter, and `fit-series` names it when the recommended recipe's series
+  flags half its runs `failed` or `amplitude_exceeds_data` (spin glass: the
+  Risch–Kehr series flagged 10 of 10; the stretched exponential ranked 4.6
+  AICc behind). Without the relaxation-only and parameter limits the replay
+  fired on most oscillatory series of passing cases (nickel, cuprate).
+- `audit` reads a conversion phrase ("would be", "corresponds to", "equivalent
+  to") as making the next number derived: replay flags only basics' "about
+  21 G" (wave 15) and "about 20 G" (Sonnet 5.5).
+- A dip counts as held only by a fit of the same scan whose line, centre ±
+  width, lies inside the dip's window. Corannulene's poor whole-scan fit
+  (χ²ᵣ 40, a 3.6 kG-wide line) and the cold scan's 15.3 kG line had silenced
+  the hot scan's 14.8 kG dip in both `integral-scan` and `audit`; replay: the
+  hold now fires in exactly the waves that left that line unfitted (8, 10, 11,
+  15) and nowhere else.
+- `fit`'s pair note: a pinned rate on one line does not cancel the χ² gain;
+  `fourier`: one peak does not exclude a doublet below the resolution (AFM,
+  wave 15).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

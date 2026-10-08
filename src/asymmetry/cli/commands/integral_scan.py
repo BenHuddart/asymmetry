@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from asymmetry.cli._output import (
@@ -253,21 +253,20 @@ def run(args: argparse.Namespace) -> None:
         for (run_number, _prefix, _path), dataset in zip(targets, datasets, strict=True)
         if run_geometry(dataset.metadata) == "TF"
     }
-    stored = {
-        path.stem: stored_fit
+    payloads = {
+        path.stem: json.loads(path.read_text(encoding="utf-8"))
         for path in sorted(workdir.scans_dir.glob("*.json"))
         if path.stem != name
-        and (stored_fit := json.loads(path.read_text(encoding="utf-8"))["fit"]) is not None
     }
-    elsewhere = [
-        value
-        for stored_fit in stored.values()
-        if stored_fit["success"]
-        for parameter, value in stored_fit["parameters"].items()
-        if parameter.split("_")[0] == "B0"
+    stored = {stem: entry["fit"] for stem, entry in payloads.items() if entry["fit"] is not None}
+    # Another stored fit of this scan (another window) may hold a dip this one announces.
+    same_scan = [
+        entry["fit"]
+        for entry in payloads.values()
+        if entry["runs"] == result_payload["runs"] and entry["fit"] is not None
     ]
     notes = _notes(
-        result_payload, free_offsets, summed, contradicted_tf_stamps(scan, stamped_tf), elsewhere
+        result_payload, free_offsets, summed, contradicted_tf_stamps(scan, stamped_tf), same_scan
     )
     if fit_payload is not None:
         notes.extend(_line_comparisons(fit_payload, stored))
@@ -361,11 +360,11 @@ def _notes(
     free_offsets: list[str],
     summed: list[int],
     longitudinal: list[int],
-    elsewhere: list[float],
+    same_scan: list[dict],
 ) -> list[str]:
     """Every NOTE and Next line the scan calls for — printed, and kept in --json.
 
-    *elsewhere* holds the line centres other stored scans in the work directory fitted.
+    *same_scan* holds the other stored fits of this scan.
     """
     fit = result["fit"]
     offset = result["period_field_offset"]
@@ -403,7 +402,7 @@ def _notes(
     if fit is not None and fit["resonance_windows"]:
         lines.append(_failed_fit_next(fit))
     elif fit is not None:
-        lines.extend(_poor_fit_note(fit, elsewhere))
+        lines.extend(_poor_fit_note(fit, same_scan))
     if summed:
         lines.append(
             f"NOTE: {range_text(summed)} are two-period (red/green) runs, and without --period "
@@ -445,6 +444,22 @@ _DISTINCT_ERRORS = 2.0
 #: Half-widths of a window around a fitted line: room for both flanks and some
 #: background on each side.
 _WINDOW_WIDTHS = 4.0
+
+
+def holds_dip(fits: Iterable[dict], window: dict) -> bool:
+    """Whether one of *fits* (of one scan) holds the dip in *window*.
+
+    A fit holds it with a line whose centre ± width lies inside the window: a
+    broad line a poor whole-scan fit stretched across two dips does not.
+    """
+    return any(
+        window["x_min"] <= centre - width and centre + width <= window["x_max"]
+        for fit in fits
+        if fit["success"]
+        for name, centre in fit["parameters"].items()
+        if name.split("_")[0] == "B0"
+        for width in [abs(fit["parameters"][name.replace("B0", "Bwid", 1)])]
+    )
 
 
 def _resolved_lines(fit: dict, fit_limit: float = _RESOLVED_FIT) -> list[str]:
@@ -555,10 +570,10 @@ def _repeated_points(points: list[dict]) -> list[tuple[float, list[dict], bool]]
 _DISTINCT_REPEAT = 3.0
 
 
-def _poor_fit_note(fit: dict, elsewhere: Sequence[float] = ()) -> list[str]:
+def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
     """Notes on what a converged resonance fit left out or cannot vouch for.
 
-    A dip another stored scan already fitted (a centre in *elsewhere*) is not announced again.
+    A dip another stored fit of this scan holds (*same_scan*) is not announced again.
     """
     from asymmetry.core.workflow.integral_scan import DIP_FLANK_WIDTHS
 
@@ -598,11 +613,7 @@ def _poor_fit_note(fit: dict, elsewhere: Sequence[float] = ()) -> list[str]:
                 )
             )
     unfitted = [
-        window
-        for window in fit["next_dip_windows"]
-        if not any(
-            window["x_min"] <= centre <= window["x_max"] for centre in [*lines.values(), *elsewhere]
-        )
+        window for window in fit["next_dip_windows"] if not holds_dip([fit, *same_scan], window)
     ]
     if unfitted:
         notes.append(

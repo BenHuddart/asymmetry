@@ -45,7 +45,11 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.component_tags import PhysicsClass, geometry_from_field_direction
+from asymmetry.core.fitting.component_tags import (
+    ParameterKind,
+    PhysicsClass,
+    geometry_from_field_direction,
+)
 from asymmetry.core.fitting.composite import COMPONENTS
 from asymmetry.core.fitting.fit_wizard import (
     build_fit_wizard_recommendation,
@@ -55,6 +59,19 @@ from asymmetry.core.fitting.wizard_narrative import render_log_text
 from asymmetry.core.fitting.wizard_scope import WizardScope
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.survey import run_geometry
+
+#: A candidate within this many AICc of the recommendation is one the run hardly
+#: tells apart from it: the runner-up gets a recipe of its own, for the scan to decide.
+#: Only between relaxation models with at most one parameter more — a precession
+#: model's alternatives (another envelope) are not a different reading of the scan.
+RUNNER_UP_AICC = 10.0
+
+
+def _relaxation_only(assessment: Any) -> bool:
+    """Whether a candidate (not a null baseline) models relaxation with no precession line."""
+    kinds = assessment.template.model.parameter_kinds().values()
+    return not assessment.is_null_baseline and ParameterKind.FREQUENCY not in kinds
+
 
 #: Where a run's geometry came from, in the order the resolution tries them.
 GEOMETRY_SOURCES = ("user", "survey", "field", "file", "none")
@@ -156,6 +173,8 @@ class ScreenResult:
     #: The recipe built from the recommended candidate, or ``None`` when the
     #: wizard made no recommendation (the payload then says so).
     recipe: FitRecipe | None
+    #: The recipe of the best other model within :data:`RUNNER_UP_AICC`, if any.
+    runner_up: FitRecipe | None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -176,6 +195,7 @@ class ScreenResult:
             "narrative": self.narrative,
             "recommendation": self.recommendation,
             "recipe": None if self.recipe is None else self.recipe.to_dict(),
+            "runner_up": None if self.runner_up is None else self.runner_up.to_dict(),
         }
 
 
@@ -250,6 +270,29 @@ def screen_run(
         if recommended is None
         else FitRecipe.from_assessment(recommended, run_number=run_number, seed_field=dataset.field)
     )
+    runner_up = (
+        None
+        if recommended is None or not _relaxation_only(recommended) or recommended.aicc is None
+        else next(
+            (
+                FitRecipe.from_assessment(
+                    assessment, run_number=run_number, seed_field=dataset.field
+                )
+                for assessment in sorted(
+                    recommendation.assessments, key=lambda item: item.selected_score
+                )
+                if assessment.is_successful
+                and not assessment.is_null_baseline
+                and not assessment.is_disqualified
+                and _relaxation_only(assessment)
+                and assessment.aicc is not None
+                and 0.0 <= assessment.aicc - recommended.aicc <= RUNNER_UP_AICC
+                and assessment.parameter_count <= recommended.parameter_count + 1
+                and assessment.template.model.component_expression_string() != recipe.expression
+            ),
+            None,
+        )
+    )
 
     return ScreenResult(
         run_number=int(run_number),
@@ -268,11 +311,13 @@ def screen_run(
         narrative=render_log_text(recommendation),
         recommendation=serialize_fit_wizard_recommendation(recommendation, compact=True),
         recipe=recipe,
+        runner_up=runner_up,
     )
 
 
 __all__ = [
     "GEOMETRY_SOURCES",
+    "RUNNER_UP_AICC",
     "SCOPE_PRESETS",
     "ScreenCandidate",
     "ScreenResult",

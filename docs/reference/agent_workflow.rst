@@ -701,6 +701,12 @@ the run inside a scan of four or more runs, a NOTE says a featureless run is
 often the scan's quiet end, so a recipe from it fits the scan only if its ends
 are featureless too, and prints the ``wizard`` command for each end of the
 scan.
+When the recommendation is a relaxation model and another relaxation model
+with at most one parameter more sits within 10 AICc of it, the wizard also
+writes that runner-up as ``recipes/wizard-<run>-alt.json`` and names it: a run
+that hardly tells two models apart leaves the scan to decide, and
+``fit-series`` offers the runner-up when the recommended recipe's series flags
+most of its runs ``failed`` or ``amplitude_exceeds_data``.
 Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended
@@ -999,12 +1005,14 @@ amplitude that falls as its frequency rises as the instrument's frequency
 response; a line held near a high field, or with an exponential envelope on
 its cold side, is offered a ready two-line ``recipe``, since an unresolved
 pair fits as one line. A series fitted in a field the survey found no Larmor
-line at (longitudinal, whatever the file's stamp), whose rates and widths
-stay below a tenth of a zero-field series' width in the same work directory on
-most runs, at a field at least ten times that width over γ\ :sub:`μ`, is read as
-decoupled: the note says the zero-field relaxation is from fields static on
-the muon time scale, and that a rate pinned at zero there is that result, not
-a failed fit. Reading either series of the pair prints it. A fitted law's
+line at (longitudinal, whatever the file's stamp), whose fitted curves lose
+less than a tenth of what a zero-field series' curves lose by 8 µs — on most
+runs, against the zero-field runs within its own temperature span — is read
+as decoupled: the note says the zero-field relaxation at those temperatures is
+from fields static on the muon time scale, and that a rate pinned at zero or a
+width left unconstrained there is that result, not a failed fit. Comparing the
+curves rather than a rate holds whatever model each side was fitted with (a
+Kubo–Toyabe fitted in the field leaves its width unconstrained, not small). Reading either series of the pair prints it. A fitted law's
 report states the x span of the points it rests on and each parameter's unit,
 and judges the law on the √χ²\ :sub:`r`-scaled errors of its physical
 parameters (a prefactor or offset — ``a``, ``b``, ``c`` — that the data leave
@@ -1119,7 +1127,8 @@ reply yet. ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. Every command
 that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
 ``integral-scan``, ``fourier``) ends its text output with the step: write
 ``summary.md`` and run ``asymmetry audit summary.md`` before replying. What it catches is the arithmetic an
-analyst does in prose — percentage changes, ratios, unit conversions,
+analyst does in prose — percentage changes, ratios, unit conversions ("which
+would be a field of about 21 G", "corresponds to roughly 16 G"),
 differences between printed columns — which the agent skill's number rule
 forbids. It also lists a law's vocabulary ("critical slowing",
 "activation energy", "correlation time") when every fit of that law in the
@@ -1146,8 +1155,9 @@ and while a run the survey found no line in has only precession fits flagged
 as not describing it (``amplitude_exceeds_data``, ``frequency_unresolved``,
 ``failed``) — for those it prints the relaxation-only ``recipe`` and
 ``fit-series`` commands. A dip an ``integral-scan`` fit announced ("the scan holds
-another dip") holds it too until some fit in the work directory has a line
-inside that window. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
+another dip") holds it too until a fit of the same scan has a line whose
+centre ± width lies inside that window — another scan's line, or a broad line a
+poor whole-scan fit stretched across two dips, does not hold it. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
 left out of the match, since a rounded sum would otherwise find one of their
 elements by chance.
 
@@ -1223,8 +1233,8 @@ five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 4 is
 called a resolved ``RESONANCE`` to report, with its errors qualified when
 χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. A scan that measures one field (or other x) more than once is noted with the
 runs and whether each repeat came back within three errors — a return pass to
-report — and a dip another stored scan in the work directory already fitted is
-not announced again. When a windowed line (both flanks in range, five errors deep) matches one
+report — and a dip another stored fit of the same scan holds (a line whose
+centre ± width lies inside the dip's window) is not announced again. When a windowed line (both flanks in range, five errors deep) matches one
 another scan in the work directory fitted near the same field, a ``COMPARE``
 line prints both centres and widths, with errors scaled by
 √χ²\ :sub:`r`, and says which is broader and which higher in field — the

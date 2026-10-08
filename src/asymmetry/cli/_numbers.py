@@ -11,8 +11,9 @@ some output, not that it is the right one. Numbers written as a multiple or a
 significance or a whole-number percentage (``10×``, ``4.3σ``, ``32 %``), or named
 as a difference (``ΔAICc 11``), match only when a command printed that exact
 token (``×``, ``x`` and "times" alike). A number whose context makes it
-arithmetic — after "a factor of" or a difference phrase ("agree to about 0.02
-MHz", "falls by 0.03 MHz", "a margin of 3.6"), named as a comparison ("4 points
+arithmetic — after "a factor of", a difference phrase ("agree to about 0.02
+MHz", "falls by 0.03 MHz", "a margin of 3.6") or a conversion ("corresponds to
+about 21 G"), named as a comparison ("4 points
 better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` — is listed unless
 a command printed it verbatim to three or more significant digits (a run number,
 a field on the scan's grid). A range ``a–b`` shares its context between both
@@ -59,12 +60,15 @@ _CHANGE_VERB = (
 #: joined by "and", and no "to" ("falls to 0.2 by 50 K" says when, not how much).
 _CLAUSE = r"(?:(?!\b(?:and|to)\b)(?:[^.,;:]|\.(?=\d)))*?"
 
-#: Phrases that make the number after them a ratio ("a factor of ~3") or a
+#: Phrases that make the number after them a ratio ("a factor of ~3"), a
 #: difference ("within about 2 G", "falls by 0.03", "agree with the survey to
-#: about 0.02 MHz", "a margin of 3.6"), hedged or not.
+#: about 0.02 MHz", "a margin of 3.6") or a conversion ("which would be a field of
+#: about 21 G"), hedged or not.
 _DERIVED_PREFIX = re.compile(
     rf"(?:factor of|times|fold|within|\b{_CHANGE_VERB}\w*\b{_CLAUSE},?\s*\bby"
     rf"|agree\w*\b{_CLAUSE}\bto"
+    rf"|\b(?:correspond\w*\s+to|equivalent\s+(?:to|of)|amounts?\s+to|converts?\s+to"
+    rf"|translat\w*\s+(?:in)?to|would\s+be){_CLAUSE}"
     rf"|\b(?:margin|difference|gap|shift|drop|rise|increase|decrease|change|offset"
     rf"|discrepancy|spread|scatter|deviation)s?\s+of)\s*{_HEDGE}\s*$",
     re.IGNORECASE,

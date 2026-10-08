@@ -14,7 +14,12 @@ import pytest
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import PhysicsClass
 from asymmetry.core.workflow.recipe import FitRecipe
-from asymmetry.core.workflow.screen import SCOPE_PRESETS, resolve_geometry, screen_run
+from asymmetry.core.workflow.screen import (
+    RUNNER_UP_AICC,
+    SCOPE_PRESETS,
+    resolve_geometry,
+    screen_run,
+)
 from asymmetry.core.workflow.workdir import WorkDir
 from tests.core.conftest import SCAN_RUNS
 
@@ -149,6 +154,17 @@ def test_screen_run_recommends_a_relaxation_model_and_writes_a_usable_recipe(
     assert data["recommended_key"] == result.recommended_key
     assert data["recommendation"]["recommended_key"] == result.recommended_key
     assert FitRecipe.from_dict(data["recipe"]) == result.recipe
+
+    # A single exponential leaves a near-tie among relaxation models: the best
+    # other one within RUNNER_UP_AICC gets its own recipe, for the scan to decide.
+    assert result.runner_up is not None
+    runner_up = next(
+        c for c in result.candidates if c.key == result.runner_up.source["template_key"]
+    )
+    assert 0.0 <= runner_up.aicc - recommended.aicc <= RUNNER_UP_AICC
+    assert runner_up.parameter_count <= recommended.parameter_count + 1
+    assert result.runner_up.expression != result.recipe.expression
+    assert FitRecipe.from_dict(data["runner_up"]) == result.runner_up
 
 
 def test_a_geometry_override_changes_the_geometry_source_and_the_resolved_scope(

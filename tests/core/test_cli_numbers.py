@@ -266,6 +266,10 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         ("it falls only slightly, by about 0.03 MHz", ["0.03"]),
         ("Delta falls and reaches its plateau by about 16.3 K", []),
         ("Lambda sits at its 0.1 lower bound", []),
+        # A unit conversion of a printed value (Haiku 5.5 wave 15, Sonnet 5.5).
+        ("a line at 3.8 MHz, which would be a field of about 16 G", ["16"]),
+        ("3.8 MHz corresponds to roughly 16 G", ["16"]),
+        ("this corresponds to run 9031", []),
     ],
 )
 def test_wave_derived_numbers_are_flagged(draft: str, flagged: list[str]) -> None:
@@ -443,11 +447,22 @@ def test_a_dip_a_scan_announced_and_no_fit_holds_is_named(tmp_path: Path) -> Non
     scans = tmp_path / "wd" / "scans"
     scans.mkdir(parents=True)
     window = {"centre": 21400.0, "x_min": 19950.0, "x_max": 22950.0}
-    whole = {"success": True, "parameters": {"B0": 19475.0}, "next_dip_windows": [window]}
-    (scans / "whole.json").write_text(json.dumps({"fit": whole}))
+
+    def store(name: str, runs: list[int], centre: float, width: float, windows=()) -> None:
+        fit = {
+            "success": True,
+            "parameters": {"B0": centre, "Bwid": width},
+            "next_dip_windows": list(windows),
+        }
+        (scans / f"{name}.json").write_text(json.dumps({"runs": runs, "fit": fit}))
+
+    store("whole", [1, 2, 3], 19475.0, 300.0, [window])
     assert _unfitted_dips([tmp_path / "wd"]) == [(tmp_path / "wd", "whole", window)]
-    local = {"success": True, "parameters": {"B0": 21474.0}, "next_dip_windows": []}
-    (scans / "local.json").write_text(json.dumps({"fit": local}))
+    # Another scan's line there, or a broad line stretched across the window, holds nothing.
+    store("other-scan", [4, 5, 6], 21474.0, 255.0)
+    store("broad", [1, 2, 3], 21000.0, 3600.0)
+    assert _unfitted_dips([tmp_path / "wd"]) == [(tmp_path / "wd", "whole", window)]
+    store("local", [1, 2, 3], 21474.0, 255.0)
     assert _unfitted_dips([tmp_path / "wd"]) == []
 
 

@@ -106,12 +106,20 @@ def run(args: argparse.Namespace) -> None:
     except ValueError as exc:
         raise UserError(str(exc)) from None
     if result.recipe is not None and (args.tmin is not None or args.tmax is not None):
-        result = replace(result, recipe=result.recipe.with_window(t_min=args.tmin, t_max=args.tmax))
+        result = replace(
+            result,
+            recipe=result.recipe.with_window(t_min=args.tmin, t_max=args.tmax),
+            runner_up=None
+            if result.runner_up is None
+            else result.runner_up.with_window(t_min=args.tmin, t_max=args.tmax),
+        )
     wizard_path = workdir.write_wizard(args.run, result.to_dict())
     recipe_name = f"wizard-{args.run}"
     recipe_path = (
         None if result.recipe is None else workdir.write_recipe(recipe_name, result.recipe)
     )
+    if result.runner_up is not None:
+        workdir.write_recipe(runner_up_name(recipe_name), result.runner_up)
     from asymmetry.core.fitting.fit_wizard import effective_window_duration
 
     peaks, unfitted = _spectral_lines(result, effective_window_duration(dataset))
@@ -188,6 +196,11 @@ def run(args: argparse.Namespace) -> None:
     ):
         options = "" if args.instrument is None else f" --instrument {args.instrument}"
         print("\n".join(_quiet_screen_notes(workdir, selection, args.folder, args.run, options)))
+
+
+def runner_up_name(recipe_name: str) -> str:
+    """The name the runner-up of the screening that wrote *recipe_name* is stored under."""
+    return f"{recipe_name}-alt"
 
 
 #: A scan of at least this many runs has ends worth screening apart from its middle.
@@ -415,6 +428,17 @@ def _render(
         lines.append("No recipe written — there is no recommended model to fit.")
     else:
         lines.append(f"Recipe written to {recipe_path}")
+    if result.runner_up is not None:
+        key = result.runner_up.source["template_key"]
+        candidate = next(entry for entry in result.candidates if entry.key == key)
+        recommended = next(entry for entry in result.candidates if entry.is_recommended)
+        name = f"wizard-{result.run_number}"
+        lines.append(
+            f"Runner-up recipe written as {runner_up_name(name)}: {result.runner_up.expression}, "
+            f"{candidate.aicc - recommended.aicc:.1f} AICc behind — a model this run hardly "
+            f"tells apart. If a fit-series from {name} flags most of its runs, fit the scan "
+            f"with --recipe {runner_up_name(name)} instead."
+        )
     if plot_path is not None:
         lines.append(f"Plot written to {plot_path}")
     elif plot_note is not None:

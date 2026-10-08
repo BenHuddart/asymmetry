@@ -314,25 +314,27 @@ def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
 
 def _unfitted_dips(roots: list[Path]) -> list[tuple[Path, str, dict]]:
     """``(work directory, scan, window)`` for each dip a scan's fit announced and no fit holds."""
+    from asymmetry.cli.commands.integral_scan import holds_dip
+
     found = []
     for root in roots:
-        fits = {
-            path.stem: fit
+        payloads = {
+            path.stem: json.loads(path.read_text(encoding="utf-8"))
             for path in sorted((root / "scans").glob("*.json"))
-            if (fit := json.loads(path.read_text(encoding="utf-8"))["fit"]) is not None
         }
-        centres = [
-            value
-            for fit in fits.values()
-            if fit["success"]
-            for name, value in fit["parameters"].items()
-            if name.split("_")[0] == "B0"
-        ]
         found.extend(
             (root, name, window)
-            for name, fit in fits.items()
-            for window in fit["next_dip_windows"]
-            if not any(window["x_min"] <= centre <= window["x_max"] for centre in centres)
+            for name, payload in payloads.items()
+            if payload["fit"] is not None
+            for window in payload["fit"]["next_dip_windows"]
+            if not holds_dip(
+                (
+                    other["fit"]
+                    for other in payloads.values()
+                    if other["runs"] == payload["runs"] and other["fit"] is not None
+                ),
+                window,
+            )
         )
     return found
 

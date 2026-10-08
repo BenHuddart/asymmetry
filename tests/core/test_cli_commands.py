@@ -1463,6 +1463,52 @@ def test_fit_series_writes_a_stamped_series_file(
     assert stored["order_key"] == "temperature"
 
 
+_ORDER = ("--order", "temperature")
+
+
+def test_fit_series_offers_the_screenings_runner_up_when_most_runs_run_away(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    stored = WorkDir(fitting_workdir)
+    relax = stored.read_recipe("relax")
+    # An amplitude held far above the data flags every run, as a runaway does.
+    stored.write_recipe("wizard-7", relax.with_overrides(initial={}, fix={"A_1": 400.0}))
+    stored.write_recipe("wizard-7-alt", relax)
+    runs = f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}"
+    capsys.readouterr()
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-series",
+        "--runs",
+        runs,
+        "--recipe",
+        "wizard-7",
+        *_ORDER,
+    )
+    out = capsys.readouterr().out
+    assert "amplitude_exceeds_data, so Exponential + Constant does not describe this scan" in out
+    assert f"--runs {runs} --recipe wizard-7-alt --order " in out
+
+    # The runner-up's own series is quiet, and so is a recipe with no runner-up.
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-series",
+        "--runs",
+        runs,
+        "--recipe",
+        "wizard-7-alt",
+        *_ORDER,
+    )
+    _cli(
+        workflow_folder, fitting_workdir, "fit-series", "--runs", runs, "--recipe", "relax", *_ORDER
+    )
+    assert "runner-up" not in capsys.readouterr().out
+
+
 def test_fit_series_defaults_its_name_from_the_recipe(
     workflow_folder: Path, fitting_workdir: Path, capsys
 ) -> None:
@@ -3428,7 +3474,7 @@ def test_repeated_scan_points_are_named_with_whether_they_came_back() -> None:
     assert (high, high_differ) == (500.0, True)
 
 
-def test_a_dip_another_scan_already_fitted_is_not_announced_again() -> None:
+def test_a_dip_another_fit_of_the_scan_holds_is_not_announced_again() -> None:
     from asymmetry.cli.commands.integral_scan import _poor_fit_note
 
     fit = {
@@ -3443,7 +3489,11 @@ def test_a_dip_another_scan_already_fitted_is_not_announced_again() -> None:
         "next_dip_windows": [{"x_min": 17950.0, "x_max": 19950.0}],
     }
     assert any("another dip" in note for note in _poor_fit_note(fit))
-    assert not any("another dip" in note for note in _poor_fit_note(fit, [19481.4]))
+    other = {"success": True, "parameters": {"B0": 19481.4, "Bwid": 240.0}}
+    assert not any("another dip" in note for note in _poor_fit_note(fit, [other]))
+    # A poor whole-scan fit's broad line, centred in the window, does not hold its dip.
+    broad = {"success": True, "parameters": {"B0": 19481.4, "Bwid": 3600.0}}
+    assert any("another dip" in note for note in _poor_fit_note(fit, [broad]))
 
 
 def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
