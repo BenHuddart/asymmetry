@@ -1887,6 +1887,17 @@ hold; held runs are now reassessed. Runaways in oscillatory and two-rate
 models (nickel's field and TF series, one plateau run) stayed unheld, and the
 CLI does not say why.
 
+After wave 13 the audit's one relation check (A_μ = ν₁ + ν₂) became a table
+of printed requests aimed at the summary — a held `A_bg`, the deadtime used,
+why a long-range resonance fit is not a result, a return pass, the missing
+radical ALC model, `trend` steps, shifts, frequency response, shape changes
+and extrema — each checked by lenient keywords; a missing one holds the reply
+and quotes the printed line back. Replayed over the 120 replies of waves 9–13
+it holds 13, among them corannulene's missing background reason (wave 12),
+copper's unstated hold (wave 12) and benzene ALC (wave 13), and accepts the
+passing replies' own wording ("one cubic cannot follow both dips"). A
+negated statement ("I do not claim a diamagnetic shift") still satisfies it.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
