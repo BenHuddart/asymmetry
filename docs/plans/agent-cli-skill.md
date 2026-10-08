@@ -1751,6 +1751,25 @@ by side with which is broader; `audit` prints the commands for each unfitted
 scan. Rejected after replaying it on the stored series of waves 1–3: a
 "recipe overreaches" note (it fired only on cases that already passed).
 
+#### Wave 5 and passes 7–8 — 2026-10-08
+
+Wave 5 (passes 5–6), 20 of 24 scored: Tier A 4/4 and trend-fit 4/4 again;
+benzene high-TF (first pass: a plain and a correlation transform of the
+co-add, A_μ stated as the sum), benzene repolarisation (first pass: the TF
+stamp argued from the integral) and corannulene (COMPARE used) recovered;
+spin-Peierls, AFM, TRSB, basics and benzene ALC still fail. The agents read
+the right advice and skip it — the two-line test, `trend` on a series, an
+announced dip.
+
+Pass 7: `wizard` calls a component at twice a tesla-field line its harmonic;
+`audit` prints the commands for each unfitted scan; `trend` names a change of
+relaxation shape between differently shaped terms (replayed on 323 stored
+series: spin-Peierls only); `audit` names a correlation spectrum with no plain
+transform. Pass 8: `audit` holds the reply while a series has not been read
+with `trend`, a tesla-field two-line test has no two-line fit, an announced
+dip has no fit, or a survey-lineless run has only precession fits flagged as
+not describing it (with relaxation-only commands, so the gate cannot loop).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
