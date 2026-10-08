@@ -1257,7 +1257,10 @@ centre ± width lies inside the dip's window) is not announced again. When a win
 another scan in the work directory fitted near the same field, a ``COMPARE``
 line prints both centres and widths, with errors scaled by
 √χ²\ :sub:`r`, and says which is broader and which higher in field — the
-direction a summary of two conditions must state. A run stamped TF at a kilogauss or more whose integral
+direction a summary of two conditions must state. A resolved line that
+another analysed scan covers, with no fitted line within five widths of it
+there, gets a NOTE with the command that fits that scan on the same window: a
+line one scan shows and another lacks is a finding to report either way. A run stamped TF at a kilogauss or more whose integral
 asymmetry stays at least 0.02 and five errors from zero is named as
 longitudinal: a transverse field that strong precesses the polarisation
 through many periods within the window and integrates to near zero. An LCR fit notes

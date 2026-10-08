@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shlex
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from asymmetry.cli._reduction import (
     describe,
     reduction_settings,
 )
-from asymmetry.cli._runs import range_text, resolve_runs
+from asymmetry.cli._runs import range_text, resolve_runs, run_spec
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -270,6 +271,7 @@ def run(args: argparse.Namespace) -> None:
     )
     if fit_payload is not None:
         notes.extend(_line_comparisons(fit_payload, stored))
+        notes.extend(_absent_lines(args.folder, fit_payload, result_payload["runs"], payloads))
     from asymmetry.core.workflow.survey import has_file_deadtime
 
     notes.extend(
@@ -550,6 +552,52 @@ def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
                     )
                     + ". Report both and that direction — a width or field changing between "
                     "conditions is the physics (motional narrowing, a changing coupling)."
+                )
+    return notes
+
+
+#: Another scan's line within this many widths of a resolved one is that line moved,
+#: not absent.
+_COUNTERPART_WIDTHS = 5.0
+
+
+def _absent_lines(folder: str, fit: dict, runs: list[int], payloads: dict[str, dict]) -> list[str]:
+    """Each resolved line another analysed scan covers but holds no fitted line near."""
+    from asymmetry.core.workflow.integral_scan import DIP_FLANK_WIDTHS
+
+    scans: dict[tuple[int, ...], tuple[str, list[float], list[tuple[float, float]]]] = {}
+    for stem, stored_scan in payloads.items():
+        if stored_scan["runs"] == runs or stored_scan["fit"] is None:
+            continue
+        name, xs, lines = scans.setdefault(tuple(stored_scan["runs"]), (stem, [], []))
+        xs.extend(point["x"] for point in stored_scan["scan"]["points"])
+        lines.extend(
+            (
+                stored_scan["fit"]["parameters"][line],
+                abs(stored_scan["fit"]["parameters"][line.replace("B0", "Bwid", 1)]),
+            )
+            for line in _resolved_lines(stored_scan["fit"], math.inf)
+        )
+    notes = []
+    low, high = fit["x_range"]
+    for line in _resolved_lines(fit, math.inf):
+        centre = fit["parameters"][line]
+        width = abs(fit["parameters"][line.replace("B0", "Bwid", 1)])
+        for other_runs, (name, xs, lines) in scans.items():
+            covered = min(xs) <= centre - DIP_FLANK_WIDTHS * width and (
+                centre + DIP_FLANK_WIDTHS * width <= max(xs)
+            )
+            moved = any(
+                abs(centre - c2) <= _COUNTERPART_WIDTHS * max(width, w2) for c2, w2 in lines
+            )
+            if lines and covered and not moved:
+                notes.append(
+                    f"NOTE: scan {name} also covers {centre:g} (this line's width {width:g}), but "
+                    f"none of its fits holds a line there. Fit it on the same window — asymmetry "
+                    f"integral-scan {shlex.quote(folder)} --runs {run_spec(list(other_runs))} "
+                    f"--model 'LorentzianLCR + Linear' --xmin {low:g} --xmax {high:g} (with "
+                    f"{name}'s other options) — and report the result either way: a line one "
+                    f"scan shows and another lacks is a finding."
                 )
     return notes
 

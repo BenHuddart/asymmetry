@@ -3429,6 +3429,35 @@ def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
     assert "of a width these errors cannot tell apart and at a field these errors" in same
 
 
+def test_a_line_another_analysed_scan_covers_without_a_fit_there_is_named() -> None:
+    from asymmetry.cli.commands.integral_scan import _absent_lines
+
+    def fit(centre: float, width: float, low: float, high: float) -> dict:
+        return {
+            "parameters": {"f": -0.01, "B0": centre, "Bwid": width, "m": 0.0, "b": 0.1},
+            "uncertainties": {"f": 0.0005, "B0": 15.0, "Bwid": 30.0, "m": 0.0, "b": 0.001},
+            "success": True,
+            "params_at_bound": [],
+            "reduced_chi_squared": 1.0,
+            "x_range": [low, high],
+            "x_min": low,
+            "x_max": high,
+        }
+
+    def scan(runs: list[int], line: dict) -> dict:
+        points = [{"x": x} for x in (0.0, 30000.0)]
+        return {"runs": runs, "scan": {"points": points}, "fit": line}
+
+    hot = fit(7080.0, 390.0, 5000.0, 9500.0)
+    cold = scan([1, 2], fit(15400.0, 1160.0, 12000.0, 19000.0))
+    (note,) = _absent_lines("data", hot, [3, 4], {"cold": cold})
+    assert "scan cold also covers 7080" in note
+    assert "--runs 1-2 --model 'LorentzianLCR + Linear' --xmin 5000 --xmax 9500" in note
+    # The same line moved a little is that line, not an absence.
+    moved = scan([1, 2], fit(7300.0, 400.0, 5000.0, 9500.0))
+    assert _absent_lines("data", hot, [3, 4], {"cold": moved}) == []
+
+
 def test_a_wizard_component_at_twice_a_tesla_line_is_named_a_harmonic() -> None:
     from asymmetry.cli.commands.wizard import _harmonic_pair
 
