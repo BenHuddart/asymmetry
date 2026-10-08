@@ -57,7 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **``audit`` holds the reply for advice not yet taken**: a fitted series no
   ``trend`` has read; a tesla-field line whose two-line test no fit has run;
   and a run the survey found no line in, whose only fits are precession models
-  flagged as not describing it — with the relaxation-only commands to fit it;
+  flagged as not describing it — with the relaxation-only commands to fit it
+  (a two-line test counts only a fit with two frequencies within 2 %, not a
+  line and its harmonic; only ``fit-series`` series need a ``trend``);
   and a dip an ``integral-scan`` fit announced that no fit holds.
 - **``audit`` names a correlation spectrum with no plain transform** of the
   same run: the two lines whose sum its peak is are in the plain FFT.
@@ -67,6 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **``survey`` lists each scan's runs**, in run order (``runs 29592-29721``),
   instead of the two runs at its axis ends, which read as a range that left
   runs out.
+- **``trend`` offers a gap law for a vortex lattice**: when a held TF line falls
+  below its warm frequency on cooling while its width grows, it prints the
+  ``SC_SWave`` (then ``SC_DWave``) command for the width, if the sample is a
+  superconductor.
 - **Gap-law trend fits start at the data's Tc.** ``SC_*`` laws seed Tc where
   σ(T) settles at its normal-state level, and the width and amplitude from the
   two plateaus, instead of at 20 K, which could land on a false minimum.

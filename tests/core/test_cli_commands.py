@@ -2653,6 +2653,7 @@ def test_a_frequency_held_along_the_scan_is_not_called_an_order_parameter(
             "frequency": value,
             "frequency_err": 0.001 if value > 1.0 else 0.01,
             "sigma": 0.3,
+            "sigma_err": 0.01,
             "flags": [],
         }
         for run, value in enumerate(frequencies, start=1)
@@ -3441,3 +3442,36 @@ def test_a_dip_another_scan_already_fitted_is_not_announced_again() -> None:
     }
     assert any("another dip" in note for note in _poor_fit_note(fit))
     assert not any("another dip" in note for note in _poor_fit_note(fit, [19481.4]))
+
+
+def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
+    from asymmetry.cli.commands.trend import _law_hints
+    from asymmetry.core.workflow.series import TrendTable
+
+    columns = ["key", "x", "frequency", "frequency_err", "sigma", "sigma_err", "flags"]
+    temperatures = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+    frequencies = [5.370, 5.372, 5.375, 5.380, 5.388, 5.396, 5.397, 5.397]
+    widths = [0.45, 0.44, 0.42, 0.38, 0.30, 0.20, 0.16, 0.16]
+    rows = [
+        {
+            "key": str(i),
+            "x": t,
+            "frequency": f,
+            "frequency_err": 0.0005,
+            "sigma": w,
+            "sigma_err": 0.005,
+            "flags": [],
+        }
+        for i, (t, f, w) in enumerate(zip(temperatures, frequencies, widths, strict=True))
+    ]
+    text = "\n".join(
+        _law_hints("tf", TrendTable("temperature", columns, rows), ["frequency", "sigma"])
+    )
+    assert "if the sample is a superconductor" in text
+    assert "--model SC_SWave --param sigma" in text
+    # A width that narrows on cooling (no vortex lattice) gets no gap law.
+    flipped = [row | {"sigma": w} for row, w in zip(rows, widths[::-1], strict=True)]
+    text = "\n".join(
+        _law_hints("tf", TrendTable("temperature", columns, flipped), ["frequency", "sigma"])
+    )
+    assert "SC_SWave" not in text

@@ -380,11 +380,15 @@ def test_a_tesla_field_line_without_a_two_line_fit_is_named(tmp_path: Path) -> N
         "peak_analysis": {"peaks": [{"frequency_mhz": 813.59}]},
     }
     (root / "spectra" / "run-686.json").write_text(json.dumps(spectrum))
-    one_line = {"expression": "Oscillatory * Exponential + Constant"}
-    (root / "fits" / "one-686.json").write_text(json.dumps(one_line))
+    def fit(**frequencies: float) -> str:
+        return json.dumps({"expression": "...", "fit": {"parameters": frequencies}})
+
+    (root / "fits" / "one-686.json").write_text(fit(frequency=813.59))
     assert _untested_doublets([root]) == [(root, 686, 813.59)]
-    two = {"expression": "Oscillatory * Exponential + Oscillatory * Exponential + Constant"}
-    (root / "fits" / "two-line-686.json").write_text(json.dumps(two))
+    # A second line at the first's harmonic is not a two-line test.
+    (root / "fits" / "wizard-686.json").write_text(fit(frequency_1=813.6, frequency_3=1627.2))
+    assert _untested_doublets([root]) == [(root, 686, 813.59)]
+    (root / "fits" / "two-line-686.json").write_text(fit(frequency_1=813.60, frequency_3=813.54))
     assert _untested_doublets([root]) == []
 
 

@@ -816,6 +816,20 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
             )
         else:
             shift = _frequency_shift(trend, frequencies[0])
+            widths = [p for p in rates if re.sub(r"_\d+$", "", p) == "sigma"] or rates
+            # A line pulled below its normal-state frequency on cooling while its
+            # width grows is the vortex lattice's diamagnetic shift and field
+            # distribution: the width is a superfluid-density measure.
+            if shift is not None and shift[0] < shift[1] and widths:
+                cold = _measured(trend, widths[0])
+                if len(cold) >= 2 and cold[0][widths[0]] > cold[-1][widths[0]]:
+                    hints.append(
+                        f"{frequencies[0]} falls below its warm value on cooling while "
+                        f"{widths[0]} grows: if the sample is a superconductor, that is its "
+                        f"diamagnetic shift and vortex lattice — fit the width with a gap law and "
+                        f"say whether it describes it: {command} SC_SWave --param {widths[0]}, "
+                        f"then SC_DWave."
+                    )
             if shift is not None:
                 hints.append(
                     f"{frequencies[0]} moves from {format_number(shift[0], 5)} to "

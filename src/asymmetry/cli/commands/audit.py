@@ -259,18 +259,41 @@ def _unfitted_report(
     return "\n".join(lines)
 
 
+#: Two fitted frequencies this close (relative) are a resolved pair, not a line
+#: and its harmonic.
+_PAIR_SPLIT = 0.02
+
+
 def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
-    """``(work directory, run, MHz)`` for a tesla-field line no two-line fit there tested."""
+    """``(work directory, run, MHz)`` for a tesla-field line no two-line fit there tested.
+
+    A fit tests the pair only when two of its frequencies lie within
+    :data:`_PAIR_SPLIT` of each other; a wizard recipe whose second line is the
+    first's harmonic does not.
+    """
     from asymmetry.cli.commands.fourier import tesla_field_lines
+
+    def paired(values: dict) -> bool:
+        lines = sorted(
+            abs(value)
+            for name, value in values.items()
+            if name.split("_")[0] == "frequency" and value is not None
+        )
+        return any(b - a <= _PAIR_SPLIT * b for a, b in zip(lines, lines[1:]))
 
     found = []
     for root in roots:
-        expressions = [
-            json.loads(path.read_text(encoding="utf-8"))["expression"]
-            for folder in ("fits", "series")
-            for path in (root / folder).glob("*.json")
+        fitted = [
+            json.loads(path.read_text(encoding="utf-8"))["fit"]["parameters"]
+            for path in (root / "fits").glob("*.json")
+        ] + [
+            row
+            for path in (root / "series").glob("*.json")
+            for row in json.loads(path.read_text(encoding="utf-8")).get("trend", {"rows": []})[
+                "rows"
+            ]
         ]
-        if any(expression.count("Oscillatory") >= 2 for expression in expressions):
+        if any(paired(values) for values in fitted):
             continue
         for path in sorted((root / "spectra").glob("*.json")):
             spectrum = json.loads(path.read_text(encoding="utf-8"))
@@ -307,14 +330,12 @@ def _unfitted_dips(roots: list[Path]) -> list[tuple[Path, str, dict]]:
 
 
 def _untrended_series(roots: list[Path], log_text: str) -> list[tuple[Path, str]]:
-    """``(work directory, name)`` for each fitted series no logged ``trend`` command read."""
-    from asymmetry.core.workflow.workdir import DERIVED_SERIES_KINDS
-
+    """``(work directory, name)`` for each ``fit-series`` series no logged ``trend`` command read."""
     return [
         (root, path.stem)
         for root in roots
         for path in sorted((root / "series").glob("*.json"))
-        if json.loads(path.read_text(encoding="utf-8"))["kind"] not in DERIVED_SERIES_KINDS
+        if json.loads(path.read_text(encoding="utf-8"))["kind"] == "series"
         and re.search(
             rf"^\$ asymmetry trend .*--series {re.escape(path.stem)}(?:\s|$)",
             log_text,
