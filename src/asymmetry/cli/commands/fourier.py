@@ -201,6 +201,21 @@ def _reduced_counts(workdir, selection, entry):
 _CLOSE_PEAKS = 2
 
 
+#: Two fitted frequencies this close (relative) are a resolved pair, not a line
+#: and its harmonic.
+PAIR_SPLIT = 0.02
+
+
+def close_pair(values: dict) -> tuple[float, float] | None:
+    """The first two fitted frequencies within :data:`PAIR_SPLIT` of each other, if any."""
+    lines = sorted(
+        abs(value)
+        for name, value in values.items()
+        if name.split("_")[0] == "frequency" and value is not None
+    )
+    return next(((a, b) for a, b in zip(lines, lines[1:]) if b - a <= PAIR_SPLIT * b), None)
+
+
 def tesla_field_lines(result: dict) -> list[dict]:
     """Peaks of a plain transform near the Larmor frequency of a field of tesla order.
 

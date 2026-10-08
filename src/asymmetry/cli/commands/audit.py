@@ -261,27 +261,14 @@ def _unfitted_report(
     return "\n".join(lines)
 
 
-#: Two fitted frequencies this close (relative) are a resolved pair, not a line
-#: and its harmonic.
-_PAIR_SPLIT = 0.02
-
-
 def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
     """``(work directory, run, MHz)`` for a tesla-field line no two-line fit there tested.
 
     A fit tests the pair only when two of its frequencies lie within
-    :data:`_PAIR_SPLIT` of each other; a wizard recipe whose second line is the
+    :data:`~asymmetry.cli.commands.fourier.PAIR_SPLIT` of each other; a wizard recipe whose second line is the
     first's harmonic does not.
     """
-    from asymmetry.cli.commands.fourier import tesla_field_lines
-
-    def paired(values: dict) -> bool:
-        lines = sorted(
-            abs(value)
-            for name, value in values.items()
-            if name.split("_")[0] == "frequency" and value is not None
-        )
-        return any(b - a <= _PAIR_SPLIT * b for a, b in zip(lines, lines[1:]))
+    from asymmetry.cli.commands.fourier import close_pair, tesla_field_lines
 
     found = []
     for root in roots:
@@ -297,7 +284,7 @@ def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
             ]
             if "failed" not in row["flags"]
         ]
-        if any(paired(values) for values in fitted):
+        if any(close_pair(values) is not None for values in fitted):
             continue
         for path in sorted((root / "spectra").glob("*.json")):
             spectrum = json.loads(path.read_text(encoding="utf-8"))

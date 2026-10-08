@@ -3524,3 +3524,11 @@ def test_two_close_fourier_peaks_get_the_two_line_recipe() -> None:
         "plot": None,
     }
     assert "--initial frequency_1=813.595 --initial frequency_3=813.497" in _render(result)
+
+
+def test_two_fitted_frequencies_within_two_percent_are_a_pair() -> None:
+    from asymmetry.cli.commands.fourier import close_pair
+
+    assert close_pair({"frequency_1": 813.601, "frequency_3": 813.542}) == (813.542, 813.601)
+    assert close_pair({"frequency_1": 813.6, "frequency_3": 1627.2}) is None
+    assert close_pair({"frequency": 1.36, "Lambda": 1.37}) is None

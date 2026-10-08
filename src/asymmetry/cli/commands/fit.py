@@ -79,6 +79,16 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(result, recipe, plot_path))
+    from asymmetry.cli.commands.fourier import close_pair
+
+    pair = close_pair(result["parameters"]) if result["success"] else None
+    if pair is not None:
+        print(
+            f"NOTE: this fit holds two lines, at {pair[1]:.6g} and {pair[0]:.6g} MHz. A split "
+            f"below the FFT resolution is still two lines: compare this chi2_red with the "
+            f"one-line fit's, and if it is lower report both frequencies and amplitudes, not a "
+            f"single line."
+        )
     note = window_note(workdir, [args.run])
     if note is not None:
         print(note)
