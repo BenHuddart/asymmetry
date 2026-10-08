@@ -65,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   summary to account for, not held on, and a failed two-line fit is no test.
 - **``fourier``'s note on two barely separated lines prints the two-line
   recipe** started at both peaks.
+- **``integral-scan``'s fit table gives each field and coupling its unit** (G
+  or MHz): a hyperfine coupling was quoted in gauss.
 - **``fit`` notes a fitted pair of lines** within 2 % of each other: a split
   below the FFT resolution is still two lines to report when it lowers χ²ᵣ.
 - **``audit`` names a correlation spectrum with no plain transform** of the

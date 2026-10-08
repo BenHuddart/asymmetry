@@ -314,11 +314,23 @@ def _render(result: dict, settings, notes: list[str]) -> str:
             f"; at a bound: {', '.join(fit['params_at_bound'])}" if fit["params_at_bound"] else ""
         )
         verdict = "" if fit["success"] else f" — FAILED ({fit['message']}{at_bound})"
+        from asymmetry.core.fitting.field_scan import as_composite_model
+
+        model = as_composite_model(fit["expression"])
+        # Fields and couplings carry their unit; an amplitude's stored unit is
+        # not that of an integral asymmetry, so it prints none.
+        units = {
+            model.component_param_name(index, local): info.unit
+            for index, component in enumerate(model.components)
+            for local, info in component.param_info.items()
+            if info.unit in ("G", "MHz")
+        }
         # A held parameter has no error; one pinned on a bound is not determined.
         rows = [
             [
                 name,
                 format_number(value, 6),
+                units.get(name, ""),
                 (
                     "fixed"
                     if name in fit["fixed"]
@@ -334,7 +346,7 @@ def _render(result: dict, settings, notes: list[str]) -> str:
             [
                 f"fit: {fit['expression']}, chi2_red "
                 f"{format_number(fit['reduced_chi_squared'], 3)}{verdict}",
-                render_table(["parameter", "value", "error"], rows),
+                render_table(["parameter", "value", "unit", "error"], rows),
             ]
         )
     lines.extend(notes)

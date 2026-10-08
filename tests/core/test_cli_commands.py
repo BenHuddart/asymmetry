@@ -935,9 +935,9 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     out = capsys.readouterr().out
     assert "period field offset (red - green): -44.00 G, mean of 2 run(s)" in out
     assert "--fix dB=44.00" in out
-    # Each fitted parameter is printed with its error; a held one says so.
+    # Each fitted parameter is printed with its unit and error; a held one says so.
     bwid = next(line.split() for line in out.splitlines() if line.startswith("Bwid "))
-    assert bwid[1:] == ["1.000000", "fixed"]
+    assert bwid[1:] == ["1.000000", "G", "fixed"]
 
     logs = iter([(9000.0, 43.0), (10000.0, 45.0)])
     cli.main([*base, "--json"])
