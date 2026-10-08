@@ -333,7 +333,7 @@ def _notes(
     lines: list[str] = []
     if longitudinal:
         lines.append(
-            f"NOTE: {range_text(longitudinal)} are stamped TF, but at fields of a kilogauss "
+            f"NOTE: the files stamp {range_text(longitudinal)} TF, but at fields of a kilogauss "
             f"and more a transverse field precesses the polarisation through many periods "
             f"within the window, so its integral asymmetry would sit near zero; these keep a "
             f"large one. They are longitudinal and the stamp is wrong: keep them in the scan, "
