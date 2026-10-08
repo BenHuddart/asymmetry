@@ -1999,6 +1999,32 @@ four wave-16 slips, copper's wave-12 "difference is about 17 meV", the
 cuprate's wave-14 "up to about 12 K", and two more setpoint-offset
 differences; nothing else.
 
+#### Wave 16 and pass 4
+
+Wave 16 (pass 1): **19/24** strict, 22/24 counting three one-number slips —
+Tier A and trend-fit 6/8, tier-b and workflow 7/8, corpus-2026 6/8. Spin
+glass passed (it screened a run whose recommendation was the stretched
+exponential), AFM passed for the second time (the two-line fit ran after the
+new `fourier` line and the reply names two lines), corannulene passed for the
+first time since wave 7 (the dip announcement for the hot 14.8 kG line now
+survives the poor whole-scan fit, and the agent fitted it). The decoupling
+note fired on TRSB and the agent wrote the static reading. Fails: nickel
+("3×"), EuO ("by up to about 0.06 MHz"), copper ("the shift is about 2.7 %"),
+all fixed in pass 3; TRSB (the zero-field scan fitted with the wizard's
+high-confidence Bessel, a 0.1 MHz "precession" with no spectral line, so no
+Kubo–Toyabe width to trend); basics (a temperature reading across calibration
+runs, a Must the scorer called strict). Six of the 24 replies were retyped
+after the last audit; none of the retyped text carried a new unprinted number.
+
+Pass 4: a recommendation in the `Oscillatory` category the spectrum shows no
+line for gets a NOTE (a precession model fitting a relaxation's shape) and the
+best relaxation model as `wizard-<run>-alt`, however far behind. Replay over
+every stored screening (waves 1–16): it fires on 16 of TRSB's 47 zero-field
+screenings and twice on copper's (both zero-field Kubo–Toyabe physics), and
+nowhere else; a muonium relaxation template is not counted as precession. The
+decoupling note also asks for a static Kubo–Toyabe refit when the zero-field
+series has no static-width term (TRSB only, 7 stored series).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

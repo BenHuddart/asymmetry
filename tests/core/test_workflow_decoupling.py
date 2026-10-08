@@ -71,6 +71,19 @@ def test_the_reading_holds_whatever_model_the_field_runs_were_fitted_with() -> N
     )
     note = decoupling_note("lf", {"zf": _ZF, "lf": kubo_toyabe}, _survey(100.0, "none"))
     assert note is not None and "whatever the model" in note
+    assert "refit the zero-field runs" not in note
+
+
+def test_a_zero_field_series_with_no_static_width_is_sent_to_a_kubo_toyabe() -> None:
+    bessel = _series(
+        "Bessel * Exponential + Constant",
+        [
+            (run, {"A_1": 20.0, "frequency": 0.1, "phase": 0.0, "Lambda": 0.15, "A_bg": 1.0}, 0.01)
+            for run in (1, 2, 3)
+        ],
+    )
+    note = decoupling_note("lf", {"zf": bessel, "lf": _QUENCHED}, _survey(100.0, "none"))
+    assert note is not None and "refit the zero-field runs with a static Kubo-Toyabe" in note
 
 
 def test_no_static_reading_when_the_data_cannot_carry_it() -> None:

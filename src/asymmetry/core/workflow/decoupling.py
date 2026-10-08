@@ -60,13 +60,18 @@ def _losses(series: Mapping[str, Any], rows: list[Mapping[str, Any]]) -> list[fl
     return losses
 
 
+def _kinds(series: Mapping[str, Any]) -> dict[str, ParameterKind]:
+    """What each parameter of a stored series' model measures."""
+    return CompositeModel.from_expression(series["expression"]).parameter_kinds()
+
+
 def _width(series: Mapping[str, Any], rows: list[Mapping[str, Any]]) -> float | None:
     """The rows' largest median rate or width, when every row measures it."""
-    kinds = CompositeModel.from_expression(series["expression"]).parameter_kinds()
+    measures = _kinds(series)
     widths = [
         statistics.median(row["parameters"][name] for row in rows)
         for name in series["free_params"]
-        if kinds.get(name) in (ParameterKind.RATE, ParameterKind.STATIC_WIDTH)
+        if measures.get(name) in (ParameterKind.RATE, ParameterKind.STATIC_WIDTH)
         and all(
             row["parameters"][name] > 3.0 * row["uncertainties"].get(name, math.inf) for row in rows
         )
@@ -142,6 +147,14 @@ def decoupling_note(
             f"scale, decoupled as a static distribution is. A rate pinned at zero or a width "
             f"left unconstrained here — whatever the model — is that result, not a failed fit: "
             f"say so."
+            + (
+                ""
+                if ParameterKind.STATIC_WIDTH in _kinds(zf).values()
+                else f" {zf_name} ({zf['expression']}) has no static-width term to measure "
+                f"those fields with: refit the zero-field runs with a static Kubo-Toyabe "
+                f"(--expression 'StaticGKT_ZF * Exponential + Constant') and report its "
+                f"width, Delta, against temperature."
+            )
         )
     return None
 

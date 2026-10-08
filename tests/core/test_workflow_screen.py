@@ -195,3 +195,33 @@ def test_a_geometry_override_changes_the_geometry_source_and_the_resolved_scope(
     # A scope name chooses the physics looked for, never the geometry.
     assert result.scope_preset == "lf-dynamics"
     assert "looking for dynamics, magnetism" in result.scope_note
+
+
+def _assessment(category: str, aicc: float, expression: str, parameters: int = 4):
+    from types import SimpleNamespace
+
+    model = SimpleNamespace(component_expression_string=lambda: expression)
+    return SimpleNamespace(
+        template=SimpleNamespace(category=category, model=model),
+        aicc=aicc,
+        parameter_count=parameters,
+        selected_score=aicc,
+        is_successful=True,
+        is_disqualified=False,
+    )
+
+
+def test_a_precession_model_with_no_spectral_line_gets_the_best_relaxation_beside_it() -> None:
+    from types import SimpleNamespace
+
+    from asymmetry.core.workflow.screen import _runner_up
+
+    bessel = _assessment("Oscillatory", 2249.1, "Bessel * Exponential + Constant", 5)
+    kubo_toyabe = _assessment("KT-like", 2260.6, "DynamicGKT_ZF + Constant")
+    recommendation = SimpleNamespace(
+        recommended_assessment=bessel, assessments=[bessel, kubo_toyabe]
+    )
+    # However far behind: the precession model fits a relaxation's shape.
+    assert _runner_up(recommendation, lined=False) is kubo_toyabe
+    # A line in the spectrum is precession's own evidence.
+    assert _runner_up(recommendation, lined=True) is None

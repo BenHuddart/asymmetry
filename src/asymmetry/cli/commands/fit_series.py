@@ -239,9 +239,9 @@ def run(args: argparse.Namespace) -> None:
         print(
             f"NOTE: {len(misfit)} of {len(outcome.results)} runs are flagged failed or "
             f"amplitude_exceeds_data, so {outcome.expression} does not describe this scan. "
-            f"The screening that wrote {args.recipe} also wrote its runner-up, "
-            f"{workdir.read_recipe(runner_up).expression}, which that run hardly told apart: "
-            f"fit the scan with it and keep whichever series describes the runs.\n"
+            f"The screening that wrote {args.recipe} also wrote a relaxation alternative, "
+            f"{workdir.read_recipe(runner_up).expression}: fit the scan with it and keep "
+            f"whichever series describes the runs.\n"
             f"  asymmetry fit-series {shlex.quote(args.folder)} --runs {args.runs} --recipe "
             f"{runner_up} --order {outcome.order_key}{supplied}{start} --name {name}-alt"
         )

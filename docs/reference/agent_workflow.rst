@@ -701,6 +701,12 @@ the run inside a scan of four or more runs, a NOTE says a featureless run is
 often the scan's quiet end, so a recipe from it fits the scan only if its ends
 are featureless too, and prints the ``wizard`` command for each end of the
 scan.
+When the recommendation is a precession model (the ``Oscillatory``
+category: a Bessel, a damped cosine, an Overhauser form) but the spectral
+search found no line in the run, a NOTE says the model is fitting the shape
+of a relaxation — a Kubo–Toyabe's dip and recovery read as one slow cycle —
+and the best relaxation model, however far behind, is written as
+``recipes/wizard-<run>-alt.json``.
 When the recommendation is a relaxation model and another relaxation model
 with at most one parameter more sits within 10 AICc of it, the wizard also
 writes that runner-up as ``recipes/wizard-<run>-alt.json`` and names it: a run
@@ -1012,7 +1018,10 @@ as decoupled: the note says the zero-field relaxation at those temperatures is
 from fields static on the muon time scale, and that a rate pinned at zero or a
 width left unconstrained there is that result, not a failed fit. Comparing the
 curves rather than a rate holds whatever model each side was fitted with (a
-Kubo–Toyabe fitted in the field leaves its width unconstrained, not small). Reading either series of the pair prints it. A fitted law's
+Kubo–Toyabe fitted in the field leaves its width unconstrained, not small).
+When the zero-field series' model has no static-width term (a Bessel or a
+plain exponential), the note also asks for the zero-field runs to be refitted
+with a static Kubo–Toyabe and its width reported against temperature. Reading either series of the pair prints it. A fitted law's
 report states the x span of the points it rests on and each parameter's unit,
 and judges the law on the √χ²\ :sub:`r`-scaled errors of its physical
 parameters (a prefactor or offset — ``a``, ``b``, ``c`` — that the data leave
