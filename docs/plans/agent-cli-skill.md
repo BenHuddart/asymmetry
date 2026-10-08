@@ -1770,6 +1770,33 @@ with `trend`, a tesla-field two-line test has no two-line fit, an announced
 dip has no fit, or a survey-lineless run has only precession fits flagged as
 not describing it (with relaxation-only commands, so the gate cannot loop).
 
+#### Waves 6–7, passes 9–11 and a Sonnet 5.5 regression wave — 2026-10-08
+
+Wave 6 (pass 7): 17/24; wave 7 (pass 8): **20/24** — Tier A 4/4, trend-fit
+3/4, hold-out and tier-b 3/4, workflow 4/4, corpus-2026 6/8; no audit hold made
+an agent loop (at most 5 audit rounds). Remaining fails: AFM (a wizard recipe
+whose second line was the harmonic silenced the two-line hold), TRSB (`trend`
+offered no gap law for the TF width), basics (no audit, one exercise) and Sn
+(read a warm block on the setpoint axis).
+
+Pass 9: `integral-scan` names repeated points (a return pass) and stops
+announcing dips another stored scan fitted; COMPARE says errors cannot tell two
+lines apart instead of "the same"; `trend`'s held-line note says nothing for or
+against order. Pass 10: `trend` offers `SC_SWave`/`SC_DWave` on a TF width when
+the line shifts diamagnetically while the width grows ("if the sample is a
+superconductor"; replay: cuprate, LiFeAs, TRSB, one CdS series); the two-line
+hold counts only two frequencies within 2 %; only `fit-series` series need
+`trend`; `reduce`/`integral-scan` note file deadtimes left off. Pass 11: every
+hold ends "do not reply yet", short scans are advisory, a failed two-line fit
+is no test, and `fourier`'s barely-separated pair prints its two-line recipe.
+
+**Sonnet 5.5 regression** on 6a63aad4 (pass 9): **21/24** — fails AFM (a
+barely-separated pair ignored), basics ("about 20 G" by hand) and corannulene
+(the rise–plateau–rise background named as a dip by the pre-existing dip
+search), each a case that was already unreliable for Sonnet; no fail traced to
+an overnight line. The holds cost Sonnet 1–3 turns a case (13 `trend` calls on
+`fit-global` children in LLZ — fixed in pass 10).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
