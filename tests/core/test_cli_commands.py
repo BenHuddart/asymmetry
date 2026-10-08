@@ -3328,8 +3328,8 @@ def test_a_windowed_line_with_both_flanks_and_depth_is_called_a_resonance() -> N
     (poor,) = _poor_fit_note(fit | {"uncertainties": fit["uncertainties"] | {"f": 0.004}})
     assert poor.startswith("NOTE: the fit converged at chi2_red 3.143")
     # Nor is a deep "line" whose fit sits far above its errors: a background step.
-    (step,) = _poor_fit_note(fit | {"reduced_chi_squared": 7.7})
-    assert step.startswith("NOTE: the fit converged at chi2_red 7.700")
+    (step,) = _poor_fit_note(fit | {"reduced_chi_squared": 12.7})
+    assert step.startswith("NOTE: the fit converged at chi2_red 12.700")
 
 
 def test_a_mistyped_folder_is_named_as_missing_with_the_folder_the_session_holds(

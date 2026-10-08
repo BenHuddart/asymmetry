@@ -2078,6 +2078,27 @@ Pass 7:
   folder: benzene ALC's agent surveyed one folder into two work directories
   and fitted in the second, and four audits listed 17 "never fitted" scans.
 
+#### Wave 18, passes 8–9
+
+Wave 18 (passes 4–5): Tier A and trend-fit **8/8** (fmuf back on the
+`fluoride-fmuf` scope), tier-b and workflow **8/8**; corpus group below. The
+"Then run audit again" line fired in eight runs and was obeyed every time;
+every run of the first two groups ended on a clean audit. The lineless
+precession note did not fire (no Oscillatory recommendation without a line in
+these groups).
+
+Pass 8: `integral-scan` names a resolved line that another analysed scan
+covers with no fitted line within five widths of it, with the command to fit
+that scan on the same window (corannulene's cold scan lacks the hot 7 kG line,
+a Must no reply in wave 17 met). Replay: corannulene in 11 waves, three benzene
+ALC scan pairs.
+
+Pass 9: the `RESONANCE` verdict takes windowed lines up to χ²ᵣ 8, not 4.
+Wave 17's benzene ALC agent dismissed a converged solid-state line at χ²ᵣ 5.0
+that had no verdict; every stored windowed line between 4 and 8 with both
+flanks and a five-error depth is a real resonance (benzene solid, o-p and
+CHMu, corannulene 7 and 14.9 kG, TCNQ), and none is a step.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

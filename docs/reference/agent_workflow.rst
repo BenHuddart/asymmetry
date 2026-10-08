@@ -1248,7 +1248,7 @@ scan, or a dip the model leaves out — and, when a single line fitted inside th
 seeder's window for one more resonance falls below its background by five
 errors, that window is named with the command that fits it. A line fitted
 inside an ``--xmin``/``--xmax`` window with data on both flanks, an amplitude
-five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 4 is
+five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 8 is
 called a resolved ``RESONANCE`` to report, with its errors qualified when
 χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. A scan that measures one field (or other x) more than once is noted with the
 runs and whether each repeat came back within three errors — a return pass to

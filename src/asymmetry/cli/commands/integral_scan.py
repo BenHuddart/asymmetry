@@ -444,9 +444,10 @@ _POOR_SCAN_FIT = 2.0
 
 #: A windowed line's amplitude this many errors from zero is a resonance, not
 #: noise, when its fit stays within this chi2_red: a background step read as a
-#: dip leaves the residuals far above their errors.
+#: dip leaves the residuals far above their errors. Real lines on a local
+#: background reach 5-8 (an anisotropic solid's broad line, the stored waves).
 _RESOLVED_DEPTH = 5.0
-_RESOLVED_FIT = 4.0
+_RESOLVED_FIT = 8.0
 
 #: Centres or widths closer than this many combined errors are the same.
 _DISTINCT_ERRORS = 2.0
