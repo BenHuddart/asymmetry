@@ -1816,6 +1816,16 @@ note separates a block the apparatus could reach — a different measurement,
 never quoted at its setpoints (Sn, twice) — from an impossible reading;
 `fit`'s pair note prints the separation with its error.
 
+#### Wave 10 and pass 14 — 2026-10-08
+
+Wave 10 (pass 12): 18/24 — Tier A and trend-fit 8/8, tier-b and workflow 7/8,
+corpus-2026 3/8. AFM ran the two-line fit (813.601/813.542 MHz, lower χ²ᵣ)
+and still called a χ²ᵣ drop of 0.0055 "small" on ~389k points; benzene RF
+obeyed `integral-scan`'s "no radical ALC or hyperfine model is available",
+which is false for an RF scan. Pass 14: a green-red scan names
+`RFResonanceMuP`, and `fit`'s pair note says to compare χ², not χ²ᵣ, with the
+degrees of freedom.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
