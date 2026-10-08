@@ -679,6 +679,18 @@ class WorkDir:
         """The names of every stored series, sorted."""
         return sorted(path.stem for path in self.series_dir.glob("*.json"))
 
+    def fit_series(self) -> dict[str, dict[str, Any]]:
+        """Every stored ``fit-series`` payload of the current schema, by name."""
+        payloads = {
+            path.stem: json.loads(path.read_text(encoding="utf-8"))
+            for path in sorted(self.series_dir.glob("*.json"))
+        }
+        return {
+            name: data
+            for name, data in payloads.items()
+            if data["kind"] == "series" and data["schema"] == SCHEMA
+        }
+
     def write_fit(self, run_number: int, recipe_name: str, payload: dict[str, Any]) -> Path:
         """Write one run's fit to ``fits/<recipe>-<run>.json`` and return its path."""
         self.ensure()
@@ -690,15 +702,40 @@ class WorkDir:
         return path
 
     def fitted_runs(self) -> set[int]:
-        """Every run a stored fit, series, simultaneous fit or integral scan holds a result for."""
+        """Every run a stored fit, series, simultaneous fit or integral scan holds a result for.
+
+        A run the survey found no line in is not fitted by a precession series
+        (free or held frequency) whose result there is flagged as not describing
+        it: that run's physics is a relaxation the series never measured.
+        """
+        from asymmetry.core.fitting.composite import CompositeModel
+        from asymmetry.core.workflow.series import UNDESCRIBED_FLAGS
+
         stored = [
             json.loads(path.read_text(encoding="utf-8")) for path in self.series_dir.glob("*.json")
         ]
+        lineless = (
+            {
+                int(run["run_number"])
+                for run in self.read_survey()["runs"]
+                if run["precession"] == "none"
+            }
+            if self.survey_path.is_file()
+            else set()
+        )
         runs = {
             int(row["key"])
             for series in stored
             if series["kind"] not in DERIVED_SERIES_KINDS
             for row in series["trend"]["rows"]
+            if not (
+                int(row["key"]) in lineless
+                and any(
+                    param.split("_")[0] == "frequency"
+                    for param in CompositeModel.from_expression(series["expression"]).param_names
+                )
+                and UNDESCRIBED_FLAGS & set(row["flags"])
+            )
         }
         for path in self.scans_dir.glob("*.json"):
             runs.update(int(run) for run in json.loads(path.read_text(encoding="utf-8"))["runs"])

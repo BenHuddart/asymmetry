@@ -15,7 +15,12 @@ from asymmetry.cli._output import (
     payload,
     render_table,
 )
-from asymmetry.cli._reduction import add_reduction_arguments, describe, reduction_settings
+from asymmetry.cli._reduction import (
+    add_reduction_arguments,
+    deadtime_note,
+    describe,
+    reduction_settings,
+)
 from asymmetry.cli._runs import coadd_note, range_text, resolve_runs
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
@@ -85,7 +90,7 @@ def run(args: argparse.Namespace) -> None:
         reduce_run,
         resolve_reduction_grouping,
     )
-    from asymmetry.core.workflow.survey import build_run_row, precession_evidence
+    from asymmetry.core.workflow.survey import build_run_row, has_file_deadtime, precession_evidence
     from asymmetry.core.workflow.workdir import ReducedEntry, reduction_digest
 
     folder = Path(args.folder)
@@ -123,9 +128,11 @@ def run(args: argparse.Namespace) -> None:
 
     entries: list[dict[str, Any]] = []
     plot_paths: list[Path] = []
+    carries_deadtime = False
     for run_number, prefix, paths, members in reductions:
         try:
             dataset_in = load_reduction_source(paths, settings.period)
+            carries_deadtime |= has_file_deadtime(dataset_in.run)
             grouping = resolve_reduction_grouping(dataset_in.run, settings)
         except (TypeError, ValueError) as exc:
             source = f"Co-add of {range_text(members)}" if members else f"Run {run_number}"
@@ -194,6 +201,8 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(entries, settings, workdir.root, plot_paths))
+    for note in deadtime_note(settings, carries_deadtime):
+        print(note)
 
 
 def _plot_window(dataset, plot_tmax: float | None):

@@ -47,6 +47,7 @@ from asymmetry.core.workflow.reduction import (
     estimate_alpha_for_run,
     reduce_run,
 )
+from asymmetry.core.workflow.series import ORDER_KEYS
 from asymmetry.core.workflow.workdir import RunSelection, instrument_name
 
 #: Timestamp spellings the loaders hand us: ISO-8601 from the ISIS NeXus
@@ -684,6 +685,144 @@ class RepeatSet:
         }
 
 
+#: Where a number stands in a note's template (see :class:`NotesScan`).
+NOTES_PLACEHOLDER = "<x>"
+
+#: A number written in free text: an optional sign, digits, an optional decimal
+#: part, units may follow ("30um"). Digits after a word ("Run2") are not one, nor
+#: are digits joined by ``/ : . -`` ("12/05/2024", "06:30", "1-3"): a date, a
+#: time or a range is text.
+_TEXT_NUMBER = re.compile(r"(?<![\w.:/-])[-+]?\d+(?:\.\d+)?(?!\d|[.:/-]\d)")
+
+#: A word of run text: letters standing alone ("30um" holds none).
+_WORD = re.compile(r"\b[A-Za-z]+\b")
+
+#: A scan in a note needs this many runs, and its number this many distinct
+#: values: two points are a comparison, not a scan.
+NOTES_SCAN_MIN_RUNS = 3
+
+#: The run text a note scan may be written in, in the order it is looked for.
+NOTES_SCAN_SOURCES = ("notes", "title")
+
+
+@dataclass(frozen=True)
+class NotesScan:
+    """Runs at one recorded condition whose note (or title) steps a number the files do not record.
+
+    A steering current or a degrader foil count is written only in the run's
+    text — ``"Steering 0.25 A"``, ``"Steering 0.50 A"`` — while temperature and
+    field stay put. The members share instrument, set-up, sample, setpoint,
+    field and the text once that one number is masked (:data:`NOTES_PLACEHOLDER`
+    in ``template``; every other number in it is the same on every run).
+    """
+
+    instrument: str
+    temperature: float
+    field: float
+    #: One of :data:`NOTES_SCAN_SOURCES`.
+    source: str
+    template: str
+    #: Parallel, ordered by value.
+    runs: list[int]
+    values: list[float]
+
+    @property
+    def quantity(self) -> str:
+        """The ``--order`` name: the word beside the number, never one the files record."""
+        before, after = self.template.split(NOTES_PLACEHOLDER)
+        words = _WORD.findall(before)[-1:] or _WORD.findall(after)[:1]
+        name = words[0].lower() if words else self.source
+        return f"{self.source}_{name}" if name in ORDER_KEYS else name
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict."""
+        return {
+            "instrument": self.instrument,
+            "temperature": self.temperature,
+            "field": self.field,
+            "source": self.source,
+            "template": self.template,
+            "quantity": self.quantity,
+            "runs": list(self.runs),
+            "values": list(self.values),
+        }
+
+
+def notes_scans(rows: list[RunRow]) -> list[NotesScan]:
+    """The scans written only in the runs' notes or titles (see :class:`NotesScan`).
+
+    A number that steps 1, 2, 3, … with the runs counts repeats ("run 2 of 3")
+    and is no scan. A run at the scan's condition whose text is the template
+    with words left out, its one number in the placeholder's place ("0 foils"
+    beside "4 (30um) foils"), is a point of it. A run in a scan found in its
+    notes is not looked for in its title.
+    """
+    conditions: dict[tuple, list[RunRow]] = {}
+    for row in sorted(rows, key=lambda row: row.run_number):
+        if row.temperature is not None and row.field is not None:
+            key = (
+                row.instrument,
+                round(float(row.temperature), _SCAN_KEY_DECIMALS),
+                round(float(row.field), _SCAN_KEY_DECIMALS),
+                measurement_setup(row),
+                _TEXT_NUMBER.sub(NOTES_PLACEHOLDER, sample_name(row)),
+            )
+            conditions.setdefault(key, []).append(row)
+    scans: list[NotesScan] = []
+    for (instrument, temperature, field, *_), members in conditions.items():
+        claimed: set[int] = set()
+        for source in NOTES_SCAN_SOURCES:
+            by_template: dict[str, list[tuple[RunRow, list[float]]]] = {}
+            for row in members:
+                text = getattr(row, source)
+                numbers = [float(number) for number in _TEXT_NUMBER.findall(text)]
+                if numbers and row.run_number not in claimed:
+                    masked = _TEXT_NUMBER.sub(NOTES_PLACEHOLDER, text)
+                    by_template.setdefault(masked, []).append((row, numbers))
+            for steps in by_template.values():
+                columns = list(zip(*(numbers for _row, numbers in steps)))
+                varying = [i for i, column in enumerate(columns) if len(set(column)) > 1]
+                if len(steps) < NOTES_SCAN_MIN_RUNS or len(varying) != 1:
+                    continue
+                (index,) = varying
+                points = {row.run_number: numbers[index] for row, numbers in steps}
+                in_run_order = list(points.values())
+                counter = in_run_order == [in_run_order[0] + n for n in range(len(points))]
+                if counter or len(set(in_run_order)) < NOTES_SCAN_MIN_RUNS:
+                    continue
+                matches = iter(range(len(columns)))
+                template = _TEXT_NUMBER.sub(
+                    lambda match: NOTES_PLACEHOLDER if next(matches) == index else match.group(),
+                    getattr(steps[0][0], source),
+                )
+                for row in members:
+                    text = getattr(row, source)
+                    numbers = _TEXT_NUMBER.findall(text)
+                    words = _TEXT_NUMBER.sub(NOTES_PLACEHOLDER, text).split()
+                    template_words = iter(template.split())
+                    if (
+                        row.run_number not in claimed | set(points)
+                        and len(numbers) == 1
+                        and len(words) > 1
+                        and all(word in template_words for word in words)
+                    ):
+                        points[row.run_number] = float(numbers[0])
+                ordered = sorted(points, key=lambda run: (points[run], run))
+                scans.append(
+                    NotesScan(
+                        instrument=instrument,
+                        temperature=temperature,
+                        field=field,
+                        source=source,
+                        template=template,
+                        runs=ordered,
+                        values=[points[run] for run in ordered],
+                    )
+                )
+                claimed |= set(points)
+    return sorted(scans, key=lambda scan: (scan.instrument, min(scan.runs)))
+
+
 @dataclass(frozen=True)
 class PrecessingPair:
     """Another detector pair of *run* that precesses where the file's own pair does not."""
@@ -761,6 +900,7 @@ class FolderSurvey:
     temperature_departures: list[int]
     scans: list[ScanGroup]
     repeats: list[RepeatSet]
+    notes_scans: list[NotesScan]
     #: ``True`` when the directory held more entries than the scan cap, so
     #: ``runs`` may be missing files that exist (see ``scan_run_files``).
     truncated: bool
@@ -788,6 +928,7 @@ class FolderSurvey:
             "temperature_departures": list(self.temperature_departures),
             "scans": [scan.to_dict() for scan in self.scans],
             "repeats": [repeat.to_dict() for repeat in self.repeats],
+            "notes_scans": [scan.to_dict() for scan in self.notes_scans],
             "other_pair": None if self.other_pair is None else self.other_pair.to_dict(),
         }
 
@@ -861,6 +1002,48 @@ def build_run_row(
 def sample_name(row: RunRow) -> str:
     """The run's sample: the file's own name for it, else its title before any ``T=``/``F=``."""
     return row.sample or re.split(r"[\s_,]+[TFB]\s*=", row.title, maxsplit=1)[0].strip()
+
+
+#: A sample named by a leading number over a name ("0.25 M salt/water"):
+#: the number is its composition.
+_NUMBERED_SAMPLE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s+(\S.*)$")
+
+
+#: Samples a setpoint must hold for a composition series: a slope needs three.
+_COMPOSITION_POINTS = 3
+
+
+@dataclass(frozen=True)
+class CompositionSet:
+    """Runs of one scan at one setpoint that differ only in what the sample is.
+
+    At least two of them name the same substance with a leading number, so the
+    set is a series along composition; ``values`` holds the numbers the names
+    give (``None`` for a sample whose name gives none — a solvent, a "neat"
+    solution — whose value the analyst supplies).
+    """
+
+    setpoint: float
+    runs: list[int]
+    values: list[float | None]
+
+
+def composition_sets(scan: ScanGroup, rows: dict[int, RunRow]) -> list[CompositionSet]:
+    """The setpoints at which *scan* crosses samples that form a composition series."""
+    by_setpoint: dict[float, dict[tuple[str, str], int]] = {}
+    for run, setpoint in sorted(zip(scan.runs, scan.values, strict=True)):
+        key = (sample_name(rows[run]), rows[run].notes)
+        by_setpoint.setdefault(setpoint, {}).setdefault(key, run)
+    sets = []
+    for setpoint, first in by_setpoint.items():
+        matches = {run: _NUMBERED_SAMPLE.match(sample) for (sample, _), run in first.items()}
+        substances = {match.group(2).lower() for match in matches.values() if match}
+        numbered = sum(1 for match in matches.values() if match)
+        if len(first) >= _COMPOSITION_POINTS and numbered >= 2 and len(substances) == 1:
+            runs = sorted(first.values())
+            values = [float(matches[run].group(1)) if matches[run] else None for run in runs]
+            sets.append(CompositionSet(setpoint, runs, values))
+    return sets
 
 
 #: Decimal places (in µs) a bin width is rounded to before it keys a set-up:
@@ -1291,6 +1474,7 @@ def survey_folder(
         temperature_departures=temperature_departures(rows),
         scans=scans,
         repeats=repeat_sets(rows),
+        notes_scans=notes_scans(rows),
         truncated=found.truncated,
         pair=pair,
         cross_sections=cross_sections,
@@ -1299,6 +1483,7 @@ def survey_folder(
 
 
 __all__ = [
+    "CompositionSet",
     "ALPHA_STEP_TOLERANCE",
     "LARMOR_FREQUENCY_TOLERANCE",
     "OPPOSITE_GROUP_NAMES",
@@ -1308,6 +1493,10 @@ __all__ = [
     "AlphaStep",
     "CalibrationCandidate",
     "FolderSurvey",
+    "NOTES_PLACEHOLDER",
+    "NOTES_SCAN_MIN_RUNS",
+    "NOTES_SCAN_SOURCES",
+    "NotesScan",
     "PrecessingPair",
     "PrecessionEvidence",
     "REPEAT_STATISTICS_GAIN",
@@ -1324,12 +1513,14 @@ __all__ = [
     "departs",
     "has_file_deadtime",
     "measurement_setup",
+    "notes_scans",
     "precessing_pair",
     "precession_evidence",
     "repeat_sets",
     "resolve_row_geometry",
     "run_facility",
     "run_geometry",
+    "composition_sets",
     "sample_name",
     "survey_folder",
     "temperature_departures",

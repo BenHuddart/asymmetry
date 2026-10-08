@@ -16,6 +16,7 @@ from asymmetry.core.workflow.survey import (
     alpha_steps,
     calibration_verdict,
     coil_geometry,
+    notes_scans,
     repeat_sets,
     resolve_row_geometry,
     survey_folder,
@@ -53,6 +54,7 @@ def _row(
     geometry: str | None = "ZF",
     geometry_source: str = "field",
     notes: str = "",
+    title: str = "",
     precession: PrecessionEvidence = _NOT_MEASURED,
     bin_width_us: float = 0.016,
     n_periods: int = 1,
@@ -66,7 +68,7 @@ def _row(
         prefix=instrument,
         instrument=instrument,
         facility="ISIS",
-        title="",
+        title=title,
         sample=None,
         temperature=temperature,
         sample_temperature_logged=sample_temperature_logged,
@@ -667,6 +669,93 @@ def test_runs_whose_note_names_a_scan_are_not_repeats_to_co_add() -> None:
     assert not repeat.co_add
 
 
+def _stepped(notes: list[str], *, first: int = 1, **fields) -> list[RunRow]:
+    """Consecutive runs at 295 K and 100 G whose notes are *notes*."""
+    condition = {"temperature": 295.0, "field": 100.0, "geometry": "TF"} | fields
+    return [
+        _row(run_number=first + offset, notes=note, **condition)
+        for offset, note in enumerate(notes)
+    ]
+
+
+def test_a_number_stepped_in_the_notes_at_one_condition_is_a_notes_scan() -> None:
+    currents = ["0.0", "0.5", "1.0", "-0.5", "-1.0"]
+    rows = _stepped([f"Steering {current} A" for current in currents])
+    rows += _stepped(["Steering 0.0 A"], first=20, temperature=10.0)
+    (scan,) = notes_scans(rows)
+    assert (scan.source, scan.template, scan.quantity) == ("notes", "Steering <x> A", "steering")
+    assert (scan.instrument, scan.temperature, scan.field) == ("SIM", 295.0, 100.0)
+    assert scan.runs == [5, 4, 1, 2, 3]
+    assert scan.values == [-1.0, -0.5, 0.0, 0.5, 1.0]
+    assert scan.to_dict()["quantity"] == "steering"
+
+
+def test_a_note_saying_less_of_the_template_joins_its_scan() -> None:
+    # The other numbers of the template stay in it; a run whose note leaves
+    # words out, its one number where the step is, is a point of the scan —
+    # and one whose number stands elsewhere is not.
+    notes = ["2 plates", "3 (50um) plates", "5 (50um) plates", "7 (50um) plates", "50um plates"]
+    (scan,) = notes_scans(_stepped(notes))
+    assert scan.template == "<x> (50um) plates"
+    assert (scan.runs, scan.values) == ([1, 2, 3, 4], [2.0, 3.0, 5.0, 7.0])
+
+
+def test_a_number_stepped_in_the_title_is_a_notes_scan_of_the_title() -> None:
+    rows = [
+        _row(run_number=run, temperature=5.0, title=f"Mix x={x} T=5 F=0")
+        for run, x in ((1, "0.1"), (2, "0.2"), (3, "0.4"))
+    ]
+    (scan,) = notes_scans(rows)
+    assert (scan.source, scan.template, scan.quantity) == ("title", "Mix x=<x> T=5 F=0", "x")
+
+
+def test_a_scan_in_the_notes_is_not_found_again_in_the_title() -> None:
+    rows = [
+        _row(run_number=run, temperature=5.0, notes=f"slit {run}5", title=f"Run {run}5 here")
+        for run in (1, 2, 4)
+    ]
+    assert [scan.source for scan in notes_scans(rows)] == ["notes"]
+
+
+def test_a_stepped_quantity_named_like_a_recorded_one_is_renamed() -> None:
+    (scan,) = notes_scans(_stepped([f"field coil {amps} A" for amps in (1, 3, 4)]))
+    assert scan.quantity == "coil"
+    (scan,) = notes_scans(_stepped([f"offset field {amps} G" for amps in (1, 3, 4)]))
+    assert scan.quantity == "notes_field"
+
+
+@pytest.mark.parametrize(
+    "notes",
+    [
+        # A repeat counter, not a quantity.
+        ["run 1 of 3", "run 2 of 3", "run 3 of 3"],
+        ["Day 4", "Day 5", "Day 6", "Day 7"],
+        # Dates and times are text.
+        ["started 12/05/2024", "started 13/05/2024", "started 15/05/2024"],
+        ["2024-05-12 cooled", "2024-05-13 cooled", "2024-05-15 cooled"],
+        ["begun 06:30", "begun 09:45", "begun 13:10"],
+        # Two points are a comparison; two numbers stepping are not one scan.
+        ["Steering 0 A", "Steering 1 A", "Steering 1 A"],
+        ["x 1 y 1", "x 2 y 3", "x 4 y 5"],
+        # Too few runs.
+        ["Steering 0 A", "Steering 2 A"],
+    ],
+)
+def test_notes_that_step_no_single_quantity_are_no_notes_scan(notes: list[str]) -> None:
+    assert notes_scans(_stepped(notes)) == []
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"temperature": 10.0}, {"field": 20.0}, {"instrument": "MUSR"}, {"bin_width_us": 0.008}],
+)
+def test_a_notes_scan_holds_one_condition(fields: dict) -> None:
+    rows = _stepped(["Steering 0 A", "Steering 1 A"]) + _stepped(
+        ["Steering 3 A"], first=3, **fields
+    )
+    assert notes_scans(rows) == []
+
+
 def test_two_instruments_sharing_a_run_number_each_get_their_own_alpha(tmp_path: Path) -> None:
     pytest.importorskip("h5py")
     from asymmetry.core.io.nexus_writer import write_nexus_v1
@@ -708,6 +797,7 @@ def test_survey_round_trips_through_its_dict(survey) -> None:
     assert [row["run_number"] for row in data["runs"]] == list(ALL_RUNS)
     assert data["scans"][0]["axis"] == "temperature"
     assert data["repeats"] == []
+    assert data["notes_scans"] == []
 
 
 def test_row_raises_key_error_for_an_absent_run(survey) -> None:
@@ -950,3 +1040,34 @@ def test_a_runs_sample_is_its_own_name_or_its_title_before_the_conditions(
     from asymmetry.core.workflow.survey import sample_name
 
     assert sample_name(SimpleNamespace(sample=sample, title=title)) == expected
+
+
+def test_a_scan_crossing_numbered_samples_at_one_setpoint_is_a_composition_series() -> None:
+    from asymmetry.core.workflow.survey import ScanGroup, composition_sets
+
+    titles = {
+        1: ("Solution T=290 F=2", "pure water"),
+        2: ("0.25 Acid/Water T=290 F=2", ""),
+        3: ("0.5 acid/water T=290 F=2", ""),
+        4: ("0.25 Acid/Water T=300 F=2", ""),
+        5: ("0.5 Acid/Water T=300 F=2", ""),
+    }
+    rows = {
+        run: _row(
+            run_number=run, temperature=290.0 if run <= 3 else 300.0, title=title, notes=notes
+        )
+        for run, (title, notes) in titles.items()
+    }
+    scan = ScanGroup(
+        axis="temperature",
+        instrument="SIM",
+        geometry=None,
+        geometry_note="",
+        temperature=None,
+        field=2.0,
+        runs=list(titles),
+        values=[290.0, 290.0, 290.0, 300.0, 300.0],
+    )
+    # 300 K holds two samples only: too few for a slope.
+    (found,) = composition_sets(scan, rows)
+    assert (found.setpoint, found.runs, found.values) == (290.0, [1, 2, 3], [None, 0.25, 0.5])

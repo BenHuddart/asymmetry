@@ -635,16 +635,104 @@ def test_the_lineless_end_of_a_precession_scan_is_named() -> None:
     def row(run: int, line: float | None, flags: list[str]) -> dict:
         return {"key": str(run), "x": float(run), "survey_line_mhz": line, "flags": flags}
 
+    def keys(rows: list[dict]) -> list[str]:
+        return [entry["key"] for entry in lineless_end(TrendTable("temperature", columns, rows))]
+
     columns = ["key", "x", "frequency", "survey_line_mhz", "flags"]
     rows = [
-        row(1, 30.0, []),
-        row(2, None, ["large_rel_err"]),  # no line, but the fit describes it
+        row(1, None, ["large_rel_err"]),  # a lone lineless run at the cold end
+        row(2, 30.0, []),
         row(3, 5.5, ["failed"]),
         row(4, None, ["failed", "frequency_unresolved"]),
-        row(5, None, ["amplitude_exceeds_data"]),
-        row(6, None, ["frequency_unresolved"]),
+        # Lineless but flagged only bound_pinned: the survey, not the fit
+        # flags, says where the precession stops, so the block runs on.
+        row(5, None, ["bound_pinned"]),
+        row(6, None, ["amplitude_exceeds_data"]),
+        row(7, None, []),
+        row(8, None, ["frequency_unresolved"]),
     ]
-    assert lineless_end(TrendTable("temperature", columns, rows)) == ["4", "5", "6"]
-    # One such run is not a block; a series fitting no frequency has none.
-    assert lineless_end(TrendTable("temperature", columns, rows[:4])) == []
+    assert keys(rows) == ["4", "5", "6", "7", "8"]
+    # A block at the cold end is named the same way.
+    assert keys([row(0, None, []), *rows[:3]]) == ["0", "1"]
+    # One lineless run is not a block, nor is a scan with no line anywhere;
+    # a series fitting no frequency has none.
+    assert keys(rows[:4]) == []
+    assert keys(rows[3:]) == []
     assert lineless_end(TrendTable("temperature", ["key", "x", "flags"], [])) == []
+
+
+def _slow_record() -> MuonDataset:
+    """A slow relaxation on no background: 33 % falling at 0.01 µs⁻¹ over 12 µs."""
+    time = np.linspace(0.1, 12.0, 400)
+    noise = np.random.default_rng(7).normal(0.0, 0.3, time.size)
+    return MuonDataset(
+        time=time,
+        asymmetry=33.0 * np.exp(-0.01 * time) + noise,
+        error=np.full_like(time, 0.3),
+        metadata={"run_number": 9, "temperature": 370.0},
+    )
+
+
+def test_a_slow_relaxation_running_off_against_the_background_is_named() -> None:
+    from asymmetry.core.workflow.series import slow_relaxation_runaway
+
+    model = CompositeModel.from_expression("Exponential + Constant")
+    record = _slow_record()
+    runaway = {"A_1": 117.0, "Lambda": 0.008, "A_bg": -84.0}
+    assert slow_relaxation_runaway(model, runaway, record, 12.0) == "A_bg"
+    # A sane fit, or a fast relaxation, is left alone.
+    assert (
+        slow_relaxation_runaway(model, {"A_1": 33.0, "Lambda": 0.01, "A_bg": 0.2}, record, 12.0)
+        is None
+    )
+    assert slow_relaxation_runaway(model, runaway | {"Lambda": 2.0}, record, 12.0) is None
+
+
+def test_fit_one_holds_the_background_when_a_slow_fit_runs_off() -> None:
+    from asymmetry.core.workflow.series import fit_one
+
+    record = _slow_record()
+    recipe = FitRecipe.from_expression("Exponential + Constant", dataset=record).with_overrides(
+        initial={"A_1": 117.0, "Lambda": 0.008, "A_bg": -84.0}
+    )
+    result = fit_one(record, recipe)
+    assert result["background_held"]
+    assert result["parameters"]["A_bg"] == 0.0
+    assert result["parameters"]["A_1"] == pytest.approx(33.0, abs=1.0)
+
+
+def test_fit_series_holds_the_background_on_the_runs_that_ran_off() -> None:
+    records = {run: _slow_record() for run in (9, 10)}
+    for run, record in records.items():
+        record.metadata.update(run_number=run, temperature=360.0 + run)
+    recipe = FitRecipe.from_expression("Exponential + Constant", dataset=records[9]).with_overrides(
+        initial={"A_1": 500.0, "Lambda": 0.0007, "A_bg": -467.0}
+    )
+    outcome = fit_series(records, recipe, axis=scan_axis(records, "temperature"), name="slow")
+    held = [entry for entry in outcome.results if entry["background_held"]]
+    assert held
+    assert all(entry["parameters"]["A_bg"] == 0.0 for entry in held)
+    # The held run is judged on the held fit, not on the runaway it replaced
+    # (which pinned Lambda at its bound).
+    assert all("bound_pinned" not in entry["quality_flags"] for entry in held)
+
+
+def test_fit_one_keeps_a_negative_background_the_data_need() -> None:
+    from asymmetry.core.workflow.series import fit_one
+
+    # Slow enough to be checked (0.04 µs⁻¹ over 12 µs), but the 0.05 % errors
+    # resolve the curvature a held background cannot reproduce.
+    time = np.linspace(0.1, 12.0, 400)
+    noise = np.random.default_rng(7).normal(0.0, 0.05, time.size)
+    record = MuonDataset(
+        time=time,
+        asymmetry=33.0 * np.exp(-0.04 * time) - 10.0 + noise,
+        error=np.full_like(time, 0.05),
+        metadata={"run_number": 9, "temperature": 370.0},
+    )
+    recipe = FitRecipe.from_expression("Exponential + Constant", dataset=record).with_overrides(
+        initial={"A_1": 33.0, "Lambda": 0.04, "A_bg": -10.0}
+    )
+    result = fit_one(record, recipe)
+    assert not result["background_held"]
+    assert result["parameters"]["A_bg"] == pytest.approx(-10.0, abs=0.5)

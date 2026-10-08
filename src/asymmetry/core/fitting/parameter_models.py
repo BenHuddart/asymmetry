@@ -1422,6 +1422,17 @@ for _name, _category in _PARAMETER_MODEL_CATEGORIES.items():
             PARAMETER_MODEL_COMPONENTS[_name], category=_category
         )
 
+#: Each superconducting gap law in temperature, with its normal-state width
+#: (``sigma_bg``, or ``sigma_nm`` in quadrature): the level σ(T) settles at
+#: above Tc, so only points above the transition determine it.
+SUPERCONDUCTING_GAP_LAWS: dict[str, str] = {
+    name: width
+    for name, definition in PARAMETER_MODEL_COMPONENTS.items()
+    if definition.category == "Superconducting gap" and "temperature" in definition.scopes
+    for width in ("sigma_bg", "sigma_nm")
+    if width in definition.param_names
+}
+
 _ALLOWED_OPERATORS: frozenset[str] = frozenset({"+", "-", "*", "/"})
 #: The parameter-vs-x grammar additionally supports the quadrature combinator
 #: ``f ⊕ g = √(f² + g²)`` (binary, same precedence as ``+``/``-``, associative),
@@ -2055,6 +2066,38 @@ def suggest_trend_seeds(
             x_sorted, y_sorted, _ = _finite_xy(xf, yf, None)
             for base_name, value in _fermi_step_seeds(x_sorted, y_sorted).items():
                 seeds[mapping[base_name]] = value
+        elif component.name in SUPERCONDUCTING_GAP_LAWS:
+            x_sorted, y_sorted, _ = _finite_xy(xf, yf, None)
+            gap = _gap_law_seeds(x_sorted, y_sorted, SUPERCONDUCTING_GAP_LAWS[component.name])
+            for base_name, value in gap.items():
+                seeds[mapping[base_name]] = value
+            seeds.setdefault(mapping["Tc"], x_max + margin)
+    return seeds
+
+
+def _gap_law_seeds(x: NDArray[np.float64], y: NDArray[np.float64], width: str) -> dict[str, float]:
+    """Seeds for a superconducting gap law from an x-sorted σ(T) trace.
+
+    σ falls from its cold plateau to the normal-state width and stays there, and
+    the superfluid density rises steeply just below Tc, so Tc sits where 90 % of
+    the fall is complete. The width is the warm plateau; the amplitude is the
+    fall itself, added linearly (``sigma_0``) or in quadrature (``sigma_sc``). A
+    trace that does not fall, or has fewer than two points on its warm plateau,
+    seeds nothing here (the caller places Tc past the data).
+    """
+    plateaus = _fermi_step_seeds(x, y)
+    if "A1" not in plateaus or plateaus["A1"] <= plateaus["A2"]:
+        return {}
+    cold, warm = plateaus["A1"], plateaus["A2"]
+    z = (y - cold) / (warm - cold)
+    # A range cut below Tc has no normal state: its warmest points still fall.
+    if np.count_nonzero(z >= 0.9) < 2:
+        return {}
+    seeds = {width: warm, "Tc": _level_crossing(x, z, 0.9)}
+    if width == "sigma_nm":
+        seeds["sigma_sc"] = float(np.sqrt(cold**2 - warm**2))
+    else:
+        seeds["sigma_0"] = cold - warm
     return seeds
 
 

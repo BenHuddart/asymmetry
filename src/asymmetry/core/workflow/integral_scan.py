@@ -153,6 +153,27 @@ def _decoded(scan: FieldScan, sources: Mapping[int, int]) -> FieldScan:
     )
 
 
+#: Above this field (G) a transverse field turns the muon spin through more than
+#: thirteen periods per microsecond (γ_μ/2π = 13.55 kHz/G), so over any
+#: integration window a TF run's integral asymmetry averages to within a few
+#: thousandths of zero; one this far from zero, and this many errors, precessed
+#: in no transverse field.
+_AVERAGING_FIELD_GAUSS = 1000.0
+_LONGITUDINAL_INTEGRAL = 0.02
+_LONGITUDINAL_SIGNIFICANCE = 5.0
+
+
+def contradicted_tf_stamps(scan: FieldScan, stamped_tf: Mapping[int, float]) -> list[int]:
+    """TF-stamped runs (run → field in G) whose integral a transverse field could not leave."""
+    return sorted(
+        point.run_number
+        for point in scan.points
+        if stamped_tf.get(point.run_number, 0.0) >= _AVERAGING_FIELD_GAUSS
+        and abs(point.value) >= _LONGITUDINAL_INTEGRAL
+        and abs(point.value) >= _LONGITUDINAL_SIGNIFICANCE * point.error
+    )
+
+
 def field_scan_payload(scan: FieldScan) -> dict[str, Any]:
     """Serialize a :class:`FieldScan` to JSON-safe values."""
     return {
@@ -420,6 +441,7 @@ def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
 
 
 __all__ = [
+    "contradicted_tf_stamps",
     "DIP_FLANK_WIDTHS",
     "period_field_offset_gauss",
     "build_integral_scan",
