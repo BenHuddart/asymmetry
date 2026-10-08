@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from asymmetry.cli._numbers import unstated_relations, unsupported_laws, unverified_numbers
 from asymmetry.cli._output import UserError, emit_json, payload
-from asymmetry.cli._runs import range_text
+from asymmetry.cli._runs import range_text, run_spec
 from asymmetry.cli._workdir import OUTPUT_LOG, WORKDIR_NAME
 
 if TYPE_CHECKING:
@@ -70,7 +71,7 @@ def run(args: argparse.Namespace) -> None:
         if set(scan.runs) - fitted
     ]
     unfitted_notes = [
-        (scan, sorted(set(scan["runs"]) - fitted))
+        (survey["folder"], scan, sorted(set(scan["runs"]) - fitted))
         for survey in surveys
         for scan in survey["notes_scans"]
         if set(scan["runs"]) - fitted
@@ -84,7 +85,7 @@ def run(args: argparse.Namespace) -> None:
                     scan.to_dict() | {"unfitted_runs": runs} for _, scan, runs in unfitted
                 ],
                 unfitted_notes_scans=[
-                    scan | {"unfitted_runs": runs} for scan, runs in unfitted_notes
+                    scan | {"unfitted_runs": runs} for _, scan, runs in unfitted_notes
                 ],
                 unsupported_laws=[{"law": law, "phrase": phrase} for law, phrase in laws],
                 unstated_relations=relations,
@@ -102,11 +103,14 @@ def run(args: argparse.Namespace) -> None:
             "Scans the run notes define (survey NOTES SCANS) with runs no fit holds — fit each "
             "against its own quantity with the fit-series command the survey printed:"
         )
-        for scan, runs in unfitted_notes:
+        for folder, scan, runs in unfitted_notes:
             print(
                 f"  {scan['instrument']} {range_text(scan['runs'])}, {scan['source']} "
                 f'"{scan["template"]}" ({scan["quantity"]}): not fitted: {range_text(runs)}'
             )
+            values = dict(zip(scan["runs"], scan["values"], strict=True))
+            x = " --x " + ",".join(f"{run}={values[run]:g}" for run in runs)
+            print("\n".join(_fit_commands(folder, runs, scan["quantity"], start=runs[0], x=x)))
     for law, phrase in laws:
         print(
             f"The draft says {phrase!r}, but every {law} fit this session printed LAW NOT "
@@ -173,30 +177,43 @@ def _unfitted_report(
                 f"of each sample that form a measurement, or say in the summary why not."
             )
         elif calibrators and scan.axis == "temperature":
-            start = calibrators[0]
             lines.append(
                 f"      {verdict}. Alpha was measured on {range_text(calibrators)}, and that "
                 f"does not account for the scan: its runs are a temperature scan of the line's "
                 f"width and envelope shape, which fit-series weighs run by run. Fit it:"
             )
-            lines.append(f"        asymmetry wizard {folder} --run {start}")
-            lines.append(
-                f"        asymmetry fit-series {folder} --runs {','.join(map(str, runs))} "
-                f"--recipe wizard-{start} --order temperature --start {start}"
-            )
+            lines.extend(_fit_commands(folder, runs, scan.axis, start=calibrators[0]))
         else:
             lines.append(
                 f"      {verdict}. Fit it — a scan crossing a transition needs a series on each "
                 f"side. A run counts once a fit was tried on it, failed or not: a survey 'none' "
                 f"means no Fourier line, not no signal, so fit it before calling it unusable "
-                f"and report what the fit shows."
+                f"and report what the fit shows:"
             )
+            if scan.axis == "field" and scan.geometry != "TF":
+                lines.append(
+                    f"        asymmetry integral-scan {shlex.quote(folder)} --runs "
+                    f"{run_spec(runs)} --plot  (then --model for the curve it shows)"
+                )
+            else:
+                lines.extend(_fit_commands(folder, runs, scan.axis, start=runs[0]))
     if short:
         lines.append(
             f"  and short scans of 2-{_SHORT_SCAN_RUNS} runs, not fitted: {range_text(short)} "
             f"— fit them where they bear on the question."
         )
     return "\n".join(lines)
+
+
+def _fit_commands(
+    folder: str, runs: list[int], order: str, *, start: int, x: str = ""
+) -> list[str]:
+    """The ``wizard`` and ``fit-series`` commands that fit *runs* as one series."""
+    return [
+        f"        asymmetry wizard {shlex.quote(folder)} --run {start}",
+        f"        asymmetry fit-series {shlex.quote(folder)} --runs {run_spec(runs)} "
+        f"--recipe wizard-{start} --order {order}{x} --start {start}",
+    ]
 
 
 __all__ = ["add_parser", "run"]

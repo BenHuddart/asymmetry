@@ -48,6 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   width``.
 - **``audit`` names a hyperfine coupling quoted without its relation** when
   ``fourier --correlation`` printed A_μ = ν₁ + ν₂.
+- **``audit`` prints the commands that fit each unfitted scan** — ``wizard``
+  and ``fit-series`` (with ``--x`` for a notes scan), or ``integral-scan`` for
+  a longitudinal field scan — rather than only naming it.
 - **``survey`` lists each scan's runs**, in run order (``runs 29592-29721``),
   instead of the two runs at its axis ends, which read as a range that left
   runs out.
