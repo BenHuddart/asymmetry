@@ -397,6 +397,12 @@ _SAY_SO: tuple[_SaySo, ...] = (
         "are static on the muon time scale",
     ),
     _SaySo(
+        _pattern(r"a (?:minimum|maximum), not a step"),
+        _pattern(r"minimum|maximum|smallest|largest|lowest|highest|\bdip\b|\bpeak"),
+        "say where the parameter is smallest (or largest) inside the scan, and that it rises "
+        "(or falls) on both sides",
+    ),
+    _SaySo(
         _pattern(r"averages two regimes: say so"),
         _pattern(r"extrem|maximum|minimum|peak|turn|two regimes|non-?monoton"),
         "say that the fitted points turn through an extremum, so one monotonic law averages "

@@ -1001,9 +1001,12 @@ diamagnetic shift) — and ``Linear`` for a rate against a supplied quantity; a
 note repeats a change of envelope along the scan. For every fitted width or
 rate (``sigma``, ``Delta``, ``Lambda``, ``nu``) the report also finds the split
 of the scan into two contiguous blocks whose weighted means differ most and,
-when that is more than five combined errors, names the step and where it
-falls, bracketed by where the parameter leaves the level of each end of the
-scan — a Kubo–Toyabe width a few percent larger below a superconductor's
+when that is more than five combined errors, names the step, which way it
+goes and where it falls, bracketed by where the parameter leaves the level of
+one end and reaches the other's (where it levels off). Along a supplied axis
+(a steering current, a foil count) an amplitude lower or higher inside the
+scan than at both ends by five combined errors is named a minimum or maximum
+instead, to report with where it lies — a Kubo–Toyabe width a few percent larger below a superconductor's
 T\ :sub:`c` is the time-reversal-symmetry-breaking signal, however small. Along
 a field scan it names a phase that runs linearly with field as a t0 offset
 (printing the implied Δt and the ``reduce --t0-offset`` to test it) and an

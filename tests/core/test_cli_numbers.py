@@ -378,6 +378,12 @@ _BACKGROUND_NOTE = (
         ),
         (_HELD_NOTE, "Runs 20888-20897 give A_1 near 24 %.", "A_bg was held at 0 on 20888."),
         (
+            "NOTE: A_1 is smallest inside the scan — 5.3 at 0 (run 4) … and rises on both "
+            "sides: a minimum, not a step.\n",
+            "A_1 changes between -0.5 and 0.75 A.",
+            "A_1 is smallest near 0 A and rises on both sides.",
+        ),
+        (
             "frequency moves from 5.38 to 5.39 MHz on warming, a shift of 0.01 ± 0.002 MHz — "
             "the line sits lower at low temperature — while staying near one field: a shift "
             "of the line (a Knight shift, or a superconductor's diamagnetic shift below Tc).\n",

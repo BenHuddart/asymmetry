@@ -2099,6 +2099,26 @@ that had no verdict; every stored windowed line between 4 and 8 with both
 flanks and a five-error depth is a real resonance (benzene solid, o-p and
 CHMu, corannulene 7 and 14.9 kG, TCNQ), and none is a step.
 
+#### Wave 18 corpus group and pass 10
+
+The wave-18 corpus group scored 3/8 again (wave 18 total **19/24**): LiFeAs,
+benzene high-TF and repolarisation passed. TRSB took the new lineless-
+precession note (it fitted the zero-field series with the relaxation
+alternative and said the Bessel was no evidence of a field) but hedged its
+headline away from a TRSB candidate; corannulene fitted a 175-run block mixing
+the low-field decoupling runs with the ALC scan; basics copied a step note onto
+a V-shaped steering curve and a saturating range curve; benzene RF gave no
+resonance fields; benzene ALC again dismissed the solid's broad line (wave 18
+ran before the χ²ᵣ 8 verdict).
+
+Pass 10: along a supplied axis `trend` names an amplitude that is lowest or
+highest inside the scan, beyond both ends by five combined errors, as a
+minimum or maximum (not a step), and the audit holds a reply that does not
+say so; every step note says which way the parameter goes and where it levels
+off. Replay over all stored series: without the supplied-axis limit the
+extremum reading fired on single odd runs in 13 cases; with it, on basics'
+steering scan in all 10 waves that fitted it, and nowhere else.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

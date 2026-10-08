@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -1789,7 +1790,7 @@ def test_trend_model_prints_the_fit_and_what_it_left_out(
     assert f"{SCAN_RUNS[0]} (excluded)" in out
     assert f"{SCAN_RUNS[-1]} (outside the x range)" in out
     # What the trend shows is still named beside the law fitted to one column.
-    assert "NOTE: Lambda changes along the scan" in out
+    assert re.search(r"NOTE: Lambda (?:rises|falls) along the scan", out)
 
 
 @pytest.mark.parametrize(
@@ -3071,6 +3072,25 @@ def test_a_small_step_in_a_width_is_named_with_where_it_happens() -> None:
     assert _rate_steps(TrendTable("temperature", trend.columns, flat), ["Delta"]) == []
 
 
+def test_an_amplitude_lowest_inside_a_supplied_scan_is_a_minimum_not_a_step() -> None:
+    from asymmetry.cli.commands.trend import _rate_steps
+    from asymmetry.core.workflow.series import TrendTable
+
+    # A calibration curve along a supplied axis: smallest near zero, rising on both sides.
+    points = [(-1.0, 7.6), (-0.75, 7.2), (-0.5, 6.4), (-0.25, 5.6), (0.0, 5.3), (0.25, 5.7)]
+    points += [(0.5, 6.3), (0.75, 6.8), (1.0, 7.0)]
+    rows = [
+        {"key": str(run), "x": x, "A_1": a, "A_1_err": 0.05, "flags": []}
+        for run, (x, a) in enumerate(points)
+    ]
+    columns = ["key", "x", "A_1", "A_1_err", "flags"]
+    (note,) = _rate_steps(TrendTable("steering", columns, rows), ["A_1"])
+    assert note.startswith("NOTE: A_1 is smallest inside the scan — 5.3000 at 0 (run 4)")
+    assert "rises on both sides: a minimum, not a step" in note
+    # Along a measured axis the amplitude is the physics' own, not a calibration curve.
+    assert _rate_steps(TrendTable("temperature", columns, rows), ["A_1"]) == []
+
+
 def test_a_gradual_step_is_bracketed_by_where_the_width_leaves_each_level() -> None:
     from asymmetry.cli.commands.trend import _rate_steps
     from asymmetry.core.workflow.series import TrendTable
@@ -3095,8 +3115,9 @@ def test_a_gradual_step_is_bracketed_by_where_the_width_leaves_each_level() -> N
     )
 
     assert "low-temperature level (0.2597 over 0.3–5.6) above 5.6" in note
-    assert "high-temperature level (0.2534 over 6.8–10) below 6.8" in note
-    assert "the change lies between 5.6 and 6.8" in note
+    assert "falls along the scan" in note
+    assert "reaches its high-temperature level (0.2534 over 6.8–10) at 6.8" in note
+    assert "the change lies between 5.6 and 6.8, it levels off from 6.8 on" in note
 
 
 @pytest.mark.parametrize(("delay_us", "direction"), [(0.02, "positive"), (-0.02, "negative")])
