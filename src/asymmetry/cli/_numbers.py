@@ -288,10 +288,11 @@ _SAY_SO: tuple[_SaySo, ...] = (
     ),
     _SaySo(
         _pattern(r"where no polynomial can follow"),
+        # The reason, not just the failure: the background is what no polynomial follows.
         _pattern(
             r"(?:polynomial|cubic|quadratic|linear|background|baseline)[^.\n]{0,80}"
-            r"(?:cannot|can't|does not|doesn't|fail|rises|rising|steps|stepp|curv)"
-            r"|(?:no|cannot|can't|fail)[^.\n]{0,60}(?:polynomial|cubic|background|baseline)"
+            r"(?:follow|describ|rises|rising|steps|stepp|curv)"
+            r"|(?:follow|describ)[^.\n]{0,40}(?:background|baseline)"
         ),
         "say why the long-range fit is not a result: the background rises or steps where "
         "no polynomial can follow",

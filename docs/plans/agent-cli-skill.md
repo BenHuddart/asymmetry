@@ -1898,6 +1898,24 @@ copper's unstated hold (wave 12) and benzene ALC (wave 13), and accepts the
 passing replies' own wording ("one cubic cannot follow both dips"). A
 negated statement ("I do not claim a diamagnetic shift") still satisfies it.
 
+#### Wave 14 — the say-so check — 2026-10-08
+
+Wave 14: 18/24 — Tier A and trend-fit 5/8, tier-b and workflow 8/8 (AFM
+passed for the first time since wave 1), corpus-2026 5/8. The failures were
+spin glass (the featureless screen again), maleic (declined the concentration
+series because the logged temperatures differ), the cuprate ("up to about
+12 K", an unprinted difference the matcher found inside other numbers), TRSB
+(a Λ pinned at zero in LF read as a defect, not as static ZF fields),
+basics (stopped after six commands to ask "Shall I continue?", no audit) and
+corannulene. The say-so check held twice (nickel: the runs A_bg was held on;
+plateau: the held runs and a trend span); both agents added the statement
+within two or three audits, with no loops. Corannulene again wrote only that
+the full-range fit "fails", which the check had accepted ("Cubic … fails");
+it now needs the reason — a background, baseline or polynomial that cannot
+follow or describe the data, or one that rises or steps — and holds
+corannulene's replies in waves 12–14 while passing benzene ALC's "one
+polynomial could not follow the whole range".
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

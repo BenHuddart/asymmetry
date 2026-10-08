@@ -342,7 +342,8 @@ _BACKGROUND_NOTE = (
         (_HELD_NOTE, "Runs 20888-20897 give A_1 near 24 %.", "A_bg was held at 0 on 20888."),
         (
             _BACKGROUND_NOTE,
-            "The full-range fit is not quoted.",
+            # That the fit fails is not the reason it fails.
+            "The full-range LorentzianLCR + Cubic fit fails.",
             "The full-range fit is not quoted: one cubic cannot follow both dips.",
         ),
     ],
