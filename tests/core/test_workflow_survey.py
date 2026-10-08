@@ -1040,3 +1040,34 @@ def test_a_runs_sample_is_its_own_name_or_its_title_before_the_conditions(
     from asymmetry.core.workflow.survey import sample_name
 
     assert sample_name(SimpleNamespace(sample=sample, title=title)) == expected
+
+
+def test_a_scan_crossing_numbered_samples_at_one_setpoint_is_a_composition_series() -> None:
+    from asymmetry.core.workflow.survey import ScanGroup, composition_sets
+
+    titles = {
+        1: ("Solution T=290 F=2", "pure water"),
+        2: ("0.25 Acid/Water T=290 F=2", ""),
+        3: ("0.5 acid/water T=290 F=2", ""),
+        4: ("0.25 Acid/Water T=300 F=2", ""),
+        5: ("0.5 Acid/Water T=300 F=2", ""),
+    }
+    rows = {
+        run: _row(
+            run_number=run, temperature=290.0 if run <= 3 else 300.0, title=title, notes=notes
+        )
+        for run, (title, notes) in titles.items()
+    }
+    scan = ScanGroup(
+        axis="temperature",
+        instrument="SIM",
+        geometry=None,
+        geometry_note="",
+        temperature=None,
+        field=2.0,
+        runs=list(titles),
+        values=[290.0, 290.0, 290.0, 300.0, 300.0],
+    )
+    # 300 K holds two samples only: too few for a slope.
+    (found,) = composition_sets(scan, rows)
+    assert (found.setpoint, found.runs, found.values) == (290.0, [1, 2, 3], [None, 0.25, 0.5])

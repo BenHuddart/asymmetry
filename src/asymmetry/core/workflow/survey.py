@@ -1004,6 +1004,48 @@ def sample_name(row: RunRow) -> str:
     return row.sample or re.split(r"[\s_,]+[TFB]\s*=", row.title, maxsplit=1)[0].strip()
 
 
+#: A sample named by a leading number over a name ("0.25 M salt/water"):
+#: the number is its composition.
+_NUMBERED_SAMPLE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s+(\S.*)$")
+
+
+#: Samples a setpoint must hold for a composition series: a slope needs three.
+_COMPOSITION_POINTS = 3
+
+
+@dataclass(frozen=True)
+class CompositionSet:
+    """Runs of one scan at one setpoint that differ only in what the sample is.
+
+    At least two of them name the same substance with a leading number, so the
+    set is a series along composition; ``values`` holds the numbers the names
+    give (``None`` for a sample whose name gives none — a solvent, a "neat"
+    solution — whose value the analyst supplies).
+    """
+
+    setpoint: float
+    runs: list[int]
+    values: list[float | None]
+
+
+def composition_sets(scan: ScanGroup, rows: dict[int, RunRow]) -> list[CompositionSet]:
+    """The setpoints at which *scan* crosses samples that form a composition series."""
+    by_setpoint: dict[float, dict[tuple[str, str], int]] = {}
+    for run, setpoint in sorted(zip(scan.runs, scan.values, strict=True)):
+        key = (sample_name(rows[run]), rows[run].notes)
+        by_setpoint.setdefault(setpoint, {}).setdefault(key, run)
+    sets = []
+    for setpoint, first in by_setpoint.items():
+        matches = {run: _NUMBERED_SAMPLE.match(sample) for (sample, _), run in first.items()}
+        substances = {match.group(2).lower() for match in matches.values() if match}
+        numbered = sum(1 for match in matches.values() if match)
+        if len(first) >= _COMPOSITION_POINTS and numbered >= 2 and len(substances) == 1:
+            runs = sorted(first.values())
+            values = [float(matches[run].group(1)) if matches[run] else None for run in runs]
+            sets.append(CompositionSet(setpoint, runs, values))
+    return sets
+
+
 #: Decimal places (in µs) a bin width is rounded to before it keys a set-up:
 #: files store it as float32, so one nominal 16 ns width reads 0.01600000262 or
 #: 0.01600001007 µs, while two real set-ups differ by at least a PSI TDC
@@ -1441,6 +1483,7 @@ def survey_folder(
 
 
 __all__ = [
+    "CompositionSet",
     "ALPHA_STEP_TOLERANCE",
     "LARMOR_FREQUENCY_TOLERANCE",
     "OPPOSITE_GROUP_NAMES",
@@ -1477,6 +1520,7 @@ __all__ = [
     "resolve_row_geometry",
     "run_facility",
     "run_geometry",
+    "composition_sets",
     "sample_name",
     "survey_folder",
     "temperature_departures",

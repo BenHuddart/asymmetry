@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from asymmetry.cli._output import UserError, emit_json, format_number, payload, render_table
-from asymmetry.cli._runs import reduced_datasets, window_note
+from asymmetry.cli._runs import range_text, reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 #: Candidates listed in the human-readable table.
@@ -180,6 +180,59 @@ def run(args: argparse.Namespace) -> None:
                 f"--window none --fmin {line - 1:.6g} --fmax {line + 1:.6g}, which prints the "
                 f"two-line test."
             )
+    from asymmetry.core.fitting.fit_wizard import RecommendationVerdict
+
+    if (
+        result.verdict == RecommendationVerdict.NO_SIGNIFICANT_STRUCTURE.value
+        and workdir.survey_path.exists()
+    ):
+        options = "" if args.instrument is None else f" --instrument {args.instrument}"
+        print("\n".join(_quiet_screen_notes(workdir, selection, args.folder, args.run, options)))
+
+
+#: A scan of at least this many runs has ends worth screening apart from its middle.
+_SCREENED_SCAN_RUNS = 4
+
+
+def _quiet_screen_notes(
+    workdir, selection, folder: str, run_number: int, options: str
+) -> list[str]:
+    """For a run with no structure inside a surveyed scan: screen the scan's ends first.
+
+    A featureless run is often the quiet end of the scan (the paramagnetic side
+    of a transition); a recipe from it fits the scan only if its ends are
+    featureless too.
+    """
+    survey = workdir.read_survey()
+    instrument = next(
+        row["instrument"]
+        for row in survey["runs"]
+        if row["run_number"] == run_number and selection.matches(row["prefix"])
+    )
+    lines = []
+    for scan in survey["scans"]:
+        if (
+            scan["instrument"] != instrument
+            or run_number not in scan["runs"]
+            or len(scan["runs"]) < _SCREENED_SCAN_RUNS
+        ):
+            continue
+        by_value = sorted(zip(scan["values"], scan["runs"], strict=True))
+        ends = [(value, run) for value, run in (by_value[0], by_value[-1]) if run != run_number]
+        unit = "K" if scan["axis"] == "temperature" else "G"
+        lines.append(
+            f"NOTE: run {run_number} shows no structure beyond a plain decay. It sits in the "
+            f"{scan['axis']} scan {range_text(sorted(scan['runs']))}, and a featureless run is "
+            f"often that scan's quiet end: a recipe from it fits the scan only if its ends are "
+            f"featureless too. Screen the ends before fitting the scan with it: "
+            + "; ".join(
+                f"asymmetry wizard {shlex.quote(folder)} --run {run}{options} ({value:g} {unit})"
+                for value, run in ends
+            )
+            + " — then fit the scan with a model that describes its ends (one that crosses a "
+            "transition needs a series on each side)."
+        )
+    return lines
 
 
 #: How close to twice a line's frequency a component counts as its harmonic.

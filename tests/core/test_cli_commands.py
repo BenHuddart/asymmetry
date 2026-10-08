@@ -3534,3 +3534,32 @@ def test_two_fitted_frequencies_within_two_percent_are_a_pair() -> None:
     assert close_pair({"frequency_1": 813.601, "frequency_3": 813.542}) == (813.542, 813.601)
     assert close_pair({"frequency_1": 813.6, "frequency_3": 1627.2}) is None
     assert close_pair({"frequency": 1.36, "Lambda": 1.37}) is None
+
+
+def test_a_featureless_screen_inside_a_scan_names_the_scan_ends_to_screen(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from asymmetry.cli.commands.wizard import _quiet_screen_notes
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    workdir = WorkDir(tmp_path / "wd")
+    runs = [11, 12, 13, 14, 15]
+    workdir.write_survey(
+        {
+            "runs": [{"run_number": run, "prefix": "SIM", "instrument": "SIM"} for run in runs],
+            "scans": [
+                {
+                    "axis": "temperature",
+                    "instrument": "SIM",
+                    "runs": runs,
+                    "values": [75.0, 120.0, 180.0, 230.0, 280.0],
+                }
+            ],
+        }
+    )
+    anywhere = SimpleNamespace(matches=lambda prefix: True)
+    (note,) = _quiet_screen_notes(workdir, anywhere, "data", 13, "")
+    assert "--run 11 (75 K)" in note and "--run 15 (280 K)" in note
+    # A screened end leaves only the other end to screen.
+    (note,) = _quiet_screen_notes(workdir, anywhere, "data", 15, "")
+    assert "--run 11 (75 K)" in note and "--run 15 " not in note

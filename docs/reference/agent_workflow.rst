@@ -495,7 +495,16 @@ numbers, so neither is reported. The scans are stored in ``survey.json`` as
 Each scan line also names its members' samples — the file's own sample name,
 or the run title before its ``T=``/``F=`` fields — so a folder holding several
 samples scanned on the same fields reads as several measurements, and a scan
-naming more than one sample says it crosses them. A folder of more than a
+naming more than one sample says it crosses them. Where such a scan holds
+three or more samples at one setpoint, two or more of them naming one substance
+with a leading number (``0.25 M salt/water``, ``0.5 M Salt/Water``),
+the scan line is followed by a ``composition:`` block: those runs with their
+samples and notes, a ``fit-series --order concentration --x RUN=VALUE,…``
+command with the numbers the names give (``<value>`` for a solvent or a sample
+whose name gives none, to fill in from its title and notes or drop), and the
+``trend --model Linear`` that reads a rate linear in concentration as a rate
+constant. It names the other setpoints that hold the same set, and says the
+shared setpoint makes the series whatever the logged temperatures do. A folder of more than a
 hundred runs prints these findings (the notes, the calibration candidates and
 the scans) before the per-run table, which comes last under ``Runs:``.
 
@@ -687,6 +696,11 @@ small amplitude, since a weak line sits on the relaxation the recommendation
 already describes — and prints the ``fit`` command to try it. Lines that complete fewer than two cycles in the
 record's informative window — relaxation leaking into the lowest bins — are
 not listed, by the survey's rule.
+When the verdict is ``no_significant_structure`` and the folder's survey puts
+the run inside a scan of four or more runs, a NOTE says a featureless run is
+often the scan's quiet end, so a recipe from it fits the scan only if its ends
+are featureless too, and prints the ``wizard`` command for each end of the
+scan.
 Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended

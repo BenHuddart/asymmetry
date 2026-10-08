@@ -52,6 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside ``--xmin``/``--xmax`` with data on both flanks, an amplitude five
   errors from zero and χ²ᵣ ≤ 4 prints ``RESONANCE: … report its centre and
   width``.
+- **``survey`` names a composition series** in a scan that crosses samples:
+  three or more samples at one setpoint, two or more named by a leading
+  number, get a ready ``fit-series --order concentration --x`` command and the
+  ``trend --model Linear`` that gives a rate constant.
+- **``wizard`` sends a featureless screen to the scan's ends.** A
+  ``no_significant_structure`` verdict on a run inside a surveyed scan prints
+  the ``wizard`` commands for the scan's two ends: a recipe from the quiet end
+  fits the scan only if its ends are featureless too.
 - **``trend`` reads a decoupled relaxation as static fields.** When a series
   fitted in a longitudinal field (no Larmor line in the survey) has its rates
   collapse below a tenth of a zero-field series' width, at a field well above
