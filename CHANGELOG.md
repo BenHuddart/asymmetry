@@ -74,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   error", "three times broader"), drifts ("drifted by about 3 K") and
   resolution-element counts, and, while a surveyed scan is unfitted, says not
   to reply yet.
+- **``trend``'s held-line note no longer reads as "no order"**: a frequency
+  that follows the applied field is not an order parameter, which says nothing
+  for or against order; the two-line hint for a tesla-field line also names
+  MaxEnt and multi-group analysis as beyond the CLI.
 - **``trend`` names a change of relaxation shape** in a series fitted with
   differently shaped terms, when the relaxing amplitude moves from one shape to
   the other between the scan's ends.

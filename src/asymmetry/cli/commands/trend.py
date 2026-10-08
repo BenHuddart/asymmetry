@@ -714,7 +714,8 @@ def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
         f"story — or the sample as unordered — fit the coldest run with two lines and "
         f"compare chi2_red: asymmetry recipe <folder> --run {coldest['key']} --name two-line "
         f"--expression '{two_line}'{initial}, then asymmetry fit <folder> --run "
-        f"{coldest['key']} --recipe two-line."
+        f"{coldest['key']} --recipe two-line. A field distribution beyond two lines needs "
+        f"MaxEnt or a multi-group analysis, which this CLI does not do: say so under Not done."
     ]
 
 
@@ -825,7 +826,8 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
                 )
             hints.append(
                 f"{frequencies[0]} stays near {format_number(held, 4)} MHz along the scan (within 10 %): the "
-                f"line follows a fixed field, not an order parameter. The physics is in the "
+                f"line follows a fixed field, so its frequency is not an order parameter — which "
+                f"says nothing for or against order in the sample. The physics is in the "
                 f"relaxation — its rate"
                 + (f" ({', '.join(rates)})" if rates else "")
                 + " and its shape"
