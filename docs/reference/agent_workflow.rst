@@ -779,6 +779,19 @@ as fitted) and ``plots/fit-<run>.png`` with ``--plot``; it is the quick way to
 check a hand-edited recipe converges on one run before spending a whole series
 on it (see `Hand-editing a recipe`_).
 
+A relaxation too slow to tell from a constant over the fitted window lets its
+amplitude and ``A_bg`` run off in opposite signs: χ² barely changes as the
+amplitude grows, the rate falls and the background goes negative to cancel it.
+When a converged fit has fitted amplitudes above the record's early-time
+asymmetry (``amplitude_exceeds_data``), an amplitude and a free ``A_bg`` of
+opposite sign larger than twice their sum, and a rate (or static width) that
+decays by less than half over the window, ``fit`` holds ``A_bg`` at 0 and
+repeats the fit from the recipe's starting values. The stored fit carries
+``background_held: true`` and the command ends with a NOTE saying so; the
+summary should say ``A_bg`` was held. ``fit-series`` applies the same rule to
+each run after the chains (a ``--global`` background is left alone) and names
+the held runs in one NOTE.
+
 ``fit-global``
 ~~~~~~~~~~~~~~
 

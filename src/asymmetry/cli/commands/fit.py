@@ -80,6 +80,8 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(result, recipe, plot_path))
+    if result["background_held"]:
+        print(f"NOTE: {HELD_BACKGROUND} Say in the summary that it was held.")
     from asymmetry.cli.commands.fourier import close_pair
 
     pair = close_pair(result["parameters"]) if result["success"] else None
@@ -108,6 +110,14 @@ def run(args: argparse.Namespace) -> None:
     note = window_note(workdir, [args.run])
     if note is not None:
         print(note)
+
+
+#: What a run fitted with its background held at zero says about why.
+HELD_BACKGROUND = (
+    "the relaxation is too slow over the fitted window to tell from the constant — the "
+    "free fit ran its amplitude and A_bg off in opposite signs — so A_bg was held at 0 and "
+    "the fit repeated."
+)
 
 
 def _render(result: dict[str, Any], recipe, plot_path: Path | None = None) -> str:

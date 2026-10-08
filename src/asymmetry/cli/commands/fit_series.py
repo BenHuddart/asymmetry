@@ -24,6 +24,7 @@ from asymmetry.cli._runs import (
     window_note,
 )
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+from asymmetry.cli.commands.fit import HELD_BACKGROUND
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -179,6 +180,12 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(outcome, series_path, plot_paths))
+    held = [entry["run"] for entry in outcome.results if entry["background_held"]]
+    if held:
+        print(
+            f"NOTE: on {range_text(held)} {HELD_BACKGROUND} Say in the summary that it was "
+            f"held there."
+        )
     from asymmetry.core.workflow.series import envelope_change, lineless_end
 
     for note in (window_note(workdir, sorted(datasets)), envelope_change(outcome.trend)):

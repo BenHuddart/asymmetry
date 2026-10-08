@@ -1928,3 +1928,13 @@ Recorded here rather than fixed, because Phase 4 changes skill text only:
 ## Open questions for the maintainer
 
 None outstanding (both resolved 2026-09-14, see "Decisions recorded").
+
+The amplitude/constant degeneracy raised on PR #361 was resolved 2026-10-08:
+Ben chose to hold `A_bg` at zero for slow relaxations. `fit` and `fit-series`
+refit with `A_bg = 0` when a converged fit is `amplitude_exceeds_data`, an
+amplitude and a free `A_bg` cancel (opposite signs, the smaller more than twice
+their sum) and a rate or static width decays by less than half over the fitted
+window, and say so in a NOTE. On the nickel scan this held 12 of 15 runs at a
+physical amplitude; one run with a weaker cancelling ratio and one on the
+ordered side were left as fitted. Over the stored wave 9–11 series it fires
+only on runs already flagged `amplitude_exceeds_data`.

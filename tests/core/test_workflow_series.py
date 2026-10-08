@@ -659,3 +659,56 @@ def test_the_lineless_end_of_a_precession_scan_is_named() -> None:
     assert keys(rows[:4]) == []
     assert keys(rows[3:]) == []
     assert lineless_end(TrendTable("temperature", ["key", "x", "flags"], [])) == []
+
+
+def _slow_record() -> MuonDataset:
+    """A slow relaxation on no background: 33 % falling at 0.01 µs⁻¹ over 12 µs."""
+    time = np.linspace(0.1, 12.0, 400)
+    noise = np.random.default_rng(7).normal(0.0, 0.3, time.size)
+    return MuonDataset(
+        time=time,
+        asymmetry=33.0 * np.exp(-0.01 * time) + noise,
+        error=np.full_like(time, 0.3),
+        metadata={"run_number": 9, "temperature": 370.0},
+    )
+
+
+def test_a_slow_relaxation_running_off_against_the_background_is_named() -> None:
+    from asymmetry.core.workflow.series import slow_relaxation_runaway
+
+    model = CompositeModel.from_expression("Exponential + Constant")
+    record = _slow_record()
+    runaway = {"A_1": 117.0, "Lambda": 0.008, "A_bg": -84.0}
+    assert slow_relaxation_runaway(model, runaway, record, 12.0) == "A_bg"
+    # A sane fit, or a fast relaxation, is left alone.
+    assert (
+        slow_relaxation_runaway(model, {"A_1": 33.0, "Lambda": 0.01, "A_bg": 0.2}, record, 12.0)
+        is None
+    )
+    assert slow_relaxation_runaway(model, runaway | {"Lambda": 2.0}, record, 12.0) is None
+
+
+def test_fit_one_holds_the_background_when_a_slow_fit_runs_off() -> None:
+    from asymmetry.core.workflow.series import fit_one
+
+    record = _slow_record()
+    recipe = FitRecipe.from_expression("Exponential + Constant", dataset=record).with_overrides(
+        initial={"A_1": 117.0, "Lambda": 0.008, "A_bg": -84.0}
+    )
+    result = fit_one(record, recipe)
+    assert result["background_held"]
+    assert result["parameters"]["A_bg"] == 0.0
+    assert result["parameters"]["A_1"] == pytest.approx(33.0, abs=1.0)
+
+
+def test_fit_series_holds_the_background_on_the_runs_that_ran_off() -> None:
+    records = {run: _slow_record() for run in (9, 10)}
+    for run, record in records.items():
+        record.metadata.update(run_number=run, temperature=360.0 + run)
+    recipe = FitRecipe.from_expression("Exponential + Constant", dataset=records[9]).with_overrides(
+        initial={"A_1": 117.0, "Lambda": 0.008, "A_bg": -84.0}
+    )
+    outcome = fit_series(records, recipe, axis=scan_axis(records, "temperature"), name="slow")
+    held = [entry for entry in outcome.results if entry["background_held"]]
+    assert held
+    assert all(entry["parameters"]["A_bg"] == 0.0 for entry in held)
