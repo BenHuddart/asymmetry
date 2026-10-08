@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   width``.
 - **``audit`` names a hyperfine coupling quoted without its relation** when
   ``fourier --correlation`` printed A_μ = ν₁ + ν₂.
+- **``audit`` names a correlation spectrum with no plain transform** of the
+  same run: the two lines whose sum its peak is are in the plain FFT.
 - **``audit`` prints the commands that fit each unfitted scan** — ``wizard``
   and ``fit-series`` (with ``--x`` for a notes scan), or ``integral-scan`` for
   a longitudinal field scan — rather than only naming it.

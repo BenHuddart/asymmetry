@@ -1085,7 +1085,8 @@ forbids. It also lists a law's vocabulary ("critical slowing",
 logged session printed ``LAW NOT ESTABLISHED``, and names a relation a command
 printed beside a quantity the draft quotes without it (the muon hyperfine
 coupling from ``fourier --correlation``, which is the sum of the radical's two
-lines, A_μ = ν₁ + ν₂). Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
+lines, A_μ = ν₁ + ν₂), and a run with a correlation spectrum but no plain
+transform in the same work directory, whose two lines the summary needs. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
 left out of the match, since a rounded sum would otherwise find one of their
 elements by chance.
 

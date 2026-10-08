@@ -336,3 +336,17 @@ def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch
         "--x 11=-1,12=0,13=1 --start 11"
     ) in out
     assert "do not reply yet: fit every scan listed above" in out
+
+
+def test_a_correlation_spectrum_without_its_plain_transform_is_named(tmp_path: Path) -> None:
+    from asymmetry.cli.commands.audit import _correlations_without_lines
+
+    spectra = tmp_path / "wd" / "spectra"
+    spectra.mkdir(parents=True)
+    for name, axis, run in [
+        ("run-7-correlation", "hyperfine_coupling", 7),
+        ("run-8-correlation", "hyperfine_coupling", 8),
+        ("run-8", "frequency", 8),
+    ]:
+        (spectra / f"{name}.json").write_text(json.dumps({"axis": axis, "run": run}))
+    assert _correlations_without_lines([tmp_path / "wd"]) == [(tmp_path / "wd", 7)]

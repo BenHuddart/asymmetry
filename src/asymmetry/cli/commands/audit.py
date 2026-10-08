@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -60,6 +61,7 @@ def run(args: argparse.Namespace) -> None:
     found = unverified_numbers(text, log_text)
     laws = unsupported_laws(text, log_text)
     relations = unstated_relations(text, log_text)
+    unpaired = _correlations_without_lines(roots)
     workdirs = [WorkDir(root) for root in roots]
     fitted = set().union(*(workdir.fitted_runs() for workdir in workdirs))
     calibration = set().union(*(workdir.alpha_calibration_runs() for workdir in workdirs))
@@ -118,7 +120,13 @@ def run(args: argparse.Namespace) -> None:
         )
     for message in relations:
         print(message)
-    if not found and not laws and not relations:
+    for root, run in unpaired:
+        print(
+            f"Run {run} in {root} has a correlation spectrum but no plain transform: its peak "
+            f"is the sum of two lines that only the plain FFT shows. Run asymmetry fourier "
+            f"<folder> --run {run} --window none --workdir {root} and report those lines."
+        )
+    if not found and not laws and not relations and not unpaired:
         if unfitted or unfitted_notes:
             print(
                 f"No unprinted numbers found in {draft}, but do not reply yet: fit every scan "
@@ -203,6 +211,18 @@ def _unfitted_report(
             f"— fit them where they bear on the question."
         )
     return "\n".join(lines)
+
+
+def _correlations_without_lines(roots: list[Path]) -> list[tuple[Path, int]]:
+    """``(work directory, run)`` for each correlation spectrum without a plain one beside it."""
+    found = []
+    for root in roots:
+        axes: dict[str, set[int]] = {"hyperfine_coupling": set(), "frequency": set()}
+        for path in sorted((root / "spectra").glob("*.json")):
+            spectrum = json.loads(path.read_text(encoding="utf-8"))
+            axes[spectrum["axis"]].add(int(spectrum["run"]))
+        found.extend((root, run) for run in sorted(axes["hyperfine_coupling"] - axes["frequency"]))
+    return found
 
 
 def _fit_commands(
