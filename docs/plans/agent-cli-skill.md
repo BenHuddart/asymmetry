@@ -1916,6 +1916,28 @@ follow or describe the data, or one that rises or steps — and holds
 corannulene's replies in waves 12–14 while passing benzene ALC's "one
 polynomial could not follow the whole range".
 
+#### Wave 15 — composition, quiet screens and decoupling — 2026-10-08
+
+Wave 15: 18/24 (19 counting benzene RF, which dropped one clause earlier
+waves did not enforce) — Tier A and trend-fit 7/8, tier-b and workflow 7/8,
+corpus-2026 4/8. Maleic passed for the first time since wave 12: it took the
+survey's `composition:` block, gave pure water 0 and the neat solution 1,
+dropped the untreated water, and quoted the slope with its error, though it
+still hedged it against the logged temperatures. The cuprate passed again.
+Spin glass screened the cold end after the wizard's new note, but the
+recommended Risch–Kehr series flagged every run and only the recommended
+recipe is written, so it fell back to `Exponential + Constant` (the stretched
+exponential ranked second, 4.6 AICc behind). TRSB took the decoupling note
+on its 10 K field scan and wrote the static reading, but fitted the 100 G
+scan with the wizard's high-confidence Kubo–Toyabe recipe (the constant 42
+AICc behind), got flagged widths, and called the scan unfittable, so the
+note never fired there. Corannulene gave the background reason (Must 8) but
+fitted only the hot 7 kG line. Basics ran the audit this time but converted
+a frequency to "about 21 G" by hand, which the matcher let through. AFM
+reported both lines of its two-line fit yet headlined "a single line". All
+three say-so holds were satisfied at the next audit and each statement was
+right for the data.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
