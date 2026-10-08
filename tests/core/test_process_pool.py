@@ -17,13 +17,17 @@ import sys
 import time
 import types
 import warnings
+from concurrent.futures import Future
+from concurrent.futures.process import BrokenProcessPool
 
 import pytest
 
 from asymmetry._worker_env import BLAS_THREAD_ENV_VARS, blas_thread_pins
+from asymmetry.core.fitting import process_pool
 from asymmetry.core.fitting.process_pool import (
     SpawnUnsafeWarning,
     main_module_has_spawn_guard,
+    map_when_a_pool_pays,
     open_spawn_pool,
     reset_spawn_safety_warning,
     spawn_pool_unsafe_reason,
@@ -293,3 +297,70 @@ def test_spawn_workers_start_with_their_blas_threads_pinned(
         pool.shutdown()
 
     assert observed == dict.fromkeys(BLAS_THREAD_ENV_VARS, "1")
+
+
+# --------------------------------------------------------------------------- #
+# A pool only when it pays: items run in-process until their measured cost
+# says a pool would finish the rest sooner than its workers take to start.
+# --------------------------------------------------------------------------- #
+
+
+class _EagerPool:
+    """In-process stand-in for a spawn pool; *broken* futures fail as a dead worker would."""
+
+    def __init__(self, *, broken: bool = False) -> None:
+        self.submitted: list[int] = []
+        self._broken = broken
+
+    def submit(self, fn, payload):
+        self.submitted.append(payload)
+        future: Future = Future()
+        if self._broken:
+            future.set_exception(BrokenProcessPool("worker died"))
+        else:
+            future.set_result(fn(payload))
+        return future
+
+    def shutdown(self, wait=True, cancel_futures=False) -> None:
+        pass
+
+
+def _square(payload: int, cancel_callback=None) -> tuple[int, int]:
+    time.sleep(0.01)
+    return payload, payload * payload
+
+
+def test_cheap_items_never_start_a_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        process_pool, "open_spawn_pool", lambda workers: pytest.fail("no pool for cheap work")
+    )
+    results = map_when_a_pool_pays(_square, range(5), workers=8, cancel_callback=None)
+    assert results == {n: n * n for n in range(5)}
+
+
+def test_costly_items_send_the_rest_to_a_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    pool = _EagerPool()
+    sizes: list[int] = []
+
+    def _open(workers: int) -> _EagerPool:
+        sizes.append(workers)
+        return pool
+
+    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.001)
+    monkeypatch.setattr(process_pool, "open_spawn_pool", _open)
+    results = map_when_a_pool_pays(_square, range(5), workers=8, cancel_callback=None)
+
+    assert results == {n: n * n for n in range(5)}
+    # The first item measured the cost in-process; the pool is sized to what is left.
+    assert pool.submitted == [1, 2, 3, 4]
+    assert sizes == [4]
+
+
+def test_what_a_broken_pool_leaves_runs_in_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    pool = _EagerPool(broken=True)
+    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.001)
+    monkeypatch.setattr(process_pool, "open_spawn_pool", lambda workers: pool)
+
+    results = map_when_a_pool_pays(_square, range(4), workers=4, cancel_callback=None)
+    assert pool.submitted == [1, 2, 3]
+    assert results == {n: n * n for n in range(4)}

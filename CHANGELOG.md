@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Batch fit of a few cheap runs no longer waits on worker processes.**
+  Every independent Batch fit (asymmetry or grouped) first started a pool of
+  worker processes, each loading the fitting libraries from scratch, before it
+  fitted anything. That start-up took seconds, and longer on a busy computer,
+  so a two-run batch whose fits take a tenth of a second could take ten
+  seconds or more. Runs are now fitted in Asymmetry's own process
+  until their measured cost shows a pool would finish the rest sooner, so cheap
+  batches start no processes and expensive ones still spread across cores.
+
 ## [0.26.0] - 2026-10-07
 
 ### Added

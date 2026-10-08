@@ -13,6 +13,7 @@ from asymmetry.core.fitting import (
     build_grouped_time_domain_datasets,
     fit_grouped_series,
     fit_grouped_time_domain,
+    process_pool,
 )
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
@@ -1117,7 +1118,9 @@ def test_resolve_grouped_series_workers_is_opt_in_and_clamped() -> None:
     assert _resolve_grouped_series_workers(8, 1) == 1
 
 
-def test_fit_grouped_series_parallel_matches_sequential() -> None:
+def test_fit_grouped_series_parallel_matches_sequential(monkeypatch) -> None:
+    # A free pool start-up sends every run after the first to real spawn workers.
+    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.0)
     model = _parallel_oscillatory_model()
     members, initial = _parallel_members(model)
     global_params = [name for name in model.param_names if not name.startswith("A")]

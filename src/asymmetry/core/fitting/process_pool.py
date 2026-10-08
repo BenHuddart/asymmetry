@@ -59,18 +59,36 @@ only to variables the caller has **not** already set, so setting any of them (in
 the shell, before the interpreter starts) remains both the parent-side knob
 above and the opt-out here: an explicit ``OMP_NUM_THREADS=4`` is honoured in the
 workers too.
+
+A pool only when it pays
+------------------------
+Starting a pool is not free: every spawn worker is a fresh interpreter that
+imports NumPy, SciPy, iminuit and the fitting package before its first fit.
+:func:`map_when_a_pool_pays` therefore fits in-process until the measured
+per-item cost shows a pool would finish the rest sooner, so a batch of a few
+cheap fits never starts a process at all.
 """
 
 from __future__ import annotations
 
 import ast
+import math
 import multiprocessing as mp
 import sys
+import time
 import warnings
-from concurrent.futures import ProcessPoolExecutor
+from collections import deque
+from collections.abc import Callable, Hashable, Sequence
+from concurrent.futures import BrokenExecutor, ProcessPoolExecutor, as_completed
 from functools import lru_cache
 
 from asymmetry._worker_env import blas_thread_pins, pin_worker_blas_threads
+from asymmetry.core.fitting.engine import FitCancelledError
+
+#: Wall-clock seconds for a spawn pool's workers to become ready: each imports the
+#: fitting stack from scratch (1.4–2.3 s measured on an Apple-silicon laptop, and
+#: ten times that on a host saturated by other processes).
+POOL_STARTUP_S = 2.0
 
 
 class SpawnUnsafeWarning(UserWarning):
@@ -220,3 +238,64 @@ def terminate_spawn_pool(pool: ProcessPoolExecutor) -> None:
             proc.join(timeout=5.0)
         except (ChildProcessError, OSError, ValueError, AttributeError):
             pass
+
+
+def map_when_a_pool_pays(
+    worker: Callable[..., tuple[Hashable, object]],
+    payloads: Sequence[object],
+    *,
+    workers: int,
+    cancel_callback: Callable[[], bool] | None,
+) -> dict[Hashable, object]:
+    """Run ``worker(payload)`` over *payloads*, return ``{key: result}`` from its pairs.
+
+    Payloads run in-process until a pool would finish the rest sooner. After ``n``
+    payloads in ``elapsed`` seconds, the ``r`` left take ``m * r`` serially
+    (``m = elapsed / n``) against ``POOL_STARTUP_S + m * ceil(r / workers)`` on
+    ``workers`` processes; once the second is smaller, the rest go to a spawn pool.
+    Whatever a pool does not return — none could start, or one broke — runs
+    in-process too, so the result never depends on where a payload ran.
+
+    *worker* is module-level so it survives ``spawn``. In-process it is called
+    with ``cancel_callback=``; across the boundary cancellation is coarse — a
+    requested cancel stops collecting and tears the pool down at once.
+    """
+    results: dict[Hashable, object] = {}
+
+    def run_here(payload: object) -> None:
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Fit cancelled.")
+        key, result = worker(payload, cancel_callback=cancel_callback)
+        results[key] = result
+
+    pending = deque(payloads)
+    started = time.perf_counter()
+    while pending:
+        if results:
+            per_item = (time.perf_counter() - started) / len(results)
+            left = len(pending)
+            if per_item * (left - math.ceil(left / workers)) > POOL_STARTUP_S:
+                break
+        run_here(pending.popleft())
+    leftover = list(pending)
+    executor = open_spawn_pool(min(workers, len(leftover))) if leftover else None
+    if executor is not None:
+        futures = {executor.submit(worker, payload): payload for payload in leftover}
+        try:
+            for future in as_completed(futures):
+                if cancel_callback is not None and cancel_callback():
+                    terminate_spawn_pool(executor)
+                    raise FitCancelledError("Fit cancelled.")
+                key, result = future.result()
+                results[key] = result
+                del futures[future]
+        except BrokenExecutor:
+            # A worker died for an environmental reason (a failed fit returns
+            # success=False without raising); what it left runs in-process below.
+            pass
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+        leftover = list(futures.values())
+    for payload in leftover:
+        run_here(payload)
+    return results
