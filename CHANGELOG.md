@@ -67,6 +67,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recipe** started at both peaks.
 - **``integral-scan``'s fit table gives each field and coupling its unit** (G
   or MHz): a hyperfine coupling was quoted in gauss.
+- **``survey``'s TEMPERATURE note separates a block the apparatus could reach**
+  (a different measurement, never quoted at its setpoints) from an impossible
+  reading (the sensor); the audit restates its hold when it also lists numbers;
+  ``integral-scan``'s off-range note no longer only says to widen the window.
 - **``fit`` notes a fitted pair of lines** within 2 % of each other: a split
   below the FFT resolution is still two lines to report when it lowers χ²ᵣ.
 - **``audit`` names a correlation spectrum with no plain transform** of the

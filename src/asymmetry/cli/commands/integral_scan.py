@@ -571,8 +571,10 @@ def _poor_fit_note(fit: dict, elsewhere: Sequence[float] = ()) -> list[str]:
             notes.append(
                 f"NOTE: the line at {centre:g} (width {width:g}) runs off the fitted range "
                 f"{low:g}–{high:g}: without data rising again on both sides it may be a step "
-                f"or the background's edge, not a resonance. Widen the window and look at the "
-                f"plot before reporting it."
+                f"or the background's edge, not a resonance — or a broad shape stretched over "
+                f"a narrower dip. Look at the plot: refit a narrower window around the dip's "
+                f"minimum, or a wider one if the dip itself runs to the edge, before reporting "
+                f"it."
             )
         elif name in resolved:
             amplitude = name.replace("B0", "f", 1)

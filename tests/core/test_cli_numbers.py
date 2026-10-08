@@ -407,3 +407,31 @@ def test_a_dip_a_scan_announced_and_no_fit_holds_is_named(tmp_path: Path) -> Non
     local = {"success": True, "parameters": {"B0": 21474.0}, "next_dip_windows": []}
     (scans / "local.json").write_text(json.dumps({"fit": local}))
     assert _unfitted_dips([tmp_path / "wd"]) == []
+
+
+def test_a_hold_is_restated_when_unprinted_numbers_are_listed_too(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    workdir = tmp_path / "asymmetry-work"
+    workdir.mkdir()
+    (workdir / "cli-output.log").write_text("$ asymmetry survey data\n", encoding="utf-8")
+    scan = {
+        "instrument": "SIM",
+        "temperature": 295.0,
+        "field": 100.0,
+        "source": "notes",
+        "template": "Steering <x> A",
+        "quantity": "steering",
+        "runs": [11, 12, 13],
+        "values": [-1.0, 0.0, 1.0],
+    }
+    survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
+    (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    draft = tmp_path / "summary.md"
+    draft.write_text("A draft quoting 999.25 G.\n", encoding="utf-8")
+
+    cli.main(["audit", str(draft)])
+    out = capsys.readouterr().out
+    assert "'999.25'" in out
+    assert out.rstrip().endswith("then run audit again.")

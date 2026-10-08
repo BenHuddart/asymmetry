@@ -243,11 +243,12 @@ def _render(survey, survey_path: Path) -> str:
         lines.append(
             "TEMPERATURE: the logged sample temperature (T log) and the setpoint (T/K) "
             "disagree on these runs, by the offset shown (T log - T/K). Decide which to trust "
-            "for each block and say why: a block sitting at a different temperature from its "
-            "neighbours (a cryostat still cooling or parked elsewhere) is a different "
-            "measurement — order it with --order sample_temperature_logged; a steady offset "
-            "a sample could not have had (a liquid logged above its boiling point) points to "
-            "the sensor. The scans below are grouped by setpoint:"
+            "for each block and say why: a logged value the apparatus could reach (a cryostat "
+            "still cooling or parked elsewhere, a block several kelvin off its neighbours) is a "
+            "different measurement — order it with --order sample_temperature_logged and never "
+            "quote those runs at their setpoints; only a value no sample here could have had "
+            "(hundreds of kelvin off, a liquid logged above its boiling point) points to the "
+            "sensor. The scans below are grouped by setpoint:"
         )
         for instrument, runs, lo, hi in _departure_blocks(survey):
             span = f"{lo:+.2f} K" if abs(hi - lo) < 0.005 else f"{lo:+.2f} to {hi:+.2f} K"
