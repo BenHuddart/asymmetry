@@ -706,12 +706,15 @@ def test_fit_series_holds_the_background_on_the_runs_that_ran_off() -> None:
     for run, record in records.items():
         record.metadata.update(run_number=run, temperature=360.0 + run)
     recipe = FitRecipe.from_expression("Exponential + Constant", dataset=records[9]).with_overrides(
-        initial={"A_1": 117.0, "Lambda": 0.008, "A_bg": -84.0}
+        initial={"A_1": 500.0, "Lambda": 0.0007, "A_bg": -467.0}
     )
     outcome = fit_series(records, recipe, axis=scan_axis(records, "temperature"), name="slow")
     held = [entry for entry in outcome.results if entry["background_held"]]
     assert held
     assert all(entry["parameters"]["A_bg"] == 0.0 for entry in held)
+    # The held run is judged on the held fit, not on the runaway it replaced
+    # (which pinned Lambda at its bound).
+    assert all("bound_pinned" not in entry["quality_flags"] for entry in held)
 
 
 def test_fit_one_keeps_a_negative_background_the_data_need() -> None:

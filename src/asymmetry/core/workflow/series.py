@@ -84,6 +84,7 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import AsymmetryScaleWarning, FitEngine, FitResult
+from asymmetry.core.fitting.member_quality import assess_member_quality
 from asymmetry.core.fitting.models import LINEAR_PARAM_ROLE_NAMES
 from asymmetry.core.fitting.parameters import ParameterSet, split_parameter_name
 from asymmetry.core.fitting.result_summary import fit_result_summary
@@ -834,6 +835,10 @@ def fit_series(
         held = _held_background_fit(records[run], recipe, model, fitted[run], start, background)
         if held is not None:
             fitted[run] = held
+            # The series' collapse and outlier checks judged the free fit.
+            quality_by_run[run] = assess_member_quality(
+                held, extra_flags=("spurious_reseeded",) if run in reseeded else ()
+            )
             held_runs.add(run)
 
     rival = rival_envelope_model(model)

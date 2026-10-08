@@ -1865,6 +1865,28 @@ A_1 ≈ 74, A_bg ≈ −41 (below the cancelling ratio), and most other runaways
 (spin glass, plateau, Sn, photo-Si, copper ARGUS) had stopped mid-run with
 `failed`. The rule was reworked as recorded under "Open questions".
 
+#### Wave 13 — the reworked hold — 2026-10-08
+
+Wave 13 (the reworked held-background rule): 19/24 — Tier A and trend-fit
+7/8, tier-b and workflow 7/8, corpus-2026 5/8. LiFeAs, benzene high-TF (the
+audit's A_μ "sum" check fired), copper and TCNQ passed; the failures were
+spin glass (screened a featureless paramagnetic run and fitted the whole scan
+with `Exponential + Constant`), AFM (a difference of two printed columns that
+the audit passed), TRSB (LF decoupling still not read as static fields),
+corannulene (the background and motional-narrowing notes not carried into
+the reply) and benzene ALC (a model-less `integral-scan` counted as fitted).
+
+The hold fired in seven cases (nickel in four series, copper, plateau, spin
+glass, Sn, EuO, TCNQ) and every summary mentioned it, though nickel's only
+in part. Held amplitudes sat at the data's early-time asymmetry: nickel's
+paramagnetic A_1 at 33.1–33.3 % beside a reduced A(0) of 33.3 %, plateau's at
+21.3–21.6 %, copper's ARGUS LF scan at 23.5–26.3 % (wave 12: up to 288 %). No
+verdict changed for the worse. Series runs that were held still carried the
+free fit's `failed` flag, because the member quality was assessed before the
+hold; held runs are now reassessed. Runaways in oscillatory and two-rate
+models (nickel's field and TF series, one plateau run) stayed unheld, and the
+CLI does not say why.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
