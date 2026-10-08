@@ -93,7 +93,8 @@ _RATIO_WORD = re.compile(
     rf"\bfactor of\s*{_HEDGE}\s*{_NUMBER_WORD}\b"
     rf"|\b{_NUMBER_WORD}(?:\s+to\s+{_NUMBER_WORD})?(?:-?fold\b|\s+times(?=\s+(?:its|their|the"
     r"|as|larger|smaller|faster|slower|higher|lower|broader|narrower|wider|greater|bigger"
-    r"|stronger|weaker|longer|shorter|more|less)\b))",
+    r"|stronger|weaker|longer|shorter|more|less)\b)"
+    r"|\s+(?:combined\s+|standard\s+)*(?:errors?|sigma|σ|standard deviations?)\b)",
     re.IGNORECASE,
 )
 
@@ -187,6 +188,7 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
         found.extend(
             Unverified(match.group(), line_number, line.strip())
             for match in _RATIO_WORD.finditer(line)
+            if match.group().lower() not in log_text.lower()
         )
         shared_until = -1
         for match in _DRAFT_NUMBER.finditer(line):
@@ -265,6 +267,9 @@ LAW_VOCABULARY: dict[str, tuple[str, ...]] = {
     "OrderParameter": ("critical exponent",),
 }
 
+#: Words that make a sentence deny, rather than claim, what it names.
+_NEGATION = re.compile(r"\b(?:not|no|never|without|cannot)\b|n't")
+
 _FIT_HEADER = re.compile(r"^Fit of (?P<expression>.+?) to ", re.MULTILINE)
 
 
@@ -284,13 +289,18 @@ def unsupported_laws(draft: str, log_text: str) -> list[tuple[str, str]]:
         for law in LAW_VOCABULARY:
             if law in header.group("expression"):
                 verdicts[law] = verdicts.get(law, False) or established
-    lowered = draft.lower()
+    # A sentence that negates the law ("no activation energy is quoted") does not lean on it.
+    asserted = [
+        sentence
+        for sentence in re.split(r"(?<=[.;!?])\s|\n", draft.lower())
+        if not _NEGATION.search(sentence)
+    ]
     return [
         (law, phrase)
         for law, established in verdicts.items()
         if not established
         for phrase in LAW_VOCABULARY[law]
-        if phrase in lowered
+        if any(phrase in sentence for sentence in asserted)
     ]
 
 

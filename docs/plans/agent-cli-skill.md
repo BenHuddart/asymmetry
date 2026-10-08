@@ -2131,6 +2131,17 @@ steering scan in all 10 waves that fitted it, and nowhere else.
   couplings are not a result when the fields fall outside the scan (wave 17's
   unseeded fit returned A_μ ≈ 24700 MHz and no warning).
 
+#### Pass 12
+
+From wave 19's first group (6/8: fmuf screened without the F-μ-F family
+again; the cuprate quoted "consistent … to about two combined standard
+errors"): a number word before "errors", "sigma" or "standard deviations" is a
+derived significance unless a command printed that phrase ("more than three
+errors" is the CLI's own); a sentence that negates a law ("an Arrhenius law
+was not established") no longer trips the law-vocabulary check. Rejected after
+replay: "below"/"above" as comparison words — they flag every "flat at 0.17
+µs⁻¹ above 6.4 K" in the stored replies.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

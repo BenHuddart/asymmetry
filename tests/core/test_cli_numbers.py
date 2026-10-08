@@ -106,6 +106,8 @@ Converged, with its physical parameters determined: report them.
     assert unsupported_laws(draft, retried) == []
     # A law never fitted is not judged.
     assert unsupported_laws("an activation energy", log) == []
+    # A sentence denying the law does not lean on it.
+    assert unsupported_laws("No critical slowing down was established.", log) == []
 
 
 def test_a_multiple_verifies_only_as_a_whole_printed_token() -> None:
