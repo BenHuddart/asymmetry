@@ -2055,6 +2055,29 @@ after six commands without an audit). A clean audit prints the passed draft
 between marker lines for the reply to copy whole: six of eight replies in one
 wave-17 group were retyped, one with an unaudited garbled clause.
 
+#### Wave 17 corpus group and pass 7
+
+The wave-17 corpus group scored 3/8 (wave 17 total **18/24**): TRSB passed
+(SC laws fitted, decoupling note quoted), but LiFeAs (the shift reported
+without its direction), basics (stopped after six commands, no audit),
+corannulene (no statement that the cold scan lacks the 7 kG line), benzene RF
+and benzene ALC (a converged broad solid-state line dismissed) failed.
+
+Pass 7:
+- The RF note in `integral-scan` was gated on a logged field step between the
+  periods — the mark of a differential ALC scan — so it printed for benzene
+  ALC's o-p scans and never for the RF scan in any of 17 waves. It now prints
+  for a green−red scan with no step; a scan with a step gets the "no radical
+  ALC model" note, which now covers `LorentzianLCRPair` fits.
+- `trend`'s shift line says which way the line sits at low temperature and
+  asks for the direction; the audit's say-so check now needs a direction word
+  or a signed value beside "shift". Replay over the 107 stored replies whose
+  logs printed the line: 21 held, nine of them LiFeAs (wave 17's fail among
+  them) and six TRSB, where the diamagnetic shift is the physics.
+- `audit` pools the fits of every work directory that surveyed the same data
+  folder: benzene ALC's agent surveyed one folder into two work directories
+  and fitted in the second, and four audits listed 17 "never fitted" scans.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

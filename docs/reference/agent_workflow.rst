@@ -1282,7 +1282,10 @@ propagates into the integral).
 ``--period green-red`` builds the RF-resonance or differential-ALC scan: each
 point is the green period's integral asymmetry less the red period's, each
 formed from that period's own counts under the `Reduction options`_, with their
-errors added in quadrature. ``RFResonanceMuP`` fits the muon and proton
+errors added in quadrature. With no field step logged between the periods the
+contrast is the RF switched on and off, and ``integral-scan`` names
+``RFResonanceMuP``; a logged step makes it a differential ALC scan, whose
+``Next`` line holds the pair's ``dB`` at the step. ``RFResonanceMuP`` fits the muon and proton
 couplings of an RF scan with the RF frequency held at its acquisition value.
 With ``nu_RF`` fixed (or given as a start), the couplings are seeded by solving
 the resonance condition at the scan's own two dip fields rather than taken from

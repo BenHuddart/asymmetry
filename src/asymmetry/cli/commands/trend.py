@@ -841,10 +841,12 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
             if shift is not None:
                 hints.append(
                     f"{frequencies[0]} moves from {format_number(shift[0], 5)} to "
-                    f"{format_number(shift[1], 5)} MHz, a shift of "
+                    f"{format_number(shift[1], 5)} MHz on warming, a shift of "
                     f"{format_number(shift[1] - shift[0], 5)} ± {format_number(shift[2], 5)} "
-                    f"MHz, while staying near one field: a shift of the line (a Knight shift, "
-                    f"or a superconductor's diamagnetic shift below Tc). Report it."
+                    f"MHz — the line sits {'lower' if shift[0] < shift[1] else 'higher'} at "
+                    f"low temperature — while staying near one field: a shift of the line (a "
+                    f"Knight shift, or a superconductor's diamagnetic shift below Tc). Report "
+                    f"it and its direction."
                 )
             hints.append(
                 f"{frequencies[0]} stays near {format_number(held, 4)} MHz along the scan (within 10 %): the "

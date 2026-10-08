@@ -309,6 +309,12 @@ def _pattern(text: str) -> re.Pattern[str]:
     return re.compile(text, re.IGNORECASE)
 
 
+#: Words that give a shift its direction.
+_DIRECTION = (
+    r"(?:lower|higher|below|above|downward|upward|\bdown\b|\bup\b|decreas|increas|fall|falls"
+    r"|rise|rises|drop|diamagnetic|negative|positive|[−+-]\s?\d)"
+)
+
 #: Lines a command printed that the summary must act on in words. The ``stated``
 #: patterns are deliberately lenient — a keyword in the draft is taken as the
 #: statement — so the check catches a reply that leaves the point out entirely.
@@ -360,8 +366,12 @@ _SAY_SO: tuple[_SaySo, ...] = (
     ),
     _SaySo(
         _pattern(r"a shift of the line \(a Knight shift"),
-        _pattern(r"\bshift"),
-        "report the line's frequency shift, with its error",
+        _pattern(
+            rf"\bshift(?:[^.\n]|\.(?=\d)){{0,100}}{_DIRECTION}"
+            rf"|{_DIRECTION}(?:[^.\n]|\.(?=\d)){{0,100}}\bshift"
+        ),
+        "report the line's frequency shift with its error, and which way it moves (lower or "
+        "higher at low temperature)",
     ),
     _SaySo(
         _pattern(r"the instrument's frequency response"),

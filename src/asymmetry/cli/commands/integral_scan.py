@@ -412,14 +412,22 @@ def _notes(
             f"held at the value that command's Next line gives (the printed red - green "
             f"offset, negated)."
         )
-    if offset is not None:
+    from asymmetry.core.workflow.reduction import GREEN_MINUS_RED
+
+    # A green - red contrast with no field step between the periods is the RF
+    # switched on and off; a logged step is a differential ALC scan.
+    if result["settings"]["period"] == GREEN_MINUS_RED and offset is None:
         lines.append(
-            "NOTE: a green-red (RF) resonance scan: RFResonanceMuP converts its lines into the "
-            "muon and proton couplings — --model RFResonanceMuP --fix nu_RF=<the RF frequency "
-            "in MHz, from the run notes or title> — rather than a pair of Lorentzians."
+            "NOTE: a green-red resonance scan with no field step logged between the periods: "
+            "the contrast is the RF, so this is an RF resonance scan, not a differential ALC "
+            "one (a LorentzianLCRPair's dB has no step to hold). RFResonanceMuP converts its "
+            "lines into the muon and proton couplings — --model RFResonanceMuP --fix "
+            "nu_RF=<the RF frequency in MHz, from the run notes or title> — rather than a "
+            "pair of Lorentzians."
         )
     elif fit is not None and any(
-        term.strip() in ("LorentzianLCR", "GaussianLCR") for term in fit["expression"].split("+")
+        term.strip() in ("LorentzianLCR", "GaussianLCR", "LorentzianLCRPair")
+        for term in fit["expression"].split("+")
     ):
         lines.append(
             "NOTE: no radical ALC or hyperfine model is available: these resonance fields "

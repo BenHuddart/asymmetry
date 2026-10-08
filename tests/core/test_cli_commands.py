@@ -935,8 +935,9 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     out = capsys.readouterr().out
     assert "period field offset (red - green): -44.00 G, mean of 2 run(s)" in out
     assert "--fix dB=44.00" in out
-    assert "RFResonanceMuP converts its lines" in out
-    assert "no radical ALC or hyperfine model" not in out
+    # A logged field step makes this a differential ALC scan, not an RF one.
+    assert "RFResonanceMuP converts its lines" not in out
+    assert "no radical ALC or hyperfine model is available" in out
     # Each fitted parameter is printed with its unit and error; a held one says so.
     bwid = next(line.split() for line in out.splitlines() if line.startswith("Bwid "))
     assert bwid[1:] == ["1.000000", "G", "fixed"]
@@ -969,7 +970,10 @@ def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
         "without --period this scan summed both periods"
     ) in capsys.readouterr().out
     cli.main([*base, "--period", "green-red"])
-    assert "summed both periods" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "summed both periods" not in out
+    # No field step between the periods: the green - red contrast is the RF.
+    assert "this is an RF resonance scan" in out and "RFResonanceMuP converts its lines" in out
 
 
 def test_integral_scan_single_period_reports_the_source_run_number(
@@ -2684,7 +2688,7 @@ def test_trend_names_the_law_its_axis_and_parameters_call_for(
         # ... with the shift and its error printed, so no one subtracts them by hand.
         (
             [5.3735, 5.385, 5.3977],
-            "frequency moves from 5.37350 to 5.39770 MHz, a shift of 0.02420 ± 0.00141 MHz",
+            "frequency moves from 5.37350 to 5.39770 MHz on warming, a shift of 0.02420 ± 0.00141 MHz — the line sits lower at low temperature",
         ),
     ],
 )
@@ -2971,6 +2975,7 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
         "name": "scan",
         "scan": {"points": [], "order_key": "field"},
         "period_field_offset": None,
+        "settings": ReductionSettings().to_dict(),
         "fit": _failed_resonance_fit(),
         "scan_path": str(tmp_path / "scan.json"),
         "plot": None,

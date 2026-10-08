@@ -197,12 +197,18 @@ def unfitted_scans(
     from asymmetry.core.workflow.survey import ScanGroup
     from asymmetry.core.workflow.workdir import WorkDir
 
-    # Run numbers identify runs only within one work directory's folder, so each
-    # survey is held against its own directory's fits, calibrators and lines.
+    # Run numbers identify runs only within one data folder, so each survey is
+    # held against the fits and calibrators of every work directory on its folder.
+    workdirs = [workdir for workdir in map(WorkDir, roots) if workdir.survey_path.is_file()]
+    surveys = [workdir.read_survey() for workdir in workdirs]
+    fitted: dict[str, set[int]] = {}
+    calibrators: dict[str, set[int]] = {}
+    for workdir, survey in zip(workdirs, surveys, strict=True):
+        fitted.setdefault(survey["folder"], set()).update(workdir.fitted_runs())
+        calibrators.setdefault(survey["folder"], set()).update(workdir.alpha_calibration_runs())
     surveyed = [
-        (workdir.read_survey(), workdir.fitted_runs(), workdir.alpha_calibration_runs())
-        for workdir in (WorkDir(root) for root in roots)
-        if workdir.survey_path.is_file()
+        (survey, fitted[survey["folder"]], calibrators[survey["folder"]])
+        for survey in {survey["folder"]: survey for survey in surveys}.values()
     ]
     unfitted = [
         _UnfittedScan(

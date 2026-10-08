@@ -378,6 +378,14 @@ _BACKGROUND_NOTE = (
         ),
         (_HELD_NOTE, "Runs 20888-20897 give A_1 near 24 %.", "A_bg was held at 0 on 20888."),
         (
+            "frequency moves from 5.38 to 5.39 MHz on warming, a shift of 0.01 ± 0.002 MHz — "
+            "the line sits lower at low temperature — while staying near one field: a shift "
+            "of the line (a Knight shift, or a superconductor's diamagnetic shift below Tc).\n",
+            # Naming the shift is not saying which way the line moved.
+            "The frequency moves from 5.38 to 5.39 MHz, a small shift near the applied field.",
+            "The line shifts lower in frequency below Tc, by 0.01 ± 0.002 MHz.",
+        ),
+        (
             _BACKGROUND_NOTE,
             # That the fit fails is not the reason it fails.
             "The full-range LorentzianLCR + Cubic fit fails.",
@@ -558,6 +566,14 @@ def test_each_survey_is_held_against_its_own_work_directory(
 
     cli.main(["audit", str(draft)])
     assert 'notes "Steering <x> A" (steering): not fitted: runs 11-13' in capsys.readouterr().out
+
+    # A second work directory on the same folder holds its fits for both.
+    survey = json.loads((tmp_path / "asymmetry-work-b" / "survey.json").read_text())
+    (tmp_path / "asymmetry-work" / "survey.json").write_text(
+        json.dumps(survey | {"folder": "asymmetry-work-b"}), encoding="utf-8"
+    )
+    cli.main(["audit", str(draft)])
+    assert "not fitted" not in capsys.readouterr().out
 
 
 def test_review_edge_cases_of_the_audit(tmp_path: Path) -> None:
