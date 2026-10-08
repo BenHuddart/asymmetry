@@ -435,6 +435,22 @@ def test_field_scans_at_one_temperature_split_by_note_and_merge_interleaved_pass
     assert [scan.notes for scan in scans] == ["CHMu(0) scan", "o-p scan"]
 
 
+def test_a_decoupling_sweep_run_on_into_an_even_scan_is_two_field_scans() -> None:
+    # Widening steps up to 3500 G, then even 100 G steps from 5000 G: a
+    # decoupling curve and a level-crossing scan taken back to back.
+    fields = [0.0, 1.0, 1.8, 3.0, 5.4, 10.0, 18.0, 30.0, 54.0, 100.0, 180.0, 300.0, 540.0]
+    fields += [1000.0, 1800.0, 2500.0, 3500.0, *range(5000, 6000, 100)]
+    rows = [
+        _row(run_number=run, temperature=50.0, field=float(field), geometry=None)
+        for run, field in enumerate(fields, start=1)
+    ]
+    scans = [scan for scan in _scan_groups(rows)[0] if scan.axis == "field"]
+    assert [(scan.values[0], scan.values[-1]) for scan in scans] == [
+        (0.0, 3500.0),
+        (5000.0, 5900.0),
+    ]
+
+
 def test_a_transverse_calibration_run_stays_out_of_a_longitudinal_field_scan() -> None:
     larmor = PrecessionEvidence(
         state="larmor", frequency_mhz=0.27, snr=40.0, larmor_mhz=0.271, note=""

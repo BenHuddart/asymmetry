@@ -416,6 +416,8 @@ def _notes(
         )
     from asymmetry.core.workflow.reduction import GREEN_MINUS_RED
 
+    if fit is not None and fit["success"] and "RFResonanceMuP" in fit["expression"]:
+        lines.append(_rf_fields(fit, result["scan"]["points"]))
     # A green - red contrast with no field step between the periods is the RF
     # switched on and off; a logged step is a differential ALC scan.
     if result["settings"]["period"] == GREEN_MINUS_RED and offset is None:
@@ -437,6 +439,26 @@ def _notes(
             "rather than only that none were quoted."
         )
     return lines
+
+
+def _rf_fields(fit: dict, points: list[dict]) -> str:
+    """The two resonance fields an RF fit's couplings put the lines at, against the scan."""
+    from asymmetry.core.fitting.muon_proton import rf_resonance_fields
+
+    values = fit["parameters"]
+    fields = rf_resonance_fields(values["A_mu"], values["A_p"], values["nu_RF"])
+    low, high = min(point["x"] for point in points), max(point["x"] for point in points)
+    if not all(low <= field <= high for field in fields):
+        return (
+            f"NOTE: these couplings put the two resonances at "
+            f"{', '.join(f'{field:.6g}' for field in fields)} G, not both inside the scan "
+            f"({low:g}–{high:g} G): the fit has not found the scan's lines, so its couplings "
+            f"are not a result. Refit with A_mu and A_p started from the dips."
+        )
+    return (
+        f"Resonance fields from the fitted couplings: {fields[0]:.6g} G (E7-E5) and "
+        f"{fields[1]:.6g} G (E8-E6) — report them beside A_mu and A_p."
+    )
 
 
 #: A converged fit this far above its errors has left structure unfitted.

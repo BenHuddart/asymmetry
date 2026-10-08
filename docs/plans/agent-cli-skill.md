@@ -2119,6 +2119,18 @@ off. Replay over all stored series: without the supplied-axis limit the
 extremum reading fired on single odd runs in 13 cases; with it, on basics'
 steering scan in all 10 waves that fitted it, and nowhere else.
 
+#### Pass 11
+
+- `survey` cuts a field sweep whose widening steps (a decoupling curve, 1,
+  1.8, 3 … G) give way to even ones (a level-crossing scan) into two scans,
+  at the first field of the even run — corannulene's 50 K block of 175 runs
+  from 0 to 30 kG mixed both, and the agent fitted it whole. Replayed on the
+  field scans of every stored survey, it cuts only that block, at 5000 G.
+- After an `RFResonanceMuP` fit, `integral-scan` prints the two resonance
+  fields the couplings imply (benzene RF gave none in wave 18), or says the
+  couplings are not a result when the fields fall outside the scan (wave 17's
+  unseeded fit returned A_μ ≈ 24700 MHz and no warning).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

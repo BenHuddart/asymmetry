@@ -3668,3 +3668,14 @@ def test_a_featureless_screen_inside_a_scan_names_the_scan_ends_to_screen(tmp_pa
     # A screened end leaves only the other end to screen.
     (note,) = _quiet_screen_notes(workdir, anywhere, "data", 15, "")
     assert "--run 11 (75 K)" in note and "--run 15 " not in note
+
+
+def test_an_rf_fit_prints_the_resonance_fields_its_couplings_imply() -> None:
+    from asymmetry.cli.commands.integral_scan import _rf_fields
+
+    points = [{"x": 560.0}, {"x": 950.0}]
+    found = _rf_fields({"parameters": {"A_mu": 514.78, "A_p": 124.6, "nu_RF": 218.5}}, points)
+    assert found.startswith("Resonance fields from the fitted couplings: 893.866 G (E7-E5)")
+    # Couplings whose lines fall outside the scan did not find its lines.
+    lost = _rf_fields({"parameters": {"A_mu": 24705.0, "A_p": 1.6e8, "nu_RF": 218.0}}, points)
+    assert "not both inside the scan (560–950 G)" in lost

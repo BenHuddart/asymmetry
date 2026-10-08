@@ -433,6 +433,9 @@ after the cryostat visited another temperature, starts a repeat of the scan —
 two decoupling scans at 420 K with a 400 K one between them are two scans —
 while a point re-measured in the same visit (a return sweep) stays in its scan,
 and so does a scan measured alternately at two temperatures, field by field.
+A sweep whose widening steps (a decoupling curve, 1, 1.8, 3 … G) give way to
+even ones (a level-crossing scan) is cut into two scans at the first field of
+the even run, where the step falls fivefold and then holds for four steps.
 Runs that precess at their Larmor frequency, when they are a minority among
 runs that do not, are transverse-field calibrations taken beside a longitudinal
 scan and are left out of it; when they are the majority the scan is transverse,
@@ -1291,7 +1294,9 @@ formed from that period's own counts under the `Reduction options`_, with their
 errors added in quadrature. With no field step logged between the periods the
 contrast is the RF switched on and off, and ``integral-scan`` names
 ``RFResonanceMuP``; a logged step makes it a differential ALC scan, whose
-``Next`` line holds the pair's ``dB`` at the step. ``RFResonanceMuP`` fits the muon and proton
+``Next`` line holds the pair's ``dB`` at the step. After an ``RFResonanceMuP``
+fit the report prints the two resonance fields its couplings imply, or says the
+couplings are not a result when those fields fall outside the scan. ``RFResonanceMuP`` fits the muon and proton
 couplings of an RF scan with the RF frequency held at its acquisition value.
 With ``nu_RF`` fixed (or given as a start), the couplings are seeded by solving
 the resonance condition at the scan's own two dip fields rather than taken from
