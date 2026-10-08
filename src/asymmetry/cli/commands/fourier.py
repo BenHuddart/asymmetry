@@ -201,6 +201,26 @@ def _reduced_counts(workdir, selection, entry):
 _CLOSE_PEAKS = 2
 
 
+def tesla_field_lines(result: dict) -> list[dict]:
+    """Peaks of a plain transform near the Larmor frequency of a field of tesla order.
+
+    A diamagnetic line there can hold two (inequivalent sites, sublattices),
+    unlike a radical's hyperfine line far from the applied field's Larmor value.
+    """
+    from asymmetry.core.fitting.knight_shift import larmor_frequency_mhz
+
+    if result["axis"] != "frequency" or result["field_gauss"] is None:
+        return []
+    larmor = larmor_frequency_mhz(abs(result["field_gauss"]))
+    if larmor < HIGH_FIELD_LINE_MHZ:
+        return []
+    return [
+        peak
+        for peak in result["peak_analysis"]["peaks"]
+        if abs(peak["frequency_mhz"] - larmor) <= 0.1 * larmor
+    ]
+
+
 def _render(result: dict) -> str:
     peaks = result["peak_analysis"]["peaks"]
     coupling = result["axis"] == "hyperfine_coupling"
@@ -272,21 +292,8 @@ def _render(result: dict) -> str:
             "the FFT barely separates. Report both frequencies (a splitting, not one line), "
             "and fit them in the time domain with two lines started there."
         )
-    from asymmetry.core.fitting.knight_shift import larmor_frequency_mhz
-
     paired = {frequency for pair in pairs for frequency in pair}
-    larmor = (
-        None if result["field_gauss"] is None else larmor_frequency_mhz(abs(result["field_gauss"]))
-    )
-    # A diamagnetic line in a field of tesla order, not a radical's hyperfine line.
-    high = [
-        peak
-        for peak in peaks
-        if larmor is not None
-        and larmor >= HIGH_FIELD_LINE_MHZ
-        and abs(peak["frequency_mhz"] - larmor) <= 0.1 * larmor
-        and peak["frequency_mhz"] not in paired
-    ]
+    high = [peak for peak in tesla_field_lines(result) if peak["frequency_mhz"] not in paired]
     if high and not coupling:
         line = max(high, key=lambda peak: peak["snr"])
         centre, width = line["frequency_mhz"], line["width_mhz"]

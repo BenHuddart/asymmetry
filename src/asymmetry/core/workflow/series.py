@@ -129,6 +129,9 @@ def amplitude_exceeds_data(dataset: MuonDataset, parameters: Mapping[str, float]
 
 FREQUENCY_UNRESOLVED = "frequency_unresolved"
 
+#: Flags saying a run's result does not describe that run.
+UNDESCRIBED_FLAGS = frozenset({"failed", AMPLITUDE_EXCEEDS_DATA, FREQUENCY_UNRESOLVED})
+
 
 def frequency_unresolved(
     dataset: MuonDataset, parameters: Mapping[str, float], free: Sequence[str]
@@ -839,6 +842,7 @@ def build_trend_table(
 
 
 __all__ = [
+    "UNDESCRIBED_FLAGS",
     "AMPLITUDE_EXCEEDS_DATA",
     "AMPLITUDE_EXCESS_FACTOR",
     "ENVELOPE_MARGIN",

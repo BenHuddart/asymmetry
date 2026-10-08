@@ -149,6 +149,12 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     cli.main(["fit-series", folder, "--runs", ",".join(map(str, warm)), *series, "--name", "warm"])
     capsys.readouterr()
     cli.main(["audit", str(draft)])
+    # Every scan is fitted, but neither series has been read with trend yet.
+    assert "Series no trend command has read: cold" in capsys.readouterr().out
+    for name in ("cold", "warm"):
+        cli.main(["trend", folder, "--series", name])
+    capsys.readouterr()
+    cli.main(["audit", str(draft)])
     assert "Now send its text" in capsys.readouterr().out
 
 
@@ -175,10 +181,19 @@ def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> Non
             ("data", scan("field", [13, 31]), [13]),
         ],
         calibration={12},
+        lineless=set(),
     )
 
     assert "never fitted. Alpha was measured on run 12" in report
     assert "asymmetry fit-series data --runs 11-14 --recipe wizard-12" in report
+    # Runs the survey found no line in are sent to a relaxation fit, not the wizard.
+    lineless = _unfitted_report(
+        [("data", scan("temperature", [41, 42, 43, 44]), [43, 44])],
+        calibration=set(),
+        lineless={43, 44},
+    )
+    assert "asymmetry recipe data --expression 'Exponential + Constant' --run 43" in lineless
+    assert "wizard" not in lineless
     # A short scan's runs appear once, and not again when a longer scan lists them.
     assert report.endswith(
         "short scans of 2-3 runs, not fitted: runs 21-22 — fit them where they bear on the "
@@ -323,7 +338,7 @@ def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch
         "runs": [11, 12, 13],
         "values": [-1.0, 0.0, 1.0],
     }
-    survey = {"folder": "data", "scans": [], "notes_scans": [scan]}
+    survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     draft = tmp_path / "summary.md"
     draft.write_text("A draft.\n", encoding="utf-8")
@@ -350,3 +365,24 @@ def test_a_correlation_spectrum_without_its_plain_transform_is_named(tmp_path: P
     ]:
         (spectra / f"{name}.json").write_text(json.dumps({"axis": axis, "run": run}))
     assert _correlations_without_lines([tmp_path / "wd"]) == [(tmp_path / "wd", 7)]
+
+
+def test_a_tesla_field_line_without_a_two_line_fit_is_named(tmp_path: Path) -> None:
+    from asymmetry.cli.commands.audit import _untested_doublets
+
+    root = tmp_path / "wd"
+    for folder in ("spectra", "fits", "series"):
+        (root / folder).mkdir(parents=True)
+    spectrum = {
+        "axis": "frequency",
+        "run": 686,
+        "field_gauss": 60000.0,
+        "peak_analysis": {"peaks": [{"frequency_mhz": 813.59}]},
+    }
+    (root / "spectra" / "run-686.json").write_text(json.dumps(spectrum))
+    one_line = {"expression": "Oscillatory * Exponential + Constant"}
+    (root / "fits" / "one-686.json").write_text(json.dumps(one_line))
+    assert _untested_doublets([root]) == [(root, 686, 813.59)]
+    two = {"expression": "Oscillatory * Exponential + Oscillatory * Exponential + Constant"}
+    (root / "fits" / "two-line-686.json").write_text(json.dumps(two))
+    assert _untested_doublets([root]) == []

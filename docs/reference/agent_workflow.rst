@@ -1086,7 +1086,13 @@ logged session printed ``LAW NOT ESTABLISHED``, and names a relation a command
 printed beside a quantity the draft quotes without it (the muon hyperfine
 coupling from ``fourier --correlation``, which is the sum of the radical's two
 lines, A_μ = ν₁ + ν₂), and a run with a correlation spectrum but no plain
-transform in the same work directory, whose two lines the summary needs. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
+transform in the same work directory, whose two lines the summary needs. It also
+holds the reply while a fitted series has not been read with ``trend``, while a
+tesla-field line ``fourier`` offered a two-line test for has no two-line fit,
+and while a run the survey found no line in has only precession fits flagged
+as not describing it (``amplitude_exceeds_data``, ``frequency_unresolved``,
+``failed``) — for those it prints the relaxation-only ``recipe`` and
+``fit-series`` commands. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
 left out of the match, since a rounded sum would otherwise find one of their
 elements by chance.
 

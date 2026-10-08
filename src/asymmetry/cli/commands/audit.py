@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -62,6 +63,8 @@ def run(args: argparse.Namespace) -> None:
     laws = unsupported_laws(text, log_text)
     relations = unstated_relations(text, log_text)
     unpaired = _correlations_without_lines(roots)
+    untested = _untested_doublets(roots)
+    untrended = _untrended_series(roots, log_text)
     workdirs = [WorkDir(root) for root in roots]
     fitted = set().union(*(workdir.fitted_runs() for workdir in workdirs))
     calibration = set().union(*(workdir.alpha_calibration_runs() for workdir in workdirs))
@@ -99,7 +102,13 @@ def run(args: argparse.Namespace) -> None:
         )
         return
     if unfitted:
-        print(_unfitted_report(unfitted, calibration))
+        lineless = {
+            int(run["run_number"])
+            for survey in surveys
+            for run in survey["runs"]
+            if run["precession"] == "none"
+        }
+        print(_unfitted_report(unfitted, calibration, lineless))
     if unfitted_notes:
         print(
             "Scans the run notes define (survey NOTES SCANS) with runs no fit holds — fit each "
@@ -126,7 +135,22 @@ def run(args: argparse.Namespace) -> None:
             f"is the sum of two lines that only the plain FFT shows. Run asymmetry fourier "
             f"<folder> --run {run} --window none --workdir {root} and report those lines."
         )
-    if not found and not laws and not relations and not unpaired:
+    for root, run, frequency in untested:
+        print(
+            f"Run {run} in {root}: fourier found a line at {frequency:.6g} MHz in a field of "
+            f"tesla order and printed a two-line test, but no fit here has two lines. Run that "
+            f"test (asymmetry fourier <folder> --run {run} --window none --workdir {root} prints "
+            f"it) before calling the line single."
+        )
+    if untrended:
+        print(
+            "Series no trend command has read: "
+            + ", ".join(f"{name} ({root})" for root, name in untrended)
+            + ". Run asymmetry trend <folder> --series NAME --workdir ROOT on each: its table "
+            "and notes say what the series shows (a shift, a change of shape, a law to fit)."
+        )
+    ready = not (found or laws or relations or unpaired or untested or untrended)
+    if ready:
         if unfitted or unfitted_notes:
             print(
                 f"No unprinted numbers found in {draft}, but do not reply yet: fit every scan "
@@ -159,6 +183,7 @@ _SHORT_SCAN_RUNS = 3
 def _unfitted_report(
     unfitted: list[tuple[str, ScanGroup, list[int]]],
     calibration: set[int],
+    lineless: set[int],
 ) -> str:
     """The surveyed scans whose runs no stored fit holds, with what to do about each."""
     from asymmetry.cli.commands.survey import scan_label
@@ -198,7 +223,20 @@ def _unfitted_report(
                 f"means no Fourier line, not no signal, so fit it before calling it unusable "
                 f"and report what the fit shows:"
             )
-            if scan.axis == "field" and scan.geometry != "TF":
+            if set(runs) <= lineless:
+                lines.append(
+                    "        The survey finds no line in these runs, so a precession model does not "
+                    "describe them: fit their relaxation."
+                )
+                lines.append(
+                    f"        asymmetry recipe {shlex.quote(folder)} --expression 'Exponential + "
+                    f"Constant' --run {runs[0]} --name relax-{runs[0]}"
+                )
+                lines.append(
+                    f"        asymmetry fit-series {shlex.quote(folder)} --runs {run_spec(runs)} "
+                    f"--recipe relax-{runs[0]} --order {scan.axis} --name relax-{runs[0]}"
+                )
+            elif scan.axis == "field" and scan.geometry != "TF":
                 lines.append(
                     f"        asymmetry integral-scan {shlex.quote(folder)} --runs "
                     f"{run_spec(runs)} --plot  (then --model for the curve it shows)"
@@ -211,6 +249,46 @@ def _unfitted_report(
             f"— fit them where they bear on the question."
         )
     return "\n".join(lines)
+
+
+def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
+    """``(work directory, run, MHz)`` for a tesla-field line no two-line fit there tested."""
+    from asymmetry.cli.commands.fourier import tesla_field_lines
+
+    found = []
+    for root in roots:
+        expressions = [
+            json.loads(path.read_text(encoding="utf-8"))["expression"]
+            for folder in ("fits", "series")
+            for path in (root / folder).glob("*.json")
+        ]
+        if any(expression.count("Oscillatory") >= 2 for expression in expressions):
+            continue
+        for path in sorted((root / "spectra").glob("*.json")):
+            spectrum = json.loads(path.read_text(encoding="utf-8"))
+            found.extend(
+                (root, int(spectrum["run"]), peak["frequency_mhz"])
+                for peak in tesla_field_lines(spectrum)[:1]
+            )
+    return found
+
+
+def _untrended_series(roots: list[Path], log_text: str) -> list[tuple[Path, str]]:
+    """``(work directory, name)`` for each fitted series no logged ``trend`` command read."""
+    from asymmetry.core.workflow.workdir import DERIVED_SERIES_KINDS
+
+    return [
+        (root, path.stem)
+        for root in roots
+        for path in sorted((root / "series").glob("*.json"))
+        if json.loads(path.read_text(encoding="utf-8"))["kind"] not in DERIVED_SERIES_KINDS
+        and re.search(
+            rf"^\$ asymmetry trend .*--series {re.escape(path.stem)}(?:\s|$)",
+            log_text,
+            re.MULTILINE,
+        )
+        is None
+    ]
 
 
 def _correlations_without_lines(roots: list[Path]) -> list[tuple[Path, int]]:
