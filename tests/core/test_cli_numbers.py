@@ -380,6 +380,7 @@ def test_a_tesla_field_line_without_a_two_line_fit_is_named(tmp_path: Path) -> N
         "peak_analysis": {"peaks": [{"frequency_mhz": 813.59}]},
     }
     (root / "spectra" / "run-686.json").write_text(json.dumps(spectrum))
+
     def fit(**frequencies: float) -> str:
         return json.dumps({"expression": "...", "fit": {"parameters": frequencies}})
 
