@@ -139,7 +139,8 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     series = ["--recipe", "relax", "--order", "temperature"]
     cli.main(["fit-series", folder, "--runs", ",".join(map(str, cold)), *series, "--name", "cold"])
     draft = tmp_path / "summary.md"
-    draft.write_text("A draft.\n", encoding="utf-8")
+    # The folder's files carry deadtimes this reduction left off, which a draft must say.
+    draft.write_text("A draft; the reduction left deadtime off.\n", encoding="utf-8")
     capsys.readouterr()
 
     cli.main(["audit", str(draft), "--json"])
@@ -312,13 +313,48 @@ def test_wave2_notation_and_contexts(draft: str, flagged: list[str]) -> None:
 
 
 def test_a_coupling_quoted_without_its_printed_relation_is_named() -> None:
-    from asymmetry.cli._numbers import unstated_relations
+    from asymmetry.cli._numbers import unstated
 
     log = "The correlation peak is the muon hyperfine coupling A_mu = nu_1 + nu_2, the sum\n"
     bare = "The correlation peak gives A_μ ≈ 514 MHz."
-    assert unstated_relations(bare, log) and not unstated_relations(bare, "no fourier here\n")
+    assert unstated(bare, log) and not unstated(bare, "no fourier here\n")
     for stated in ("A_μ = ν₁ + ν₂ ≈ 514 MHz", "A_mu, the sum of the two lines, is 514 MHz"):
-        assert unstated_relations(stated, log) == []
+        assert unstated(stated, log) == []
+    # Only a draft that quotes the coupling owes its relation.
+    assert unstated("No correlation peak is quoted.", log) == []
+
+
+_HELD_NOTE = (
+    "NOTE: on runs 20888, 20896-20897 the relaxation is too slow over the fitted window to "
+    "tell from the constant — the free fit ran its amplitude and A_bg off in opposite signs — "
+    "so A_bg was held at 0 and the fit repeated. Say in the summary that it was held there.\n"
+)
+_BACKGROUND_NOTE = (
+    "NOTE: the fit converged at chi2_red 40.1: over a long range the background may rise or "
+    "step where no polynomial can follow — a fit that cannot is not a result, and the "
+    "summary should say that is why — or the range holds more dips than the model.\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("log", "silent", "stated"),
+    [
+        (_HELD_NOTE, "Runs 20888-20897 give A_1 near 24 %.", "A_bg was held at 0 on 20888."),
+        (
+            _BACKGROUND_NOTE,
+            "The full-range fit is not quoted.",
+            "The full-range fit is not quoted: one cubic cannot follow both dips.",
+        ),
+    ],
+)
+def test_a_printed_request_the_draft_leaves_out_is_quoted_back(
+    log: str, silent: str, stated: str
+) -> None:
+    from asymmetry.cli._numbers import unstated
+
+    (message,) = unstated(silent, log)
+    assert log.strip()[:60] in message
+    assert unstated(stated, log) == []
 
 
 def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch, capsys) -> None:

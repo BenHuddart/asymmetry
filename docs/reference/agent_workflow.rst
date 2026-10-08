@@ -1103,11 +1103,22 @@ analyst does in prose — percentage changes, ratios, unit conversions,
 differences between printed columns — which the agent skill's number rule
 forbids. It also lists a law's vocabulary ("critical slowing",
 "activation energy", "correlation time") when every fit of that law in the
-logged session printed ``LAW NOT ESTABLISHED``, and names a relation a command
-printed beside a quantity the draft quotes without it (the muon hyperfine
-coupling from ``fourier --correlation``, which is the sum of the radical's two
-lines, A_μ = ν₁ + ν₂), and a run with a correlation spectrum but no plain
-transform in the same work directory, whose two lines the summary needs. It also
+logged session printed ``LAW NOT ESTABLISHED``, and a run with a correlation
+spectrum but no plain
+transform in the same work directory, whose two lines the summary needs.
+
+It holds the reply, quoting the printed line back, when a command asked the
+summary to say something the draft leaves out: that ``A_bg`` was held at 0
+(``fit``, ``fit-series``); which deadtime correction was used, when
+``reduce`` left the files' deadtimes off; why a long-range ``integral-scan``
+fit is not a result (a background no polynomial can follow); that the scan
+measures some points twice; that no radical ALC or hyperfine model converts
+the resonance fields; a ``trend`` step and its span, a line's frequency shift,
+the instrument's frequency response, a change of relaxation shape, or an
+extremum a monotonic law averages over; and, for a draft quoting the muon
+hyperfine coupling, that A_μ = ν₁ + ν₂ is the sum of the radical's two lines.
+The check reads keywords, so it catches a point left out, not one stated
+badly. It also
 holds the reply while a fitted series has not been read with ``trend``, while a
 tesla-field line ``fourier`` offered a two-line test for has no two-line fit,
 and while a run the survey found no line in has only precession fits flagged

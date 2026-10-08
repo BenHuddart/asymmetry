@@ -249,34 +249,118 @@ def unsupported_laws(draft: str, log_text: str) -> list[tuple[str, str]]:
     ]
 
 
-#: Relations a command printed beside a quantity, which a summary quoting that
-#: quantity must state: ``(printed marker, quantity in the draft, the relation
-#: stated, what to write)``.
-_RELATIONS: tuple[tuple[str, re.Pattern[str], re.Pattern[str], str], ...] = (
-    (
-        "A_mu = nu_1 + nu_2",
-        re.compile(r"A_?\{?(?:μ|mu)\b|hyperfine coupling", re.IGNORECASE),
-        re.compile(r"\bsum\b|(?:ν|nu)_?₁?1?\s*\+\s*(?:ν|nu)_?₂?2?", re.IGNORECASE),
-        "The draft quotes the muon hyperfine coupling without its relation: say that A_μ is "
-        "the sum of the radical's two precession lines, A_μ = ν₁ + ν₂, as fourier printed.",
+@dataclass(frozen=True)
+class _SaySo:
+    """A printed line that asks the summary to say something, and how to tell it did."""
+
+    marker: re.Pattern[str]
+    stated: re.Pattern[str]
+    instruction: str
+    #: Only a draft quoting this owes the statement (a relation beside a quantity).
+    quantity: re.Pattern[str] | None = None
+
+
+def _pattern(text: str) -> re.Pattern[str]:
+    return re.compile(text, re.IGNORECASE)
+
+
+#: Lines a command printed that the summary must act on in words. The ``stated``
+#: patterns are deliberately lenient — a keyword in the draft is taken as the
+#: statement — so the check catches a reply that leaves the point out entirely.
+_SAY_SO: tuple[_SaySo, ...] = (
+    _SaySo(
+        _pattern(r"A_mu = nu_1 \+ nu_2"),
+        _pattern(r"\bsum\b|(?:ν|nu)_?₁?1?\s*\+\s*(?:ν|nu)_?₂?2?"),
+        "say that A_μ is the sum of the radical's two precession lines, A_μ = ν₁ + ν₂",
+        _pattern(r"A_?\{?(?:μ|mu)\b|hyperfine coupling"),
+    ),
+    _SaySo(
+        _pattern(r"so A_bg was held at 0"),
+        _pattern(
+            r"(?:A_?bg|background)[^.\n]{0,80}\bheld\b|\bheld\b[^.\n]{0,80}(?:A_?bg|background)"
+        ),
+        "say on which runs A_bg was held at 0, and why",
+    ),
+    _SaySo(
+        _pattern(r"this reduction leaves deadtime off"),
+        _pattern(r"dead ?time"),
+        "say which deadtime correction the reduction used",
+    ),
+    _SaySo(
+        _pattern(r"where no polynomial can follow"),
+        _pattern(
+            r"(?:polynomial|cubic|quadratic|linear|background|baseline)[^.\n]{0,80}"
+            r"(?:cannot|can't|does not|doesn't|fail|rises|rising|steps|stepp|curv)"
+            r"|(?:no|cannot|can't|fail)[^.\n]{0,60}(?:polynomial|cubic|background|baseline)"
+        ),
+        "say why the long-range fit is not a result: the background rises or steps where "
+        "no polynomial can follow",
+    ),
+    _SaySo(
+        _pattern(r"Say so: a return pass or repeated points"),
+        _pattern(r"return pass|repeat|more than once|twice|came back"),
+        "say that the scan measures some points twice (a return pass), and whether they agree",
+    ),
+    _SaySo(
+        _pattern(r"no radical ALC or hyperfine model is available"),
+        _pattern(r"model[^.\n]{0,60}(?:available|exist)|not (?:been )?converted|site assignment"),
+        "say that no radical ALC or hyperfine model is available, so the resonance fields are "
+        "not converted into couplings or sites",
+    ),
+    _SaySo(
+        _pattern(r"Report it and that span"),
+        _pattern(r"\bstep|onset|transition|changes? (?:between|across|at)|change lies|levels?\b"),
+        "report the parameter's change and the span it lies in",
+    ),
+    _SaySo(
+        _pattern(r"a shift of the line \(a Knight shift"),
+        _pattern(r"\bshift"),
+        "report the line's frequency shift, with its error",
+    ),
+    _SaySo(
+        _pattern(r"the instrument's frequency response"),
+        _pattern(r"frequency response|time binning|pulse width|pulse's width"),
+        "say that the amplitude falling as the frequency rises is the instrument's frequency "
+        "response, not the sample losing its signal",
+    ),
+    _SaySo(
+        _pattern(r"the relaxation shape changes along this scan"),
+        _pattern(
+            r"\bshape|line ?form|(?:Gaussian|exponential)[^.\n]{0,80}(?:Gaussian|exponential)"
+        ),
+        "report the change of relaxation shape along the scan, with the runs on each side",
+    ),
+    _SaySo(
+        _pattern(r"averages two regimes: say so"),
+        _pattern(r"extrem|maximum|minimum|peak|turn|two regimes|non-?monoton"),
+        "say that the fitted points turn through an extremum, so one monotonic law averages "
+        "two regimes",
     ),
 )
 
+#: The most printed lines quoted for one statement the draft owes.
+_QUOTED_LINES = 3
 
-def unstated_relations(draft: str, log_text: str) -> list[str]:
-    """What to add where the draft quotes a quantity without the relation a command printed."""
-    return [
-        message
-        for printed, quantity, relation, message in _RELATIONS
-        if printed in log_text and quantity.search(draft) and not relation.search(draft)
-    ]
+
+def unstated(draft: str, log_text: str) -> list[str]:
+    """What the draft must still say: one message per printed request it leaves out."""
+    messages = []
+    for say in _SAY_SO:
+        printed = list(
+            dict.fromkeys(line.strip() for line in log_text.splitlines() if say.marker.search(line))
+        )
+        owed = say.quantity is None or say.quantity.search(draft)
+        if printed and owed and not say.stated.search(draft):
+            quoted = "\n".join(f"    > {line[:240]}" for line in printed[:_QUOTED_LINES])
+            messages.append(f"The draft does not {say.instruction}, as printed:\n{quoted}")
+    return messages
 
 
 __all__ = [
     "LAW_VOCABULARY",
     "Unverified",
     "printed_values",
-    "unstated_relations",
+    "unstated",
     "unsupported_laws",
     "unverified_numbers",
 ]

@@ -52,8 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside ``--xmin``/``--xmax`` with data on both flanks, an amplitude five
   errors from zero and χ²ᵣ ≤ 4 prints ``RESONANCE: … report its centre and
   width``.
-- **``audit`` names a hyperfine coupling quoted without its relation** when
-  ``fourier --correlation`` printed A_μ = ν₁ + ν₂.
+- **``audit`` holds the reply when the draft leaves out what a command asked the
+  summary to say**, quoting the printed line back: a held ``A_bg``, the deadtime
+  used, why a long-range resonance fit is not a result, a return pass, the
+  missing radical ALC model, a ``trend`` step, shift, frequency response, shape
+  change or extremum, and A_μ = ν₁ + ν₂ for a quoted hyperfine coupling.
 - **``audit`` holds the reply for advice not yet taken**: a fitted series no
   ``trend`` has read; a tesla-field line whose two-line test no fit has run;
   and a run the survey found no line in, whose only fits are precession models

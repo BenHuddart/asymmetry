@@ -9,7 +9,7 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from asymmetry.cli._numbers import unstated_relations, unsupported_laws, unverified_numbers
+from asymmetry.cli._numbers import unstated, unsupported_laws, unverified_numbers
 from asymmetry.cli._output import UserError, emit_json, payload
 from asymmetry.cli._runs import range_text, run_spec
 from asymmetry.cli._workdir import OUTPUT_LOG, WORKDIR_NAME
@@ -61,7 +61,7 @@ def run(args: argparse.Namespace) -> None:
     text = draft.read_text(encoding="utf-8")
     found = unverified_numbers(text, log_text)
     laws = unsupported_laws(text, log_text)
-    relations = unstated_relations(text, log_text)
+    relations = unstated(text, log_text)
     unpaired = _correlations_without_lines(roots)
     untested = _untested_doublets(roots)
     untrended = _untrended_series(roots, log_text)
@@ -103,7 +103,7 @@ def run(args: argparse.Namespace) -> None:
                     scan | {"unfitted_runs": runs} for _, scan, runs in unfitted_notes
                 ],
                 unsupported_laws=[{"law": law, "phrase": phrase} for law, phrase in laws],
-                unstated_relations=relations,
+                unstated=relations,
                 unverified=[
                     {"text": entry.text, "line_number": entry.line_number, "line": entry.line}
                     for entry in found
