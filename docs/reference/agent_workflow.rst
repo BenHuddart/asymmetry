@@ -1160,7 +1160,7 @@ is not a polynomial across the whole scan. A window holding no more points than
 the model has free parameters is refused. A fit that does not converge is
 reported with ``FAILED`` and the parameters it ended on (the component that ran
 away is usually plain from them); the scan is written either way. The fitted
-parameters print as a table of value and error — ``fixed`` for a held one,
+parameters print as a table of value, unit (G or MHz, for fields and couplings) and error — ``fixed`` for a held one,
 ``(at bound)`` beside one pinned on a bound, and ``-`` for the errors of a fit
 that failed; a failed fit names the minimiser's reasons and any parameter at a
 bound, and suggests fitting one resonance per ``--xmin``/``--xmax`` window
