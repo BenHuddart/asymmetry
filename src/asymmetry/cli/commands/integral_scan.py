@@ -617,8 +617,9 @@ def _poor_fit_note(fit: dict, elsewhere: Sequence[float] = ()) -> list[str]:
             + (
                 ": "
                 + "; ".join(
-                    f"--model 'LorentzianLCR + Linear' --xmin {centre - _WINDOW_WIDTHS * width:.0f}"
-                    f" --xmax {centre + _WINDOW_WIDTHS * width:.0f}"
+                    f"--model 'LorentzianLCR + Linear' --xmin "
+                    f"{max(low, centre - _WINDOW_WIDTHS * width):.0f}"
+                    f" --xmax {min(high, centre + _WINDOW_WIDTHS * width):.0f}"
                     for centre, width in (
                         (centre, abs(fit["parameters"][name.replace("B0", "Bwid", 1)]))
                         for name, centre in lines.items()
