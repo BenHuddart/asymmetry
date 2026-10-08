@@ -386,3 +386,17 @@ def test_a_tesla_field_line_without_a_two_line_fit_is_named(tmp_path: Path) -> N
     two = {"expression": "Oscillatory * Exponential + Oscillatory * Exponential + Constant"}
     (root / "fits" / "two-line-686.json").write_text(json.dumps(two))
     assert _untested_doublets([root]) == []
+
+
+def test_a_dip_a_scan_announced_and_no_fit_holds_is_named(tmp_path: Path) -> None:
+    from asymmetry.cli.commands.audit import _unfitted_dips
+
+    scans = tmp_path / "wd" / "scans"
+    scans.mkdir(parents=True)
+    window = {"centre": 21400.0, "x_min": 19950.0, "x_max": 22950.0}
+    whole = {"success": True, "parameters": {"B0": 19475.0}, "next_dip_windows": [window]}
+    (scans / "whole.json").write_text(json.dumps({"fit": whole}))
+    assert _unfitted_dips([tmp_path / "wd"]) == [(tmp_path / "wd", "whole", window)]
+    local = {"success": True, "parameters": {"B0": 21474.0}, "next_dip_windows": []}
+    (scans / "local.json").write_text(json.dumps({"fit": local}))
+    assert _unfitted_dips([tmp_path / "wd"]) == []

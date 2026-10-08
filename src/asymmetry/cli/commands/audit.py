@@ -65,6 +65,7 @@ def run(args: argparse.Namespace) -> None:
     unpaired = _correlations_without_lines(roots)
     untested = _untested_doublets(roots)
     untrended = _untrended_series(roots, log_text)
+    dips = _unfitted_dips(roots)
     workdirs = [WorkDir(root) for root in roots]
     fitted = set().union(*(workdir.fitted_runs() for workdir in workdirs))
     calibration = set().union(*(workdir.alpha_calibration_runs() for workdir in workdirs))
@@ -149,7 +150,14 @@ def run(args: argparse.Namespace) -> None:
             + ". Run asymmetry trend <folder> --series NAME --workdir ROOT on each: its table "
             "and notes say what the series shows (a shift, a change of shape, a law to fit)."
         )
-    ready = not (found or laws or relations or unpaired or untested or untrended)
+    for root, name, window in dips:
+        print(
+            f"integral-scan {name} ({root}) announced another dip near {window['centre']:g} that no "
+            f"fit holds: fit it with the same options and --model 'LorentzianLCR + Linear' "
+            f"--xmin {window['x_min']:g} --xmax {window['x_max']:g} --workdir {root}, and report "
+            f"what it shows."
+        )
+    ready = not (found or laws or relations or unpaired or untested or untrended or dips)
     if ready:
         if unfitted or unfitted_notes:
             print(
@@ -270,6 +278,31 @@ def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
                 (root, int(spectrum["run"]), peak["frequency_mhz"])
                 for peak in tesla_field_lines(spectrum)[:1]
             )
+    return found
+
+
+def _unfitted_dips(roots: list[Path]) -> list[tuple[Path, str, dict]]:
+    """``(work directory, scan, window)`` for each dip a scan's fit announced and no fit holds."""
+    found = []
+    for root in roots:
+        fits = {
+            path.stem: fit
+            for path in sorted((root / "scans").glob("*.json"))
+            if (fit := json.loads(path.read_text(encoding="utf-8"))["fit"]) is not None
+        }
+        centres = [
+            value
+            for fit in fits.values()
+            if fit["success"]
+            for name, value in fit["parameters"].items()
+            if name.split("_")[0] == "B0"
+        ]
+        found.extend(
+            (root, name, window)
+            for name, fit in fits.items()
+            for window in fit["next_dip_windows"]
+            if not any(window["x_min"] <= centre <= window["x_max"] for centre in centres)
+        )
     return found
 
 

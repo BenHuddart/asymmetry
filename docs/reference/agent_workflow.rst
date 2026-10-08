@@ -1092,7 +1092,9 @@ tesla-field line ``fourier`` offered a two-line test for has no two-line fit,
 and while a run the survey found no line in has only precession fits flagged
 as not describing it (``amplitude_exceeds_data``, ``frequency_unresolved``,
 ``failed``) — for those it prints the relaxation-only ``recipe`` and
-``fit-series`` commands. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
+``fit-series`` commands. A dip an ``integral-scan`` fit announced ("the scan holds
+another dip") holds it too until some fit in the work directory has a line
+inside that window. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
 left out of the match, since a rounded sum would otherwise find one of their
 elements by chance.
 
