@@ -1120,7 +1120,7 @@ def test_resolve_grouped_series_workers_is_opt_in_and_clamped() -> None:
 
 def test_fit_grouped_series_parallel_matches_sequential(monkeypatch) -> None:
     # A free pool start-up sends every run after the first to real spawn workers.
-    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.0)
+    monkeypatch.setattr(process_pool, "_startup_estimate_s", 0.0)
     model = _parallel_oscillatory_model()
     members, initial = _parallel_members(model)
     global_params = [name for name in model.param_names if not name.startswith("A")]

@@ -90,6 +90,10 @@ from asymmetry.core.fitting.engine import FitCancelledError
 #: ten times that on a host saturated by other processes).
 POOL_STARTUP_S = 2.0
 
+#: The start-up the next pool decision assumes: the last pool's measured start-up,
+#: never below :data:`POOL_STARTUP_S`, so a loaded host stops paying for pools.
+_startup_estimate_s = POOL_STARTUP_S
+
 
 class SpawnUnsafeWarning(UserWarning):
     """Warned when parallel work degrades to serial for spawn-safety reasons."""
@@ -251,8 +255,10 @@ def map_when_a_pool_pays(
 
     Payloads run in-process until a pool would finish the rest sooner. After ``n``
     payloads in ``elapsed`` seconds, the ``r`` left take ``m * r`` serially
-    (``m = elapsed / n``) against ``POOL_STARTUP_S + m * ceil(r / workers)`` on
+    (``m = elapsed / n``) against ``startup + m * ceil(r / workers)`` on
     ``workers`` processes; once the second is smaller, the rest go to a spawn pool.
+    ``startup`` is the last pool's measured start-up (time to its first result,
+    less one payload), floored at :data:`POOL_STARTUP_S`.
     Whatever a pool does not return — none could start, or one broke — runs
     in-process too, so the result never depends on where a payload ran.
 
@@ -260,11 +266,15 @@ def map_when_a_pool_pays(
     with ``cancel_callback=``; across the boundary cancellation is coarse — a
     requested cancel stops collecting and tears the pool down at once.
     """
+    global _startup_estimate_s
     results: dict[Hashable, object] = {}
 
-    def run_here(payload: object) -> None:
+    def raise_if_cancelled() -> None:
         if cancel_callback is not None and cancel_callback():
             raise FitCancelledError("Fit cancelled.")
+
+    def run_here(payload: object) -> None:
+        raise_if_cancelled()
         key, result = worker(payload, cancel_callback=cancel_callback)
         results[key] = result
 
@@ -274,15 +284,23 @@ def map_when_a_pool_pays(
         if results:
             per_item = (time.perf_counter() - started) / len(results)
             left = len(pending)
-            if per_item * (left - math.ceil(left / workers)) > POOL_STARTUP_S:
+            if per_item * (left - math.ceil(left / workers)) > _startup_estimate_s:
                 break
         run_here(pending.popleft())
     leftover = list(pending)
+    if leftover:
+        # A cancel asked for during the last in-process payload must not start a pool.
+        raise_if_cancelled()
+    opened = time.perf_counter()
     executor = open_spawn_pool(min(workers, len(leftover))) if leftover else None
     if executor is not None:
         futures = {executor.submit(worker, payload): payload for payload in leftover}
         try:
             for future in as_completed(futures):
+                if len(futures) == len(leftover):
+                    _startup_estimate_s = max(
+                        POOL_STARTUP_S, time.perf_counter() - opened - per_item
+                    )
                 if cancel_callback is not None and cancel_callback():
                     terminate_spawn_pool(executor)
                     raise FitCancelledError("Fit cancelled.")

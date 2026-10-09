@@ -24,6 +24,7 @@ import pytest
 
 from asymmetry._worker_env import BLAS_THREAD_ENV_VARS, blas_thread_pins
 from asymmetry.core.fitting import process_pool
+from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.process_pool import (
     SpawnUnsafeWarning,
     main_module_has_spawn_guard,
@@ -346,7 +347,7 @@ def test_costly_items_send_the_rest_to_a_pool(monkeypatch: pytest.MonkeyPatch) -
         sizes.append(workers)
         return pool
 
-    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.001)
+    monkeypatch.setattr(process_pool, "_startup_estimate_s", 0.001)
     monkeypatch.setattr(process_pool, "open_spawn_pool", _open)
     results = map_when_a_pool_pays(_square, range(5), workers=8, cancel_callback=None)
 
@@ -358,9 +359,51 @@ def test_costly_items_send_the_rest_to_a_pool(monkeypatch: pytest.MonkeyPatch) -
 
 def test_what_a_broken_pool_leaves_runs_in_process(monkeypatch: pytest.MonkeyPatch) -> None:
     pool = _EagerPool(broken=True)
-    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.001)
+    monkeypatch.setattr(process_pool, "_startup_estimate_s", 0.001)
     monkeypatch.setattr(process_pool, "open_spawn_pool", lambda workers: pool)
 
     results = map_when_a_pool_pays(_square, range(4), workers=4, cancel_callback=None)
     assert pool.submitted == [1, 2, 3]
     assert results == {n: n * n for n in range(4)}
+
+
+def test_a_slow_pool_start_up_raises_the_bar_for_the_next_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _SlowPool(_EagerPool):
+        def submit(self, fn, payload):
+            time.sleep(0.05)
+            return super().submit(fn, payload)
+
+    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.001)
+    monkeypatch.setattr(process_pool, "_startup_estimate_s", 0.001)
+    monkeypatch.setattr(process_pool, "open_spawn_pool", lambda workers: _SlowPool())
+    map_when_a_pool_pays(_square, range(5), workers=8, cancel_callback=None)
+    # The pool took four slow submits to return its first result: that is its start-up now.
+    assert process_pool._startup_estimate_s >= 0.15
+
+    # Pools measured fast never take the estimate below the floor.
+    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.5)
+    monkeypatch.setattr(process_pool, "_startup_estimate_s", 0.001)
+    monkeypatch.setattr(process_pool, "open_spawn_pool", lambda workers: _EagerPool())
+    map_when_a_pool_pays(_square, range(5), workers=8, cancel_callback=None)
+    assert process_pool._startup_estimate_s == 0.5
+
+
+def test_a_cancel_during_the_last_in_process_item_starts_no_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancelled: list[bool] = []
+
+    def _cancel_after_first(payload: int, cancel_callback=None) -> tuple[int, int]:
+        cancelled.append(True)
+        return _square(payload)
+
+    monkeypatch.setattr(process_pool, "_startup_estimate_s", 0.001)
+    monkeypatch.setattr(
+        process_pool, "open_spawn_pool", lambda workers: pytest.fail("no pool after a cancel")
+    )
+    with pytest.raises(FitCancelledError):
+        map_when_a_pool_pays(
+            _cancel_after_first, range(5), workers=8, cancel_callback=lambda: bool(cancelled)
+        )

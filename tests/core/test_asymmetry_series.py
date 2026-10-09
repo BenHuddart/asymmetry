@@ -225,7 +225,7 @@ def test_resolve_series_workers_is_opt_in_and_clamped():
 
 def test_parallel_as_provided_matches_sequential(monkeypatch):
     # A free pool start-up sends every run after the first to real spawn workers.
-    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.0)
+    monkeypatch.setattr(process_pool, "_startup_estimate_s", 0.0)
     serial = _fit_real_batch(1)
     parallel = _fit_real_batch(4)
 
@@ -252,7 +252,7 @@ def test_parallel_falls_back_when_pool_unavailable(monkeypatch):
         calls.append(workers)
         return None
 
-    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.0)
+    monkeypatch.setattr(process_pool, "_startup_estimate_s", 0.0)
     monkeypatch.setattr(process_pool, "open_spawn_pool", _no_pool)
     result = _fit_real_batch(4)
     assert calls  # parallel was attempted
@@ -348,7 +348,7 @@ class _EagerFakePool:
 
 def test_parallel_cancellation_tears_down_pool_and_raises(monkeypatch):
     pool = _EagerFakePool()
-    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", 0.0)
+    monkeypatch.setattr(process_pool, "_startup_estimate_s", 0.0)
     monkeypatch.setattr(process_pool, "open_spawn_pool", lambda workers: pool)
 
     # The first run fits in-process; cancel fires once the rest are on the pool, between
@@ -382,7 +382,7 @@ def _record_payloads(monkeypatch) -> list[tuple]:
         payloads.append(payload)
         return worker(payload, cancel_callback=cancel_callback)
 
-    monkeypatch.setattr(process_pool, "POOL_STARTUP_S", math.inf)
+    monkeypatch.setattr(process_pool, "_startup_estimate_s", math.inf)
     monkeypatch.setattr(series_module, "_series_run_worker", _recording)
     return payloads
 
