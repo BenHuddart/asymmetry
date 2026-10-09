@@ -2200,6 +2200,29 @@ F-μ-F family and found no line — was rejected after replay: it would print in
 13 of the 24 cases. Recognising the sample by its material name would put a
 corpus sample name in the CLI; recorded as an open question.
 
+#### Wave 21 and pass 16
+
+Wave 21 (pass 13): **20/24** — Tier A and trend-fit 7/8 (fmuf), tier-b and
+workflow 7/8 (TCNQ: "move the centres by up to about 100 G", a difference the
+audit passed because 100 is printed elsewhere and counts three significant
+digits), corpus-2026 6/8 (basics; corannulene reported a 7355 G line the CLI
+said ran off its window). The closing step got every agent to write and audit
+summary.md, basics included; basics then replied over a "do not reply yet".
+
+Pass 16:
+- `audit` pools fits by the data folder each work directory's manifest is
+  bound to, not by survey: basics split its exercises into work directories
+  without surveys of their own, and the audit listed 79 fitted runs as
+  unfitted (19 after; replay changes nothing else but two older runs with the
+  same layout).
+- A field scan most of whose runs precess gets `wizard`/`fit-series` commands
+  from the audit, not `integral-scan` (basics' silver scan, LiFeAs's TF field
+  scans and maleic's muonium field scan in the replay).
+- Rejected after replay: counting an integer's trailing zeros out of its
+  significant digits ("about 100 G") — it flagged nine labels such as "100 G
+  TF screen" and "by 170–190 K" in passing replies, and missed the TCNQ
+  wording anyway.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

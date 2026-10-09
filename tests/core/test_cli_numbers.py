@@ -211,6 +211,25 @@ def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> Non
     )
     assert "asymmetry recipe data --expression 'Exponential + Constant' --run 43" in lineless
     assert "wizard" not in lineless
+    # A field scan of unresolved geometry whose runs precess is fitted in time, not integrated.
+    unresolved = ScanGroup(
+        axis="field",
+        instrument="SIM",
+        geometry=None,
+        geometry_note="",
+        temperature=300.0,
+        field=None,
+        runs=[61, 62, 63, 64],
+        values=[50.0, 100.0, 150.0, 200.0],
+    )
+    runs = [61, 62, 63, 64]
+    precessing = _unfitted_report(
+        [_UnfittedScan("data", unresolved, runs, set(), set(), frozenset(runs))]
+    )
+    assert "asymmetry wizard data --run 61" in precessing
+    assert "asymmetry integral-scan" not in precessing
+    integrated = _unfitted_report([_UnfittedScan("data", unresolved, runs, set(), set())])
+    assert "asymmetry integral-scan data --runs 61-64" in integrated
     # A short scan's runs appear once, and not again when a longer scan lists them.
     assert report.endswith(
         "short scans of 2-3 runs, not fitted: runs 21-22 — fit them where they bear on the "
@@ -434,6 +453,7 @@ def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch
     }
     survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (workdir / "manifest.json").write_text(json.dumps({"folder": "data"}), encoding="utf-8")
     draft = tmp_path / "summary.md"
     draft.write_text("A draft.\n", encoding="utf-8")
 
@@ -533,6 +553,7 @@ def test_a_hold_is_restated_when_unprinted_numbers_are_listed_too(
     }
     survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (workdir / "manifest.json").write_text(json.dumps({"folder": "data"}), encoding="utf-8")
     draft = tmp_path / "summary.md"
     draft.write_text("A draft quoting 999.25 G.\n", encoding="utf-8")
 
@@ -564,6 +585,7 @@ def test_each_survey_is_held_against_its_own_work_directory(
         (root / "cli-output.log").write_text("$ asymmetry survey data\n", encoding="utf-8")
         survey = {"folder": name, "runs": [], "scans": [], "notes_scans": notes}
         (root / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+        (root / "manifest.json").write_text(json.dumps({"folder": name}), encoding="utf-8")
     for run in (11, 12, 13):
         (tmp_path / "asymmetry-work" / "fits" / f"x-{run}.json").write_text(
             json.dumps(
@@ -581,10 +603,11 @@ def test_each_survey_is_held_against_its_own_work_directory(
     cli.main(["audit", str(draft)])
     assert 'notes "Steering <x> A" (steering): not fitted: runs 11-13' in capsys.readouterr().out
 
-    # A second work directory on the same folder holds its fits for both.
-    survey = json.loads((tmp_path / "asymmetry-work-b" / "survey.json").read_text())
-    (tmp_path / "asymmetry-work" / "survey.json").write_text(
-        json.dumps(survey | {"folder": "asymmetry-work-b"}), encoding="utf-8"
+    # A second work directory bound to the same folder holds its fits for both,
+    # though it never surveyed the folder itself.
+    (tmp_path / "asymmetry-work" / "survey.json").unlink()
+    (tmp_path / "asymmetry-work" / "manifest.json").write_text(
+        json.dumps({"folder": "asymmetry-work-b"}), encoding="utf-8"
     )
     cli.main(["audit", str(draft)])
     assert "not fitted" not in capsys.readouterr().out

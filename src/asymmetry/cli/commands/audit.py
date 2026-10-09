@@ -193,6 +193,8 @@ class _UnfittedScan(NamedTuple):
     runs: list[int]
     calibration: set[int]
     lineless: set[int]
+    #: Runs the survey found precessing (at their Larmor frequency or another line).
+    precessing: frozenset[int] = frozenset()
 
 
 def unfitted_scans(
@@ -203,14 +205,16 @@ def unfitted_scans(
     from asymmetry.core.workflow.workdir import WorkDir
 
     # Run numbers identify runs only within one data folder, so each survey is
-    # held against the fits and calibrators of every work directory on its folder.
-    workdirs = [workdir for workdir in map(WorkDir, roots) if workdir.survey_path.is_file()]
-    surveys = [workdir.read_survey() for workdir in workdirs]
+    # held against the fits and calibrators of every work directory bound to its
+    # folder (a work directory without a survey of its own included).
+    workdirs = [workdir for workdir in map(WorkDir, roots) if workdir.manifest_path.is_file()]
     fitted: dict[str, set[int]] = {}
     calibrators: dict[str, set[int]] = {}
-    for workdir, survey in zip(workdirs, surveys, strict=True):
-        fitted.setdefault(survey["folder"], set()).update(workdir.fitted_runs())
-        calibrators.setdefault(survey["folder"], set()).update(workdir.alpha_calibration_runs())
+    for workdir in workdirs:
+        folder = workdir.read_manifest()["folder"]
+        fitted.setdefault(folder, set()).update(workdir.fitted_runs())
+        calibrators.setdefault(folder, set()).update(workdir.alpha_calibration_runs())
+    surveys = [workdir.read_survey() for workdir in workdirs if workdir.survey_path.is_file()]
     surveyed = [
         (survey, fitted[survey["folder"]], calibrators[survey["folder"]])
         for survey in {survey["folder"]: survey for survey in surveys}.values()
@@ -222,6 +226,11 @@ def unfitted_scans(
             sorted(set(scan.runs) - fitted),
             calibration,
             {int(run["run_number"]) for run in survey["runs"] if run["precession"] == "none"},
+            frozenset(
+                int(run["run_number"])
+                for run in survey["runs"]
+                if run["precession"] in ("larmor", "other")
+            ),
         )
         for survey, fitted, calibration in surveyed
         for scan in (ScanGroup(**entry) for entry in survey["scans"])
@@ -275,7 +284,7 @@ def _unfitted_report(unfitted: list[_UnfittedScan]) -> str:
             if (entry.folder, run) not in listed and run not in entry.calibration
         }
     )
-    for folder, scan, runs, calibration, lineless in long_scans:
+    for folder, scan, runs, calibration, lineless, precessing in long_scans:
         lines.append(f"  {scan_label(scan)}")
         calibrators = sorted(calibration & set(runs))
         verdict = (
@@ -313,7 +322,12 @@ def _unfitted_report(unfitted: list[_UnfittedScan]) -> str:
                     f"        asymmetry fit-series {shlex.quote(folder)} --runs {run_spec(runs)} "
                     f"--recipe relax-{runs[0]} --order {scan.axis} --name relax-{runs[0]}"
                 )
-            elif scan.axis == "field" and scan.geometry != "TF":
+            # A field scan most of whose runs precess is fitted in time, not integrated.
+            elif (
+                scan.axis == "field"
+                and scan.geometry != "TF"
+                and 2 * len(precessing & set(scan.runs)) <= len(scan.runs)
+            ):
                 lines.append(
                     f"        asymmetry integral-scan {shlex.quote(folder)} --runs "
                     f"{run_spec(runs)} --plot  (then --model for the curve it shows)"
