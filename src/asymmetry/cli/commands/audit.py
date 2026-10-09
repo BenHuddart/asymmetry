@@ -266,7 +266,8 @@ def _unfitted_report(unfitted: list[_UnfittedScan]) -> str:
             for entry in unfitted
             if len(entry.scan.runs) <= _SHORT_SCAN_RUNS
             for run in entry.runs
-            if (entry.folder, run) not in listed
+            # A short scan's run that measured alpha has done its job.
+            if (entry.folder, run) not in listed and run not in entry.calibration
         }
     )
     for folder, scan, runs, calibration, lineless in long_scans:

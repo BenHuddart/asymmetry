@@ -197,6 +197,8 @@ def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> Non
                 "data", scan("temperature", [11, 12, 13, 14]), [11, 12, 13, 14], {12}, set()
             ),
             _UnfittedScan("data", scan("field", [21, 22]), [21, 22], {12}, set()),
+            # A short scan's run that measured alpha has done its job.
+            _UnfittedScan("data", scan("field", [12, 51]), [12], {12}, set()),
             _UnfittedScan("data", scan("field", [13, 31]), [13], {12}, set()),
         ]
     )

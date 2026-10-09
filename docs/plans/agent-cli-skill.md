@@ -2142,6 +2142,28 @@ was not established") no longer trips the law-vocabulary check. Rejected after
 replay: "below"/"above" as comparison words — they flag every "flat at 0.17
 µs⁻¹ above 6.4 K" in the stored replies.
 
+#### Wave 19 and pass 13
+
+Wave 19 (passes 6–9): **19/24** — Tier A and trend-fit 6/8 (fmuf without the
+F-μ-F family again; the cuprate's "two combined standard errors", fixed in
+pass 12), tier-b and workflow 8/8, corpus-2026 5/8. Benzene RF passed with the
+RF note, benzene ALC with the solid's lines reported under the χ²ᵣ 8
+`RESONANCE` verdict, TRSB again. The echoed draft took: in two groups 13 of 15
+audited replies were byte-identical to the audited file (one added a question
+block after it, one retyped). "Still unfitted" fired in most runs and was
+acted on in all but basics, which stopped after the quartz exercise and wrote
+no summary.md "since you asked for the summary here". LiFeAs failed on a
+frequency `trend` called held (within 10 %) without a shift line: its first
+and last runs are within five errors though the cold and warm sides differ.
+A two-block shift test was tried and rejected after replay: it adds shift
+lines to the passing TF series of five cases and drops 36 that the end-point
+test prints for copper and the cuprate.
+
+Pass 13: the closing audit step says it applies however the summary was
+asked for, and even to stop early; the audit's list of short unfitted scans
+leaves out runs that measured alpha (TCNQ's agent fitted its 100 G
+calibration runs to clear it).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
