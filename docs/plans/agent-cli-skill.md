@@ -1667,6 +1667,277 @@ and the recipe. Open maintainer question: `spurious_reseeded` flags every
 reseeded run even when the reseed rescued it (GUI rule since #167); one
 copper run discarded a real 1 K ν upturn because of it.
 
+### Haiku 5.5 — 2026-10-07, on main 0.26.0
+
+Host Claude Code 2.1.293 (2.1.291 ran `claude-haiku-5-5` but warned
+`unrecognized_model`), model `claude-haiku-5-5`, all 24 cases once from a
+snapshot of main. $5.13 for the wave ($0.03–0.55 and 1–8 min a case), against
+about $30 for a Sonnet 5.5 wave. Scored per wave with `scoring_brief.md`.
+
+| Set | Haiku 5.5 | Passed |
+|---|---|---|
+| Tier A | 0/4 | — (nickel and spin glass fail on one derived number each) |
+| trend-fit | 2/4 | plateau, maleic |
+| hold-out | 2/2 | copper, molecular AFM |
+| workflow | 0/4 | — (TCNQ, LLZ on one derived number; silicon on an unstated window) |
+| tier-b | 1/2 | spin-Peierls |
+| corpus-2026 | 3/8 | LiFeAs, corannulene, benzene RF |
+
+8/24 strict; 13–16/24 with the judgement-call fails relaxed. Haiku skips
+Step 7 (no `summary.md`, no `audit`) in five runs, files the next command a
+CLI note prints under "Not done", rarely opens a plot, and writes small
+arithmetic into prose. It follows printed CLI output far more than skill text:
+several passes reached the fit `audit` listed.
+
+Most number-rule fails passed a clean `audit`: "by about N" and "agree … to
+about N" were not difference phrases, decimal percentages ("0.5 %", "1.2–1.3 %
+spread", "±0.6 %") were exempt as asymmetries, and "ΔAICc about 11" matched a
+`ionic-11` name. The audit now lists numbers after a change verb's "by" and an
+agreement's "to", numbers named as a comparison ("4 points better", "a … %
+spread"), relative `±` percentages, and Δ-quantities not printed verbatim; on
+the wave's 24 summaries it newly flags every such number, and one ambiguous
+"falls by 3500 G". Open, model-agnostic: `alpha --run N` and `reduce
+--alpha-from N` print different alphas for one run (five cases discussed the
+gap); fit commands do not print the fitted window and `fit-global` takes no
+`--tmin/--tmax`; SKILL.md names `StaticGaussianKT` (the CLI's is
+`StaticGKT_ZF`).
+
+#### Wave 2 — the audit fix (`fix/audit-derived-numbers`)
+
+12/24: Tier A 3/4, trend-fit 1/4, hold-out 2/2, workflow 4/4, tier-b 1/2,
+corpus-2026 1/8. Nickel, spin glass and Sn flipped to pass on numbers the new
+rules listed; every run that skipped the audit (fmuf, plateau, basics, AFM)
+failed. LiFeAs, corannulene and maleic regressed on analysis, two of them by
+taking the audit's "or say in the summary which runs cannot be fitted"
+escape. Scorers found the audit's remaining holes ("a margin of 3.6", "a shift
+of about 0.03", "±0.2 MHz", "a factor of six", "4,200") and false positives
+(table error columns, "×" against a printed "x", "by 5000 G" meaning *at*,
+a run number before "discrepancy").
+
+#### Pass 3 — on `feat/haiku-cli-loop` (overnight loop)
+
+Result commands end with the audit step; `audit` no longer takes a sentence in
+place of a fit; context-derived numbers verify only as verbatim tokens of three
+or more significant digits; noun differences, bare-`±` spreads, ratio words,
+separators and powers of ten; `trend` prints a held line's shift with its
+error; `reduce`, `survey` and `alpha` say which counts alpha was measured on
+(the "mismatch" was `reduce` re-measuring on deadtime-corrected counts);
+`audit` names a hyperfine coupling quoted without A_μ = ν₁ + ν₂ when `fourier`
+printed it. Misfire check: on the 48 summaries of waves 1–2 the new matcher
+adds only real derived numbers and drops the false positives above.
+
+#### Waves 3–4 and passes 4–6 — overnight, 2026-10-08
+
+Wave 3 (pass 3): the audit ran in 23 of 24 runs (it ran in 20 in wave 2, fewer
+in wave 1), and lifeas, plateau and maleic recovered by fitting the runs the
+audit listed. Wave 4 (pass 4): **16/24** — Tier A, trend-fit and workflow each
+4/4 (fmuf and EuO pass for the first time; EuO fitted its paramagnetic side),
+hold-out 2/2 (copper, molecular AFM), tier-b 0/2, corpus-2026 2/8 (LiFeAs,
+benzene RF).
+
+Pass 4 added `audit`'s A_μ = ν₁ + ν₂ relation check, the `integral-scan`
+RESONANCE verdict for a clean windowed line, the whole lineless block in the
+`fit-series` note, gap-law verdict/rival/normal-state prompts in `trend`, and
+`NOTES SCANS:` in `survey` (scans stepped only in run notes). Pass 5: gap-law
+Tc seeded from the data (a 20 K default could pin σ_bg at zero); ratio words,
+drifts and resolution-element counts in the matcher; "do not reply yet" while
+scans are unfitted; survey scan lines list their runs (benzene-alc fitted 16 of
+76 runs twice from "(run A -> B)"). Pass 6: `integral-scan` names TF stamps a
+kilogauss integral contradicts (repolarisation, TCNQ ALC); `fourier` offers a
+two-line test for a tesla-field line and names MaxEnt as unavailable; `wizard`
+names a component at twice that line a harmonic; a poor whole-scan resonance
+fit prints window commands; `COMPARE` sets one line resolved in two scans side
+by side with which is broader; `audit` prints the commands for each unfitted
+scan. Rejected after replaying it on the stored series of waves 1–3: a
+"recipe overreaches" note (it fired only on cases that already passed).
+
+#### Wave 5 and passes 7–8 — 2026-10-08
+
+Wave 5 (passes 5–6), 20 of 24 scored: Tier A 4/4 and trend-fit 4/4 again;
+benzene high-TF (first pass: a plain and a correlation transform of the
+co-add, A_μ stated as the sum), benzene repolarisation (first pass: the TF
+stamp argued from the integral) and corannulene (COMPARE used) recovered;
+spin-Peierls, AFM, TRSB, basics and benzene ALC still fail. The agents read
+the right advice and skip it — the two-line test, `trend` on a series, an
+announced dip.
+
+Pass 7: `wizard` calls a component at twice a tesla-field line its harmonic;
+`audit` prints the commands for each unfitted scan; `trend` names a change of
+relaxation shape between differently shaped terms (replayed on 323 stored
+series: spin-Peierls only); `audit` names a correlation spectrum with no plain
+transform. Pass 8: `audit` holds the reply while a series has not been read
+with `trend`, a tesla-field two-line test has no two-line fit, an announced
+dip has no fit, or a survey-lineless run has only precession fits flagged as
+not describing it (with relaxation-only commands, so the gate cannot loop).
+
+#### Waves 6–7, passes 9–11 and a Sonnet 5.5 regression wave — 2026-10-08
+
+Wave 6 (pass 7): 17/24; wave 7 (pass 8): **20/24** — Tier A 4/4, trend-fit
+3/4, hold-out and tier-b 3/4, workflow 4/4, corpus-2026 6/8; no audit hold made
+an agent loop (at most 5 audit rounds). Remaining fails: AFM (a wizard recipe
+whose second line was the harmonic silenced the two-line hold), TRSB (`trend`
+offered no gap law for the TF width), basics (no audit, one exercise) and Sn
+(read a warm block on the setpoint axis).
+
+Pass 9: `integral-scan` names repeated points (a return pass) and stops
+announcing dips another stored scan fitted; COMPARE says errors cannot tell two
+lines apart instead of "the same"; `trend`'s held-line note says nothing for or
+against order. Pass 10: `trend` offers `SC_SWave`/`SC_DWave` on a TF width when
+the line shifts diamagnetically while the width grows ("if the sample is a
+superconductor"; replay: cuprate, LiFeAs, TRSB, one CdS series); the two-line
+hold counts only two frequencies within 2 %; only `fit-series` series need
+`trend`; `reduce`/`integral-scan` note file deadtimes left off. Pass 11: every
+hold ends "do not reply yet", short scans are advisory, a failed two-line fit
+is no test, and `fourier`'s barely-separated pair prints its two-line recipe.
+
+**Sonnet 5.5 regression** on 6a63aad4 (pass 9): **21/24** — fails AFM (a
+barely-separated pair ignored), basics ("about 20 G" by hand) and corannulene
+(the rise–plateau–rise background named as a dip by the pre-existing dip
+search), each a case that was already unreliable for Sonnet; no fail traced to
+an overnight line. The holds cost Sonnet 1–3 turns a case (13 `trend` calls on
+`fit-global` children in LLZ — fixed in pass 10).
+
+#### Waves 8–9 and passes 12–13 — 2026-10-08
+
+Wave 8 (pass 9): 19/24; wave 9 (pass 11): 17/24. Across waves 4–9 Haiku
+scores 16–20/24: Tier A, trend-fit and workflow pass almost every wave, and
+the misses rotate among basics, AFM, corannulene, TRSB, Sn and benzene ALC.
+In wave 9 AFM passed every physics Must for the first time (both pairs fitted,
+the harmonic rejected, MaxEnt named) and failed only on a hand-computed line
+separation.
+
+Pass 12: `fit` notes a fitted pair within 2 % is still two lines (AFM had
+fitted 813.601/813.542 MHz and reported one); `integral-scan`'s fit table
+gives fields and couplings their units (benzene RF quoted A_μ in gauss); window
+commands stay inside the scan. Pass 13: the audit restates its hold when it
+also lists numbers (basics and benzene ALC replied over unfitted scans because
+the hold printed only on the numbers-clean branch); the survey's TEMPERATURE
+note separates a block the apparatus could reach — a different measurement,
+never quoted at its setpoints (Sn, twice) — from an impossible reading;
+`fit`'s pair note prints the separation with its error.
+
+#### Wave 10 and pass 14 — 2026-10-08
+
+Wave 10 (pass 12): 18/24 — Tier A and trend-fit 8/8, tier-b and workflow 7/8,
+corpus-2026 3/8. AFM ran the two-line fit (813.601/813.542 MHz, lower χ²ᵣ)
+and still called a χ²ᵣ drop of 0.0055 "small" on ~389k points; benzene RF
+obeyed `integral-scan`'s "no radical ALC or hyperfine model is available",
+which is false for an RF scan. Pass 14: a green-red scan names
+`RFResonanceMuP`, and `fit`'s pair note says to compare χ², not χ²ᵣ, with the
+degrees of freedom.
+
+#### Wave 11 and where the overnight loop ended — 2026-10-08 05:40
+
+Wave 11 (pass 13): 17/24 — Tier A and trend-fit 7/8 (maleic tried relaxation
+fits on Mu-precessing 2 G runs), tier-b and workflow 6/8 (an AFM agent declined
+the whole 8-group HIFI folder as "multi-group", fixed in the skill's decline
+row; TCNQ quoted a "0.04 MHz apart" difference of printed values), corpus-2026
+4/8. Haiku 5.5 across the night: 8, 12, 14, 16, 19, 17, 20, 19, 17, 18, 17 of
+24; Sonnet 5.5 on pass 9: 21/24. Tier A, trend-fit and workflow pass almost
+every wave from wave 4 on; the misses rotate among basics (stops early),
+corannulene (the hot 14.8 kG dip), TRSB (LF decoupling from an all-flagged
+series), benzene ALC (an agent overriding RESONANCE), AFM and Sn.
+
+Next targets, in order of how often they cost a wave:
+- an all-flagged LF series should print the relaxation-only comparison with
+  ZF (TRSB);
+- the frequency-response note should fire on `A_n`/`frequency_n` pairs
+  (basics' muonium amplitudes);
+- `frequency_unresolved` should print the `--fix frequency_N=` command, and a
+  mixed-sample scan the `--order concentration --x` template (maleic);
+- the matcher should catch small-number differences ("0.04 MHz apart");
+- the final reply should be held to the audited file.
+
+#### Wave 12 — the held background — 2026-10-08
+
+Wave 12 (the first held-background rule): 18/24 — Tier A and trend-fit 8/8
+(maleic passed: a hand-written Mu + diamagnetic recipe and an
+`--order concentration` series), tier-b and workflow 6/8, corpus-2026 4/8.
+Benzene ALC and basics passed; the failures were LiFeAs (trusted the
+coarse `survey_line_mhz` column over a 6σ fitted shift), TRSB (LF decoupling
+again), corannulene, benzene high-TF ("hyperfine coupling" for A_μ without
+"sum", so the A_mu check never keyed), AFM (vortex-lattice reading only) and
+copper (an unprinted "difference is about 17 meV").
+
+The hold fired on one run each in copper, TCNQ and spin-Peierls, and missed
+the runaways it was written for: nickel's paramagnetic series sat at
+A_1 ≈ 74, A_bg ≈ −41 (below the cancelling ratio), and most other runaways
+(spin glass, plateau, Sn, photo-Si, copper ARGUS) had stopped mid-run with
+`failed`. The rule was reworked as recorded under "Open questions".
+
+#### Wave 13 — the reworked hold — 2026-10-08
+
+Wave 13 (the reworked held-background rule): 19/24 — Tier A and trend-fit
+7/8, tier-b and workflow 7/8, corpus-2026 5/8. LiFeAs, benzene high-TF (the
+audit's A_μ "sum" check fired), copper and TCNQ passed; the failures were
+spin glass (screened a featureless paramagnetic run and fitted the whole scan
+with `Exponential + Constant`), AFM (a difference of two printed columns that
+the audit passed), TRSB (LF decoupling still not read as static fields),
+corannulene (the background and motional-narrowing notes not carried into
+the reply) and benzene ALC (a model-less `integral-scan` counted as fitted).
+
+The hold fired in seven cases (nickel in four series, copper, plateau, spin
+glass, Sn, EuO, TCNQ) and every summary mentioned it, though nickel's only
+in part. Held amplitudes sat at the data's early-time asymmetry: nickel's
+paramagnetic A_1 at 33.1–33.3 % beside a reduced A(0) of 33.3 %, plateau's at
+21.3–21.6 %, copper's ARGUS LF scan at 23.5–26.3 % (wave 12: up to 288 %). No
+verdict changed for the worse. Series runs that were held still carried the
+free fit's `failed` flag, because the member quality was assessed before the
+hold; held runs are now reassessed. Runaways in oscillatory and two-rate
+models (nickel's field and TF series, one plateau run) stayed unheld, and the
+CLI does not say why.
+
+After wave 13 the audit's one relation check (A_μ = ν₁ + ν₂) became a table
+of printed requests aimed at the summary — a held `A_bg`, the deadtime used,
+why a long-range resonance fit is not a result, a return pass, the missing
+radical ALC model, `trend` steps, shifts, frequency response, shape changes
+and extrema — each checked by lenient keywords; a missing one holds the reply
+and quotes the printed line back. Replayed over the 120 replies of waves 9–13
+it holds 13, among them corannulene's missing background reason (wave 12),
+copper's unstated hold (wave 12) and benzene ALC (wave 13), and accepts the
+passing replies' own wording ("one cubic cannot follow both dips"). A
+negated statement ("I do not claim a diamagnetic shift") still satisfies it.
+
+#### Wave 14 — the say-so check — 2026-10-08
+
+Wave 14: 18/24 — Tier A and trend-fit 5/8, tier-b and workflow 8/8 (AFM
+passed for the first time since wave 1), corpus-2026 5/8. The failures were
+spin glass (the featureless screen again), maleic (declined the concentration
+series because the logged temperatures differ), the cuprate ("up to about
+12 K", an unprinted difference the matcher found inside other numbers), TRSB
+(a Λ pinned at zero in LF read as a defect, not as static ZF fields),
+basics (stopped after six commands to ask "Shall I continue?", no audit) and
+corannulene. The say-so check held twice (nickel: the runs A_bg was held on;
+plateau: the held runs and a trend span); both agents added the statement
+within two or three audits, with no loops. Corannulene again wrote only that
+the full-range fit "fails", which the check had accepted ("Cubic … fails");
+it now needs the reason — a background, baseline or polynomial that cannot
+follow or describe the data, or one that rises or steps — and holds
+corannulene's replies in waves 12–14 while passing benzene ALC's "one
+polynomial could not follow the whole range".
+
+#### Wave 15 — composition, quiet screens and decoupling — 2026-10-08
+
+Wave 15: 18/24 (19 counting benzene RF, which dropped one clause earlier
+waves did not enforce) — Tier A and trend-fit 7/8, tier-b and workflow 7/8,
+corpus-2026 4/8. Maleic passed for the first time since wave 12: it took the
+survey's `composition:` block, gave pure water 0 and the neat solution 1,
+dropped the untreated water, and quoted the slope with its error, though it
+still hedged it against the logged temperatures. The cuprate passed again.
+Spin glass screened the cold end after the wizard's new note, but the
+recommended Risch–Kehr series flagged every run and only the recommended
+recipe is written, so it fell back to `Exponential + Constant` (the stretched
+exponential ranked second, 4.6 AICc behind). TRSB took the decoupling note
+on its 10 K field scan and wrote the static reading, but fitted the 100 G
+scan with the wizard's high-confidence Kubo–Toyabe recipe (the constant 42
+AICc behind), got flagged widths, and called the scan unfittable, so the
+note never fired there. Corannulene gave the background reason (Must 8) but
+fitted only the hot 7 kG line. Basics ran the audit this time but converted
+a frequency to "about 21 G" by hand, which the matcher let through. AFM
+reported both lines of its two-line fit yet headlined "a single line". All
+three say-so holds were satisfied at the next audit and each statement was
+right for the data.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
@@ -1747,3 +2018,17 @@ Recorded here rather than fixed, because Phase 4 changes skill text only:
 ## Open questions for the maintainer
 
 None outstanding (both resolved 2026-09-14, see "Decisions recorded").
+
+The amplitude/constant degeneracy raised on PR #361 was resolved 2026-10-08:
+Ben chose to hold `A_bg` at zero for slow relaxations. `fit` and `fit-series`
+refit with `A_bg = 0` when a fit is `amplitude_exceeds_data`, an amplitude
+and a free `A_bg` have opposite signs and a rate or static width decays by
+less than half over the fitted window, and keep the held fit when it converges
+inside the data at a χ² cost under 25 χ²ᵣ; a NOTE says so. The first version
+also required a converged free fit and a cancelling ratio of 2; wave 12 showed
+it held nothing in nickel's paramagnetic series (A_1 ≈ 74, A_bg ≈ −41, many
+runs `failed` mid-runaway). Replayed over the stored wave 9–12 series, the
+χ² cost separates cleanly: genuine flat valleys (nickel, Sn, spin glass,
+plateau, photo-Si, slow copper) cost under ~15 and come back at physical
+amplitudes; wrong models (maleic's muonium fitted as relaxation, the
+molecular antiferromagnet) cost thousands and keep their free fits.

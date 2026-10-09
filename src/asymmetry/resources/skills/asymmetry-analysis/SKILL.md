@@ -45,7 +45,7 @@ do it*, and stop without producing fit numbers.
 | Case | How the survey shows it |
 |---|---|
 | Count-domain fitting | You need per-detector counts with N₀ and a relaxation term, not asymmetry. `reduce` only produces asymmetry. |
-| Multi-group / orientation-resolved analysis | The run has many detector groups that must be fit together (angle-dependent Knight shift, crystal rotations). This CLI reduces one forward/backward pair at a time (`--pair` picks which). |
+| Multi-group / orientation-resolved analysis | The run has many detector groups that must be fit together (angle-dependent Knight shift, crystal rotations). This CLI reduces one forward/backward pair at a time (`--pair` picks which): a many-group file is still analysed through that pair — lines, shifts, widths — and only the joint or angular step is declined. |
 | Maximum-entropy spectra | `fourier` provides an FFT and peak table, not maximum entropy reconstruction. Do not describe its output as MaxEnt. |
 | Negative-muon (μ⁻) elemental analysis | Gamma spectra, elemental lines. Not asymmetry data. |
 | Rotating-reference-frame analysis | Titles or notes naming a rotating reference frame; data demodulated at a reference frequency. (An RF-*resonance* field scan is in scope: Step 5b.) |
@@ -166,7 +166,9 @@ below.
   steering scan, a weak-field scan). Analyse **each** exercise to its result —
   never stop at listing them for the user to choose. A quantity varied only in
   the titles or notes (a steering current, a degrader foil count) is a scan
-  like any other: fit it with `--order <name> --x <run>=<value>,…`.
+  like any other: fit it with `--order <name> --x <run>=<value>,…`. The survey
+  lists each such scan it finds under `NOTES SCANS:` with its `fit-series`
+  command; fit every one, even when its runs also appear in a scan above.
 
 For a folder of more than a hundred runs the survey prints its findings first
 and the run table last. If any command's output is cut off, read what it
@@ -989,7 +991,9 @@ asymmetry trend <folder> --series zf-scan --model OrderParameter \
   relaxation between them because AICc preferred it, refit the series with a
   single-rate recipe first — the law describes the one rate.
 - `--xmin`/`--xmax` set the fit range in the trend's x units. An order
-  parameter is fitted **below** the transition, a Redfield law over the field
+  parameter (`OrderParameter`) is fitted **below** the transition; an `SC_*`
+  gap law needs the normal-state points above Tc too, which fix its σ_bg, so
+  give it no `--xmax` below them. A Redfield law is fitted over the field
   range where one process dominates. Compare points measured under matched
   conditions (one temperature for a concentration series). State the range in
   the summary.
@@ -1030,8 +1034,8 @@ Every command's printed output is logged in the work directory, and `audit`
 lists each number in the draft that no command printed. It first lists every
 scan the survey found whose runs no `fit-series`, `fit-global` or
 `integral-scan` (or single `fit`) covered — a TF scan used only for alpha, the far side of a
-transition. Fit those runs, or say in the draft which cannot be fitted and
-why. Each number it lists is
+transition. Fit those runs: a run counts once a fit was tried on it, so a
+run you believe unusable is fitted and its failed fit reported. Each number it lists is
 almost always arithmetic on printed values — a percentage change, a ratio, a
 difference of two columns, a unit conversion (MHz to gauss, relative to molar),
 a significance in σ — or a value from memory. Remove it, quote the printed
@@ -1069,7 +1073,7 @@ below), and say in the summary which you chose and why:
   a second physics choice the ranking cannot make for you. A **dense** array
   of nuclear moments — the ordinary case for a stoichiometric compound, where
   every muon site has many comparable neighbours (H, Li, F, Al, La, V, Nb,
-  Cu …) — gives a **Gaussian** field distribution: `StaticGaussianKT`,
+  Cu …) — gives a **Gaussian** field distribution: `StaticGKT_ZF`,
   `DynamicGaussianKT`, or `Keren` for a run in a longitudinal field. The
   **Lorentzian** KT describes *dilute*, randomly sited moments — a few percent
   of impurity or defect spins in an otherwise moment-free host — and its
@@ -1457,11 +1461,11 @@ run  T/K    B/G     geom  prec    orient        hist  points  dt   title
 107  60.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=60.0 K B=0.0 G
 108  2.00   110.00  -     none    Longitudinal  8     500     no   Sample T=2.0 K B=110.0 G (decoupling)
 
-Alpha-calibration candidates:
+Alpha-calibration candidates (alpha on raw counts: deadtime off, background none; `reduce --alpha-from` re-measures under its own corrections, and applies that):
   run 101 (best) [measured]: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
 Scans:
-  temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
+  temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (runs 102-107)
 ```
 
 One calibration run, one ZF temperature scan, one decoupling run. The files

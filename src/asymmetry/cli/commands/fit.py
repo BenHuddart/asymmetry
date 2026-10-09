@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 from pathlib import Path
 from typing import Any
 
@@ -79,9 +80,44 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(result, recipe, plot_path))
+    if result["background_held"]:
+        print(f"NOTE: {HELD_BACKGROUND} Say in the summary that it was held.")
+    from asymmetry.cli.commands.fourier import close_pair
+
+    pair = close_pair(result["parameters"]) if result["success"] else None
+    if pair is not None:
+        # An exact fit has chi2_red 0 and no degrees of freedom to quote.
+        weight = (
+            f" — on {result['chi_squared'] / result['reduced_chi_squared']:.0f} degrees of "
+            f"freedom a chi2_red lower by 0.001 is a chi2 lower by "
+            f"{result['chi_squared'] / result['reduced_chi_squared'] * 0.001:.0f}, far more than "
+            f"the few extra parameters cost —"
+            if result["reduced_chi_squared"] > 0.0
+            else ""
+        )
+        errors = [
+            result["uncertainties"][name]
+            for name, value in result["parameters"].items()
+            if name.split("_")[0] == "frequency" and abs(value) in pair
+        ]
+        print(
+            f"NOTE: this fit holds two lines, at {pair[1]:.6g} and {pair[0]:.6g} MHz, "
+            f"{pair[1] - pair[0]:.4g} ± {math.hypot(*errors):.2g} MHz apart. A split below the "
+            f"FFT resolution is still two lines: compare chi2, not chi2_red, with the one-line "
+            f"fit's{weight} and if it is lower report both frequencies, their separation and "
+            f"amplitudes, not a single line."
+        )
     note = window_note(workdir, [args.run])
     if note is not None:
         print(note)
+
+
+#: What a run fitted with its background held at zero says about why.
+HELD_BACKGROUND = (
+    "the relaxation is too slow over the fitted window to tell from the constant — the "
+    "free fit ran its amplitude and A_bg off in opposite signs — so A_bg was held at 0 and "
+    "the fit repeated."
+)
 
 
 def _render(result: dict[str, Any], recipe, plot_path: Path | None = None) -> str:

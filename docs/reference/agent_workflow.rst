@@ -294,11 +294,11 @@ leave the two several kelvin apart, and a series can be ordered by either:
    107  60.00  -        0.00    ZF    -       Longitudinal  8     1        500     2000456  no   Sample T=60.0 K B=0.0 G
    108  2.00   -        110.00  -     none    Longitudinal  8     1        500     1999544  no   Sample T=2.0 K B=110.0 G (decoupling)
 
-   Alpha-calibration candidates:
+   Alpha-calibration candidates (alpha on raw counts: deadtime off, background none; `reduce --alpha-from` re-measures under its own corrections, and applies that):
      run 101 (best) [measured] alpha 1.2500: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
    Scans:
-     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
+     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (runs 102-107)
 
 .. _agent-workflow-precession:
 
@@ -456,7 +456,7 @@ disagree:
 .. code-block:: console
 
    Scans:
-     temperature scan, EMU, mixed geometry, B = 100 G: 21 runs, 340 to 380 K (run 124269 -> 124249)
+     temperature scan, EMU, mixed geometry, B = 100 G: 21 runs, 340 to 380 K (runs 124249-124269)
          geometry: TF measured on 12 of 21 runs; 9 unresolved
 
 That note is itself a finding: it says where in the scan the measurement could
@@ -478,10 +478,33 @@ are different set-ups and never share a scan; a scan of two-period (red/green)
 runs says so on its line and, for a field scan, names ``integral-scan
 --period green-red``.
 
+The survey also finds scans the files do not record in any field. Among runs
+that share instrument, set-up, sample, temperature setpoint and field, a note
+(or title) that reads the same once its numbers are masked, with one number
+stepping through at least three values on at least three runs, is a scan of
+that quantity — a steering current, a degrader foil count, a slit width. Each
+prints under ``NOTES SCANS:`` with its template (``Steering <x> A``), the value
+range and the commands that fit it (``asymmetry wizard`` on its first run,
+then ``asymmetry fit-series … --order steering --x RUN=VALUE,…``). A run whose
+note leaves words out of the template, with its one number where the step is
+(``0 foils`` beside ``4 (30um) foils``), is a point of the scan; a number that
+steps 1, 2, 3 with the runs counts repeats, and dates, times and ranges are not
+numbers, so neither is reported. The scans are stored in ``survey.json`` as
+``notes_scans``, and ``audit`` lists one whose runs no fit holds.
+
 Each scan line also names its members' samples — the file's own sample name,
 or the run title before its ``T=``/``F=`` fields — so a folder holding several
 samples scanned on the same fields reads as several measurements, and a scan
-naming more than one sample says it crosses them. A folder of more than a
+naming more than one sample says it crosses them. Where such a scan holds
+three or more samples at one setpoint, two or more of them naming one substance
+with a leading number (``0.25 M salt/water``, ``0.5 M Salt/Water``),
+the scan line is followed by a ``composition:`` block: those runs with their
+samples and notes, a ``fit-series --order concentration --x RUN=VALUE,…``
+command with the numbers the names give (``<value>`` for a solvent or a sample
+whose name gives none, to fill in from its title and notes or drop), and the
+``trend --model Linear`` that reads a rate linear in concentration as a rate
+constant. It names the other setpoints that hold the same set, and says the
+shared setpoint makes the series whatever the logged temperatures do. A folder of more than a
 hundred runs prints these findings (the notes, the calibration candidates and
 the scans) before the per-run table, which comes last under ``Runs:``.
 
@@ -551,6 +574,10 @@ directory.
                     [--plot] [--json] [--workdir WORKDIR]
                     [--instrument NAME]
                     folder
+
+When the files carry per-detector deadtimes and the reduction leaves deadtime
+off, ``reduce`` (and ``integral-scan``) end with a NOTE to pass ``--deadtime
+from_file`` before fitting further.
 
 ``--runs`` takes ranges and commas (``102-107``, ``102-105,107``). The
 alpha, deadtime, pair, background, t0 and period choices are the
@@ -669,6 +696,11 @@ small amplitude, since a weak line sits on the relaxation the recommendation
 already describes — and prints the ``fit`` command to try it. Lines that complete fewer than two cycles in the
 record's informative window — relaxation leaking into the lowest bins — are
 not listed, by the survey's rule.
+When the verdict is ``no_significant_structure`` and the folder's survey puts
+the run inside a scan of four or more runs, a NOTE says a featureless run is
+often the scan's quiet end, so a recipe from it fits the scan only if its ends
+are featureless too, and prints the ``wizard`` command for each end of the
+scan.
 Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended
@@ -760,6 +792,23 @@ stores its result in ``fits/<recipe>-<run>.json`` (so ``audit`` counts the run
 as fitted) and ``plots/fit-<run>.png`` with ``--plot``; it is the quick way to
 check a hand-edited recipe converges on one run before spending a whole series
 on it (see `Hand-editing a recipe`_).
+
+A relaxation too slow to tell from a constant over the fitted window lets its
+amplitude and ``A_bg`` run off in opposite signs: χ² barely changes as the
+amplitude grows, the rate falls and the background goes negative to cancel it.
+When a fit — converged or not, since a runaway often stops at the call limit
+— has fitted amplitudes above the record's early-time asymmetry
+(``amplitude_exceeds_data``), an amplitude of opposite sign to a free
+``A_bg``, and a rate (or static width) that decays by less than half over the
+window, ``fit`` repeats it from its own values with ``A_bg`` held at 0. The
+held fit is kept when it converges, its amplitudes fit inside the record, and
+it costs less than 25 χ²ᵣ in χ² (under 5σ for the one parameter dropped:
+the data do not need the background). The stored fit then carries
+``background_held: true`` and the command ends with a NOTE saying so; the
+summary should say ``A_bg`` was held. A background the data do need, or a
+model the hold cannot rescue, keeps its free fit and its flags. ``fit-series`` applies the same rule to
+each run after the chains (a ``--global`` background is left alone) and names
+the held runs in one NOTE.
 
 ``fit-global``
 ~~~~~~~~~~~~~~
@@ -856,13 +905,16 @@ temperature axis it adds that a Gaussian (a static spread of fields) turning
 exponential as the fluctuations outrun it is motional narrowing — and, when
 the exponential is the cold side instead, that it is not: a broad, skewed
 distribution (a vortex lattice beside a narrow background line) fits an
-exponential better. When the series fits a frequency and at least
-two runs at one end of the scan show no survey line and carry a flag saying
-the fit does not describe them (``failed``, ``frequency_unresolved``,
-``amplitude_exceeds_data``), the command names them: either the other side of
-a transition or a weak line a free envelope width has swallowed. It asks for a
-refit with the width held first, then prints the ``recipe`` and
-``fit-series`` commands that fit them with ``Exponential + Constant``. Ordered by ``temperature`` (the setpoint) while the logged sample
+exponential better. When the series fits a frequency and the survey found no line in at least
+two runs at one end of the scan, while another run holds one, the command
+names every contiguous lineless run at that end, whatever their fit flags say:
+the side with no precession — at the warm end of a temperature scan, likely
+the paramagnetic side, though a line also vanishes where the local field at
+the muon passes through zero. The precession model's values there are not
+results; the note prints the ``recipe`` and ``fit-series`` commands that fit
+exactly those runs with ``Exponential + Constant``, and asks for a refit with
+the width held only where a weak line the survey missed still holds a
+frequency. Ordered by ``temperature`` (the setpoint) while the logged sample
 temperature departs on some of its runs, the command ends with a note naming
 them. Writes
 ``series/<name>.json`` (per-run results, a trend table, and quality flags —
@@ -946,7 +998,13 @@ a field scan it names a phase that runs linearly with field as a t0 offset
 amplitude that falls as its frequency rises as the instrument's frequency
 response; a line held near a high field, or with an exponential envelope on
 its cold side, is offered a ready two-line ``recipe``, since an unresolved
-pair fits as one line. A fitted law's
+pair fits as one line. A series fitted in a field the survey found no Larmor
+line at (longitudinal, whatever the file's stamp), whose rates and widths
+stay below a tenth of a zero-field series' width in the same work directory on
+most runs, at a field at least ten times that width over γ\ :sub:`μ`, is read as
+decoupled: the note says the zero-field relaxation is from fields static on
+the muon time scale, and that a rate pinned at zero there is that result, not
+a failed fit. Reading either series of the pair prints it. A fitted law's
 report states the x span of the points it rests on and each parameter's unit,
 and judges the law on the √χ²\ :sub:`r`-scaled errors of its physical
 parameters (a prefactor or offset — ``a``, ``b``, ``c`` — that the data leave
@@ -974,6 +1032,20 @@ fitted to the same column coexist instead of one overwriting the other, and
 ``--plot``
 draws the curve over the points it rests on. On the simulated scan, whose rate
 was generated as 0.10 + 0.004 T:
+
+For a series fitted with differently shaped relaxation terms (an
+``Exponential`` beside a ``Gaussian``), ``trend`` notes when the relaxing
+amplitude — counting only terms whose rate stands above its error — moves
+from one shape to the other between the scan's ends, and asks for that change
+of shape to be reported.
+
+After a superconducting gap-law fit (``SC_SWave``, ``SC_DWave`` and the other
+``SC_*`` σ(T) laws), ``trend`` asks for an explicit verdict — does the law
+describe σ(T), judged by χ²\ :sub:`r` and the trend plot — and after
+``SC_SWave`` prints the ready ``SC_DWave`` command on the same points. When the
+fitted range leaves fewer than two points above the fitted Tc, the
+normal-state width (``sigma_bg``) is not set by the data; ``trend`` says so and
+gives the refit without ``--xmax``, rather than advising a held value.
 
 .. code-block:: console
 
@@ -1032,15 +1104,50 @@ the default one when it exists). ``audit`` extracts each number from the draft
 and reports the ones that appear in none of those logs, with the line they sit
 on. A number written with *d* decimals matches any printed value it rounds
 from, so a clean audit means every number appears in *some* output, not that it
-is the right one; a multiple, a significance or a whole-number percentage
-(``10×``, ``4.3σ``, ``32 %``) matches only when a command printed that exact
-token, and a number after "a factor of" or a difference phrase ("within
-about 2 G", "differ by 0.6"), hedged or not, is always listed. What it catches is the arithmetic an
+is the right one; a multiple, a significance, a whole-number percentage or a
+Δ-quantity (``10×``, ``4.3σ``, ``32 %``, ``ΔAICc 11``) matches only when a
+command printed that exact token (``×``, ``x`` and "times" alike). A number its
+context makes arithmetic — after "a factor of" or a difference phrase ("within
+about 2 G", "differ by 0.6", "falls by about 0.03 MHz", "agree with the survey
+to about 0.02 MHz", "a margin of 3.6"), named as a comparison ("4 points
+better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` (``±0.2 MHz``) —
+is listed unless a command printed it verbatim to three or more significant
+digits, as a run number or a field on the scan's grid is; a ratio in words
+("a factor of six", "five and a half times its error", "three times broader")
+is listed too. While a surveyed scan is unfitted, a clean audit says not to
+reply yet. ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. Every command
+that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
+``integral-scan``, ``fourier``) ends its text output with the step: write
+``summary.md`` and run ``asymmetry audit summary.md`` before replying. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions,
 differences between printed columns — which the agent skill's number rule
 forbids. It also lists a law's vocabulary ("critical slowing",
 "activation energy", "correlation time") when every fit of that law in the
-logged session printed ``LAW NOT ESTABLISHED``. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
+logged session printed ``LAW NOT ESTABLISHED``, and a run with a correlation
+spectrum but no plain
+transform in the same work directory, whose two lines the summary needs.
+
+It holds the reply, quoting the printed line back, when a command asked the
+summary to say something the draft leaves out: that ``A_bg`` was held at 0
+(``fit``, ``fit-series``); which deadtime correction was used, when
+``reduce`` left the files' deadtimes off; why a long-range ``integral-scan``
+fit is not a result (a background no polynomial can follow); that the scan
+measures some points twice; that no radical ALC or hyperfine model converts
+the resonance fields; a ``trend`` step and its span, a line's frequency shift,
+the instrument's frequency response, a change of relaxation shape, an
+extremum a monotonic law averages over, or a longitudinal field decoupling the
+zero-field relaxation (the fields are static); and, for a draft quoting the muon
+hyperfine coupling, that A_μ = ν₁ + ν₂ is the sum of the radical's two lines.
+The check reads keywords, so it catches a point left out, not one stated
+badly. It also
+holds the reply while a fitted series has not been read with ``trend``, while a
+tesla-field line ``fourier`` offered a two-line test for has no two-line fit,
+and while a run the survey found no line in has only precession fits flagged
+as not describing it (``amplitude_exceeds_data``, ``frequency_unresolved``,
+``failed``) — for those it prints the relaxation-only ``recipe`` and
+``fit-series`` commands. A dip an ``integral-scan`` fit announced ("the scan holds
+another dip") holds it too until some fit in the work directory has a line
+inside that window. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
 left out of the match, since a rounded sum would otherwise find one of their
 elements by chance.
 
@@ -1051,8 +1158,8 @@ the runs left out:
 .. code-block:: text
 
    Scans the survey found with runs that no fit, fit-series, fit-global or integral-scan fitted. Each scan is a measurement:
-     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
-         not fitted: runs 105-107. Fit it — a scan crossing a transition needs a series on each side — or say in the summary which runs cannot be fitted and why.
+     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (runs 102-107)
+         not fitted: runs 105-107. Fit it — a scan crossing a transition needs a series on each side. A run counts once a fit was tried on it, failed or not: a survey 'none' means no Fourier line, not no signal, so fit it before calling it unusable and report what the fit shows.
 
 The far side of a transition that one series stopped short of is still a
 measurement, and so is a temperature scan whose runs served to measure alpha:
@@ -1102,7 +1209,7 @@ is not a polynomial across the whole scan. A window holding no more points than
 the model has free parameters is refused. A fit that does not converge is
 reported with ``FAILED`` and the parameters it ended on (the component that ran
 away is usually plain from them); the scan is written either way. The fitted
-parameters print as a table of value and error — ``fixed`` for a held one,
+parameters print as a table of value, unit (G or MHz, for fields and couplings) and error — ``fixed`` for a held one,
 ``(at bound)`` beside one pinned on a bound, and ``-`` for the errors of a fit
 that failed; a failed fit names the minimiser's reasons and any parameter at a
 bound, and suggests fitting one resonance per ``--xmin``/``--xmax`` window
@@ -1110,7 +1217,21 @@ around the scan's own dips. A fit that converges with a χ²\ :sub:`r` above 2
 is told why that may be — a background no polynomial can follow across a long
 scan, or a dip the model leaves out — and, when a single line fitted inside the
 seeder's window for one more resonance falls below its background by five
-errors, that window is named with the command that fits it. An LCR fit notes
+errors, that window is named with the command that fits it. A line fitted
+inside an ``--xmin``/``--xmax`` window with data on both flanks, an amplitude
+five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 4 is
+called a resolved ``RESONANCE`` to report, with its errors qualified when
+χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. A scan that measures one field (or other x) more than once is noted with the
+runs and whether each repeat came back within three errors — a return pass to
+report — and a dip another stored scan in the work directory already fitted is
+not announced again. When a windowed line (both flanks in range, five errors deep) matches one
+another scan in the work directory fitted near the same field, a ``COMPARE``
+line prints both centres and widths, with errors scaled by
+√χ²\ :sub:`r`, and says which is broader and which higher in field — the
+direction a summary of two conditions must state. A run stamped TF at a kilogauss or more whose integral
+asymmetry stays at least 0.02 and five errors from zero is named as
+longitudinal: a transverse field that strong precesses the polarisation
+through many periods within the window and integrates to near zero. An LCR fit notes
 that no radical ALC or hyperfine model is available, so its fields are not
 converted into couplings. Without ``--period``, a scan of two-period runs
 notes that it summed the periods. With ``--json`` every NOTE and Next line is
@@ -1213,7 +1334,15 @@ spectrum it points at the plain transform of the same run, whose radical
 lines belong beside :math:`A_\mu` in a summary; it states that the peak is
 :math:`A_\mu = \nu_1 + \nu_2`, the sum of the radical's two lines. The header
 also gives the band searched against the whole transform, and a note names the
-strongest lines detected outside a ``--fmin``/``--fmax`` band.
+strongest lines detected outside a ``--fmin``/``--fmax`` band. (``wizard``,
+for its part, names a recommended component at twice a tesla-field line's
+frequency as that line's harmonic and points here.) A line near the
+Larmor frequency of a field above about 0.74 T (100 MHz) gets a note that
+inequivalent sites or sublattices split a line by about the resolution there,
+with the ``recipe`` and ``fit`` commands that test two lines started either
+side of it; and every plain transform closes by saying that MaxEnt and
+multi-group field-distribution analysis are not available, to be named under
+Not done where the field distribution matters.
 
 The command stores numerical arrays in ``spectra/<name>.npz`` and settings,
 resolution and the peak table in ``spectra/<name>.json``. Zero padding makes
