@@ -271,6 +271,10 @@ setpoint, and the setpoint-grouped scans that contain them are provisional.
 The line lists the runs in consecutive blocks of similar offset with each
 block's range (``T log − T/K``), so a block sitting several kelvin away from the
 rest stands out as its own measurement.
+Runs whose line sits within 15 % of muonium's weak-field triplet frequency for
+their field (about 1.394 MHz per gauss) are named on a ``MUONIUM:`` line, with
+the ``recipe`` (one damped line started at a low-field run's own line) and the
+``fit-series`` that chains it up the field scan.
 Each alpha-calibration candidate is listed with its own
 measured alpha, and where alpha moves by more than 10 % between consecutive
 candidates in run order — a sample change, a moved detector, a second
@@ -433,6 +437,9 @@ after the cryostat visited another temperature, starts a repeat of the scan —
 two decoupling scans at 420 K with a 400 K one between them are two scans —
 while a point re-measured in the same visit (a return sweep) stays in its scan,
 and so does a scan measured alternately at two temperatures, field by field.
+A sweep whose widening steps (a decoupling curve, 1, 1.8, 3 … G) give way to
+even ones (a level-crossing scan) is cut into two scans at the first field of
+the even run, where the step falls fivefold and then holds for four steps.
 Runs that precess at their Larmor frequency, when they are a minority among
 runs that do not, are transverse-field calibrations taken beside a longitudinal
 scan and are left out of it; when they are the majority the scan is transverse,
@@ -701,6 +708,18 @@ the run inside a scan of four or more runs, a NOTE says a featureless run is
 often the scan's quiet end, so a recipe from it fits the scan only if its ends
 are featureless too, and prints the ``wizard`` command for each end of the
 scan.
+When the recommendation is a precession model (the ``Oscillatory``
+category: a Bessel, a damped cosine, an Overhauser form) but the spectral
+search found no line in the run, a NOTE says the model is fitting the shape
+of a relaxation — a Kubo–Toyabe's dip and recovery read as one slow cycle —
+and the best relaxation model, however far behind, is written as
+``recipes/wizard-<run>-alt.json``.
+When the recommendation is a relaxation model and another relaxation model
+with at most one parameter more sits within 10 AICc of it, the wizard also
+writes that runner-up as ``recipes/wizard-<run>-alt.json`` and names it: a run
+that hardly tells two models apart leaves the scan to decide, and
+``fit-series`` offers the runner-up when the recommended recipe's series flags
+at least half of its runs ``failed`` or ``amplitude_exceeds_data``.
 Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended
@@ -989,9 +1008,12 @@ diamagnetic shift) — and ``Linear`` for a rate against a supplied quantity; a
 note repeats a change of envelope along the scan. For every fitted width or
 rate (``sigma``, ``Delta``, ``Lambda``, ``nu``) the report also finds the split
 of the scan into two contiguous blocks whose weighted means differ most and,
-when that is more than five combined errors, names the step and where it
-falls, bracketed by where the parameter leaves the level of each end of the
-scan — a Kubo–Toyabe width a few percent larger below a superconductor's
+when that is more than five combined errors, names the step, which way it
+goes and where it falls, bracketed by where the parameter leaves the level of
+one end and reaches the other's (where it levels off). Along a supplied axis
+(a steering current, a foil count) an amplitude lower or higher inside the
+scan than at both ends by five combined errors is named a minimum or maximum
+instead, to report with where it lies — a Kubo–Toyabe width a few percent larger below a superconductor's
 T\ :sub:`c` is the time-reversal-symmetry-breaking signal, however small. Along
 a field scan it names a phase that runs linearly with field as a t0 offset
 (printing the implied Δt and the ``reduce --t0-offset`` to test it) and an
@@ -999,12 +1021,17 @@ amplitude that falls as its frequency rises as the instrument's frequency
 response; a line held near a high field, or with an exponential envelope on
 its cold side, is offered a ready two-line ``recipe``, since an unresolved
 pair fits as one line. A series fitted in a field the survey found no Larmor
-line at (longitudinal, whatever the file's stamp), whose rates and widths
-stay below a tenth of a zero-field series' width in the same work directory on
-most runs, at a field at least ten times that width over γ\ :sub:`μ`, is read as
-decoupled: the note says the zero-field relaxation is from fields static on
-the muon time scale, and that a rate pinned at zero there is that result, not
-a failed fit. Reading either series of the pair prints it. A fitted law's
+line at (longitudinal, whatever the file's stamp), whose fitted curves lose
+less than a tenth of what a zero-field series' curves lose by 8 µs — on most
+runs, against the zero-field runs within its own temperature span — is read
+as decoupled: the note says the zero-field relaxation at those temperatures is
+from fields static on the muon time scale, and that a rate pinned at zero or a
+width left unconstrained there is that result, not a failed fit. Comparing the
+curves rather than a rate holds whatever model each side was fitted with (a
+Kubo–Toyabe fitted in the field leaves its width unconstrained, not small).
+When the zero-field series' model has no static-width term (a Bessel or a
+plain exponential), the note also asks for the zero-field runs to be refitted
+with a static Kubo–Toyabe and its width reported against temperature. Reading either series of the pair prints it. A fitted law's
 report states the x span of the points it rests on and each parameter's unit,
 and judges the law on the √χ²\ :sub:`r`-scaled errors of its physical
 parameters (a prefactor or offset — ``a``, ``b``, ``c`` — that the data leave
@@ -1115,11 +1142,22 @@ is listed unless a command printed it verbatim to three or more significant
 digits, as a run number or a field on the scan's grid is; a ratio in words
 ("a factor of six", "five and a half times its error", "three times broader")
 is listed too. While a surveyed scan is unfitted, a clean audit says not to
-reply yet. ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. Every command
+reply yet. A written number matches a printed value within one unit of its
+last digit (rounded or truncated). ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
+("about 12340 G") may round away its trailing zeros, a field in kG verifies
+against one printed in G, an error in parentheses after its value
+("2.91 (±0.12)") is that value's error, and "1σ errors", "> 3σ" and
+"2× LorentzianLCR" are a convention, a threshold and a count, not results. Every command
 that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
 ``integral-scan``, ``fourier``) ends its text output with the step: write
-``summary.md`` and run ``asymmetry audit summary.md`` before replying. What it catches is the arithmetic an
-analyst does in prose — percentage changes, ratios, unit conversions,
+``summary.md`` and run ``asymmetry audit summary.md`` before replying, preceded
+by a "Still unfitted:" line naming the surveyed measurements no fit holds yet.
+A clean audit prints the passed draft between ``----- BEGIN -----`` and
+``----- END -----`` lines for the reply to copy whole, since agents that retype
+it add unaudited text; a report listing only numbers ends by asking for
+another audit before replying. What it catches is the arithmetic an
+analyst does in prose — percentage changes, ratios, unit conversions ("which
+would be a field of about 21 G", "corresponds to roughly 16 G"),
 differences between printed columns — which the agent skill's number rule
 forbids. It also lists a law's vocabulary ("critical slowing",
 "activation energy", "correlation time") when every fit of that law in the
@@ -1146,8 +1184,9 @@ and while a run the survey found no line in has only precession fits flagged
 as not describing it (``amplitude_exceeds_data``, ``frequency_unresolved``,
 ``failed``) — for those it prints the relaxation-only ``recipe`` and
 ``fit-series`` commands. A dip an ``integral-scan`` fit announced ("the scan holds
-another dip") holds it too until some fit in the work directory has a line
-inside that window. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
+another dip") holds it too until a fit of the same scan has a line whose
+centre ± width lies inside that window — another scan's line, or a broad line a
+poor whole-scan fit stretched across two dips, does not hold it. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
 left out of the match, since a rounded sum would otherwise find one of their
 elements by chance.
 
@@ -1219,16 +1258,19 @@ scan, or a dip the model leaves out — and, when a single line fitted inside th
 seeder's window for one more resonance falls below its background by five
 errors, that window is named with the command that fits it. A line fitted
 inside an ``--xmin``/``--xmax`` window with data on both flanks, an amplitude
-five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 4 is
+five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 8 is
 called a resolved ``RESONANCE`` to report, with its errors qualified when
 χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. A scan that measures one field (or other x) more than once is noted with the
 runs and whether each repeat came back within three errors — a return pass to
-report — and a dip another stored scan in the work directory already fitted is
-not announced again. When a windowed line (both flanks in range, five errors deep) matches one
+report — and a dip another stored fit of the same scan holds (a line whose
+centre ± width lies inside the dip's window) is not announced again. When a windowed line (both flanks in range, five errors deep) matches one
 another scan in the work directory fitted near the same field, a ``COMPARE``
 line prints both centres and widths, with errors scaled by
 √χ²\ :sub:`r`, and says which is broader and which higher in field — the
-direction a summary of two conditions must state. A run stamped TF at a kilogauss or more whose integral
+direction a summary of two conditions must state. A resolved line that
+another analysed scan covers, with no fitted line within five widths of it
+there, gets a NOTE with the command that fits that scan on the same window: a
+line one scan shows and another lacks is a finding to report either way. A run stamped TF at a kilogauss or more whose integral
 asymmetry stays at least 0.02 and five errors from zero is named as
 longitudinal: a transverse field that strong precesses the polarisation
 through many periods within the window and integrates to near zero. An LCR fit notes
@@ -1253,7 +1295,13 @@ propagates into the integral).
 ``--period green-red`` builds the RF-resonance or differential-ALC scan: each
 point is the green period's integral asymmetry less the red period's, each
 formed from that period's own counts under the `Reduction options`_, with their
-errors added in quadrature. ``RFResonanceMuP`` fits the muon and proton
+errors added in quadrature. With no field step logged between the periods the
+contrast is the RF switched on and off, and ``integral-scan`` names
+``RFResonanceMuP``; a logged step makes it a differential ALC scan, whose
+``Next`` line holds the pair's ``dB`` at the step (and points a single
+Lorentzian on such a scan at ``LorentzianLCRPair``). After an ``RFResonanceMuP``
+fit the report prints the two resonance fields its couplings imply, or says the
+couplings are not a result when those fields fall outside the scan. ``RFResonanceMuP`` fits the muon and proton
 couplings of an RF scan with the RF frequency held at its acquisition value.
 With ``nu_RF`` fixed (or given as a start), the couplings are seeded by solving
 the resonance condition at the scan's own two dip fields rather than taken from

@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -935,8 +936,9 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     out = capsys.readouterr().out
     assert "period field offset (red - green): -44.00 G, mean of 2 run(s)" in out
     assert "--fix dB=44.00" in out
-    assert "RFResonanceMuP converts its lines" in out
-    assert "no radical ALC or hyperfine model" not in out
+    # A logged field step makes this a differential ALC scan, not an RF one.
+    assert "RFResonanceMuP converts its lines" not in out
+    assert "no radical ALC or hyperfine model is available" in out
     # Each fitted parameter is printed with its unit and error; a held one says so.
     bwid = next(line.split() for line in out.splitlines() if line.startswith("Bwid "))
     assert bwid[1:] == ["1.000000", "G", "fixed"]
@@ -947,6 +949,7 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     assert data["period_field_offset"] == {"gauss": pytest.approx(-44.0), "runs": 2}
     # The Next line survives --json.
     assert any("--fix dB=44.00" in note for note in data["notes"])
+    assert not any("refit with --model 'LorentzianLCRPair" in note for note in data["notes"])
 
 
 def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
@@ -969,7 +972,10 @@ def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
         "without --period this scan summed both periods"
     ) in capsys.readouterr().out
     cli.main([*base, "--period", "green-red"])
-    assert "summed both periods" not in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "summed both periods" not in out
+    # No field step between the periods: the green - red contrast is the RF.
+    assert "this is an RF resonance scan" in out and "RFResonanceMuP converts its lines" in out
 
 
 def test_integral_scan_single_period_reports_the_source_run_number(
@@ -1463,6 +1469,52 @@ def test_fit_series_writes_a_stamped_series_file(
     assert stored["order_key"] == "temperature"
 
 
+_ORDER = ("--order", "temperature")
+
+
+def test_fit_series_offers_the_screenings_runner_up_when_most_runs_run_away(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    stored = WorkDir(fitting_workdir)
+    relax = stored.read_recipe("relax")
+    # An amplitude held far above the data flags every run, as a runaway does.
+    stored.write_recipe("wizard-7", relax.with_overrides(initial={}, fix={"A_1": 400.0}))
+    stored.write_recipe("wizard-7-alt", relax)
+    runs = f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}"
+    capsys.readouterr()
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-series",
+        "--runs",
+        runs,
+        "--recipe",
+        "wizard-7",
+        *_ORDER,
+    )
+    out = capsys.readouterr().out
+    assert "amplitude_exceeds_data, so Exponential + Constant does not describe this scan" in out
+    assert f"--runs {runs} --recipe wizard-7-alt --order " in out
+
+    # The runner-up's own series is quiet, and so is a recipe with no runner-up.
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-series",
+        "--runs",
+        runs,
+        "--recipe",
+        "wizard-7-alt",
+        *_ORDER,
+    )
+    _cli(
+        workflow_folder, fitting_workdir, "fit-series", "--runs", runs, "--recipe", "relax", *_ORDER
+    )
+    assert "runner-up" not in capsys.readouterr().out
+
+
 def test_fit_series_defaults_its_name_from_the_recipe(
     workflow_folder: Path, fitting_workdir: Path, capsys
 ) -> None:
@@ -1739,7 +1791,7 @@ def test_trend_model_prints_the_fit_and_what_it_left_out(
     assert f"{SCAN_RUNS[0]} (excluded)" in out
     assert f"{SCAN_RUNS[-1]} (outside the x range)" in out
     # What the trend shows is still named beside the law fitted to one column.
-    assert "NOTE: Lambda changes along the scan" in out
+    assert re.search(r"NOTE: Lambda (?:rises|falls) along the scan", out)
 
 
 @pytest.mark.parametrize(
@@ -2638,7 +2690,7 @@ def test_trend_names_the_law_its_axis_and_parameters_call_for(
         # ... with the shift and its error printed, so no one subtracts them by hand.
         (
             [5.3735, 5.385, 5.3977],
-            "frequency moves from 5.37350 to 5.39770 MHz, a shift of 0.02420 ± 0.00141 MHz",
+            "frequency moves from 5.37350 to 5.39770 MHz on warming, a shift of 0.02420 ± 0.00141 MHz — the line sits lower at low temperature",
         ),
     ],
 )
@@ -2917,6 +2969,20 @@ def _failed_resonance_fit(**changes) -> dict:
     } | changes
 
 
+def test_one_lorentzian_on_a_stepped_green_red_scan_is_pointed_at_the_pair() -> None:
+    from asymmetry.cli.commands.integral_scan import _notes
+    from asymmetry.core.workflow.reduction import GREEN_MINUS_RED, ReductionSettings
+
+    result = {
+        "scan": {"points": [], "order_key": "field"},
+        "period_field_offset": {"gauss": -44.0, "runs": 2},
+        "settings": ReductionSettings(period=GREEN_MINUS_RED).to_dict(),
+        "fit": _failed_resonance_fit(expression="LorentzianLCR + Linear"),
+    }
+    notes = _notes(result, [], [], [], [])
+    assert any("--model 'LorentzianLCRPair + Linear' --fix dB=44.00" in note for note in notes)
+
+
 def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Path) -> None:
     from asymmetry.cli.commands.integral_scan import _notes, _render
     from asymmetry.core.workflow.reduction import ReductionSettings
@@ -2925,6 +2991,7 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
         "name": "scan",
         "scan": {"points": [], "order_key": "field"},
         "period_field_offset": None,
+        "settings": ReductionSettings().to_dict(),
         "fit": _failed_resonance_fit(),
         "scan_path": str(tmp_path / "scan.json"),
         "plot": None,
@@ -3020,6 +3087,25 @@ def test_a_small_step_in_a_width_is_named_with_where_it_happens() -> None:
     assert _rate_steps(TrendTable("temperature", trend.columns, flat), ["Delta"]) == []
 
 
+def test_an_amplitude_lowest_inside_a_supplied_scan_is_a_minimum_not_a_step() -> None:
+    from asymmetry.cli.commands.trend import _rate_steps
+    from asymmetry.core.workflow.series import TrendTable
+
+    # A calibration curve along a supplied axis: smallest near zero, rising on both sides.
+    points = [(-1.0, 7.6), (-0.75, 7.2), (-0.5, 6.4), (-0.25, 5.6), (0.0, 5.3), (0.25, 5.7)]
+    points += [(0.5, 6.3), (0.75, 6.8), (1.0, 7.0)]
+    rows = [
+        {"key": str(run), "x": x, "A_1": a, "A_1_err": 0.05, "flags": []}
+        for run, (x, a) in enumerate(points)
+    ]
+    columns = ["key", "x", "A_1", "A_1_err", "flags"]
+    (note,) = _rate_steps(TrendTable("steering", columns, rows), ["A_1"])
+    assert note.startswith("NOTE: A_1 is smallest inside the scan — 5.3000 at 0 (run 4)")
+    assert "rises on both sides: a minimum, not a step" in note
+    # Along a measured axis the amplitude is the physics' own, not a calibration curve.
+    assert _rate_steps(TrendTable("temperature", columns, rows), ["A_1"]) == []
+
+
 def test_a_gradual_step_is_bracketed_by_where_the_width_leaves_each_level() -> None:
     from asymmetry.cli.commands.trend import _rate_steps
     from asymmetry.core.workflow.series import TrendTable
@@ -3044,8 +3130,9 @@ def test_a_gradual_step_is_bracketed_by_where_the_width_leaves_each_level() -> N
     )
 
     assert "low-temperature level (0.2597 over 0.3–5.6) above 5.6" in note
-    assert "high-temperature level (0.2534 over 6.8–10) below 6.8" in note
-    assert "the change lies between 5.6 and 6.8" in note
+    assert "falls along the scan" in note
+    assert "reaches its high-temperature level (0.2534 over 6.8–10) at 6.8" in note
+    assert "the change lies between 5.6 and 6.8, it levels off from 6.8 on" in note
 
 
 @pytest.mark.parametrize(("delay_us", "direction"), [(0.02, "positive"), (-0.02, "negative")])
@@ -3273,12 +3360,14 @@ def test_a_windowed_line_with_both_flanks_and_depth_is_called_a_resonance() -> N
     (note,) = _poor_fit_note(fit)
     assert note.startswith("RESONANCE: the line at 19475.5 ± 6.5 (width 232.5)")
     assert "16.0 errors from zero" in note and "chi2_red of 3.143" in note
+    # The scaled errors are printed, so nobody scales them by hand.
+    assert "± 11.5 on the centre and ± 21.3 on the width" in note
     # A shallow line is no resonance, and the poor fit's note returns.
     (poor,) = _poor_fit_note(fit | {"uncertainties": fit["uncertainties"] | {"f": 0.004}})
     assert poor.startswith("NOTE: the fit converged at chi2_red 3.143")
     # Nor is a deep "line" whose fit sits far above its errors: a background step.
-    (step,) = _poor_fit_note(fit | {"reduced_chi_squared": 7.7})
-    assert step.startswith("NOTE: the fit converged at chi2_red 7.700")
+    (step,) = _poor_fit_note(fit | {"reduced_chi_squared": 12.7})
+    assert step.startswith("NOTE: the fit converged at chi2_red 12.700")
 
 
 def test_a_mistyped_folder_is_named_as_missing_with_the_folder_the_session_holds(
@@ -3378,6 +3467,39 @@ def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
     assert "of a width these errors cannot tell apart and at a field these errors" in same
 
 
+def test_a_line_another_analysed_scan_covers_without_a_fit_there_is_named() -> None:
+    from asymmetry.cli.commands.integral_scan import _absent_lines
+
+    def fit(centre: float, width: float, low: float, high: float) -> dict:
+        return {
+            "parameters": {"f": -0.01, "B0": centre, "Bwid": width, "m": 0.0, "b": 0.1},
+            "uncertainties": {"f": 0.0005, "B0": 15.0, "Bwid": 30.0, "m": 0.0, "b": 0.001},
+            "success": True,
+            "params_at_bound": [],
+            "reduced_chi_squared": 1.0,
+            "x_range": [low, high],
+            "x_min": low,
+            "x_max": high,
+        }
+
+    def scan(runs: list[int], line: dict) -> dict:
+        points = [{"x": x} for x in (0.0, 30000.0)]
+        return {"runs": runs, "scan": {"points": points}, "fit": line}
+
+    hot = fit(7080.0, 390.0, 5000.0, 9500.0)
+    cold = scan([1, 2], fit(15400.0, 1160.0, 12000.0, 19000.0))
+    (note,) = _absent_lines("data", hot, [3, 4], {"cold": cold})
+    assert "scan cold also covers 7080" in note
+    assert "--runs 1-2 --model 'LorentzianLCR + Linear' --xmin 5000 --xmax 9500" in note
+    # The same line moved a little is that line, not an absence.
+    moved = scan([1, 2], fit(7300.0, 400.0, 5000.0, 9500.0))
+    assert _absent_lines("data", hot, [3, 4], {"cold": moved}) == []
+    # A scan fitted with no line at all lacks this one as well.
+    flat = fit(7080.0, 390.0, 5000.0, 9500.0) | {"parameters": {"m": 0.0, "b": 0.1}}
+    (note,) = _absent_lines("data", hot, [3, 4], {"cold": scan([1, 2], flat)})
+    assert "none of its fits holds a line there" in note
+
+
 def test_a_wizard_component_at_twice_a_tesla_line_is_named_a_harmonic() -> None:
     from asymmetry.cli.commands.wizard import _harmonic_pair
 
@@ -3428,7 +3550,7 @@ def test_repeated_scan_points_are_named_with_whether_they_came_back() -> None:
     assert (high, high_differ) == (500.0, True)
 
 
-def test_a_dip_another_scan_already_fitted_is_not_announced_again() -> None:
+def test_a_dip_another_fit_of_the_scan_holds_is_not_announced_again() -> None:
     from asymmetry.cli.commands.integral_scan import _poor_fit_note
 
     fit = {
@@ -3443,7 +3565,11 @@ def test_a_dip_another_scan_already_fitted_is_not_announced_again() -> None:
         "next_dip_windows": [{"x_min": 17950.0, "x_max": 19950.0}],
     }
     assert any("another dip" in note for note in _poor_fit_note(fit))
-    assert not any("another dip" in note for note in _poor_fit_note(fit, [19481.4]))
+    other = {"success": True, "parameters": {"B0": 19481.4, "Bwid": 240.0}}
+    assert not any("another dip" in note for note in _poor_fit_note(fit, [other]))
+    # A poor whole-scan fit's broad line, centred in the window, does not hold its dip.
+    broad = {"success": True, "parameters": {"B0": 19481.4, "Bwid": 3600.0}}
+    assert any("another dip" in note for note in _poor_fit_note(fit, [broad]))
 
 
 def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
@@ -3563,3 +3689,14 @@ def test_a_featureless_screen_inside_a_scan_names_the_scan_ends_to_screen(tmp_pa
     # A screened end leaves only the other end to screen.
     (note,) = _quiet_screen_notes(workdir, anywhere, "data", 15, "")
     assert "--run 11 (75 K)" in note and "--run 15 " not in note
+
+
+def test_an_rf_fit_prints_the_resonance_fields_its_couplings_imply() -> None:
+    from asymmetry.cli.commands.integral_scan import _rf_fields
+
+    points = [{"x": 560.0}, {"x": 950.0}]
+    found = _rf_fields({"parameters": {"A_mu": 514.78, "A_p": 124.6, "nu_RF": 218.5}}, points)
+    assert found.startswith("Resonance fields from the fitted couplings: 893.866 G (E7-E5)")
+    # Couplings whose lines fall outside the scan did not find its lines.
+    lost = _rf_fields({"parameters": {"A_mu": 24705.0, "A_p": 1.6e8, "nu_RF": 218.0}}, points)
+    assert "not both inside the scan (560–950 G)" in lost

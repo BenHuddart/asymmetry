@@ -227,6 +227,24 @@ def run(args: argparse.Namespace) -> None:
             f"free envelope width can swallow one), refit those runs with the width held "
             f"(--fix) at a value from the runs that do precess."
         )
+    from asymmetry.cli.commands.wizard import runner_up_name
+
+    runner_up = runner_up_name(Path(args.recipe).stem)
+    misfit = [
+        entry["run"] for entry in outcome.results if _MISFIT_FLAGS & set(entry["quality_flags"])
+    ]
+    if 2 * len(misfit) >= len(outcome.results) and runner_up in workdir.recipe_names():
+        supplied = "" if args.x is None else f" --x {shlex.quote(args.x)}"
+        start = "" if args.start is None else f" --start {args.start}"
+        print(
+            f"NOTE: {len(misfit)} of {len(outcome.results)} runs are flagged failed or "
+            f"amplitude_exceeds_data, so {outcome.expression} does not describe this scan. "
+            f"The screening that wrote {args.recipe} also wrote a relaxation alternative, "
+            f"{workdir.read_recipe(runner_up).expression}: fit the scan with it and keep "
+            f"whichever series describes the runs.\n"
+            f"  asymmetry fit-series {shlex.quote(args.folder)} --runs {args.runs} --recipe "
+            f"{runner_up} --order {outcome.order_key}{supplied}{start} --name {name}-alt"
+        )
     print(
         f"Next: asymmetry trend {shlex.quote(args.folder)} --series {name} — the trend "
         f"table, and the law it calls for."
@@ -250,6 +268,10 @@ def run(args: argparse.Namespace) -> None:
                 f"one and not the other says which — and refit with --order "
                 f"sample_temperature_logged if it is the logged one."
             )
+
+
+#: Flags that say a run's fit ran away rather than measured the physics.
+_MISFIT_FLAGS = frozenset({"failed", "amplitude_exceeds_data"})
 
 
 def _render(outcome, series_path: Path, plot_paths: list[Path] | None = None) -> str:

@@ -18,6 +18,11 @@ Tc 69.1731 ± 0.0541, frequency 30.19 MHz, SNR 3.1x the noise floor
 """
 
 
+def _manifest(folder: str, instrument: str | None = None) -> str:
+    """A work directory's manifest binding it to *folder* and *instrument*."""
+    return json.dumps({"schema": 4, "folder": folder, "instrument": instrument})
+
+
 def test_printed_values_verify_at_the_precision_they_are_written() -> None:
     draft = "Tc = 69.17 ± 0.05 K from runs 102–106; the line at 30.2 MHz; chi2 0.97."
     assert unverified_numbers(draft, _LOG) == []
@@ -64,6 +69,7 @@ def test_audit_reads_the_output_every_command_logged(
     out = capsys.readouterr().out
     assert "'999.25'" in out
     assert f"'{SCAN_RUNS[0]}'" not in out
+    assert "Then run audit again" in out
     # The audit's own report is not logged, so it can never verify itself.
     assert "999.25" not in (tmp_path / "asymmetry-work" / "cli-output.log").read_text(
         encoding="utf-8"
@@ -105,6 +111,15 @@ Converged, with its physical parameters determined: report them.
     assert unsupported_laws(draft, retried) == []
     # A law never fitted is not judged.
     assert unsupported_laws("an activation energy", log) == []
+    # A sentence denying the law does not lean on it.
+    assert unsupported_laws("No critical slowing down was established.", log) == []
+
+
+def test_a_multiple_verifies_only_as_a_whole_printed_token() -> None:
+    log = "candidate 13x the noise floor"
+    assert [entry.text for entry in unverified_numbers("a rate 3× the warm value", log)] == ["3×"]
+    assert unverified_numbers("a candidate 13× the noise floor", log) == []
+    assert unverified_numbers("62 % of the amplitude", "relaxing 62% of it") == []
 
 
 def test_hedged_ratios_and_differences_are_always_listed() -> None:
@@ -137,7 +152,10 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     )
     cold, warm = ZF_RUNS[:3], ZF_RUNS[3:]
     series = ["--recipe", "relax", "--order", "temperature"]
+    capsys.readouterr()
     cli.main(["fit-series", folder, "--runs", ",".join(map(str, cold)), *series, "--name", "cold"])
+    # A result command closes by naming what is still unfitted, before the audit step.
+    assert "Still unfitted: 1 measurement(s)" in capsys.readouterr().out
     draft = tmp_path / "summary.md"
     # The folder's files carry deadtimes this reduction left off, which a draft must say.
     draft.write_text("A draft; the reduction left deadtime off.\n", encoding="utf-8")
@@ -148,7 +166,7 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     assert scan["unfitted_runs"] == list(warm)
 
     cli.main(["fit-series", folder, "--runs", ",".join(map(str, warm)), *series, "--name", "warm"])
-    capsys.readouterr()
+    assert "Still unfitted" not in capsys.readouterr().out
     cli.main(["audit", str(draft)])
     # Every scan is fitted, but neither series has been read with trend yet.
     assert "Series no trend command has read: cold" in capsys.readouterr().out
@@ -156,7 +174,10 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
         cli.main(["trend", folder, "--series", name])
     capsys.readouterr()
     cli.main(["audit", str(draft)])
-    assert "Now send its text" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "your final message is this summary itself" in out
+    # The passed text is printed whole, for the reply to copy rather than retype.
+    assert "----- BEGIN -----\nA draft; the reduction left deadtime off.\n----- END -----" in out
 
 
 def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> None:
@@ -181,6 +202,8 @@ def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> Non
                 "data", scan("temperature", [11, 12, 13, 14]), [11, 12, 13, 14], {12}, set()
             ),
             _UnfittedScan("data", scan("field", [21, 22]), [21, 22], {12}, set()),
+            # A short scan's run that measured alpha has done its job.
+            _UnfittedScan("data", scan("field", [12, 51]), [12], {12}, set()),
             _UnfittedScan("data", scan("field", [13, 31]), [13], {12}, set()),
         ]
     )
@@ -193,6 +216,25 @@ def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> Non
     )
     assert "asymmetry recipe data --expression 'Exponential + Constant' --run 43" in lineless
     assert "wizard" not in lineless
+    # A field scan of unresolved geometry whose runs precess is fitted in time, not integrated.
+    unresolved = ScanGroup(
+        axis="field",
+        instrument="SIM",
+        geometry=None,
+        geometry_note="",
+        temperature=300.0,
+        field=None,
+        runs=[61, 62, 63, 64],
+        values=[50.0, 100.0, 150.0, 200.0],
+    )
+    runs = [61, 62, 63, 64]
+    precessing = _unfitted_report(
+        [_UnfittedScan("data", unresolved, runs, set(), set(), frozenset(runs))]
+    )
+    assert "asymmetry wizard data --run 61" in precessing
+    assert "asymmetry integral-scan" not in precessing
+    integrated = _unfitted_report([_UnfittedScan("data", unresolved, runs, set(), set())])
+    assert "asymmetry integral-scan data --runs 61-64" in integrated
     # A short scan's runs appear once, and not again when a longer scan lists them.
     assert report.endswith(
         "short scans of 2-3 runs, not fitted: runs 21-22 — fit them where they bear on the "
@@ -235,7 +277,7 @@ frequency 1.92645  survey_line_mhz 1.94529  sigma 0.020831
 alpha 1.2373 (estimated:24563)  alpha 1.2320  0.50 0.52
 r_muF 1.22 1.25  A(0) 16.42 0.05  bound 0.1
 series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
-(Δt = 0.0123 µs); runs 9031 9051; nu 16.3 3.8 MHz
+(Δt = 0.0123 µs); runs 9031 9051; nu 16.3 3.8 MHz; offset +0.34 K
 """
 
 
@@ -266,6 +308,29 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         ("it falls only slightly, by about 0.03 MHz", ["0.03"]),
         ("Delta falls and reaches its plateau by about 16.3 K", []),
         ("Lambda sits at its 0.1 lower bound", []),
+        # A unit conversion of a printed value (Haiku 5.5 wave 15, Sonnet 5.5).
+        ("a line at 3.8 MHz, which would be a field of about 16 G", ["16"]),
+        ("3.8 MHz corresponds to roughly 16 G", ["16"]),
+        ("this corresponds to run 9031", []),
+        # Roundings and restatements of printed values (round 2, waves 11-15).
+        ("A(0) 16.42 (±0.05) at 16.3 K", []),
+        ("errors are 1σ; none differ at > 3σ", []),
+        ("a 2× LorentzianLCR + Cubic fit", []),
+        ("the line sits at about 9030 G", []),
+        ("the total is about 16.6", ["16.6"]),
+        # Stacked hedges (wave 16).
+        ("the lines differ from the survey by up to about 0.02 MHz", ["0.02"]),
+        ("the shift is about 1.3 %", ["1.3 %"]),
+        ("the spread is only about 40 G", ["40"]),
+        ("logged offsets of +0.34 K", []),
+        ("a 47-point AICc difference", ["47-point"]),
+        # A whole-number percentage naming an asymmetry restates it; elsewhere it is a ratio.
+        ("A(0) is about 16 % throughout", []),
+        ("the amplitude stays near 16 %", []),
+        ("the rate falls about 16 % on warming", ["16 %"]),
+        ("the line sits at 9.03 kG", []),
+        ("the line sits at 9028 G", ["9028"]),
+        ("a 2× faster rate", ["2×"]),
     ],
 )
 def test_wave_derived_numbers_are_flagged(draft: str, flagged: list[str]) -> None:
@@ -348,6 +413,20 @@ _BACKGROUND_NOTE = (
         ),
         (_HELD_NOTE, "Runs 20888-20897 give A_1 near 24 %.", "A_bg was held at 0 on 20888."),
         (
+            "NOTE: A_1 is smallest inside the scan — 5.3 at 0 (run 4) … and rises on both "
+            "sides: a minimum, not a step.\n",
+            "A_1 changes between -0.5 and 0.75 A.",
+            "A_1 is smallest near 0 A and rises on both sides.",
+        ),
+        (
+            "frequency moves from 5.38 to 5.39 MHz on warming, a shift of 0.01 ± 0.002 MHz — "
+            "the line sits lower at low temperature — while staying near one field: a shift "
+            "of the line (a Knight shift, or a superconductor's diamagnetic shift below Tc).\n",
+            # Naming the shift is not saying which way the line moved.
+            "The frequency moves from 5.38 to 5.39 MHz, a small shift near the applied field.",
+            "The line shifts lower in frequency below Tc, by 0.01 ± 0.002 MHz.",
+        ),
+        (
             _BACKGROUND_NOTE,
             # That the fit fails is not the reason it fails.
             "The full-range LorentzianLCR + Cubic fit fails.",
@@ -382,6 +461,7 @@ def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch
     }
     survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (workdir / "manifest.json").write_text(_manifest("data"), encoding="utf-8")
     draft = tmp_path / "summary.md"
     draft.write_text("A draft.\n", encoding="utf-8")
 
@@ -443,11 +523,22 @@ def test_a_dip_a_scan_announced_and_no_fit_holds_is_named(tmp_path: Path) -> Non
     scans = tmp_path / "wd" / "scans"
     scans.mkdir(parents=True)
     window = {"centre": 21400.0, "x_min": 19950.0, "x_max": 22950.0}
-    whole = {"success": True, "parameters": {"B0": 19475.0}, "next_dip_windows": [window]}
-    (scans / "whole.json").write_text(json.dumps({"fit": whole}))
+
+    def store(name: str, runs: list[int], centre: float, width: float, windows=()) -> None:
+        fit = {
+            "success": True,
+            "parameters": {"B0": centre, "Bwid": width},
+            "next_dip_windows": list(windows),
+        }
+        (scans / f"{name}.json").write_text(json.dumps({"runs": runs, "fit": fit}))
+
+    store("whole", [1, 2, 3], 19475.0, 300.0, [window])
     assert _unfitted_dips([tmp_path / "wd"]) == [(tmp_path / "wd", "whole", window)]
-    local = {"success": True, "parameters": {"B0": 21474.0}, "next_dip_windows": []}
-    (scans / "local.json").write_text(json.dumps({"fit": local}))
+    # Another scan's line there, or a broad line stretched across the window, holds nothing.
+    store("other-scan", [4, 5, 6], 21474.0, 255.0)
+    store("broad", [1, 2, 3], 21000.0, 3600.0)
+    assert _unfitted_dips([tmp_path / "wd"]) == [(tmp_path / "wd", "whole", window)]
+    store("local", [1, 2, 3], 21474.0, 255.0)
     assert _unfitted_dips([tmp_path / "wd"]) == []
 
 
@@ -470,6 +561,7 @@ def test_a_hold_is_restated_when_unprinted_numbers_are_listed_too(
     }
     survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+    (workdir / "manifest.json").write_text(_manifest("data"), encoding="utf-8")
     draft = tmp_path / "summary.md"
     draft.write_text("A draft quoting 999.25 G.\n", encoding="utf-8")
 
@@ -501,6 +593,7 @@ def test_each_survey_is_held_against_its_own_work_directory(
         (root / "cli-output.log").write_text("$ asymmetry survey data\n", encoding="utf-8")
         survey = {"folder": name, "runs": [], "scans": [], "notes_scans": notes}
         (root / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
+        (root / "manifest.json").write_text(_manifest(name), encoding="utf-8")
     for run in (11, 12, 13):
         (tmp_path / "asymmetry-work" / "fits" / f"x-{run}.json").write_text(
             json.dumps(
@@ -517,6 +610,23 @@ def test_each_survey_is_held_against_its_own_work_directory(
 
     cli.main(["audit", str(draft)])
     assert 'notes "Steering <x> A" (steering): not fitted: runs 11-13' in capsys.readouterr().out
+
+    # A second work directory bound to the same folder holds its fits for both,
+    # though it never surveyed the folder itself.
+    (tmp_path / "asymmetry-work" / "survey.json").unlink()
+    (tmp_path / "asymmetry-work" / "manifest.json").write_text(
+        _manifest("asymmetry-work-b"), encoding="utf-8"
+    )
+    cli.main(["audit", str(draft)])
+    assert "not fitted" not in capsys.readouterr().out
+
+    # Two instruments in one folder reuse run numbers: one's fits hold none of the other's runs.
+    for name, instrument in (("asymmetry-work", "EMU"), ("asymmetry-work-b", "MUSR")):
+        (tmp_path / name / "manifest.json").write_text(
+            _manifest("asymmetry-work-b", instrument), encoding="utf-8"
+        )
+    cli.main(["audit", str(draft)])
+    assert "not fitted: runs 11-13" in capsys.readouterr().out
 
 
 def test_review_edge_cases_of_the_audit(tmp_path: Path) -> None:

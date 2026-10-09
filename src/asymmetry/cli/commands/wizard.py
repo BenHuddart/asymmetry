@@ -106,15 +106,21 @@ def run(args: argparse.Namespace) -> None:
     except ValueError as exc:
         raise UserError(str(exc)) from None
     if result.recipe is not None and (args.tmin is not None or args.tmax is not None):
-        result = replace(result, recipe=result.recipe.with_window(t_min=args.tmin, t_max=args.tmax))
+        result = replace(
+            result,
+            recipe=result.recipe.with_window(t_min=args.tmin, t_max=args.tmax),
+            runner_up=None
+            if result.runner_up is None
+            else result.runner_up.with_window(t_min=args.tmin, t_max=args.tmax),
+        )
     wizard_path = workdir.write_wizard(args.run, result.to_dict())
     recipe_name = f"wizard-{args.run}"
     recipe_path = (
         None if result.recipe is None else workdir.write_recipe(recipe_name, result.recipe)
     )
-    from asymmetry.core.fitting.fit_wizard import effective_window_duration
-
-    peaks, unfitted = _spectral_lines(result, effective_window_duration(dataset))
+    if result.runner_up is not None:
+        workdir.write_recipe(runner_up_name(recipe_name), result.runner_up)
+    unfitted = _unfitted_lines(result)
     line_recipe = (
         None
         if not unfitted or result.recipe is None
@@ -158,11 +164,7 @@ def run(args: argparse.Namespace) -> None:
         )
         return
 
-    print(
-        _render(
-            args.folder, peaks, line_recipe, result, wizard_path, recipe_path, plot_path, plot_note
-        )
-    )
+    print(_render(args.folder, line_recipe, result, wizard_path, recipe_path, plot_path, plot_note))
     note = window_note(workdir, [args.run])
     if note is not None:
         print(note)
@@ -188,6 +190,11 @@ def run(args: argparse.Namespace) -> None:
     ):
         options = "" if args.instrument is None else f" --instrument {args.instrument}"
         print("\n".join(_quiet_screen_notes(workdir, selection, args.folder, args.run, options)))
+
+
+def runner_up_name(recipe_name: str) -> str:
+    """The name the runner-up of the screening that wrote *recipe_name* is stored under."""
+    return f"{recipe_name}-alt"
 
 
 #: A scan of at least this many runs has ends worth screening apart from its middle.
@@ -253,31 +260,18 @@ def _harmonic_pair(frequencies: list[float]) -> tuple[float, float] | None:
     return None
 
 
-def _spectral_lines(result, duration_us: float) -> tuple[list[dict], list[float]]:
-    """The detected lines worth reading, and those the recommendation does not fit.
-
-    A "line" completing under MIN_CYCLES_IN_EFFECTIVE_WINDOW cycles in the
-    informative window is relaxation leaking into the lowest bins, not
-    precession (the survey's rule too), so it is dropped.
-    """
-    from asymmetry.core.fitting.fit_wizard import MIN_CYCLES_IN_EFFECTIVE_WINDOW
-
-    peaks = [
-        peak
-        for peak in result.recommendation["peak_analysis"]["peaks"]
-        if peak["frequency_mhz"] * duration_us >= MIN_CYCLES_IN_EFFECTIVE_WINDOW
-    ]
+def _unfitted_lines(result) -> list[float]:
+    """The detected lines (MHz) the recommendation does not fit."""
     fitted = (
         []
         if result.recipe is None
         else [p.value for p in result.recipe.parameters if p.name.startswith("frequency")]
     )
-    unfitted = [
+    return [
         peak["frequency_mhz"]
-        for peak in peaks
+        for peak in result.lines
         if not any(abs(value / peak["frequency_mhz"] - 1.0) < 0.1 for value in fitted)
     ]
-    return peaks, unfitted
 
 
 def _line_recipe(result, dataset, frequency: float):
@@ -331,7 +325,6 @@ def _survey_geometry(workdir, selection, run_number: int) -> str | None:
 
 def _render(
     folder: str,
-    peaks: list[dict],
     line_recipe: tuple[float, Path] | None,
     result,
     wizard_path: Path,
@@ -385,8 +378,10 @@ def _render(
     lines.append(
         "Spectral lines: "
         + (
-            ", ".join(f"{peak['frequency_mhz']:.4g} MHz (SNR {peak['snr']:.1f})" for peak in peaks)
-            if peaks
+            ", ".join(
+                f"{peak['frequency_mhz']:.4g} MHz (SNR {peak['snr']:.1f})" for peak in result.lines
+            )
+            if result.lines
             else "none detected"
         )
     )
@@ -415,6 +410,28 @@ def _render(
         lines.append("No recipe written — there is no recommended model to fit.")
     else:
         lines.append(f"Recipe written to {recipe_path}")
+    if result.runner_up is not None:
+        from asymmetry.core.workflow.screen import PRECESSION_CATEGORY
+
+        key = result.runner_up.source["template_key"]
+        candidate = next(entry for entry in result.candidates if entry.key == key)
+        recommended = next(entry for entry in result.candidates if entry.is_recommended)
+        name = f"wizard-{result.run_number}"
+        behind = f"{candidate.aicc - recommended.aicc:.1f} AICc behind"
+        lines.append(
+            f"NOTE: {recommended.title} precesses, but the spectral search found no line in "
+            f"this run: a precession model with no line is fitting the shape of a relaxation "
+            f"(a Kubo-Toyabe's dip and recovery read as one slow cycle), so it is not evidence "
+            f"of precession or of an internal field. The best relaxation model, "
+            f"{result.runner_up.expression} ({behind}), is written as {runner_up_name(name)}: "
+            f"fit the scan with --recipe {runner_up_name(name)}, and report precession only "
+            f"where a spectrum shows its line."
+            if recommended.category == PRECESSION_CATEGORY
+            else f"Runner-up recipe written as {runner_up_name(name)}: "
+            f"{result.runner_up.expression}, {behind} — a model this run hardly tells apart. "
+            f"If a fit-series from {name} flags most of its runs, fit the scan with --recipe "
+            f"{runner_up_name(name)} instead."
+        )
     if plot_path is not None:
         lines.append(f"Plot written to {plot_path}")
     elif plot_note is not None:

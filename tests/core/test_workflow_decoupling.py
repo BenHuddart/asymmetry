@@ -5,39 +5,49 @@ from __future__ import annotations
 from typing import Any
 
 from asymmetry.core.workflow.decoupling import decoupling_note
+from asymmetry.core.workflow.recipe import FitRecipe
 
 
-def _series(expression: str, rate: str, rows: list[tuple[int, float, float]]) -> dict[str, Any]:
+def _series(expression: str, rows: list[tuple[int, dict[str, float], float]]) -> dict[str, Any]:
+    """A stored series whose runs carry *parameters*, each free one with a relative *error*."""
+    recipe = FitRecipe.from_expression(expression)
     return {
         "kind": "series",
         "expression": expression,
-        "free_params": ["A_1", rate, "A_bg"],
+        "recipe": recipe.to_dict(),
+        "free_params": recipe.free_parameter_names(),
         "results": [
             {
                 "run": run,
                 "success": True,
-                "parameters": {"A_1": 20.0, rate: value, "A_bg": 1.0},
-                "uncertainties": {"A_1": 0.1, rate: error, "A_bg": 0.1},
+                "parameters": parameters,
+                "uncertainties": {name: error * abs(value) for name, value in parameters.items()},
             }
-            for run, value, error in rows
+            for run, parameters, error in rows
         ],
     }
 
 
-def _survey(field: float, precession: str) -> dict[int, dict[str, Any]]:
-    """Runs 1-3 in zero field, runs 11-13 in *field* with the given precession verdict."""
-    zero = {run: {"field": 0.0, "precession": "none"} for run in (1, 2, 3)}
-    applied = {run: {"field": field, "precession": precession} for run in (11, 12, 13)}
+def _survey(field: float, precession: str, temperature: float = 5.0) -> dict[int, dict[str, Any]]:
+    """Runs 1-3 in zero field at 5 K, runs 11-13 in *field* at *temperature*."""
+    zero = {run: {"field": 0.0, "precession": "none", "temperature": 5.0} for run in (1, 2, 3)}
+    applied = {
+        run: {"field": field, "precession": precession, "temperature": temperature}
+        for run in (11, 12, 13)
+    }
     return zero | applied
 
 
 _ZF = _series(
-    "StaticGKT_ZF + Constant", "Delta", [(1, 0.26, 0.001), (2, 0.26, 0.001), (3, 0.25, 0.001)]
+    "StaticGKT_ZF + Constant",
+    [(run, {"A_1": 20.0, "Delta": 0.26, "A_bg": 1.0}, 0.01) for run in (1, 2, 3)],
 )
 _QUENCHED = _series(
     "Exponential + Constant",
-    "Lambda",
-    [(11, 0.0004, 0.0007), (12, 0.0014, 0.0007), (13, 0.0022, 0.0007)],
+    [
+        (run, {"A_1": 20.0, "Lambda": rate, "A_bg": 1.0}, 0.5)
+        for run, rate in ((11, 4e-4), (12, 1e-3), (13, 2e-3))
+    ],
 )
 
 
@@ -50,13 +60,40 @@ def test_a_relaxation_a_strong_longitudinal_field_removes_is_named_static_from_b
     assert decoupling_note("zf", stored, survey) == note
 
 
-def test_no_static_reading_when_the_field_or_the_data_cannot_carry_it() -> None:
-    # Δ/γ_μ is about 3 G here: 5 G is not enough to decouple a static distribution.
-    assert decoupling_note("lf", {"zf": _ZF, "lf": _QUENCHED}, _survey(5.0, "none")) is None
+def test_the_reading_holds_whatever_model_the_field_runs_were_fitted_with() -> None:
+    # A Kubo–Toyabe in 100 G is flat whatever its width: the fit leaves Delta unconstrained.
+    kubo_toyabe = _series(
+        "GaussianBroadenedKT + Constant",
+        [
+            (run, {"A_1": 5.0, "Delta": 2.0, "B_L": 100.0, "w_rel": 0.003, "A_bg": 15.0}, 3.0)
+            for run in (11, 12, 13)
+        ],
+    )
+    note = decoupling_note("lf", {"zf": _ZF, "lf": kubo_toyabe}, _survey(100.0, "none"))
+    assert note is not None and "whatever the model" in note
+    assert "refit the zero-field runs" not in note
+
+
+def test_a_zero_field_series_with_no_static_width_is_sent_to_a_kubo_toyabe() -> None:
+    bessel = _series(
+        "Bessel * Exponential + Constant",
+        [
+            (run, {"A_1": 20.0, "frequency": 0.1, "phase": 0.0, "Lambda": 0.15, "A_bg": 1.0}, 0.01)
+            for run in (1, 2, 3)
+        ],
+    )
+    note = decoupling_note("lf", {"zf": bessel, "lf": _QUENCHED}, _survey(100.0, "none"))
+    assert note is not None and "refit the zero-field runs with a static Kubo-Toyabe" in note
+
+
+def test_no_static_reading_when_the_data_cannot_carry_it() -> None:
     # A rate the field leaves standing is not decoupled.
     relaxing = _series(
-        "Exponential + Constant", "Lambda", [(11, 0.2, 0.01), (12, 0.2, 0.01), (13, 0.2, 0.01)]
+        "Exponential + Constant",
+        [(run, {"A_1": 20.0, "Lambda": 0.2, "A_bg": 1.0}, 0.05) for run in (11, 12, 13)],
     )
     assert decoupling_note("lf", {"zf": _ZF, "lf": relaxing}, _survey(100.0, "none")) is None
     # A Larmor line in the field runs makes the field transverse.
     assert decoupling_note("lf", {"zf": _ZF, "lf": _QUENCHED}, _survey(100.0, "larmor")) is None
+    # Zero-field runs at other temperatures say nothing about the field runs' fields.
+    assert decoupling_note("lf", {"zf": _ZF, "lf": _QUENCHED}, _survey(100.0, "none", 40.0)) is None

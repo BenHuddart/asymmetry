@@ -282,6 +282,30 @@ def _render(survey, survey_path: Path) -> str:
             f"needs --instrument NAME (the file prefix, in any case: {', '.join(shared)})."
         )
         lines.append("")
+    from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+    from asymmetry.core.workflow.survey import MUONIUM_MHZ_PER_G, muonium_runs
+
+    muonium = muonium_runs(survey.runs)
+    if muonium:
+        # Start low in field, where the line is strong and the chain tracks it upward.
+        middle = sorted(muonium, key=lambda row: row.field)[len(muonium) // 4]
+        listed = run_spec(sorted(row.run_number for row in muonium), separator=", ")
+        folder = shlex.quote(survey.folder)
+        lines.append(
+            f"MUONIUM: runs {listed} precess near {MUONIUM_MHZ_PER_G:.4g} MHz per gauss of their "
+            f"field (the other@ line), muonium's triplet precession in a weak transverse field, "
+            f"not the bare muon's {field_gauss_to_frequency_mhz(1.0):.4g} MHz/G. Fit them as one "
+            f"precessing line, not with the wizard:\n"
+            f"  asymmetry recipe {folder} --expression 'Oscillatory * Exponential + Constant' "
+            f"--run {middle.run_number} --initial "
+            f"frequency={middle.precession.frequency_mhz:.4g} --name mu-line\n"
+            f"  asymmetry fit-series {folder} --runs "
+            f"{run_spec(sorted(row.run_number for row in muonium))} --recipe mu-line --order "
+            f"field --start {middle.run_number}\n"
+            f"Report the line's amplitude against field (falling as its frequency rises: the "
+            f"instrument's frequency response) and the field where it is lost."
+        )
+        lines.append("")
     if survey.temperature_departures:
         lines.append(
             "TEMPERATURE: the logged sample temperature (T log) and the setpoint (T/K) "

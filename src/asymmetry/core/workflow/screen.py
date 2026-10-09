@@ -48,13 +48,58 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import PhysicsClass, geometry_from_field_direction
 from asymmetry.core.fitting.composite import COMPONENTS
 from asymmetry.core.fitting.fit_wizard import (
+    MIN_CYCLES_IN_EFFECTIVE_WINDOW,
     build_fit_wizard_recommendation,
+    effective_window_duration,
     serialize_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.wizard_narrative import render_log_text
 from asymmetry.core.fitting.wizard_scope import WizardScope
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.survey import run_geometry
+
+#: A candidate within this many AICc of the recommendation is one the run hardly
+#: tells apart from it: the runner-up gets a recipe of its own, for the scan to decide.
+#: Only between relaxation models with at most one parameter more — a precession
+#: model's alternatives (another envelope) are not a different reading of the scan.
+RUNNER_UP_AICC = 10.0
+
+#: Wizard categories that model relaxation alone, and the one that precesses.
+_RELAXATION = frozenset({"General", "Multi-rate", "KT-like"})
+PRECESSION_CATEGORY = "Oscillatory"
+
+
+def _runner_up(recommendation: Any, lined: bool) -> Any | None:
+    """The relaxation assessment worth a recipe beside the recommended one, if any.
+
+    A close one beside a relaxation recommendation; beside a precession model
+    the spectrum shows no line for (*lined* false) — which is fitting a
+    relaxation's shape — the best relaxation model, however far behind.
+    """
+    recommended = recommendation.recommended_assessment
+    expression = recommended.template.model.component_expression_string()
+    candidates = [
+        assessment
+        for assessment in sorted(recommendation.assessments, key=lambda item: item.selected_score)
+        if assessment.is_successful
+        and not assessment.is_disqualified
+        and assessment.template.category in _RELAXATION
+        and assessment.aicc is not None
+        and assessment.template.model.component_expression_string() != expression
+    ]
+    if recommended.aicc is None:
+        return None
+    if recommended.template.category in _RELAXATION:
+        candidates = [
+            assessment
+            for assessment in candidates
+            if 0.0 <= assessment.aicc - recommended.aicc <= RUNNER_UP_AICC
+            and assessment.parameter_count <= recommended.parameter_count + 1
+        ]
+    elif recommended.template.category != PRECESSION_CATEGORY or lined:
+        return None
+    return candidates[0] if candidates else None
+
 
 #: Where a run's geometry came from, in the order the resolution tries them.
 GEOMETRY_SOURCES = ("user", "survey", "field", "file", "none")
@@ -156,6 +201,12 @@ class ScreenResult:
     #: The recipe built from the recommended candidate, or ``None`` when the
     #: wizard made no recommendation (the payload then says so).
     recipe: FitRecipe | None
+    #: The recipe of the best relaxation model when it is a close runner-up to a
+    #: relaxation recommendation (:data:`RUNNER_UP_AICC`), or when the
+    #: recommendation precesses and the spectrum shows no line; else ``None``.
+    runner_up: FitRecipe | None
+    #: The spectral lines the search detected that complete enough cycles to be precession.
+    lines: list[dict[str, Any]]
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -176,6 +227,8 @@ class ScreenResult:
             "narrative": self.narrative,
             "recommendation": self.recommendation,
             "recipe": None if self.recipe is None else self.recipe.to_dict(),
+            "runner_up": None if self.runner_up is None else self.runner_up.to_dict(),
+            "lines": list(self.lines),
         }
 
 
@@ -250,6 +303,21 @@ def screen_run(
         if recommended is None
         else FitRecipe.from_assessment(recommended, run_number=run_number, seed_field=dataset.field)
     )
+    serialized = serialize_fit_wizard_recommendation(recommendation, compact=True)
+    # A "line" completing too few cycles in the informative window is relaxation
+    # leaking into the lowest bins, not precession (the survey's rule too).
+    duration = effective_window_duration(scoped)
+    lines = [
+        peak
+        for peak in serialized["peak_analysis"]["peaks"]
+        if peak["frequency_mhz"] * duration >= MIN_CYCLES_IN_EFFECTIVE_WINDOW
+    ]
+    alternative = None if recommended is None else _runner_up(recommendation, bool(lines))
+    runner_up = (
+        None
+        if alternative is None
+        else FitRecipe.from_assessment(alternative, run_number=run_number, seed_field=dataset.field)
+    )
 
     return ScreenResult(
         run_number=int(run_number),
@@ -266,13 +334,17 @@ def screen_run(
         recommended_key=recommendation.recommended_key,
         candidates=candidates,
         narrative=render_log_text(recommendation),
-        recommendation=serialize_fit_wizard_recommendation(recommendation, compact=True),
+        recommendation=serialized,
+        lines=lines,
         recipe=recipe,
+        runner_up=runner_up,
     )
 
 
 __all__ = [
     "GEOMETRY_SOURCES",
+    "PRECESSION_CATEGORY",
+    "RUNNER_UP_AICC",
     "SCOPE_PRESETS",
     "ScreenCandidate",
     "ScreenResult",
