@@ -32,7 +32,7 @@ from asymmetry.core.fitting.engine import (
 )
 from asymmetry.core.fitting.member_quality import MemberQuality, assess_member_quality
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
-from asymmetry.core.fitting.process_pool import open_spawn_pool
+from asymmetry.core.fitting.process_pool import map_when_a_pool_pays, open_spawn_pool
 from asymmetry.core.fitting.series_seeding import recommend_series_seeding
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
@@ -1198,9 +1198,8 @@ def _fit_grouped_series_independent(
         # Independent seeds → the members share no state, so each run's joint fit is
         # a self-contained, deterministic problem. Dispatch them across processes
         # (iminuit calls back into Python for every cost evaluation, so threads would
-        # serialise on the GIL; processes give real parallelism). Results are
-        # bit-identical to the sequential path regardless of worker count; a pool that
-        # cannot start (or breaks) returns ``None`` and we fall through to sequential.
+        # serialise on the GIL; processes give real parallelism) once their measured
+        # cost repays a pool's start-up. Results are bit-identical to the sequential path.
         parallel_results = _fit_members_parallel(
             run_order,
             members,
@@ -1302,12 +1301,12 @@ def _grouped_series_payload_picklable(model_fn) -> bool:
     return True
 
 
-def _grouped_member_worker(payload):
-    """Process-pool entry point: fit one run's groups and return ``(run, result)``.
+def _grouped_member_worker(payload, cancel_callback=None):
+    """Fit one run's groups and return ``(run, result)``, in-process or in a pool worker.
 
     Module-level (so it survives the ``spawn`` start method) and engine-free — each
-    worker builds its own :class:`FitEngine`. Cancellation is handled in the parent
-    between completions, so no cancel callback crosses the boundary.
+    call builds its own :class:`FitEngine`. Only an in-process call gets a cancel
+    callback; a pool worker's cancel is handled in the parent.
     """
     (
         run,
@@ -1335,7 +1334,7 @@ def _grouped_member_worker(payload):
         method=method,
         max_calls=max_calls,
         minos=minos,
-        cancel_callback=None,
+        cancel_callback=cancel_callback,
         cost=cost,
     )
     return run, result
@@ -1357,19 +1356,13 @@ def _fit_members_parallel(
     cost: str,
     cancel_callback: Callable[[], bool] | None,
     workers: int,
-) -> dict[int, GroupedTimeDomainFitResult] | None:
-    """Fit every independent member across a process pool; return ``{run: result}``.
+) -> dict[int, GroupedTimeDomainFitResult]:
+    """Fit every independent member, on a process pool once it pays; ``{run: result}``.
 
-    Members are dispatched to a spawn-based :class:`ProcessPoolExecutor` and collected
-    as they complete (the caller folds them in by run number, so completion order does
-    not matter). Results are bit-identical to the sequential path regardless of worker
-    count. Returns ``None`` — signalling the caller to run sequentially instead — when
-    a spawn-safe pool cannot start or the pool breaks mid-run (a constrained or frozen
-    environment); raises :class:`FitCancelledError` on a cooperative cancel.
-
-    Cancellation is coarse: a requested cancel stops collecting further results, but an
-    in-flight member fit runs to completion (the same per-member abort granularity as
-    the sequential path).
+    :func:`map_when_a_pool_pays` fits members in-process until their measured cost
+    warrants a spawn pool for the rest. Results are bit-identical to the sequential
+    path wherever each member is fit; raises :class:`FitCancelledError` on a
+    cooperative cancel.
     """
     payloads = [
         (
@@ -1388,32 +1381,9 @@ def _fit_members_parallel(
         )
         for raw_run in run_order
     ]
-    if cancel_callback is not None and bool(cancel_callback()):
-        raise FitCancelledError("Fit cancelled.")
-    # No spawn-safe workers here (e.g. a restricted sandbox) → the caller falls back to
-    # the sequential path, which produces identical results.
-    executor = open_spawn_pool(workers)
-    if executor is None:
-        return None
-    results: dict[int, GroupedTimeDomainFitResult] = {}
-    try:
-        futures = {
-            executor.submit(_grouped_member_worker, payload): payload[0] for payload in payloads
-        }
-        for future in as_completed(futures):
-            if cancel_callback is not None and bool(cancel_callback()):
-                raise FitCancelledError("Fit cancelled.")
-            run, result = future.result()
-            results[run] = result
-    except BrokenExecutor:
-        # A worker died for an environmental reason (not a fit failure — failed fits
-        # return success=False without raising). Abandon parallelism and let the
-        # caller re-run the batch sequentially rather than report partial results.
-        return None
-    finally:
-        # Drop pending work immediately; in-flight processes finish on their own.
-        executor.shutdown(wait=False, cancel_futures=True)
-    return results
+    return map_when_a_pool_pays(
+        _grouped_member_worker, payloads, workers=workers, cancel_callback=cancel_callback
+    )
 
 
 def _fit_grouped_series_global(
