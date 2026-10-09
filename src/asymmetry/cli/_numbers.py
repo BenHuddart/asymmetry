@@ -48,7 +48,7 @@ _RANGE_END = re.compile(r"\s?(?:[–-]|to)\s?[-+−]?\d+(?:\.\d+)?")
 
 #: Suffixes that make a number a derived multiple, significance or percentage.
 _DERIVED_SUFFIX = re.compile(
-    r"\s?(?:×|x|σ|sigma|%|percent|-fold|fold|\s?times"
+    r"\s?(?:×|x|σ|sigma|%|percent|-fold|fold|-point|\s?times"
     r"|\s?(?:standard|combined) errors?|\s?error bars?|\s?resolution elements?)(?![a-zA-Z])"
 )
 

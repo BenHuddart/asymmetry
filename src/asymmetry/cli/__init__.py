@@ -171,8 +171,9 @@ _RESULT_COMMANDS = frozenset(
 #: The closing step a result command names, so an agent that stops after one still audits.
 AUDIT_STEP = (
     "Before you reply — however the summary was asked for, and even to stop early: write "
-    "the summary to summary.md and run `asymmetry audit summary.md` — it lists the numbers "
-    "no command printed and the scans no fit covers; the reply is that file's text."
+    "the summary to summary.md and run `asymmetry audit summary.md`, whatever it may list — "
+    "it names the numbers no command printed and the scans no fit covers; the reply is that "
+    "file's text."
 )
 
 

@@ -3360,6 +3360,8 @@ def test_a_windowed_line_with_both_flanks_and_depth_is_called_a_resonance() -> N
     (note,) = _poor_fit_note(fit)
     assert note.startswith("RESONANCE: the line at 19475.5 ± 6.5 (width 232.5)")
     assert "16.0 errors from zero" in note and "chi2_red of 3.143" in note
+    # The scaled errors are printed, so nobody scales them by hand.
+    assert "± 11.5 on the centre and ± 21.3 on the width" in note
     # A shallow line is no resonance, and the poor fit's note returns.
     (poor,) = _poor_fit_note(fit | {"uncertainties": fit["uncertainties"] | {"f": 0.004}})
     assert poor.startswith("NOTE: the fit converged at chi2_red 3.143")

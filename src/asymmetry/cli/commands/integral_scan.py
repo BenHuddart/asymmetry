@@ -657,6 +657,11 @@ def _repeated_points(points: list[dict]) -> list[tuple[float, list[dict], bool]]
 _DISTINCT_REPEAT = 3.0
 
 
+def _scaled(fit: dict, name: str) -> float:
+    """*name*'s error scaled by √chi2_red, as a poor fit's errors are quoted."""
+    return fit["uncertainties"][name] * math.sqrt(fit["reduced_chi_squared"])
+
+
 def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
     """Notes on what a converged resonance fit left out or cannot vouch for.
 
@@ -694,7 +699,10 @@ def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
                 f"its centre and width"
                 + (
                     f", with errors understated by the chi2_red of "
-                    f"{format_number(fit['reduced_chi_squared'], 3)}."
+                    f"{format_number(fit['reduced_chi_squared'], 3)}: scaled by its square root "
+                    f"they are ± {_scaled(fit, name):.3g} on the centre and ± "
+                    f"{_scaled(fit, name.replace('B0', 'Bwid', 1)):.3g} on the width — quote "
+                    f"these."
                     if fit["reduced_chi_squared"] > _POOR_SCAN_FIT
                     else "."
                 )

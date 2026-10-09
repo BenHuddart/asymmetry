@@ -2277,6 +2277,22 @@ cuprate four audit rounds. A value printed verbatim with its sign now
 verifies in a difference context. Replay: seven such flags in waves 12–15
 go, final replies unchanged.
 
+#### Wave 23 and pass 21
+
+Wave 23 (passes 16–18): **22/24** — Tier A and trend-fit 8/8 (fmuf with the
+fluoride scope), tier-b and workflow 8/8, corpus-2026 6/8. Every audited
+reply but one was the audited file byte for byte. Basics kept the muonium
+amplitude and no longer called the faulty logged temperatures sample
+temperatures, but passed "a 47-point AICc difference"; corannulene found
+both hot lines and the broad cold line, then scaled the RESONANCE errors by
+hand and skipped the audit "because the surveyed scans are still unfitted".
+
+Pass 21: `RESONANCE` prints the √χ²ᵣ-scaled errors on the centre and width
+when the fit is poor; "N-point" is a derived suffix (replay over waves 12–23:
+that line only — a looser two-word comparison rule flagged a dozen readings
+such as "at 2 K is higher" and was dropped); the closing audit step says to
+run the audit "whatever it may list".
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

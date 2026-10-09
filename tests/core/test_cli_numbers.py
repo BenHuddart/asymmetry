@@ -318,6 +318,7 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         ("the shift is about 1.3 %", ["1.3 %"]),
         ("the spread is only about 40 G", ["40"]),
         ("logged offsets of +0.34 K", []),
+        ("a 47-point AICc difference", ["47-point"]),
         # A whole-number percentage naming an asymmetry restates it; elsewhere it is a ratio.
         ("A(0) is about 16 % throughout", []),
         ("the amplitude stays near 16 %", []),
