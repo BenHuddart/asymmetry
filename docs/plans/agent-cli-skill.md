@@ -2293,6 +2293,56 @@ that line only — a looser two-word comparison rule flagged a dozen readings
 such as "at 2 K is higher" and was dropped); the closing audit step says to
 run the audit "whatever it may list".
 
+#### Waves 24–25 and where round 2 ended — 2026-10-09 05:50
+
+Wave 24 (passes 19–20): **22/24** — Tier A and trend-fit 8/8, tier-b and
+workflow 7/8 (molecular AFM: "differ by at most about 0.17 K"; "at most" is
+not yet a hedge), corpus-2026 7/8. Basics passed for the first time this
+round, following the `MUONIUM:` recipe and series exactly and calling the
+amplitude fall the frequency response. Wave 25 (pass 21, the PR head), run in
+parallel from a second snapshot worktree: **21/24** — Tier A and trend-fit 7/8
+(maleic withdrew its concentration slope after excluding flagged points left
+two, a judgement call), tier-b and workflow 8/8, corpus-2026 6/8 (TRSB replied
+with a short digest that dropped the time-reversal reading the audited file
+held; corannulene fitted wide windows, read COMPARE's "cannot tell apart" as
+"the same line", and ended with a question).
+
+| wave | commit | Tier A + trend-fit | tier-b + workflow | corpus-2026 | total |
+|---|---|---|---|---|---|
+| 15 (end of round 1) | 867305d6 | 7/8 | 7/8 | 4/8 | 18 |
+| 16 | d697ff6b | 6/8 | 7/8 | 6/8 | 19 |
+| 17 | ca8c50c7 | 7/8 | 8/8 | 3/8 | 18 |
+| 18 | 1ea3401c | 8/8 | 8/8 | 3/8 | 19 |
+| 19 | eb1d20ec | 6/8 | 8/8 | 5/8 | 19 |
+| 20 | ee33e185 | 8/8 | 8/8 | 7/8 | 23 |
+| 21 | bb8a3ea9 | 7/8 | 7/8 | 6/8 | 20 |
+| 22 | 6b998890 | 7/8 | 7/8 | 6/8 | 20 |
+| 23 | 3cfce921 | 8/8 | 8/8 | 6/8 | 22 |
+| 24 | 57c912e9 | 8/8 | 7/8 | 7/8 | 22 |
+| 25 | 66d5e4df | 7/8 | 8/8 | 6/8 | 21 |
+
+Strict scores; most passes in the corpus group are judgement calls. Over the
+last six waves (20–25) the mean is 21.3/24 against 18.3 for waves 15–19.
+Tier A, trend-fit, hold-out, workflow and tier-b pass almost every wave; the
+misses rotate among corannulene, basics, TRSB and one number slip a wave
+elsewhere. Each wave cost $6.4–7.6.
+
+What still fails, and the likely next fix:
+- corannulene: wide windows put the hot line outside its range and COMPARE's
+  "cannot tell apart" reads as "the same line" — print the narrower window
+  command when a windowed fit's χ²ᵣ is high and its window is many widths
+  wide, and give COMPARE's separation in scaled errors.
+- the reply: two agents in wave 25 sent something other than the audited file
+  (a digest; a question), and one treated the CLI's imperative audit step as
+  a prompt injection and skipped the audit — the harness could compare the
+  reply with the last audited body, or the tail could state a fact rather
+  than an instruction (an open question below).
+- audit holes still seen: "at most about N", sums of printed columns, a value
+  quoted against the wrong run's row; false positives on whole-number
+  percentages that are not next to an amplitude's name and on years.
+- maleic: a supplied-axis rate series with too few unflagged points should
+  print the all-points law with a caveat, not only "readmit points".
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
@@ -2372,7 +2422,18 @@ Recorded here rather than fixed, because Phase 4 changes skill text only:
 
 ## Open questions for the maintainer
 
-None outstanding (both resolved 2026-09-14, see "Decisions recorded").
+From round 2 (2026-10-09), for Ben:
+- May the fluorine sniff recognise fluorinated materials by name (polymer
+  trade names and abbreviations, not only a formula's F)? It would make the
+  F–μ–F family reachable from the survey, but a corpus sample is named that
+  way; round 2 used a skill row instead.
+- The CLI's closing lines are imperatives ("Before you reply … run audit");
+  one Haiku run read them as a prompt injection and skipped the audit. Keep
+  them, restate them as facts, or move the check into the eval harness (a
+  diff of the reply against the last audited body)?
+
+Earlier questions: none outstanding (both resolved 2026-09-14, see "Decisions
+recorded").
 
 The amplitude/constant degeneracy raised on PR #361 was resolved 2026-10-08:
 Ben chose to hold `A_bg` at zero for slow relaxations. `fit` and `fit-series`
