@@ -201,22 +201,25 @@ def unfitted_scans(
 ) -> tuple[list[_UnfittedScan], list[tuple[str, dict, list[int]]]]:
     """The surveyed scans, and the scans the run notes define, with runs no fit holds."""
     from asymmetry.core.workflow.survey import ScanGroup
-    from asymmetry.core.workflow.workdir import WorkDir
+    from asymmetry.core.workflow.workdir import RunSelection, WorkDir
 
-    # Run numbers identify runs only within one data folder, so each survey is
-    # held against the fits and calibrators of every work directory bound to its
-    # folder (a work directory without a survey of its own included).
+    # Run numbers identify runs only within one run selection (a folder, and an
+    # instrument where two reuse numbers), so each survey is held against the fits
+    # and calibrators of every work directory bound to its selection (a work
+    # directory without a survey of its own included).
     workdirs = [workdir for workdir in map(WorkDir, roots) if workdir.manifest_path.is_file()]
-    fitted: dict[str, set[int]] = {}
-    calibrators: dict[str, set[int]] = {}
+    fitted: dict[RunSelection, set[int]] = {}
+    calibrators: dict[RunSelection, set[int]] = {}
     for workdir in workdirs:
-        folder = workdir.read_manifest()["folder"]
-        fitted.setdefault(folder, set()).update(workdir.fitted_runs())
-        calibrators.setdefault(folder, set()).update(workdir.alpha_calibration_runs())
-    surveys = [workdir.read_survey() for workdir in workdirs if workdir.survey_path.is_file()]
+        fitted.setdefault(workdir.selection, set()).update(workdir.fitted_runs())
+        calibrators.setdefault(workdir.selection, set()).update(workdir.alpha_calibration_runs())
+    surveys = {
+        workdir.selection: workdir.read_survey()
+        for workdir in workdirs
+        if workdir.survey_path.is_file()
+    }
     surveyed = [
-        (survey, fitted[survey["folder"]], calibrators[survey["folder"]])
-        for survey in {survey["folder"]: survey for survey in surveys}.values()
+        (survey, fitted[selection], calibrators[selection]) for selection, survey in surveys.items()
     ]
     unfitted = [
         _UnfittedScan(

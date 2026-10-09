@@ -233,7 +233,7 @@ def run(args: argparse.Namespace) -> None:
     misfit = [
         entry["run"] for entry in outcome.results if _MISFIT_FLAGS & set(entry["quality_flags"])
     ]
-    if 2 * len(misfit) > len(outcome.results) and runner_up in workdir.recipe_names():
+    if 2 * len(misfit) >= len(outcome.results) and runner_up in workdir.recipe_names():
         supplied = "" if args.x is None else f" --x {shlex.quote(args.x)}"
         start = "" if args.start is None else f" --start {args.start}"
         print(

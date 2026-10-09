@@ -621,7 +621,7 @@ def _absent_lines(folder: str, fit: dict, runs: list[int], payloads: dict[str, d
             moved = any(
                 abs(centre - c2) <= _COUNTERPART_WIDTHS * max(width, w2) for c2, w2 in lines
             )
-            if lines and covered and not moved:
+            if covered and not moved:
                 notes.append(
                     f"NOTE: scan {name} also covers {centre:g} (this line's width {width:g}), but "
                     f"none of its fits holds a line there. Fit it on the same window — asymmetry "

@@ -3494,6 +3494,10 @@ def test_a_line_another_analysed_scan_covers_without_a_fit_there_is_named() -> N
     # The same line moved a little is that line, not an absence.
     moved = scan([1, 2], fit(7300.0, 400.0, 5000.0, 9500.0))
     assert _absent_lines("data", hot, [3, 4], {"cold": moved}) == []
+    # A scan fitted with no line at all lacks this one as well.
+    flat = fit(7080.0, 390.0, 5000.0, 9500.0) | {"parameters": {"m": 0.0, "b": 0.1}}
+    (note,) = _absent_lines("data", hot, [3, 4], {"cold": scan([1, 2], flat)})
+    assert "none of its fits holds a line there" in note
 
 
 def test_a_wizard_component_at_twice_a_tesla_line_is_named_a_harmonic() -> None:

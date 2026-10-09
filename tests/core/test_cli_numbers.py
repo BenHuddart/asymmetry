@@ -18,6 +18,11 @@ Tc 69.1731 ± 0.0541, frequency 30.19 MHz, SNR 3.1x the noise floor
 """
 
 
+def _manifest(folder: str, instrument: str | None = None) -> str:
+    """A work directory's manifest binding it to *folder* and *instrument*."""
+    return json.dumps({"schema": 4, "folder": folder, "instrument": instrument})
+
+
 def test_printed_values_verify_at_the_precision_they_are_written() -> None:
     draft = "Tc = 69.17 ± 0.05 K from runs 102–106; the line at 30.2 MHz; chi2 0.97."
     assert unverified_numbers(draft, _LOG) == []
@@ -456,7 +461,7 @@ def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch
     }
     survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
-    (workdir / "manifest.json").write_text(json.dumps({"folder": "data"}), encoding="utf-8")
+    (workdir / "manifest.json").write_text(_manifest("data"), encoding="utf-8")
     draft = tmp_path / "summary.md"
     draft.write_text("A draft.\n", encoding="utf-8")
 
@@ -556,7 +561,7 @@ def test_a_hold_is_restated_when_unprinted_numbers_are_listed_too(
     }
     survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
-    (workdir / "manifest.json").write_text(json.dumps({"folder": "data"}), encoding="utf-8")
+    (workdir / "manifest.json").write_text(_manifest("data"), encoding="utf-8")
     draft = tmp_path / "summary.md"
     draft.write_text("A draft quoting 999.25 G.\n", encoding="utf-8")
 
@@ -588,7 +593,7 @@ def test_each_survey_is_held_against_its_own_work_directory(
         (root / "cli-output.log").write_text("$ asymmetry survey data\n", encoding="utf-8")
         survey = {"folder": name, "runs": [], "scans": [], "notes_scans": notes}
         (root / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
-        (root / "manifest.json").write_text(json.dumps({"folder": name}), encoding="utf-8")
+        (root / "manifest.json").write_text(_manifest(name), encoding="utf-8")
     for run in (11, 12, 13):
         (tmp_path / "asymmetry-work" / "fits" / f"x-{run}.json").write_text(
             json.dumps(
@@ -610,10 +615,18 @@ def test_each_survey_is_held_against_its_own_work_directory(
     # though it never surveyed the folder itself.
     (tmp_path / "asymmetry-work" / "survey.json").unlink()
     (tmp_path / "asymmetry-work" / "manifest.json").write_text(
-        json.dumps({"folder": "asymmetry-work-b"}), encoding="utf-8"
+        _manifest("asymmetry-work-b"), encoding="utf-8"
     )
     cli.main(["audit", str(draft)])
     assert "not fitted" not in capsys.readouterr().out
+
+    # Two instruments in one folder reuse run numbers: one's fits hold none of the other's runs.
+    for name, instrument in (("asymmetry-work", "EMU"), ("asymmetry-work-b", "MUSR")):
+        (tmp_path / name / "manifest.json").write_text(
+            _manifest("asymmetry-work-b", instrument), encoding="utf-8"
+        )
+    cli.main(["audit", str(draft)])
+    assert "not fitted: runs 11-13" in capsys.readouterr().out
 
 
 def test_review_edge_cases_of_the_audit(tmp_path: Path) -> None:

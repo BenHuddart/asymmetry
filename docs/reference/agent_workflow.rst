@@ -719,7 +719,7 @@ with at most one parameter more sits within 10 AICc of it, the wizard also
 writes that runner-up as ``recipes/wizard-<run>-alt.json`` and names it: a run
 that hardly tells two models apart leaves the scan to decide, and
 ``fit-series`` offers the runner-up when the recommended recipe's series flags
-most of its runs ``failed`` or ``amplitude_exceeds_data``.
+at least half of its runs ``failed`` or ``amplitude_exceeds_data``.
 Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended
