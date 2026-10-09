@@ -135,7 +135,12 @@ def run(args: argparse.Namespace) -> None:
         )
     # A short scan (a calibration pair, a setpoint's two or three fields) is
     # listed for the summary to account for; only a longer one holds the reply.
-    held_scans = [entry for entry in unfitted if len(entry.scan.runs) > _SHORT_SCAN_RUNS]
+    # A scan crossing samples is listed with "or say why not"; only one sample's scan holds.
+    held_scans = [
+        entry
+        for entry in unfitted
+        if len(entry.scan.runs) > _SHORT_SCAN_RUNS and len(entry.scan.samples) <= 1
+    ]
     held = held_scans or unfitted_notes or laws or relations or unpaired or untested
     held = held or untrended or dips
     if not found and held:
@@ -237,7 +242,7 @@ def still_unfitted(root: Path) -> str | None:
     names = [
         f"{entry.scan.instrument} {range_text(entry.runs)} ({entry.scan.axis})"
         for entry in unfitted
-        if len(entry.scan.runs) > _SHORT_SCAN_RUNS
+        if len(entry.scan.runs) > _SHORT_SCAN_RUNS and len(entry.scan.samples) <= 1
     ] + [
         f"{scan['instrument']} {range_text(runs)} ({scan['quantity']})"
         for _, scan, runs in unfitted_notes

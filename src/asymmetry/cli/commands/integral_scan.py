@@ -401,6 +401,14 @@ def _notes(
             f"Next: the red period sat {format_number(-offset['gauss'], 2)} G below the green; "
             f"with the pair offset free the fit is degenerate, so refit with {fixes}."
         )
+    if offset is not None and fit is not None and "LorentzianLCRPair" not in fit["expression"]:
+        lines.append(
+            f"Next: the red period sat {format_number(-offset['gauss'], 2)} G below the green, "
+            f"so each line appears in the green - red difference as a pair of opposite dips "
+            f"that step apart (a differential ALC scan), which one Lorentzian cannot describe: "
+            f"refit with --model 'LorentzianLCRPair + Linear' --fix "
+            f"dB={format_number(-offset['gauss'], 2)}."
+        )
     if fit is not None and fit["resonance_windows"]:
         lines.append(_failed_fit_next(fit))
     elif fit is not None:

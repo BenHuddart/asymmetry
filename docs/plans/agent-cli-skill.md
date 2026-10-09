@@ -2164,6 +2164,26 @@ asked for, and even to stop early; the audit's list of short unfitted scans
 leaves out runs that measured alpha (TCNQ's agent fitted its 100 G
 calibration runs to clear it).
 
+#### Wave 20 and pass 14
+
+Wave 20 (passes 10–12): **23/24** — Tier A and trend-fit 8/8, tier-b and
+workflow 8/8, corpus-2026 7/8, the best wave of either round. Basics was the
+only fail: it used the new minimum note on the steering scan and the range
+curve's levelling point, but fitted the low-field quartz muonium with one damped
+cosine (19 runs flagged), called it unusable, and never reached a clean audit
+(a scan crossing two samples stayed listed although the draft said why).
+Corannulene passed with the survey's split of its 50 K block, benzene RF with
+the printed resonance fields, LiFeAs, TRSB, benzene ALC again. In 23 of 24
+runs the reply was the audited file or differed only in wording.
+
+Pass 14: `survey` names runs whose line sits near muonium's weak-field triplet
+frequency for their field on a `MUONIUM:` line (replay: basics' 16 quartz runs
+and maleic's four muonium-in-water runs, nowhere else); a scan crossing samples
+is listed but no longer holds the reply or the "Still unfitted" line, as its
+own text ("or say in the summary why not") always promised (maleic gave up on
+its audit over one in wave 19); a single Lorentzian on a stepped green−red scan
+is pointed at `LorentzianLCRPair` with `dB` held at the step.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

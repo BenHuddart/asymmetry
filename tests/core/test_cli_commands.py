@@ -949,6 +949,7 @@ def test_integral_scan_green_red_suggests_holding_a_pair_at_the_period_field_off
     assert data["period_field_offset"] == {"gauss": pytest.approx(-44.0), "runs": 2}
     # The Next line survives --json.
     assert any("--fix dB=44.00" in note for note in data["notes"])
+    assert not any("refit with --model 'LorentzianLCRPair" in note for note in data["notes"])
 
 
 def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
@@ -2966,6 +2967,20 @@ def _failed_resonance_fit(**changes) -> dict:
             },
         ],
     } | changes
+
+
+def test_one_lorentzian_on_a_stepped_green_red_scan_is_pointed_at_the_pair() -> None:
+    from asymmetry.cli.commands.integral_scan import _notes
+    from asymmetry.core.workflow.reduction import GREEN_MINUS_RED, ReductionSettings
+
+    result = {
+        "scan": {"points": [], "order_key": "field"},
+        "period_field_offset": {"gauss": -44.0, "runs": 2},
+        "settings": ReductionSettings(period=GREEN_MINUS_RED).to_dict(),
+        "fit": _failed_resonance_fit(expression="LorentzianLCR + Linear"),
+    }
+    notes = _notes(result, [], [], [], [])
+    assert any("--model 'LorentzianLCRPair + Linear' --fix dB=44.00" in note for note in notes)
 
 
 def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Path) -> None:

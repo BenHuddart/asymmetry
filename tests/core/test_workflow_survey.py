@@ -1087,3 +1087,19 @@ def test_a_scan_crossing_numbered_samples_at_one_setpoint_is_a_composition_serie
     # 300 K holds two samples only: too few for a slope.
     (found,) = composition_sets(scan, rows)
     assert (found.setpoint, found.runs, found.values) == (290.0, [1, 2, 3], [None, 0.25, 0.5])
+
+
+def test_a_line_near_muoniums_triplet_frequency_for_its_field_is_named_muonium() -> None:
+    from asymmetry.core.workflow.survey import muonium_runs
+
+    def line(frequency: float) -> PrecessionEvidence:
+        return PrecessionEvidence(
+            state="other", frequency_mhz=frequency, snr=20.0, larmor_mhz=0.027, note=""
+        )
+
+    rows = [
+        _row(run_number=1, temperature=300.0, field=2.0, geometry="TF", precession=line(2.7)),
+        # A magnet's own line, far from 1.39 MHz per gauss of the applied field.
+        _row(run_number=2, temperature=300.0, field=2.0, geometry="TF", precession=line(40.0)),
+    ]
+    assert [row.run_number for row in muonium_runs(rows)] == [1]

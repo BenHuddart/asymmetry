@@ -282,6 +282,20 @@ def _render(survey, survey_path: Path) -> str:
             f"needs --instrument NAME (the file prefix, in any case: {', '.join(shared)})."
         )
         lines.append("")
+    from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+    from asymmetry.core.workflow.survey import MUONIUM_MHZ_PER_G, muonium_runs
+
+    muonium = muonium_runs(survey.runs)
+    if muonium:
+        listed = run_spec(sorted(row.run_number for row in muonium), separator=", ")
+        lines.append(
+            f"MUONIUM: runs {listed} precess near {MUONIUM_MHZ_PER_G:.4g} MHz per gauss of their "
+            f"field (the other@ line), muonium's triplet precession in a weak transverse field, "
+            f"not the bare muon's {field_gauss_to_frequency_mhz(1.0):.4g} MHz/G: screen them "
+            f"with --scope muonium-radical and report the muonium line, its amplitude against "
+            f"field, and where it is lost."
+        )
+        lines.append("")
     if survey.temperature_departures:
         lines.append(
             "TEMPERATURE: the logged sample temperature (T log) and the setpoint (T/K) "

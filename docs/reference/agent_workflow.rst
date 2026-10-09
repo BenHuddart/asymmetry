@@ -271,6 +271,9 @@ setpoint, and the setpoint-grouped scans that contain them are provisional.
 The line lists the runs in consecutive blocks of similar offset with each
 block's range (``T log − T/K``), so a block sitting several kelvin away from the
 rest stands out as its own measurement.
+Runs whose line sits within 15 % of muonium's weak-field triplet frequency for
+their field (about 1.394 MHz per gauss) are named on a ``MUONIUM:`` line, with
+the wizard scope that screens them.
 Each alpha-calibration candidate is listed with its own
 measured alpha, and where alpha moves by more than 10 % between consecutive
 candidates in run order — a sample change, a moved detector, a second
@@ -1294,7 +1297,8 @@ formed from that period's own counts under the `Reduction options`_, with their
 errors added in quadrature. With no field step logged between the periods the
 contrast is the RF switched on and off, and ``integral-scan`` names
 ``RFResonanceMuP``; a logged step makes it a differential ALC scan, whose
-``Next`` line holds the pair's ``dB`` at the step. After an ``RFResonanceMuP``
+``Next`` line holds the pair's ``dB`` at the step (and points a single
+Lorentzian on such a scan at ``LorentzianLCRPair``). After an ``RFResonanceMuP``
 fit the report prints the two resonance fields its couplings imply, or says the
 couplings are not a result when those fields fall outside the scan. ``RFResonanceMuP`` fits the muon and proton
 couplings of an RF scan with the RF frequency held at its acquisition value.

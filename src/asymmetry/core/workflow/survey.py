@@ -39,6 +39,7 @@ from asymmetry.core.fitting.fit_wizard import (
     MIN_CYCLES_IN_EFFECTIVE_WINDOW,
     fingerprint_spectrum,
 )
+from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.transform.grouping import group_names
@@ -1324,6 +1325,25 @@ def _note_shared_unresolved(
             f"at this temperature — likely its points, not this scan's"
         ),
     )
+
+
+#: Muonium's triplet precession per gauss in a weak transverse field, (γₑ − γ_μ)/4π.
+MUONIUM_MHZ_PER_G = (G_E_MHZ_PER_G - G_MU_MHZ_PER_G) / 2.0
+
+#: A line within this fraction of :data:`MUONIUM_MHZ_PER_G` times the field is muonium's.
+_MUONIUM_TOLERANCE = 0.15
+
+
+def muonium_runs(rows: list[RunRow]) -> list[RunRow]:
+    """The runs whose line sits near muonium's triplet frequency for their field."""
+    return [
+        row
+        for row in rows
+        if row.precession.state == "other"
+        and row.field
+        and abs(row.precession.frequency_mhz / abs(row.field) / MUONIUM_MHZ_PER_G - 1.0)
+        < _MUONIUM_TOLERANCE
+    ]
 
 
 def calibration_verdict(
