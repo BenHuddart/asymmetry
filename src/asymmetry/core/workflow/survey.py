@@ -39,6 +39,7 @@ from asymmetry.core.fitting.fit_wizard import (
     MIN_CYCLES_IN_EFFECTIVE_WINDOW,
     fingerprint_spectrum,
 )
+from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.transform.grouping import group_names
@@ -1226,14 +1227,16 @@ def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
 def _field_scan_members(members: list[RunRow], stretch: dict[str, int]) -> list[list[RunRow]]:
     """The field scans in *members*, runs sharing an instrument, temperature, note and set-up.
 
-    Two cuts. A run at a field its scan already holds, taken after the cryostat
+    Three cuts. A run at a field its scan already holds, taken after the cryostat
     visited another temperature, starts a repeat of the scan — a field point
     re-measured in the same visit (a return sweep) does not, and neither does a
     new field after a detour (a scan measured alternately at two temperatures).
     And a minority of runs precessing at their Larmor frequency among runs that
     do not are transverse calibrations taken beside a longitudinal scan, and are
     not part of it; where they are the majority the scan is transverse, and runs
-    too slow or too fast to show a line belong to it. *stretch* numbers each
+    too slow or too fast to show a line belong to it. And a sweep whose widening
+    steps give way to even ones is two measurements (:func:`_sweep_change`).
+    *stretch* numbers each
     file's stretch of consecutive runs at one temperature.
     """
     scans: list[list[RunRow]] = []
@@ -1250,8 +1253,39 @@ def _field_scan_members(members: list[RunRow], stretch: dict[str, int]) -> list[
         larmor = [row for row in scan if row.precession.state == "larmor"]
         if 2 * len(larmor) < len(scan):
             scan = [row for row in scan if row.precession.state != "larmor"]
-        result.append(scan)
+        cut = _sweep_change(sorted(float(row.field) for row in scan))
+        if cut is None:
+            result.append(scan)
+        else:
+            result.append([row for row in scan if float(row.field) < cut])
+            result.append([row for row in scan if float(row.field) >= cut])
     return result
+
+
+#: A field sweep changes measurement where its step falls this many times and
+#: then holds (within :data:`_EVEN_STEPS`) for :data:`_HELD_STEPS` steps.
+_STEP_COLLAPSE = 5.0
+_EVEN_STEPS = 1.5
+_HELD_STEPS = 4
+
+
+def _sweep_change(fields: list[float]) -> float | None:
+    """The field where a sweep's widening steps give way to even ones, if they do.
+
+    A decoupling sweep steps geometrically (1, 1.8, 3, 5.4 … G) and a level-
+    crossing scan in even steps; run back to back at one temperature they share
+    every key but are two measurements, cut at the first field of the even run.
+    """
+    steps = [high - low for low, high in zip(fields, fields[1:], strict=False)]
+    for index in range(3, len(steps) - _HELD_STEPS + 1):
+        held = steps[index : index + _HELD_STEPS]
+        if (
+            min(held) > 0.0
+            and max(held) <= _EVEN_STEPS * min(held)
+            and steps[index - 1] >= _STEP_COLLAPSE * steps[index]
+        ):
+            return fields[index]
+    return None
 
 
 def _note_shared_unresolved(
@@ -1291,6 +1325,25 @@ def _note_shared_unresolved(
             f"at this temperature — likely its points, not this scan's"
         ),
     )
+
+
+#: Muonium's triplet precession per gauss in a weak transverse field, (γₑ − γ_μ)/4π.
+MUONIUM_MHZ_PER_G = (G_E_MHZ_PER_G - G_MU_MHZ_PER_G) / 2.0
+
+#: A line within this fraction of :data:`MUONIUM_MHZ_PER_G` times the field is muonium's.
+_MUONIUM_TOLERANCE = 0.15
+
+
+def muonium_runs(rows: list[RunRow]) -> list[RunRow]:
+    """The runs whose line sits near muonium's triplet frequency for their field."""
+    return [
+        row
+        for row in rows
+        if row.precession.state == "other"
+        and row.field
+        and abs(row.precession.frequency_mhz / abs(row.field) / MUONIUM_MHZ_PER_G - 1.0)
+        < _MUONIUM_TOLERANCE
+    ]
 
 
 def calibration_verdict(

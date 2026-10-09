@@ -105,7 +105,9 @@ def run(args: argparse.Namespace) -> None:
             f"{pair[1] - pair[0]:.4g} ± {math.hypot(*errors):.2g} MHz apart. A split below the "
             f"FFT resolution is still two lines: compare chi2, not chi2_red, with the one-line "
             f"fit's{weight} and if it is lower report both frequencies, their separation and "
-            f"amplitudes, not a single line."
+            f"amplitudes, not a single line. A rate pinned at its bound or a large error flags "
+            f"one line's envelope, not the line: it does not cancel the chi2 gain, so do not "
+            f"headline a single line either."
         )
     note = window_note(workdir, [args.run])
     if note is not None:

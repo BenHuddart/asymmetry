@@ -6,17 +6,24 @@ a command's output. Every command's printed output is appended to
 :func:`unverified_numbers` holds a draft against it.
 
 A match is deliberately loose — a number written with *d* decimals matches any
-printed value it rounds from — so a match says only that the number appears in
-some output, not that it is the right one. Numbers written as a multiple or a
+printed value within one unit of its last digit (rounded or truncated) — so a
+match says only that the number appears in some output, not that it is the
+right one. Numbers written as a multiple or a
 significance or a whole-number percentage (``10×``, ``4.3σ``, ``32 %``), or named
 as a difference (``ΔAICc 11``), match only when a command printed that exact
 token (``×``, ``x`` and "times" alike). A number whose context makes it
-arithmetic — after "a factor of" or a difference phrase ("agree to about 0.02
-MHz", "falls by 0.03 MHz", "a margin of 3.6"), named as a comparison ("4 points
+arithmetic — after "a factor of", a difference phrase ("agree to about 0.02
+MHz", "falls by 0.03 MHz", "a margin of 3.6") or a conversion ("corresponds to
+about 21 G"), named as a comparison ("4 points
 better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` — is listed unless
 a command printed it verbatim to three or more significant digits (a run number,
 a field on the scan's grid). A range ``a–b`` shares its context between both
-ends, and ``4,200`` and ``3.2 × 10⁻⁸`` read as one number.
+ends, and ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
+("about 12340 G") may round away its trailing zeros, a field in kG restates
+one printed in G, and "1σ errors", "> 3σ" and "2× LorentzianLCR" are
+conventions, thresholds and counts, not derived numbers. A whole-number
+percentage right after an asymmetry's name ("A_1 is about 33 %") is that
+asymmetry in its unit, not a ratio.
 """
 
 from __future__ import annotations
@@ -41,11 +48,14 @@ _RANGE_END = re.compile(r"\s?(?:[–-]|to)\s?[-+−]?\d+(?:\.\d+)?")
 
 #: Suffixes that make a number a derived multiple, significance or percentage.
 _DERIVED_SUFFIX = re.compile(
-    r"\s?(?:×|x|σ|sigma|%|percent|-fold|fold|\s?times"
+    r"\s?(?:×|x|σ|sigma|%|percent|-fold|fold|-point|\s?times"
     r"|\s?(?:standard|combined) errors?|\s?error bars?|\s?resolution elements?)(?![a-zA-Z])"
 )
 
-_HEDGE = r"(?:about|roughly|approximately|around|some|only|up to|~|≈)?"
+#: A hedge that makes "the shift is about N" an estimate, where "the shift is N" quotes one.
+_APPROXIMATE = r"(?:about|roughly|approximately|around|~|≈)"
+
+_HEDGE = r"(?:(?:about|roughly|approximately|around|some|only|up to|~|≈)\s*)*"
 
 #: Verbs whose "by N" is a change, not a time ("falls by 0.03" against
 #: "disappears by 6 K").
@@ -59,14 +69,18 @@ _CHANGE_VERB = (
 #: joined by "and", and no "to" ("falls to 0.2 by 50 K" says when, not how much).
 _CLAUSE = r"(?:(?!\b(?:and|to)\b)(?:[^.,;:]|\.(?=\d)))*?"
 
-#: Phrases that make the number after them a ratio ("a factor of ~3") or a
+#: Phrases that make the number after them a ratio ("a factor of ~3"), a
 #: difference ("within about 2 G", "falls by 0.03", "agree with the survey to
-#: about 0.02 MHz", "a margin of 3.6"), hedged or not.
+#: about 0.02 MHz", "a margin of 3.6") or a conversion ("which would be a field of
+#: about 21 G"), hedged or not.
 _DERIVED_PREFIX = re.compile(
     rf"(?:factor of|times|fold|within|\b{_CHANGE_VERB}\w*\b{_CLAUSE},?\s*\bby"
     rf"|agree\w*\b{_CLAUSE}\bto"
+    rf"|\b(?:correspond\w*\s+to|equivalent\s+(?:to|of)|amounts?\s+to|converts?\s+to"
+    rf"|translat\w*\s+(?:in)?to|would\s+be){_CLAUSE}"
     rf"|\b(?:margin|difference|gap|shift|drop|rise|increase|decrease|change|offset"
-    rf"|discrepancy|spread|scatter|deviation)s?\s+of)\s*{_HEDGE}\s*$",
+    rf"|discrepancy|spread|scatter|deviation)s?\s+(?:of|(?:is|was|are|were)\s+(?:only\s+|just\s+)?{_APPROXIMATE}))"
+    rf"\s*{_HEDGE}\s*$",
     re.IGNORECASE,
 )
 
@@ -81,7 +95,8 @@ _RATIO_WORD = re.compile(
     rf"\bfactor of\s*{_HEDGE}\s*{_NUMBER_WORD}\b"
     rf"|\b{_NUMBER_WORD}(?:\s+to\s+{_NUMBER_WORD})?(?:-?fold\b|\s+times(?=\s+(?:its|their|the"
     r"|as|larger|smaller|faster|slower|higher|lower|broader|narrower|wider|greater|bigger"
-    r"|stronger|weaker|longer|shorter|more|less)\b))",
+    r"|stronger|weaker|longer|shorter|more|less)\b)"
+    r"|\s+(?:combined\s+|standard\s+)*(?:errors?|sigma|σ|standard deviations?)\b)",
     re.IGNORECASE,
 )
 
@@ -91,7 +106,7 @@ _DELTA_PREFIX = re.compile(rf"Δ[A-Za-zχν]\S*\s*(?:=|:|of|is)?\s*{_HEDGE}\s*$"
 #: A ``±`` after a value, its unit and a table's cell border (``| 85.95 K | ±``):
 #: a ``±`` without one is a spread or a relative error (``±0.2 MHz``, ``±0.6 %``),
 #: not a printed value's error.
-_VALUE_PLUS_MINUS = re.compile(r"\d(?:\s*[^\W\d][^\s|±]*)?[\s|]*±\s*$")
+_VALUE_PLUS_MINUS = re.compile(r"\d(?:\s*[^\W\d][^\s|±(]*)?[\s|(]*±\s*$")
 
 #: Words after a number (and its unit) that name it a comparison of two values.
 _COMPARISON_SUFFIX = re.compile(
@@ -100,6 +115,25 @@ _COMPARISON_SUFFIX = re.compile(
     r"(?!\s+(?:bound|limit|edge))",
     re.IGNORECASE,
 )
+
+#: Words that make a percentage an asymmetry in its unit, not a ratio ("A_1 is about 33 %").
+_ASYMMETRY_CONTEXT = re.compile(
+    r"(?:(?-i:\bA_\w+\b|\bA\(0\)|\bA[₀-₉]+)|\b(?:amplitudes?|asymmetry|fractions?)\b)"
+    r"[^.;\n]{0,25}$",
+    re.IGNORECASE,
+)
+
+#: A comparison sign before a significance makes it a threshold ("> 3σ"), not a result.
+_THRESHOLD = re.compile(r"[<>≤≥]\s*$")
+
+#: A multiple that counts a model's components ("2× LorentzianLCR"), not a ratio.
+_COMPONENT_COUNT = re.compile(r"\s*[A-Z][a-z]+[A-Z]")
+
+#: A hedge right before a number: an integer it rounds may drop its trailing digits.
+_ROUNDED_HEDGE = re.compile(r"(?:about|roughly|approximately|around|near|~|≈)\s*$", re.IGNORECASE)
+
+#: A kilo-unit a printed field in gauss (or oersted) is restated in.
+_KILO_UNIT = re.compile(r"\s?(?:kG|kOe)\b")
 
 #: Significant digits a printed token needs to verify a number its context makes
 #: arithmetic: a run number or a grid field, not a small value printed by chance.
@@ -125,14 +159,23 @@ def _decimals(token: str) -> int:
 
 
 def _multiples(text: str) -> str:
-    """*text* with every multiple sign written as ``x`` (``3.3×``, ``3.3 times``)."""
-    return re.sub(r"\s?(?:×|times\b)", "x", text)
+    """*text* with every multiple sign written as ``x`` and no space before ``%``."""
+    return re.sub(r"\s?(?:×|times\b)", "x", re.sub(r"\s+%", "%", text))
 
 
 #: A JSON array of ten or more numbers — a time axis, a histogram, a spectrum
 #: dumped by ``--json``. Its values were never read by anyone, and a rounded
 #: sum or ratio would match one of its thousands of elements by chance.
 _NUMBER_ARRAY = re.compile(r"\[(?:\s*[-+\deE.]+\s*,){9,}\s*[-+\deE.]+\s*\]")
+
+
+def _within(values: list[float], value: float, tolerance: float) -> bool:
+    """Whether a printed value of either sign lies within *tolerance* of ``|value|``."""
+    return any(
+        bisect.bisect_left(values, centre - tolerance)
+        < bisect.bisect_right(values, centre + tolerance)
+        for centre in (abs(value), -abs(value))
+    )
 
 
 def printed_values(log_text: str) -> list[float]:
@@ -154,6 +197,7 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
         found.extend(
             Unverified(match.group(), line_number, line.strip())
             for match in _RATIO_WORD.finditer(line)
+            if match.group().lower() not in log_text.lower()
         )
         shared_until = -1
         for match in _DRAFT_NUMBER.finditer(line):
@@ -180,7 +224,11 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
                 printed = _printed_verbatim(token, log_text) or _printed_verbatim(
                     match.group("mantissa"), log_text
                 )
-                if significant < _VERBATIM_DIGITS or not printed:
+                # A value printed with its sign ("+0.34") is that value, not a chance match.
+                signed = match.group("mantissa")[0] in "+-−" and _printed_verbatim(
+                    match.group("mantissa"), log_text
+                )
+                if not signed and (significant < _VERBATIM_DIGITS or not printed):
                     found.append(Unverified(text, line_number, line.strip()))
                 continue
             if _DELTA_PREFIX.search(before):
@@ -189,25 +237,41 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
                 continue
             # A decimal percentage ("A(0) 16.42 %") is a printed asymmetry in
             # its unit; a whole-number one ("32 %") is almost always a ratio.
-            if suffix is not None and "%" in suffix.group() and "." in token:
+            if (
+                suffix is not None
+                and "%" in suffix.group()
+                and ("." in token or _ASYMMETRY_CONTEXT.search(before))
+            ):
                 suffix = None
+            if suffix is not None and (
+                ("σ" in suffix.group() or "sigma" in suffix.group())
+                and (token == "1" or _THRESHOLD.search(before))
+                or suffix.group().strip() in ("×", "x")
+                and _COMPONENT_COUNT.match(line, suffix.end())
+            ):
+                continue
             if suffix is not None:
-                if _multiples(token + suffix.group()) not in multiples:
+                if not _printed_verbatim(_multiples(token + suffix.group()), multiples):
                     found.append(Unverified(text, line_number, line.strip()))
                 continue
             exponent = match.group("exponent")
             scale = 10.0 ** int(exponent.translate(_SUPERSCRIPT)) if exponent else 1.0
-            value = _value(token) * scale
-            tolerance = 0.5 * 10.0 ** -_decimals(token) * scale + 1e-12 * scale
-            lo = bisect.bisect_left(values, abs(value) - tolerance)
-            hi = bisect.bisect_right(values, abs(value) + tolerance)
-            neg_lo = bisect.bisect_left(values, -abs(value) - tolerance)
-            neg_hi = bisect.bisect_right(values, -abs(value) + tolerance)
-            if (
-                lo == hi
-                and neg_lo == neg_hi
-                and not _printed_verbatim(match.group("mantissa"), log_text)
-            ):
+            # "about 12340 G" for a printed 12340.6: a hedged integer's trailing zeros are not digits.
+            zeros = 0 if "." in token else len(token) - len(token.rstrip("0"))
+            rounded = (
+                zeros
+                and len(token.lstrip("-+")) >= _VERBATIM_DIGITS
+                and _ROUNDED_HEDGE.search(before)
+            )
+            step = 10.0**zeros if rounded else 10.0 ** -_decimals(token)
+            # One unit in the last written digit: agents truncate as often as they round.
+            tolerance = (step + 1e-12) * scale
+            # A field in kilogauss restates a printed one in gauss.
+            multipliers = (1.0, 1000.0) if _KILO_UNIT.match(line, match.end()) else (1.0,)
+            if not any(
+                _within(values, _value(token) * scale * factor, tolerance * factor)
+                for factor in multipliers
+            ) and not _printed_verbatim(match.group("mantissa"), log_text):
                 found.append(Unverified(match.group(), line_number, line.strip()))
     return found
 
@@ -219,6 +283,9 @@ LAW_VOCABULARY: dict[str, tuple[str, ...]] = {
     "Redfield": ("correlation time", "redfield"),
     "OrderParameter": ("critical exponent",),
 }
+
+#: Words that make a sentence deny, rather than claim, what it names.
+_NEGATION = re.compile(r"\b(?:not|no|never|without|cannot)\b|n't")
 
 _FIT_HEADER = re.compile(r"^Fit of (?P<expression>.+?) to ", re.MULTILINE)
 
@@ -239,13 +306,18 @@ def unsupported_laws(draft: str, log_text: str) -> list[tuple[str, str]]:
         for law in LAW_VOCABULARY:
             if law in header.group("expression"):
                 verdicts[law] = verdicts.get(law, False) or established
-    lowered = draft.lower()
+    # A sentence that negates the law ("no activation energy is quoted") does not lean on it.
+    asserted = [
+        sentence
+        for sentence in re.split(r"(?<=[.;!?])\s|\n", draft.lower())
+        if not _NEGATION.search(sentence)
+    ]
     return [
         (law, phrase)
         for law, established in verdicts.items()
         if not established
         for phrase in LAW_VOCABULARY[law]
-        if phrase in lowered
+        if any(phrase in sentence for sentence in asserted)
     ]
 
 
@@ -263,6 +335,12 @@ class _SaySo:
 def _pattern(text: str) -> re.Pattern[str]:
     return re.compile(text, re.IGNORECASE)
 
+
+#: Words that give a shift its direction.
+_DIRECTION = (
+    r"(?:lower|higher|below|above|downward|upward|\bdown\b|\bup\b|decreas|increas|fall|falls"
+    r"|rise|rises|drop|diamagnetic|negative|positive|[−+-]\s?\d)"
+)
 
 #: Lines a command printed that the summary must act on in words. The ``stated``
 #: patterns are deliberately lenient — a keyword in the draft is taken as the
@@ -315,8 +393,12 @@ _SAY_SO: tuple[_SaySo, ...] = (
     ),
     _SaySo(
         _pattern(r"a shift of the line \(a Knight shift"),
-        _pattern(r"\bshift"),
-        "report the line's frequency shift, with its error",
+        _pattern(
+            rf"\bshift(?:[^.\n]|\.(?=\d)){{0,100}}{_DIRECTION}"
+            rf"|{_DIRECTION}(?:[^.\n]|\.(?=\d)){{0,100}}\bshift"
+        ),
+        "report the line's frequency shift with its error, and which way it moves (lower or "
+        "higher at low temperature)",
     ),
     _SaySo(
         _pattern(r"the instrument's frequency response"),
@@ -340,6 +422,12 @@ _SAY_SO: tuple[_SaySo, ...] = (
         ),
         "say that the longitudinal field decouples the zero-field relaxation, so its fields "
         "are static on the muon time scale",
+    ),
+    _SaySo(
+        _pattern(r"a (?:minimum|maximum), not a step"),
+        _pattern(r"minimum|maximum|smallest|largest|lowest|highest|\bdip\b|\bpeak"),
+        "say where the parameter is smallest (or largest) inside the scan, and that it rises "
+        "(or falls) on both sides",
     ),
     _SaySo(
         _pattern(r"averages two regimes: say so"),

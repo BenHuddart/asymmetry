@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from collections.abc import Sequence
+import shlex
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from asymmetry.cli._output import (
@@ -23,7 +24,7 @@ from asymmetry.cli._reduction import (
     describe,
     reduction_settings,
 )
-from asymmetry.cli._runs import range_text, resolve_runs
+from asymmetry.cli._runs import range_text, resolve_runs, run_spec
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -253,24 +254,24 @@ def run(args: argparse.Namespace) -> None:
         for (run_number, _prefix, _path), dataset in zip(targets, datasets, strict=True)
         if run_geometry(dataset.metadata) == "TF"
     }
-    stored = {
-        path.stem: stored_fit
+    payloads = {
+        path.stem: json.loads(path.read_text(encoding="utf-8"))
         for path in sorted(workdir.scans_dir.glob("*.json"))
         if path.stem != name
-        and (stored_fit := json.loads(path.read_text(encoding="utf-8"))["fit"]) is not None
     }
-    elsewhere = [
-        value
-        for stored_fit in stored.values()
-        if stored_fit["success"]
-        for parameter, value in stored_fit["parameters"].items()
-        if parameter.split("_")[0] == "B0"
+    stored = {stem: entry["fit"] for stem, entry in payloads.items() if entry["fit"] is not None}
+    # Another stored fit of this scan (another window) may hold a dip this one announces.
+    same_scan = [
+        entry["fit"]
+        for entry in payloads.values()
+        if entry["runs"] == result_payload["runs"] and entry["fit"] is not None
     ]
     notes = _notes(
-        result_payload, free_offsets, summed, contradicted_tf_stamps(scan, stamped_tf), elsewhere
+        result_payload, free_offsets, summed, contradicted_tf_stamps(scan, stamped_tf), same_scan
     )
     if fit_payload is not None:
         notes.extend(_line_comparisons(fit_payload, stored))
+        notes.extend(_absent_lines(args.folder, fit_payload, result_payload["runs"], payloads))
     from asymmetry.core.workflow.survey import has_file_deadtime
 
     notes.extend(
@@ -361,11 +362,11 @@ def _notes(
     free_offsets: list[str],
     summed: list[int],
     longitudinal: list[int],
-    elsewhere: list[float],
+    same_scan: list[dict],
 ) -> list[str]:
     """Every NOTE and Next line the scan calls for — printed, and kept in --json.
 
-    *elsewhere* holds the line centres other stored scans in the work directory fitted.
+    *same_scan* holds the other stored fits of this scan.
     """
     fit = result["fit"]
     offset = result["period_field_offset"]
@@ -400,10 +401,18 @@ def _notes(
             f"Next: the red period sat {format_number(-offset['gauss'], 2)} G below the green; "
             f"with the pair offset free the fit is degenerate, so refit with {fixes}."
         )
+    if offset is not None and fit is not None and "LorentzianLCRPair" not in fit["expression"]:
+        lines.append(
+            f"Next: the red period sat {format_number(-offset['gauss'], 2)} G below the green, "
+            f"so each line appears in the green - red difference as a pair of opposite dips "
+            f"that step apart (a differential ALC scan), which one Lorentzian cannot describe: "
+            f"refit with --model 'LorentzianLCRPair + Linear' --fix "
+            f"dB={format_number(-offset['gauss'], 2)}."
+        )
     if fit is not None and fit["resonance_windows"]:
         lines.append(_failed_fit_next(fit))
     elif fit is not None:
-        lines.extend(_poor_fit_note(fit, elsewhere))
+        lines.extend(_poor_fit_note(fit, same_scan))
     if summed:
         lines.append(
             f"NOTE: {range_text(summed)} are two-period (red/green) runs, and without --period "
@@ -413,14 +422,24 @@ def _notes(
             f"held at the value that command's Next line gives (the printed red - green "
             f"offset, negated)."
         )
-    if offset is not None:
+    from asymmetry.core.workflow.reduction import GREEN_MINUS_RED
+
+    if fit is not None and fit["success"] and "RFResonanceMuP" in fit["expression"]:
+        lines.append(_rf_fields(fit, result["scan"]["points"]))
+    # A green - red contrast with no field step between the periods is the RF
+    # switched on and off; a logged step is a differential ALC scan.
+    if result["settings"]["period"] == GREEN_MINUS_RED and offset is None:
         lines.append(
-            "NOTE: a green-red (RF) resonance scan: RFResonanceMuP converts its lines into the "
-            "muon and proton couplings — --model RFResonanceMuP --fix nu_RF=<the RF frequency "
-            "in MHz, from the run notes or title> — rather than a pair of Lorentzians."
+            "NOTE: a green-red resonance scan with no field step logged between the periods: "
+            "the contrast is the RF, so this is an RF resonance scan, not a differential ALC "
+            "one (a LorentzianLCRPair's dB has no step to hold). RFResonanceMuP converts its "
+            "lines into the muon and proton couplings — --model RFResonanceMuP --fix "
+            "nu_RF=<the RF frequency in MHz, from the run notes or title> — rather than a "
+            "pair of Lorentzians."
         )
     elif fit is not None and any(
-        term.strip() in ("LorentzianLCR", "GaussianLCR") for term in fit["expression"].split("+")
+        term.strip() in ("LorentzianLCR", "GaussianLCR", "LorentzianLCRPair")
+        for term in fit["expression"].split("+")
     ):
         lines.append(
             "NOTE: no radical ALC or hyperfine model is available: these resonance fields "
@@ -430,14 +449,35 @@ def _notes(
     return lines
 
 
+def _rf_fields(fit: dict, points: list[dict]) -> str:
+    """The two resonance fields an RF fit's couplings put the lines at, against the scan."""
+    from asymmetry.core.fitting.muon_proton import rf_resonance_fields
+
+    values = fit["parameters"]
+    fields = rf_resonance_fields(values["A_mu"], values["A_p"], values["nu_RF"])
+    low, high = min(point["x"] for point in points), max(point["x"] for point in points)
+    if not all(low <= field <= high for field in fields):
+        return (
+            f"NOTE: these couplings put the two resonances at "
+            f"{', '.join(f'{field:.6g}' for field in fields)} G, not both inside the scan "
+            f"({low:g}–{high:g} G): the fit has not found the scan's lines, so its couplings "
+            f"are not a result. Refit with A_mu and A_p started from the dips."
+        )
+    return (
+        f"Resonance fields from the fitted couplings: {fields[0]:.6g} G (E7-E5) and "
+        f"{fields[1]:.6g} G (E8-E6) — report them beside A_mu and A_p."
+    )
+
+
 #: A converged fit this far above its errors has left structure unfitted.
 _POOR_SCAN_FIT = 2.0
 
 #: A windowed line's amplitude this many errors from zero is a resonance, not
 #: noise, when its fit stays within this chi2_red: a background step read as a
-#: dip leaves the residuals far above their errors.
+#: dip leaves the residuals far above their errors. Real lines on a local
+#: background reach 5-8 (an anisotropic solid's broad line, the stored waves).
 _RESOLVED_DEPTH = 5.0
-_RESOLVED_FIT = 4.0
+_RESOLVED_FIT = 8.0
 
 #: Centres or widths closer than this many combined errors are the same.
 _DISTINCT_ERRORS = 2.0
@@ -445,6 +485,22 @@ _DISTINCT_ERRORS = 2.0
 #: Half-widths of a window around a fitted line: room for both flanks and some
 #: background on each side.
 _WINDOW_WIDTHS = 4.0
+
+
+def holds_dip(fits: Iterable[dict], window: dict) -> bool:
+    """Whether one of *fits* (of one scan) holds the dip in *window*.
+
+    A fit holds it with a line whose centre ± width lies inside the window: a
+    broad line a poor whole-scan fit stretched across two dips does not.
+    """
+    return any(
+        window["x_min"] <= centre - width and centre + width <= window["x_max"]
+        for fit in fits
+        if fit["success"]
+        for name, centre in fit["parameters"].items()
+        if name.split("_")[0] == "B0"
+        for width in [abs(fit["parameters"][name.replace("B0", "Bwid", 1)])]
+    )
 
 
 def _resolved_lines(fit: dict, fit_limit: float = _RESOLVED_FIT) -> list[str]:
@@ -531,6 +587,52 @@ def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
     return notes
 
 
+#: Another scan's line within this many widths of a resolved one is that line moved,
+#: not absent.
+_COUNTERPART_WIDTHS = 5.0
+
+
+def _absent_lines(folder: str, fit: dict, runs: list[int], payloads: dict[str, dict]) -> list[str]:
+    """Each resolved line another analysed scan covers but holds no fitted line near."""
+    from asymmetry.core.workflow.integral_scan import DIP_FLANK_WIDTHS
+
+    scans: dict[tuple[int, ...], tuple[str, list[float], list[tuple[float, float]]]] = {}
+    for stem, stored_scan in payloads.items():
+        if stored_scan["runs"] == runs or stored_scan["fit"] is None:
+            continue
+        name, xs, lines = scans.setdefault(tuple(stored_scan["runs"]), (stem, [], []))
+        xs.extend(point["x"] for point in stored_scan["scan"]["points"])
+        lines.extend(
+            (
+                stored_scan["fit"]["parameters"][line],
+                abs(stored_scan["fit"]["parameters"][line.replace("B0", "Bwid", 1)]),
+            )
+            for line in _resolved_lines(stored_scan["fit"], math.inf)
+        )
+    notes = []
+    low, high = fit["x_range"]
+    for line in _resolved_lines(fit, math.inf):
+        centre = fit["parameters"][line]
+        width = abs(fit["parameters"][line.replace("B0", "Bwid", 1)])
+        for other_runs, (name, xs, lines) in scans.items():
+            covered = min(xs) <= centre - DIP_FLANK_WIDTHS * width and (
+                centre + DIP_FLANK_WIDTHS * width <= max(xs)
+            )
+            moved = any(
+                abs(centre - c2) <= _COUNTERPART_WIDTHS * max(width, w2) for c2, w2 in lines
+            )
+            if covered and not moved:
+                notes.append(
+                    f"NOTE: scan {name} also covers {centre:g} (this line's width {width:g}), but "
+                    f"none of its fits holds a line there. Fit it on the same window — asymmetry "
+                    f"integral-scan {shlex.quote(folder)} --runs {run_spec(list(other_runs))} "
+                    f"--model 'LorentzianLCR + Linear' --xmin {low:g} --xmax {high:g} (with "
+                    f"{name}'s other options) — and report the result either way: a line one "
+                    f"scan shows and another lacks is a finding."
+                )
+    return notes
+
+
 def _repeated_points(points: list[dict]) -> list[tuple[float, list[dict], bool]]:
     """``(x, points, differ)`` for each x measured more than once, *differ* past three errors."""
     groups: dict[float, list[dict]] = {}
@@ -555,10 +657,15 @@ def _repeated_points(points: list[dict]) -> list[tuple[float, list[dict], bool]]
 _DISTINCT_REPEAT = 3.0
 
 
-def _poor_fit_note(fit: dict, elsewhere: Sequence[float] = ()) -> list[str]:
+def _scaled(fit: dict, name: str) -> float:
+    """*name*'s error scaled by √chi2_red, as a poor fit's errors are quoted."""
+    return fit["uncertainties"][name] * math.sqrt(fit["reduced_chi_squared"])
+
+
+def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
     """Notes on what a converged resonance fit left out or cannot vouch for.
 
-    A dip another stored scan already fitted (a centre in *elsewhere*) is not announced again.
+    A dip another stored fit of this scan holds (*same_scan*) is not announced again.
     """
     from asymmetry.core.workflow.integral_scan import DIP_FLANK_WIDTHS
 
@@ -592,17 +699,16 @@ def _poor_fit_note(fit: dict, elsewhere: Sequence[float] = ()) -> list[str]:
                 f"its centre and width"
                 + (
                     f", with errors understated by the chi2_red of "
-                    f"{format_number(fit['reduced_chi_squared'], 3)}."
+                    f"{format_number(fit['reduced_chi_squared'], 3)}: scaled by its square root "
+                    f"they are ± {_scaled(fit, name):.3g} on the centre and ± "
+                    f"{_scaled(fit, name.replace('B0', 'Bwid', 1)):.3g} on the width — quote "
+                    f"these."
                     if fit["reduced_chi_squared"] > _POOR_SCAN_FIT
                     else "."
                 )
             )
     unfitted = [
-        window
-        for window in fit["next_dip_windows"]
-        if not any(
-            window["x_min"] <= centre <= window["x_max"] for centre in [*lines.values(), *elsewhere]
-        )
+        window for window in fit["next_dip_windows"] if not holds_dip([fit, *same_scan], window)
     ]
     if unfitted:
         notes.append(

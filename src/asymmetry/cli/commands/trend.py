@@ -497,6 +497,16 @@ def _rate_steps(trend, free_params: list[str]) -> list[str]:
         if re.sub(r"_\d+$", "", param) not in stepping:
             continue
         rows = _measured(trend, param)
+        # A supplied axis (a steering current, a foil count) is a calibration
+        # curve whose amplitude can turn; elsewhere one odd run would read as one.
+        extremum = (
+            _inner_extremum(rows, param)
+            if param.startswith("A") and axis not in _MEASURED_AXES
+            else None
+        )
+        if extremum is not None:
+            notes.append(extremum)
+            continue
         splits = []
         for k in range(2, len(rows) - 1):
             (low, low_err), (high, high_err) = (
@@ -513,17 +523,51 @@ def _rate_steps(trend, free_params: list[str]) -> list[str]:
         high_level, high_rows = _held_level(rows[k:][::-1], param)
         low_edge, high_edge = low_rows[-1]["x"], high_rows[-1]["x"]
         notes.append(
-            f"NOTE: {param} changes along the scan ({significance:.0f}x the combined error "
-            f"between the weighted means of its two sides). It leaves its low-{axis} level "
-            f"({format_number(low_level, 4)} over {low_rows[0]['x']:g}–{low_edge:g}) above "
-            f"{low_edge:g} and its high-{axis} level ({format_number(high_level, 4)} over "
-            f"{high_edge:g}–{high_rows[0]['x']:g}) below {high_edge:g}: the change lies between "
-            f"{low_edge:g} and {high_edge:g}, and an onset is where it leaves a level, not a "
+            f"NOTE: {param} {'rises' if high_level > low_level else 'falls'} along the scan "
+            f"({significance:.0f}x the combined error between the weighted means of its two "
+            f"sides). It leaves its low-{axis} level ({format_number(low_level, 4)} over "
+            f"{low_rows[0]['x']:g}–{low_edge:g}) above {low_edge:g} and reaches its high-{axis} "
+            f"level ({format_number(high_level, 4)} over {high_edge:g}–{high_rows[0]['x']:g}) "
+            f"at {high_edge:g}: the change lies between {low_edge:g} and {high_edge:g}, it "
+            f"levels off from {high_edge:g} on, and an onset is where it leaves a level, not a "
             f"midpoint. Report it and that span: a small step in a width or rate is often the "
             f"physics (a transition, an onset), even when the parameter you expected to move "
             f"did not."
         )
     return notes
+
+
+#: Order keys a run records for itself; any other was supplied with --x.
+_MEASURED_AXES = frozenset({"temperature", "sample_temperature_logged", "field", "run"})
+
+
+def _inner_extremum(rows: list[dict[str, Any]], param: str) -> str | None:
+    """A note when *param* is lowest (or highest) inside the scan, well beyond both ends.
+
+    The ends are the weighted means of the outer two rows on each side; a run
+    inside them that differs from both by more than :data:`_STEP_SIGNIFICANCE`
+    combined errors, the same way, is a minimum or a maximum — not a step.
+    """
+    if len(rows) < 5:
+        return None
+    ends = [_weighted_mean(rows[:2], param), _weighted_mean(rows[-2:], param)]
+    inner = rows[2:-2] or rows[1:-1]
+    for pick, word, rise in ((min, "smallest", "rises"), (max, "largest", "falls")):
+        row = pick(inner, key=lambda entry: entry[param])
+        departures = [
+            (row[param] - level) / math.hypot(row[f"{param}_err"], error) for level, error in ends
+        ]
+        if all(abs(d) > _STEP_SIGNIFICANCE for d in departures) and (
+            (word == "smallest") == (departures[0] < 0) == (departures[1] < 0)
+        ):
+            return (
+                f"NOTE: {param} is {word} inside the scan — {format_number(row[param], 4)} at "
+                f"{row['x']:g} (run {row['key']}), against {format_number(ends[0][0], 4)} and "
+                f"{format_number(ends[1][0], 4)} at the two ends — and {rise} on both sides: a "
+                f"{'minimum' if word == 'smallest' else 'maximum'}, not a step. Report where it "
+                f"is {word} and that it {rise} on both sides of it."
+            )
+    return None
 
 
 #: A phase whose straight line in field explains less of its variation than
@@ -841,10 +885,12 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
             if shift is not None:
                 hints.append(
                     f"{frequencies[0]} moves from {format_number(shift[0], 5)} to "
-                    f"{format_number(shift[1], 5)} MHz, a shift of "
+                    f"{format_number(shift[1], 5)} MHz on warming, a shift of "
                     f"{format_number(shift[1] - shift[0], 5)} ± {format_number(shift[2], 5)} "
-                    f"MHz, while staying near one field: a shift of the line (a Knight shift, "
-                    f"or a superconductor's diamagnetic shift below Tc). Report it."
+                    f"MHz — the line sits {'lower' if shift[0] < shift[1] else 'higher'} at "
+                    f"low temperature — while staying near one field: a shift of the line (a "
+                    f"Knight shift, or a superconductor's diamagnetic shift below Tc). Report "
+                    f"it and its direction."
                 )
             hints.append(
                 f"{frequencies[0]} stays near {format_number(held, 4)} MHz along the scan (within 10 %): the "
