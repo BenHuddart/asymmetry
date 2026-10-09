@@ -421,12 +421,12 @@ Best statistical fit: the role splits
    :width: 100%
 
 *The Compare step under* **Best statistical fit** *after a coupled optimisation*
-*of Longitudinal-field KT + Constant. A is the recommended split, with Δ shared*
-*and* :math:`B_L` *per run. B, pinned dashed, frees Δ per run as well. It fits*
-*every run as closely by eye, but it scores +34 AICc and fails the runs test at*
-*100 G. The trend plot follows Δ: A's shared value is one line across the*
-*series, while B's per-run Δ falls away at 100 G, where the decoupled signal no*
-*longer constrains it.*
+*of Longitudinal-field KT + Constant on an Ag decoupling series at 0, 5, 10*
+*and 25 G. A is the recommended split, with Δ shared and* :math:`B_L` *per run.*
+*B, pinned dashed, frees Δ per run as well. It fits every run as closely by eye*
+*and passes every check, but its three extra parameters buy nothing: it scores*
+*+4.0 AICc. The trend plot follows Δ: A's shared value is one line across the*
+*series, and B's per-run values sit on it within their errors.*
 
 Under **Best statistical fit** the optimised candidates are grouped by model,
 best first, with one row per Global/Local split — a single template usually

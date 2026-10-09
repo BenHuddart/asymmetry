@@ -11,12 +11,11 @@ build completes in seconds. Only ``lf_kt_constant`` goes through the coupled
 role search, and it yields eight role splits of the one template. A is the
 recommendation: Δ shared, B_L local, the textbook decoupling model (Hayano
 et al., Phys. Rev. B **20**, 850 (1979)). B is pinned to the runner-up split,
-which frees Δ per run as well. It fits every run as well by eye, but scores
-+34 AICc and fails the runs test at 100 G. The trend plot follows Δ: A's
-shared value is one line across the series, while B's per-run Δ falls away at
-100 G, where the decoupled signal no longer constrains it and Δ trades off
-against B_L. The capture shows why sharing a parameter is the better answer
-when the data allow it.
+which frees Δ per run as well. It fits every run as well by eye and passes
+every check, but its three extra parameters buy nothing: +4 AICc. The trend
+plot follows Δ: A's shared value is one line across the series, and B's
+per-run values sit on it within their errors. The capture shows why sharing a
+parameter is the better answer when the data allow it.
 
 Marked ``requires_fit = True`` because the coupled optimisation runs real
 fits.
@@ -49,10 +48,11 @@ class GlobalFitWizardResultScenario(Scenario):
         from asymmetry.core.fitting.wizard_scope import WizardScope
         from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
-        # Default noise seed. At 100 G, with B_L free (field recorded, geometry
-        # not), Delta and B_L trade off, so on some seeds a per-run Delta scores
-        # better; on this one the shared Delta wins (AICc 1964 against 1998).
-        datasets = make_ag_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
+        # γ_μB_L/Δ ≈ 0, 1, 2, 5: every run still constrains Δ on its own. Past
+        # that (50, 100 G) the per-run fits the role search starts from are
+        # ill-posed and their minimum moves with the host's SIMD floating point,
+        # and the verdict with it: docs/investigations/wizard-result-screenshot-flake.md.
+        datasets = make_ag_lf_decoupling(fields_g=(0.0, 5.0, 10.0, 25.0))
 
         # Keep the screening portfolio small so the build is fast: LF dynamics
         # and magnetism with the competing relaxation leaves excluded leaves the
