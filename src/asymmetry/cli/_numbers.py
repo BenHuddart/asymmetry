@@ -19,7 +19,7 @@ better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` — is listed 
 a command printed it verbatim to three or more significant digits (a run number,
 a field on the scan's grid). A range ``a–b`` shares its context between both
 ends, and ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
-("about 20740 G") may round away its trailing zeros, a field in kG restates
+("about 12340 G") may round away its trailing zeros, a field in kG restates
 one printed in G, and "1σ errors", "> 3σ" and "2× LorentzianLCR" are
 conventions, thresholds and counts, not derived numbers. A whole-number
 percentage right after an asymmetry's name ("A_1 is about 33 %") is that
@@ -252,7 +252,7 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
                 continue
             exponent = match.group("exponent")
             scale = 10.0 ** int(exponent.translate(_SUPERSCRIPT)) if exponent else 1.0
-            # "about 20740 G" for a printed 20740.6: a hedged integer's trailing zeros are not digits.
+            # "about 12340 G" for a printed 12340.6: a hedged integer's trailing zeros are not digits.
             zeros = 0 if "." in token else len(token) - len(token.rstrip("0"))
             rounded = (
                 zeros

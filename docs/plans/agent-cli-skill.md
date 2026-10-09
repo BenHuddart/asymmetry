@@ -1967,8 +1967,8 @@ pushed commit, scored by three Sonnet scorers.
   21 G" (wave 15) and "about 20 G" (Sonnet 5.5).
 - A dip counts as held only by a fit of the same scan whose line, centre ±
   width, lies inside the dip's window. Corannulene's poor whole-scan fit
-  (χ²ᵣ 40, a 3.6 kG-wide line) and the cold scan's 15.3 kG line had silenced
-  the hot scan's 14.8 kG dip in both `integral-scan` and `audit`; replay: the
+  (χ²ᵣ 40, a line kilogauss wide) and the cold scan's own line had silenced
+  the hot scan's high-field dip in both `integral-scan` and `audit`; replay: the
   hold now fires in exactly the waves that left that line unfitted (8, 10, 11,
   15) and nowhere else.
 - `fit`'s pair note: a pinned rate on one line does not cancel the χ² gain;
@@ -1979,7 +1979,7 @@ pushed commit, scored by three Sonnet scorers.
 
 The audit's false positives on printed values, mined from the audit outputs in
 the transcripts of waves 9–15: a hedged integer that rounds away trailing zeros
-("about 20740 G" for 20740.6), a field in kG for one printed in G, an error in
+("about 12340 G" for 12340.6), a field in kG for one printed in G, an error in
 parentheses ("2.91 (±0.12)"), "1σ errors", "> 3σ" and "2× LorentzianLCR". Of
 the lines those audits flagged, 167 flags go and none is added; the final
 replies of waves 13–15 are unchanged. A first version also widened hedged
@@ -2006,12 +2006,12 @@ Tier A and trend-fit 6/8, tier-b and workflow 7/8, corpus-2026 6/8. Spin
 glass passed (it screened a run whose recommendation was the stretched
 exponential), AFM passed for the second time (the two-line fit ran after the
 new `fourier` line and the reply names two lines), corannulene passed for the
-first time since wave 7 (the dip announcement for the hot 14.8 kG line now
+first time since wave 7 (the dip announcement for the hot high-field line now
 survives the poor whole-scan fit, and the agent fitted it). The decoupling
 note fired on TRSB and the agent wrote the static reading. Fails: nickel
 ("3×"), EuO ("by up to about 0.06 MHz"), copper ("the shift is about 2.7 %"),
 all fixed in pass 3; TRSB (the zero-field scan fitted with the wizard's
-high-confidence Bessel, a 0.1 MHz "precession" with no spectral line, so no
+high-confidence Bessel, a slow "precession" with no spectral line, so no
 Kubo–Toyabe width to trend); basics (a temperature reading across calibration
 runs, a Must the scorer called strict). Six of the 24 replies were retyped
 after the last audit; none of the retyped text carried a new unprinted number.
@@ -2028,8 +2028,8 @@ series has no static-width term (TRSB only, 7 stored series).
 #### Pass 5
 
 The audit matches a written number to any printed value within one unit of
-its last digit, not half: Haiku truncates as often as it rounds ("−0.0353" for
-−0.03537). Replay over the audit outputs of waves 12–15: 171 more intermediate
+its last digit, not half: Haiku truncates as often as it rounds ("−0.0123" for
+−0.01237). Replay over the audit outputs of waves 12–15: 171 more intermediate
 flags go; the final replies change only where a printed value was truncated
 (event counts, a field) and on one textbook constant quoted as background.
 When the audit lists numbers and holds nothing else, it now ends "Then run
@@ -2060,7 +2060,7 @@ wave-17 group were retyped, one with an unaudited garbled clause.
 The wave-17 corpus group scored 3/8 (wave 17 total **18/24**): TRSB passed
 (SC laws fitted, decoupling note quoted), but LiFeAs (the shift reported
 without its direction), basics (stopped after six commands, no audit),
-corannulene (no statement that the cold scan lacks the 7 kG line), benzene RF
+corannulene (no statement that the cold scan lacks the low-field line), benzene RF
 and benzene ALC (a converged broad solid-state line dismissed) failed.
 
 Pass 7:
@@ -2089,7 +2089,7 @@ these groups).
 
 Pass 8: `integral-scan` names a resolved line that another analysed scan
 covers with no fitted line within five widths of it, with the command to fit
-that scan on the same window (corannulene's cold scan lacks the hot 7 kG line,
+that scan on the same window (corannulene's cold scan lacks the hot low-field line,
 a Must no reply in wave 17 met). Replay: corannulene in 11 waves, three benzene
 ALC scan pairs.
 
@@ -2097,7 +2097,7 @@ Pass 9: the `RESONANCE` verdict takes windowed lines up to χ²ᵣ 8, not 4.
 Wave 17's benzene ALC agent dismissed a converged solid-state line at χ²ᵣ 5.0
 that had no verdict; every stored windowed line between 4 and 8 with both
 flanks and a five-error depth is a real resonance (benzene solid, o-p and
-CHMu, corannulene 7 and 14.9 kG, TCNQ), and none is a step.
+CHMu, corannulene's two hot lines, TCNQ), and none is a step.
 
 #### Wave 18 corpus group and pass 10
 
@@ -2124,12 +2124,12 @@ steering scan in all 10 waves that fitted it, and nowhere else.
 - `survey` cuts a field sweep whose widening steps (a decoupling curve, 1,
   1.8, 3 … G) give way to even ones (a level-crossing scan) into two scans,
   at the first field of the even run — corannulene's 50 K block of 175 runs
-  from 0 to 30 kG mixed both, and the agent fitted it whole. Replayed on the
-  field scans of every stored survey, it cuts only that block, at 5000 G.
+  across the whole field range mixed both, and the agent fitted it whole. Replayed on the
+  field scans of every stored survey, it cuts only that block, where the steps turn even.
 - After an `RFResonanceMuP` fit, `integral-scan` prints the two resonance
   fields the couplings imply (benzene RF gave none in wave 18), or says the
   couplings are not a result when the fields fall outside the scan (wave 17's
-  unseeded fit returned A_μ ≈ 24700 MHz and no warning).
+  unseeded fit returned couplings of tens of GHz and no warning).
 
 #### Pass 12
 
@@ -2205,8 +2205,8 @@ corpus sample name in the CLI; recorded as an open question.
 Wave 21 (pass 13): **20/24** — Tier A and trend-fit 7/8 (fmuf), tier-b and
 workflow 7/8 (TCNQ: "move the centres by up to about 100 G", a difference the
 audit passed because 100 is printed elsewhere and counts three significant
-digits), corpus-2026 6/8 (basics; corannulene reported a 7355 G line the CLI
-said ran off its window). The closing step got every agent to write and audit
+digits), corpus-2026 6/8 (basics; corannulene reported a line the CLI said ran
+off its window). The closing step got every agent to write and audit
 summary.md, basics included; basics then replied over a "do not reply yet".
 
 Pass 16:
@@ -2261,7 +2261,7 @@ Corannulene reported a background step as its "most robust" cold line.
 Pass 19: the `MUONIUM:` line prints the recipe (`Oscillatory * Exponential +
 Constant` started at a low-field run's own line) and the `fit-series` that
 chains it up the scan. Run on the basics data, that series tracks the
-survey's line on every run to 7 G, loses it at the top two fields, and `trend`
+survey's line on every run until the top two fields, where it is lost, and `trend`
 prints the frequency-response note — the rubric's reading; a start in the
 middle of the scan left the start run itself at zero amplitude.
 

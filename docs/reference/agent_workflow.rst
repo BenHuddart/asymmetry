@@ -1144,7 +1144,7 @@ digits, as a run number or a field on the scan's grid is; a ratio in words
 is listed too. While a surveyed scan is unfitted, a clean audit says not to
 reply yet. A written number matches a printed value within one unit of its
 last digit (rounded or truncated). ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
-("about 20740 G") may round away its trailing zeros, a field in kG verifies
+("about 12340 G") may round away its trailing zeros, a field in kG verifies
 against one printed in G, an error in parentheses after its value
 ("2.91 (±0.12)") is that value's error, and "1σ errors", "> 3σ" and
 "2× LorentzianLCR" are a convention, a threshold and a count, not results. Every command
