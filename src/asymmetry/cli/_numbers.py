@@ -21,7 +21,9 @@ a field on the scan's grid). A range ``a–b`` shares its context between both
 ends, and ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
 ("about 20740 G") may round away its trailing zeros, a field in kG restates
 one printed in G, and "1σ errors", "> 3σ" and "2× LorentzianLCR" are
-conventions, thresholds and counts, not derived numbers.
+conventions, thresholds and counts, not derived numbers. A whole-number
+percentage right after an asymmetry's name ("A_1 is about 33 %") is that
+asymmetry in its unit, not a ratio.
 """
 
 from __future__ import annotations
@@ -111,6 +113,13 @@ _COMPARISON_SUFFIX = re.compile(
     r"\s?(?:%|[^\W\d][^\s,;.]*)?\s(?:better|worse|lower|higher|larger|smaller|faster"
     r"|slower|spread|difference|discrepancy|mismatch|disagreement|scatter|behind|ahead)\b"
     r"(?!\s+(?:bound|limit|edge))",
+    re.IGNORECASE,
+)
+
+#: Words that make a percentage an asymmetry in its unit, not a ratio ("A_1 is about 33 %").
+_ASYMMETRY_CONTEXT = re.compile(
+    r"(?:(?-i:\bA_\w+\b|\bA\(0\)|\bA[₀-₉]+)|\b(?:amplitudes?|asymmetry|fractions?)\b)"
+    r"[^.;\n]{0,25}$",
     re.IGNORECASE,
 )
 
@@ -224,7 +233,11 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
                 continue
             # A decimal percentage ("A(0) 16.42 %") is a printed asymmetry in
             # its unit; a whole-number one ("32 %") is almost always a ratio.
-            if suffix is not None and "%" in suffix.group() and "." in token:
+            if (
+                suffix is not None
+                and "%" in suffix.group()
+                and ("." in token or _ASYMMETRY_CONTEXT.search(before))
+            ):
                 suffix = None
             if suffix is not None and (
                 ("σ" in suffix.group() or "sigma" in suffix.group())

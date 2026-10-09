@@ -2184,6 +2184,22 @@ own text ("or say in the summary why not") always promised (maleic gave up on
 its audit over one in wave 19); a single Lorentzian on a stepped green−red scan
 is pointed at `LorentzianLCRPair` with `dB` held at the step.
 
+#### Pass 15
+
+A whole-number percentage right after an asymmetry's name ("A_1 is about
+33 %", "the amplitude stays near 21 %") is that asymmetry in its unit, not a
+ratio, and verifies against the printed value (the scorers counted about 20–30
+such false flags a group). Replay over the audit outputs of waves 12–15: 80
+false flags go, three are reworded, the final replies of waves 16–20 are
+unchanged; a first version matched every word starting with "a" ("about 4 %
+below") and the replay caught it.
+
+Wave 21's first group (pass 13): 7/8, fmuf the miss for the third time in
+five waves. A generic cue — a zero-field screen whose scope left out the
+F-μ-F family and found no line — was rejected after replay: it would print in
+13 of the 24 cases. Recognising the sample by its material name would put a
+corpus sample name in the CLI; recorded as an open question.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
