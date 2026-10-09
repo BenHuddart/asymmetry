@@ -272,7 +272,7 @@ frequency 1.92645  survey_line_mhz 1.94529  sigma 0.020831
 alpha 1.2373 (estimated:24563)  alpha 1.2320  0.50 0.52
 r_muF 1.22 1.25  A(0) 16.42 0.05  bound 0.1
 series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
-(Δt = 0.0123 µs); runs 9031 9051; nu 16.3 3.8 MHz
+(Δt = 0.0123 µs); runs 9031 9051; nu 16.3 3.8 MHz; offset +0.34 K
 """
 
 
@@ -317,6 +317,7 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         ("the lines differ from the survey by up to about 0.02 MHz", ["0.02"]),
         ("the shift is about 1.3 %", ["1.3 %"]),
         ("the spread is only about 40 G", ["40"]),
+        ("logged offsets of +0.34 K", []),
         # A whole-number percentage naming an asymmetry restates it; elsewhere it is a ratio.
         ("A(0) is about 16 % throughout", []),
         ("the amplitude stays near 16 %", []),

@@ -224,7 +224,11 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
                 printed = _printed_verbatim(token, log_text) or _printed_verbatim(
                     match.group("mantissa"), log_text
                 )
-                if significant < _VERBATIM_DIGITS or not printed:
+                # A value printed with its sign ("+0.34") is that value, not a chance match.
+                signed = match.group("mantissa")[0] in "+-−" and _printed_verbatim(
+                    match.group("mantissa"), log_text
+                )
+                if not signed and (significant < _VERBATIM_DIGITS or not printed):
                     found.append(Unverified(text, line_number, line.strip()))
                 continue
             if _DELTA_PREFIX.search(before):

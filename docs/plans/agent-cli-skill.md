@@ -2265,6 +2265,18 @@ survey's line on every run until the top two fields, where it is lost, and `tren
 prints the frequency-response note — the rubric's reading; a start in the
 middle of the scan left the start run itself at zero amplitude.
 
+#### Pass 20
+
+Wave 23's first group (passes 16–18): **8/8** — fmuf read the new skill row,
+screened with `fluoride-fmuf` unprompted and reported `r_muF` against
+temperature; all eight replies were the audited file exactly, with no preface
+(the reworded clean audit). One audit loop remained: a survey offset quoted
+with its sign ("offsets of +0.34 K") has two significant digits, so the
+difference rule rejected it although it is printed verbatim; it cost the
+cuprate four audit rounds. A value printed verbatim with its sign now
+verifies in a difference context. Replay: seven such flags in waves 12–15
+go, final replies unchanged.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
