@@ -29,19 +29,17 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Collection, Mapping, Sequence
-from concurrent.futures import BrokenExecutor, as_completed
 from dataclasses import dataclass, field
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import (
     CostFactory,
-    FitCancelledError,
     FitEngine,
     FitResult,
 )
 from asymmetry.core.fitting.member_quality import MemberQuality, assess_member_quality
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
+from asymmetry.core.fitting.process_pool import map_when_a_pool_pays
 from asymmetry.core.fitting.series_seeding import (
     SeriesPoint,
     diagnose_series,
@@ -283,12 +281,12 @@ def _series_payload_picklable(model_fn: object, cost_factory: object) -> bool:
     return True
 
 
-def _series_run_worker(payload):
-    """Process-pool entry point: fit one run and return ``(run, result)``.
+def _series_run_worker(payload, cancel_callback=None):
+    """Fit one run and return ``(run, result)``, in-process or in a pool worker.
 
     Module-level (so it survives the ``spawn`` start method) and engine-free — each
-    worker builds its own stateless :class:`FitEngine`. Cancellation is handled in the
-    parent between completions, so no cancel callback crosses the boundary.
+    call builds its own stateless :class:`FitEngine`. Only an in-process call gets a
+    cancel callback; a pool worker's cancel is handled in the parent.
     """
     (
         run,
@@ -310,7 +308,7 @@ def _series_run_worker(payload):
         t_max=t_max,
         method=method,
         minos=minos,
-        cancel_callback=None,
+        cancel_callback=cancel_callback,
         cost_factory=cost_factory,
         error_oversampling=error_oversampling,
     )
@@ -331,27 +329,16 @@ def _fit_runs_parallel(
     error_oversampling: float,
     cancel_callback: Callable[[], bool] | None,
     workers: int,
-) -> dict[int, FitResult] | None:
-    """Fit every ``as_provided`` run across a process pool; return ``{run: result}``.
+) -> dict[int, FitResult]:
+    """Fit every ``as_provided`` run, on a process pool once it pays; ``{run: result}``.
 
     The runs share no state, so each per-run fit is a self-contained, deterministic
-    problem dispatched to a spawn-based pool and collected as it completes (the caller
-    folds results back by run number, so completion order does not matter). Results are
-    bit-identical to the sequential path regardless of worker count. Returns ``None`` —
-    signalling the caller to run sequentially instead — when a spawn-safe pool cannot
-    start or breaks mid-run (a constrained or frozen environment); raises
-    :class:`FitCancelledError` on a cooperative cancel.
-
-    Cancellation is coarse: a requested cancel stops collecting further results and
-    tears the pool down at once (``terminate_spawn_pool``), leaving no orphaned
-    workers; an in-flight fit is abandoned rather than observed mid-minimisation.
+    problem; :func:`map_when_a_pool_pays` fits them in-process until their measured
+    cost warrants a spawn pool for the rest. Results are bit-identical to the
+    sequential path wherever each run is fit; raises :class:`FitCancelledError` on a
+    cooperative cancel.
     """
-    if cancel_callback is not None and bool(cancel_callback()):
-        raise FitCancelledError("Fit cancelled.")
-    executor = open_spawn_pool(workers)
-    if executor is None:
-        return None
-    # Every payload is pickled to a worker, so it ships whatever the dataset still
+    # A payload sent to a pool worker is pickled, so it ships whatever the dataset still
     # references — including the source run's raw detector histograms, which dominate
     # its size: a 15-detector, 9e4-bin run is of the order of 11 MB against fitted
     # arrays a fraction of a megabyte, so a 29-run batch pushes ~320 MB across the
@@ -378,25 +365,9 @@ def _fit_runs_parallel(
         )
         for run in run_order
     ]
-    results: dict[int, FitResult] = {}
-    try:
-        futures = {executor.submit(_series_run_worker, payload): payload[0] for payload in payloads}
-        for future in as_completed(futures):
-            if cancel_callback is not None and bool(cancel_callback()):
-                # Kill workers now instead of blocking on in-flight fits, then abort.
-                terminate_spawn_pool(executor)
-                raise FitCancelledError("Fit cancelled.")
-            run, result = future.result()
-            results[run] = result
-    except BrokenExecutor:
-        # A worker died for an environmental reason (not a fit failure — failed fits
-        # return success=False without raising). Abandon parallelism and let the caller
-        # re-run the batch sequentially rather than report partial results.
-        return None
-    finally:
-        # Drop pending work immediately; in-flight processes finish on their own.
-        executor.shutdown(wait=False, cancel_futures=True)
-    return results
+    return map_when_a_pool_pays(
+        _series_run_worker, payloads, workers=workers, cancel_callback=cancel_callback
+    )
 
 
 def fit_asymmetry_series(
@@ -438,8 +409,10 @@ def fit_asymmetry_series(
     max_workers
         Opt-in process-level parallelism for the ``as_provided`` mode only, whose runs
         share no state and are thus embarrassingly parallel. ``None`` (default) or ``1``
-        — and a spawn-safe pool that cannot start, or an injected non-default engine —
-        keep the sequential loop, producing byte-identical results. ``chain`` seeding is
+        — and an injected non-default engine — keep the sequential loop. Otherwise a
+        pool starts only once the runs' measured cost repays its start-up
+        (:func:`~asymmetry.core.fitting.process_pool.map_when_a_pool_pays`), so a few
+        cheap runs never leave the process. Results are byte-identical. ``chain`` seeding is
         inherently sequential (each run warm-starts from the previous good run with
         trend-based reseeding) and always runs sequentially regardless of this value.
 
@@ -510,8 +483,7 @@ def fit_asymmetry_series(
     # Only ``as_provided`` runs share no state, so only they are dispatched; the pool is
     # skipped for ``chain`` (sequential warm-start/reseed), a non-default injected engine
     # (a worker rebuilds a stateless ``FitEngine`` and cannot honour a custom one), and an
-    # unpicklable model/cost. On any of those — or a pool that cannot start — the loop
-    # below runs, byte-identical.
+    # unpicklable model/cost. On any of those the loop below runs, byte-identical.
     parallel_results: dict[int, FitResult] | None = None
     if resolved != "chain":
         workers = _resolve_series_workers(max_workers, len(run_order))
