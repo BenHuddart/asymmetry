@@ -170,7 +170,7 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     capsys.readouterr()
     cli.main(["audit", str(draft)])
     out = capsys.readouterr().out
-    assert "Now send its text" in out
+    assert "your final message is this summary itself" in out
     # The passed text is printed whole, for the reply to copy rather than retype.
     assert "----- BEGIN -----\nA draft; the reduction left deadtime off.\n----- END -----" in out
 
@@ -316,6 +316,7 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         # Stacked hedges (wave 16).
         ("the lines differ from the survey by up to about 0.02 MHz", ["0.02"]),
         ("the shift is about 1.3 %", ["1.3 %"]),
+        ("the spread is only about 40 G", ["40"]),
         # A whole-number percentage naming an asymmetry restates it; elsewhere it is a ratio.
         ("A(0) is about 16 % throughout", []),
         ("the amplitude stays near 16 %", []),

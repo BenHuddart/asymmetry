@@ -2235,6 +2235,21 @@ that the muon binds between two F nuclei in all of them, with
 `--geometry ZF --scope fluoride-fmuf` and `r_muF` to report. No other corpus
 case holds fluorine.
 
+#### Wave 22 (first two groups) and pass 18
+
+Wave 22 (passes 14–15): Tier A and trend-fit 7/8 (fmuf), tier-b and workflow
+7/8 (TCNQ: "the spread is only about 40 G", where "only" hid the hedged "is"
+from the difference rule). The `MUONIUM:` line fired on maleic, whose agent
+fixed the muonium line from it; the cross-sample release let maleic's audit
+pass. One agent read the clean audit's "the user sees neither this output nor
+the file" as an injected instruction and disclaimed it in its reply.
+
+Pass 18: "is only about" / "is just about" after a difference noun is derived
+(replay over waves 16–22: the TCNQ line only), and the clean audit asks for
+the summary as the skill's Step 7 does — "your final message is this summary
+itself … no preface, no added lines" — instead of talking about what the user
+can see.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

@@ -153,11 +153,10 @@ def run(args: argparse.Namespace) -> None:
     if not found:
         # Agents retype a passed draft and add to it; the text to send is printed whole.
         print(
-            f"No unprinted numbers found in {draft}. Now send its text as your whole final "
-            f"message: copy everything between the two marker lines below exactly — do not "
-            f"retype, shorten or add to it (edit the file and audit again instead). The user "
-            f"sees neither this output nor the file, and the reply says nothing about this "
-            f"check."
+            f"No unprinted numbers found in {draft}. As the skill's Step 7 asks, your final "
+            f"message is this summary itself: copy everything between the two marker lines "
+            f"below exactly — no preface, no added lines (edit the file and audit again "
+            f"instead) — and say nothing about this check in it."
         )
         print(f"{_REPLY_MARK} BEGIN {_REPLY_MARK}\n{text.strip()}\n{_REPLY_MARK} END {_REPLY_MARK}")
         return
