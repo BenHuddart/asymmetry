@@ -273,7 +273,8 @@ block's range (``T log − T/K``), so a block sitting several kelvin away from t
 rest stands out as its own measurement.
 Runs whose line sits within 15 % of muonium's weak-field triplet frequency for
 their field (about 1.394 MHz per gauss) are named on a ``MUONIUM:`` line, with
-the wizard scope that screens them.
+the ``recipe`` (one damped line started at a low-field run's own line) and the
+``fit-series`` that chains it up the field scan.
 Each alpha-calibration candidate is listed with its own
 measured alpha, and where alpha moves by more than 10 % between consecutive
 candidates in run order — a sample change, a moved detector, a second

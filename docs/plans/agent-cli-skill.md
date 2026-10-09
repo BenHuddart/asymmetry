@@ -2250,6 +2250,21 @@ the summary as the skill's Step 7 does — "your final message is this summary
 itself … no preface, no added lines" — instead of talking about what the user
 can see.
 
+#### Wave 22 corpus group and pass 19
+
+Wave 22's corpus group scored 6/8 (wave 22 total **20/24**): basics took the
+`MUONIUM:` line but followed its "screen them with --scope muonium-radical",
+which contradicts the skill's weak-TF muonium advice; the wizard's line recipe
+ran its background away on all 19 runs and the agent abandoned the amplitude.
+Corannulene reported a background step as its "most robust" cold line.
+
+Pass 19: the `MUONIUM:` line prints the recipe (`Oscillatory * Exponential +
+Constant` started at a low-field run's own line) and the `fit-series` that
+chains it up the scan. Run on the basics data, that series tracks the
+survey's line on every run to 7 G, loses it at the top two fields, and `trend`
+prints the frequency-response note — the rubric's reading; a start in the
+middle of the scan left the start run itself at zero amplitude.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
