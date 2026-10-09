@@ -2223,6 +2223,18 @@ Pass 16:
   TF screen" and "by 170–190 K" in passing replies, and missed the TCNQ
   wording anyway.
 
+#### Pass 17 — one skill row
+
+fmuf failed in waves 19, 21 and 22, each time screened with
+`zf-static-magnetism`; in wave 22 the agent knew the sample was rich in
+fluorine and argued that F–μ–F "is not the claimed situation for a polymer".
+That is a physics misreading no printed line can correct without naming the
+sample, so the skill's scope row for fluorine now says fluorine counts by
+formula or by material — fluorides, fluorinated polymers and organics — and
+that the muon binds between two F nuclei in all of them, with
+`--geometry ZF --scope fluoride-fmuf` and `r_muF` to report. No other corpus
+case holds fluorine.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
