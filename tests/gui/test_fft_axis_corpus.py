@@ -41,54 +41,15 @@ from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
     compute_average_group_spectrum,
 )
+from tests.corpus import corpus_path, requires_corpus
+
+_EMU = corpus_path("Semiconductors/Shallow donor state in cadmium sulphide/Data/EMU00020711.nxs")
+# A TF MUSR (BiSCCO, 400 G ⇒ ~5.4 MHz) run: Round-2 saw the same empty FFT plot
+# for MUSR as for EMU, so the GUI render regression covers both instruments.
+_MUSR = corpus_path("Superconductivity/A high-Tc cuprate/Data/MUSR00001277.nxs")
 
 
-def _corpus_root() -> Path | None:
-    candidates = [
-        os.environ.get("WIMDA_CORPUS_ROOT"),
-        r"C:\Users\benhu\Source\wimda-corpus",
-        str(Path.home() / "Documents" / "WiMDA muon school"),
-    ]
-    for cand in candidates:
-        if cand and Path(cand).exists():
-            return Path(cand)
-    return None
-
-
-def _emu_run() -> Path | None:
-    root = _corpus_root()
-    if root is None:
-        return None
-    matches = sorted(root.rglob("EMU00020711.nxs")) or sorted(
-        (root / "Semiconductors").rglob("EMU*.nxs")
-    )
-    # The legacy ``Data/`` copies are HDF4 (not loadable); prefer the HDF5 v2
-    # copies under ``data_hdf5/`` (case-insensitive).
-    hdf5 = [m for m in matches if "hdf5" in str(m).lower()]
-    matches = hdf5 or matches
-    return matches[0] if matches else None
-
-
-def _musr_run() -> Path | None:
-    """A TF MUSR (BiSCCO, 400 G ⇒ ~5.4 MHz) run — the second ISIS NeXus case.
-
-    Round-2 saw the same empty FFT plot for MUSR as for EMU, so the GUI render
-    regression covers both instruments.
-    """
-    root = _corpus_root()
-    if root is None:
-        return None
-    matches = sorted(root.rglob("MUSR00001277.nxs"))
-    hdf5 = [m for m in matches if "hdf5" in str(m).lower()]
-    matches = hdf5 or matches
-    return matches[0] if matches else None
-
-
-_EMU = _emu_run()
-_MUSR = _musr_run()
-
-
-@pytest.mark.skipif(_EMU is None, reason="WiMDA corpus EMU run not present")
+@requires_corpus(_EMU)
 def test_emu_fft_complex_axis_is_physical() -> None:
     """Characterisation: the single-dataset primitive is correct for EMU.
 
@@ -106,7 +67,7 @@ def test_emu_fft_complex_axis_is_physical() -> None:
     assert 1.0 < peak_freq < 2.0, f"peak at {peak_freq:.3f} MHz, expected ~1.36"
 
 
-@pytest.mark.skipif(_EMU is None, reason="WiMDA corpus EMU run not present")
+@requires_corpus(_EMU)
 def test_emu_grouped_spectrum_axis_is_physical() -> None:
     """The GUI's averaged grouped-FFT path must produce a physical axis for EMU.
 
@@ -136,14 +97,14 @@ def test_emu_grouped_spectrum_axis_is_physical() -> None:
 #: ISIS NeXus runs whose Round-2 FFT rendered empty, with the physical line each
 #: should resolve (γµ·B): EMU 100 G ⇒ 1.36 MHz, MUSR (BiSCCO) 400 G ⇒ ~5.42 MHz.
 _RENDER_CASES = [
-    pytest.param(_EMU, 1.36, id="emu-100G"),
-    pytest.param(_MUSR, 5.42, id="musr-biscco-400G"),
+    pytest.param(_EMU, 1.36, id="emu-100G", marks=requires_corpus(_EMU)),
+    pytest.param(_MUSR, 5.42, id="musr-biscco-400G", marks=requires_corpus(_MUSR)),
 ]
 
 
 @pytest.mark.gui
 @pytest.mark.parametrize("run_path, expected_mhz", _RENDER_CASES)
-def test_fft_spectrum_renders_in_gui(run_path: Path | None, expected_mhz: float) -> None:
+def test_fft_spectrum_renders_in_gui(run_path: Path, expected_mhz: float) -> None:
     """The GUI FFT must draw the physical line for ISIS NeXus data (EMU + MUSR).
 
     Round-2 acceptance gate. Drives the *real* render entry point — the
@@ -157,8 +118,6 @@ def test_fft_spectrum_renders_in_gui(run_path: Path | None, expected_mhz: float)
     axis stays within the ~31 MHz Nyquist limit, and (c) the rendered spectrum's
     dominant non-DC peak is the physical line.
     """
-    if run_path is None:
-        pytest.skip("WiMDA corpus run not present")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6")
     from PySide6.QtWidgets import QApplication

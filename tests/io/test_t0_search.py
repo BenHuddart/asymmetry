@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pytest
 
@@ -18,6 +16,7 @@ from asymmetry.core.transform import (
     tolerance_bins,
 )
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
+from tests.corpus import corpus_path, requires_corpus
 
 
 def _continuous_histogram(t0_bin: int, n: int = 600, seed: int = 0) -> np.ndarray:
@@ -122,19 +121,15 @@ def test_run_search_handles_dead_detectors():
 
 # --- corpus -----------------------------------------------------------------------
 
-NICKEL_FILE = os.path.expanduser(
-    "~/Documents/WiMDA muon school/Magnetism/Ferromagnetic nickel/Data/emu00124254.nxs"
-)
-EUO_FILE = os.path.expanduser(
-    "~/Documents/WiMDA muon school/Magnetism/Magnetic ordering in EuO/data/deltat_pta_gps_2966.bin"
-)
+NICKEL_FILE = corpus_path("Magnetism/Ferromagnetic nickel/Data/emu00124254.nxs")
+EUO_FILE = corpus_path("Magnetism/Magnetic ordering in EuO/data/deltat_pta_gps_2966.bin")
 
 
-@pytest.mark.skipif(not os.path.exists(NICKEL_FILE), reason="nickel corpus not available")
+@requires_corpus(NICKEL_FILE)
 def test_t0_search_recovers_loader_t0_on_pulsed_corpus():
     from asymmetry.core.io import load
 
-    dataset = load(NICKEL_FILE)
+    dataset = load(str(NICKEL_FILE))
     dataset = dataset[0] if isinstance(dataset, list) else dataset
     run = dataset.run
     search = find_t0_for_run(run.histograms, run.metadata)
@@ -144,11 +139,11 @@ def test_t0_search_recovers_loader_t0_on_pulsed_corpus():
     assert abs(search.consensus_t0_bin - file_t0) <= 2
 
 
-@pytest.mark.skipif(not os.path.exists(EUO_FILE), reason="EuO corpus not available")
+@requires_corpus(EUO_FILE)
 def test_t0_search_recovers_loader_t0_on_continuous_corpus():
     from asymmetry.core.io import load
 
-    dataset = load(EUO_FILE)
+    dataset = load(str(EUO_FILE))
     dataset = dataset[0] if isinstance(dataset, list) else dataset
     run = dataset.run
     search = find_t0_for_run(run.histograms, run.metadata)
