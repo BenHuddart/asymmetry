@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pytest
 
@@ -14,10 +12,9 @@ from asymmetry.core.io.periods import (
     select_period_histograms,
     sum_period_histograms,
 )
+from tests.corpus import corpus_path, requires_corpus
 
-PHOTO_MUSR_FILE = os.path.expanduser(
-    "~/Documents/WiMDA muon school/Semiconductors/Photo-muSR in silicon/Data_hdf5/HIFI00103277.nxs"
-)
+PHOTO_MUSR_FILE = corpus_path("Semiconductors/Photo-muSR in silicon/Data/HIFI00103277.nxs")
 
 
 def _period_dataset(period: int, level: float, frames: float, n_periods: int = 4) -> MuonDataset:
@@ -175,7 +172,7 @@ def test_mismatched_deadtimes_get_frame_weighted_mean():
 # --- corpus -----------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not os.path.exists(PHOTO_MUSR_FILE), reason="photo-µSR corpus not available")
+@requires_corpus(PHOTO_MUSR_FILE)
 def test_photo_musr_trivial_mapping_matches_loader_combination():
     """On the validated photo-µSR silicon run, mapping {1→red, 2→green} of the
     per-period datasets reproduces the loader's combined two-period dataset."""

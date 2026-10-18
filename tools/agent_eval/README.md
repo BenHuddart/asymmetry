@@ -8,11 +8,15 @@ packaged `asymmetry-analysis` skill. `run_eval.py` drives Claude Code;
 run the agent, score its summary against the dataset's rubric, and fix **the
 skill text** — never the rubric, never the CLI.
 
+The datasets come from the WiMDA muon-school corpus, which is never in this
+repository: extract its release and set `ASYMMETRY_CORPUS_ROOT` to it (see
+`AGENTS.md` § "Test corpus").
+
 ## Running one evaluation
 
 ```bash
 python tools/agent_eval/run_eval.py \
-    --data "$HOME/Documents/WiMDA muon school/Nuclear magnetism and ionic motion/The FmuF state in PTFE/Data" \
+    --data "$ASYMMETRY_CORPUS_ROOT/Nuclear magnetism and ionic motion/The FmuF state in PTFE/Data" \
     --rubric fmuf-ptfe \
     --out /tmp/evals/pass1-fmuf-ptfe
 ```
@@ -36,7 +40,7 @@ rubrics are evaluated through Codex, use the dedicated runner:
 
 ```bash
 python tools/agent_eval/run_codex_eval.py \
-    --data "$HOME/Documents/WiMDA muon school/Chemistry/ALC resonance in TCNQ/Data" \
+    --data "$ASYMMETRY_CORPUS_ROOT/Chemistry/ALC resonance in TCNQ/Data" \
     --rubric alc-tcnq \
     --out /tmp/evals/luna-alc-tcnq
 ```
@@ -124,7 +128,8 @@ that worth closing.
 
 `run_wave.py` runs several evaluations in parallel into one output root, one
 directory per case, then prints each case's exit code, wall time and cost and
-deletes the per-run dataset copies (`--keep-data` keeps them):
+deletes the per-run dataset copies (`--keep-data` keeps them). It finds each
+case's data under `$ASYMMETRY_CORPUS_ROOT` (or `--corpus`):
 
 ```bash
 python tools/agent_eval/run_wave.py --set trend-fit --out /tmp/evals/pass16a

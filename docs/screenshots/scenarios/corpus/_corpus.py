@@ -18,17 +18,15 @@ from typing import ClassVar
 
 from .._base import Scenario, _process_events_for, register  # noqa: F401  (re-exported)
 
-DEFAULT_CORPUS_ROOT = "/home/ben/Documents/WiMDA muon school-indexed"
-
-
 def corpus_root() -> Path:
-    """Return the corpus root, honouring ``ASYMMETRY_CORPUS_ROOT``."""
-    root = Path(os.environ.get("ASYMMETRY_CORPUS_ROOT", DEFAULT_CORPUS_ROOT))
-    if not root.is_dir():
+    """Return the corpus root named by ``ASYMMETRY_CORPUS_ROOT``."""
+    if "ASYMMETRY_CORPUS_ROOT" not in os.environ:
         raise FileNotFoundError(
-            f"Corpus root not found: {root} — set ASYMMETRY_CORPUS_ROOT to the "
-            "'WiMDA muon school' corpus directory."
+            "ASYMMETRY_CORPUS_ROOT is not set — point it at the extracted WiMDA corpus release."
         )
+    root = Path(os.environ["ASYMMETRY_CORPUS_ROOT"])
+    if not root.is_dir():
+        raise FileNotFoundError(f"Corpus root not found: {root} (from ASYMMETRY_CORPUS_ROOT)")
     return root
 
 

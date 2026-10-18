@@ -8,8 +8,6 @@ NeXus file is available) a real round-trip plus GUI/core agreement.
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pytest
 
@@ -24,10 +22,9 @@ from asymmetry.core.io.periods import (
     select_period_histograms,
 )
 from asymmetry.core.utils.constants import PeriodMode
+from tests.corpus import corpus_path, requires_corpus
 
-PHOTO_MUSR_FILE = os.path.expanduser(
-    "~/Documents/WiMDA muon school/Semiconductors/Photo-muSR in silicon/Data_hdf5/HIFI00103277.nxs"
-)
+PHOTO_MUSR_FILE = corpus_path("Semiconductors/Photo-muSR in silicon/Data/HIFI00103277.nxs")
 
 
 # --- fixtures ----------------------------------------------------------------
@@ -362,7 +359,7 @@ def test_combine_period_asymmetry_empty_and_bad_mode():
 # --- real NeXus round-trip (skipped without the WiMDA corpus) ----------------
 
 
-@pytest.mark.skipif(not os.path.exists(PHOTO_MUSR_FILE), reason="photo-µSR corpus not available")
+@requires_corpus(PHOTO_MUSR_FILE)
 def test_nexus_period_roundtrip_and_load_kwarg():
     combined = load(PHOTO_MUSR_FILE)
     assert isinstance(combined, MuonDataset)

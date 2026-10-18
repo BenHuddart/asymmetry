@@ -6,8 +6,6 @@ Corpus checks (skip-if-missing) exercise real instrument templates.
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pytest
 
@@ -15,12 +13,12 @@ from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.io import load
 from asymmetry.core.io.nexus_writer import write_nexus_v1
 from asymmetry.core.simulate import degrade_run, reduce_run_to_dataset, simulate_run
+from tests.corpus import corpus_path, requires_corpus
 
 h5py = pytest.importorskip("h5py")
 
-CORPUS_ROOT = os.path.expanduser("~/Documents/WiMDA muon school")
-NICKEL_DIR = os.path.join(CORPUS_ROOT, "Magnetism", "Ferromagnetic nickel")
-EUO_DIR = os.path.join(CORPUS_ROOT, "Magnetism", "Magnetic ordering in EuO")
+NICKEL_RUN = corpus_path("Magnetism/Ferromagnetic nickel/Data/emu00124218.nxs")
+EUO_RUN = corpus_path("Magnetism/Magnetic ordering in EuO/data/deltat_pta_gps_2923.bin")
 
 N_BINS = 1500
 BIN_WIDTH = 0.016
@@ -341,26 +339,10 @@ class TestRefitRecovery:
 # ---------------------------------------------------------------------------
 
 
-def _first_file(root: str, suffix: str) -> str | None:
-    if not os.path.isdir(root):
-        return None
-    for dirpath, _dirnames, filenames in os.walk(root):
-        for name in sorted(filenames):
-            # A corpus copied from macOS carries AppleDouble stubs ("._foo.nxs",
-            # not HDF5) that sort before the real files; skip anything hidden.
-            if name.startswith("."):
-                continue
-            if name.lower().endswith(suffix):
-                return os.path.join(dirpath, name)
-    return None
-
-
-@pytest.mark.skipif(not os.path.isdir(NICKEL_DIR), reason="Muon School corpus not available")
+@requires_corpus(NICKEL_RUN)
 def test_corpus_nickel_template_round_trip(tmp_path) -> None:
     """HDF5 nickel run as template: simulate → write → reload → counts equal."""
-    source_path = _first_file(NICKEL_DIR, ".nxs")
-    assert source_path is not None
-    loaded = load(source_path)
+    loaded = load(NICKEL_RUN)
     dataset = loaded[0] if isinstance(loaded, list) else loaded
     template = dataset.run
     assert template is not None and template.histograms
@@ -373,13 +355,10 @@ def test_corpus_nickel_template_round_trip(tmp_path) -> None:
         assert np.array_equal(again.counts, original.counts)
 
 
-@pytest.mark.skipif(not os.path.isdir(EUO_DIR), reason="Muon School corpus not available")
+@requires_corpus(EUO_RUN)
 def test_corpus_psi_bin_template_writes_nexus(tmp_path) -> None:
     """A PSI .bin template produces a loadable NeXus file (impossible in WiMDA)."""
-    source_path = _first_file(EUO_DIR, ".bin")
-    if source_path is None:
-        pytest.skip("no .bin runs in corpus")
-    loaded = load(source_path)
+    loaded = load(EUO_RUN)
     dataset = loaded[0] if isinstance(loaded, list) else loaded
     template = dataset.run
     assert template is not None and template.histograms

@@ -14,15 +14,13 @@ E_i ~ tens of meV. **Corpus-conditional**: skips cleanly when the WiMDA muon
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.parameters import AffineTie, Parameter, ParameterSet
+from tests.corpus import corpus_path, requires_corpus
 
 _K_B = 0.0861733  # meV/K
 _EXPR = "Oscillatory*Exponential + Oscillatory*Exponential + Oscillatory*Exponential + Constant"
@@ -30,30 +28,9 @@ _EXPR = "Oscillatory*Exponential + Oscillatory*Exponential + Oscillatory*Exponen
 # the Arrhenius slope. Run -> Tlog from GROUND_TRUTH §3.
 _RUNS = [20721, 20720, 20719, 20718, 20722, 20723, 20724, 20725, 20726, 20727, 20728]
 
+_CDS_DIR = corpus_path("Semiconductors/Shallow donor state in cadmium sulphide/Data")
 
-def _corpus_root() -> Path | None:
-    candidates = [
-        os.environ.get("WIMDA_CORPUS_ROOT"),
-        r"C:\Users\benhu\Source\wimda-corpus",
-        str(Path.home() / "Documents" / "WiMDA muon school"),
-    ]
-    for cand in candidates:
-        if cand and Path(cand).exists():
-            return Path(cand)
-    return None
-
-
-def _cds_dir() -> Path | None:
-    root = _corpus_root()
-    if root is None:
-        return None
-    matches = sorted(root.rglob("EMU00020721.nxs"))
-    hdf5 = [m for m in matches if "hdf5" in str(m).lower()]
-    matches = hdf5 or matches
-    return matches[0].parent if matches else None
-
-
-pytestmark = pytest.mark.skipif(_cds_dir() is None, reason="WiMDA CdS corpus not present")
+pytestmark = requires_corpus(_CDS_DIR)
 
 
 def _model_fn():
@@ -99,7 +76,7 @@ def _tied_seed(fc: float = 1.39, dsat: float = 0.126) -> ParameterSet:
 def _fit(run: int):
     from asymmetry.core.io import load
 
-    ds = load(str(_cds_dir() / f"EMU000{run}.nxs"))
+    ds = load(_CDS_DIR / f"EMU000{run}.nxs")
     result = FitEngine().fit(ds, _model_fn(), _tied_seed(), 0.1, 8.0)
     return ds, result
 
