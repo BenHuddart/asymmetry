@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -30,7 +31,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_CORPUS = Path.home() / "Documents" / "WiMDA muon school"
 
 #: Each rubric's data folder, relative to the corpus root.
 CASES: dict[str, str] = {
@@ -126,7 +126,11 @@ def main(argv: list[str] | None = None) -> int:
         "--case", action="append", default=[], choices=sorted(CASES), help="A case (repeatable)"
     )
     parser.add_argument("--out", required=True, help="Output root; one directory per case")
-    parser.add_argument("--corpus", default=str(DEFAULT_CORPUS), help="The corpus root")
+    parser.add_argument(
+        "--corpus",
+        default=os.environ.get("ASYMMETRY_CORPUS_ROOT"),
+        help="The corpus root (default: $ASYMMETRY_CORPUS_ROOT)",
+    )
     parser.add_argument("--model", default="sonnet", help="Model alias for the agent")
     parser.add_argument("--parallel", type=int, default=4, help="Cases run at once")
     parser.add_argument("--keep-data", action="store_true", help="Keep the per-run dataset copies")
@@ -135,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
     cases = list(dict.fromkeys([*(case for name in args.set for case in SETS[name]), *args.case]))
     if not cases:
         parser.error("name a --set or at least one --case")
+    if args.corpus is None:
+        parser.error("pass --corpus or set ASYMMETRY_CORPUS_ROOT")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     corpus = Path(args.corpus).expanduser()

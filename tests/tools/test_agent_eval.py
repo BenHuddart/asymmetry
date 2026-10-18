@@ -19,12 +19,13 @@ from pathlib import Path, PureWindowsPath
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-RUNNER_PATH = ROOT / "tools" / "agent_eval" / "run_eval.py"
 
 
-def _load_runner():
-    """The evaluation runner, loaded from ``tools/`` by path."""
-    spec = importlib.util.spec_from_file_location("asymmetry_run_eval", RUNNER_PATH)
+def _load_runner(name: str = "run_eval"):
+    """An evaluation script (``run_eval`` or ``run_wave``), loaded from ``tools/`` by path."""
+    spec = importlib.util.spec_from_file_location(
+        f"asymmetry_{name}", ROOT / "tools" / "agent_eval" / f"{name}.py"
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -256,12 +257,7 @@ def test_a_copy_shorter_than_its_source_is_reported(tmp_path: Path) -> None:
 
 
 def test_every_wave_case_names_a_rubric_and_every_set_names_cases() -> None:
-    spec = importlib.util.spec_from_file_location(
-        "asymmetry_run_wave", ROOT / "tools" / "agent_eval" / "run_wave.py"
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_runner("run_wave")
 
     rubrics = {path.stem for path in (ROOT / "tools" / "agent_eval" / "rubrics").glob("*.md")}
     assert set(module.CASES) <= rubrics
@@ -271,17 +267,33 @@ def test_every_wave_case_names_a_rubric_and_every_set_names_cases() -> None:
 
 
 def test_a_wave_runs_every_named_set_once(tmp_path: Path, monkeypatch) -> None:
-    spec = importlib.util.spec_from_file_location(
-        "asymmetry_run_wave", ROOT / "tools" / "agent_eval" / "run_wave.py"
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_runner("run_wave")
 
     ran: list[str] = []
     monkeypatch.setattr(
         module, "run_case", lambda case, corpus, out, model: ran.append(case) or (case, 0)
     )
-    argv = ["--set", "trend-fit", "--set", "hold-out", "--case", "euo-psi", "--out", str(tmp_path)]
-    assert module.main(argv) == 0
+    argv = ["--set", "trend-fit", "--set", "hold-out", "--case", "euo-psi"]
+    assert module.main([*argv, "--corpus", str(tmp_path), "--out", str(tmp_path)]) == 0
     assert sorted(ran) == sorted({*module.SETS["trend-fit"], *module.SETS["hold-out"]})
+
+
+def test_a_wave_reads_the_corpus_root_from_the_environment(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ASYMMETRY_CORPUS_ROOT", str(tmp_path / "corpus"))
+    module = _load_runner("run_wave")
+
+    corpora: list[Path] = []
+    monkeypatch.setattr(
+        module, "run_case", lambda case, corpus, out, model: corpora.append(corpus) or (case, 0)
+    )
+    assert module.main(["--case", "euo-psi", "--out", str(tmp_path)]) == 0
+    assert corpora == [tmp_path / "corpus"]
+
+
+def test_a_wave_without_a_corpus_root_stops_before_running(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("ASYMMETRY_CORPUS_ROOT", raising=False)
+    module = _load_runner("run_wave")
+
+    monkeypatch.setattr(module, "run_case", lambda *_: pytest.fail("ran without a corpus"))
+    with pytest.raises(SystemExit):
+        module.main(["--case", "euo-psi", "--out", str(tmp_path)])

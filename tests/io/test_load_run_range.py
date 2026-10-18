@@ -16,33 +16,16 @@ exists; corpus-conditional so CI stays green.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 
+from tests.corpus import corpus_path, requires_corpus
 
-def _corpus_root() -> Path | None:
-    for cand in (
-        os.environ.get("WIMDA_CORPUS_ROOT"),
-        r"C:\Users\benhu\Source\wimda-corpus",
-        str(Path.home() / "Documents" / "WiMDA muon school"),
-    ):
-        if cand and Path(cand).exists():
-            return Path(cand)
-    return None
+_BISCCO = corpus_path("Superconductivity/A high-Tc cuprate/Data")
 
 
-_BISCCO = None
-_root = _corpus_root()
-if _root is not None:
-    hits = sorted((_root / "Superconductivity").rglob("MUSR00001276.nxs"))
-    hits = [h for h in hits if "hdf5" in str(h).lower()]
-    if hits:
-        _BISCCO = hits[0].parent  # the Data_hdf5 folder
-
-
-@pytest.mark.skipif(_BISCCO is None, reason="WiMDA corpus BiSCCO runs not present")
+@requires_corpus(_BISCCO)
 def test_resolve_run_range_expands_contiguous_series() -> None:
     from asymmetry.core.io import resolve_run_range
 

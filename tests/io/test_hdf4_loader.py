@@ -1,18 +1,13 @@
-"""pyhdf-backed HDF4 read tests: synthetic round-trips + real-corpus parity.
+"""pyhdf-backed HDF4 read tests: synthetic round-trips.
 
-Two layers, both requiring a working pyhdf/HDF4 runtime (so they run on CI
-Linux/macOS, where the wheel is self-contained, and locally on Windows when
+These need a working pyhdf/HDF4 runtime (so they run on CI Linux/macOS, where
+the wheel is self-contained, and locally on Windows when
 ``ASYMMETRY_HDF4_DLL_DIR`` points at the HDF4 DLLs — see
-``packaging/windows/fetch_hdf4_dlls.py``):
-
-* **Synthetic round-trip** — write a tiny HDF4 v1 file with pyhdf, then read it
-  back through ``NexusLoader``. This exercises the real container walk
-  (``read_tree`` / ``_build_root`` / ``_read_vgroup`` / ``_read_sds``) end to
-  end without committing any data.
-* **Corpus parity** — opt-in via ``ASYMMETRY_WIMDA_CORPUS``: every legacy HDF4
-  ``/run`` file must reduce identically to its ``nxs4to5``-converted HDF5 v2
-  twin (a known-good oracle that loads like genuine ISISICP v2). Never commits
-  data.
+``packaging/windows/fetch_hdf4_dlls.py``). Each writes a tiny HDF4 v1 file with
+pyhdf, then reads it back through ``NexusLoader``, exercising the real container
+walk (``read_tree`` / ``_build_root`` / ``_read_vgroup`` / ``_read_sds``) end to
+end without committing any data. Real HDF4 corpus runs are covered by the
+corpus-conditional tests (``tests/corpus.py``), which load the originals directly.
 
 Pure-adapter and ``_load_v1`` logic (no HDF4 runtime needed) is covered by
 ``tests/test_hdf4_adapter.py``.
@@ -41,8 +36,6 @@ pytest.importorskip("pyhdf.SD", exc_type=ImportError)
 
 from asymmetry.core.io.hdf4 import is_hdf4
 from asymmetry.core.io.nexus import NexusLoader
-
-_CORPUS_ROOT = os.environ.get("ASYMMETRY_WIMDA_CORPUS")
 
 
 @pytest.fixture()
@@ -221,105 +214,3 @@ def test_hdf4_load_does_not_lock_file(loader: NexusLoader, tmp_path) -> None:
     _ = _as_single(loader.load(str(path)))
     path.unlink()  # raises PermissionError on Windows if still locked
     assert not path.exists()
-
-
-# --- real-corpus parity sweep (opt-in via ASYMMETRY_WIMDA_CORPUS) -----------
-
-
-def _assert_reduced_parity(ds4, ds5) -> None:
-    """Assert two reduced datasets (HDF4-v1 vs HDF5-v2 twin) match.
-
-    One deliberate exception: ``field``/``field_state``/``field_direction`` may
-    legitimately diverge when exactly one side filled a gap from a sidecar ICP
-    ``.log`` (``metadata["field_source"] == "icp_log"``, see
-    :meth:`NexusLoader._fill_field_from_sidecar_log`). The HDF4 original and its
-    converted ``*_hdf5`` twin live in different directories
-    (``data/`` vs ``data_hdf5/``); the ``.log`` sidecar sits beside the
-    original and the conversion tooling does not necessarily copy it beside the
-    twin, so only one side may find it. That is an artifact of this corpus's
-    directory layout, not a loader bug, so it is excluded from the strict
-    equality check below rather than silently loosened for every field.
-    """
-    assert ds4.time.shape == ds5.time.shape, (ds4.time.shape, ds5.time.shape)
-    assert np.allclose(ds4.time, ds5.time, rtol=1e-6, atol=1e-6)
-    assert np.allclose(ds4.asymmetry, ds5.asymmetry, rtol=1e-6, atol=1e-6)
-    assert np.allclose(ds4.error, ds5.error, rtol=1e-6, atol=1e-6)
-
-    assert int(ds4.metadata["run_number"]) == int(ds5.metadata["run_number"])
-    assert ds4.metadata.get("instrument") == ds5.metadata.get("instrument")
-    assert ds4.metadata.get("title") == ds5.metadata.get("title")
-
-    def _log_sources(ds) -> tuple[object, object]:
-        return (
-            ds.metadata.get("field_source"),
-            ds.metadata.get("field_direction_source"),
-        )
-
-    log_filled = "icp_log" in (*_log_sources(ds4), *_log_sources(ds5))
-    if log_filled:
-        # Only a sidecar-.log fill on exactly one side may cause a mismatch;
-        # confirm that is actually the shape of the divergence rather than
-        # masking an unrelated regression.
-        assert _log_sources(ds4) != _log_sources(ds5)
-    else:
-        assert ds4.metadata.get("field_state") == ds5.metadata.get("field_state")
-        assert pytest.approx(float(ds5.metadata["field"]), abs=1e-6) == float(ds4.metadata["field"])
-
-    assert pytest.approx(float(ds5.metadata["temperature"]), rel=1e-5) == float(
-        ds4.metadata["temperature"]
-    )
-
-    # Logged sample temperature must agree across containers — the native-HDF4
-    # logged-T gap (a Temp_Sample NXlog whose Vgroup is generically named and
-    # whose sensor label lives in a ``name`` child). Same value, or both absent.
-    t4 = ds4.metadata.get("sample_temperature_logged")
-    t5 = ds5.metadata.get("sample_temperature_logged")
-    if t4 is None or t5 is None:
-        assert t4 is None and t5 is None, (t4, t5)
-    else:
-        assert pytest.approx(float(t5), rel=1e-5) == float(t4)
-
-    g4, g5 = ds4.run.grouping, ds5.run.grouping
-    assert int(g4["first_good_bin"]) == int(g5["first_good_bin"])
-    assert int(g4["last_good_bin"]) == int(g5["last_good_bin"])
-    assert g4["groups"] == g5["groups"]
-
-    assert len(ds4.run.histograms) == len(ds5.run.histograms)
-    for h4, h5 in zip(ds4.run.histograms, ds5.run.histograms):
-        np.testing.assert_array_equal(
-            np.asarray(h4.counts, dtype=np.int64), np.asarray(h5.counts, dtype=np.int64)
-        )
-
-
-def _corpus_pairs() -> list[tuple[Path, Path]]:
-    """Every corpus HDF4 file paired with its converted ``*_hdf5`` twin."""
-    if not _CORPUS_ROOT:
-        return []
-    root = Path(_CORPUS_ROOT)
-    pairs: list[tuple[Path, Path]] = []
-    for nxs in root.rglob("*.nxs"):
-        parts = nxs.parts
-        if any(p.lower().endswith("_hdf5") for p in parts):
-            continue
-        if not is_hdf4(str(nxs)):
-            continue
-        # Map ``.../data/<f>`` (or ``Data``) to its ``.../data_hdf5/<f>`` twin,
-        # preserving the original case of the data segment.
-        twin = None
-        for i, part in enumerate(parts):
-            if part.lower() == "data":
-                twin = Path(*parts[:i], part + "_hdf5", *parts[i + 1 :])
-                break
-        if twin is not None and twin.exists():
-            pairs.append((nxs, twin))
-    return pairs
-
-
-@pytest.mark.slow
-@pytest.mark.skipif(not _CORPUS_ROOT, reason="ASYMMETRY_WIMDA_CORPUS not set")
-@pytest.mark.parametrize("pair", _corpus_pairs(), ids=lambda p: p[0].stem if p else "none")
-def test_corpus_hdf4_parity(loader: NexusLoader, pair: tuple[Path, Path]) -> None:
-    hdf4_path, hdf5_path = pair
-    ds4 = _as_single(loader.load(str(hdf4_path)))
-    ds5 = _as_single(loader.load(str(hdf5_path)))
-    _assert_reduced_parity(ds4, ds5)

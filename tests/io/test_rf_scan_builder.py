@@ -16,9 +16,6 @@ Two layers:
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -27,6 +24,7 @@ from asymmetry.core.fitting.field_scan import fit_rf_resonance
 from asymmetry.core.fitting.muon_proton import rf_resonance_mup
 from asymmetry.core.io.periods import build_rf_difference_scan
 from asymmetry.core.utils.constants import PeriodMode
+from tests.corpus import corpus_path, requires_corpus
 
 # --- synthetic fixtures -------------------------------------------------------
 
@@ -176,28 +174,7 @@ def test_fit_recovers_input_couplings_on_synthetic_scan() -> None:
 # --- corpus-conditional recovery ----------------------------------------------
 
 
-def _corpus_rf_dir() -> Path | None:
-    """Locate the benzene RF-resonance run directory, or None when absent."""
-    candidates = []
-    env = os.environ.get("WIMDA_CORPUS_ROOT")
-    if env:
-        candidates.append(Path(env))
-    candidates += [
-        Path.home() / "Documents" / "WiMDA muon school",
-        Path.home() / "Source" / "wimda-corpus",
-        Path("C:/Users/benhu/Source/wimda-corpus"),
-    ]
-    rel = Path("Chemistry") / "Muon spectroscopy of benzene"
-    for root in candidates:
-        benzene = root / rel
-        for sub in ("data_hdf5", "data"):
-            rf_dir = benzene / sub / "RF resonance"
-            if rf_dir.is_dir() and any(rf_dir.glob("*.nxs")):
-                return rf_dir
-    return None
-
-
-_RF_DIR = _corpus_rf_dir()
+_RF_DIR = corpus_path("Chemistry/Muon spectroscopy of benzene/data/RF resonance")
 
 
 # Loads 37 real HDF4 files + a Migrad fit (~5s alone) — a genuine standard-tier
@@ -206,11 +183,9 @@ _RF_DIR = _corpus_rf_dir()
 # worker alongside dozens of other tests with no wall-clock margin, and under
 # full-suite contention it has intermittently run past the tier's tight
 # per-test budget. `slow` moves it to the full tier (2 workers, 600s timeout —
-# see tools/harness.py _FULL_TIER_WORKERS/_FULL_TIER_TIMEOUT_S), matching the
-# precedent already set for the other corpus-conditional heavy test,
-# test_corpus_hdf4_parity in tests/io/test_hdf4_loader.py.
+# see tools/harness.py _FULL_TIER_WORKERS/_FULL_TIER_TIMEOUT_S).
 @pytest.mark.slow
-@pytest.mark.skipif(_RF_DIR is None, reason="WiMDA benzene RF corpus not present")
+@requires_corpus(_RF_DIR)
 def test_benzene_rf_scan_recovers_paper_couplings() -> None:
     """End-to-end: load benzene RF runs → Green − Red scan → fit → A_µ ≈ 514.78."""
     from asymmetry.core.io import load

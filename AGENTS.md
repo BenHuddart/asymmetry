@@ -151,6 +151,17 @@ rewritten wholesale. Briefs for subagents carry this section verbatim.
   baseline and fail when it rises, so new code meets the rule without a
   rewrite of what exists.
 
+## Test Corpus
+
+Real-data tests, the agent-skill evaluations (`tools/agent_eval/`) and the
+corpus screenshot scenarios read the WiMDA muon-school corpus, which is never
+copied into this repository. It is published as a release archive on the
+private `BenHuddart/wimda-muon-school-corpus` repository; extract it and set
+`ASYMMETRY_CORPUS_ROOT` to the extracted `wimda-corpus/` directory. That
+variable is the only way code finds the corpus: tests resolve paths through
+`tests/corpus.py` and skip when it is unset, and `run_wave.py` reads it as
+its `--corpus` default. Never hard-code a corpus path.
+
 ## Validation Ladder
 
 Agent-skill evaluations use Claude Sonnet when driven through Claude Code and

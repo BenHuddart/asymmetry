@@ -5,8 +5,8 @@ runs (one TF, one ZF).  They are **not numerical oracles** — no trusted
 reference spectrum exists for these files — only that the overlay renders and
 ZF/LF mode constrains the fit without crashing.
 
-The corpus lives outside the repository (``~/Documents/WiMDA muon school``), so
-every test here skips cleanly when the files are absent (always the case in CI).
+The corpus lives outside the repository (``tests/corpus.py``), so every test
+here skips cleanly when the files are absent (always the case in CI).
 Run them locally to confirm the GUI surfaces survive real data.
 
 Marked ``slow``: the TF reconstruction takes ~24s per parametrization, which
@@ -37,24 +37,12 @@ from asymmetry.core.maxent import (
 )
 from asymmetry.core.representation import build_maxent_reconstruction_datasets
 from asymmetry.gui.panels.plot_panel import PlotPanel
-
-_CORPUS = Path.home() / "Documents" / "WiMDA muon school"
-
-
-def _first_match(subdir: str, pattern: str) -> Path | None:
-    """Return the first corpus file matching *pattern* under *subdir*, or None."""
-    root = _CORPUS / subdir
-    if not root.exists():
-        return None
-    matches = sorted(root.rglob(pattern))
-    return matches[0] if matches else None
-
+from tests.corpus import corpus_path, requires_corpus
 
 # A transverse-field PSI HiFi run (60 kG, multi-group) and a zero-field ISIS
-# EMU F/B run — both confirmed loadable.  Resolved by glob so a corpus reshuffle
-# (the files live under a per-experiment ``data/`` subdir) does not break them.
-_TF_RUN = _first_match("Magnetism/AFM transition in high TF", "tdc_hifi_*.mdu")
-_ZF_RUN = _first_match("Magnetism/Ferromagnetic nickel", "emu*.nxs")
+# EMU F/B run.
+_TF_RUN = corpus_path("Magnetism/AFM transition in high TF/data/tdc_hifi_2020_00686.mdu")
+_ZF_RUN = corpus_path("Magnetism/Ferromagnetic nickel/Data/emu00124218.nxs")
 
 
 @pytest.fixture(scope="module")
@@ -73,7 +61,7 @@ def _load_run(path: Path):
     return run if run is not None else dataset
 
 
-@pytest.mark.skipif(_TF_RUN is None, reason="TF corpus run not present")
+@requires_corpus(_TF_RUN)
 @pytest.mark.parametrize("combined", [False, True])
 def test_tf_run_reconstruction_overlay_renders(qapp: QApplication, combined: bool) -> None:
     run = _load_run(_TF_RUN)
@@ -102,7 +90,7 @@ def test_tf_run_reconstruction_overlay_renders(qapp: QApplication, combined: boo
         panel.deleteLater()
 
 
-@pytest.mark.skipif(_ZF_RUN is None, reason="ZF corpus run not present")
+@requires_corpus(_ZF_RUN)
 def test_zf_run_constrains_to_two_groups_with_pinned_phases(qapp: QApplication) -> None:
     run = _load_run(_ZF_RUN)
     grouping = run.grouping

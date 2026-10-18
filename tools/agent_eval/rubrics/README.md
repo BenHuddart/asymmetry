@@ -8,7 +8,7 @@ from the WiMDA muon school corpus and the prompt:
 > you analyse these using Asymmetry and present me a summary of what
 > they show?"
 
-The corpus lives at `~/Documents/WiMDA muon school/` and is never
+The corpus lives at `$ASYMMETRY_CORPUS_ROOT` and is never
 copied into the repository. Each rubric file documents, from its
 worksheet (or paper, where no worksheet exists), what a correct
 summary should and should not say — checkable from the summary text

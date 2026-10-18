@@ -34,7 +34,7 @@ session in that folder.
 Usage::
 
     python tools/agent_eval/run_eval.py \\
-        --data "~/Documents/WiMDA muon school/.../Data" \\
+        --data "$ASYMMETRY_CORPUS_ROOT/.../Data" \\
         --rubric fmuf-ptfe --out /tmp/evals/pass1-fmuf-ptfe
 """
 

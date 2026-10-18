@@ -14,7 +14,7 @@ the project and the original corpus is never exposed to writes.
 Usage::
 
     python tools/agent_eval/run_codex_eval.py \
-        --data "~/Documents/WiMDA muon school/.../Data" \
+        --data "$ASYMMETRY_CORPUS_ROOT/.../Data" \
         --rubric alc-tcnq --out /tmp/evals/luna-alc-tcnq
 """
 
