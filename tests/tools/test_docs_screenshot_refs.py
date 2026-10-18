@@ -7,6 +7,7 @@ and the ``--check-refs`` CLI mode.
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import sys
 from pathlib import Path
@@ -147,7 +148,7 @@ def test_harness_wraps_problems_as_structural_failures(tmp_path: Path) -> None:
     assert any("orphan_scenario" in message for message in messages)
 
 
-def test_docs_command_runs_capture_first_with_screenshots_flag(monkeypatch) -> None:
+def test_docs_command_runs_capture_first_with_screenshots_flag(monkeypatch, tmp_path) -> None:
     harness = _load_harness()
     recorded: list[list[str]] = []
 
@@ -156,6 +157,13 @@ def test_docs_command_runs_capture_first_with_screenshots_flag(monkeypatch) -> N
         return 0
 
     monkeypatch.setattr(harness, "_run_command", _fake_run)
+    # The build is faked, so the size check scans an empty build, not whatever
+    # docs/_build/html a past local build left behind.
+    monkeypatch.setattr(
+        harness,
+        "_report_oversized_docs_pages",
+        functools.partial(harness._report_oversized_docs_pages, tmp_path),
+    )
 
     from types import SimpleNamespace
 

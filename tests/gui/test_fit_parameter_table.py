@@ -311,6 +311,17 @@ def test_resting_columns_fit_a_narrow_inspector_dock(qapp):
     assert table_content_width(table) <= char_width(44)
 
 
+def test_narrow_columns_keep_their_character_widths(qapp):
+    """Fix/Link/Tie sit below the unstyled header's minimum section size on some
+    platforms; sizing them before styling would leave them clamped up to it."""
+    table = FitParameterTable()
+    assert [table.columnWidth(c) for c in (2, 6, 7)] == [
+        char_width(4),
+        char_width(5),
+        char_width(5),
+    ]
+
+
 def _resting_table(qapp, width_chars: int = 60) -> FitParameterTable:
     """A shown Name·Value·Fix·Min·Max table in a dock wider than it needs."""
     table = FitParameterTable()
