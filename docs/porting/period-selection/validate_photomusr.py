@@ -12,7 +12,7 @@ API (no GUI):
    first ~1 µs of light-ON for the relaxation rate λ — the first point of the
    λ-vs-Δn calibration.
 
-Usage::
+Usage (with ``ASYMMETRY_CORPUS_ROOT`` set to the extracted corpus release)::
 
     .venv/bin/python docs/porting/period-selection/validate_photomusr.py
 """
@@ -27,8 +27,8 @@ from asymmetry.core.fitting import FitEngine, Parameter, ParameterSet
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.io import load, period_labels, select_period
 
-DATA_DIR = os.path.expanduser(
-    "~/Documents/WiMDA muon school/Semiconductors/Photo-muSR in silicon/Data_hdf5"
+DATA_DIR = os.path.join(
+    os.environ["ASYMMETRY_CORPUS_ROOT"], "Semiconductors", "Photo-muSR in silicon", "Data"
 )
 RUN = "HIFI00103277.nxs"
 
