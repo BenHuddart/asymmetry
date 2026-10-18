@@ -788,19 +788,22 @@ def test_command_env_respects_explicit_thread_override(
     assert harness._command_env()["OPENBLAS_NUM_THREADS"] == "4"
 
 
-def test_command_env_puts_the_interpreters_scripts_first_on_path(
-    monkeypatch: pytest.MonkeyPatch,
+def test_command_env_puts_the_installations_scripts_first_on_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     harness = _load_harness()
 
+    # A base Windows install: console scripts live in ``Scripts\``, not beside
+    # the interpreter, so the scheme's scripts path is what must lead.
+    scripts = tmp_path / "Scripts"
+    monkeypatch.setattr(
+        harness.sysconfig, "get_path", lambda name: str(scripts) if name == "scripts" else ""
+    )
     monkeypatch.setenv("PATH", "/usr/bin")
 
     # As an activated venv would: ``asymmetry`` resolves to this install even
     # when the caller's shell never activated it.
-    assert harness._command_env()["PATH"].split(os.pathsep) == [
-        str(Path(sys.executable).parent),
-        "/usr/bin",
-    ]
+    assert harness._command_env()["PATH"].split(os.pathsep) == [str(scripts), "/usr/bin"]
 
 
 def test_fast_tier_marker_is_unit_only_and_parallel() -> None:
