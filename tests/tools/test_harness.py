@@ -788,6 +788,21 @@ def test_command_env_respects_explicit_thread_override(
     assert harness._command_env()["OPENBLAS_NUM_THREADS"] == "4"
 
 
+def test_command_env_puts_the_interpreters_scripts_first_on_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = _load_harness()
+
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    # As an activated venv would: ``asymmetry`` resolves to this install even
+    # when the caller's shell never activated it.
+    assert harness._command_env()["PATH"].split(os.pathsep) == [
+        str(Path(sys.executable).parent),
+        "/usr/bin",
+    ]
+
+
 def test_fast_tier_marker_is_unit_only_and_parallel() -> None:
     harness = _load_harness()
 

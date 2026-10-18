@@ -1194,6 +1194,9 @@ def run_structural_checks() -> int:
 
 def _command_env() -> dict[str, str]:
     env = os.environ.copy()
+    # This interpreter's scripts directory first on PATH, as activating its venv
+    # would, so the ``asymmetry`` command the suite checks for is this install's.
+    env["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{env.get('PATH', '')}"
     env.setdefault("QT_QPA_PLATFORM", "offscreen")
     # Pin the numeric backends to a single thread each. pytest-xdist already
     # spreads the suite across one process per core (``-n auto``), and the

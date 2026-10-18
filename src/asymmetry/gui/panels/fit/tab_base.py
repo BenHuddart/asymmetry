@@ -1601,6 +1601,10 @@ class FitParameterTable(ElasticTable):
         self.setHorizontalHeaderLabels(
             ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
         )
+        # Styled before sizing: the unstyled header's minimum section size
+        # (38 px under Fusion with Noto Sans) would silently raise the narrow
+        # Fix/Link/Tie widths below, and restyling never lowers them again.
+        _apply_param_table_style(self)
         # Name (col 0) holds formatted "name (unit)" labels; a too-narrow column
         # clips common cases like "f (MHz)" / "A_bg (%)" (tooltip backs the rest).
         # Widths are char-based (metrics.char_width) so they track the UI font
@@ -1622,7 +1626,6 @@ class FitParameterTable(ElasticTable):
         # Value is where a long number (or a ±σ overlay and a link/tie badge)
         # actually needs the room, so it takes the dock's leftover width.
         elastic_value_columns(self, (self.COL_VALUE,), chars=VALUE_COL_CHARS)
-        _apply_param_table_style(self)
         # Tab commits the open editor on every editable column; the Value column
         # additionally paints the ±σ overlay.
         self.setItemDelegate(_CommitOnTabDelegate(self))
