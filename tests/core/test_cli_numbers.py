@@ -212,6 +212,10 @@ def test_report_provenance_and_coupled_fits_are_required(
         )
     text = "6 runs, two temperature groups: 201-203 and 204-206."
     assert any("COUPLED FIELD GROUPS: 2" in m for m in report_obligations([workdir.root], text))
+    # One global fit over both temperatures forces one set of dynamics on them.
+    union = {"kind": "global", "trend": {"rows": [{"key": str(run)} for run in range(201, 207)]}}
+    workdir.write_series("union", union)
+    assert any("COUPLED FIELD GROUPS: 2" in m for m in report_obligations([workdir.root], text))
     for index in range(2):
         # Any simultaneous fit clears the gate, whichever model it shares.
         workdir.write_series(str(index), workdir.read_series(str(index)) | {"kind": "global"})

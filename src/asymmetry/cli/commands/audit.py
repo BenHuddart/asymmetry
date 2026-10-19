@@ -197,7 +197,8 @@ def report_obligations(roots: list[Path], text: str) -> list[str]:
     workdirs = [workdir for workdir in map(WorkDir, roots) if workdir.manifest_path.is_file()]
     # Run ranges match on whitespace-free, dash-normalised text: "201 – 206" is 201-206.
     ranges = re.sub(r"\s+", "", text).replace("–", "-").replace("—", "-")
-    # Any global fit is simultaneous across its runs, whichever model it shares.
+    # Any global fit is simultaneous across its runs, whichever model it shares;
+    # it measures one group's dynamics only when its runs are exactly that group.
     joint = [
         (workdir.selection, {int(row["key"]) for row in series["trend"]["rows"]})
         for workdir in workdirs
@@ -231,7 +232,7 @@ def report_obligations(roots: list[Path], text: str) -> list[str]:
                 )
         fitted = [runs for owner, runs in joint if owner == selection]
         for batch in coupled_field_groups(scans, survey["runs"]):
-            missing = [scan for scan in batch if not any(set(scan.runs) <= runs for runs in fitted)]
+            missing = [scan for scan in batch if set(scan.runs) not in fitted]
             if missing:
                 messages.append(
                     f"COUPLED FIELD GROUPS: {len(missing)} temperature groups have no "
