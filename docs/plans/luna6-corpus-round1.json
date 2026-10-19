@@ -278,14 +278,322 @@
       "staged_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
       "boundary_check": "PASS: inspected commands use staged/project files and Asymmetry CLI; no external calculator, source/personal skill read, network or delegation.",
       "permission_denials": 0
+    },
+    "afm-high-tf-mdu": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the two temperature scans by field (6 T and 8 T) with their run ranges, from the survey rather than from file names alone.",
+          "pass": true,
+          "evidence": "Names 6 T runs 686\u2013693 and 8 T runs 730\u2013739 with recorded temperature spans from survey."
+        },
+        {
+          "requirement": "Resolves the precession near the Larmor frequency into more than one line (from a Fourier transform or a multi-component fit) at at least one field, and says which it used. Reporting the two lines passes even when it calls the splitting not precisely resolved; it fails when it concludes there is one line.",
+          "pass": true,
+          "evidence": "Reports two-line time-domain fits at both fields: 813.601/813.542 MHz separated by 0.05927\u00b10.0052 MHz and 1084.84/1084.73 MHz separated by 0.1059\u00b10.0032 MHz."
+        },
+        {
+          "requirement": "Reports a change in the spectrum or line shape (broadening, splitting or extra structure) on cooling through the tens-of-kelvin region at at least one field, from this session's own fits or spectra.",
+          "pass": true,
+          "evidence": "Reports cold broad-component damping falling on warming through 12\u201330.0005 K at 6 T and 10.4659\u201349.9994 K at 8 T, from fitted scan trends."
+        },
+        {
+          "requirement": "States which parts of a full analysis the tool cannot do (MaxEnt field spectra; a multi-group field-distribution analysis); does not present a canting angle or ordered moment as a finding, and does not infer the absence of magnetic order from a single-line fit.",
+          "pass": true,
+          "evidence": "Explicitly bounds scope: no MaxEnt, multi-group orientation-resolved distribution or canting/site calculation; does not infer absent order from one line."
+        },
+        {
+          "requirement": "Contains no transition temperature, field shift or line parameter that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Frequencies, separations, rates and transition brackets are printed CLI results; no paper TN or canting result claimed."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reports the recorded run temperature where it differs from the title (run 732 is titled 12 K but recorded at 10.5 K).",
+          "pass": true,
+          "evidence": "Table reports run 732 at recorded 10.4659 K, rather than its 12 K title."
+        },
+        {
+          "requirement": "If it quotes a transition temperature, it comes from a stated `trend --model` fit to a line parameter with the fit range given, and is framed as that fit's result rather than the paper's T_N, which rests on the wing area of MaxEnt spectra.",
+          "pass": true,
+          "evidence": "No transition temperature claimed; explicitly says no physical trend law was fitted and does not borrow paper TN."
+        },
+        {
+          "requirement": "Notes that the two central lines are separated by roughly one Fourier resolution element, so a zoomed spectrum's empty peak table is not evidence that the second line is absent.",
+          "pass": true,
+          "evidence": "Explains cold 6 T separation below FFT resolution and 8 T separation close to resolution; distinguishes shoulders from detected peaks."
+        }
+      ],
+      "number_rule": "PASS: two-line fit separations/errors, per-run rate/frequency rows including 732, FFT peaks/resolution and trend brackets checked in command output. Final exactly equals passed audit.",
+      "root_cause": "Scientific PASS, exact-copy PASS, and previous AFM physics-scope warning resolved. Screens explicitly use tf-knight-precession and exclude vortex-lattice models based on magnetic context. No superconducting gap law or transition asserted. Poor chi-squared and negative baseline are retained as limitations.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 950.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [],
+      "command_failures": [],
+      "summary_sha256": "7c8e8b7dfc8a2c20d346cdfdd5e8bcd663e29e789f3c631d36dfbf3958b3e6c9",
+      "rubric_sha256": "062fa8082f95b4b6cb7f075cf9a287e8add6d5313d56290d3d5ead8bc95725cf",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round1/afm-high-tf-mdu",
+      "staged_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
+      "boundary_check": "PASS: inspected commands use staged/project files and Asymmetry CLI; no external calculator, source/personal skill read, network or delegation.",
+      "permission_denials": 0,
+      "physics_scope_warning_resolved": true
+    },
+    "copper-diffusion": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Splits the folder into its TF, ZF, and LF run groups rather than treating it as one undifferentiated series.",
+          "pass": true,
+          "evidence": "Separates six ZF/TF/LF survey groups in scan table and uses distinct fits."
+        },
+        {
+          "requirement": "Separates the EMU (2010) and ARGUS (2024) runs as two distinct measurement campaigns on the same sample.",
+          "pass": true,
+          "evidence": "Keeps EMU and ARGUS as distinct instrument/campaign blocks with their own workdirs and alpha; years not repeated, but campaigns are not merged."
+        },
+        {
+          "requirement": "Reports a change in TF line shape (Lorentzian-like to Gaussian-like) as temperature decreases, from at least one of the two TF series.",
+          "pass": false,
+          "evidence": "Reports exponential ARGUS TF and narrowing Gaussian EMU TF rates, but no Lorentzian-like-to-Gaussian-like TF shape change on cooling within either series."
+        },
+        {
+          "requirement": "Reports the ZF spectra as showing Kubo-Toyabe-like behaviour and states whether the relaxation (e.g. the fluctuation rate \u03bd) at the lowest-temperature run differs from the next-lowest \u2014 the low-T upturn \u2014 whether or not it interprets it.",
+          "pass": true,
+          "evidence": "Explicitly identifies KT spectra and compares EMU cold nu=0.100875\u00b10.036476 with next bound-pinned 8.61103e-08\u00b10.0303708, saying contrast unresolved given fit limitations; ARGUS cold pair both failed."
+        },
+        {
+          "requirement": "Identifies the fixed-temperature, swept-field runs as the LF/QLCR data, distinct from the temperature scans.",
+          "pass": true,
+          "evidence": "Identifies fixed-temperature field sweeps separately as LF; declines a resolved QLCR dip because observed curve is recovery, not a resonance."
+        },
+        {
+          "requirement": "Contains no hop rate, activation energy, or rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Reported rates and Arrhenius parameters/errors are actual command output; no hand-derived hop rate."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares a hop rate or dynamics trend derived from TF against one derived from ZF, as the worksheet asks.",
+          "pass": false,
+          "evidence": "Discusses TF weakening and ZF dynamics qualitatively but does not explicitly compare a TF-derived hop/dynamics trend with the ZF one."
+        },
+        {
+          "requirement": "Keeps the EMU and ARGUS scans on separate axes and notes their different fields, step sizes and ranges, rather than merging both eras' runs into one T-axis.",
+          "pass": true,
+          "evidence": "Separate instrument axes, fields and scan ranges are clearly named."
+        },
+        {
+          "requirement": "Flags any run whose logged sample temperature deviates substantially from its nominal set-point.",
+          "pass": true,
+          "evidence": "Uses logged temperatures, flags physically plausible offset/away-from-setpoint runs, and records t0 metadata discrepancy."
+        }
+      ],
+      "number_rule": "PASS: EMU cold/next nu and uncertainties, selected ZF/TF rows, integral endpoints and Arrhenius Ea=40.585426\u00b16.478834 meV over 5.7955\u2013200.8665 K verified in CLI output. Final exactly equals passed audit.",
+      "root_cause": "Scientific FAIL (TF line-shape-change Must), exact-copy PASS. All time-domain fits were restricted to early ~4.5 microsecond windows after a late baseline concern; EMU TF comparison is Gaussian at cold point and either at both warm points, ARGUS mostly exponential. The final omits the required shape comparison rather than establishing it. General next steps: resolve baseline/window dependence and summarize envelope comparison explicitly; do not force an unsupported transition. Agent also wastes effort fitting MuRepolarisation to metallic-copper LF recovery despite chemical model mismatch.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1461.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 9,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/copper-diffusion/data --series emu-ZF-dynamicGKT --model Arrhenius --param nu --order sample_temperature_logged --plot --instrument EMU --workdir asymmetry-work-emu'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/copper-diffusion/data --series emu-ZF-dynamicGKT --model Arrhenius --param nu --plot --instrument EMU --workdir asymmetry-work-emu'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/copper-diffusion/data --series argus-LF-exp-rate --model Redfield --param Lambda --xmin 40 --xmax 130 --plot --instrument ARGUS --workdir asymmetry-work-argus'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/copper-diffusion/data --series argus-LF-exp-rate --model Redfield --param Lambda --xmin 40 --xmax 130 --fix m=2 --plot --instrument ARGUS --workdir asymmetry-work-argus'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/copper-diffusion/data --series emu-ZF-dynamicGKT --model Arrhenius --param nu --exclude 20886,20901,20904,20910,20913,20915,20882 --plot --instrument EMU --workdir asymmetry-work-emu'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/copper-diffusion/data --series argus-ZF-KT-early --order sample_temperature_logged --plot --instrument ARGUS --workdir asymmetry-work-argus'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/copper-diffusion/data --series argus-ZF-KT-early --fit Lambda --order sample_temperature_logged --plot --instrument ARGUS --workdir asymmetry-work-argus'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/copper-diffusion/data --series emu-ZF-dynamicGKT --model Arrhenius --param nu --order sample_temperature_logged --plot --instrument EMU --workdir asymmetry-work-emu'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /tmp/asymmetry-luna6-improvements/round1/copper-diffusion/data --runs 76924-76961 --instrument ARGUS --alpha-from 76928'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"sed -n '29,32p' summary.md; sed -n '80,87p' summary.md; sed -n '106,115p' summary.md; rg -n -i redfield summary.md\"",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "f2d2da1c5d753f6bd3469b7f897dda3894eb7cef143e0793aa7c1106d1556af6",
+      "rubric_sha256": "4a0d496f6e89d82feb628d6378c6019071fd8813790f1b6b70a83a6e1e4459c6",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round1/copper-diffusion",
+      "staged_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
+      "boundary_check": "PASS: inspected commands use staged/project files and Asymmetry CLI; no external calculator, source/personal skill read, network or delegation.",
+      "permission_denials": 0
+    },
+    "maleic-mu-kinetics": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Recognises the 2 G runs as muonium precession measurements and the 100 G runs as diamagnetic ones.",
+          "pass": true,
+          "evidence": "Names 2 G muonium and 100 G diamagnetic control signals, with fixed-frequency two-component model."
+        },
+        {
+          "requirement": "Separates the samples by concentration, read from titles or notes, and says where the concentration values came from.",
+          "pass": true,
+          "evidence": "Separates neat=1, half=0.5, quarter=0.25 from titles/context and deoxygenated-water blank=0."
+        },
+        {
+          "requirement": "Reports the Mu relaxation rate rising with maleic acid concentration at a fixed temperature (290 K, or matched setpoints), from fits of the 2 G runs.",
+          "pass": true,
+          "evidence": "Reports fitted Mu rate increasing 0.4473, 1.5974, 2.1000, 2.8065 across the matched-290 K-setpoint relative concentration series; logged-temperature caveat explicit."
+        },
+        {
+          "requirement": "Obtains a rate constant from the slope of \u03bb_Mu against concentration with a CLI fit (e.g. `fit-series`/`fit-global` with `--order concentration --x ...`, then `trend --model Linear`), reported with its uncertainty and in the concentration units it used. A fit-quality caveat is fine; withdrawing the converged slope is not.",
+          "pass": false,
+          "evidence": "Prints converged slope 2.648567\u00b10.528840 per relative-concentration unit, but explicitly withdraws it: prevent interpreting the slope as a chemical rate constant. Rubric allows caveats but forbids withdrawing the converged slope."
+        },
+        {
+          "requirement": "Contains no rate constant, activation energy or fraction that was not produced by a tool call in this session (the worksheet's published values are background).",
+          "pass": true,
+          "evidence": "Slope, rates and amplitudes are CLI outputs; no invented molarity, activation energy or normalized fractions."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares deoxygenated with untreated water (the untreated Mu signal relaxes faster, or leaves no resolvable line: dissolved O\u2082).",
+          "pass": true,
+          "evidence": "Deoxygenated-water reference has resolved Mu line; straight-water 78291 has none. Oxygen history remains qualified rather than claiming a measured oxygen concentration."
+        },
+        {
+          "requirement": "Uses a calibration run appropriate to the sample being reduced rather than one alpha for the whole folder, or notes the alpha step.",
+          "pass": true,
+          "evidence": "Names sample-appropriate calibration runs and alpha step at 78280/78281."
+        },
+        {
+          "requirement": "Holds the Mu and diamagnetic frequencies or amplitudes common across the concentration set (shared in `fit-global`, or fixed) and says so.",
+          "pass": true,
+          "evidence": "Holds Mu/diamagnetic frequencies and shares amplitudes/phases in global concentration fit, explicitly reported."
+        },
+        {
+          "requirement": "States that the Arrhenius step needs k_Mu at several temperatures, each from its own concentration fit, and either does it per temperature and fits the Arrhenius law through them with a command (`trend --from-fits \u2026 --model Arrhenius`) rather than by hand, or declines that step with the reason.",
+          "pass": false,
+          "evidence": "Declines quantitative temperature kinetics, but does not explicitly state the required Arrhenius-on-kMu(T) procedure or why single-concentration Lambda(T) is insufficient."
+        }
+      ],
+      "number_rule": "PASS: global fitted rate table, shared component values, Linear slope=2.648567\u00b10.528840 and intercept=0.550220\u00b10.188993, with chi2_red 23.385, checked in actual command output. Final exactly equals passed audit; no unprinted derived fraction/activation result.",
+      "root_cause": "Scientific FAIL (converged slope withdrawn), exact-copy PASS. The final confuses poor model adequacy with whether a determined empirical fit may be reported with limitations: it prints the slope then says it is not a reaction-rate result. Fourteen irrelevant MuRepolarisation attempts on two-field TF/calibration pairs are another regression: all correctly reject underdetermined fits, but generic field-observable guidance attracted effort away from kinetics. Refine geometry/observable checks before model selection and distinguish fitted slope from intrinsic kinetic constant.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1580.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --series kinetics-290 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --series kinetics-290 --model Linear --param Lambda_2 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78256,78257 --alpha-from 78278 --deadtime from_file --model MuRepolarisation --name polarisation-neat --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78279,78280 --alpha-from 78278 --deadtime from_file --model MuRepolarisation --name polarisation-quarter --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78251,78252 --alpha-from 78252 --deadtime from_file --model MuRepolarisation --name polarisation-water --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78277,78278 --alpha-from 78278 --deadtime from_file --model MuRepolarisation --name polarisation-half --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78258,78259 --alpha-from 78258 --deadtime from_file --model MuRepolarisation --name mu-repol-78258-78259'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78270,78271 --alpha-from 78270 --deadtime from_file --model MuRepolarisation --name mu-repol-78270-78271'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78266,78267 --alpha-from 78266 --deadtime from_file --model MuRepolarisation --name mu-repol-78266-78267'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78274,78275 --alpha-from 78274 --deadtime from_file --model MuRepolarisation --name mu-repol-78274-78275'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78260,78261 --alpha-from 78260 --deadtime from_file --model MuRepolarisation --name mu-repol-78260-78261'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78272,78273 --alpha-from 78272 --deadtime from_file --model MuRepolarisation --name mu-repol-78272-78273'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78264,78265 --alpha-from 78264 --deadtime from_file --model MuRepolarisation --name mu-repol-78264-78265'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78268,78269 --alpha-from 78268 --deadtime from_file --model MuRepolarisation --name mu-repol-78268-78269'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78262,78263 --alpha-from 78262 --deadtime from_file --model MuRepolarisation --name mu-repol-78262-78263'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics/data --runs 78293,78294 --alpha-from 78293 --deadtime from_file --model MuRepolarisation --name mu-repol-78293-78294'",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "e63f1b65a9cf3780c588fcd5c63f03953fe6d1e58c79f7c3392f5e99e64183e7",
+      "rubric_sha256": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round1/maleic-mu-kinetics",
+      "staged_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
+      "boundary_check": "PASS: inspected commands use staged/project files and Asymmetry CLI; no external calculator, source/personal skill read, network or delegation.",
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 3,
-    "scientific_pass": 3,
-    "must_pass": 15,
-    "must_total": 15,
-    "exact_copy_pass": 2,
-    "combined_pass": 2
+    "scored": 6,
+    "scientific_pass": 4,
+    "must_pass": 29,
+    "must_total": 31,
+    "exact_copy_pass": 5,
+    "combined_pass": 3
   }
 }

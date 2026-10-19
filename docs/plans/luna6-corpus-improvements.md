@@ -79,15 +79,36 @@ The supervising exec session is `98755`; inspect host processes and per-case
 `cost.json`/transcripts before relaunching after any interruption. No round-one
 reports were scored at launch. Keep CLI/skill frozen until the wave completes.
 
-First checkpoint: three reports scored in
-[luna6-corpus-round1.json](luna6-corpus-round1.json), with 15/15 Musts.
-Plateau and EuO also pass exact-copy; Sn deletes one plot-file entry after
-audit, so its exact-copy check fails. EuO repairs its baseline missing
+Second checkpoint: six reports scored in
+[luna6-corpus-round1.json](luna6-corpus-round1.json), with 29/31 Musts,
+4/6 scientific passes, 5/6 exact-copy passes and 3/6 combined passes.
+Sn deletes one plot-file entry after audit, so its exact-copy check fails.
+EuO repairs its baseline missing
 paramagnetic rate: it used pre-t0 background correction and a separate
 warm-ZF exponential series, reporting roughly constant relaxation without
-inventing a critical divergence. The wave remains active;
+inventing a critical divergence. AFM passes and resolves the earlier physics
+scope warning: it explicitly uses magnetic TF scope and reports two lines,
+rate changes and limits without a superconducting gap law.
+Copper fails the TF envelope-change Must: early-window fits give Gaussian
+at the EMU cold point and indistinguishable envelopes at the warm points,
+while the report omits that comparison. Its cold/next ZF comparison and
+exact-copy reporting now pass. Maleic acid regresses on the converged-slope
+Must: it prints the fitted slope but then explicitly withdraws it as a
+reaction-rate result. All three newest reports pass exact-copy.
+The wave remains active;
 these are partial results, not a wave verdict. Scoring records include the
 frozen hashes, final-summary hashes, actual command evidence and Should gaps.
 Tests/logs use `/tmp/asymmetry-luna6-round1-*`. Once targeted cases pass,
 run all 24 from fresh projects and score the entire wave; do not pool latest
 passing attempts and call that a fresh gate.
+
+Next-round candidates (do not edit CLI/skill while this wave runs): require
+LF geometry and appropriate sample physics before recommending an integral
+MuRepolarisation model; two-field TF/control pairs are not LF recovery scans.
+Both copper and maleic acid spent effort on physically mismatched recovery
+fits after round-one guidance. Make envelope comparison explicit even when
+one shape wins throughout or warm points cannot distinguish shapes; resolve
+window/baseline dependence rather than forcing the expected change. Distinguish
+a converged empirical slope with uncertainty and model limitations from a
+validated intrinsic kinetic constant, preserving the former as a fitted result.
+Finish scoring all thirteen first attempts before choosing round-two edits.
