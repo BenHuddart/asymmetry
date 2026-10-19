@@ -77,7 +77,17 @@ model execution successfully. `wave-metadata.json` records the commit, skill
 and rubric hashes; console log `/tmp/asymmetry-luna6-round1-wave.log`.
 The supervising exec session is `98755`; inspect host processes and per-case
 `cost.json`/transcripts before relaunching after any interruption. No round-one
-reports have been scored yet. Keep CLI/skill frozen until the wave completes.
+reports were scored at launch. Keep CLI/skill frozen until the wave completes.
+
+First checkpoint: three reports scored in
+[luna6-corpus-round1.json](luna6-corpus-round1.json), with 15/15 Musts.
+Plateau and EuO also pass exact-copy; Sn deletes one plot-file entry after
+audit, so its exact-copy check fails. EuO repairs its baseline missing
+paramagnetic rate: it used pre-t0 background correction and a separate
+warm-ZF exponential series, reporting roughly constant relaxation without
+inventing a critical divergence. The wave remains active;
+these are partial results, not a wave verdict. Scoring records include the
+frozen hashes, final-summary hashes, actual command evidence and Should gaps.
 Tests/logs use `/tmp/asymmetry-luna6-round1-*`. Once targeted cases pass,
 run all 24 from fresh projects and score the entire wave; do not pool latest
 passing attempts and call that a fresh gate.

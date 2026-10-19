@@ -1,0 +1,291 @@
+{
+  "metadata": {
+    "host": "Codex CLI / Linux",
+    "model": "gpt-6-luna",
+    "commit": "ea920f97913021e25029e1f5d849518dfaf5b9b1",
+    "branch": "codex/luna6-corpus-improvements",
+    "recorded_at": "2026-10-19T22:30:58.458337+00:00",
+    "parallel": 3,
+    "protocol": "two_turn_image_review_v2",
+    "BLAS_threads": 1,
+    "cases": [
+      "plateau-redfield",
+      "sn-critical-field",
+      "euo-psi",
+      "maleic-mu-kinetics",
+      "copper-diffusion",
+      "afm-high-tf-mdu",
+      "lifeas-psi",
+      "trsb-re6zr",
+      "basics",
+      "corannulene-alc",
+      "benzene-rf",
+      "benzene-repolarisation",
+      "benzene-alc"
+    ],
+    "skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
+    "rubric_sha256": {
+      "plateau-redfield": "23bb04d9a398fa17dde7cf8fc51632eda64e51646ad926a80a7462453df6243e",
+      "sn-critical-field": "da9d2ae997537590c2ab33b031cfb6feb9f6394dcc5231e529b29eea9be97842",
+      "euo-psi": "fe9da3aa512839d6107beebcf6bbb0c343d0d6f7fc668e02e8a3d7ce74096600",
+      "maleic-mu-kinetics": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "copper-diffusion": "4a0d496f6e89d82feb628d6378c6019071fd8813790f1b6b70a83a6e1e4459c6",
+      "afm-high-tf-mdu": "062fa8082f95b4b6cb7f075cf9a287e8add6d5313d56290d3d5ead8bc95725cf",
+      "lifeas-psi": "aec00fed822c67878ad9bf50a445b877c14e3eb85af4dfa06d6610dbacace608",
+      "trsb-re6zr": "9b37cf0242fec13643391e4be4d75ce3791578ee9633fe4b675ce8fb1b19fdcc",
+      "basics": "9a7e1671e076193352ce4016016147c30a58b3f8098aef4a5b6383f19d34c8cc",
+      "corannulene-alc": "db2d44507bcce99e2f21eb7efcbe45e707286c4f51ff591e669839e5000ee745",
+      "benzene-rf": "29bc5fab99a3ca1088aaea71742bda2503e7ad7b974b2d66a2342c99e8c26ce2",
+      "benzene-repolarisation": "394577546a8a6efae2ef56d912dbf00216156d50a4fa60e7800ea736fd2cd059",
+      "benzene-alc": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46"
+    }
+  },
+  "status": "partial; remaining cases running or unscored",
+  "cases": {
+    "plateau-redfield": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Uses run 9023 for alpha and says so.",
+          "pass": true,
+          "evidence": "Calibration section names run 9023: alpha 1.0069; corrected reduction 1.0097."
+        },
+        {
+          "requirement": "Treats the longitudinal-field runs from 9035 to 9051 (with or without the zero-field 15.9 K runs 9031\u20139034 before them) as the 15 K field sweep, and does not present 9024\u20139030 as 15 K points of that sweep.",
+          "pass": true,
+          "evidence": "Separates 9024\u20139030 logged cooldown from near-15 K LF sweep 9035\u20139051."
+        },
+        {
+          "requirement": "Reports the relaxation rate falling as the longitudinal field rises through the sweep, from a series fitted along field.",
+          "pass": true,
+          "evidence": "Reports Lambda declining overall with increasing LF, from its field-ordered single-exponential series."
+        },
+        {
+          "requirement": "Fits Redfield's law to \u03bb(B) with the CLI (`trend --model Redfield` or a sum containing it), states the field range fitted, and reports the fitted parameters with uncertainties as the command printed them.",
+          "pass": true,
+          "evidence": "Reports the full 1000\u201338000 G LF series and Redfield D=25.715\u00b10.653 MHz, nu=109.974\u00b116.973 MHz, m=1.505\u00b10.100, chi2_red 1.755; command confirms full-span fit."
+        },
+        {
+          "requirement": "Contains no correlation time, field width or rate that was not produced by a tool call in this session (the handout's and paper's values are background).",
+          "pass": true,
+          "evidence": "Reported rate, field-width and dynamic parameters are printed CLI values; no hand-derived correlation time."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits over the plateau (roughly 0.5\u20133.6 T) rather than the whole sweep, or says why not.",
+          "pass": false,
+          "evidence": "Uses full 1000\u201338000 G sweep; does not explain declining a plateau-only fit."
+        },
+        {
+          "requirement": "Holds the Redfield exponent `m` at 2 (the handout's equation) or says why it was left free.",
+          "pass": false,
+          "evidence": "Reports free m without explaining why it was not fixed at 2."
+        },
+        {
+          "requirement": "Says how the initial and background asymmetries were handled as the field rises (the handout's first question).",
+          "pass": true,
+          "evidence": "Explains A_1 relaxing and A_bg constant contributions, fits both, and reports their field-dependent values."
+        },
+        {
+          "requirement": "Comments on whether the plateau edges show in \u03bb(B) (a change of slope near 0.5 T, flattening near 3.6 T), marked as a qualitative reading.",
+          "pass": false,
+          "evidence": "Describes broad rate suppression and leveling, but does not explicitly compare both plateau edges."
+        },
+        {
+          "requirement": "Notes the cooldown in 9024\u20139030 from the logged temperature.",
+          "pass": true,
+          "evidence": "Explicitly calls 9024\u20139030 a logged-temperature cooldown."
+        }
+      ],
+      "number_rule": "PASS: alpha, field membership, single-exponential table and Redfield values/errors/span verified in actual CLI output. The final summary equals the last passed audit; no unsupported derived quantity identified.",
+      "root_cause": "Scientific PASS, exact-copy PASS. Should gaps remain: full-span/free-exponent Redfield fit is accepted without stating the physical comparison to the plateau equation.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 658.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/plateau-redfield/data --series lf-exp --plot --model Redfield --param Lambda'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "8137f8f59728440b4ed180dbba4b3bb124d526c1bd4c5edb8635d2ab98a8752e",
+      "rubric_sha256": "23bb04d9a398fa17dde7cf8fc51632eda64e51646ad926a80a7462453df6243e",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round1/plateau-redfield",
+      "staged_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
+      "boundary_check": "PASS: command inspection found staged data/project reads and Asymmetry CLI use; no source/personal-skill reads, network, external calculators or delegation.",
+      "permission_denials": 0
+    },
+    "sn-critical-field": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the 40 G temperature scan 91516\u201391529 and treats it as the Hc(T) measurement.",
+          "pass": true,
+          "evidence": "Names the 40 G infill 91516\u201391529 and its falling internal line as the Hc(T) evidence; explains failed quantitative law."
+        },
+        {
+          "requirement": "Reports that the logged sample temperature differs from the setpoint, and orders or reports the scan against the logged temperature.",
+          "pass": true,
+          "evidence": "Reports four logged-minus-setpoint offset blocks and consistently uses logged temperature."
+        },
+        {
+          "requirement": "Reports a precession signal from the sample away from the applied field's Larmor frequency, whose frequency falls on warming (the critical field decreasing towards Tc).",
+          "pass": true,
+          "evidence": "Describes internal-field other@ line away from applied Larmor frequency falling from 1.95 MHz to disappearance at logged 3.02 K."
+        },
+        {
+          "requirement": "Does not treat 91501\u201391515 as sub-Tc data at their setpoints.",
+          "pass": true,
+          "evidence": "Explicitly treats 91501\u201391515 as warm 8.18\u20138.41 K block, not low setpoint data."
+        },
+        {
+          "requirement": "Contains no Hc, Tc or thermometer offset that was not produced by a tool call in this session (the worksheet's 3.7 K and textbook Hc(0) are background).",
+          "pass": true,
+          "evidence": "No fitted Hc/Tc or hand-derived thermometer offset claimed; failed OrderParameter law is withheld."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits a critical-field law (e.g. `trend --model OrderParameter` with `alpha=2`, `beta=1`, i.e. Hc0[1 \u2212 (T/Tc)\u00b2]) to the frequency trend and reports Tc and the amplitude with uncertainties, with the fit range stated.",
+          "pass": false,
+          "evidence": "OrderParameter attempted but fails; no fitted critical-field law parameters reported as results."
+        },
+        {
+          "requirement": "Compares that Tc with tin's in words to discuss the thermometer error, without presenting a hand-computed offset as Asymmetry output.",
+          "pass": false,
+          "evidence": "No established Tc to compare with textbook Tc or infer thermometer error."
+        },
+        {
+          "requirement": "Notes the sample signal is small against a large background and says which runs' fits are flagged or were excluded.",
+          "pass": true,
+          "evidence": "Reports small line against large constant/nonoscillatory components and details all flagged scans."
+        },
+        {
+          "requirement": "Mentions the other fields (20, 80, 160 G) and what they add, or why they were not analysed.",
+          "pass": true,
+          "evidence": "20/80 G analyses and 160 G unreliable endpoint are described."
+        }
+      ],
+      "number_rule": "PASS: survey offsets, membership, FFT candidate/peak values, fit examples and law failure are present in CLI output. Last audit passed; the final differs only by deleting a plot-file list entry, with no numeric edits.",
+      "root_cause": "Scientific PASS, exact-copy FAIL: final reply deletes the audited Files entry asymmetry-work/plots/reduced-91518.png. Analysis still overfits a weak line with broad relaxation components; Should-level law fit fails. Do not substitute audited file for scored reply.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 895.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 6,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/sn-critical-field/data --series sn-40g-line --model OrderParameter --param frequency --xmax 3.2 --plot'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "ce7717fa1dd1274698a530a892dd28dfd31deb8b4380d9a4c758116622fe618e",
+      "rubric_sha256": "da9d2ae997537590c2ab33b031cfb6feb9f6394dcc5231e529b29eea9be97842",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round1/sn-critical-field",
+      "staged_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
+      "boundary_check": "PASS: command inspection found staged data/project reads and Asymmetry CLI use; no source/personal-skill reads, network, external calculators or delegation.",
+      "permission_denials": 0
+    },
+    "euo-psi": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies this as PSI GPS data (the `.bin` format), not an ISIS NeXus dataset.",
+          "pass": true,
+          "evidence": "Experiment names PSI GPS, all 51 .bin files 2923\u20132973."
+        },
+        {
+          "requirement": "Separates the ZF block from the TF 60 G block as two distinct scans.",
+          "pass": true,
+          "evidence": "Separates ZF 2923\u20132960 and 60 G TF 2961\u20132973 with logbook and precession evidence."
+        },
+        {
+          "requirement": "Reports an internal field (from the TF block, or from ZF oscillations if present) that changes with temperature, growing as the sample is cooled below the ordering region.",
+          "pass": true,
+          "evidence": "Reports spontaneous ordered-side ZF frequency increasing on cooling from near transition to about 30 MHz at cold temperatures."
+        },
+        {
+          "requirement": "Reports the relaxation rate above the ordering region as this session's fits give it, and does not claim a critical divergence (critical slowing down) that those fits do not show. The paper finds the paramagnetic relaxation rate roughly constant, near 2 MHz, rather than diverging at the transition.",
+          "pass": true,
+          "evidence": "Warm ZF Exponential + Constant series gives Lambda about 2\u20133 per microsecond through 200 K and explicitly states no supported divergence."
+        },
+        {
+          "requirement": "Contains no internal-field value, relaxation rate, or Curie temperature that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Restricted logged-temperature OrderParameter and warm relaxation values are actual CLI fits; no imported literature Tc or hand-derived field."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that both blocks revisit a narrow temperature window several times rather than assuming a single monotonic sweep.",
+          "pass": true,
+          "evidence": "Notes both scans contain finer points acquired out of sequence and distinguishes logged temperature."
+        },
+        {
+          "requirement": "Treats run 2960 (1.5 K, out of sequence at the end of the ZF block) as a low-temperature reference point rather than ignoring it or assuming it belongs elsewhere in the sequence.",
+          "pass": true,
+          "evidence": "Explicitly identifies late run 2960 as 1.5 K low-temperature reference with 30.2 MHz survey line; flagged time-fit excluded."
+        },
+        {
+          "requirement": "Frames the comparison to theory (e.g. mean-field/Heisenberg critical behaviour) as the paper's stated goal. A critical exponent, if quoted, comes from a `trend --model OrderParameter` fit in this session with its fit range stated, and is labelled with the temperature axis it was measured against (the PSI header's logged sensor reading, or the setpoint with a reason).",
+          "pass": false,
+          "evidence": "Reports fitted beta, range and logged-temperature axis, but does not frame mean-field/Heisenberg comparison as the paper goal."
+        }
+      ],
+      "number_rule": "PASS: raw/corrected alpha, ordered-side line values and restricted OrderParameter parameters/errors/window verified in CLI output. Warm-series endpoint/table rates checked against trend output. Final reply exactly equals last passed audit; no unsupported result identified.",
+      "root_cause": "Scientific PASS and exact-copy PASS, repairing the baseline missing paramagnetic-rate result. Agent used continuous-source pre-t0 background range and a separate Exponential + Constant warm-ZF series rather than accepting the bound-limited KT screen. TF fits remain poor and properly caveated; theory comparison is a Should gap.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1133.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 5,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/euo-psi/data --series zf-order --model OrderParameter --param frequency'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/euo-psi/data --series zf-ordered-side --model OrderParameter --param frequency'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/euo-psi/data --series zf-ordered-logged --model OrderParameter --param frequency'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/euo-psi/data --series zf-ordered-logged --model OrderParameter --param frequency'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/euo-psi/data --series zf-ordered-logged --model OrderParameter --param frequency --xmin 24 --xmax 67.9 --exclude 2926,2928,2943'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/euo-psi/data --series zf-ordered-logged --model OrderParameter --param frequency --xmin 24 --xmax 67.9 --exclude 2926,2928,2943'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/euo-psi/data --series zf-ordered-logged --model OrderParameter --param frequency --xmin 24 --xmax 67.9 --exclude 2926,2928,2943 --plot'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "a5a4d51984e184adc791d75a0122c476ac1fe33432e6468fb5a4c5da18abbe80",
+      "rubric_sha256": "fe9da3aa512839d6107beebcf6bbb0c343d0d6f7fc668e02e8a3d7ce74096600",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round1/euo-psi",
+      "staged_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
+      "boundary_check": "PASS: inspected commands use staged/project files and Asymmetry CLI; no external calculator, source/personal skill read, network or delegation.",
+      "permission_denials": 0
+    }
+  },
+  "totals": {
+    "scored": 3,
+    "scientific_pass": 3,
+    "must_pass": 15,
+    "must_total": 15,
+    "exact_copy_pass": 2,
+    "combined_pass": 2
+  }
+}
