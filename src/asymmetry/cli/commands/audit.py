@@ -64,6 +64,7 @@ def run(args: argparse.Namespace) -> None:
     untrended = _untrended_series(roots, log_text)
     dips = _unfitted_dips(roots)
     unfitted, unfitted_notes = unfitted_scans(roots)
+    reporting = report_obligations(roots, text)
 
     if args.json:
         emit_json(
@@ -77,6 +78,7 @@ def run(args: argparse.Namespace) -> None:
                 ],
                 unsupported_laws=[{"law": law, "phrase": phrase} for law, phrase in laws],
                 unstated=relations,
+                report_obligations=reporting,
                 unverified=[
                     {"text": entry.text, "line_number": entry.line_number, "line": entry.line}
                     for entry in found
@@ -86,6 +88,8 @@ def run(args: argparse.Namespace) -> None:
         return
     if unfitted:
         print(_unfitted_report(unfitted))
+    for message in reporting:
+        print(message)
     if unfitted_notes:
         print(
             "Scans the run notes define (survey NOTES SCANS) with runs no fit holds — fit each "
@@ -143,6 +147,7 @@ def run(args: argparse.Namespace) -> None:
     ]
     held = held_scans or unfitted_notes or laws or relations or unpaired or untested
     held = held or untrended or dips
+    held = held or reporting
     if not found and held:
         print(
             f"No unprinted numbers found in {draft}, but do not reply yet: act on each item "
@@ -182,6 +187,62 @@ _REPLY_MARK = "-----"
 #: A scan of at most this many runs is listed on one shared line: a setpoint's
 #: two or three fields, a calibration pair — rarely the experiment's question.
 _SHORT_SCAN_RUNS = 3
+
+
+def report_obligations(roots: list[Path], text: str) -> list[str]:
+    """Report missing survey provenance and repeated field groups fitted independently."""
+    from asymmetry.core.workflow.survey import ScanGroup, coupled_field_groups
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    workdirs = [workdir for workdir in map(WorkDir, roots) if workdir.manifest_path.is_file()]
+    # Run ranges match on whitespace-free, dash-normalised text: "201 – 206" is 201-206.
+    ranges = re.sub(r"\s+", "", text).replace("–", "-").replace("—", "-")
+    # Any global fit is simultaneous across its runs, whichever model it shares;
+    # it measures one group's dynamics only when its runs are exactly that group.
+    joint = [
+        (workdir.selection, {int(row["key"]) for row in series["trend"]["rows"]})
+        for workdir in workdirs
+        for path in workdir.series_dir.glob("*.json")
+        for series in [json.loads(path.read_text(encoding="utf-8"))]
+        if series["kind"] == "global"
+    ]
+    messages: list[str] = []
+    surveys = {
+        workdir.selection: workdir.read_survey()
+        for workdir in workdirs
+        if workdir.survey_path.is_file()
+    }
+    for selection, survey in surveys.items():
+        count = len(survey["runs"])
+        if not re.search(rf"\b{count}\s+(?:[^\s.,;:]+\s+){{0,2}}runs?\b", text):
+            messages.append(
+                f"Report the folder coverage as '{count} runs': {survey['folder']} contains "
+                f"{count} runs, including calibrations and non-scan records."
+            )
+        scans = [ScanGroup(**entry) for entry in survey["scans"]]
+        for scan in scans:
+            spellings = {run_spec(scan.runs), f"{min(scan.runs)}-{max(scan.runs)}"}
+            if len(scan.runs) > _SHORT_SCAN_RUNS and not any(
+                re.search(rf"(?<!\d){re.escape(spelling)}(?!\d)", ranges) for spelling in spellings
+            ):
+                messages.append(
+                    f"Report this scan's explicit run members: {scan.instrument} "
+                    f"{scan.axis} scan, {run_spec(scan.runs)}; a total folder range is not "
+                    "per-scan provenance."
+                )
+        fitted = [runs for owner, runs in joint if owner == selection]
+        for batch in coupled_field_groups(scans, survey["runs"]):
+            missing = [scan for scan in batch if set(scan.runs) not in fitted]
+            if missing:
+                messages.append(
+                    f"COUPLED FIELD GROUPS: {len(missing)} temperature groups have no "
+                    "simultaneous fit. Independent fit-series results do not measure "
+                    "shared dynamic parameters. Fit each group's fields together with "
+                    "fit-global --groups, sharing the model's relaxation parameters; the "
+                    "survey prints the group members and a dynamic Kubo-Toyabe starting "
+                    "command. Fit competing coupled models the same way and compare them."
+                )
+    return messages
 
 
 class _UnfittedScan(NamedTuple):

@@ -150,6 +150,10 @@ class FitRecipe:
 
     # -- serialisation ------------------------------------------------------
 
+    def time_window(self, dataset: MuonDataset) -> tuple[float, float]:
+        """Actual retained bin centres after this recipe's rebinning and time cut."""
+        return retained_window(dataset, self.rebin, self.t_min, self.t_max)
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
         return {
@@ -352,4 +356,16 @@ class FitRecipe:
         )
 
 
-__all__ = ["SCHEMA", "FitRecipe", "RecipeParameter"]
+def retained_window(
+    dataset: MuonDataset,
+    rebin: int = 1,
+    t_min: float | None = None,
+    t_max: float | None = None,
+) -> tuple[float, float]:
+    """First and last bin centres a fit keeps after merging *rebin* bins and the time cut."""
+    record = dataset.rebin(rebin) if rebin != 1 else dataset
+    time = record.time_range(t_min, t_max).time
+    return float(time[0]), float(time[-1])
+
+
+__all__ = ["SCHEMA", "FitRecipe", "RecipeParameter", "retained_window"]

@@ -1127,7 +1127,36 @@ def _group_geometry(members: list[RunRow]) -> tuple[str | None, str]:
     unresolved = sum(1 for row in members if row.geometry is None)
     if unresolved:
         parts.append(f"{unresolved} unresolved")
+    coincident = [str(row.run_number) for row in _internal_field_coincident(members)]
+    if coincident:
+        parts.append(
+            "INTERNAL-FIELD AMBIGUITY: the apparent TF match on runs "
+            f"{', '.join(coincident)} is also compatible with the zero-field "
+            "reference's internal precession. It does not establish applied TF "
+            "geometry. Inspect the field-dependent relaxation and late-time tail "
+            "for LF decoupling; retain a provisional LF assignment if that "
+            "recovery is supported, and verify the instrument configuration."
+        )
     return None, "; ".join(parts)
+
+
+def _internal_field_coincident(members: list[RunRow]) -> list[RunRow]:
+    """High-field Larmor runs whose line a zero-field member's internal precession also fits."""
+    spontaneous = [
+        float(row.precession.frequency_mhz)
+        for row in members
+        if row.field == 0.0 and row.precession.state == "other"
+    ]
+    return [
+        row
+        for row in members
+        if row.precession.state == "larmor"
+        and abs(float(row.field)) > WEAK_TF_FIELD_RANGE_GAUSS[1]
+        and any(
+            abs(float(row.precession.frequency_mhz) / frequency - 1.0) <= LARMOR_FREQUENCY_TOLERANCE
+            for frequency in spontaneous
+        )
+    ]
 
 
 def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
@@ -1224,6 +1253,34 @@ def _scan_groups(rows: list[RunRow]) -> tuple[list[ScanGroup], int]:
     return [_note_shared_unresolved(scan, scans, rows) for scan in scans], len(cross_sections)
 
 
+def coupled_field_groups(
+    scans: list[ScanGroup], runs: list[dict[str, Any]]
+) -> list[list[ScanGroup]]:
+    """Repeated ZF/weak-field groups that can constrain shared dynamic relaxation.
+
+    *runs* is the survey payload's run table. A group with a transverse run or
+    any precession — Larmor or an ordered magnet's internal field — is not one.
+    """
+    precessing = {
+        (row["instrument"], row["run_number"])
+        for row in runs
+        if row["geometry"] == "TF" or row["precession"] in ("larmor", "other")
+    }
+    groups: dict[tuple, list[ScanGroup]] = {}
+    for scan in scans:
+        fields = tuple(sorted(set(scan.values)))
+        if (
+            scan.axis == "field"
+            and 3 <= len(fields) <= 5
+            and 0.0 in fields
+            and max(abs(field) for field in fields) <= 100.0
+            and not any((scan.instrument, run) in precessing for run in scan.runs)
+        ):
+            key = (scan.instrument, tuple(scan.samples), scan.notes, fields)
+            groups.setdefault(key, []).append(scan)
+    return [batch for batch in groups.values() if len(batch) >= 2]
+
+
 def _field_scan_members(members: list[RunRow], stretch: dict[str, int]) -> list[list[RunRow]]:
     """The field scans in *members*, runs sharing an instrument, temperature, note and set-up.
 
@@ -1231,13 +1288,13 @@ def _field_scan_members(members: list[RunRow], stretch: dict[str, int]) -> list[
     visited another temperature, starts a repeat of the scan — a field point
     re-measured in the same visit (a return sweep) does not, and neither does a
     new field after a detour (a scan measured alternately at two temperatures).
-    And a minority of runs precessing at their Larmor frequency among runs that
-    do not are transverse calibrations taken beside a longitudinal scan, and are
-    not part of it; where they are the majority the scan is transverse, and runs
-    too slow or too fast to show a line belong to it. And a sweep whose widening
-    steps give way to even ones is two measurements (:func:`_sweep_change`).
-    *stretch* numbers each
-    file's stretch of consecutive runs at one temperature.
+    A minority of Larmor runs are transverse calibrations beside a longitudinal
+    scan and are excluded — unless a zero-field member's internal precession
+    explains the line as well (:func:`_internal_field_coincident`). Where Larmor
+    runs are the majority, unresolved points remain in the scan. And a sweep
+    whose widening steps give way to even ones is two measurements
+    (:func:`_sweep_change`). *stretch* numbers each file's stretch of
+    consecutive runs at one temperature.
     """
     scans: list[list[RunRow]] = []
     for row in members:
@@ -1252,7 +1309,12 @@ def _field_scan_members(members: list[RunRow], stretch: dict[str, int]) -> list[
     for scan in scans:
         larmor = [row for row in scan if row.precession.state == "larmor"]
         if 2 * len(larmor) < len(scan):
-            scan = [row for row in scan if row.precession.state != "larmor"]
+            ambiguous = {row.run_number for row in _internal_field_coincident(scan)}
+            scan = [
+                row
+                for row in scan
+                if row.precession.state != "larmor" or row.run_number in ambiguous
+            ]
         cut = _sweep_change(sorted(float(row.field) for row in scan))
         if cut is None:
             result.append(scan)

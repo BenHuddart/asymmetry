@@ -10,6 +10,8 @@ Exit codes (the contract every subcommand keeps):
 
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Iterable
 from typing import Any
 
 from asymmetry import __version__
@@ -100,6 +102,25 @@ def render_trend(trend: Any) -> str:
     )
 
 
+def render_quality_counts(results: Iterable[dict[str, Any]]) -> str:
+    """Print verdict counts so reports need not calculate them from fit tables."""
+    counts = Counter(
+        "unknown" if result["quality"] is None else result["quality"]["verdict"]
+        for result in results
+    )
+    return "Fit quality counts: " + ", ".join(
+        f"{name} {count}" for name, count in sorted(counts.items())
+    )
+
+
+def render_fit_windows(windows: dict[int, tuple[float, float]]) -> str:
+    """Print actual fitted bin centres, including recipes with no explicit bounds."""
+    return "Fit windows (retained bin centres):\n" + render_table(
+        ["run", "t_min/µs", "t_max/µs"],
+        [[str(run), f"{lo:.8g}", f"{hi:.8g}"] for run, (lo, hi) in windows.items()],
+    )
+
+
 __all__ = [
     "SCHEMA",
     "UserError",
@@ -109,4 +130,6 @@ __all__ = [
     "payload",
     "render_table",
     "render_trend",
+    "render_fit_windows",
+    "render_quality_counts",
 ]

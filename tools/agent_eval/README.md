@@ -45,7 +45,7 @@ python tools/agent_eval/run_codex_eval.py \
     --out /tmp/evals/luna-alc-tcnq
 ```
 
-Its default model is `gpt-5.6-luna`. It records `Codex` and the exact model ID
+Its default model is `gpt-6-luna`. It records `Codex` and the exact model ID
 in `cost.json`; do not compare an unlabeled Codex run with the historical
 Sonnet table below. The Codex runner uses a persistent two-turn `codex exec`
 session with `--ignore-user-config --approve-for-me`: the first turn performs
@@ -56,6 +56,16 @@ writable, the sibling data copy is read-only to the nested sandbox, and
 personal plugins, instructions and host-installed skills do not vary the run.
 It enables `skip_host_skill_discovery` and installs the evaluated skill under
 `<out>/project/.agents/skills/`.
+
+Protocol `two_turn_image_review_v2` requires the second turn to save and audit
+the complete final report after image inspection, then return it verbatim.
+Both invocations use `codex exec --approve-for-me`; the resume invocation puts
+that option before `resume`, since the subcommand does not accept it after
+`resume` and otherwise defaults to read-only in the tested CLI.
+`cost.json` records `final_report_audited`: whether the reply matches the text
+printed by the last passed audit. This prevents an audited first-turn draft
+from being mistaken for a different, shorter final report. Rubric scoring
+still checks the final report's scientific content and provenance.
 
 Unlike the Claude runner's tool allowlist, Codex cannot mechanically hide
 every readable sibling path from shell commands. The generated project

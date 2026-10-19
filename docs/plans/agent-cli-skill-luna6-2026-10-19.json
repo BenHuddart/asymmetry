@@ -1,0 +1,595 @@
+{
+  "metadata": {
+    "date": "2026-10-19",
+    "host": "Codex CLI / Linux",
+    "model": "gpt-6-luna",
+    "codex_version": "codex-cli 0.163.0",
+    "commit": "1db2ab9c3e110e8687894c39c0d34b0c7e9888bf",
+    "corpus_root": "/home/ben/Data/wimda-corpus",
+    "baseline": {
+      "host": "Codex / Windows",
+      "model": "gpt-5.6-luna",
+      "date": "2026-09-16",
+      "source": "docs/plans/agent-cli-skill.md",
+      "verdict": "8/8 pass",
+      "rubric_snapshot": "f6bf39c"
+    },
+    "protocol": "two_turn_image_review_v1",
+    "cases": [
+      "fmuf-ptfe",
+      "spin-glass-ymnal",
+      "high-tc-cuprate",
+      "ferromagnetic-nickel",
+      "alc-tcnq",
+      "ionic-motion-llz",
+      "photo-musr-silicon",
+      "cds-fourier"
+    ],
+    "rubric_sha256": {
+      "fmuf-ptfe": "49ca7ef87b2b8eec6e518da9052579a255090e3fdb132bc0df381610155df82d",
+      "spin-glass-ymnal": "c1fd733e78e7de397ebd0e533eaac4b698e4d47a33035f26348f9a8f9a7bdb6e",
+      "high-tc-cuprate": "6768523173dd08582c6c56642fe11ca2d276a0b467ea21494e31b1db78c59029",
+      "ferromagnetic-nickel": "8fdb04d7a4f7906dd74d19161f80e7983e02e98ef10344ae70273a54ba1dc0b9",
+      "alc-tcnq": "a2a38dc913e30cfad99eecaac81cac05cccad4b2b7d7afb893390314e39d251b",
+      "ionic-motion-llz": "26a96516c6b7d735288e5a79b9d63cd349de9e38850c4eba7367f47fc00a1b28",
+      "photo-musr-silicon": "9ea075b0d8d260180a124f3bbd71391eb593a605ee4117357c0b92d0e28d7d8a",
+      "cds-fourier": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a"
+    },
+    "limitations": [
+      "Model, skill/CLI version and OS differ from the historical baseline; this checks end-to-end regression, not an isolated model effect.",
+      "Historical baseline uses latest passing results after iteration; this wave retains its first scoreable attempts."
+    ],
+    "rubric_changes_since_baseline": {
+      "alc-tcnq": "Centre acceptance range changed from 3.0–3.2 to 2.9–3.2 kG. Score historical threshold separately.",
+      "ionic-motion-llz": "Batch-group support documented; same requirement to couple every group used in a trend.",
+      "remaining_six": "unchanged"
+    },
+    "results_root": "/tmp/asymmetry-luna6-2026-10-19/pass2",
+    "result": "2/8 PASS; six rubric failures, zero infrastructure voids in completed wave",
+    "scoring": "Manual review by the supervising Codex agent, using scoring_brief.md, unchanged Must/Should rules, numerical-output and boundary audit; no separate scorer model.",
+    "top_followups": [
+      "Make survey and wizard geometry evidence consistent; review field-scan Larmor-minority exclusion and closure over unassigned runs.",
+      "Route repeated few-field triplets to shared dynamic fits; diagnose cuprate model selection and fit recovery before fitting superconducting laws.",
+      "Emit fit-window provenance and require the final report itself to be audited; recover useful FFT views and physical interpretation without upgrading candidates to detections."
+    ],
+    "verification": {
+      "diff_check": "pass",
+      "documentation_build": "blocked at Sphinx startup: missing sphinx_design in project virtual environment",
+      "evaluation_runs": "8/8 completed two turns, exit 0; 2 pass and 6 fail scientific/report rubrics"
+    },
+    "paired_control": "docs/plans/agent-cli-skill-luna56-control-2026-10-19.json"
+  },
+  "cases": {
+    "high-tc-cuprate": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "three transverse-field temperature scans: EMU at 150 G ... MUSR at 400 G ... MUSR at 200 G"
+        },
+        {
+          "pass": true,
+          "evidence": "MUSR at 400 G (1276–1289), and MUSR at 200 G (1290–1303)"
+        },
+        {
+          "pass": false,
+          "evidence": "does not establish a Gaussian cooling trend; EMU uses exponential damping and both MUSR trends are rejected"
+        },
+        {
+          "pass": false,
+          "evidence": "mentions constant/background terms but never discusses the non-superconducting signal fraction",
+          "judgement_call": true
+        },
+        {
+          "pass": true,
+          "evidence": "reported rates and chi2 trace to cli-output.log; no numerical Tc or penetration-depth result"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "reports 76993 and detector tests 1274/1275"
+        },
+        {
+          "pass": false,
+          "evidence": "MUSR trends rejected; no cross-field sigma comparison"
+        },
+        {
+          "pass": false,
+          "evidence": "1276 used as alpha reference, not identified as 125 K normal-state reference"
+        }
+      ],
+      "number_rule": "PASS; checked quoted calibration, frequency, rates, windows and chi2 against cli-output.log. Rounding 0.099 and 0.068 is permissible.",
+      "root_cause": "wizard selects oscillatory_exp_constant on EMU (AICc 4241.2 vs Gaussian 8423.2 on 76976). Its MUSR Gaussian+relaxation recipe chains into 13/14 flagged fits; 200 G chains into 14/14 flagged fits. Agent reports limitations honestly but does not recover the required sigma(T) finding or explain the constant as the non-superconducting fraction. EMU trend explicitly suggests a two-line fit, but agent instead fits SC_SWave to exponential Lambda. Model selection/fit recovery and scientific reporting need diagnosis, not forced Gaussian results.",
+      "must_score": "3/5",
+      "wall_seconds": 237.6,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "wizard_calls": 5,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-2026-10-19/pass2/high-tc-cuprate/data --series emu150 --model SC_SWave --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-2026-10-19/pass2/high-tc-cuprate/data --series emu150 --model SC_DWave --param Lambda'"
+      ],
+      "audit_calls": 0,
+      "boundary_audit": "No source/personal-file reads, network calls or delegation seen in completed command events; staged/project file reads only.",
+      "permission_denials": [],
+      "usage": {
+        "input_tokens": 2824069,
+        "cached_input_tokens": 2634496,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 10643,
+        "reasoning_output_tokens": 4156
+      },
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b"
+    },
+    "spin-glass-ymnal": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": false,
+          "evidence": "20 G calibration is identified, but science scan is called nominally/file-labelled TF rather than LF",
+          "judgement_call": false
+        },
+        {
+          "pass": true,
+          "evidence": "Alpha was calibrated on run 24563 ... forward group 1 and backward group 2; file detector pair used",
+          "note": "Detector groups are loader/file groups, not fitted from the calibration. Current skill explicitly permits this provenance."
+        },
+        {
+          "pass": true,
+          "evidence": "stretched exponential plus constant with high confidence"
+        },
+        {
+          "pass": true,
+          "evidence": "fitted relaxation rate falls with logged temperature"
+        },
+        {
+          "pass": true,
+          "evidence": "table and numerical trend are printed by CLI; 51x difference is emitted by trend"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "all 20 runs accounted for; correctly separates ZF 24591 from the 110 G scan",
+          "note": "Rubric incorrectly calls 24591 an LF member; current survey confirms 0 G."
+        },
+        {
+          "pass": false,
+          "evidence": "no reference-fixed A(0)/background strategy or explicit methodological justification; automatic A_bg=0 fallback only"
+        },
+        {
+          "pass": false,
+          "evidence": "no Tg/critical-exponent follow-on"
+        }
+      ],
+      "number_rule": "PASS; checked calibration, table and trend quantities against cli-output.log. 51x comes from the CLI, not agent arithmetic.",
+      "root_cause": "Survey labels 110 G scan unknown geometry and prec none. wizard then falls back to geometry TF (from file), screening TF families. Agent repeats nominal/file-labelled TF and never resolves LF decoupling intent. No experimental notes were consulted. This is both a CLI evidence-consistency issue and an agent/skill interpretation gap. Rubric also wrongly includes ZF run 24591 in LF series; do not penalize correct separation.",
+      "must_score": "4/5",
+      "wall_seconds": 253.5,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "wizard_calls": 3,
+      "trend_laws": [],
+      "audit_calls": 2,
+      "boundary_audit": "No source/personal-file reads, network calls or delegation seen in completed command events; staged/project file reads only.",
+      "permission_denials": [],
+      "usage": {
+        "input_tokens": 1309492,
+        "cached_input_tokens": 1216384,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 16812,
+        "reasoning_output_tokens": 5454
+      },
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b"
+    },
+    "fmuf-ptfe": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "17293 ... TF*; ZF runs 17294–17322"
+        },
+        {
+          "pass": true,
+          "evidence": "17293 ... raw-count alpha 0.9566 ... applied 0.9553"
+        },
+        {
+          "pass": true,
+          "evidence": "Dynamic F–μ–F + Constant"
+        },
+        {
+          "pass": true,
+          "evidence": "rμF = 1.233; pattern match rμF = 1.24 Å"
+        },
+        {
+          "pass": true,
+          "evidence": "rμF fits are approximately stable across the lower-temperature part ... later fits become flagged"
+        },
+        {
+          "pass": true,
+          "evidence": "coupling distance, alpha and temperatures printed by CLI"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "after 200 K ... return to intermediate and lower setpoints"
+        },
+        {
+          "pass": false,
+          "evidence": "logged values distinguished from setpoints, but uncertainty not given"
+        },
+        {
+          "pass": false,
+          "evidence": "muon–fluorine dipolar beat explained; no hydrogen-bonding/entanglement context"
+        }
+      ],
+      "number_rule": "PASS; calibration, wizard parameters and diagnostics, trend levels and rejected law chi2, FFT bins/resolution and candidate maxima verified against CLI output.",
+      "root_cause": null,
+      "must_score": "6/6",
+      "wall_seconds": 374.3,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "wizard_calls": 2,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-2026-10-19/pass2/fmuf-ptfe/data --series teflon-zf --model Arrhenius --param nu --exclude 17321,17297,17298,17300,17310,17311,17313,17304,17305,17307,17318,17309 --plot'"
+      ],
+      "audit_calls": 2,
+      "boundary_audit": "No source/personal-file reads, network calls or delegation seen in completed command events; staged/project file reads only.",
+      "permission_denials": [],
+      "usage": {
+        "input_tokens": 2521321,
+        "cached_input_tokens": 2391680,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 25061,
+        "reasoning_output_tokens": 9248
+      },
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b"
+    },
+    "ferromagnetic-nickel": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": false,
+          "evidence": "labels field scan geometry unresolved and omits 124278 from its member list; never identifies the LF regime"
+        },
+        {
+          "pass": true,
+          "evidence": "alpha measured on 124251 ... 100 G ... clear applied-field precession"
+        },
+        {
+          "pass": true,
+          "evidence": "ZF spontaneous precession ... internal-field lines at 16.3 MHz at 150 K"
+        },
+        {
+          "pass": true,
+          "evidence": "no line resolved at 375 K and above"
+        },
+        {
+          "pass": true,
+          "evidence": "16.3 MHz at 150 K falling to 4.45 MHz at 350 K"
+        },
+        {
+          "pass": true,
+          "evidence": "quoted lines, rates and amplitudes trace to survey/wizard/trend output"
+        },
+        {
+          "pass": true,
+          "evidence": "does not claim textbook Tc"
+        }
+      ],
+      "should": [
+        {
+          "pass": false,
+          "evidence": "does not flag discrepancy with bulk Ni literature transition"
+        },
+        {
+          "pass": true,
+          "evidence": "200 K field scan treated separately; explicitly declines confirmed LF interpretation",
+          "note": "separate exercise is preserved, but physical geometry remains wrong/unresolved"
+        },
+        {
+          "pass": false,
+          "evidence": "no critical exponent follow-on"
+        },
+        {
+          "pass": true,
+          "evidence": "Overhauser+constant and relaxation-only warm-side fits discussed"
+        }
+      ],
+      "number_rule": "PASS; quoted survey lines, wizard spectral lines, alpha, fit counts, rates and amplitudes checked against cli-output.log. Approximate 0.01 is rounded printed trend.",
+      "root_cause": "Survey field-scan members are 124220,124270–124277 (0–4000 G), excluding actual 1200 G field-sweep run 124278 after its measured Larmor line gives TF*. Agent repeats that generated grouping, never accounts separately for 124278 and refuses the LF decoupling interpretation. Underlying acquisition-series grouping/geometry inference and agent coverage closure both need diagnosis. The oscillation/frequency/cold-to-warm physics otherwise meets the baseline.",
+      "must_score": "6/7",
+      "wall_seconds": 332.0,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "wizard_calls": 5,
+      "trend_laws": [],
+      "audit_calls": 1,
+      "boundary_audit": "No source/personal-file reads, network calls or delegation seen in completed command events; staged/project file reads only.",
+      "permission_denials": [],
+      "usage": {
+        "input_tokens": 2543617,
+        "cached_input_tokens": 2341888,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 11654,
+        "reasoning_output_tokens": 2144
+      },
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b"
+    },
+    "alc-tcnq": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "high-field data are longitudinal-field scans ... broad reduction in integral asymmetry near 3 kG"
+        },
+        {
+          "pass": true,
+          "evidence": "128 EMU runs 19485–19612; all four blocks mapped; first block includes extra ZF/repeat points",
+          "note": "Current survey groups 33 runs in first block rather than rubric four 31-point scans plus extras; complete actual folder coverage is preserved."
+        },
+        {
+          "pass": true,
+          "evidence": "integral-scan invoked on 19520–19550 and other complete blocks"
+        },
+        {
+          "pass": true,
+          "evidence": "LorentzianLCR + Linear over 2000–4100 G"
+        },
+        {
+          "pass": true,
+          "evidence": "centres 3103.05,3032.64,3002.16,3019.71 G with width/errors/chi2 and explicit poor-fit caveat"
+        },
+        {
+          "pass": true,
+          "evidence": "cannot ... convert ... into muon or proton couplings or site assignments"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "alpha 1.0323 from 19485"
+        },
+        {
+          "pass": false,
+          "evidence": "window and fit bounds stated, but count-integral method not named"
+        },
+        {
+          "pass": true,
+          "evidence": "all four blocks fitted, comparative claims qualified for poor fits"
+        },
+        {
+          "pass": false,
+          "evidence": "generic workdir reference only; no scan JSON/PNG filenames"
+        }
+      ],
+      "number_rule": "PASS; fit parameters and scaled errors trace to integral-scan output and COMPARE notes; temperature summaries round surveyed logged values.",
+      "historical_rubric": "PASS; all centres also lie in historical 3.0–3.2 kG acceptance range.",
+      "root_cause": null,
+      "must_score": "6/6",
+      "wall_seconds": 252.1,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "audit_calls": 0,
+      "boundary_audit": "No source/personal-file reads, network calls or delegation seen in completed command events; staged/project file reads only.",
+      "permission_denials": [],
+      "usage": {
+        "input_tokens": 2290760,
+        "cached_input_tokens": 2149504,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 14301,
+        "reasoning_output_tokens": 6601
+      },
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b"
+    },
+    "photo-musr-silicon": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "23 HIFI runs; 22-run −100 G P scan, calibration 103299 at 20 G; red/green kept separate; missing P values stated",
+          "note": "Two acquisition periods are expressed by the red/green reductions rather than an explicit period-count sentence."
+        },
+        {
+          "pass": true,
+          "evidence": "red to laser-on and green to laser-off, supported by observed decay and caveat that logbook does not map periods explicitly"
+        },
+        {
+          "pass": true,
+          "evidence": "103288 reduced with --period red/green into separate workdirs"
+        },
+        {
+          "pass": true,
+          "evidence": "same representative run green 0.0655442 versus red 1.12784, red fit poor",
+          "note": "Representative is 103288 rather than historical example 103277; rubric permits a representative science run. 103277 was surveyed, inspected via info and reduced in both full-sequence reductions."
+        },
+        {
+          "pass": false,
+          "evidence": "claims green full stored range 0.108–7.916 μs, but 7.916 appears in no current-session command output or command; recipe has null t_min/t_max and agent never reads stored time data",
+          "note": "Rates/errors/chi2 do trace to CLI. Failure is unsupported precision in the reported fit window, under the unchanged number rule."
+        },
+        {
+          "pass": true,
+          "evidence": "no carrier-rate trend or density inference from unreliable screen"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "alpha from 103299, period-specific corrected values stated"
+        },
+        {
+          "pass": false,
+          "evidence": "pure exponential and fixed green amplitude used, but red fit extends to 4 μs rather than first microsecond"
+        },
+        {
+          "pass": true,
+          "evidence": "poor red chi2 3.4586 and residual mismatch explicitly rejected"
+        },
+        {
+          "pass": true,
+          "evidence": "both workdirs and all four plot links"
+        }
+      ],
+      "number_rule": "FAIL: final green fit-window endpoint 7.916 μs is absent from all completed command outputs and command arguments. The only info call was for another run (103277), whose printed end is 32.7320 μs. No stored-array read appears in transcript. This is not a rounded printed value.",
+      "root_cause": "Agent fits green 103288 with no tmin/tmax and final report supplies an exact 7.916 μs endpoint that no command printed. It queried info only for 103277 (printed 32.7320 μs end), not fitted run 103288, and did not read cached time arrays or fit records. It also skips the requested audit before final reporting. Period separation, direction, calibration and rates otherwise satisfy workflow. Fix fit-output window provenance/summary audit, rather than changing the number rule.",
+      "must_score": "5/6",
+      "wall_seconds": 177.5,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "audit_calls": 0,
+      "boundary_audit": "No source/personal-file reads, network calls or delegation seen in completed command events; staged/project file reads only.",
+      "permission_denials": [],
+      "usage": {
+        "input_tokens": 2923841,
+        "cached_input_tokens": 2812288,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 9988,
+        "reasoning_output_tokens": 4302
+      },
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b"
+    },
+    "ionic-motion-llz": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": false,
+          "evidence": "calibration and 13 0/5/10 G groups identified, but 5/10 G geometry left unresolved instead of LF"
+        },
+        {
+          "pass": false,
+          "evidence": "only fit-series used; no fit-global command"
+        },
+        {
+          "pass": false,
+          "evidence": "Static GKT × Exponential, Exponential+Gaussian and StretchedExponential replace dynamic Gaussian/Keren coupled model"
+        },
+        {
+          "pass": false,
+          "evidence": "no shared Delta,nu,amplitudes and no per-run fixed B_L in coupled objective"
+        },
+        {
+          "pass": false,
+          "evidence": "reports independent Delta/Lambda values, no coupled shared values/errors/quality"
+        },
+        {
+          "pass": true,
+          "evidence": "does not claim measured fluctuation-rate nu trend; independent relaxation trends and limitations explicitly described"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "51315 alpha raw0.8567 and corrected0.8561"
+        },
+        {
+          "pass": false,
+          "evidence": "no coupled near-0–12 μs fit with guide seeds"
+        },
+        {
+          "pass": false,
+          "evidence": "no Keren low-rate caveat"
+        },
+        {
+          "pass": false,
+          "evidence": "no global-series artifact"
+        }
+      ],
+      "number_rule": "PASS; numeric claims checked against independent series/trend and FFT output; failure is missing required coupled workflow, not fabricated nu.",
+      "historical_rubric": "FAIL; historical rubric also required at least one complete fit-global triplet with shared dynamic parameters.",
+      "root_cause": "Survey reports mixed/unknown geometry for field triplets and wizard falls back to file TF. Agent treats fields as independent temperature scans, then runs fit-series for all 13 triplets with a static zero-field recipe. Skill Step 5a explicitly gives this dataset’s run IDs and fit-global --shared A_1,Delta,nu,A_bg --field-param B_L, but the agent never uses it. No coupled attempt or shared nu result is produced. Primary fix areas: survey/wizard geometry consistency and workflow routing/skill adherence; independent-fit limitations do not satisfy the coupled-fit gate.",
+      "must_score": "1/6",
+      "wall_seconds": 287.7,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "wizard_calls": 3,
+      "trend_laws": [],
+      "audit_calls": 0,
+      "boundary_audit": "No source/personal-file reads, network calls or delegation seen in completed command events; staged/project file reads only.",
+      "permission_denials": [],
+      "usage": {
+        "input_tokens": 3332579,
+        "cached_input_tokens": 3218048,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 15131,
+        "reasoning_output_tokens": 7011
+      },
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b"
+    },
+    "cds-fourier": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "TF 100 G scan 20711–20733; representative 20721 lowest logged T with substantial statistics"
+        },
+        {
+          "pass": true,
+          "evidence": "20721 reduced, alpha0.9499 from20729, fourier --plot used"
+        },
+        {
+          "pass": true,
+          "evidence": "FFT, no window full-record, resolution0.0316MHz; crop3μs resolution0.347MHz"
+        },
+        {
+          "pass": false,
+          "evidence": "reports candidate maxima1.3896,1.5001,1.2396 but never identifies the central diamagnetic line and visual satellite/shoulder arrangement",
+          "judgement_call": true
+        },
+        {
+          "pass": false,
+          "evidence": "no shallow-muonium/hyperfine-triplet interpretation anywhere in final report"
+        },
+        {
+          "pass": true,
+          "evidence": "rejects Hann trial after early-signal warning; retries none/crop and fullrecord"
+        }
+      ],
+      "should": [
+        {
+          "pass": false,
+          "evidence": "no Larmor-versus-central-frequency comparison"
+        },
+        {
+          "pass": false,
+          "evidence": "no splitting estimate; conservatism appropriate for weak full-record candidates"
+        },
+        {
+          "pass": false,
+          "evidence": "no spectrum JSON/NPZ/PNG filenames in final report"
+        },
+        {
+          "pass": true,
+          "evidence": "no full-temperature FFT claim from one run"
+        }
+      ],
+      "number_rule": "PASS; all quoted frequencies, candidate maxima, resolutions, calibration, temperatures and diagnostics appear in CLI output (allowing rounding). Hann warning is present in transcript stderr.",
+      "root_cause": "Agent performs required FFT on20721 but replaces the same run-20721 plot with each transform, ultimately attaching the noisy full-record unwindowed spectrum. It does not produce a matched warm-reference FFT or the gentler Lorentzian-filter view that could help distinguish the triplet. The final report correctly refuses to upgrade maxima to detections but omits the required qualitative shallow-muonium assignment. This is an analysis/visual-evidence recovery gap; do not force a triplet claim from the noisy final plot or weaken the number rule.",
+      "must_score": "4/6",
+      "wall_seconds": 133.8,
+      "completed_turns": 2,
+      "image_inputs": 3,
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-2026-10-19/pass2/cds-fourier/data --series tf-cds --model OrderParameter --param frequency_1 --plot'"
+      ],
+      "audit_calls": 0,
+      "boundary_audit": "No source/personal-file reads, network calls or delegation seen in completed command events; staged/project file reads only.",
+      "permission_denials": [],
+      "usage": {
+        "input_tokens": 1160033,
+        "cached_input_tokens": 1008768,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 6984,
+        "reasoning_output_tokens": 2160
+      },
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b"
+    }
+  }
+}

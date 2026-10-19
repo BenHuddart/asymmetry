@@ -1,0 +1,766 @@
+{
+  "metadata": {
+    "date": "2026-10-19",
+    "host": "Codex CLI / Linux",
+    "model": "gpt-5.6-luna",
+    "codex_version": "codex-cli 0.163.0",
+    "commit": "1db2ab9c3e110e8687894c39c0d34b0c7e9888bf",
+    "corpus_root": "/home/ben/Data/wimda-corpus",
+    "baseline": {
+      "host": "Codex / Windows",
+      "model": "gpt-5.6-luna",
+      "date": "2026-09-16",
+      "source": "docs/plans/agent-cli-skill.md",
+      "verdict": "8/8 pass",
+      "rubric_snapshot": "f6bf39c"
+    },
+    "protocol": "two_turn_image_review_v1",
+    "cases": [
+      "fmuf-ptfe",
+      "spin-glass-ymnal",
+      "high-tc-cuprate",
+      "ferromagnetic-nickel",
+      "alc-tcnq",
+      "ionic-motion-llz",
+      "photo-musr-silicon",
+      "cds-fourier"
+    ],
+    "rubric_sha256": {
+      "fmuf-ptfe": "49ca7ef87b2b8eec6e518da9052579a255090e3fdb132bc0df381610155df82d",
+      "spin-glass-ymnal": "c1fd733e78e7de397ebd0e533eaac4b698e4d47a33035f26348f9a8f9a7bdb6e",
+      "high-tc-cuprate": "6768523173dd08582c6c56642fe11ca2d276a0b467ea21494e31b1db78c59029",
+      "ferromagnetic-nickel": "8fdb04d7a4f7906dd74d19161f80e7983e02e98ef10344ae70273a54ba1dc0b9",
+      "alc-tcnq": "a2a38dc913e30cfad99eecaac81cac05cccad4b2b7d7afb893390314e39d251b",
+      "ionic-motion-llz": "26a96516c6b7d735288e5a79b9d63cd349de9e38850c4eba7367f47fc00a1b28",
+      "photo-musr-silicon": "9ea075b0d8d260180a124f3bbd71391eb593a605ee4117357c0b92d0e28d7d8a",
+      "cds-fourier": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a"
+    },
+    "rubric_changes_since_baseline": {
+      "alc-tcnq": "Centre acceptance range changed from 3.0–3.2 to 2.9–3.2 kG. Score historical threshold separately.",
+      "ionic-motion-llz": "Batch-group support documented; same requirement to couple every group used in a trend.",
+      "remaining_six": "unchanged"
+    },
+    "results_root": "/tmp/asymmetry-luna56-current-2026-10-19/pass1",
+    "scoring": "Manual review by the supervising Codex agent, using scoring_brief.md, unchanged Must/Should rules, numerical-output and boundary audit; no separate scorer model.",
+    "paired_comparison": "docs/plans/agent-cli-skill-luna6-2026-10-19.json",
+    "comparison_limitations": [
+      "One fresh attempt per model per case; stochastic variation remains.",
+      "Staged absolute paths differ; user prompt, boundary instructions, runner and source dataset contents are otherwise matched.",
+      "Historical best-after-iteration 8/8 is context, not the paired control."
+    ],
+    "runner_sha256": "5156a82fb89fe22fc918417962ef2f6bc8ef7170b773683f5277a511a8b26284",
+    "result": "2/8 PASS under strict rubric reading; CdS would make3/8 if resolution/window means either rather than both.8/8 completed two turns,exit0.",
+    "paired_result": {
+      "gpt_5_6_passes": 2,
+      "gpt_6_passes": 2,
+      "gpt_5_6_musts": 39,
+      "gpt_6_musts": 35,
+      "must_total": 47,
+      "discordant_cases": [
+        "spin-glass-ymnal",
+        "alc-tcnq"
+      ],
+      "wording_sensitive_case": "cds-fourier"
+    },
+    "input_matching": "All eight data trees and skill instructions/references match byte for byte; all rubrics identical. Skill installer metadata differs only in installed_at.",
+    "verification": {
+      "record_consistency": "pass",
+      "diff_check": "pass",
+      "documentation_build": "not repeated: prior build in same task blocked by missing sphinx_design; no source changes"
+    },
+    "conclusion": "Historical8/8 reliability is not reproduced by5.6 on current setup. Failures are shared across models,with concrete model-dependent choices and reporting differences. One attempt per case cannot establish model-specific reliability rates or attribute shared failures to a particular CLI/skill change.",
+    "top_followups": [
+      "Audit the exact post-image-review final report; preserve scan ranges and transform/fit-window provenance when rewriting the summary.",
+      "Route Al-LLZ repeated field triplets to actual shared dynamic fit-global objectives; both models miss this despite recovering different geometry evidence.",
+      "Repeat discordant or scientifically differing cases before model choice; use matched same-model historical-code controls to isolate CLI/skill changes from OS/backend changes."
+    ]
+  },
+  "matched_inputs": {
+    "spin-glass-ymnal": {
+      "data_sha256": "9d49921b4e553cf022ebe21578c58ea9d418e876c84ba8355ebe9cc865b0c0c8",
+      "skill_content_tree_sha256": "87038b96a825bf79ea5f0867fbf3e286c31470f31a9fc081b5881de63633dbdc",
+      "skill_metadata_difference": "installed_at only",
+      "rubric_sha256": "c1fd733e78e7de397ebd0e533eaac4b698e4d47a33035f26348f9a8f9a7bdb6e",
+      "matches_gpt6": true
+    },
+    "fmuf-ptfe": {
+      "data_sha256": "5b2aa28e9763b8632c21c93923a171314511230f7dbcd89a8221ab56ec660c3f",
+      "skill_content_tree_sha256": "87038b96a825bf79ea5f0867fbf3e286c31470f31a9fc081b5881de63633dbdc",
+      "skill_metadata_difference": "installed_at only",
+      "rubric_sha256": "49ca7ef87b2b8eec6e518da9052579a255090e3fdb132bc0df381610155df82d",
+      "matches_gpt6": true
+    },
+    "alc-tcnq": {
+      "data_sha256": "2e5ebdf14699865ed1d89a87702695ae965b1c31c5a4ee1d8153af89b640cb3d",
+      "skill_content_tree_sha256": "87038b96a825bf79ea5f0867fbf3e286c31470f31a9fc081b5881de63633dbdc",
+      "skill_metadata_difference": "installed_at only",
+      "rubric_sha256": "a2a38dc913e30cfad99eecaac81cac05cccad4b2b7d7afb893390314e39d251b",
+      "matches_gpt6": true
+    },
+    "ferromagnetic-nickel": {
+      "data_sha256": "e29120a053d575c253181175a3daecb08523af04f31f1572dc531d65709386a4",
+      "skill_content_tree_sha256": "87038b96a825bf79ea5f0867fbf3e286c31470f31a9fc081b5881de63633dbdc",
+      "skill_metadata_difference": "installed_at only",
+      "rubric_sha256": "8fdb04d7a4f7906dd74d19161f80e7983e02e98ef10344ae70273a54ba1dc0b9",
+      "matches_gpt6": true
+    },
+    "high-tc-cuprate": {
+      "data_sha256": "2fdb7efc2d578c812966ad56bf86c5bd679a4ec22f0bf4322a81c2ba5ad52229",
+      "skill_content_tree_sha256": "87038b96a825bf79ea5f0867fbf3e286c31470f31a9fc081b5881de63633dbdc",
+      "skill_metadata_difference": "installed_at only",
+      "rubric_sha256": "6768523173dd08582c6c56642fe11ca2d276a0b467ea21494e31b1db78c59029",
+      "matches_gpt6": true
+    },
+    "cds-fourier": {
+      "data_sha256": "5187e72d7d46a1730cdca70308b7f0c3329f89b17cb0bd8bfa8bcff96c1ab912",
+      "skill_content_tree_sha256": "87038b96a825bf79ea5f0867fbf3e286c31470f31a9fc081b5881de63633dbdc",
+      "skill_metadata_difference": "installed_at only",
+      "rubric_sha256": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a",
+      "matches_gpt6": true
+    },
+    "ionic-motion-llz": {
+      "data_sha256": "9e7b720c56991b4441fb782d9125269d4a19cd4a3441c32823b2497a1518051e",
+      "skill_content_tree_sha256": "87038b96a825bf79ea5f0867fbf3e286c31470f31a9fc081b5881de63633dbdc",
+      "skill_metadata_difference": "installed_at only",
+      "rubric_sha256": "26a96516c6b7d735288e5a79b9d63cd349de9e38850c4eba7367f47fc00a1b28",
+      "matches_gpt6": true
+    },
+    "photo-musr-silicon": {
+      "data_sha256": "08e1905af17d061a289cdc505b94a1401674267e4def2279ccf1d3afc6d377f6",
+      "skill_content_tree_sha256": "87038b96a825bf79ea5f0867fbf3e286c31470f31a9fc081b5881de63633dbdc",
+      "skill_metadata_difference": "installed_at only",
+      "rubric_sha256": "9ea075b0d8d260180a124f3bbd71391eb593a605ee4117357c0b92d0e28d7d8a",
+      "matches_gpt6": true
+    }
+  },
+  "paired_cases": {
+    "spin-glass-ymnal": {
+      "gpt_5_6_luna": "PASS",
+      "gpt_5_6_musts": "5/5",
+      "gpt_6_luna": "FAIL",
+      "gpt_6_musts": "4/5",
+      "interpretation": "Recovers LF interpretation with explicit wizard --geometry LF --scope lf-dynamics; GPT-6 used file-TF fallback. Both distinguish ZF24591 correctly."
+    },
+    "fmuf-ptfe": {
+      "gpt_5_6_luna": "PASS",
+      "gpt_5_6_musts": "6/6",
+      "gpt_6_luna": "PASS",
+      "gpt_6_musts": "6/6",
+      "interpretation": "Both pass;5.6 splits low-T FmuF and warm relaxation regimes with different recipes."
+    },
+    "alc-tcnq": {
+      "gpt_5_6_luna": "FAIL",
+      "gpt_5_6_musts": "5/6",
+      "gpt_6_luna": "PASS",
+      "gpt_6_musts": "6/6",
+      "interpretation": "GPT-6 passes by accounting for all128 files including extra points;5.6 omits that provenance despite completing the scans. Current widened centre threshold is used consistently."
+    },
+    "ferromagnetic-nickel": {
+      "gpt_5_6_luna": "FAIL",
+      "gpt_5_6_musts": "6/7",
+      "gpt_6_luna": "FAIL",
+      "gpt_6_musts": "6/7",
+      "interpretation": "Both fail Must1, but different causes:5.6 correctly classifies LF and accounts for124278 in the audited draft, then drops ranges in final;6 never resolves LF and leaves124278 out."
+    },
+    "high-tc-cuprate": {
+      "gpt_5_6_luna": "FAIL",
+      "gpt_5_6_musts": "4/5",
+      "gpt_6_luna": "FAIL",
+      "gpt_6_musts": "3/5",
+      "interpretation": "Both fail the fraction-discussion Must4;5.6 additionally recovers Gaussian broadening and a qualified superconducting-law trend, so4/5 versus6’s3/5."
+    },
+    "cds-fourier": {
+      "gpt_5_6_luna": "FAIL",
+      "gpt_5_6_musts": "5/6",
+      "gpt_6_luna": "FAIL",
+      "gpt_6_musts": "4/6",
+      "interpretation": "Both fail strict rubric, but5.6 recovers matched-reference spectral interpretation;6 provides window provenance but omits triplet assignment. With resolution-only interpretation of Must3,5.6 would pass."
+    },
+    "ionic-motion-llz": {
+      "gpt_5_6_luna": "FAIL",
+      "gpt_5_6_musts": "3/6",
+      "gpt_6_luna": "FAIL",
+      "gpt_6_musts": "1/6",
+      "interpretation": "Shared missing-coupled-fit failure.5.6 improves geometry and attempts dynamic family but still produces no shared triplet parameters."
+    },
+    "photo-musr-silicon": {
+      "gpt_5_6_luna": "FAIL",
+      "gpt_5_6_musts": "5/6",
+      "gpt_6_luna": "FAIL",
+      "gpt_6_musts": "5/6",
+      "interpretation": "Both preserve final period direction and quantitative comparison but fail window provenance.5.6 numbers are all printed;6 supplied an unsupported7.916μs endpoint."
+    }
+  },
+  "cases": {
+    "spin-glass-ymnal": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "Separate20 G weak-TF24563 calibration;110 G longitudinal-field measurement"
+        },
+        {
+          "pass": true,
+          "evidence": "24563 provided detector calibration, groups1/2 and corrected alpha1.2373"
+        },
+        {
+          "pass": true,
+          "evidence": "stretched-exponential plus constant alternative ... more stable"
+        },
+        {
+          "pass": true,
+          "evidence": "rate decreases sharply on warming,0.526 to0.034"
+        },
+        {
+          "pass": true,
+          "evidence": "alpha,precession,trend values and failed law verified against CLI output"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "18-point science scan plus ZF24591 accounts for actual data; no worksheet-only subset used"
+        },
+        {
+          "pass": false,
+          "evidence": "no reference-fixed A(0)/background strategy or deliberate-departure explanation"
+        },
+        {
+          "pass": true,
+          "evidence": "CriticalDivergence law attempted and rejected; no critical temperature/exponent quoted"
+        }
+      ],
+      "number_rule": "PASS: quoted rates, logged temperatures, calibration, precession, repeat conditions and trend bounds printed by current-session CLI; rounded onset91–111K is permissible.",
+      "root_cause": null,
+      "comparison_to_gpt6": "Recovers LF interpretation with explicit wizard --geometry LF --scope lf-dynamics; GPT-6 used file-TF fallback. Both distinguish ZF24591 correctly.",
+      "must_score": "5/5",
+      "wall_seconds": 186.9,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "usage": {
+        "input_tokens": 1884215,
+        "cached_input_tokens": 1784832,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 11934,
+        "reasoning_output_tokens": 3281
+      },
+      "wizard_calls": 2,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/spin-glass-ymnal/data --series lf-temp-alt --model CriticalDivergence --param Lambda --plot --workdir asymmetry-work'"
+      ],
+      "audit_calls": 2,
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b",
+      "permission_denials": [],
+      "boundary_audit": {
+        "suspicious_commands": [],
+        "note": "Only staged/project file reads,CLI calls and JSON extraction observed. No external reads,network calls or delegation in completed command events."
+      }
+    },
+    "fmuf-ptfe": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "29-point ZF20–200K scan,17293 weak-TF calibration"
+        },
+        {
+          "pass": true,
+          "evidence": "alpha0.9566 raw and0.9553 applied from17293"
+        },
+        {
+          "pass": true,
+          "evidence": "collinear F–μ–F × exponential + constant"
+        },
+        {
+          "pass": true,
+          "evidence": "r_muF1.2465±0.0009Å on17322"
+        },
+        {
+          "pass": true,
+          "evidence": "r_muF approximately1.24–1.30Å through20–80.8K; unconstrained25.2K point excluded"
+        },
+        {
+          "pass": true,
+          "evidence": "coupling,alpha,temperatures and numerical trends printed by CLI"
+        }
+      ],
+      "should": [
+        {
+          "pass": false,
+          "evidence": "does not explicitly describe out-of-temperature-order infill"
+        },
+        {
+          "pass": false,
+          "evidence": "logged temperature distinguished from setpoint only implicitly; no uncertainty column"
+        },
+        {
+          "pass": false,
+          "evidence": "no worksheet hydrogen-bonding or entanglement context"
+        }
+      ],
+      "number_rule": "PASS: representative fit values/errors,raw/corrected alpha,temperature spans and FFT candidate maxima trace to current-session CLI (rounding allowed).",
+      "root_cause": null,
+      "comparison_to_gpt6": "Both pass;5.6 splits low-T FmuF and warm relaxation regimes with different recipes.",
+      "must_score": "6/6",
+      "wall_seconds": 213.7,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "usage": {
+        "input_tokens": 1907206,
+        "cached_input_tokens": 1734144,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 12670,
+        "reasoning_output_tokens": 3620
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "audit_calls": 1,
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b",
+      "permission_denials": [],
+      "boundary_audit": {
+        "suspicious_commands": [],
+        "note": "Only staged/project file reads,CLI calls and JSON extraction observed. No external reads,network calls or delegation in completed command events."
+      }
+    },
+    "alc-tcnq": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "longitudinal-field ALC scans;1–10 μs integral asymmetries"
+        },
+        {
+          "pass": false,
+          "evidence": "four31-run blocks described, but128-run total, extra runs and per-block run ranges omitted; final summary never accounts for full folder"
+        },
+        {
+          "pass": true,
+          "evidence": "integral-scan on complete31-run blocks19489–19519,19520–19550,19551–19581,19582–19612; final names all four temperatures"
+        },
+        {
+          "pass": true,
+          "evidence": "local LorentzianLCR+Linear fits"
+        },
+        {
+          "pass": true,
+          "evidence": "negative broad dip3.0–3.1kG; centres2989.8–3101.8G with width/errors/chi2; poor model quality qualified"
+        },
+        {
+          "pass": true,
+          "evidence": "no radical/hyperfine conversion or molecular-site assignment"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "alpha1.0323 from19485"
+        },
+        {
+          "pass": false,
+          "evidence": "integration window stated, but count-integral method and baseline regions not explained"
+        },
+        {
+          "pass": true,
+          "evidence": "all four blocks fitted; comparative interpretation qualified"
+        },
+        {
+          "pass": false,
+          "evidence": "no scan JSON or plot paths in final"
+        }
+      ],
+      "number_rule": "PASS: calibration and rounded local-fit parameter/error/chi2 values trace to current-session command output and jq reads. Temperatures explicitly nominal; no invented couplings.",
+      "root_cause": "Agent analyses all four31-run blocks and performs local Lorentzian fits, but compresses the final reply to a resonance table and drops128-run coverage/non-scan context. Survey JSON contains full membership, and agent saw logbook, but final never says128 runs or accounts for the four additional files. It also skips the final summary audit. Failure is report coverage, not failure to run integral-scan.",
+      "comparison_to_gpt6": "GPT-6 passes by accounting for all128 files including extra points;5.6 omits that provenance despite completing the scans. Current widened centre threshold is used consistently.",
+      "must_score": "5/6",
+      "wall_seconds": 143.6,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "usage": {
+        "input_tokens": 2500161,
+        "cached_input_tokens": 2318592,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 10859,
+        "reasoning_output_tokens": 3077
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "audit_calls": 0,
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b",
+      "permission_denials": [],
+      "boundary_audit": {
+        "suspicious_commands": [],
+        "note": "Only staged/project file reads,CLI calls and JSON extraction observed. No external reads,network calls or delegation in completed command events."
+      }
+    },
+    "ferromagnetic-nickel": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": false,
+          "evidence": "ZF,100G TF and200K LF regimes named, but per-scan run ranges absent from final report; only total61 and calibration/repeat IDs remain"
+        },
+        {
+          "pass": true,
+          "evidence": "100G124251 measured alpha1.9723 raw/1.9787 corrected"
+        },
+        {
+          "pass": true,
+          "evidence": "below-transition ZF spontaneous precession;354K visibly damped oscillation"
+        },
+        {
+          "pass": true,
+          "evidence": "above356K no significant ZF line resolved"
+        },
+        {
+          "pass": true,
+          "evidence": "internal frequency9.50MHz320K to3.93MHz354K"
+        },
+        {
+          "pass": true,
+          "evidence": "frequency,rate,Tc and Redfield values printed by CLI; failed critical law explicitly qualified"
+        },
+        {
+          "pass": true,
+          "evidence": "no textbook630K finding"
+        }
+      ],
+      "should": [
+        {
+          "pass": false,
+          "evidence": "no explicit comparison to bulk literature Tc"
+        },
+        {
+          "pass": true,
+          "evidence": "separate200K LF Redfield analysis"
+        },
+        {
+          "pass": true,
+          "evidence": "order-parameter critical fit attempted and rejected for high chi2; no exponent claimed"
+        },
+        {
+          "pass": true,
+          "evidence": "background role and A_bg=0 degeneracy treatment explained"
+        }
+      ],
+      "number_rule": "PASS: rounded fitted frequencies/rates and law/Redfield parameters checked against CLI output;358K is emitted by the descriptive fit, not textbook Tc.",
+      "root_cause": "Agent recovers LF geometry and analyses the full sweep including124278. Its audited project/summary.md explicitly lists all per-scan ranges and co-add membership. The separate image-review turn rewrites that summary and omits all three run ranges, failing the same final-report Must1. This directly exposes a gap between auditing an intermediate file and scoring a different final reply.",
+      "comparison_to_gpt6": "Both fail Must1, but different causes:5.6 correctly classifies LF and accounts for124278 in the audited draft, then drops ranges in final;6 never resolves LF and leaves124278 out.",
+      "must_score": "6/7",
+      "wall_seconds": 413.4,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "usage": {
+        "input_tokens": 4736078,
+        "cached_input_tokens": 4586112,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 20742,
+        "reasoning_output_tokens": 6564
+      },
+      "wizard_calls": 7,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/ferromagnetic-nickel/data --series zf-ordered --model OrderParameter --param frequency --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/ferromagnetic-nickel/data --series lf-field --model Redfield --param Lambda --plot --workdir asymmetry-work-field'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/ferromagnetic-nickel/data --series zf-ordered --model OrderParameter --param frequency --fix alpha=1.000 --plot'"
+      ],
+      "audit_calls": 4,
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b",
+      "permission_denials": [],
+      "boundary_audit": {
+        "suspicious_commands": [],
+        "note": "Only staged/project file reads,CLI calls and JSON extraction observed. No external reads,network calls or delegation in completed command events."
+      }
+    },
+    "high-tc-cuprate": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "EMU BISCO150G and MUSR HTC400G/200G separate scans"
+        },
+        {
+          "pass": true,
+          "evidence": "both MUSR fields independently analysed"
+        },
+        {
+          "pass": true,
+          "evidence": "400G Gaussian width1.16 at low T to0.066 at high T; cooling broadening explicit"
+        },
+        {
+          "pass": false,
+          "evidence": "no discussion of non-superconducting signal fraction or physical constant/second-signal contribution; sigma_bg is a law width floor, not a signal fraction",
+          "judgement_call": true
+        },
+        {
+          "pass": true,
+          "evidence": "sigma,Tc,gap-law and frequency-shift values printed by CLI; no unsupported penetration depth"
+        }
+      ],
+      "should": [
+        {
+          "pass": false,
+          "evidence": "76993 discussed but detector tests1274/1275 absent from final coverage"
+        },
+        {
+          "pass": true,
+          "evidence": "compares400G robust trend with200G unstable Gaussian results and150G exponential results"
+        },
+        {
+          "pass": false,
+          "evidence": "no explicit1276/125K normal-state reference"
+        }
+      ],
+      "number_rule": "PASS: all quoted decimal quantities match rounded CLI outputs, including explicitly emitted frequency shift0.1768±0.0085MHz; no calculated shift manufactured by agent.",
+      "root_cause": "5.6 uses wizard --scope tf-superconductor on1284 and chains a successful400G Gaussian series, recovering the cooling broadening missed by6. However its final report never identifies or explains the non-superconducting signal fraction. A fitted sigma_bg law parameter describes a background width and does not substitute for discussing constant/second-component signal amplitude. Report-science omission fails Must4, with the same judgement interpretation used for6.",
+      "comparison_to_gpt6": "Both fail the fraction-discussion Must4;5.6 additionally recovers Gaussian broadening and a qualified superconducting-law trend, so4/5 versus6’s3/5.",
+      "must_score": "4/5",
+      "wall_seconds": 296.7,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "usage": {
+        "input_tokens": 3550478,
+        "cached_input_tokens": 3347968,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 22739,
+        "reasoning_output_tokens": 4497
+      },
+      "wizard_calls": 5,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series htc-200G --model SC_SWave --param sigma_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series htc-400G --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series bisco-150G --model SC_SWave --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series htc-200G --model SC_SWave --param sigma_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series htc-400G --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series bisco-150G --model SC_SWave --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series htc-200G --model SC_DWave --param sigma_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series htc-400G --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series bisco-150G --model SC_DWave --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series htc-400G --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series htc-200G --model SC_DWave --param sigma_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/high-tc-cuprate/data --series bisco-150G --model SC_DWave --param Lambda --plot'"
+      ],
+      "audit_calls": 2,
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b",
+      "permission_denials": [],
+      "boundary_audit": {
+        "suspicious_commands": [],
+        "note": "Only staged/project file reads,CLI calls and JSON extraction observed. No external reads,network calls or delegation in completed command events."
+      }
+    },
+    "cds-fourier": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "100G TF CdS series;20721 cold5.18K representative compared with20729 warm50K"
+        },
+        {
+          "pass": true,
+          "evidence": "alpha0.9499 from20729;20721 reduced and fourier --window none --plot run"
+        },
+        {
+          "pass": false,
+          "evidence": "final gives FFT resolution0.0316MHz but never states transform window or full-record/crop choice beside reported peaks",
+          "judgement_call": true,
+          "note": "Strict reading of resolution/window requirement and skill provenance contract; under an either/or reading of that slash this would pass. Command itself uses none over full record."
+        },
+        {
+          "pass": true,
+          "evidence": "central1.39MHz with visual-only maxima near1.24/1.50; warm single-line reference; no promoted detections"
+        },
+        {
+          "pass": true,
+          "evidence": "approximately symmetric candidates consistent with shallow-muon hyperfine triplet, explicitly not precision-resolved"
+        },
+        {
+          "pass": true,
+          "evidence": "uses unwindowed FFT from outset; no apodisation warning to heed"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "100G applied-field Larmor line near1.39MHz identified; no explicit numerical residual comparison"
+        },
+        {
+          "pass": false,
+          "evidence": "no splitting estimate; only candidate maxima quoted"
+        },
+        {
+          "pass": false,
+          "evidence": "cold/warm PNG links present, but stored spectrum JSON/NPZ not linked"
+        },
+        {
+          "pass": true,
+          "evidence": "temperature trend from fitted series, not one FFT"
+        }
+      ],
+      "number_rule": "PASS: peak/candidate frequencies,resolution,fit diagnostics and temperature/rate spans trace to current CLI outputs, allowing rounding.",
+      "root_cause": "5.6 runs matched cold20721/warm20729 unwindowed full-record FFTs and recovers the qualitative triplet interpretation, with appropriate candidate-only language. Final report omits window/full-record provenance even though it is printed by both fourier commands, failing the strict resolution/window Must3. This verdict is wording-sensitive and should be distinguished from6’s missing physical interpretation.",
+      "comparison_to_gpt6": "Both fail strict rubric, but5.6 recovers matched-reference spectral interpretation;6 provides window provenance but omits triplet assignment. With resolution-only interpretation of Must3,5.6 would pass.",
+      "must_score": "5/6",
+      "wall_seconds": 173.6,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "usage": {
+        "input_tokens": 1712332,
+        "cached_input_tokens": 1605248,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 10913,
+        "reasoning_output_tokens": 2660
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "audit_calls": 1,
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b",
+      "permission_denials": [],
+      "boundary_audit": {
+        "suspicious_commands": [],
+        "note": "Only staged/project file reads,CLI calls and JSON extraction observed. No external reads,network calls or delegation in completed command events."
+      }
+    },
+    "ionic-motion-llz": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "40runs,51315weakTFcalibration,39science0/5/10G at13T; LF decoupling explicit; range157–391K in scan table"
+        },
+        {
+          "pass": false,
+          "evidence": "no fit-global; independent field/temperature series only"
+        },
+        {
+          "pass": true,
+          "evidence": "DynamicGaussianKT+Constant recipe tested on51341 and ZFseries",
+          "note": "Correct dynamic family attempted, but not in required coupled objective."
+        },
+        {
+          "pass": false,
+          "evidence": "no shared A_1,Delta,nu,A_bg with per-run fixed B_L"
+        },
+        {
+          "pass": false,
+          "evidence": "single-run nu0.937272±0.0821 quoted, no coupled shared values/errors/quality"
+        },
+        {
+          "pass": true,
+          "evidence": "dynamic nu series flagged throughout and explicitly rejected as reliable trend"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "51315alpha0.8567 raw/0.8561 corrected"
+        },
+        {
+          "pass": false,
+          "evidence": "no coupled near0–12μs group fit with guide seeds"
+        },
+        {
+          "pass": false,
+          "evidence": "no Keren low-rate caveat; DynamicGaussianKT attempted instead"
+        },
+        {
+          "pass": false,
+          "evidence": "no global-series artifact"
+        }
+      ],
+      "number_rule": "PASS: calibration,static-KT fit values,independent rates,dynamic trial nu and trend bounds printed in session output. Failed dynamic nu trend is explicitly rejected.",
+      "root_cause": "Agent resolves5/10G as LF and tests DynamicGaussianKT+Constant, but still analyses three independent temperature series and thirteen independent fit-series field sets. No fit-global appears. It interprets sparse-field Redfield failure as lack of quantitative information, despite skill Step5a giving exact coupled-triplet workflow. This workflow-routing failure occurs with both models; geometry fallback alone cannot explain it.",
+      "comparison_to_gpt6": "Shared missing-coupled-fit failure.5.6 improves geometry and attempts dynamic family but still produces no shared triplet parameters.",
+      "must_score": "3/6",
+      "wall_seconds": 414.3,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "usage": {
+        "input_tokens": 7335493,
+        "cached_input_tokens": 7128832,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 23506,
+        "reasoning_output_tokens": 4462
+      },
+      "wizard_calls": 2,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna56-current-2026-10-19/pass1/ionic-motion-llz/data --series field-220K --model Redfield --param Lambda --plot'"
+      ],
+      "audit_calls": 2,
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b",
+      "permission_denials": [],
+      "boundary_audit": {
+        "suspicious_commands": [],
+        "note": "Only staged/project file reads,CLI calls and JSON extraction observed. No external reads,network calls or delegation in completed command events."
+      }
+    },
+    "photo-musr-silicon": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "pass": true,
+          "evidence": "23HIFI,22−100Gscience103277–103298,20Gcalibration103299;separate red/green;Pscan coordinate missing"
+        },
+        {
+          "pass": true,
+          "evidence": "red photoON and greenOFF assigned from visible fast-vs-slow traces"
+        },
+        {
+          "pass": true,
+          "evidence": "103277 separately reduced --period red/green in separate workdirs"
+        },
+        {
+          "pass": true,
+          "evidence": "OFFLambda0.222912 vs ON1.22015; ONsingleexp poor; no inversion in final"
+        },
+        {
+          "pass": false,
+          "evidence": "0.108–4.0μs stated for single-exponential comparison, but quoted wizard two-exponential rates and series trend have no stated window; wizard recipe has null t_min/t_max, unlike explicit4μs screens",
+          "note": "No fabricated value found; failure is missing provenance for additional quoted rates."
+        },
+        {
+          "pass": true,
+          "evidence": "no carrier lifetime,density-calibration exponent or power/delay law invented"
+        }
+      ],
+      "should": [
+        {
+          "pass": true,
+          "evidence": "103299calibration,period-specific alpha1.0355/1.0347"
+        },
+        {
+          "pass": false,
+          "evidence": "exponential+constant and4μs screen rather than pureexp/firstμs"
+        },
+        {
+          "pass": true,
+          "evidence": "ONchi2poor3.4926 acknowledged; two-component residuals and16/22flaggedfits stated"
+        },
+        {
+          "pass": false,
+          "evidence": "no final workdir/plot links"
+        }
+      ],
+      "number_rule": "PASS: all quoted rate,amplitude,field,T,run,chi2 and residual-z values match current command output; explicit4μs window is in commands. Unlike6,no unsupported exact endpoint.",
+      "root_cause": "5.6 corrects an initial ON/OFF inversion before final reporting and explicitly fits103277 over0.108–4μs. It then quotes wizard two-exponential rates and an acquisition-order rate trend without stating their full-record fit window. The wizard recipe is unbounded (nullt_min/t_max), so these cannot inherit the4μs screen window. Same Must5 fails as6, through omission rather than an invented exact endpoint.",
+      "comparison_to_gpt6": "Both preserve final period direction and quantitative comparison but fail window provenance.5.6 numbers are all printed;6 supplied an unsupported7.916μs endpoint.",
+      "must_score": "5/6",
+      "wall_seconds": 352.3,
+      "completed_turns": 2,
+      "image_inputs": 4,
+      "usage": {
+        "input_tokens": 5431383,
+        "cached_input_tokens": 5269632,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 20524,
+        "reasoning_output_tokens": 5557
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "audit_calls": 2,
+      "skill_sha256": "7c8752634aad8e116afffe11cd25cd2b0a337ac990e56955b0ab57ba9b9ac26b",
+      "permission_denials": [],
+      "boundary_audit": {
+        "suspicious_commands": [],
+        "note": "Only staged/project file reads,CLI calls and JSON extraction observed. No external reads,network calls or delegation in completed command events."
+      }
+    }
+  }
+}

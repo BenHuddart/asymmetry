@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import shlex
+from collections import Counter
 from pathlib import Path
 
 from asymmetry.cli._axis import add_axis_arguments, axis_from_arguments
@@ -13,6 +14,8 @@ from asymmetry.cli._output import (
     emit_json,
     format_number,
     payload,
+    render_fit_windows,
+    render_quality_counts,
     render_table,
 )
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
@@ -137,6 +140,7 @@ def run(args: argparse.Namespace) -> None:
         "kind": "series",
         "recipe": recipe.to_dict(),
         "trend_fits": {},
+        "time_windows": {run: recipe.time_window(data) for run, data in datasets.items()},
     }
     series_path = workdir.write_series(name, series_payload)
 
@@ -172,7 +176,7 @@ def run(args: argparse.Namespace) -> None:
     if args.json:
         emit_json(
             payload(
-                series=outcome.to_dict(),
+                series=series_payload,
                 series_path=str(series_path),
                 plots=[str(path) for path in plot_paths],
             )
@@ -180,6 +184,8 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(outcome, series_path, plot_paths))
+    print(render_quality_counts(outcome.results))
+    print(render_fit_windows(series_payload["time_windows"]))
     held = [entry["run"] for entry in outcome.results if entry["background_held"]]
     if held:
         print(
@@ -233,18 +239,34 @@ def run(args: argparse.Namespace) -> None:
     misfit = [
         entry["run"] for entry in outcome.results if _MISFIT_FLAGS & set(entry["quality_flags"])
     ]
-    if 2 * len(misfit) >= len(outcome.results) and runner_up in workdir.recipe_names():
-        supplied = "" if args.x is None else f" --x {shlex.quote(args.x)}"
-        start = "" if args.start is None else f" --start {args.start}"
-        print(
-            f"NOTE: {len(misfit)} of {len(outcome.results)} runs are flagged failed or "
-            f"amplitude_exceeds_data, so {outcome.expression} does not describe this scan. "
-            f"The screening that wrote {args.recipe} also wrote a relaxation alternative, "
-            f"{workdir.read_recipe(runner_up).expression}: fit the scan with it and keep "
-            f"whichever series describes the runs.\n"
-            f"  asymmetry fit-series {shlex.quote(args.folder)} --runs {args.runs} --recipe "
-            f"{runner_up} --order {outcome.order_key}{supplied}{start} --name {name}-alt"
-        )
+    if runner_up in workdir.recipe_names():
+        alternative = workdir.read_recipe(runner_up)
+        ours = Counter(recipe.model().component_names)
+        theirs = Counter(alternative.model().component_names)
+        # The alternative swaps a single-rate decay for a distributed-rate (stretched) one.
+        distributed = "Exponential" in ours - theirs and "StretchedExponential" in theirs - ours
+        if 2 * len(misfit) >= len(outcome.results) or distributed:
+            supplied = "" if args.x is None else f" --x {shlex.quote(args.x)}"
+            start = "" if args.start is None else f" --start {args.start}"
+            reason = (
+                "DISTRIBUTED RELAXATION: a comparable stretched-exponential recipe "
+                "was found by the screen. A single-exponential ranking on one run "
+                "does not establish one relaxation rate across a scan. For a "
+                "disordered/glassy magnet, test the distributed-rate decay and report "
+                "its stretching exponent beta, including where it approaches one."
+                if distributed
+                else f"NOTE: {len(misfit)} of {len(outcome.results)} runs are flagged "
+                f"failed or amplitude_exceeds_data, so {outcome.expression} does not "
+                "describe this scan."
+            )
+            print(
+                f"{reason} The screening that wrote {args.recipe} also wrote an "
+                f"alternative model, {alternative.expression}: fit the scan with it "
+                f"and compare the models across the scan before selecting a rate trend.\n"
+                f"  asymmetry fit-series {shlex.quote(args.folder)} --runs {args.runs} "
+                f"--recipe {runner_up} --order {outcome.order_key}{supplied}{start} "
+                f"--name {name}-alt"
+            )
     print(
         f"Next: asymmetry trend {shlex.quote(args.folder)} --series {name} — the trend "
         f"table, and the law it calls for."

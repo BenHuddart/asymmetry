@@ -6,10 +6,21 @@ import argparse
 import shlex
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from asymmetry.cli._output import UserError, emit_json, format_number, payload, render_table
+from asymmetry.cli._output import (
+    UserError,
+    emit_json,
+    format_number,
+    payload,
+    render_fit_windows,
+    render_table,
+)
 from asymmetry.cli._runs import range_text, reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+
+if TYPE_CHECKING:
+    from asymmetry.core.workflow.screen import SurveyGeometry
 
 #: Candidates listed in the human-readable table.
 _TOP_CANDIDATES = 5
@@ -97,7 +108,7 @@ def run(args: argparse.Namespace) -> None:
         result = screen_run(
             dataset,
             geometry=args.geometry,
-            survey_geometry=_survey_geometry(workdir, selection, args.run),
+            survey=_survey_geometry(workdir, selection, args.run),
             scope_preset=args.scope,
             include=_names(args.include),
             exclude=_names(args.exclude),
@@ -165,10 +176,30 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(args.folder, line_recipe, result, wizard_path, recipe_path, plot_path, plot_note))
+    print(render_fit_windows({args.run: result.time_window}))
+    if args.scope == "tf-superconductor":
+        print(
+            "SIGNAL FRACTIONS: report the oscillating sample amplitude and the "
+            "slow/nonrelaxing background separately. Explain how the non-superconducting "
+            "signal is represented or why it could not be separated. A Constant can "
+            "describe a time-independent contribution or offset; it alone does not "
+            "measure a non-superconducting volume fraction. Do not turn sigma_bg, a "
+            "width-law floor, into a signal fraction."
+        )
     note = window_note(workdir, [args.run])
     if note is not None:
         print(note)
     if result.recipe is not None:
+        if "DynamicLorentzianKT" in result.recipe.model().component_names:
+            print(
+                "FIELD DISTRIBUTION: Lorentzian KT describes dilute, randomly sited "
+                "moments. Dense nuclear moments in a stoichiometric material call for "
+                "Gaussian KT (DynamicGaussianKT or Keren) with a Gaussian width Delta "
+                "and fluctuation rate nu. Ionic motion does not change dense nuclei "
+                "into dilute moments. Choose the distribution from the sample physics "
+                "and compare coupled field-group fits; a single-run AICc ranking "
+                "cannot decide that physical choice."
+            )
         harmonic = _harmonic_pair(
             [p.value for p in result.recipe.parameters if p.name.startswith("frequency")]
         )
@@ -304,22 +335,23 @@ def _names(text: str) -> list[str]:
     return [name.strip() for name in text.split(",") if name.strip()]
 
 
-def _survey_geometry(workdir, selection, run_number: int) -> str | None:
-    """The geometry the folder's survey resolved for *run_number*, if surveyed.
+def _survey_geometry(workdir, selection, run_number: int) -> SurveyGeometry | None:
+    """The folder survey's reading of *run_number*, if surveyed.
 
     The survey may have *measured* it from Larmor precession, which is the only
     source that can speak for a file recording no field state; so when a survey
     exists in the work directory its reading beats this one dataset's metadata.
     The row is the *selection*'s — a survey without ``--instrument`` lists
     every instrument in the folder, and two may share the run number. ``None`` when the folder was
-    never surveyed, the run is not in the survey, or the survey could not
-    decide either.
+    never surveyed or the run is not in the survey.
     """
+    from asymmetry.core.workflow.screen import SurveyGeometry
+
     if not workdir.survey_path.exists():
         return None
     for row in workdir.read_survey()["runs"]:
         if row["run_number"] == run_number and selection.matches(row["prefix"]):
-            return row["geometry"]
+            return SurveyGeometry(row["geometry"])
     return None
 
 
@@ -426,7 +458,7 @@ def _render(
             f"{result.runner_up.expression} ({behind}), is written as {runner_up_name(name)}: "
             f"fit the scan with --recipe {runner_up_name(name)}, and report precession only "
             f"where a spectrum shows its line."
-            if recommended.category == PRECESSION_CATEGORY
+            if recommended.category == PRECESSION_CATEGORY and not result.lines
             else f"Runner-up recipe written as {runner_up_name(name)}: "
             f"{result.runner_up.expression}, {behind} — a model this run hardly tells apart. "
             f"If a fit-series from {name} flags most of its runs, fit the scan with --recipe "

@@ -45,6 +45,7 @@ from asymmetry.core.workflow.screen import (
     SCOPE_PRESETS,
     ScreenCandidate,
     ScreenResult,
+    SurveyGeometry,
     resolve_geometry,
     screen_run,
 )
@@ -157,6 +158,7 @@ __all__ = [
     "reduce_run",
     "reduction_source",
     "reduction_digest",
+    "SurveyGeometry",
     "resolve_geometry",
     "resolve_reduction_grouping",
     "resolve_row_geometry",

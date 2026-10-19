@@ -169,6 +169,20 @@ def test_a_recipe_rejects_a_rebin_below_one_and_an_inverted_window() -> None:
 # -- serialisation ----------------------------------------------------------
 
 
+def test_recipe_reports_actual_bin_centres_after_rebin_and_window(
+    reduced_workdir: WorkDir,
+) -> None:
+    from tests.core.conftest import SCAN_RUNS
+
+    data = reduced_workdir.reduced(SCAN_RUNS[0])
+    recipe = FitRecipe.from_expression(_EXPRESSION)
+    assert recipe.time_window(data) == (data.time[0], data.time[-1])
+    cut = replace(recipe, rebin=2, t_min=0.23, t_max=4.91)
+    time = data.rebin(2).time
+    selected = time[(time >= 0.23) & (time <= 4.91)]
+    assert cut.time_window(data) == (selected[0], selected[-1])
+
+
 def test_a_recipe_round_trips_through_its_dict() -> None:
     recipe = FitRecipe.from_assessment(_assessment(), run_number=102, seed_field=400.0).with_window(
         t_min=0.2, t_max=12.0

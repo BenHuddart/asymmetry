@@ -844,6 +844,14 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
     frequencies = [p for base, ps in by_base.items() if base in _FREQUENCY_BASES for p in ps]
     command = f"asymmetry trend <folder> --series {name} --model"
     hints: list[str] = []
+    if order_key in ("temperature", "sample_temperature_logged") and "r_muF" in free_params:
+        hints.append(
+            "DIPOLAR COUPLING: r_muF encodes the F–mu–F coupling, separately from "
+            "the fluctuation rate nu. Test whether it is roughly temperature "
+            f"independent: {command} Constant --param r_muF. State explicitly whether "
+            "the distance/coupling is roughly constant or varies, qualifying poor or "
+            "flagged fits. A change in nu does not establish a change in coupling."
+        )
     # A precessing line's rate is its width (TF), not a Redfield relaxation (LF).
     if order_key == "field" and rates and not frequencies:
         hints.append(

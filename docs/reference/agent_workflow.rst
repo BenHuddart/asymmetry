@@ -474,6 +474,20 @@ names it — "run 20898 also belongs to a field scan with no transverse line at
 this temperature — likely its points, not this scan's" — since a longitudinal
 point the file does not label is otherwise fitted with a precession model.
 
+Repeated sets of three to five weak fields, including zero field, print
+``COUPLED FIELD GROUPS`` when no member is transverse or precesses (a
+Larmor line, or an ordered magnet's spontaneous zero-field line). The survey
+gives a ``DynamicGaussianKT + Constant`` recipe and a ``fit-global --groups``
+command sharing the amplitudes, static width, and fluctuation rate within
+each temperature group, with ``B_L`` fixed from each run. Confirm longitudinal
+decoupling from the reduced spectra before using that physical model.
+Independent field fits do not measure those shared parameters, so ``audit``
+holds the reply until each group has a ``fit-global`` fit — of any model, so
+a competing coupled model satisfies it as well as the Kubo-Toyabe one. A
+minority Larmor-precessing point is removed from a field scan as a likely
+transverse calibration, unless a zero-field member precesses at the same
+frequency (see ``INTERNAL-FIELD AMBIGUITY`` below); then it stays a member.
+
 Consecutive runs of one sample at one condition — field, temperature,
 geometry, note and set-up — whose co-add at least halves the counting
 variance of the largest print as a repeat set with the command that co-adds
@@ -720,6 +734,14 @@ writes that runner-up as ``recipes/wizard-<run>-alt.json`` and names it: a run
 that hardly tells two models apart leaves the scan to decide, and
 ``fit-series`` offers the runner-up when the recommended recipe's series flags
 at least half of its runs ``failed`` or ``amplitude_exceeds_data``.
+For ``Exponential + Constant`` with a comparable stretched-exponential
+alternative, ``DISTRIBUTED RELAXATION`` also prints that comparison command
+without requiring widespread failures: one run's ranking cannot establish
+one rate throughout a scan, especially in a disordered/glassy magnet.
+For a detected precession signal, a close nested model with fewer parameters
+also gets an alternative recipe when it retains the precessing components.
+This lets a scan test whether an extra relaxation term is identifiable,
+without discarding the measured oscillation.
 Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended
@@ -740,6 +762,33 @@ candidate's fitted values — see `The fit recipe`_), plus
       key           title                  category  AICc   chi2_red  params
    -  ------------  ---------------------  --------  -----  --------  ------
    *  exp_constant  Exponential + Constant  General  487.7  0.969     3
+
+``wizard``, ``fit``, ``fit-series``, and ``fit-global`` print
+``Fit windows (retained bin
+centres)`` with the actual first and last fitted bin centres. This includes
+the full stored record when no explicit time cut was supplied; recipe
+rebinning is included for fits, and the wizard's own analysis rebinning for
+the wizard. Their JSON products retain the same bounds
+as ``time_window`` or, for a series or coupled group, ``time_windows``. Quote these alongside
+relaxation rates, rather than inferring exact limits from plot axes.
+Series and grouped-fit batches also print ``Fit quality counts`` so a report
+can quote the verdict totals directly rather than calculate them from rows.
+For a field sweep containing a zero-field reference, the survey reports
+``INTERNAL-FIELD AMBIGUITY`` when a high-field Larmor-like line also matches
+the spontaneous zero-field precession. That coincidence cannot establish
+applied TF geometry. The note asks the analyst to inspect relaxation and
+late-time recovery for LF decoupling and verify the instrument configuration.
+
+An unresolved survey geometry remains unknown in the wizard instead of
+falling back to a file stamp the survey did not confirm. An explicit
+``--geometry`` still takes precedence.
+
+When a dynamic Lorentzian KT wins the screen, ``FIELD DISTRIBUTION`` reminds
+the analyst that it describes dilute moments. Dense nuclear moments instead
+call for Gaussian KT; ionic motion changes the fluctuation rate, not that
+physical distribution. The single-run statistical ranking does not decide
+which distribution the sample contains; see :ref:`fit-kubo-toyabe` for the
+model definitions and references.
 
 ``recipe``
 ~~~~~~~~~~
@@ -872,6 +921,12 @@ chooses the axis the groups are ordered and trended along — ``temperature``
 ``field`` or ``run``, or any other name given per group with ``--group-x``
 (``--group-order concentration --group-x 1=0,2=0.25,3=0.5``); ``--order`` and
 ``--x`` still control each group's own within-group axis.
+
+The batch closes with ``MODEL COMPARISON``: when competing coupled families
+were fitted, report representative shared values, uncertainties and quality
+for each successful family, then choose from sample physics and joint
+results. A single-run wizard ranking is insufficient to discard a viable
+coupled comparison.
 
 ``fit-series``
 ~~~~~~~~~~~~~~
@@ -1066,6 +1121,11 @@ amplitude — counting only terms whose rate stands above its error — moves
 from one shape to the other between the scan's ends, and asks for that change
 of shape to be reported.
 
+For a temperature trend containing ``r_muF``, ``DIPOLAR COUPLING`` prints a
+``Constant --param r_muF`` comparison. It asks whether the fitted distance
+and coupling are roughly constant or vary, with fit-quality caveats,
+separately from a change in the dynamic fluctuation rate ``nu``.
+
 After a superconducting gap-law fit (``SC_SWave``, ``SC_DWave`` and the other
 ``SC_*`` σ(T) laws), ``trend`` asks for an explicit verdict — does the law
 describe σ(T), judged by χ²\ :sub:`r` and the trend plot — and after
@@ -1124,6 +1184,11 @@ List the numbers in a draft summary that no command printed.
 .. code-block:: text
 
    asymmetry audit [-h] [--workdir WORKDIR] [--json] draft
+
+The audit also checks that the report gives the folder run count and explicit
+members for each longer scan. For repeated weak-field groups it checks for
+actual simultaneous fits with shared dynamic parameters and per-run fields;
+independent ``fit-series`` coverage does not satisfy that check.
 
 Every other command appends what it printed to ``cli-output.log`` in the work
 directory it used (commands without a ``--workdir``, such as ``alpha``, log to
@@ -1206,6 +1271,11 @@ for one of those ``audit`` says that the calibration does not account for the
 scan and prints the ``wizard`` and ``fit-series`` commands that fit it. Scans of
 two or three runs share one line. A run fitted on its own with ``fit`` counts
 as fitted.
+
+``audit`` also holds the reply until the draft states the folder's coverage as
+a run count (``24 runs``; a bare ``24`` elsewhere, such as ``24 K``, does not
+count) and each surveyed scan of more than three runs by its own members —
+its ``--runs`` spelling or its first-to-last range (``201-206``, ``201 – 206``).
 
 ``integral-scan``
 ~~~~~~~~~~~~~~~~~
@@ -1674,8 +1744,14 @@ drives an agent against a copied dataset folder and reports the transcript
 and work directory for scoring against the rubric.
 
 The evaluation target is host-specific: use Sonnet through Claude Code and
-``gpt-5.6-luna`` through Codex. Record both the host and exact model with each
+``gpt-6-luna`` through Codex. Record both the host and exact model with each
 result so the two evaluation tracks remain comparable without being conflated.
+The Codex runner's image-review turn writes and audits the complete final
+report after inspecting the attached plots. ``cost.json`` records
+``final_report_audited`` by comparing the reply with the last passed audit;
+an audited earlier draft does not verify a rewritten final reply.
+Both turns explicitly request the workspace-write approval mode; the resume
+invocation must not fall back to a read-only sandbox.
 
 Limits and what is not there yet
 ----------------------------------

@@ -48,7 +48,7 @@ def test_codex_runner_defaults_to_luna(tmp_path: Path) -> None:
 
     args = _args(runner, tmp_path)
 
-    assert args.model == "gpt-5.6-luna"
+    assert args.model == "gpt-6-luna"
 
 
 def test_command_is_persistent_and_uses_the_controlled_workspace(tmp_path: Path) -> None:
@@ -66,7 +66,7 @@ def test_command_is_persistent_and_uses_the_controlled_workspace(tmp_path: Path)
     enabled = [command[index + 1] for index, value in enumerate(command) if value == "--enable"]
     assert enabled == ["view_image", "skip_host_skill_discovery"]
     assert "--sandbox" not in command
-    assert command[command.index("--model") + 1] == "gpt-5.6-luna"
+    assert command[command.index("--model") + 1] == "gpt-6-luna"
     assert command[command.index("--cd") + 1] == str(project)
     assert str(data) in command[-1]
     assert runner.IMAGE_REVIEW_START in command[-1]
@@ -113,7 +113,7 @@ def test_resume_command_attaches_each_nominated_image(tmp_path: Path) -> None:
 
     command = runner.build_resume_command(args, project, "thread-1", images)
 
-    assert command[:3] == [sys.executable, "exec", "resume"]
+    assert command[:4] == [sys.executable, "exec", "--approve-for-me", "resume"]
     enabled = [command[index + 1] for index, value in enumerate(command) if value == "--enable"]
     assert enabled == ["view_image", "skip_host_skill_discovery"]
     assert command[command.index("--image") + 1] == str(image)
@@ -162,6 +162,23 @@ def test_usage_is_summed_across_both_turns() -> None:
     assert runner.completed_turns(events) == 2
 
 
+def test_final_report_must_match_the_last_passed_audit() -> None:
+    runner = _load_runner()
+    event = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "command": "asymmetry audit summary.md",
+            "aggregated_output": "Passed\n----- BEGIN -----\nFull report\n----- END -----\n",
+        },
+    }
+    assert runner.final_report_audited("Full report", [event])
+    assert not runner.final_report_audited("Shorter recap", [event])
+    failed = event | {"item": event["item"] | {"aggregated_output": "One unprinted number"}}
+    assert not runner.final_report_audited("Full report", [event, failed])
+    assert not runner.final_report_audited("Full report", [])
+
+
 def test_hdf4_runtime_is_forwarded_to_the_agent(tmp_path: Path) -> None:
     runner = _load_runner()
     args = _args(runner, tmp_path)
@@ -204,10 +221,10 @@ def test_cost_record_names_codex_and_exact_model(tmp_path: Path) -> None:
 
     record = json.loads((args.out / "cost.json").read_text(encoding="utf-8"))
     assert record["agent"] == "Codex"
-    assert record["model"] == "gpt-5.6-luna"
+    assert record["model"] == "gpt-6-luna"
     assert record["turn_completed"] is True
     assert record["turns_completed"] == 2
-    assert record["protocol"] == "two_turn_image_review_v1"
+    assert record["protocol"] == "two_turn_image_review_v2"
     assert record["skill_installed"] is True
 
 
