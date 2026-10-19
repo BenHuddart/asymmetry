@@ -1075,7 +1075,20 @@ a field scan it names a phase that runs linearly with field as a t0 offset
 amplitude that falls as its frequency rises as the instrument's frequency
 response; a line held near a high field, or with an exponential envelope on
 its cold side, is offered a ready two-line ``recipe``, since an unresolved
-pair fits as one line. A series fitted in a field the survey found no Larmor
+pair fits as one line. A superconducting gap-law suggestion uses Gaussian
+``sigma``; an exponential ``Lambda`` instead calls for an explicit Gaussian
+recipe comparison before a gap law is fitted. Broadening alone does not
+identify the sample as superconducting.
+
+Temperature trends also print ``ENDPOINTS:`` values and errors for the first
+two distinct reliable temperatures and the warm end. Compare these individual
+rows before treating a weighted cold block as a plateau: a cold-end upturn can
+coexist with a change farther along the scan. Dynamic Gaussian KT trends print
+``KT CONTROL:`` to compare both ``Delta`` and ``nu``, including a control with
+no corresponding onset. These notes omit unreliable fit rows and do not turn
+poorly constrained parameters into measurements.
+
+A series fitted in a field the survey found no Larmor
 line at (longitudinal, whatever the file's stamp), whose fitted curves lose
 less than a tenth of what a zero-field series' curves lose by 8 µs — on most
 runs, against the zero-field runs within its own temperature span — is read
@@ -1295,7 +1308,8 @@ optionally fit a field-scan expression. This is the ALC/QLCR path:
                            [--method {integral,differential}]
                            [--order {field,temperature,run}]
                            [--model MODEL] [--initial NAME=VALUE]
-                           [--fix NAME=VALUE] [--xmin XMIN] [--xmax XMAX]
+                           [--fix NAME=VALUE] [--bound NAME=LO:HI]
+                           [--xmin XMIN] [--xmax XMAX]
                            [--baseline MODEL]
                            [--baseline-regions LO:HI,...] [--plot]
                            [--json] [--workdir WORKDIR]
@@ -1308,8 +1322,15 @@ Cubic"`` two resonances: each LCR component starts on its own resonance, found
 in turn as the largest excursion from a straight baseline that falls to half
 height on both sides inside the scan, so a background curving away at one end
 of the scan is not taken for one. Each resonance is held inside the scan, with
-a width between a thousandth and a quarter of it — a wider one is
-indistinguishable from the polynomial background. Alternatively, ``--baseline
+a width between a thousandth and a quarter of it by default, to discourage a
+line from absorbing a poorly constrained polynomial background. A broad line
+can require a different interval: ``--bound Bwid=10:2000`` replaces that
+parameter's automatic bounds. Bounds must be finite and ordered, and widths
+and differential field steps must stay positive. Indexed component names work
+the same way. The selected intervals are stored in the fit's ``bounds`` field.
+Include baseline data on both flanks and check nearby windows before accepting
+a width recovered this way; relaxing a bound does not resolve a background
+degeneracy. Alternatively, ``--baseline
 Cubic --baseline-regions 2000:2600,4500:5000 --model LorentzianLCR``
 determines the background only from non-resonant regions before fitting the
 corrected scan, and ``--xmin``/``--xmax`` fit only the points inside a window

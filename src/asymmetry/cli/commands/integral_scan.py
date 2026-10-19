@@ -17,7 +17,7 @@ from asymmetry.cli._output import (
     payload,
     render_table,
 )
-from asymmetry.cli._recipes import parse_fix
+from asymmetry.cli._recipes import parse_bounds, parse_fix
 from asymmetry.cli._reduction import (
     add_reduction_arguments,
     deadtime_note,
@@ -62,6 +62,13 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument(
         "--xmin", type=float, default=None, help="Fit only points at or above this x"
+    )
+    parser.add_argument(
+        "--bound",
+        action="append",
+        default=[],
+        metavar="NAME=LO:HI",
+        help="Override a fit parameter's search interval (repeatable)",
     )
     parser.add_argument(
         "--xmax", type=float, default=None, help="Fit only points at or below this x"
@@ -124,6 +131,8 @@ def run(args: argparse.Namespace) -> None:
         fit_only_options.append("--initial")
     if args.fix:
         fit_only_options.append("--fix")
+    if args.bound:
+        fit_only_options.append("--bound")
     if args.baseline is not None:
         fit_only_options.extend(["--baseline", "--baseline-regions"])
     if args.xmin is not None or args.xmax is not None:
@@ -179,6 +188,7 @@ def run(args: argparse.Namespace) -> None:
                 args.model,
                 initial=parse_fix(args.initial, flag="--initial"),
                 fixed=fixed,
+                bounds=parse_bounds(args.bound),
                 baseline_model=args.baseline,
                 baseline_regions=_regions(args.baseline_regions),
                 x_min=args.xmin,
@@ -413,6 +423,14 @@ def _notes(
         lines.append(_failed_fit_next(fit))
     elif fit is not None:
         lines.extend(_poor_fit_note(fit, same_scan))
+    if fit is not None and any(name.split("_")[0] == "Bwid" for name in fit["params_at_bound"]):
+        lines.append(
+            "BOUND-LIMITED WIDTH: first widen the field window to include both flanks and "
+            "baseline. If an independently constrained baseline supports a broad line, "
+            "override its automatic width interval with --bound Bwid=LO:HI "
+            "(use the indexed name for a multi-line model), and test stability against "
+            "window and baseline changes. A bound-pinned width is not a measured width."
+        )
     if summed:
         lines.append(
             f"NOTE: {range_text(summed)} are two-period (red/green) runs, and without --period "
@@ -431,7 +449,9 @@ def _notes(
     if result["settings"]["period"] == GREEN_MINUS_RED and offset is None:
         lines.append(
             "NOTE: a green-red resonance scan with no field step logged between the periods: "
-            "the contrast is the RF, so this is an RF resonance scan, not a differential ALC "
+            "the contrast is the RF, so interpret this as a longitudinal-field RF resonance "
+            "scan from its experimental context, even when precession cannot determine "
+            "geometry. It is not a differential ALC "
             "one (a LorentzianLCRPair's dB has no step to hold). RFResonanceMuP converts its "
             "lines into the muon and proton couplings — --model RFResonanceMuP --fix "
             "nu_RF=<the RF frequency in MHz, from the run notes or title> — rather than a "

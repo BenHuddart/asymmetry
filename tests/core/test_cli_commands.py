@@ -975,7 +975,7 @@ def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
     out = capsys.readouterr().out
     assert "summed both periods" not in out
     # No field step between the periods: the green - red contrast is the RF.
-    assert "this is an RF resonance scan" in out and "RFResonanceMuP converts its lines" in out
+    assert "longitudinal-field RF resonance" in out and "RFResonanceMuP converts its lines" in out
 
 
 def test_integral_scan_single_period_reports_the_source_run_number(
@@ -3648,6 +3648,81 @@ def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
         _law_hints("tf", TrendTable("temperature", columns, flipped), ["frequency", "sigma"])
     )
     assert "SC_SWave" not in text
+
+    # An exponential rate is not silently relabelled as a Gaussian vortex width.
+    exponential = [
+        {
+            ("Lambda" + key[5:] if key.startswith("sigma") else key): value
+            for key, value in row.items()
+        }
+        for row in rows
+    ]
+    text = "\n".join(
+        _law_hints("tf", TrendTable("temperature", columns, exponential), ["frequency", "Lambda"])
+    )
+    assert "Oscillatory * Gaussian + Constant" in text
+    assert "SC_SWave --param Lambda" not in text
+
+
+def test_temperature_edge_comparison_preserves_a_cold_upturn_and_kt_control() -> None:
+    from asymmetry.cli.commands.trend import _edge_comparisons
+    from asymmetry.core.workflow.series import TrendTable
+
+    rows = [
+        {
+            "key": str(index),
+            "x": temperature,
+            "nu": rate,
+            "nu_err": 0.001,
+            "Delta": 0.3,
+            "Delta_err": 0.01,
+            "flags": flags,
+        }
+        for index, (temperature, rate, flags) in enumerate(
+            [(1, 9.99, ["failed"]), (5, 0.1, []), (40, 0.02, []), (100, 0.3, [])]
+        )
+    ]
+    notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu", "Delta"]))
+    assert "0.100000 ± 0.001000 at temperature=5" in notes
+    assert "0.020000 ± 0.001000 at temperature=40" in notes
+    assert "9.990000" not in notes
+    assert "KT CONTROL" in notes
+    assert _edge_comparisons(TrendTable("field", [], rows), ["nu", "Delta"]) == []
+
+
+def test_integral_scan_bound_syntax_and_model_requirement(workflow_folder, capsys) -> None:
+    from asymmetry.cli._recipes import parse_bounds
+
+    assert parse_bounds(["Bwid=1:1000"]) == {"Bwid": (1.0, 1000.0)}
+    for invalid in ["Bwid=1", "=1:2", "Bwid=a:2"]:
+        with pytest.raises(UserError):
+            parse_bounds([invalid])
+    with pytest.raises(SystemExit):
+        cli.main(["integral-scan", str(workflow_folder), "--runs", "102", "--bound", "Bwid=1:10"])
+    assert "--bound require --model" in capsys.readouterr().err
+
+
+def test_integral_scan_passes_explicit_bounds_to_the_stored_fit(
+    workflow_folder, tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cli.main(
+        [
+            "integral-scan",
+            str(workflow_folder),
+            "--runs",
+            ",".join(map(str, ALL_RUNS)),
+            "--model",
+            "Constant",
+            "--bound",
+            "c=-1:1",
+            "--json",
+        ]
+    )
+    result = _json_output(capsys)
+    assert result["fit"]["bounds"] == {"c": [-1.0, 1.0]}
+    stored = json.loads((tmp_path / "asymmetry-work/scans/integral-scan.json").read_text())
+    assert stored["fit"]["bounds"] == result["fit"]["bounds"]
 
 
 def test_a_reduction_leaving_off_the_files_deadtimes_says_so(

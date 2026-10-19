@@ -197,7 +197,7 @@ usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                                [--tmax TMAX] [--method {integral,differential}]
                                [--order {field,temperature,run}] [--model MODEL]
                                [--initial NAME=VALUE] [--fix NAME=VALUE] [--xmin XMIN]
-                               [--xmax XMAX] [--baseline MODEL]
+                               [--bound NAME=LO:HI] [--xmax XMAX] [--baseline MODEL]
                                [--baseline-regions LO:HI,...] [--plot] [--json]
                                [--workdir WORKDIR] [--instrument NAME]
                                folder
@@ -240,6 +240,7 @@ options:
   --initial NAME=VALUE  Fit start (repeatable)
   --fix NAME=VALUE      Fixed fit value (repeatable)
   --xmin XMIN           Fit only points at or above this x
+  --bound NAME=LO:HI    Override a fit parameter's search interval (repeatable)
   --xmax XMAX           Fit only points at or below this x
   --baseline MODEL      Fit and subtract this baseline model first
   --baseline-regions LO:HI,...

@@ -203,6 +203,7 @@ def _parameters(
     *,
     initial: Mapping[str, float] | None,
     fixed: Mapping[str, float] | None,
+    bounds: Mapping[str, tuple[float, float]] | None = None,
 ) -> tuple[Any, ParameterSet]:
     model = as_composite_model(expression)
     fixed = {str(name): float(value) for name, value in (fixed or {}).items()}
@@ -215,12 +216,9 @@ def _parameters(
     parameters = parameter_set_for_model(
         model, suggest_model_seeds(model, scan.x, scan.value, scan.error, known=known)
     )
-    # Every resonance sits inside the scan with a width between a thousandth and
-    # a quarter of it: two LCR components otherwise trade places, one running
-    # off the axis with a negative width, and a resonance wider than a quarter
-    # of the scan is indistinguishable from the polynomial background it then
-    # impersonates. A differential pair's copy sits a positive dB above its line,
-    # inside the scan.
+    # Default intervals discourage an LCR line from absorbing an unconstrained
+    # background. Explicit bounds can relax this when baseline data constrain
+    # a broader line; widths and differential field steps remain positive.
     x_lo = float(np.min(scan.x))
     x_hi = float(np.max(scan.x))
     span = x_hi - x_lo
@@ -237,6 +235,18 @@ def _parameters(
             offset.max = max(span, offset.min)
     for name in fixed:
         parameters[name].fixed = True
+    for name, (lower, upper) in (bounds or {}).items():
+        if name not in model.param_names:
+            raise ValueError(f"Unknown bounded parameter {name!r}; expected {model.param_names}.")
+        if not np.isfinite([lower, upper]).all() or lower >= upper:
+            raise ValueError(f"Bounds for {name} must be finite with LO < HI.")
+        if name.split("_")[0] in {"Bwid", "dB"} and lower <= 0:
+            raise ValueError(f"Bounds for {name} must keep the width or step positive.")
+        parameter = parameters[name]
+        if name in known and not lower <= known[name] <= upper:
+            raise ValueError(f"Start or fixed value for {name} is outside its bounds.")
+        parameter.min, parameter.max = float(lower), float(upper)
+        parameter.value = float(np.clip(parameter.value, lower, upper))
     return model, parameters
 
 
@@ -246,6 +256,7 @@ def fit_integral_scan(
     *,
     initial: Mapping[str, float] | None = None,
     fixed: Mapping[str, float] | None = None,
+    bounds: Mapping[str, tuple[float, float]] | None = None,
     baseline_model: str | None = None,
     baseline_regions: list[tuple[float, float]] | None = None,
     x_min: float | None = None,
@@ -290,6 +301,7 @@ def fit_integral_scan(
         expression,
         initial=initial,
         fixed=fixed,
+        bounds=bounds,
     )
     free = sum(1 for parameter in parameters if not parameter.fixed)
     if fitted_scan.n_points <= free:
@@ -312,6 +324,7 @@ def fit_integral_scan(
         "params_at_bound": list(result.params_at_bound),
         "initial": {str(name): float(value) for name, value in (initial or {}).items()},
         "fixed": [parameter.name for parameter in parameters if parameter.fixed],
+        "bounds": {name: [float(lo), float(hi)] for name, (lo, hi) in (bounds or {}).items()},
         "baseline": baseline_payload,
         "x_min": x_min,
         "x_max": x_max,

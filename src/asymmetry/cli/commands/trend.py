@@ -355,6 +355,7 @@ def _render(
     readings = [
         *([change] if change is not None else []),
         *_rate_steps(trend, series["free_params"]),
+        *_edge_comparisons(trend, series["free_params"]),
         *_phase_drift(trend, series["free_params"]),
         *_frequency_response(series, trend),
         *([decoupling] if decoupling is not None else []),
@@ -455,6 +456,42 @@ def _weighted_mean(rows, param: str) -> tuple[float, float]:
     weights = [1.0 / row[f"{param}_err"] ** 2 for row in rows]
     mean = sum(w * row[param] for w, row in zip(weights, rows)) / sum(weights)
     return mean, 1.0 / math.sqrt(sum(weights))
+
+
+def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
+    """Keep individual reliable temperature endpoints visible beside whole-scan step notes."""
+    if trend.order_key not in {"temperature", "sample_temperature_logged"}:
+        return []
+    rates = [p for p in free_params if re.sub(r"_\d+$", "", p) in _RATE_BASES]
+    notes = []
+    for param in rates:
+        rows = _measured(trend, param)
+        if len(rows) < 2:
+            continue
+        first = rows[0]
+        following = next((row for row in rows[1:] if row["x"] > first["x"]), None)
+        if following is None:
+            continue
+        shown = [first, following] + ([rows[-1]] if rows[-1] is not following else [])
+        notes.append(
+            f"ENDPOINTS: {param}: "
+            + "; ".join(
+                f"{format_number(row[param], 6)} ± {format_number(row[f'{param}_err'], 6)} "
+                f"at {trend.order_key}={row['x']:g} (run {row['key']})"
+                for row in shown
+            )
+            + ". These are individual reliable rows: compare the coldest with the next "
+            "temperature explicitly before describing a plateau or a monotonic trend. "
+            "A whole-scan step note does not rule out an endpoint upturn."
+        )
+    if {"Delta", "nu"}.issubset({re.sub(r"_\d+$", "", p) for p in rates}):
+        notes.append(
+            "KT CONTROL: describe the temperature dependence of both Delta (field width) "
+            "and nu (dynamics), including any rate with no corresponding onset. A change "
+            "of static width alone is different from a change of fluctuation rate; "
+            "compare their trends rather than assigning the same mechanism to both."
+        )
+    return notes
 
 
 def _held_level(block: list[dict[str, Any]], param: str) -> tuple[float, list[dict[str, Any]]]:
@@ -886,9 +923,16 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
                     hints.append(
                         f"{frequencies[0]} falls below its warm value on cooling while "
                         f"{widths[0]} grows: if the sample is a superconductor, that is its "
-                        f"diamagnetic shift and vortex lattice — fit the width with a gap law and "
-                        f"say whether it describes it: {command} SC_SWave --param {widths[0]}, "
-                        f"then SC_DWave."
+                        "diamagnetic shift and vortex lattice — "
+                        + (
+                            f"fit the Gaussian width: {command} SC_SWave --param {widths[0]}, "
+                            "then SC_DWave."
+                            if re.sub(r"_\d+$", "", widths[0]) == "sigma"
+                            else "first obtain a Gaussian-width series with an "
+                            "Oscillatory * Gaussian + Constant recipe. Fit SC_* to sigma, "
+                            "not to this exponential Lambda; the two envelopes describe "
+                            "different field distributions."
+                        )
                     )
             if shift is not None:
                 hints.append(

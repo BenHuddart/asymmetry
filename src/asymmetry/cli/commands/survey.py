@@ -410,6 +410,15 @@ def _render(survey, survey_path: Path) -> str:
                 f"  ({survey.cross_sections} temperature scan(s) through the field scans' points "
                 "not listed: each is a cross-section of the field scans above)"
             )
+        if any(scan.axis == "field" and scan.geometry != "TF" for scan in survey.scans):
+            lines.append(
+                "FIELD OBSERVABLE: choose the question before fitting. In a muonium/radical "
+                "repolarisation experiment, measure integral asymmetry versus field with "
+                "integral-scan --model MuRepolarisation and report recovery at the highest "
+                "field, including a poor-fit caveat if needed. Redfield on a time-domain "
+                "rate answers a different dynamics question and cannot replace that curve. "
+                "Use local resonance models for dips and RFResonanceMuP for an RF contrast."
+            )
     else:
         lines.append("Scans: none — no two runs share a geometry and a held quantity.")
     lines.append("")

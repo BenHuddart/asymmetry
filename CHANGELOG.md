@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Integral-scan fit intervals can be overridden** with repeatable
+  ``--bound NAME=LO:HI`` options, recorded with the fit. Widths remain positive;
+  bound-limited resonance fits explain how to revisit the window and baseline.
 - **``survey`` finds scans written only in the run notes or title.** A
   steering current or a degrader foil count stepped in each run's notes prints
   under ``NOTES SCANS:`` with the ``fit-series --order <name> --x RUN=V,…``
@@ -17,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agent guidance distinguishes physical observables and controls.** Field
+  scans distinguish integral polarisation recovery from rate decoupling;
+  temperature trends keep reliable cold/next-temperature endpoints visible
+  and name the KT width/dynamics comparison. Superconducting gap guidance
+  requires a Gaussian-width series rather than relabelling an exponential rate.
 - **Agent analysis preserves geometry, coupled-fit and report provenance.**
   An unresolved survey no longer revives a file's TF stamp in the wizard;
   high-field sweep points remain members, with a warning when internal-field

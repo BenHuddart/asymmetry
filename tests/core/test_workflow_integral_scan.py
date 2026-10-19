@@ -41,6 +41,38 @@ def test_fit_integral_scan_seeds_an_off_zero_lorentzian_from_the_data() -> None:
     assert result["parameters"]["c"] == pytest.approx(0.18, abs=0.005)
 
 
+def test_explicit_width_bounds_recover_a_broad_line_and_keep_the_interval() -> None:
+    from dataclasses import replace
+
+    scan = _scan()
+    scan = replace(scan, value=0.18 - 0.04 / (1 + ((scan.x - 3500) / 1000) ** 2))
+    _, default = fit_integral_scan(scan, "LorentzianLCR + Constant")
+    _, expanded = fit_integral_scan(
+        scan, "LorentzianLCR + Constant", bounds={"Bwid": (10.0, 2000.0)}
+    )
+    assert default["parameters"]["Bwid"] <= 750.01
+    assert expanded["success"]
+    assert expanded["parameters"]["Bwid"] == pytest.approx(1000, rel=0.01)
+    assert expanded["parameters"]["B0"] == pytest.approx(3500, abs=1)
+    assert "Bwid" not in expanded["params_at_bound"]
+    assert expanded["bounds"] == {"Bwid": [10.0, 2000.0]}
+
+
+@pytest.mark.parametrize(
+    ("bounds", "initial", "message"),
+    [
+        ({"missing": (1, 2)}, {}, "Unknown bounded parameter"),
+        ({"Bwid": (1, float("inf"))}, {}, "finite"),
+        ({"Bwid": (2, 1)}, {}, "LO < HI"),
+        ({"Bwid": (-1, 2)}, {}, "positive"),
+        ({"Bwid": (10, 100)}, {"Bwid": 180}, "outside its bounds"),
+    ],
+)
+def test_invalid_scan_bounds_are_rejected_at_the_api_boundary(bounds, initial, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        fit_integral_scan(_scan(), "LorentzianLCR + Constant", bounds=bounds, initial=initial)
+
+
 def test_fit_integral_scan_seeds_cubic_on_a_kilogauss_axis() -> None:
     x = np.linspace(2000.0, 5000.0, 31)
     centred = x - 3500.0

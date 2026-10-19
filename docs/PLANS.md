@@ -234,6 +234,9 @@ GPT-6 Luna evaluation record (previous eight-case gate plus sixteen new
 baselines). The expansion scores 7/16 scientific passes; per-case failures,
 audit-copy checks and evidence are recorded in the plan and its expansion JSON.
 The CLI, analysis skill and rubrics were unchanged during this baseline.
+The active [Luna improvement loop](plans/luna6-corpus-improvements.md) now
+iterates general skill and CLI changes on `codex/luna6-corpus-improvements`,
+committing each round before its wave and targeting a fresh 24-case pass.
 
 ### Parameters panel: parameter cards, chip rail, pop-out table
 

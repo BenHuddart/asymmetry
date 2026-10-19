@@ -16,6 +16,28 @@ also has `--help`.
 **Workflow contract.** Read the relevant steps below before fitting, and keep
 these obligations through the final reply, including after image review:
 
+- Identify the experiment's question before selecting a model. An integrated
+  polarisation-recovery curve, a relaxation rate versus field, and a resonance
+  scan are different observables. In muonium/radical chemistry, test recovery
+  with `integral-scan --model MuRepolarisation`; a Redfield fit to a time-domain
+  rate does not answer that question. RF-resonance context establishes the LF
+  experiment even when the survey cannot resolve precession.
+- Establish the sample class from experimental context, not from broadening
+  alone or a familiar material abbreviation. A high-TF magnet can broaden or
+  split at magnetic order; this is not by itself evidence for a vortex lattice.
+  A nonmagnetic calibration sample with a nominal zero-field header can carry
+  an unrecorded weak TF. Do not turn its line or sensor readings into an
+  ordered-state temperature campaign.
+- Keep the required observable separate from its controls. In a KT analysis,
+  compare both the field width and the dynamic/exponential rate across the
+  same temperature interval, explicitly reporting when a control has no onset.
+  Compare the coldest run with the next temperature before averaging a cold
+  block: an endpoint upturn can coexist with a warmer activated trend.
+- Continuous-source reductions need the pre-t0 background check (`--background
+  range`). A systematically rising late-time baseline is a reduction/model
+  problem to resolve before accepting a static KT or a paramagnetic rate.
+  Above magnetic order, test a relaxing paramagnetic model even if a static
+  KT screen ranks first; a poor dip-shaped fit does not measure that rate.
 - Decide geometry from the scan, notes and reduced plots; an unresolved survey
   does not restore a refuted TF stamp. Pass the geometry and physics scope to
   every wizard call (Steps 3a–3b).
@@ -40,6 +62,8 @@ these obligations through the final reply, including after image review:
 - The final report is the complete section 6 template, not a recap. Preserve
   folder count, per-scan run ranges, component meanings and every fit/FFT window.
   After any image-review changes, audit that final file and send it verbatim.
+  Once that audit passes, preserve every character, including rounded errors
+  and punctuation; do not regenerate the reply from memory or make final edits.
 
 ## 1. What this does, and what it does not
 
@@ -673,6 +697,15 @@ only away from the resonance, use, for example,
 Only call a feature an ALC resonance when the fitted peak, its uncertainty and
 the plotted field dependence support that interpretation.
 
+A width at its search bound is a reason to revisit the window and background,
+not to repeat the same failed fit on every scan. Include data on both flanks,
+compare local linear and independently constrained backgrounds, and try a
+joint multi-line model when neighboring resonances share a baseline. The CLI's
+automatic width interval is conservative; `--bound Bwid=LO:HI` can replace it
+when the data and baseline constrain a broader or narrower line. Refit nearby
+windows to test stability, and report unresolved values honestly if these
+checks still fail.
+
 - **Several resonances**: sum the components (`LorentzianLCR + LorentzianLCR +
   Cubic`); each is seeded on its own dip. `--xmin`/`--xmax` fit a window of a
   long scan when one background shape does not span it all.
@@ -686,7 +719,8 @@ the plotted field dependence support that interpretation.
   gives the muon and proton hyperfine couplings `A_mu`, `A_p`. Which period
   had the RF on is read from the sign, not a colour convention: the RF
   depolarises at resonance, so green − red peaking positive means green kept
-  its polarisation — green was RF-off.
+  its polarisation — green was RF-off. State the LF RF-resonance geometry from
+  that context; `prec none` does not erase it.
 - **Muonium repolarisation** (an LF scan of the integral asymmetry rising to a
   plateau): `--model MuRepolarisation` gives the isotropic hyperfine constant
   `A_hf` of a muonium-like state. A radical's curve (muon plus proton
@@ -1220,6 +1254,11 @@ lines (the vortex line and a narrow background line), fit the gap law to the
 broad line's σ with the narrow line's width held from the normal state; if the
 two lines trade amplitude near Tc, fit the scan with one Gaussian and give the
 law on that σ — a gap-law fit is the expected result, not an optional extra.
+If the wizard supplies only an exponential, make and compare an explicit
+`Oscillatory * Gaussian + Constant` recipe. Do not substitute exponential
+`Lambda(T)` for `sigma(T)` in a superconducting gap law. These instructions
+apply once superconductivity is established by the experimental context;
+they do not classify every cooling-broadened TF line as superconducting.
 
 **Zero field in a superconductor** tests time-reversal symmetry breaking: a
 spontaneous field appears below Tc as extra relaxation — in the Kubo–Toyabe
@@ -1233,6 +1272,10 @@ a *static* spontaneous field — the time-reversal-symmetry-breaking result
 itself, not a lesser candidate for being in Δ rather than Λ. Place its onset
 where Δ leaves its normal-state level (the `trend` note brackets it), and set
 it beside the TF Tc.
+For a dynamic-KT model, make the corresponding comparison with `nu`: state
+whether it has an onset at the width change, stays roughly level, or is too
+uncertain to decide. A table of endpoint values without this comparison does
+not establish a static-versus-dynamic interpretation.
 
 ## 4. What things cost
 
