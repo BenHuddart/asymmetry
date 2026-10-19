@@ -586,14 +586,116 @@
       "staged_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
       "boundary_check": "PASS: inspected commands use staged/project files and Asymmetry CLI; no external calculator, source/personal skill read, network or delegation.",
       "permission_denials": 0
+    },
+    "lifeas-psi": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Reduces the data on the `Up/Down` pair (or names another pair transverse to the field) and says so. It does not conclude from the default pair that the runs are longitudinal or do not precess.",
+          "pass": true,
+          "evidence": "Survey/reduction use Up/Down, groups 3/4; explicitly corrects default pair with no precession."
+        },
+        {
+          "requirement": "Treats `LFA` (3366\u20133387) and `LFA_2` (3662\u20133697) as two separate samples or campaigns, not one series.",
+          "pass": true,
+          "evidence": "Separates TF WED 3366\u20133387 and Veto on 3662\u20133697 campaigns and does not pool them."
+        },
+        {
+          "requirement": "Identifies 3366\u20133373 as the 400 G temperature scan. Reports that the Gaussian TF width \u03c3 is roughly flat at the warm end and rises steeply on cooling (or, with a two-line fit, that the broad vortex component appears on cooling). The onset lies between 14 and 17 K.",
+          "pass": false,
+          "evidence": "400 G temperature series reports only exponential Lambda; no sigma(T) or appearing broad Gaussian vortex component and no 14\u201317 K onset."
+        },
+        {
+          "requirement": "Reports that the line shifts to lower frequency below the transition (a diamagnetic shift), in words or from fitted frequencies.",
+          "pass": true,
+          "evidence": "Explicitly reports line lower at cold temperatures, printed shift 0.01343\u00b10.00246 MHz on warming."
+        },
+        {
+          "requirement": "Describes the other runs as pairs above and below Tc at each field (a field dependence at base temperature) \u2014 two field scans, at ~20 K and at base, compared field by field, count \u2014 not as a temperature scan or an LF decoupling scan. Reports the paired widths for at least one campaign, or names the fields whose fits failed.",
+          "pass": true,
+          "evidence": "Keeps above/base-temperature field scans separate; tables give paired Gaussian widths for Veto on and explicitly flag unresolved low-field fits."
+        },
+        {
+          "requirement": "Does not present a penetration depth \u03bb, a superfluid density \u03c1_s, or an Uemura-plot position as Asymmetry output. It either omits them or says that converting \u03c3 to \u03bb is not something the tool does.",
+          "pass": true,
+          "evidence": "No penetration depth, superfluid density or Uemura position claimed."
+        },
+        {
+          "requirement": "Does not claim evidence for the paper's field-induced magnetism. The `LFA_2` runs in this folder stop at 200 G.",
+          "pass": true,
+          "evidence": "Explicitly refuses field-induced magnetic evidence; Veto on stops at 200 G."
+        },
+        {
+          "requirement": "Contains no \u03c3, Tc, gap ratio, frequency shift, \u03bb or field value that was not produced by a tool call in this session. The paper's Tc values, \u03bb_ab values and exponent n are background.",
+          "pass": true,
+          "evidence": "Reported rates, widths, frequency shift and fields are actual command outputs."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits an `SC_*` gap law (`trend --model SC_SWave`, `SC_DWave`, \u2026) to \u03c3 against the logged temperature. Reports Tc and \u03c3_0 with their errors and the fit range. States that \u03c3_bg holds the normal-state nuclear width and is added linearly, not in quadrature (a `SC_* + Constant` with the background held counts; freeing both \u03c3_bg and the constant is degenerate).",
+          "pass": false,
+          "evidence": "No SC gap-law fit to sigma(T); explicitly declines any physical-law trend."
+        },
+        {
+          "requirement": "Does not claim a pairing symmetry that eight points cannot settle. If both s- and d-wave fit, it says so. It notes in words whether \u03c3 is still rising at the lowest temperature.",
+          "pass": false,
+          "evidence": "No pairing-symmetry claim, but no sigma(T) low-end behavior reported; only exponential Lambda endpoints."
+        },
+        {
+          "requirement": "Compares the two samples in words at their common fields (100 and 200 G).",
+          "pass": false,
+          "evidence": "Does not explicitly compare two campaigns at their common 100/200 G fields."
+        },
+        {
+          "requirement": "Discusses the background or non-superconducting fraction of the signal, for example a second narrow line at the applied field. If a two-component fit was tried and became unstable near Tc, it says so.",
+          "pass": true,
+          "evidence": "Explains constant background separately and a tentative two-cosine cold fit with residual structure and limits."
+        },
+        {
+          "requirement": "States the reduction provenance: `--background range` (continuous source), which run each campaign's alpha came from, and whether one alpha was carried across both campaigns.",
+          "pass": true,
+          "evidence": "States pre-t0 range correction, alpha from 3373 and one reduction/correction applied across folder."
+        },
+        {
+          "requirement": "Orders the temperature scan by the logged temperature. Notes that the logged temperature sits above the setpoint (about 1 K higher on the 20 K runs).",
+          "pass": false,
+          "evidence": "Orders temperature scan by logged sensor; does not explicitly note ~1 K high logged 20 K measurements."
+        }
+      ],
+      "number_rule": "PASS: 400 G Lambda rows, Veto on sigma rows, reported frequency shift/error and alpha are printed by actual CLI commands. Final equals passed audit; no unsupported derived result identified.",
+      "root_cause": "Scientific FAIL (missing sigma(T)), exact-copy PASS, boundary FAIL. New sample-class caution led the agent to declare material class unestablished and decline superconducting-model comparison; it never followed the explicit Gaussian-series instruction. Round two should allow provisional model tests with clearly conditional interpretation, while retaining evidence-based classification. Also tried MuRepolarisation on a confirmed TF field scan before rejecting it.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 802.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 15,
+      "trend_laws": [],
+      "command_failures": [],
+      "summary_sha256": "4a004e5d39674d2b184fc0d534bf357e54b83d8e8a89a3c6290ff3c416a411fa",
+      "rubric_sha256": "aec00fed822c67878ad9bf50a445b877c14e3eb85af4dfa06d6610dbacace608",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round1/lifeas-psi",
+      "staged_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
+      "boundary_check": "FAIL: first completed command reads /home/ben/.codex/skills/asymmetry-analysis/SKILL.md despite AGENTS.md forbidding personal-skill reads. Read succeeds. Host path is a symlink to packaged source and hash equals frozen staged skill; no different content was introduced, but boundary compliance fails.",
+      "boundary_pass": false,
+      "permission_denials": 0,
+      "host_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc"
     }
   },
   "totals": {
-    "scored": 6,
+    "scored": 7,
     "scientific_pass": 4,
-    "must_pass": 29,
-    "must_total": 31,
-    "exact_copy_pass": 5,
+    "must_pass": 36,
+    "must_total": 39,
+    "exact_copy_pass": 6,
     "combined_pass": 3
   }
 }

@@ -79,9 +79,9 @@ The supervising exec session is `98755`; inspect host processes and per-case
 `cost.json`/transcripts before relaunching after any interruption. No round-one
 reports were scored at launch. Keep CLI/skill frozen until the wave completes.
 
-Second checkpoint: six reports scored in
-[luna6-corpus-round1.json](luna6-corpus-round1.json), with 29/31 Musts,
-4/6 scientific passes, 5/6 exact-copy passes and 3/6 combined passes.
+Third checkpoint: seven reports scored in
+[luna6-corpus-round1.json](luna6-corpus-round1.json), with 36/39 Musts,
+4/7 scientific passes, 6/7 exact-copy passes and 3/7 combined passes.
 Sn deletes one plot-file entry after audit, so its exact-copy check fails.
 EuO repairs its baseline missing
 paramagnetic rate: it used pre-t0 background correction and a separate
@@ -94,7 +94,12 @@ at the EMU cold point and indistinguishable envelopes at the warm points,
 while the report omits that comparison. Its cold/next ZF comparison and
 exact-copy reporting now pass. Maleic acid regresses on the converged-slope
 Must: it prints the fitted slope but then explicitly withdraws it as a
-reaction-rate result. All three newest reports pass exact-copy.
+reaction-rate result. LiFeAs still fails the Gaussian-width Must: the new
+sample-class caution led it to decline superconducting-model comparison and
+retain exponential damping. Its final reply does pass exact-copy. It also
+reads the personal skill path, violating the stated boundary. That path is a
+symlink to the packaged source and has the frozen staged hash, so it introduces
+no different skill content; the boundary violation is still recorded separately.
 The wave remains active;
 these are partial results, not a wave verdict. Scoring records include the
 frozen hashes, final-summary hashes, actual command evidence and Should gaps.
@@ -111,4 +116,9 @@ one shape wins throughout or warm points cannot distinguish shapes; resolve
 window/baseline dependence rather than forcing the expected change. Distinguish
 a converged empirical slope with uncertainty and model limitations from a
 validated intrinsic kinetic constant, preserving the former as a fitted result.
+Allow provisional physical-model comparisons with clearly conditional
+interpretation when material context is incomplete; distinguish testing a
+superconducting width model from asserting that broadening proves a vortex
+lattice. Review why host skills remain discoverable despite the runner's
+skip-host-skill-discovery option, before a fresh confirmation wave.
 Finish scoring all thirteen first attempts before choosing round-two edits.
