@@ -229,6 +229,12 @@ Status: implemented 2026-09-15 on `feat/agent-cli-skill`; PR pending; all
 four Tier A rubrics pass with Sonnet. Full plan:
 [docs/plans/agent-cli-skill.md](plans/agent-cli-skill.md).
 
+Codex corpus scope expanded on 2026-10-19: all 24 shared cases now have a
+GPT-6 Luna evaluation record (previous eight-case gate plus sixteen new
+baselines). The expansion scores 7/16 scientific passes; per-case failures,
+audit-copy checks and evidence are recorded in the plan and its expansion JSON.
+The CLI, analysis skill and rubrics were unchanged during this baseline.
+
 ### Parameters panel: parameter cards, chip rail, pop-out table
 
 Status: implemented 2026-09-13; single PR on `feat/parameters-panel-cards`

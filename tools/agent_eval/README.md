@@ -148,12 +148,47 @@ python tools/agent_eval/run_wave.py --case copper-diffusion --case molecular-ant
     --out /tmp/evals/hold-out
 ```
 
-The named sets (`--set` is repeatable) are `trend-fit` (the four cases the 2026-09-23/24 loop iterated
-on), `tier-a` (the regression set) and `hold-out` (two cases never tuned
-against); `--case` adds any rubric. Run repeats of a set as separate waves —
-single runs are noisy, and a claim that a change fixed a case needs two or
-three passing repeats. Score a wave with [`scoring_brief.md`](scoring_brief.md),
-by hand or by handing it to a scoring agent.
+Select Codex with `--agent codex`; its default model is `gpt-6-luna`. The
+Claude default remains `--agent claude --model sonnet`; pass an explicit
+`--model` for other Claude evaluations, including Haiku. Every case's
+`cost.json` and the wave's console report identify the host and model. Codex
+records token usage without estimating a dollar cost.
+
+```bash
+# All 24 cases shared with the Claude suite:
+python tools/agent_eval/run_wave.py --agent codex --set all --out /tmp/evals/luna-full
+# The 16 cases beyond the previously verified eight-case Codex gate:
+python tools/agent_eval/run_wave.py --agent codex --set codex-expansion \
+    --out /tmp/evals/luna-expansion
+```
+
+The named sets (`--set` is repeatable) are:
+
+| Set | Coverage |
+| --- | --- |
+| `all` | All 24 rubric-backed cases, for either host |
+| `codex-gate` | The original eight: `tier-a` plus `workflow` |
+| `codex-expansion` | The other 16 cases; disjoint from `codex-gate` |
+| `tier-a` | Nickel, PTFE, YMnAl and cuprate |
+| `workflow` | TCNQ, Al-LLZ, photo-silicon and CdS |
+| `trend-fit` | Plateau, Sn, EuO and maleic-acid kinetics |
+| `hold-out` | Copper and molecular antiferromagnet (historical hold-outs) |
+| `tier-b` | Spin-Peierls and high-TF MDU |
+| `corpus-2026` | LiFeAs, TRSB, basics, corannulene and four benzene exercises |
+
+Waves default to one case at a time. Increase `--parallel` only when memory
+allows for each analysis command's own fit workers. Keep broad test suites
+separate from live evaluations, and cap pytest workers explicitly with
+`python tools/harness.py validate -- -n 2`. Pin BLAS threads before starting a
+wave when the host would otherwise oversubscribe numerical fits (for example,
+`OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1`).
+
+`--case` adds any individual case; overlapping selections run each case once.
+Run repeats as separate output roots — single runs are noisy, and a claim that
+a change fixed a case needs two or three passing repeats. Score a wave with
+[`scoring_brief.md`](scoring_brief.md). Completion and final-report audit
+status alone do not establish a scientific pass. Keep corpus copies and raw
+transcripts outside the repository; commit only coverage and scoring records.
 
 Delete the dataset copies of old waves: a few passes fill a disk, and on macOS
 iCloud then offloads the corpus, whose "dataless" files read as empty.
