@@ -70,7 +70,14 @@ baseline science or exact-copy failures (including the AFM scope warning):
 `copper-diffusion`, `afm-high-tf-mdu`, `lifeas-psi`, `trsb-re6zr`, `basics`,
 `corannulene-alc`, `benzene-rf`, `benzene-repolarisation`, `benzene-alc`.
 
-Suggested result root: `/tmp/asymmetry-luna6-improvements/round1`.
+Round one is committed as `ea920f9`. Its 13-case wave is running in
+`/tmp/asymmetry-luna6-improvements/round1` with Codex / `gpt-6-luna`, three
+concurrent cases and BLAS threads pinned to one. The first three cases entered
+model execution successfully. `wave-metadata.json` records the commit, skill
+and rubric hashes; console log `/tmp/asymmetry-luna6-round1-wave.log`.
+The supervising exec session is `98755`; inspect host processes and per-case
+`cost.json`/transcripts before relaunching after any interruption. No round-one
+reports have been scored yet. Keep CLI/skill frozen until the wave completes.
 Tests/logs use `/tmp/asymmetry-luna6-round1-*`. Once targeted cases pass,
 run all 24 from fresh projects and score the entire wave; do not pool latest
 passing attempts and call that a fresh gate.
