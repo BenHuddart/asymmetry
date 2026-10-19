@@ -2628,6 +2628,60 @@ artifact paths are in
 [`agent-cli-skill-luna6-remediation-2026-10-19.json`](agent-cli-skill-luna6-remediation-2026-10-19.json).
 Raw evidence remains under `/tmp/asymmetry-luna6-fixes-2026-10-19/`.
 
+## GPT-6 Luna post-review verification — 2026-10-19
+
+Claude's review fixes are present on local branch
+`codex/luna6-eval-regressions` in commit `3c4e6fd`, immediately after
+remediation commit `15d0581`. This verifies the local branch; it does not
+establish that the branch has been pushed to a remote.
+
+A fresh complete wave on **Codex CLI 0.163.0 / Linux, `gpt-6-luna`** passes
+**8/8 strict, all 47 Musts**. The entire implementation was frozen from
+`3c4e6fd` in a separate checkout and interpreter. Each case was run once,
+using protocol `two_turn_image_review_v2`; there were no targeted retries or
+implementation changes during the wave. Rubric and staged dataset hashes
+match the preceding remediation evaluation, and the packaged skill is
+unchanged. All eight final replies exactly match their post-image audited
+reports, with no command-level permission denials.
+
+| Case | Strict | Musts |
+|---|---|---|
+| Ferromagnetic nickel | PASS | 7/7 |
+| F–μ–F in PTFE | PASS | 6/6 |
+| Spin glass YMnAl | PASS | 5/5 |
+| High-Tc cuprate | PASS | 5/5 |
+| Al-LLZ ionic motion | PASS | 6/6 |
+| Photo-μSR silicon | PASS | 6/6 |
+| CdS Fourier | PASS | 6/6 |
+| TCNQ ALC | PASS | 6/6 |
+
+The strict gate shows no regression in this wave. In particular, nickel
+retains the high-field point with the spontaneous-internal-line caveat and
+reports the nonzero-field scan as provisional LF; Al-LLZ reports all thirteen
+coupled Gaussian groups; silicon quotes the actual model windows; PTFE
+explicitly tests coupling stability; and YMnAl exercises the distributed-rate
+alternative. The previous 8/8 result pooled latest passing remediation gates;
+this result is one fresh complete wave, though one wave does not establish
+repeatability or eliminate all reporting errors.
+
+Non-blocking gaps remain. Al-LLZ's rejected Lorentzian comparison incorrectly
+lists run 51342 as poor, although its printed aggregate count and selected
+Gaussian results are correct. Cuprate's opening instrument-block shorthand is
+inconsistent with its explicit EMU detector-check identification; its scan
+table and actual fitting distinguish the instruments. Other Should gaps,
+including reference fixing, literature context, and optional spectral or
+critical-exponent follow-up, are recorded individually rather than hidden by
+the strict score.
+
+The 416 focused tests covering the reviewed changes pass. The documentation
+build passes with 85 existing warnings. Only evaluation records were changed
+during this verification; no implementation was modified.
+The supervising Codex agent scored final replies against the unchanged
+Must/Should lists and number rule, with numerical and command evidence.
+Per-case decisions, hashes, usage, image inputs and evidence paths are in
+[`agent-cli-skill-luna6-post-review-2026-10-19.json`](agent-cli-skill-luna6-post-review-2026-10-19.json).
+Raw evidence remains under `/tmp/asymmetry-luna6-review-3c4e6fd-2026-10-19/`.
+
 ## Open questions for the maintainer
 
 From round 2 (2026-10-09), for Ben:
