@@ -79,9 +79,9 @@ The supervising exec session is `98755`; inspect host processes and per-case
 `cost.json`/transcripts before relaunching after any interruption. No round-one
 reports were scored at launch. Keep CLI/skill frozen until the wave completes.
 
-Third checkpoint: seven reports scored in
-[luna6-corpus-round1.json](luna6-corpus-round1.json), with 36/39 Musts,
-4/7 scientific passes, 6/7 exact-copy passes and 3/7 combined passes.
+Fourth checkpoint: twelve reports scored in
+[luna6-corpus-round1.json](luna6-corpus-round1.json), with 68/76 Musts,
+6/12 scientific passes, 11/12 exact-copy passes and 5/12 combined passes.
 Sn deletes one plot-file entry after audit, so its exact-copy check fails.
 EuO repairs its baseline missing
 paramagnetic rate: it used pre-t0 background correction and a separate
@@ -100,7 +100,14 @@ retain exponential damping. Its final reply does pass exact-copy. It also
 reads the personal skill path, violating the stated boundary. That path is a
 symlink to the packaged source and has the frozen staged hash, so it introduces
 no different skill content; the boundary violation is still recorded separately.
-The wave remains active;
+Benzene RF and repolarisation now pass: LF RF context and the actual integral
+recovery observable are both repaired. Corannulene recovers the cold broad
+resonance with a wider local polynomial window, but fails to interpret the
+hot sharpening as molecular reorientation. TRSB now compares Delta and nu,
+but a coupled-fit reversal leads it to reject a candidate TRSB headline.
+Basics repairs foil saturation at 13–15, but still treats the Ag calibration
+as ZF with a temperature axis and replaces the Ag TF frequency/phase exercise
+with integrated asymmetry. Only benzene ALC is still running;
 these are partial results, not a wave verdict. Scoring records include the
 frozen hashes, final-summary hashes, actual command evidence and Should gaps.
 Tests/logs use `/tmp/asymmetry-luna6-round1-*`. Once targeted cases pass,
@@ -122,3 +129,19 @@ superconducting width model from asserting that broadening proves a vortex
 lattice. Review why host skills remain discoverable despite the runner's
 skip-host-skill-discovery option, before a fresh confirmation wave.
 Finish scoring all thirteen first attempts before choosing round-two edits.
+
+Additional round-two candidates: choose the observable before satisfying scan
+coverage (TF field scans require frequency/phase or amplitude, not the integral
+of an oscillation). For known nonmagnetic calibration samples, test an
+unrecorded weak TF rather than interpreting a header-ZF line with a powder
+magnetic model. When a small KT onset reverses under nuisance sharing, compare
+the static KT times exponential baseline and dynamic model with plausible
+sharing choices before declaring it absent. ALC width comparisons should
+include the conditional molecular-motion interpretation as well as fit values.
+
+Isolation research: official Codex documentation describes per-skill disable
+overrides (`skills.config`), whereas the current skip-host option did not
+prevent the LiFeAs read. Sources checked:
+https://learn.chatgpt.com/docs/config-file/config-reference and
+https://learn.chatgpt.com/docs/build-skills. Test any runner isolation change
+separately after this frozen wave; do not silently change its protocol.
