@@ -165,7 +165,7 @@ its `--corpus` default. Never hard-code a corpus path.
 ## Validation Ladder
 
 Agent-skill evaluations use Claude Sonnet when driven through Claude Code and
-`gpt-5.6-luna` when driven through Codex. Keep the host and model recorded with
+`gpt-6-luna` when driven through Codex. Keep the host and model recorded with
 every result so scores from the two evaluation tracks are not conflated.
 
 Use the smallest check that answers the question, then climb when the blast

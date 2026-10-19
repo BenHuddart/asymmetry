@@ -414,6 +414,38 @@ def _render(survey, survey_path: Path) -> str:
         lines.append("Scans: none — no two runs share a geometry and a held quantity.")
     lines.append("")
 
+    from asymmetry.core.workflow.survey import coupled_field_groups
+
+    transverse = {
+        (row.instrument, row.run_number)
+        for row in survey.runs
+        if row.geometry == "TF" or row.precession.state == "larmor"
+    }
+    for batch in coupled_field_groups(survey.scans, transverse):
+        instrument = batch[0].instrument
+        options = _selection_options(survey, instrument, clashes)
+        folder = shlex.quote(survey.folder)
+        groups = ";".join(run_spec(scan.runs) for scan in batch)
+        first = batch[0].runs[0]
+        lines.extend(
+            [
+                f"COUPLED FIELD GROUPS: {len(batch)} temperatures, each measured at "
+                f"{', '.join(f'{field:g}' for field in sorted(set(batch[0].values)))} G. "
+                "These repeated ZF/weak-field sets constrain one dynamic relaxation per "
+                "temperature. Confirm LF decoupling on the reduced plots; fit the fields "
+                "jointly, not as independent temperature series or independent field fits.",
+                f"  After reduction: asymmetry recipe {folder} --run {first} "
+                f"--expression 'DynamicGaussianKT + Constant' --initial Delta=0.3 "
+                f"--initial nu=0.2 --name dynamic-gkt{options}",
+                f"  asymmetry fit-global {folder} --groups {shlex.quote(groups)} "
+                "--recipe dynamic-gkt --shared A_1,Delta,nu,A_bg --field-param B_L "
+                f"--group-order sample_temperature_logged --name dynamics --plot{options}",
+                "  Inspect shared values, uncertainties and quality per group; a failed "
+                "joint strategy can be retried with --strategy least_squares.",
+                "",
+            ]
+        )
+
     if survey.notes_scans:
         lines.append(
             f"NOTES SCANS: each set of runs below holds one temperature and field while its "

@@ -150,6 +150,12 @@ class FitRecipe:
 
     # -- serialisation ------------------------------------------------------
 
+    def time_window(self, dataset: MuonDataset) -> tuple[float, float]:
+        """Actual retained bin centres after this recipe's rebinning and time cut."""
+        record = dataset.rebin(self.rebin) if self.rebin != 1 else dataset
+        time = record.time_range(self.t_min, self.t_max).time
+        return float(time[0]), float(time[-1])
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
         return {

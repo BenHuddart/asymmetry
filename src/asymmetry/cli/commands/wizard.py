@@ -7,7 +7,14 @@ import shlex
 from dataclasses import replace
 from pathlib import Path
 
-from asymmetry.cli._output import UserError, emit_json, format_number, payload, render_table
+from asymmetry.cli._output import (
+    UserError,
+    emit_json,
+    format_number,
+    payload,
+    render_fit_windows,
+    render_table,
+)
 from asymmetry.cli._runs import range_text, reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
@@ -113,7 +120,9 @@ def run(args: argparse.Namespace) -> None:
             if result.runner_up is None
             else result.runner_up.with_window(t_min=args.tmin, t_max=args.tmax),
         )
-    wizard_path = workdir.write_wizard(args.run, result.to_dict())
+    time_window = (float(dataset.time[0]), float(dataset.time[-1]))
+    screen_payload = result.to_dict() | {"time_window": time_window}
+    wizard_path = workdir.write_wizard(args.run, screen_payload)
     recipe_name = f"wizard-{args.run}"
     recipe_path = (
         None if result.recipe is None else workdir.write_recipe(recipe_name, result.recipe)
@@ -153,7 +162,7 @@ def run(args: argparse.Namespace) -> None:
     if args.json:
         emit_json(
             payload(
-                screen=result.to_dict(),
+                screen=screen_payload,
                 wizard_path=str(wizard_path),
                 recipe_name=None if recipe_path is None else recipe_name,
                 recipe_path=None if recipe_path is None else str(recipe_path),
@@ -165,10 +174,30 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(args.folder, line_recipe, result, wizard_path, recipe_path, plot_path, plot_note))
+    print(render_fit_windows({args.run: time_window}))
+    if args.scope == "tf-superconductor":
+        print(
+            "SIGNAL FRACTIONS: report the oscillating sample amplitude and the "
+            "slow/nonrelaxing background separately. Explain how the non-superconducting "
+            "signal is represented or why it could not be separated. A Constant can "
+            "describe a time-independent contribution or offset; it alone does not "
+            "measure a non-superconducting volume fraction. Do not turn sigma_bg, a "
+            "width-law floor, into a signal fraction."
+        )
     note = window_note(workdir, [args.run])
     if note is not None:
         print(note)
     if result.recipe is not None:
+        if "DynamicLorentzianKT" in result.recipe.model().component_names:
+            print(
+                "FIELD DISTRIBUTION: Lorentzian KT describes dilute, randomly sited "
+                "moments. Dense nuclear moments in a stoichiometric material call for "
+                "Gaussian KT (DynamicGaussianKT or Keren) with a Gaussian width Delta "
+                "and fluctuation rate nu. Ionic motion does not change dense nuclei "
+                "into dilute moments. Choose the distribution from the sample physics "
+                "and compare coupled field-group fits; a single-run AICc ranking "
+                "cannot decide that physical choice."
+            )
         harmonic = _harmonic_pair(
             [p.value for p in result.recipe.parameters if p.name.startswith("frequency")]
         )
@@ -312,14 +341,14 @@ def _survey_geometry(workdir, selection, run_number: int) -> str | None:
     exists in the work directory its reading beats this one dataset's metadata.
     The row is the *selection*'s — a survey without ``--instrument`` lists
     every instrument in the folder, and two may share the run number. ``None`` when the folder was
-    never surveyed, the run is not in the survey, or the survey could not
-    decide either.
+    never surveyed or the run is not in the survey; ``"unknown"`` when the
+    survey refuted the file's stamp without resolving the geometry.
     """
     if not workdir.survey_path.exists():
         return None
     for row in workdir.read_survey()["runs"]:
         if row["run_number"] == run_number and selection.matches(row["prefix"]):
-            return row["geometry"]
+            return row["geometry"] or "unknown"
     return None
 
 
@@ -426,7 +455,7 @@ def _render(
             f"{result.runner_up.expression} ({behind}), is written as {runner_up_name(name)}: "
             f"fit the scan with --recipe {runner_up_name(name)}, and report precession only "
             f"where a spectrum shows its line."
-            if recommended.category == PRECESSION_CATEGORY
+            if recommended.category == PRECESSION_CATEGORY and not result.lines
             else f"Runner-up recipe written as {runner_up_name(name)}: "
             f"{result.runner_up.expression}, {behind} — a model this run hardly tells apart. "
             f"If a fit-series from {name} flags most of its runs, fit the scan with --recipe "

@@ -1367,6 +1367,13 @@ def test_fit_reports_the_parameter_table_and_the_quality_verdict(
     assert "Exponential + Constant" in out
     assert "Lambda" in out
     assert "chi2_red" in out
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    data = WorkDir(fitting_workdir).reduced(SCAN_RUNS[0])
+    assert "Fit windows (retained bin centres)" in out
+    assert f"{data.time[-1]:.8g}" in out
+    stored = json.loads(next((fitting_workdir / "fits").glob("*.json")).read_text())
+    assert stored["fit"]["time_window"] == [data.time[0], data.time[-1]]
 
 
 def test_fit_with_fix_pins_the_parameter_at_the_given_value(
@@ -1515,6 +1522,36 @@ def test_fit_series_offers_the_screenings_runner_up_when_most_runs_run_away(
     assert "runner-up" not in capsys.readouterr().out
 
 
+def test_fit_series_checks_distributed_relaxation_before_a_single_rate_trend(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    from asymmetry.core.workflow.recipe import FitRecipe
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    stored = WorkDir(fitting_workdir)
+    stored.write_recipe("wizard-shape", stored.read_recipe("relax"))
+    stored.write_recipe(
+        "wizard-shape-alt", FitRecipe.from_expression("StretchedExponential + Constant")
+    )
+    runs = f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}"
+    capsys.readouterr()
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "fit-series",
+        "--runs",
+        runs,
+        "--recipe",
+        "wizard-shape",
+        *_ORDER,
+    )
+    out = capsys.readouterr().out
+    assert "DISTRIBUTED RELAXATION" in out
+    assert "stretching exponent beta" in out
+    assert f"--runs {runs} --recipe wizard-shape-alt --order temperature" in out
+    assert "does not describe this scan" not in out
+
+
 def test_fit_series_defaults_its_name_from_the_recipe(
     workflow_folder: Path, fitting_workdir: Path, capsys
 ) -> None:
@@ -1561,7 +1598,10 @@ def test_fit_global_fits_a_shared_parameter_instead_of_pinning_it(
     assert data["shared_params"] == ["A_bg"]
     assert "A_bg" in data["shared"]
     assert len(data["results"]) == 2
-    assert (fitting_workdir / "series" / "joint.json").exists()
+    assert set(data["time_windows"]) == {str(run) for run in SCAN_RUNS[:2]}
+    assert all(window[0] < window[1] for window in data["time_windows"].values())
+    stored = json.loads((fitting_workdir / "series" / "joint.json").read_text())
+    assert stored["time_windows"] == data["time_windows"]
 
 
 def test_fit_series_start_chains_outward_from_the_named_run(
@@ -2563,10 +2603,14 @@ def test_wizard_prints_its_spectral_evidence_and_keeps_a_screening_window(
     # 100 G precesses at 1.355 MHz; the line and the fitted values are printed.
     assert "Spectral lines: 1.3" in out
     assert "Recommended fit: " in out
+    assert "Fit windows (retained bin centres)" in out
     stored = json.loads(
         (workdir / "recipes" / f"wizard-{CALIBRATION_RUN}.json").read_text(encoding="utf-8")
     )
     assert stored["t_max"] == 6.0
+    screen = json.loads((workdir / "wizard" / f"{CALIBRATION_RUN}.json").read_text())
+    assert screen["time_window"][1] <= 6.0
+    assert f"{screen['time_window'][1]:.8g}" in out
 
 
 def test_fit_series_fits_inside_the_window_it_is_given(
@@ -3700,3 +3744,18 @@ def test_an_rf_fit_prints_the_resonance_fields_its_couplings_imply() -> None:
     # Couplings whose lines fall outside the scan did not find its lines.
     lost = _rf_fields({"parameters": {"A_mu": 24705.0, "A_p": 1.6e8, "nu_RF": 218.0}}, points)
     assert "not both inside the scan (560–950 G)" in lost
+
+
+def test_fmuf_temperature_trend_checks_coupling_separately_from_dynamics() -> None:
+    from asymmetry.cli.commands.trend import _law_hints
+    from asymmetry.core.workflow.series import TrendTable
+
+    trend = TrendTable("sample_temperature_logged", [], [])
+    hints = _law_hints("dipoles", trend, ["r_muF", "nu"])
+    coupling = next(note for note in hints if note.startswith("DIPOLAR COUPLING"))
+    assert "--series dipoles --model Constant --param r_muF" in coupling
+    assert "roughly constant or varies" in coupling
+    assert "A change in nu does not establish a change in coupling" in coupling
+    assert not any(
+        note.startswith("DIPOLAR COUPLING") for note in _law_hints("rates", trend, ["Lambda"])
+    )

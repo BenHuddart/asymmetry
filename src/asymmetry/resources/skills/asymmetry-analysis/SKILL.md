@@ -13,6 +13,34 @@ end to end and writing a summary a spectroscopist would recognise.
 Full flag reference: `references/commands.md` beside this file. Every command
 also has `--help`.
 
+**Workflow contract.** Read the relevant steps below before fitting, and keep
+these obligations through the final reply, including after image review:
+
+- Decide geometry from the scan, notes and reduced plots; an unresolved survey
+  does not restore a refuted TF stamp. Pass the geometry and physics scope to
+  every wizard call (Steps 3a–3b).
+- Repeated ZF/weak-field triplets require a shared dynamic `fit-global`, not
+  independent fits followed by a trend. Follow `COUPLED FIELD GROUPS` and Step 5a.
+  Dense nuclear moments need Gaussian KT; Lorentzian KT describes dilute
+  moments. Ionic motion changes `nu`, not that distribution. Report the shared
+  values and uncertainties for viable competing coupled models; choose from
+  sample physics and joint diagnostics, not one run's statistical ranking.
+- A disordered/glassy magnet needs a distributed-rate (stretched) decay check.
+  Test the comparable stretched alternative across the scan and report `beta`;
+  a middle-temperature single-exponential recommendation cannot settle this.
+- In TF superconductors, use `--scope tf-superconductor`; report both the
+  broadening and the non-superconducting signal fraction (Step 3b and section 3).
+- A Fourier interpretation needs matched cold/warm spectra and their pixels,
+  window and resolution. Report supported visual side structure separately
+  from detected lines, with its physical interpretation (Step 5c). In a
+  semiconductor, a central applied-field line with roughly symmetric cold
+  satellites that disappear in the warm reference is consistent with a
+  shallow-muonium hyperfine triplet; say that cautiously, without turning
+  visual shoulders into precise hyperfine constants.
+- The final report is the complete section 6 template, not a recap. Preserve
+  folder count, per-scan run ranges, component meanings and every fit/FFT window.
+  After any image-review changes, audit that final file and send it verbatim.
+
 ## 1. What this does, and what it does not
 
 **In scope.** Preliminary forward–backward asymmetry analysis of:

@@ -29,7 +29,7 @@ summary that quotes only numbers the tools emitted.
 The proof of concept answers one question: **does an agent make sensible
 choices with these tools?** Polish is out of scope. Success is measured on
 the WiMDA muon school datasets (see "Evaluation"). Claude Code evaluations
-target Sonnet; Codex evaluations target `gpt-5.6-luna`, keeping a fast,
+target Sonnet; Codex evaluations target `gpt-6-luna`, keeping a fast,
 inexpensive agent as the bar on each host.
 
 ## Non-goals (this PR)
@@ -2419,6 +2419,214 @@ Recorded here rather than fixed, because Phase 4 changes skill text only:
   is paid for by making the manifest's `folder` binding: one work directory
   serves one data folder, checked on every command, so two folders with
   overlapping run numbers can never collide in one cache.
+
+## Codex / GPT-6 Luna regression check — 2026-10-19
+
+Host: Codex CLI 0.163.0 on Linux. Model: `gpt-6-luna`. Checkout:
+`1db2ab9`. The eight cases from the recorded 2026-09-16 GPT-5.6 Luna gates
+were rerun with the current packaged skill and CLI, the fixed prompt and
+`run_codex_eval.py`'s two-turn image-review protocol. This is an end-to-end
+regression check: the model, skill/CLI and OS changed, so failures cannot yet
+be attributed to the model alone. The historical 8/8 baseline records the
+latest passing attempts after iteration; this wave retains the first
+scoreable attempt of each case without tuning or retries.
+
+**Result: 2/8 pass.** All eight completed both turns with exit 0. No completed
+command showed a source/personal-file read, network request, delegation or
+permission denial. Earlier preflight attempts with CLI 0.145.0 were void
+(unsupported flags, then model access), not scientific failures.
+
+| Case | GPT-5.6 Luna | GPT-6 Luna Musts | Verdict | Main gap |
+|---|---|---:|---|---|
+| PTFE | pass | 6/6 | **pass** | F–μ–F model, calibration and qualified coupling stability retained |
+| YMnAl | pass | 4/5 | **fail** | Calls the science scan nominal/file-labelled TF, never identifies LF decoupling |
+| High-Tc cuprate | pass | 3/5 | **fail** | No established Gaussian cooling trend; no physical account of the non-superconducting fraction |
+| Nickel | pass | 6/7 | **fail** | No LF classification; final field-sweep run omitted from scan accounting |
+| TCNQ | pass | 6/6 | **pass** | All four ALC blocks fitted; poor fits explicitly qualified |
+| Silicon photo-μSR | pass | 5/6 | **fail** | Exact green fit endpoint 7.916 μs is absent from session command output |
+| Al-LLZ | pass | 1/6 | **fail** | Independent static/phenomenological fits replace the required coupled dynamic fit |
+| CdS | pass | 4/6 | **fail** | FFT safeguards retained, shallow-muonium triplet interpretation omitted |
+
+The numerical audit matters: silicon otherwise preserves separate red/green
+reductions, laser-on/off direction and quantitative rates. Its exact window
+endpoint fails the unchanged number rule; it was not rounded from a printed
+value. Cuprate's non-superconducting-fraction failure and CdS's visual-feature
+failure contain judgement calls, but each also fails another unambiguous Must.
+
+Three follow-ups have the strongest evidence:
+
+1. **Geometry and scan membership.** YMnAl and Al-LLZ surveys report unresolved
+   geometry, then `wizard` falls back to the file's TF stamp. Nickel's
+   `_field_scan_members` drops the minority Larmor-precessing run 124278 from
+   its field-sweep grouping; the final report leaves it unaccounted for.
+   Review these evidence paths before adding more instructions to the skill.
+2. **Physical workflow selection and recovery.** Al-LLZ never calls
+   `fit-global`, despite the skill's explicit triplet example with these run
+   IDs. Cuprate follows exponential/over-complex wizard recipes and rejects
+   flagged MUSR results, then fits a superconducting law to EMU's exponential
+   rate without recovering the required Gaussian result. Diagnose the models
+   and convergence rather than forcing the expected physics into the report.
+3. **Final-report provenance and spectral interpretation.** Print or inspect
+   actual fit windows and audit the final report. CdS overwrites its plot with
+   successive FFT variants, attaches the noisy full-record transform and
+   never makes the qualitative shallow-muonium connection. A matched warm
+   reference or an early-signal-preserving filtered view is a follow-up;
+   the final noisy spectrum alone does not justify forcing a triplet claim.
+
+Rubric caveats were preserved, not edited: six case rubrics are unchanged
+since `f6bf39c`; TCNQ's centre range widened from 3.0–3.2 to 2.9–3.2 kG,
+but this run passes either threshold. Al-LLZ's wording now documents batch
+groups, while both versions require a coupled fit. YMnAl's rubric incorrectly
+includes run 24591 in the LF series: the current survey records it as ZF,
+and correct separation was not penalised. TCNQ's first field block now groups
+33 actual runs including the extra ZF/repeat points; complete accounting was
+accepted rather than demanding the older four-31-point partition. Silicon
+uses representative run 103288 rather than historical example 103277; that
+choice was accepted, and the failure rests on the unsupported window value.
+
+The supervising Codex agent scored the summaries and audited numerical and
+command evidence using `tools/agent_eval/scoring_brief.md`. Full per-Must and
+per-Should decisions, numerical checks, root causes, runtimes, wizard/law/audit
+counts, usage, skill/rubric hashes and comparison metadata are in
+[`agent-cli-skill-luna6-2026-10-19.json`](agent-cli-skill-luna6-2026-10-19.json).
+Raw transcripts, summaries, staged skills, image-input hashes and analysis
+products remain under the external scratch root
+`/tmp/asymmetry-luna6-2026-10-19/pass2/`. No CLI, skill or rubric was changed.
+
+## GPT-5.6 Luna on the current CLI/skill — paired control, 2026-10-19
+
+Host: Codex CLI 0.163.0 on Linux. Model: `gpt-5.6-luna`. Same checkout,
+runner, prompts, evaluation boundary, two-turn image review and current rubrics
+as the GPT-6 wave above. All eight staged data trees, skill instructions and
+references match byte for byte; skill-install metadata differs only in its
+timestamp. Absolute staging paths necessarily differ. One fresh attempt per
+case was retained, with no tuning or retries. All eight completed both turns
+with exit 0; no completed command showed a boundary violation or permission
+denial.
+
+**Strict result: 2/8 pass for each model.** GPT-5.6 satisfies 39/47 Musts,
+versus GPT-6's 35/47, but a dataset passes only when every Must passes.
+
+| Case | Current GPT-5.6 Luna | GPT-6 Luna | Paired finding |
+|---|---|---|---|
+| PTFE | **pass**, 6/6 | **pass**, 6/6 | Both recover qualified F–μ–F coupling stability |
+| YMnAl | **pass**, 5/5 | fail, 4/5 | 5.6 resolves LF geometry and explicitly overrides wizard scope |
+| Cuprate | fail, 4/5 | fail, 3/5 | 5.6 recovers the 400 G Gaussian trend; both omit the non-superconducting signal fraction |
+| Nickel | fail, 6/7 | fail, 6/7 | 5.6 recovers LF/Redfield and full sweep coverage, but final reply drops scan ranges |
+| TCNQ | fail, 5/6 | **pass**, 6/6 | 5.6 fits all four blocks but omits the 128-run accounting from the final report |
+| Silicon | fail, 5/6 | fail, 5/6 | 5.6 states the single-rate screen window but omits windows for extra wizard/series rates; 6 invents an exact endpoint |
+| Al-LLZ | fail, 3/6 | fail, 1/6 | 5.6 resolves LF and tries dynamic KT, but neither performs a coupled `fit-global` |
+| CdS | fail, 5/6* | fail, 4/6 | 5.6 recovers matched cold/warm evidence and qualitative triplet; final window provenance omitted |
+
+*CdS is wording-sensitive: the strict reading of "frequency resolution/window"
+requires both, consistently with the skill's transform-provenance contract.
+The final 5.6 report gives resolution but not the window/full-record choice.
+If the slash is read as either/or, CdS passes and 5.6 scores 3/8. The
+scientific triplet interpretation itself passes. Cuprate's sole failing Must
+also contains a judgement call: the reported `sigma_bg` is a width-law floor,
+not an explanation of the non-superconducting signal fraction. These caveats
+are retained in the scoring record rather than changing the rubric.
+
+The paired evidence changes the diagnosis. The historical 8/8 drop is not
+specific to GPT-6: the current setup fails with 5.6 too. There are real
+differences in agent decisions—5.6 resolves LF geometry, chooses the
+superconducting wizard scope and makes the CdS interpretation more
+successfully in this wave—but the aggregate does not establish a blanket
+model regression. One attempt per case cannot estimate reliability or
+separate a particular CLI/skill change from the historical OS/backend
+differences.
+
+A concrete shared harness gap is visible in nickel: 5.6's audited
+`project/summary.md` contains all three scan ranges, including the final
+field-sweep run, but the second image-review turn rewrites the answer and
+drops them. The scored final reply is a different artifact from the audited
+draft. Audit the actual final report before interpreting report omissions as
+analysis incapability. Independently, both agents miss the coupled Al-LLZ
+workflow despite the skill giving an explicit example with these run IDs;
+recovering LF geometry alone does not fix that routing failure.
+
+Full Must/Should decisions, numerical checks, model comparisons, matched-input
+hashes, runtimes and command metrics are in
+[`agent-cli-skill-luna56-control-2026-10-19.json`](agent-cli-skill-luna56-control-2026-10-19.json).
+Raw artifacts remain under
+`/tmp/asymmetry-luna56-current-2026-10-19/pass1/`. No CLI, skill, runner or
+rubric was changed. The earlier documentation build remains blocked by the
+missing `sphinx_design` dependency; these follow-up record edits were checked
+with `git diff --check`.
+
+## GPT-6 Luna remediation — 2026-10-19
+
+Work is on `codex/luna6-eval-regressions`. Codex evaluations now default to
+`gpt-6-luna`, including the agent map. The Must/Should rubrics were not edited.
+The initial fresh GPT-6 and paired GPT-5.6 results above remain the baselines.
+
+The fixes address evidence and workflow gaps rather than inserting expected
+corpus results into the prompts:
+
+- **Geometry and coverage:** unresolved survey geometry clears stale file
+  tokens before screening; high-field points remain in field sweeps. A
+  high-field Larmor-like line that also matches a zero-field internal line
+  gets an explicit ambiguity warning and a request to inspect LF recovery.
+- **Model choice across a scan:** repeated weak-field groups print a genuine
+  coupled-fit command. The CLI distinguishes dense-nuclear Gaussian KT from
+  dilute-moment Lorentzian KT and asks for coupled comparison results.
+  Comparable simpler precession models preserve measured oscillations while
+  removing an unidentifiable extra relaxation term. A comparable stretched
+  decay is offered across a scan even without widespread parameter failures.
+- **Scientific conclusions:** the coupling-stability check fits `Constant` to
+  `r_muF` separately from dynamic `nu`. The skill preserves the cautious
+  semiconductor central-line/satellite interpretation and requires a matched
+  reference, pixels, FFT window and resolution. Failed fits remain failed;
+  none of these cues establishes a law or a physical fraction by assertion.
+- **Report provenance:** time-domain commands print actual retained bin
+  centres, including recipe rebinning/cuts, and quality totals. Audit checks
+  folder/scan coverage and genuine coupled fitting, accepting either Gaussian
+  or Lorentzian widths; choosing the physically appropriate model remains a
+  separate scientific judgement.
+- **Harness:** `codex exec resume` silently resumed read-only on CLI 0.163.0.
+  Passing `--approve-for-me` before `resume` restores project writes, verified
+  with a two-turn file-writing probe. Protocol `two_turn_image_review_v2`
+  audits the report written after pixel review and records whether the final
+  reply exactly matches the last passed audit. Earlier `fix1` diagnostic
+  attempts predate that repair and are not counted as strict passes.
+
+The first frozen-code remediation wave (`gate1`) passed **4/8**: cuprate,
+silicon, CdS and TCNQ. It exposed narrower omissions in YMnAl (single instead
+of stretched decay), Al-LLZ (successful Gaussian coupled results omitted),
+PTFE (no explicit coupling-stability conclusion), and nickel (an internal
+line promoted to applied-TF evidence). Those failures are retained in the
+scoring record. PTFE also corrected one printed background uncertainty after
+its audit, so its exact-audit flag is false; that is recorded separately from
+its scientific omission.
+
+Fresh targeted runs pass YMnAl and Al-LLZ (`gate2`), PTFE (`gate3`), and nickel
+(`gate4`). **Latest strict case gates: 8/8, with all 47 Musts satisfied.**
+Every passing targeted run's final report exactly matches its post-image audit.
+This is the same iterative-gate method as the historical 8/8 record, not a
+single fresh eight-case wave on the final tree or an estimate of repeatability.
+Separate candidate checkouts/interpreters kept each active run's code fixed.
+Nickel retains a non-blocking concluding sentence that overgeneralizes absence
+of cold precession despite its earlier explicit detected-line list; the
+scoring record calls this out. The explicit low-temperature observations and
+ordered-interval fits satisfy its precession Must. Approximate plot-display
+bounds are distinguished from the printed, exact fitted interval.
+
+Final validation passes structural checks, lint and **9,890 tests** (25 skipped,
+one expected failure), using `tools/harness.py validate -- --dist loadfile`.
+The documentation build passes with 85 existing warnings. GUI checks use
+writable temporary XDG roots. Initial read-only-home errors and intermittent
+layout/selection failures are retained in the scratch logs; the affected
+41-test selection file passes in isolation, and the final whole-file scheduled
+suite passes without disabling tests. An earlier default-scheduled full branch
+validation also passed 9,889 tests before the final audit refinement. No GUI
+code was changed.
+
+The supervising Codex agent scored the final replies using the unchanged
+`tools/agent_eval/scoring_brief.md`, checking numerical and command evidence.
+Full decisions, all attempts, hashes, model/host, image inputs, usage and raw
+artifact paths are in
+[`agent-cli-skill-luna6-remediation-2026-10-19.json`](agent-cli-skill-luna6-remediation-2026-10-19.json).
+Raw evidence remains under `/tmp/asymmetry-luna6-fixes-2026-10-19/`.
 
 ## Open questions for the maintainer
 

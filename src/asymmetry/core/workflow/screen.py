@@ -40,6 +40,7 @@ run screens zero-field dynamics.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -60,8 +61,8 @@ from asymmetry.core.workflow.survey import run_geometry
 
 #: A candidate within this many AICc of the recommendation is one the run hardly
 #: tells apart from it: the runner-up gets a recipe of its own, for the scan to decide.
-#: Only between relaxation models with at most one parameter more — a precession
-#: model's alternatives (another envelope) are not a different reading of the scan.
+#: Relaxation alternatives may have at most one parameter more. A precession
+#: alternative must simplify a nested model while retaining its precessing terms.
 RUNNER_UP_AICC = 10.0
 
 #: Wizard categories that model relaxation alone, and the one that precesses.
@@ -70,11 +71,11 @@ PRECESSION_CATEGORY = "Oscillatory"
 
 
 def _runner_up(recommendation: Any, lined: bool) -> Any | None:
-    """The relaxation assessment worth a recipe beside the recommended one, if any.
+    """A close alternative, or a relaxation fallback for line-free precession.
 
-    A close one beside a relaxation recommendation; beside a precession model
-    the spectrum shows no line for (*lined* false) — which is fitting a
-    relaxation's shape — the best relaxation model, however far behind.
+    Relaxation models get a close relaxation alternative. A detected line
+    permits a simpler nested precession model; without a line, the best
+    relaxation model replaces precession fitting the relaxation's shape.
     """
     recommended = recommendation.recommended_assessment
     expression = recommended.template.model.component_expression_string()
@@ -83,7 +84,6 @@ def _runner_up(recommendation: Any, lined: bool) -> Any | None:
         for assessment in sorted(recommendation.assessments, key=lambda item: item.selected_score)
         if assessment.is_successful
         and not assessment.is_disqualified
-        and assessment.template.category in _RELAXATION
         and assessment.aicc is not None
         and assessment.template.model.component_expression_string() != expression
     ]
@@ -95,8 +95,25 @@ def _runner_up(recommendation: Any, lined: bool) -> Any | None:
             for assessment in candidates
             if 0.0 <= assessment.aicc - recommended.aicc <= RUNNER_UP_AICC
             and assessment.parameter_count <= recommended.parameter_count + 1
+            and assessment.template.category in _RELAXATION
         ]
-    elif recommended.template.category != PRECESSION_CATEGORY or lined:
+    elif recommended.template.category == PRECESSION_CATEGORY and lined:
+        components = Counter(recommended.template.model.component_names)
+        precession = components - Counter(
+            {name: components[name] for name in ("Gaussian", "Exponential", "Constant")}
+        )
+        candidates = [
+            assessment
+            for assessment in candidates
+            if assessment.template.category == PRECESSION_CATEGORY
+            and assessment.parameter_count < recommended.parameter_count
+            and 0.0 <= assessment.aicc - recommended.aicc <= RUNNER_UP_AICC
+            and Counter(assessment.template.model.component_names) <= components
+            and precession <= Counter(assessment.template.model.component_names)
+        ]
+    elif recommended.template.category == PRECESSION_CATEGORY:
+        candidates = [a for a in candidates if a.template.category in _RELAXATION]
+    else:
         return None
     return candidates[0] if candidates else None
 
@@ -135,12 +152,15 @@ def resolve_geometry(
 
     *survey_geometry* is the geometry the folder's survey resolved for this run;
     it loses to an explicit *override* and beats this dataset's own metadata.
+    ``"unknown"`` preserves an unresolved survey instead of reviving a file stamp.
     Raises :class:`ValueError` for a token that is not a geometry.
     """
     if override is not None:
         return _named_geometry(override), "user"
     if survey_geometry is not None:
-        return _named_geometry(survey_geometry), "survey"
+        return (
+            None if survey_geometry == "unknown" else _named_geometry(survey_geometry)
+        ), "survey"
     resolved = run_geometry(dataset.metadata)
     if resolved is None:
         return None, "none"
@@ -201,9 +221,7 @@ class ScreenResult:
     #: The recipe built from the recommended candidate, or ``None`` when the
     #: wizard made no recommendation (the payload then says so).
     recipe: FitRecipe | None
-    #: The recipe of the best relaxation model when it is a close runner-up to a
-    #: relaxation recommendation (:data:`RUNNER_UP_AICC`), or when the
-    #: recommendation precesses and the spectrum shows no line; else ``None``.
+    #: A close alternative or a relaxation fallback for line-free precession.
     runner_up: FitRecipe | None
     #: The spectral lines the search detected that complete enough cycles to be precession.
     lines: list[dict[str, Any]]
@@ -269,8 +287,8 @@ def screen_run(
     # Hand the wizard the geometry this workflow resolved, not the file's raw
     # token, so its scope matches the survey's reading of the same run.
     metadata = dict(dataset.metadata)
-    if resolved_geometry is not None:
-        metadata["field_direction"] = resolved_geometry
+    metadata["field_direction"] = resolved_geometry
+    metadata["field_state"] = resolved_geometry
     scoped = replace(dataset, metadata=metadata)
 
     recommendation = build_fit_wizard_recommendation(

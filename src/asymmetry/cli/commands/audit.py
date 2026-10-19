@@ -64,6 +64,7 @@ def run(args: argparse.Namespace) -> None:
     untrended = _untrended_series(roots, log_text)
     dips = _unfitted_dips(roots)
     unfitted, unfitted_notes = unfitted_scans(roots)
+    reporting = report_obligations(roots, text)
 
     if args.json:
         emit_json(
@@ -77,6 +78,7 @@ def run(args: argparse.Namespace) -> None:
                 ],
                 unsupported_laws=[{"law": law, "phrase": phrase} for law, phrase in laws],
                 unstated=relations,
+                report_obligations=reporting,
                 unverified=[
                     {"text": entry.text, "line_number": entry.line_number, "line": entry.line}
                     for entry in found
@@ -86,6 +88,8 @@ def run(args: argparse.Namespace) -> None:
         return
     if unfitted:
         print(_unfitted_report(unfitted))
+    for message in reporting:
+        print(message)
     if unfitted_notes:
         print(
             "Scans the run notes define (survey NOTES SCANS) with runs no fit holds — fit each "
@@ -143,6 +147,7 @@ def run(args: argparse.Namespace) -> None:
     ]
     held = held_scans or unfitted_notes or laws or relations or unpaired or untested
     held = held or untrended or dips
+    held = held or reporting
     if not found and held:
         print(
             f"No unprinted numbers found in {draft}, but do not reply yet: act on each item "
@@ -182,6 +187,66 @@ _REPLY_MARK = "-----"
 #: A scan of at most this many runs is listed on one shared line: a setpoint's
 #: two or three fields, a calibration pair — rarely the experiment's question.
 _SHORT_SCAN_RUNS = 3
+
+
+def report_obligations(roots: list[Path], text: str) -> list[str]:
+    """Report missing survey provenance and repeated field groups fitted independently."""
+    from asymmetry.core.workflow.survey import ScanGroup, coupled_field_groups
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    workdirs = [workdir for workdir in map(WorkDir, roots) if workdir.manifest_path.is_file()]
+    numbers = set(re.findall(r"\b\d+\b", text))
+    messages: list[str] = []
+    surveys = {
+        workdir.selection: workdir.read_survey()
+        for workdir in workdirs
+        if workdir.survey_path.is_file()
+    }
+    for selection, survey in surveys.items():
+        if str(len(survey["runs"])) not in numbers:
+            messages.append(
+                f"Report the folder coverage: {survey['folder']} contains "
+                f"{len(survey['runs'])} runs, including calibrations and non-scan records."
+            )
+        scans = [ScanGroup(**entry) for entry in survey["scans"]]
+        for scan in scans:
+            if (
+                len(scan.runs) > _SHORT_SCAN_RUNS
+                and not {str(min(scan.runs)), str(max(scan.runs))} <= numbers
+            ):
+                messages.append(
+                    f"Report this scan's explicit run members: {scan.instrument} "
+                    f"{scan.axis} scan, {run_spec(scan.runs)}; a total folder range is not "
+                    "per-scan provenance."
+                )
+        transverse = {
+            (row["instrument"], row["run_number"])
+            for row in survey["runs"]
+            if row["geometry"] == "TF" or row["precession"] == "larmor"
+        }
+        joint = [
+            set(int(row["key"]) for row in series["trend"]["rows"])
+            for member in workdirs
+            if member.selection == selection
+            for path in member.series_dir.glob("*.json")
+            for series in [json.loads(path.read_text(encoding="utf-8"))]
+            if series["kind"] == "global"
+            and "nu" in series["shared_params"]
+            and {"Delta", "a_L"} & set(series["shared_params"])
+            and "B_L" in series["field_params"]
+        ]
+        for batch in coupled_field_groups(scans, transverse):
+            missing = [scan for scan in batch if not any(set(scan.runs) <= runs for runs in joint)]
+            if missing:
+                messages.append(
+                    f"COUPLED FIELD GROUPS: {len(missing)} temperature groups have no "
+                    "simultaneous fit. Independent fit-series results do not measure "
+                    "shared dynamic parameters. Use fit-global --groups with a dynamic "
+                    "KT + Constant, sharing its width, nu and amplitudes with "
+                    "--field-param B_L; the "
+                    "survey prints the group members."
+                )
+    return messages
 
 
 class _UnfittedScan(NamedTuple):
