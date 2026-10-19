@@ -1280,6 +1280,7 @@ def test_wizard_takes_the_geometry_the_survey_resolved(
     # Screening one run cannot see the folder's survey unless the command hands
     # it over; without that, a file recording no field state screens blind.
     from asymmetry.cli.commands.wizard import _survey_geometry
+    from asymmetry.core.workflow.screen import SurveyGeometry
     from asymmetry.core.workflow.workdir import WorkDir
 
     workdir = WorkDir(tmp_path / "wd")
@@ -1288,8 +1289,8 @@ def test_wizard_takes_the_geometry_the_survey_resolved(
 
     cli.main(["survey", str(workflow_folder), "--workdir", str(workdir.root)])
     capsys.readouterr()
-    assert _survey_geometry(workdir, every_run, CALIBRATION_RUN) == "TF"
-    assert _survey_geometry(workdir, every_run, SCAN_RUNS[0]) == "ZF"
+    assert _survey_geometry(workdir, every_run, CALIBRATION_RUN) == SurveyGeometry("TF")
+    assert _survey_geometry(workdir, every_run, SCAN_RUNS[0]) == SurveyGeometry("ZF")
     assert _survey_geometry(workdir, every_run, 900) is None
     assert _survey_geometry(workdir, RunSelection(workflow_folder, "EMU"), SCAN_RUNS[0]) is None
 
@@ -1531,7 +1532,7 @@ def test_fit_series_checks_distributed_relaxation_before_a_single_rate_trend(
     stored = WorkDir(fitting_workdir)
     stored.write_recipe("wizard-shape", stored.read_recipe("relax"))
     stored.write_recipe(
-        "wizard-shape-alt", FitRecipe.from_expression("StretchedExponential + Constant")
+        "wizard-shape-alt", FitRecipe.from_expression("Constant + StretchedExponential")
     )
     runs = f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}"
     capsys.readouterr()

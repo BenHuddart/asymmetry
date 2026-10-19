@@ -56,7 +56,7 @@ from asymmetry.core.fitting.fit_wizard import (
 )
 from asymmetry.core.fitting.wizard_narrative import render_log_text
 from asymmetry.core.fitting.wizard_scope import WizardScope
-from asymmetry.core.workflow.recipe import FitRecipe
+from asymmetry.core.workflow.recipe import FitRecipe, retained_window
 from asymmetry.core.workflow.survey import run_geometry
 
 #: A candidate within this many AICc of the recommendation is one the run hardly
@@ -143,24 +143,30 @@ def _named_geometry(value: str) -> str:
     return geometry.value
 
 
+@dataclass(frozen=True)
+class SurveyGeometry:
+    """The folder survey's reading of one run: ``geometry`` is ``None`` where it could not decide."""
+
+    geometry: str | None
+
+
 def resolve_geometry(
     dataset: MuonDataset,
     override: str | None,
-    survey_geometry: str | None = None,
+    survey: SurveyGeometry | None = None,
 ) -> tuple[str | None, str]:
     """Return this run's ``(geometry, source)`` — see the module docstring.
 
-    *survey_geometry* is the geometry the folder's survey resolved for this run;
-    it loses to an explicit *override* and beats this dataset's own metadata.
-    ``"unknown"`` preserves an unresolved survey instead of reviving a file stamp.
+    *survey* is the folder survey's reading of this run (``None``: not
+    surveyed); it loses to an explicit *override* and beats this dataset's own
+    metadata, including when it left the geometry unresolved — a survey that
+    could not decide has refuted the file's stamp, not deferred to it.
     Raises :class:`ValueError` for a token that is not a geometry.
     """
     if override is not None:
         return _named_geometry(override), "user"
-    if survey_geometry is not None:
-        return (
-            None if survey_geometry == "unknown" else _named_geometry(survey_geometry)
-        ), "survey"
+    if survey is not None:
+        return (None if survey.geometry is None else _named_geometry(survey.geometry)), "survey"
     resolved = run_geometry(dataset.metadata)
     if resolved is None:
         return None, "none"
@@ -225,6 +231,8 @@ class ScreenResult:
     runner_up: FitRecipe | None
     #: The spectral lines the search detected that complete enough cycles to be precession.
     lines: list[dict[str, Any]]
+    #: First and last bin centres of the record the wizard fitted (after its own rebinning).
+    time_window: tuple[float, float]
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -247,6 +255,7 @@ class ScreenResult:
             "recipe": None if self.recipe is None else self.recipe.to_dict(),
             "runner_up": None if self.runner_up is None else self.runner_up.to_dict(),
             "lines": list(self.lines),
+            "time_window": list(self.time_window),
         }
 
 
@@ -254,7 +263,7 @@ def screen_run(
     dataset: MuonDataset,
     *,
     geometry: str | None = None,
-    survey_geometry: str | None = None,
+    survey: SurveyGeometry | None = None,
     scope_preset: str = "auto",
     include: Iterable[str] = (),
     exclude: Iterable[str] = (),
@@ -263,8 +272,8 @@ def screen_run(
     """Screen *dataset* against the wizard's candidate models.
 
     *geometry* overrides the file's recorded field direction (``"ZF"``,
-    ``"TF"`` or ``"LF"``); *survey_geometry* is what the folder's survey
-    resolved for this run, used when the caller gives no override;
+    ``"TF"`` or ``"LF"``); *survey* is the folder survey's reading of this
+    run, used when the caller gives no override;
     *scope_preset* is one of :data:`SCOPE_PRESETS`, naming the physics looked
     for. *include* and *exclude* name time-domain components to add to or drop
     from the scope (exclude wins). Raises :class:`ValueError` for a value outside any of these
@@ -282,7 +291,7 @@ def screen_run(
             f"Unknown component(s) {', '.join(unknown)}; the wizard's components are "
             f"{', '.join(sorted(COMPONENTS))}."
         )
-    resolved_geometry, geometry_source = resolve_geometry(dataset, geometry, survey_geometry)
+    resolved_geometry, geometry_source = resolve_geometry(dataset, geometry, survey)
 
     # Hand the wizard the geometry this workflow resolved, not the file's raw
     # token, so its scope matches the survey's reading of the same run.
@@ -356,6 +365,7 @@ def screen_run(
         lines=lines,
         recipe=recipe,
         runner_up=runner_up,
+        time_window=retained_window(scoped, recommendation.rebin_factor),
     )
 
 
@@ -366,6 +376,7 @@ __all__ = [
     "SCOPE_PRESETS",
     "ScreenCandidate",
     "ScreenResult",
+    "SurveyGeometry",
     "resolve_geometry",
     "screen_run",
 ]

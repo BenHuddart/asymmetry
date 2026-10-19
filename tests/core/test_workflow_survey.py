@@ -467,19 +467,33 @@ def test_a_transverse_calibration_run_stays_out_of_a_longitudinal_field_scan() -
     assert scan.runs == [2, 3, 4, 5]
 
 
-def test_a_high_field_larmor_point_stays_in_its_field_sweep() -> None:
+@pytest.mark.parametrize(("internal_mhz", "members"), [(16.0, range(1, 7)), (None, range(1, 6))])
+def test_a_high_field_larmor_point_stays_in_its_sweep_only_where_internal_precession_fits_it(
+    internal_mhz: float | None, members: range
+) -> None:
+    # A zero-field line at the same frequency makes the "Larmor" match ambiguous;
+    # without one, a high-field Larmor run beside an LF sweep is a TF calibration.
     larmor = PrecessionEvidence(
         state="larmor", frequency_mhz=16.3, snr=10.0, larmor_mhz=16.26, note=""
     )
+    reference = (
+        _NOT_MEASURED
+        if internal_mhz is None
+        else PrecessionEvidence(
+            state="other", frequency_mhz=internal_mhz, snr=20.0, larmor_mhz=0.0, note=""
+        )
+    )
     rows = [
+        _row(run_number=1, temperature=200.0, field=0.0, geometry=None, precession=reference)
+    ] + [
         _row(run_number=run, temperature=200.0, field=field, geometry=None)
-        for run, field in enumerate([0.0, 1600.0, 2400.0, 3200.0, 4000.0], start=1)
+        for run, field in enumerate([1600.0, 2400.0, 3200.0, 4000.0], start=2)
     ]
     rows.append(
         _row(run_number=6, temperature=200.0, field=1200.0, geometry="TF", precession=larmor)
     )
     (scan,) = [scan for scan in _scan_groups(rows)[0] if scan.axis == "field"]
-    assert set(scan.runs) == set(range(1, 7))
+    assert set(scan.runs) == set(members)
 
 
 def test_repeated_weak_field_triplets_are_coupled_groups_not_two_field_pairs() -> None:
@@ -489,11 +503,20 @@ def test_repeated_weak_field_triplets_are_coupled_groups_not_two_field_pairs() -
         for offset, field in enumerate([0.0, 5.0, 10.0])
     ]
     scans = _scan_groups(rows)[0]
-    (batch,) = coupled_field_groups(scans, set())
+    table = [row.to_dict() for row in rows]
+    (batch,) = coupled_field_groups(scans, table)
     assert [scan.runs for scan in batch] == [[1, 2, 3], [4, 5, 6]]
-    assert not coupled_field_groups(scans, {("SIM", 2), ("SIM", 5)})
+    transverse = [
+        entry | {"geometry": "TF"} if entry["run_number"] == 2 else entry for entry in table
+    ]
+    assert not coupled_field_groups(scans, transverse)
+    # An ordered magnet's zero-field oscillation is not a Kubo-Toyabe group.
+    ordered = [
+        entry | {"precession": "other"} if entry["run_number"] == 4 else entry for entry in table
+    ]
+    assert not coupled_field_groups(scans, ordered)
     pairs = _scan_groups([row for row in rows if row.field != 10.0])[0]
-    assert not coupled_field_groups(pairs, set())
+    assert not coupled_field_groups(pairs, table)
 
 
 def test_a_temperature_returned_to_starts_a_new_field_scan() -> None:

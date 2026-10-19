@@ -475,14 +475,18 @@ this temperature — likely its points, not this scan's" — since a longitudina
 point the file does not label is otherwise fitted with a precession model.
 
 Repeated sets of three to five weak fields, including zero field, print
-``COUPLED FIELD GROUPS`` when no member has transverse evidence. The survey
+``COUPLED FIELD GROUPS`` when no member is transverse or precesses (a
+Larmor line, or an ordered magnet's spontaneous zero-field line). The survey
 gives a ``DynamicGaussianKT + Constant`` recipe and a ``fit-global --groups``
 command sharing the amplitudes, static width, and fluctuation rate within
 each temperature group, with ``B_L`` fixed from each run. Confirm longitudinal
 decoupling from the reduced spectra before using that physical model.
-Independent field fits do not measure those shared parameters. A minority
-Larmor-precessing point is removed as a possible transverse calibration only
-within the weak-TF calibration range; high-field sweep points remain members.
+Independent field fits do not measure those shared parameters, so ``audit``
+holds the reply until each group has a ``fit-global`` fit — of any model, so
+a competing coupled model satisfies it as well as the Kubo-Toyabe one. A
+minority Larmor-precessing point is removed from a field scan as a likely
+transverse calibration, unless a zero-field member precesses at the same
+frequency (see ``INTERNAL-FIELD AMBIGUITY`` below); then it stays a member.
 
 Consecutive runs of one sample at one condition — field, temperature,
 geometry, note and set-up — whose co-add at least halves the counting
@@ -763,7 +767,8 @@ candidate's fitted values — see `The fit recipe`_), plus
 ``Fit windows (retained bin
 centres)`` with the actual first and last fitted bin centres. This includes
 the full stored record when no explicit time cut was supplied; recipe
-rebinning is included for fits. Their JSON products retain the same bounds
+rebinning is included for fits, and the wizard's own analysis rebinning for
+the wizard. Their JSON products retain the same bounds
 as ``time_window`` or, for a series or coupled group, ``time_windows``. Quote these alongside
 relaxation rates, rather than inferring exact limits from plot axes.
 Series and grouped-fit batches also print ``Fit quality counts`` so a report
@@ -1266,6 +1271,11 @@ for one of those ``audit`` says that the calibration does not account for the
 scan and prints the ``wizard`` and ``fit-series`` commands that fit it. Scans of
 two or three runs share one line. A run fitted on its own with ``fit`` counts
 as fitted.
+
+``audit`` also holds the reply until the draft states the folder's coverage as
+a run count (``24 runs``; a bare ``24`` elsewhere, such as ``24 K``, does not
+count) and each surveyed scan of more than three runs by its own members —
+its ``--runs`` spelling or its first-to-last range (``201-206``, ``201 – 206``).
 
 ``integral-scan``
 ~~~~~~~~~~~~~~~~~

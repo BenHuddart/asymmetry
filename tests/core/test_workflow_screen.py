@@ -16,6 +16,7 @@ from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.screen import (
     RUNNER_UP_AICC,
     SCOPE_PRESETS,
+    SurveyGeometry,
     resolve_geometry,
     screen_run,
 )
@@ -62,7 +63,7 @@ def test_resolve_geometry_reports_the_value_and_where_it_came_from(
 def test_an_override_wins_and_is_recorded_as_the_users() -> None:
     dataset = _dataset({"field": 0.0, "field_state": "TF"})
     assert resolve_geometry(dataset, "LF") == ("LF", "user")
-    assert resolve_geometry(dataset, "LF", "TF") == ("LF", "user")
+    assert resolve_geometry(dataset, "LF", SurveyGeometry("TF")) == ("LF", "user")
 
 
 def test_the_surveys_geometry_beats_this_datasets_own_metadata() -> None:
@@ -70,30 +71,36 @@ def test_the_surveys_geometry_beats_this_datasets_own_metadata() -> None:
     # is the only source that can speak for a file recording no field state.
     dataset = _dataset({"field": 100.0})
     assert resolve_geometry(dataset, None) == (None, "none")
-    assert resolve_geometry(dataset, None, "TF") == ("TF", "survey")
+    assert resolve_geometry(dataset, None, SurveyGeometry("TF")) == ("TF", "survey")
 
 
 def test_an_unresolved_survey_does_not_revive_the_files_tf_stamp() -> None:
     dataset = _dataset({"field": 110.0, "field_state": "TF"})
-    assert resolve_geometry(dataset, None, "unknown") == (None, "survey")
-    assert resolve_geometry(dataset, "LF", "unknown") == ("LF", "user")
+    assert resolve_geometry(dataset, None, SurveyGeometry(None)) == (None, "survey")
+    assert resolve_geometry(dataset, "LF", SurveyGeometry(None)) == ("LF", "user")
 
 
-def test_unknown_survey_clears_both_metadata_geometry_tokens(reduced_workdir: WorkDir) -> None:
+def test_unresolved_survey_clears_both_metadata_geometry_tokens(reduced_workdir: WorkDir) -> None:
     from dataclasses import replace
+
+    from asymmetry.core.workflow.recipe import retained_window
 
     dataset = reduced_workdir.reduced(SCAN_RUNS[0])
     stamped = replace(dataset, metadata=dataset.metadata | {"field": 110.0, "field_state": "TF"})
-    result = screen_run(stamped, survey_geometry="unknown", run_number=SCAN_RUNS[0])
+    result = screen_run(stamped, survey=SurveyGeometry(None), run_number=SCAN_RUNS[0])
     assert result.geometry is None
     assert "field geometry not recorded" in result.scope_note
+    # The window is the record the wizard fitted, after its own analysis rebinning.
+    rebin = result.recommendation["rebin_factor"]
+    assert result.time_window == retained_window(stamped, rebin)
+    assert result.to_dict()["time_window"] == list(result.time_window)
 
 
 def test_an_unknown_geometry_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unknown geometry"):
         resolve_geometry(_dataset({}), "sideways")
     with pytest.raises(ValueError, match="Unknown geometry"):
-        resolve_geometry(_dataset({}), None, "sideways")
+        resolve_geometry(_dataset({}), None, SurveyGeometry("sideways"))
 
 
 def test_scope_names_are_physics_shortcuts() -> None:

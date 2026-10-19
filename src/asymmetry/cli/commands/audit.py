@@ -195,7 +195,16 @@ def report_obligations(roots: list[Path], text: str) -> list[str]:
     from asymmetry.core.workflow.workdir import WorkDir
 
     workdirs = [workdir for workdir in map(WorkDir, roots) if workdir.manifest_path.is_file()]
-    numbers = set(re.findall(r"\b\d+\b", text))
+    # Run ranges match on whitespace-free, dash-normalised text: "201 – 206" is 201-206.
+    ranges = re.sub(r"\s+", "", text).replace("–", "-").replace("—", "-")
+    # Any global fit is simultaneous across its runs, whichever model it shares.
+    joint = [
+        (workdir.selection, {int(row["key"]) for row in series["trend"]["rows"]})
+        for workdir in workdirs
+        for path in workdir.series_dir.glob("*.json")
+        for series in [json.loads(path.read_text(encoding="utf-8"))]
+        if series["kind"] == "global"
+    ]
     messages: list[str] = []
     surveys = {
         workdir.selection: workdir.read_survey()
@@ -203,48 +212,34 @@ def report_obligations(roots: list[Path], text: str) -> list[str]:
         if workdir.survey_path.is_file()
     }
     for selection, survey in surveys.items():
-        if str(len(survey["runs"])) not in numbers:
+        count = len(survey["runs"])
+        if not re.search(rf"\b{count}\s+(?:[^\s.,;:]+\s+){{0,2}}runs?\b", text):
             messages.append(
-                f"Report the folder coverage: {survey['folder']} contains "
-                f"{len(survey['runs'])} runs, including calibrations and non-scan records."
+                f"Report the folder coverage as '{count} runs': {survey['folder']} contains "
+                f"{count} runs, including calibrations and non-scan records."
             )
         scans = [ScanGroup(**entry) for entry in survey["scans"]]
         for scan in scans:
-            if (
-                len(scan.runs) > _SHORT_SCAN_RUNS
-                and not {str(min(scan.runs)), str(max(scan.runs))} <= numbers
+            spellings = {run_spec(scan.runs), f"{min(scan.runs)}-{max(scan.runs)}"}
+            if len(scan.runs) > _SHORT_SCAN_RUNS and not any(
+                re.search(rf"(?<!\d){re.escape(spelling)}(?!\d)", ranges) for spelling in spellings
             ):
                 messages.append(
                     f"Report this scan's explicit run members: {scan.instrument} "
                     f"{scan.axis} scan, {run_spec(scan.runs)}; a total folder range is not "
                     "per-scan provenance."
                 )
-        transverse = {
-            (row["instrument"], row["run_number"])
-            for row in survey["runs"]
-            if row["geometry"] == "TF" or row["precession"] == "larmor"
-        }
-        joint = [
-            set(int(row["key"]) for row in series["trend"]["rows"])
-            for member in workdirs
-            if member.selection == selection
-            for path in member.series_dir.glob("*.json")
-            for series in [json.loads(path.read_text(encoding="utf-8"))]
-            if series["kind"] == "global"
-            and "nu" in series["shared_params"]
-            and {"Delta", "a_L"} & set(series["shared_params"])
-            and "B_L" in series["field_params"]
-        ]
-        for batch in coupled_field_groups(scans, transverse):
-            missing = [scan for scan in batch if not any(set(scan.runs) <= runs for runs in joint)]
+        fitted = [runs for owner, runs in joint if owner == selection]
+        for batch in coupled_field_groups(scans, survey["runs"]):
+            missing = [scan for scan in batch if not any(set(scan.runs) <= runs for runs in fitted)]
             if missing:
                 messages.append(
                     f"COUPLED FIELD GROUPS: {len(missing)} temperature groups have no "
                     "simultaneous fit. Independent fit-series results do not measure "
-                    "shared dynamic parameters. Use fit-global --groups with a dynamic "
-                    "KT + Constant, sharing its width, nu and amplitudes with "
-                    "--field-param B_L; the "
-                    "survey prints the group members."
+                    "shared dynamic parameters. Fit each group's fields together with "
+                    "fit-global --groups, sharing the model's relaxation parameters; the "
+                    "survey prints the group members and a dynamic Kubo-Toyabe starting "
+                    "command. Fit competing coupled models the same way and compare them."
                 )
     return messages
 

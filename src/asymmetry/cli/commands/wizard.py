@@ -6,6 +6,7 @@ import argparse
 import shlex
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from asymmetry.cli._output import (
     UserError,
@@ -17,6 +18,9 @@ from asymmetry.cli._output import (
 )
 from asymmetry.cli._runs import range_text, reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+
+if TYPE_CHECKING:
+    from asymmetry.core.workflow.screen import SurveyGeometry
 
 #: Candidates listed in the human-readable table.
 _TOP_CANDIDATES = 5
@@ -104,7 +108,7 @@ def run(args: argparse.Namespace) -> None:
         result = screen_run(
             dataset,
             geometry=args.geometry,
-            survey_geometry=_survey_geometry(workdir, selection, args.run),
+            survey=_survey_geometry(workdir, selection, args.run),
             scope_preset=args.scope,
             include=_names(args.include),
             exclude=_names(args.exclude),
@@ -120,9 +124,7 @@ def run(args: argparse.Namespace) -> None:
             if result.runner_up is None
             else result.runner_up.with_window(t_min=args.tmin, t_max=args.tmax),
         )
-    time_window = (float(dataset.time[0]), float(dataset.time[-1]))
-    screen_payload = result.to_dict() | {"time_window": time_window}
-    wizard_path = workdir.write_wizard(args.run, screen_payload)
+    wizard_path = workdir.write_wizard(args.run, result.to_dict())
     recipe_name = f"wizard-{args.run}"
     recipe_path = (
         None if result.recipe is None else workdir.write_recipe(recipe_name, result.recipe)
@@ -162,7 +164,7 @@ def run(args: argparse.Namespace) -> None:
     if args.json:
         emit_json(
             payload(
-                screen=screen_payload,
+                screen=result.to_dict(),
                 wizard_path=str(wizard_path),
                 recipe_name=None if recipe_path is None else recipe_name,
                 recipe_path=None if recipe_path is None else str(recipe_path),
@@ -174,7 +176,7 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(args.folder, line_recipe, result, wizard_path, recipe_path, plot_path, plot_note))
-    print(render_fit_windows({args.run: time_window}))
+    print(render_fit_windows({args.run: result.time_window}))
     if args.scope == "tf-superconductor":
         print(
             "SIGNAL FRACTIONS: report the oscillating sample amplitude and the "
@@ -333,22 +335,23 @@ def _names(text: str) -> list[str]:
     return [name.strip() for name in text.split(",") if name.strip()]
 
 
-def _survey_geometry(workdir, selection, run_number: int) -> str | None:
-    """The geometry the folder's survey resolved for *run_number*, if surveyed.
+def _survey_geometry(workdir, selection, run_number: int) -> SurveyGeometry | None:
+    """The folder survey's reading of *run_number*, if surveyed.
 
     The survey may have *measured* it from Larmor precession, which is the only
     source that can speak for a file recording no field state; so when a survey
     exists in the work directory its reading beats this one dataset's metadata.
     The row is the *selection*'s — a survey without ``--instrument`` lists
     every instrument in the folder, and two may share the run number. ``None`` when the folder was
-    never surveyed or the run is not in the survey; ``"unknown"`` when the
-    survey refuted the file's stamp without resolving the geometry.
+    never surveyed or the run is not in the survey.
     """
+    from asymmetry.core.workflow.screen import SurveyGeometry
+
     if not workdir.survey_path.exists():
         return None
     for row in workdir.read_survey()["runs"]:
         if row["run_number"] == run_number and selection.matches(row["prefix"]):
-            return row["geometry"] or "unknown"
+            return SurveyGeometry(row["geometry"])
     return None
 
 

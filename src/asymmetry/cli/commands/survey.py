@@ -416,12 +416,7 @@ def _render(survey, survey_path: Path) -> str:
 
     from asymmetry.core.workflow.survey import coupled_field_groups
 
-    transverse = {
-        (row.instrument, row.run_number)
-        for row in survey.runs
-        if row.geometry == "TF" or row.precession.state == "larmor"
-    }
-    for batch in coupled_field_groups(survey.scans, transverse):
+    for batch in coupled_field_groups(survey.scans, [row.to_dict() for row in survey.runs]):
         instrument = batch[0].instrument
         options = _selection_options(survey, instrument, clashes)
         folder = shlex.quote(survey.folder)

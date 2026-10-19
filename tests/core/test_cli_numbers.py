@@ -159,7 +159,7 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     draft = tmp_path / "summary.md"
     # The folder's files carry deadtimes this reduction left off, which a draft must say.
     draft.write_text(
-        f"{len(ALL_RUNS)} runs; ZF scan {min(ZF_RUNS)}-{max(ZF_RUNS)}; "
+        f"{len(ALL_RUNS)} runs; ZF scan {min(ZF_RUNS)} – {max(ZF_RUNS)}; "
         "the reduction left deadtime off.\n",
         encoding="utf-8",
     )
@@ -184,9 +184,8 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     assert f"----- BEGIN -----\n{draft.read_text().strip()}\n----- END -----" in out
 
 
-@pytest.mark.parametrize("width", ["Delta", "a_L"])
 def test_report_provenance_and_coupled_fits_are_required(
-    workflow_folder: Path, tmp_path: Path, width: str
+    workflow_folder: Path, tmp_path: Path
 ) -> None:
     from dataclasses import replace
 
@@ -203,7 +202,7 @@ def test_report_provenance_and_coupled_fits_are_required(
     workdir = WorkDir(tmp_path / "work")
     workdir.write_manifest(RunSelection(workflow_folder, None))
     workdir.write_survey(replace(survey, runs=rows, scans=_scan_groups(rows)[0]).to_dict())
-    missing = report_obligations([workdir.root], "A draft")
+    missing = report_obligations([workdir.root], "A draft at 6 K; Figure 6.")
     assert any("6 runs" in message for message in missing)
     assert any("COUPLED FIELD GROUPS: 2" in message for message in missing)
     for index, members in enumerate([[201, 202, 203], [204, 205, 206]]):
@@ -214,12 +213,8 @@ def test_report_provenance_and_coupled_fits_are_required(
     text = "6 runs, two temperature groups: 201-203 and 204-206."
     assert any("COUPLED FIELD GROUPS: 2" in m for m in report_obligations([workdir.root], text))
     for index in range(2):
-        stored = workdir.read_series(str(index)) | {
-            "kind": "global",
-            "shared_params": ["A_1", width, "nu", "A_bg"],
-            "field_params": ["B_L"],
-        }
-        workdir.write_series(str(index), stored)
+        # Any simultaneous fit clears the gate, whichever model it shares.
+        workdir.write_series(str(index), workdir.read_series(str(index)) | {"kind": "global"})
     assert report_obligations([workdir.root], text) == []
 
 

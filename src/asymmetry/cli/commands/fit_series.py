@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import shlex
+from collections import Counter
 from pathlib import Path
 
 from asymmetry.cli._axis import add_axis_arguments, axis_from_arguments
@@ -240,10 +241,10 @@ def run(args: argparse.Namespace) -> None:
     ]
     if runner_up in workdir.recipe_names():
         alternative = workdir.read_recipe(runner_up)
-        distributed = (
-            recipe.expression == "Exponential + Constant"
-            and alternative.expression == "StretchedExponential + Constant"
-        )
+        ours = Counter(recipe.model().component_names)
+        theirs = Counter(alternative.model().component_names)
+        # The alternative swaps a single-rate decay for a distributed-rate (stretched) one.
+        distributed = "Exponential" in ours - theirs and "StretchedExponential" in theirs - ours
         if 2 * len(misfit) >= len(outcome.results) or distributed:
             supplied = "" if args.x is None else f" --x {shlex.quote(args.x)}"
             start = "" if args.start is None else f" --start {args.start}"
