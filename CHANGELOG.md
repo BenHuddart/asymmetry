@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agent analysis preserves geometry, coupled-fit and report provenance.**
+  An unresolved survey no longer revives a file's TF stamp in the wizard;
+  high-field sweep points remain members, with a warning when internal-field
+  precession makes an apparent TF match ambiguous. Repeated ZF/weak-field groups get a
+  simultaneous-fit command and are checked by the summary audit. The wizard
+  and time-domain fits print their actual time windows, and the Codex
+  evaluation runner audits the final report after image review. Comparable
+  simpler precession and distributed-relaxation recipes are offered for scan
+  checks; model guidance distinguishes dense/dilute field distributions and
+  dipolar coupling from fluctuation rates. Codex evals now default to GPT-6 Luna.
 - **Commands that produce results end with the audit step.** ``fit``,
   ``fit-series``, ``fit-global``, ``trend``, ``integral-scan`` and ``fourier``
   close their text output with "write the summary to summary.md and run

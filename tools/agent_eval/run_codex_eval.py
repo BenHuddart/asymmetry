@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 
 RUBRIC_DIR = Path(__file__).resolve().parent / "rubrics"
-DEFAULT_MODEL = "gpt-5.6-luna"
+DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_PROMPT = (
     "This directory contains the data from a recent muSR experiment. Can you "
     "analyse these using Asymmetry and present me a summary of what they show?"
@@ -47,7 +47,17 @@ image inputs, in the order listed below. Inspect their pixels directly and
 reconcile the visual evidence with the numerical CLI output already in this
 conversation. Distinguish algorithmically detected quantities from visual
 features such as shoulders or weak lines. Now write the final user-facing
-scientific summary, including the relevant provenance and limitations.
+scientific summary using the installed skill's complete summary template.
+This is the final report, so preserve the analysis and provenance from the
+first turn rather than replacing them with a shorter recap. Include the total
+folder coverage, each scan's run members and geometry evidence, calibration,
+the physical meaning of every model component, and the fit/FFT windows and
+resolution alongside the values they qualify. Explain any uncompleted work.
+
+After inspecting these images, write the complete final report to summary.md
+and run asymmetry audit summary.md. Resolve its findings, then copy that final
+audited file verbatim into your reply. An audit of a first-turn draft does not
+audit a different report written after image review.
 """
 EVALUATION_INSTRUCTIONS = """# Agent evaluation boundary
 
@@ -291,6 +301,7 @@ def build_resume_command(
     command = [
         args.codex,
         "exec",
+        "--approve-for-me",
         "resume",
         "--json",
         "--ignore-user-config",
@@ -460,6 +471,21 @@ def completed_turns(events: list[dict]) -> int:
     return sum(event.get("type") == "turn.completed" for event in events)
 
 
+def final_report_audited(summary: str, events: list[dict]) -> bool:
+    """Whether the last completed audit printed this exact final report as passed."""
+    for event in reversed(events):
+        item = event.get("item", {})
+        if (
+            event.get("type") == "item.completed"
+            and item.get("type") == "command_execution"
+            and "asymmetry audit " in item.get("command", "")
+        ):
+            _, begin, body = item.get("aggregated_output", "").partition("----- BEGIN -----\n")
+            report, end, _ = body.partition("\n----- END -----")
+            return bool(begin and end and report.strip() == summary.strip())
+    return False
+
+
 def write_outputs(
     args: argparse.Namespace,
     data: Path,
@@ -494,7 +520,8 @@ def write_outputs(
         "returncode": returncode,
         "wall_seconds": round(elapsed, 1),
         "usage": usage(events),
-        "protocol": "two_turn_image_review_v1",
+        "protocol": "two_turn_image_review_v2",
+        "final_report_audited": final_report_audited(summary, events),
         "turn_completed": turns >= 2,
         "turns_completed": turns,
         "image_inputs": serializable_images,

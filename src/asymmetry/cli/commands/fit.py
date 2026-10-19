@@ -7,7 +7,13 @@ import math
 from pathlib import Path
 from typing import Any
 
-from asymmetry.cli._output import emit_json, format_number, payload, render_table
+from asymmetry.cli._output import (
+    emit_json,
+    format_number,
+    payload,
+    render_fit_windows,
+    render_table,
+)
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
 from asymmetry.cli._runs import reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
@@ -46,7 +52,7 @@ def run(args: argparse.Namespace) -> None:
     if args.tmin is not None or args.tmax is not None:
         recipe = recipe.with_window(t_min=args.tmin, t_max=args.tmax)
 
-    result = fit_one(dataset, recipe)
+    result = fit_one(dataset, recipe) | {"time_window": recipe.time_window(dataset)}
     workdir.write_fit(
         args.run,
         Path(args.recipe).stem,
@@ -80,6 +86,7 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(result, recipe, plot_path))
+    print(render_fit_windows({args.run: result["time_window"]}))
     if result["background_held"]:
         print(f"NOTE: {HELD_BACKGROUND} Say in the summary that it was held.")
     from asymmetry.cli.commands.fourier import close_pair

@@ -9,7 +9,7 @@ import pytest
 
 from asymmetry import cli
 from asymmetry.cli._numbers import unverified_numbers
-from tests.core.conftest import SCAN_RUNS, ZF_RUNS
+from tests.core.conftest import ALL_RUNS, SCAN_RUNS, ZF_RUNS
 
 _LOG = """$ asymmetry fit-series runs --runs 102-106
 run  temperature  chi2_red
@@ -158,7 +158,11 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     assert "Still unfitted: 1 measurement(s)" in capsys.readouterr().out
     draft = tmp_path / "summary.md"
     # The folder's files carry deadtimes this reduction left off, which a draft must say.
-    draft.write_text("A draft; the reduction left deadtime off.\n", encoding="utf-8")
+    draft.write_text(
+        f"{len(ALL_RUNS)} runs; ZF scan {min(ZF_RUNS)} – {max(ZF_RUNS)}; "
+        "the reduction left deadtime off.\n",
+        encoding="utf-8",
+    )
     capsys.readouterr()
 
     cli.main(["audit", str(draft), "--json"])
@@ -177,7 +181,45 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     out = capsys.readouterr().out
     assert "your final message is this summary itself" in out
     # The passed text is printed whole, for the reply to copy rather than retype.
-    assert "----- BEGIN -----\nA draft; the reduction left deadtime off.\n----- END -----" in out
+    assert f"----- BEGIN -----\n{draft.read_text().strip()}\n----- END -----" in out
+
+
+def test_report_provenance_and_coupled_fits_are_required(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.audit import report_obligations
+    from asymmetry.core.workflow.survey import _scan_groups, survey_folder
+    from asymmetry.core.workflow.workdir import RunSelection, WorkDir
+
+    survey = survey_folder(workflow_folder)
+    rows = [
+        replace(survey.runs[1], run_number=201 + 3 * i + j, temperature=temperature, field=field)
+        for i, temperature in enumerate([160.0, 180.0])
+        for j, field in enumerate([0.0, 5.0, 10.0])
+    ]
+    workdir = WorkDir(tmp_path / "work")
+    workdir.write_manifest(RunSelection(workflow_folder, None))
+    workdir.write_survey(replace(survey, runs=rows, scans=_scan_groups(rows)[0]).to_dict())
+    missing = report_obligations([workdir.root], "A draft at 6 K; Figure 6.")
+    assert any("6 runs" in message for message in missing)
+    assert any("COUPLED FIELD GROUPS: 2" in message for message in missing)
+    for index, members in enumerate([[201, 202, 203], [204, 205, 206]]):
+        workdir.write_series(
+            str(index),
+            {"kind": "series", "trend": {"rows": [{"key": str(run)} for run in members]}},
+        )
+    text = "6 runs, two temperature groups: 201-203 and 204-206."
+    assert any("COUPLED FIELD GROUPS: 2" in m for m in report_obligations([workdir.root], text))
+    # One global fit over both temperatures forces one set of dynamics on them.
+    union = {"kind": "global", "trend": {"rows": [{"key": str(run)} for run in range(201, 207)]}}
+    workdir.write_series("union", union)
+    assert any("COUPLED FIELD GROUPS: 2" in m for m in report_obligations([workdir.root], text))
+    for index in range(2):
+        # Any simultaneous fit clears the gate, whichever model it shares.
+        workdir.write_series(str(index), workdir.read_series(str(index)) | {"kind": "global"})
+    assert report_obligations([workdir.root], text) == []
 
 
 def test_a_temperature_scan_used_only_for_alpha_is_sent_to_a_series_fit() -> None:

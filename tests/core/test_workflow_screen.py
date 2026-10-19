@@ -1,9 +1,8 @@
 """Tests for :mod:`asymmetry.core.workflow.screen`.
 
 Screening runs the whole fit wizard, which is seconds of fitting per call, so
-this file makes exactly **two** wizard builds: one with the geometry the file
-implies and one with an override. Everything each build can answer is asserted
-against that build rather than triggering another.
+this file shares its wizard builds across assertions: file geometry, an
+explicit override, and an unresolved survey that must clear stale file tokens.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.screen import (
     RUNNER_UP_AICC,
     SCOPE_PRESETS,
+    SurveyGeometry,
     resolve_geometry,
     screen_run,
 )
@@ -63,7 +63,7 @@ def test_resolve_geometry_reports_the_value_and_where_it_came_from(
 def test_an_override_wins_and_is_recorded_as_the_users() -> None:
     dataset = _dataset({"field": 0.0, "field_state": "TF"})
     assert resolve_geometry(dataset, "LF") == ("LF", "user")
-    assert resolve_geometry(dataset, "LF", "TF") == ("LF", "user")
+    assert resolve_geometry(dataset, "LF", SurveyGeometry("TF")) == ("LF", "user")
 
 
 def test_the_surveys_geometry_beats_this_datasets_own_metadata() -> None:
@@ -71,14 +71,36 @@ def test_the_surveys_geometry_beats_this_datasets_own_metadata() -> None:
     # is the only source that can speak for a file recording no field state.
     dataset = _dataset({"field": 100.0})
     assert resolve_geometry(dataset, None) == (None, "none")
-    assert resolve_geometry(dataset, None, "TF") == ("TF", "survey")
+    assert resolve_geometry(dataset, None, SurveyGeometry("TF")) == ("TF", "survey")
+
+
+def test_an_unresolved_survey_does_not_revive_the_files_tf_stamp() -> None:
+    dataset = _dataset({"field": 110.0, "field_state": "TF"})
+    assert resolve_geometry(dataset, None, SurveyGeometry(None)) == (None, "survey")
+    assert resolve_geometry(dataset, "LF", SurveyGeometry(None)) == ("LF", "user")
+
+
+def test_unresolved_survey_clears_both_metadata_geometry_tokens(reduced_workdir: WorkDir) -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow.recipe import retained_window
+
+    dataset = reduced_workdir.reduced(SCAN_RUNS[0])
+    stamped = replace(dataset, metadata=dataset.metadata | {"field": 110.0, "field_state": "TF"})
+    result = screen_run(stamped, survey=SurveyGeometry(None), run_number=SCAN_RUNS[0])
+    assert result.geometry is None
+    assert "field geometry not recorded" in result.scope_note
+    # The window is the record the wizard fitted, after its own analysis rebinning.
+    rebin = result.recommendation["rebin_factor"]
+    assert result.time_window == retained_window(stamped, rebin)
+    assert result.to_dict()["time_window"] == list(result.time_window)
 
 
 def test_an_unknown_geometry_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unknown geometry"):
         resolve_geometry(_dataset({}), "sideways")
     with pytest.raises(ValueError, match="Unknown geometry"):
-        resolve_geometry(_dataset({}), None, "sideways")
+        resolve_geometry(_dataset({}), None, SurveyGeometry("sideways"))
 
 
 def test_scope_names_are_physics_shortcuts() -> None:
@@ -200,7 +222,9 @@ def test_a_geometry_override_changes_the_geometry_source_and_the_resolved_scope(
 def _assessment(category: str, aicc: float, expression: str, parameters: int = 4):
     from types import SimpleNamespace
 
-    model = SimpleNamespace(component_expression_string=lambda: expression)
+    from asymmetry.core.fitting.composite import CompositeModel
+
+    model = CompositeModel.from_expression(expression)
     return SimpleNamespace(
         template=SimpleNamespace(category=category, model=model),
         aicc=aicc,
@@ -217,11 +241,30 @@ def test_a_precession_model_with_no_spectral_line_gets_the_best_relaxation_besid
     from asymmetry.core.workflow.screen import _runner_up
 
     bessel = _assessment("Oscillatory", 2249.1, "Bessel * Exponential + Constant", 5)
-    kubo_toyabe = _assessment("KT-like", 2260.6, "DynamicGKT_ZF + Constant")
+    kubo_toyabe = _assessment("KT-like", 2260.6, "DynamicGaussianKT + Constant")
     recommendation = SimpleNamespace(
         recommended_assessment=bessel, assessments=[bessel, kubo_toyabe]
     )
     # However far behind: the precession model fits a relaxation's shape.
     assert _runner_up(recommendation, lined=False) is kubo_toyabe
     # A line in the spectrum is precession's own evidence.
+    assert _runner_up(recommendation, lined=True) is None
+
+
+def test_a_close_nested_precession_model_is_a_portable_scan_alternative() -> None:
+    from types import SimpleNamespace
+
+    from asymmetry.core.workflow.screen import _runner_up
+
+    complex_model = _assessment(
+        "Oscillatory", 100.0, "Oscillatory * Gaussian + Exponential + Constant", 7
+    )
+    simple = _assessment("Oscillatory", 103.0, "Oscillatory * Gaussian + Constant", 5)
+    relaxation = _assessment("General", 104.0, "Exponential + Constant", 3)
+    recommendation = SimpleNamespace(
+        recommended_assessment=complex_model,
+        assessments=[complex_model, simple, relaxation],
+    )
+    assert _runner_up(recommendation, lined=True) is simple
+    simple.aicc = 111.0
     assert _runner_up(recommendation, lined=True) is None

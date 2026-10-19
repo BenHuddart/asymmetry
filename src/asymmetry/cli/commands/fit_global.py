@@ -19,6 +19,8 @@ from asymmetry.cli._output import (
     emit_json,
     format_number,
     payload,
+    render_fit_windows,
+    render_quality_counts,
     render_table,
     render_trend,
 )
@@ -191,6 +193,9 @@ def _fit_batch(args, workdir, selection, recipe, name: str, options: dict[str, A
         print(_render(group_payload))
         print()
     print(
+        render_quality_counts(result for group in batch.groups.values() for result in group.results)
+    )
+    print(
         "\n".join(
             [
                 f"{name} — {batch.expression}, {len(batch.groups)} group(s) ordered by "
@@ -199,6 +204,11 @@ def _fit_batch(args, workdir, selection, recipe, name: str, options: dict[str, A
                 render_trend(batch.trend),
                 "",
                 f"Batch written to {stored['series_path']}",
+                "MODEL COMPARISON: if competing coupled model families were fitted, "
+                "report representative shared values, uncertainties and fit quality "
+                "for each successful family. Choose using the sample physics and "
+                "joint diagnostics, not a single-run wizard ranking; a viable "
+                "comparison is a result to explain, not omit.",
                 f"Next: asymmetry trend {shlex.quote(args.folder)} --series {name} --model "
                 f"<law> --param <shared parameter> — or a law per group on its run-local "
                 f"parameters (--series {name}-<i>), then trend --from-fits across the groups.",
@@ -227,12 +237,18 @@ def _store_group(workdir, name: str, outcome, recipe, datasets, *, plot: bool) -
         "series_path": str(workdir.series_path(name)),
         "plots": [str(path) for path in plot_paths],
     }
-    workdir.write_series(
-        name,
+    stored = (
         outcome.to_dict()
-        | {"name": name, "recipe": recipe.to_dict(), "kind": "global", "trend_fits": {}}
-        | artefacts,
+        | {
+            "name": name,
+            "recipe": recipe.to_dict(),
+            "kind": "global",
+            "trend_fits": {},
+            "time_windows": {run: recipe.time_window(data) for run, data in datasets.items()},
+        }
+        | artefacts
     )
+    workdir.write_series(name, stored)
     if plot:
         for result, plot_path in zip(outcome.results, plot_paths, strict=True):
             run_number = result["run"]
@@ -248,7 +264,7 @@ def _store_group(workdir, name: str, outcome, recipe, datasets, *, plot: bool) -
                 expression=outcome.expression,
                 out_path=plot_path,
             )
-    return outcome.to_dict() | {"name": name} | artefacts
+    return stored
 
 
 def _render(outcome: dict) -> str:
@@ -290,6 +306,8 @@ def _render(outcome: dict) -> str:
         f"shared: {shared or '-'}",
         "",
         render_table(headers, rows),
+        "",
+        render_fit_windows(outcome["time_windows"]),
         "",
         f"Fit written to {outcome['series_path']}",
     ]
