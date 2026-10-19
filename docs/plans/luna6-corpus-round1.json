@@ -40,7 +40,7 @@
       "benzene-alc": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46"
     }
   },
-  "status": "partial; remaining cases running or unscored",
+  "status": "complete",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -1223,15 +1223,135 @@
       "boundary_check": "PASS: command inspection found staged/project files and Asymmetry CLI use; no personal/source reads, external calculator, network or delegation.",
       "boundary_pass": true,
       "permission_denials": 0
+    },
+    "benzene-alc": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Recognises the three sub-folders and analyses each separately, with its own work directory, never mixing runs between them.",
+          "pass": true,
+          "evidence": "Three folders surveyed separately with their own liquid/solid/solution workdirs."
+        },
+        {
+          "requirement": "Treats every folder as longitudinal-field ALC scans fitted with `integral-scan`, uses the 20 G TF runs only for alpha (naming, for each sub-folder it reduced with a measured alpha, a run and its value \u2014 one of the liquid's two calibration runs is enough), and says alpha was assumed 1.0 for `solution`.",
+          "pass": true,
+          "evidence": "All treated as LF integral scans; names29799 alpha1.1884\u21921.1916 and59731 alpha1.2736\u21921.2809; solution assumed1.0."
+        },
+        {
+          "requirement": "Liquid: reports from `integral-scan` fits one resonance in the CHMu(0) scan between 20.7 and 20.9 kG and two in the 28.5\u201330 kG scan, one between 28.9 and 29.0 kG and one between 29.5 and 29.6 kG, with uncertainties or fit quality.",
+          "pass": false,
+          "evidence": "CHMu0 fit20797.6\u00b11.39 G reported, but both o-p resonances are withheld as results; only sampled minima28940/29540 G given."
+        },
+        {
+          "requirement": "Does not integrate the red/green repeat 29800\u201329854 as an ordinary scan: either fits it as `--period green-red` with a pair model and the red\u2013green field step held from the command's printed offset, or sets it aside and says why.",
+          "pass": true,
+          "evidence": "Green-red repeat fitted with LorentzianLCRPair, dB fixed+44.06 G from printed red-minus-green\u221244.06 G; poor fit explicitly withheld."
+        },
+        {
+          "requirement": "Solid: reports two resonances from converged fits (a joint fit, or one windowed fit per resonance), one between 19.3 and 19.7 kG and one between 21.3 and 21.6 kG. A failed fit's position is not a fitted resonance.",
+          "pass": true,
+          "evidence": "Converged solid lines19483.2\u00b17.01 and21472.8\u00b17.87 G reported with uncertainties/chi2, second appropriately qualified for step background."
+        },
+        {
+          "requirement": "Solution: names the three samples and fits at least one scan, stating sample and temperature, with a resonance between 20.4 and 21.2 kG.",
+          "pass": false,
+          "evidence": "Names three solution samples, but withholds all fitted centres; gives only sampled aqueous300 K minimum20800.6 G."
+        },
+        {
+          "requirement": "Contains no A_\u03bc, A_p, D_\u03bc or resonance field that was not produced by a tool call in this session: no couplings from resonance fields by the worksheet's formulas.",
+          "pass": true,
+          "evidence": "No hand-converted A_mu/A_p/D_mu; qualified reported line parameters are CLI outputs."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Solid: from a converged joint fit of both resonances, notes that the lower one is the broader (separately windowed fits with their own backgrounds can hide the difference).",
+          "pass": false,
+          "evidence": "Separate solid windows only; no converged joint-width comparison."
+        },
+        {
+          "requirement": "Assigns in words: liquid lines are \u03940 (the 20.8 kG one the methylene CHMu proton, the pair near 29 kG ring protons); the solid's broad lower line is the \u03941 muon resonance and the narrower upper one a \u03940 line.",
+          "pass": false,
+          "evidence": "No Delta0/Delta1 molecular assignments."
+        },
+        {
+          "requirement": "Solution: fits several temperatures of one sample and reports the resonance field rising with temperature, as a list of fitted fields.",
+          "pass": false,
+          "evidence": "No solution temperature series of fitted centres; all withheld."
+        },
+        {
+          "requirement": "Solid: uses the logged sample temperature and notes the calibration run was taken colder than the scan.",
+          "pass": false,
+          "evidence": "Reports warming/logged scan temperatures but does not explicitly note calibration59731 was colder than scan."
+        },
+        {
+          "requirement": "Says the worksheet's time-domain questions (relaxation vs field, on-resonance oscillations) were or were not examined.",
+          "pass": true,
+          "evidence": "Says no time-domain wizard/Redfield used because observable is integral field scan; time-domain questions not examined."
+        },
+        {
+          "requirement": "Names the stored scan JSON and PNG for each fitted scan.",
+          "pass": false,
+          "evidence": "Names workdirs and decisive PNGs, but not stored scan JSON for every fit."
+        }
+      ],
+      "number_rule": "PASS: CHMu0 and solid centres/errors/widths verified in CLI notes; dB/period offset and sampled minima verified. No unsupported hyperfine formula result. Final exactly equals passed audit.",
+      "root_cause": "Scientific FAIL (liquid o-p fitted peaks and solution centre Musts), exact-copy PASS. Twenty explicit width-bound overrides were used. Aqueous300 K widthcheck converges at B0=20796.461849\u00b10.911940 G, Bwid=66.937061\u00b12.968717 G, chi2_red1.642; nearby window yields20796.2 G. Yet the two-width flank rule calls it range-limited despite a stable centre and visible recovery, causing wholesale withholding. Liquid o-p fits also withheld solely for high chi2. General fix: distinguish a conditional stable fitted centre from an established isolated line/fully constrained baseline, and replace misleading no-flanks language with the actual coverage limitation; preserve fit caveats rather than forcing a resonance claim.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1263.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/benzene-alc/data/solution --series solution-aq-300-local2 --param B0 --model Linear --workdir asymmetry-work-solution'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry survey /tmp/asymmetry-luna6-improvements/round1/benzene-alc/data'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/benzene-alc/data/solution --series solution-aq-300-local2 --param B0 --workdir asymmetry-work-solution'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round1/benzene-alc/data/solution --series solution-aq-300-local2 --param B0 --model Linear --workdir asymmetry-work-solution'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"jq -s 'map({name, fit: {expr:.fit.expression, chi2:.fit.reduced_chi_squared, params:.fit.parameters, errors:.fit.uncertainties, bound:.fit.params_at_bound, x_min:.fit.x_min,x_max:.fit.x_max,n:.fit.n_points, notes:.fit.notes}, fields: [.fit_scan.points|map(.x)|min, .fit_scan.points|map(.x)|max]})' asymmetry-work-liquid/scans/liquid-chmu0-resonance.json asymmetry-work-liquid/scans/liquid-op-line-1.json asymmetry-work-liquid/scans/liquid-op-line-2.json asymmetry-work-liquid/scans/liquid-op-rg-fit.json asymmetry-work-solid/scans/solid-warming-200-linear.json asymmetry-work-solid/scans/solid-warming-200-local2.json asymmetry-work-solution/scans/solution-aq-350-local2.json asymmetry-work-solution/scans/solution-aq-325-local2.json asymmetry-work-solution/scans/solution-aq-300-local2.json asymmetry-work-solution/scans/solution-aq-275-local2.json asymmetry-work-solution/scans/solution-hx-200-local2.json asymmetry-work-solution/scans/solution-hx-250-local2.json asymmetry-work-solution/scans/solution-hx-225-local2.json asymmetry-work-solution/scans/solution-hx-200b-local2.json asymmetry-work-solution/scans/solution-hx-180-local2.json asymmetry-work-solution/scans/solution-hx-275-local2.json asymmetry-work-solution/scans/solution-hx-300-local2.json asymmetry-work-solution/scans/solution-hx-320-local2.json asymmetry-work-solution/scans/solution-hx-335-local2.json asymmetry-work-solution/scans/solution-water-300-local2.json asymmetry-work-solution/scans/solution-water-280-local2.json asymmetry-work-solution/scans/solution-water-320-local2.json asymmetry-work-solution/scans/solution-water-360-local2.json\"",
+          "exit_code": 5
+        }
+      ],
+      "summary_sha256": "3b057a15a0f166d72c4cf170e946c30148e1c61bb7eb51f3031f205ace0190ca",
+      "rubric_sha256": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round1/benzene-alc",
+      "staged_skill_sha256": "07c9bc53e785c1c78fe19949be1aba9170b94ed4de1b2e4f5cdf5b5a8ccb8bfc",
+      "boundary_check": "PASS: command inspection found only staged/project files and Asymmetry CLI; no personal/source read, external calculator, network or delegation.",
+      "boundary_pass": true,
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 12,
+    "scored": 13,
     "scientific_pass": 6,
-    "must_pass": 68,
-    "must_total": 76,
-    "exact_copy_pass": 11,
+    "must_pass": 73,
+    "must_total": 83,
+    "exact_copy_pass": 12,
     "combined_pass": 5,
-    "boundary_pass": 11
+    "boundary_pass": 12
+  },
+  "comparison": {
+    "same_13_baseline_scientific_pass": 4,
+    "same_13_round1_scientific_pass": 6,
+    "note": "Targeted wave, not fresh24 confirmation. EuO/RF/repolarisation repaired; maleic slope withdrawal regresses; AFM physics scope repaired. One same-content personal-skill boundary failure is separate."
   }
 }

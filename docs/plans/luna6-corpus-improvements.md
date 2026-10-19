@@ -31,13 +31,14 @@ that warning must be resolved as well as the literal rubric failures.
 - The baseline full validation has four GUI sizing failures in unchanged GUI
   code; record these honestly. Do not expand this task into GUI redesign.
 - Quiet heartbeat `gpt-6-luna-corpus-improvements` wakes this chat every thirty
-  minutes. Inspect this plan and current processes, continue real work, and
+  minutes initially, now every ten minutes to shorten idle gaps. Inspect this
+  plan and current processes, continue real work, and
   notify only on meaningful scored rounds, completion or required input.
   Disable it once the objective is achieved.
 
 ## Round one
 
-Implementation complete; awaiting evaluation:
+Implementation and evaluation complete:
 
 - Skill checkpoints distinguish integral polarisation recovery, rate
   decoupling, resonances, magnetic broadening, superconducting Gaussian widths,
@@ -70,7 +71,7 @@ baseline science or exact-copy failures (including the AFM scope warning):
 `copper-diffusion`, `afm-high-tf-mdu`, `lifeas-psi`, `trsb-re6zr`, `basics`,
 `corannulene-alc`, `benzene-rf`, `benzene-repolarisation`, `benzene-alc`.
 
-Round one is committed as `ea920f9`. Its 13-case wave is running in
+Round one is committed as `ea920f9`. Its 13-case wave completed in
 `/tmp/asymmetry-luna6-improvements/round1` with Codex / `gpt-6-luna`, three
 concurrent cases and BLAS threads pinned to one. The first three cases entered
 model execution successfully. `wave-metadata.json` records the commit, skill
@@ -79,9 +80,9 @@ The supervising exec session is `98755`; inspect host processes and per-case
 `cost.json`/transcripts before relaunching after any interruption. No round-one
 reports were scored at launch. Keep CLI/skill frozen until the wave completes.
 
-Fourth checkpoint: twelve reports scored in
-[luna6-corpus-round1.json](luna6-corpus-round1.json), with 68/76 Musts,
-6/12 scientific passes, 11/12 exact-copy passes and 5/12 combined passes.
+Final score: thirteen reports scored in
+[luna6-corpus-round1.json](luna6-corpus-round1.json), with 73/83 Musts,
+6/13 scientific passes, 12/13 exact-copy passes and 5/13 combined passes.
 Sn deletes one plot-file entry after audit, so its exact-copy check fails.
 EuO repairs its baseline missing
 paramagnetic rate: it used pre-t0 background correction and a separate
@@ -107,8 +108,12 @@ hot sharpening as molecular reorientation. TRSB now compares Delta and nu,
 but a coupled-fit reversal leads it to reject a candidate TRSB headline.
 Basics repairs foil saturation at 13–15, but still treats the Ag calibration
 as ZF with a temperature axis and replaces the Ag TF frequency/phase exercise
-with integrated asymmetry. Only benzene ALC is still running;
-these are partial results, not a wave verdict. Scoring records include the
+with integrated asymmetry. Benzene ALC still fails by withholding both liquid
+ring-proton fits and all solution fitted centres. Twenty width overrides were
+used; one solution centre is stable across nearby windows with chi2_red 1.642,
+but the two-width coverage rule makes the CLI call it range-limited. Distinguish
+a qualified fitted centre from a demonstrated isolated resonance and baseline.
+Scoring records include the
 frozen hashes, final-summary hashes, actual command evidence and Should gaps.
 Tests/logs use `/tmp/asymmetry-luna6-round1-*`. Once targeted cases pass,
 run all 24 from fresh projects and score the entire wave; do not pool latest
@@ -128,7 +133,7 @@ interpretation when material context is incomplete; distinguish testing a
 superconducting width model from asserting that broadening proves a vortex
 lattice. Review why host skills remain discoverable despite the runner's
 skip-host-skill-discovery option, before a fresh confirmation wave.
-Finish scoring all thirteen first attempts before choosing round-two edits.
+All thirteen first attempts have now been scored; round two may proceed.
 
 Additional round-two candidates: choose the observable before satisfying scan
 coverage (TF field scans require frequency/phase or amplitude, not the integral
