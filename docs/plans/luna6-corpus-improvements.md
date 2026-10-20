@@ -690,3 +690,17 @@ windows not a joint width assignment, and differential mean-asymmetry control
 remains weak/unresolved. Literal pass is not a claim of complete physics.
 Corannulene remains live; keep CLI/skill frozen. Host has 16 GiB available,
 zero swap/PSI and 6.3 GiB scratch free. Do not launch full24 until it is scored.
+
+Round seven COMPLETE: 17/17 Musts, 2/2 scientific, exact-copy, combined and
+boundary. Corannulene recovers cold 15306.1 ± 27.1 G / width 870.45 ± 75.4 G
+with a wider Cubic baseline, explicit cold/hot width/field comparison and
+conditional molecular-reorientation/anisotropy interpretation. Whole-background
+limitations and absent radical model are explicit. Remaining Should/quality
+caveats are recorded, not silently promoted to new Musts. Both actual replies
+match their audited files. No code/skill changes before fresh confirmation.
+Prepared `/tmp/asymmetry-luna6-confirmation1-wave.sh` uses --set all, 24 fresh
+projects, gpt-6-luna, max3 cases, BLAS1 and same protocol/source. Total staged
+corpus data is 1.76 GiB; 6.3 GiB scratch free before launch is sufficient with
+headroom for logs/products. Inspect processes again, commit scores, then launch.
+Score every full-gate first attempt, including AFM physics scope; never pool
+older passes. The objective remains incomplete until that fresh gate passes.

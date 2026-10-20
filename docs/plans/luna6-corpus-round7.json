@@ -20,7 +20,7 @@
       "benzene-alc": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46"
     }
   },
-  "status": "partial; remaining cases running or unscored",
+  "status": "complete; both first attempts scored",
   "cases": {
     "benzene-alc": {
       "verdict": "PASS",
@@ -130,15 +130,129 @@
       "boundary_pass": true,
       "boundary_check": "PASS: completed commands use staged skill, supplied data/log metadata and installed CLI. jq selects stored CLI fields without scientific calculations. No host skill/source/network/ad hoc numerical scripts.",
       "permission_denials": 0
+    },
+    "corannulene-alc": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the two high-field ALC scans (118259\u2013118416 and 118417\u2013118515) as separate longitudinal-field integral-asymmetry scans at two temperatures. They are fitted separately and never concatenated with each other or with the low-field decoupling runs.",
+          "pass": true,
+          "evidence": "Cold 118259\u2013118416 and hot 118417\u2013118515 LF integral scans separate, never concatenated."
+        },
+        {
+          "requirement": "Separates the 20 G TF calibration runs and the low-field (\u2264 5000 G) ZF/LF decoupling scans from the ALC scans, and names them as such.",
+          "pass": true,
+          "evidence": "Separate 20 G TF calibration and low-field ZF/LF recovery groups, named run lists."
+        },
+        {
+          "requirement": "Reports that the logged sample temperature is several kelvin below the setpoint, and labels the two ALC scans by logged temperature or states the offset.",
+          "pass": true,
+          "evidence": "Explicit logged-minus-setpoint offsets -4.43 to -11.43 K with relevant dense-scan blocks."
+        },
+        {
+          "requirement": "Runs `integral-scan` on both ALC scans, fitting resonances inside stated `--xmin/--xmax` windows, and reports each fitted centre, width, uncertainty and \u03c7\u00b2\u1d63 from its own output.",
+          "pass": true,
+          "evidence": "Local fits for both scans with stated windows, centres, widths, uncertainties and reduced chi squared; errors scaled where printed."
+        },
+        {
+          "requirement": "Reports two resonances in the hot (~410 K) scan: one centred between 6.9 and 7.3 kG and one between 14.6 and 15.0 kG.",
+          "pass": true,
+          "evidence": "Hot 7075.22 \u00b1 10.6 G and 14869.3 \u00b1 39.3 G (conditional Cubic centre), both inside required intervals."
+        },
+        {
+          "requirement": "Reports the resonance in the cold (~43 K) scan centred between 15.1 and 15.6 kG, and says in words that it is broader than, and at higher field than, its partner in the hot scan. Also states that the cold scan shows no narrow line near 7 kG.",
+          "pass": true,
+          "evidence": "Cold 15306.1 \u00b1 27.1 G, width 870.45 \u00b1 75.4 G; explicit broader and higher field than hot partner and no resolved narrow cold 7 kG line."
+        },
+        {
+          "requirement": "States the headline in words: the lines are sharper at high temperature (and a line appears near 7 kG), consistent with molecular reorientation averaging the hyperfine anisotropy. This is presented as interpretation, not a fitted result.",
+          "pass": true,
+          "evidence": "Cold broader/higher versus hot narrower plus hot-only narrow 7 kG line; explicitly consistent with molecular reorientation averaging hyperfine anisotropy on warming, conditional interpretation."
+        },
+        {
+          "requirement": "Says why there is no whole-scan fit: the background across a whole ALC scan is not a polynomial (e.g. a rise plus a step near 20 kG; the detail is illustrative \u2014 \"a cubic cannot follow the background over the whole range\" is enough).",
+          "pass": true,
+          "evidence": "Explains strongly changing/rising/stepped baseline and why a whole-range polynomial cannot supply individual lines; local windows used."
+        },
+        {
+          "requirement": "Says why there are no hyperfine couplings or site assignments: no radical ALC or hyperfine model is available (not merely that the fields were not converted, or that the tool does not print couplings).",
+          "pass": true,
+          "evidence": "Explicit unavailable radical ALC/hyperfine model prevents couplings, site assignments or motion-rate fit."
+        },
+        {
+          "requirement": "Contains no resonance field, width, hyperfine coupling, temperature, activation energy or run number that was not produced by a tool call in this session. The paper's 40 K/410 K and its couplings are background.",
+          "pass": true,
+          "evidence": "Numbers verified against completed scientific CLI commands only; no inferred couplings, activation law or external numeric values."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Says that two ALC temperatures show a change but support no activation law for the line positions or widths.",
+          "pass": false,
+          "evidence": "No explicit statement that two ALC temperatures alone cannot establish an activation law; no activation fit claimed."
+        },
+        {
+          "requirement": "Flags that the cold-scan line is asymmetric (a powder-like shape), so a single Lorentzian leaves \u03c7\u00b2\u1d63 well above 1 and the width depends on the window.",
+          "pass": false,
+          "evidence": "Baseline-sensitive cold widths/chi2 qualified, but no asymmetric powder-like shape explanation."
+        },
+        {
+          "requirement": "Chooses alpha from a TF run in the same block and beam configuration (e.g. 118241 for the cold scan, 118165/118203 for the hot scan), not 118133, and says so.",
+          "pass": false,
+          "evidence": "Uses survey-best 118133 throughout, not local-block TF calibration."
+        },
+        {
+          "requirement": "Describes the low-field LF scans qualitatively: the integral asymmetry recovers from its ZF value over tens to hundreds of gauss, and the recovery is steeper, with a higher plateau, at the lowest temperature than at 350\u2013440 K. States that a `MuRepolarisation` fit does not describe these curves (large \u03c7\u00b2\u1d63, unphysical amplitudes) rather than quoting its `A_hf`.",
+          "pass": false,
+          "evidence": "Cold curve numerically higher and poor MuRepolarisation documented, but no explicit steeper/higher cold plateau comparison."
+        },
+        {
+          "requirement": "Mentions the ZF temperature scan and that its integral asymmetry barely changes from 300 to 440 K, or says it was not analysed.",
+          "pass": false,
+          "evidence": "ZF time-domain analysis present, no explicit nearly constant integral or unanalysed-integral statement."
+        },
+        {
+          "requirement": "Points the reader to the stored scan JSON and plot files.",
+          "pass": true,
+          "evidence": "Stored scan/series JSON directories and named decisive high-field/recovery PNGs."
+        }
+      ],
+      "number_rule": "PASS: unverified_numbers against only completed asymmetry scientific commands, excluding audits and draft displays, returns no unsupported numbers. Direct output checks confirm cold Cubic 15306.1 G/870.45 G (scaled errors 27.1/75.4, chi2_red 2.533), hot Cubic 7075.22 G/324.84 G and 14869.3 G/360.16 G with printed uncertainties and mismatch. No radical coupling or motion-rate inference.",
+      "root_cause": "All ten literal Musts, exact-copy and boundary pass. Wider independent windows recover the cold broad resonance; conditional thermal comparison and whole-background explanation retained. Remaining scientific caveats: same global alpha despite beam-configuration changes, hot high-field baseline mismatch, cold width/centre baseline sensitivity, and no two-point activation-law inference. These Should/quality limitations are recorded rather than changing fixed rubric requirements. Fresh full24 confirmation is now eligible; this two-case pass alone is not the final gate.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 2149.9,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 12,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round7/corannulene-alc/data --series slit-scan --model Linear --param sigma'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "2a451add8bb3b790387549247cc1ae6527f37f1589242f7e929c0ead41c764ed",
+      "rubric_sha256": "db2d44507bcce99e2f21eb7efcbe45e707286c4f51ff591e669839e5000ee745",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round7/corannulene-alc",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses only staged project skill, supplied data/logbook and installed CLI/products; no host skill/source/network or ad hoc scientific scripts.",
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 1,
-    "scientific_pass": 1,
-    "must_pass": 7,
-    "must_total": 7,
-    "exact_copy_pass": 1,
-    "combined_pass": 1,
-    "boundary_pass": 1
-  }
+    "scored": 2,
+    "scientific_pass": 2,
+    "must_pass": 17,
+    "must_total": 17,
+    "exact_copy_pass": 2,
+    "combined_pass": 2,
+    "boundary_pass": 2
+  },
+  "gate_caveat": "Two targeted passes qualify source for fresh full24 confirmation; not itself a full gate."
 }
