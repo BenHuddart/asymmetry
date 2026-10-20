@@ -2034,3 +2034,6 @@ Confirmation5 now9/24scored: silicon6/6Musts and4/4Shoulds; same-run periodfit/g
 
 
 Confirmation5 now11/24scored: CDS6/6Musts,2/4Shoulds,exact-copyPASS with explicit noisyvisualtriplet judgement retained; RFbenzene5/5Musts,2/5Shoulds,copyFAILoneLF. Totals60/60Musts,11/11science,4/11copy/combined,11/11boundary,26/40Shoulds. RFdefaultintegral remains repaired. Read-only next-round finding: distinguish built-in RF exactdiagonalisation from unsupported microscopic site/DFT and analytic high-field comparison; generic no-Hamiltonian prose is misleading. No source edits during frozen wave.
+
+
+Confirmation5 now13/24scored: EuO5/5Musts,2/3Shoulds andcopper6/6Musts,3/3Shoulds; both exact-copyPASS afterpreparation. Totals71/71Musts,13/13science,6/13copy/combined,13/13boundary,31/46Shoulds. Retain GPSshorthand judgement, conditionalpoorEuOorderlaw/window-sensitiveparamagnetism andrawversusscaledARGUSresonance-error caveat. Read-only next-round finding: integral-fit parameter table prints raw errors while later note requests scaled errors; align presentation to prevent understated uncertainties. Source remains frozen.
