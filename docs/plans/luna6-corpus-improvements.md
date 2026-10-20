@@ -851,3 +851,18 @@ Partial full24:124/124 Musts,21/21 science/boundary,20/21 exact-copy/combined.
 Three remain; source frozen through whole gate despite nickel copy failure.
 Host13 GiB available,zero swap/PSI,3.7 GiB scratch free; max3 live models,
 no tests or duplicate runs. All raw first attempts retained outside repo.
+
+Corannulene and benzene repolarisation scored:8/10 and6/6 Musts, both
+copy/boundary pass. Corannulene SCIENTIFIC FAIL: correct cold15359 G/hot14933 G
+fit table is contradicted by prose saying the hot centre is higher; specific
+molecular reorientation averaging hyperfine anisotropy is replaced by generic
+dynamics wording. Retain this first-attempt failure. Local fits,calibration,
+whole-background/model limits otherwise pass. Benzene recovery preserves
+rising integral through4 kG,poor effective fits/negative diamagnetic term,
+return drift and LF geometry. Partial full24:138/140 Musts,22/23 science,
+23/23 boundary,22/23 copy,21/23 combined. Only benzene ALC remains live.
+Keep CLI/skill frozen until it finishes; do not restart/stop gate. Next-round
+candidate: reconcile comparative prose with paired estimates and distinguish
+qualitative mechanisms from unavailable quantitative microscopic fitting,
+plus simpler final-copy formatting. Host14 GiB available,zero swap/PSI,
+3.7 GiB scratch free; one model and no tests. Full objective still incomplete.
