@@ -556,7 +556,7 @@ options:
 ## `asymmetry audit`
 
 ```
-usage: asymmetry audit [-h] [--workdir WORKDIR] [--json] draft
+usage: asymmetry audit [-h] [--workdir WORKDIR] [--json | --prepare-reply] draft
 
 positional arguments:
   draft              The draft summary (a text or Markdown file)
@@ -566,6 +566,8 @@ options:
   --workdir WORKDIR  Work directory whose cli-output.log to check against (repeatable;
                      default: every ./asymmetry-work* directory here)
   --json             Emit the machine-readable payload
+  --prepare-reply    After all checks pass, remove terminal line endings from the
+                     draft before printing it
 ```
 
 ## `asymmetry skill`

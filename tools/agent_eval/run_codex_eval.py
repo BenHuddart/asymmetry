@@ -177,6 +177,9 @@ def agent_env(args: argparse.Namespace) -> dict[str, str]:
     env = dict(os.environ)
     env["PATH"] = f"{cli_bin_dir()}{os.pathsep}{env.get('PATH', '')}"
     env.setdefault("PYTHONUTF8", "1")
+    plot_cache = args.out / "project" / ".cache" / "matplotlib"
+    plot_cache.mkdir(parents=True, exist_ok=True)
+    env["MPLCONFIGDIR"] = str(plot_cache.resolve())
     if args.hdf4_dll_dir:
         env["ASYMMETRY_HDF4_DLL_DIR"] = str(args.hdf4_dll_dir)
     return env

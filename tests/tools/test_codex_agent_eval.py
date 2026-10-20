@@ -276,3 +276,12 @@ def test_report_replaces_characters_the_console_cannot_encode(tmp_path: Path, mo
     runner.report(args)
 
     stream.flush()
+
+
+def test_agent_plot_cache_is_writable_and_project_local(tmp_path: Path) -> None:
+    runner = _load_runner()
+    args = _args(runner, tmp_path)
+    cache = Path(runner.agent_env(args)["MPLCONFIGDIR"])
+    assert cache.is_relative_to(args.out / "project")
+    (cache / "probe").write_text("cache")
+    assert Path(runner.agent_env(args)["MPLCONFIGDIR"]) == cache

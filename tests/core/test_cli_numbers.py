@@ -182,7 +182,10 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     assert "your final message is this summary itself" in out
     # The passed text is printed whole, for the reply to copy rather than retype.
     assert f"----- BEGIN -----\n{draft.read_text()}\n----- END -----" in out
-    assert "COPY CHECK: 4 report lines; the final line is 'plots/review.png'" in out
+    assert (
+        "COPY CHECK: 4 report lines; terminal newline: yes; the final line is 'plots/review.png'"
+        in out
+    )
 
 
 @pytest.mark.parametrize(
@@ -795,3 +798,83 @@ def test_composition_axis_requires_its_experimental_source():
     log = "COMPOSITION AXIS: state concentration provenance and normalization."
     assert unstated("The relative concentration is shown in a table.", log)
     assert not unstated("Relative concentrations came from the run titles; full = 1.", log)
+
+
+@pytest.mark.parametrize("ending", ["\n", "\n\n", ""])
+def test_prepare_reply_only_removes_terminal_line_endings_after_a_pass(
+    tmp_path: Path, monkeypatch, capsys, ending: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "asymmetry-work"
+    root.mkdir()
+    (root / "cli-output.log").write_text("$ asymmetry info data\n")
+    draft = tmp_path / "summary.md"
+    body = "Measured signal.  \n\nFiles\nplots/result.png"
+    draft.write_text(body + ending)
+    cli.main(["audit", str(draft)])
+    assert draft.read_text() == body + ending
+    capsys.readouterr()
+    cli.main(["audit", str(draft), "--prepare-reply"])
+    out = capsys.readouterr().out
+    assert draft.read_bytes() == body.encode()
+    assert f"----- BEGIN -----\n{body}\n----- END -----" in out
+    assert "terminal newline: no" in out
+    draft.write_text("Unprinted result 98765.4321.\n")
+    cli.main(["audit", str(draft), "--prepare-reply"])
+    assert draft.read_text().endswith("\n")
+    assert "----- BEGIN -----" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "The Redfield fit failed because its exponent was negative.",
+        "Redfield was rejected as unresolved.",
+        "The activation energy is not established.",
+    ],
+)
+def test_failed_law_descriptions_do_not_claim_a_supported_mechanism(sentence: str) -> None:
+    from asymmetry.cli._numbers import unsupported_laws
+
+    log = "Fit of Redfield to Lambda against field\nLAW NOT ESTABLISHED\n"
+    assert unsupported_laws(sentence, log) == []
+    assert unsupported_laws("The Redfield law explains the rate.", log) == [
+        ("Redfield", "redfield")
+    ]
+
+
+def test_an_integral_only_scan_requires_its_first_local_dip_test(tmp_path: Path) -> None:
+    import numpy as np
+
+    from asymmetry.cli.commands.audit import _unfitted_dips
+    from asymmetry.core.transform import FieldScan
+    from asymmetry.core.workflow.integral_scan import field_scan_payload
+
+    root = tmp_path / "wd"
+    scans = root / "scans"
+    scans.mkdir(parents=True)
+    x = np.linspace(2000, 5000, 61)
+    scan = FieldScan(
+        x=x,
+        value=0.2 - 0.04 / (1 + ((x - 3500) / 180) ** 2),
+        error=np.full_like(x, 0.0005),
+        run_numbers=list(range(61)),
+        order_key="field",
+        method="integral",
+    )
+    payload = {"runs": list(range(61)), "scan": field_scan_payload(scan), "fit": None}
+    (scans / "measured.json").write_text(json.dumps(payload))
+    ((directory, name, window),) = _unfitted_dips([root])
+    assert (directory, name) == (root, "measured")
+    assert window["centre"] == pytest.approx(3500)
+    # A failed local test is still a test; it must be reported as unresolved,
+    # not repeatedly fitted until a noisy candidate becomes a claimed line.
+    fit = {
+        "success": False,
+        "parameters": {},
+        "next_dip_windows": [],
+        "x_min": window["x_min"],
+        "x_max": window["x_max"],
+    }
+    (scans / "local.json").write_text(json.dumps(payload | {"fit": fit}))
+    assert _unfitted_dips([root]) == []

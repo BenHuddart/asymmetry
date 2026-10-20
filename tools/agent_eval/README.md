@@ -262,3 +262,7 @@ python tools/agent_eval/render_command_reference.py --check  # verify
 
 `tests/tools/test_skill_package.py` runs the check, so a new CLI flag that
 never reaches `references/commands.md` fails the suite.
+
+Codex cases set `MPLCONFIGDIR` to a writable `.cache/matplotlib` directory in
+their staged project, so plotting does not rebuild a font cache against a
+read-only home directory. This cache is not analysis evidence.

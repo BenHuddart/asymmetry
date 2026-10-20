@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Agent reports can use `audit --prepare-reply` to finalize terminal whitespace
+  after checks pass; local scan candidates and co-added fit coverage are audited
+  without suppressing honest failed-law descriptions. Generalized Redfield
+  trends start on a physical positive-exponent domain with field-to-frequency
+  seeds; evaluation plots share a writable project-local Matplotlib cache.
+
 - **Integral scans identify their estimator.** The default count integral and
   the per-bin asymmetry mean are distinguished from green-minus-red period
   subtraction. Fourier output suggests a conditional radical correlation

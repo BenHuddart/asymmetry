@@ -3714,6 +3714,8 @@ def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
         _law_hints("tf", TrendTable("temperature", columns, rows), ["frequency", "sigma"])
     )
     assert "interpretation is a hypothesis to test" in text
+    assert "in an established magnetic system discuss internal" in text
+    assert "test applies only when the experiment supports a superconducting hypothesis" in text
     assert "--model SC_SWave --param sigma" in text
     # A width that narrows on cooling (no vortex lattice) gets no gap law.
     flipped = [row | {"sigma": w} for row, w in zip(rows, widths[::-1], strict=True)]

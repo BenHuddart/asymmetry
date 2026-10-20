@@ -197,6 +197,25 @@ def field_scan_payload(scan: FieldScan) -> dict[str, Any]:
     }
 
 
+def field_scan_from_payload(data: Mapping[str, Any]) -> FieldScan:
+    """Restore the stored scan's points and provenance for model-free checks."""
+    from asymmetry.core.transform.units import AsymmetryUnit
+
+    points = data["points"]
+    return FieldScan(
+        x=np.asarray([point["x"] for point in points], dtype=float),
+        value=np.asarray([point["value"] for point in points], dtype=float),
+        error=np.asarray([point["error"] for point in points], dtype=float),
+        run_numbers=[int(point["run"]) for point in points],
+        order_key=data["order_key"],
+        method=data["method"],
+        x_label=data["x_label"],
+        y_label=data["y_label"],
+        units=AsymmetryUnit(data["units"]),
+        excluded=[(entry["run"], entry["reason"]) for entry in data["excluded"]],
+    )
+
+
 def _parameters(
     scan: FieldScan,
     expression: str,
@@ -490,6 +509,7 @@ __all__ = [
     "period_field_offset_gauss",
     "build_integral_scan",
     "field_scan_payload",
+    "field_scan_from_payload",
     "fit_integral_scan",
     "resonance_windows",
 ]

@@ -327,7 +327,9 @@ LAW_VOCABULARY: dict[str, tuple[str, ...]] = {
 }
 
 #: Words that make a sentence deny, rather than claim, what it names.
-_NEGATION = re.compile(r"\b(?:not|no|never|without|cannot)\b|n't")
+_NEGATION = re.compile(
+    r"\b(?:not|no|never|without|cannot|failed|rejected|unsuccessful|unestablished|unresolved)\b|n't"
+)
 
 _FIT_HEADER = re.compile(r"^Fit of (?P<expression>.+?) to ", re.MULTILINE)
 

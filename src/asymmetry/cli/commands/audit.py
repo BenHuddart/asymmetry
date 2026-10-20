@@ -34,7 +34,13 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
             f"every ./{WORKDIR_NAME}* directory here)"
         ),
     )
-    parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
+    output.add_argument(
+        "--prepare-reply",
+        action="store_true",
+        help="After all checks pass, remove terminal line endings from the draft before printing it",
+    )
     parser.set_defaults(func=run)
 
 
@@ -134,7 +140,7 @@ def run(args: argparse.Namespace) -> None:
     for root, name, window in dips:
         print(
             f"integral-scan {name} ({root}) announced another dip near {window['centre']:g} that no "
-            f"fit holds: fit it with the same options and --model 'LorentzianLCR + Linear' "
+            f"local fit has tested: inspect it and fit with the same options and --model 'LorentzianLCR + Linear' "
             f"--xmin {window['x_min']:g} --xmax {window['x_max']:g} --workdir {root}, and report "
             f"what it shows."
         )
@@ -157,6 +163,9 @@ def run(args: argparse.Namespace) -> None:
         )
         return
     if not found:
+        if args.prepare_reply:
+            text = text.rstrip("\r\n")
+            draft.write_text(text, encoding="utf-8", newline="")
         # Agents retype a passed draft and add to it; the text to send is printed whole.
         print(
             f"No unprinted numbers found in {draft}. As the skill's Step 7 asks, your final "
@@ -171,7 +180,8 @@ def run(args: argparse.Namespace) -> None:
         lines = report.splitlines()
         last_line = "".join(lines[-1:])
         print(
-            f"COPY CHECK: {len(lines)} report lines; the final line is {last_line!r}. "
+            f"COPY CHECK: {len(lines)} report lines; terminal newline: "
+            f"{'yes' if report.endswith(chr(10)) else 'no'}; the final line is {last_line!r}. "
             "Keep every line through that final line in your reply, including the file list."
         )
         return
@@ -487,8 +497,9 @@ def _untested_doublets(roots: list[Path]) -> list[tuple[Path, int, float]]:
 
 
 def _unfitted_dips(roots: list[Path]) -> list[tuple[Path, str, dict]]:
-    """``(work directory, scan, window)`` for each dip a scan's fit announced and no fit holds."""
+    """Untested local minima, including scans with no first resonance fit."""
     from asymmetry.cli.commands.integral_scan import holds_dip
+    from asymmetry.core.workflow.integral_scan import candidate_dip_windows, field_scan_from_payload
 
     found = []
     for root in roots:
@@ -496,20 +507,26 @@ def _unfitted_dips(roots: list[Path]) -> list[tuple[Path, str, dict]]:
             path.stem: json.loads(path.read_text(encoding="utf-8"))
             for path in sorted((root / "scans").glob("*.json"))
         }
-        found.extend(
-            (root, name, window)
-            for name, payload in payloads.items()
-            if payload["fit"] is not None
-            for window in payload["fit"]["next_dip_windows"]
-            if not holds_dip(
-                (
-                    other["fit"]
-                    for other in payloads.values()
-                    if other["runs"] == payload["runs"] and other["fit"] is not None
-                ),
-                window,
+        for name, scan_payload in payloads.items():
+            windows = (
+                candidate_dip_windows(field_scan_from_payload(scan_payload["scan"]))
+                if scan_payload["fit"] is None
+                else scan_payload["fit"]["next_dip_windows"]
             )
-        )
+            fits = [
+                other["fit"]
+                for other in payloads.values()
+                if other["runs"] == scan_payload["runs"] and other["fit"] is not None
+            ]
+            for window in windows:
+                locally_tested = scan_payload["fit"] is None and any(
+                    fit["x_min"] is not None
+                    and fit["x_max"] is not None
+                    and fit["x_min"] <= window["centre"] <= fit["x_max"]
+                    for fit in fits
+                )
+                if not holds_dip(fits, window) and not locally_tested:
+                    found.append((root, name, window))
     return found
 
 

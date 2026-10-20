@@ -1211,8 +1211,13 @@ then run, from the project directory and without `--workdir` (it reads every
 `asymmetry-work*` directory there, so numbers from each work directory count)
 
 ```bash
-asymmetry audit summary.md
+asymmetry audit summary.md --prepare-reply
 ```
+
+`--prepare-reply` changes the draft only after every audit check passes: it
+removes terminal line endings and prints the exact remaining body. Use it
+again after every later edit; do not manually truncate characters or repair
+newlines after auditing. A plain audit remains read-only.
 
 Every command's printed output is logged in the work directory, and `audit`
 lists each number in the draft that no command printed. It first lists every
@@ -1242,6 +1247,37 @@ appears in some output, not that it is the right one — still quote values from
 the command that produced them.
 
 ## 3. Decision rules
+
+**Finish the primary observable before auxiliary cross-sections.** Survey scan
+groups can overlap: temperature slices through field scans and calibration or
+beam-setting tests are not independent experiments. Map every group, but first
+complete the field or time-spectrum workflow that measures the experiment's
+question. For an integral field scan with local minima, inspect and test those
+minima at every condition before concluding only recovery was measured. A
+failed first fit calls for a local window/background comparison, not abandoning
+other conditions. Explain overlapping or confounded groups rather than deriving
+an extra temperature law from them.
+
+**Preserve context and calibration per measurement.** Read supplied experiment
+notes before choosing a mechanism. An established magnetic experiment calls for
+magnetic interpretations; a generic TF broadening cue does not make it a
+superconducting experiment. If context is missing, keep the interpretation
+conditional and state what is missing. Name the actual calibrant and applied
+alpha for every fitted exercise/period/block, including beam and detector changes.
+Check the final stored reduction after timing or background corrections; an earlier
+survey alpha can differ. Zero parameter errors do not mean zero fitted values:
+quote the actual failed diagnostic or omit invalid parameters, never replace
+failed rows with a blanket numerical claim.
+
+**A kinetic rate needs the signal component that carries it.** In weak-field
+muonium/reaction experiments, generic smooth relaxation can describe the
+background while missing the rapidly damped precession. Recover an oscillatory
+component using the measured line, suitable early-time window and calibration;
+compare a constrained/shared-frequency or amplitude model across the reaction
+coordinate. Report kinetic slopes only from that component's measured rates,
+with a stated concentration scale and temperature matching. Merely fitting all
+runs with a generic decay does not complete the kinetic workflow.
+
 
 **AICc ranks the candidates; the physics picks the model.** The wizard's
 recommendation is the best *statistical* fit to one run. When two candidates
@@ -1714,10 +1750,10 @@ the limitation is the software, the data, or a choice made in this session.
 looking at. Write complete plain paths, one per line, without inline backticks
 or abbreviated follow-on filenames. Finish this list before the last audit;
 the reply must retain its final line exactly as well as the scientific text.
-While editing the draft, finish at the last path's final character, with no
-terminal newline or blank lines. Then audit and copy the body without any
-further edits. The evaluation preserves exact reply whitespace; an invisible
-extra newline in the saved draft is still a character to reproduce.
+Finish the file list, then run `asymmetry audit summary.md --prepare-reply`.
+It removes terminal line endings only when the checks pass. Copy that printed
+body without further edits, retaining the last path's final character. Repeat
+the preparation after any edit; ordinary editors may restore a terminal newline.
 
 ## 7. Worked example
 

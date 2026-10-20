@@ -745,6 +745,12 @@ class WorkDir:
             int(json.loads(path.read_text(encoding="utf-8"))["run"])
             for path in self.fits_dir.glob("*.json")
         )
+        runs.update(
+            member
+            for run in self.reduced_runs()
+            if run in runs
+            for member in self.entry(run).source_runs
+        )
         return runs
 
     def alpha_calibration_runs(self) -> set[int]:

@@ -1999,3 +1999,18 @@ Confirmation4 COMPLETE24/24scored:138/147Musts,19/24science,3/24audit-copy/liter
 
 
 Final confirmation4 evidence verified: all24 raw final agent_messages equal last-message.md and actual summary.md byte-for-byte; all raw artifact and review snapshot hashes match; complete source manifest unchanged. Gate FAIL, including independent AFM scope. Twelve-case wave wall58.05min, minimum19.61GiBavailable, peak summedRSS8.30GiB(sharedpagesdoublecount), memoryPSI0, CPU PSIpeak2.42; about0.96MiBswappeak versus0.60MiBbaseline. Two initial429retries recovered, no restarts. Keep12 for nextwave; hostheadroom is ample, service latency and longcase tail dominate, no controlledspeedupclaim. Generalround15repairs can now begin; noevalprocessis live.
+
+
+Round15 implementation is in progress after the complete confirmation4 score; no
+evaluation is live. General repairs add pass-only `audit --prepare-reply`, honest
+failed-law descriptions, co-add membership coverage, untested integral-only dip
+coverage, physical Redfield domains/seeds, project-local plotting caches, and
+context/calibration/primary-observable guidance. Scientific rubrics and strict
+reply comparison remain fixed. Validation so far:224 focused and448 adjacent
+tests pass; skill validation passes. Broader checks and documentation are next,
+then commit before a fresh full24 confirmation5 at12 concurrent cases. The
+06:00UTC hard stop and04:30UTC full-gate launch cutoff remain mandatory.
+
+Round15 validation update: fast5937 passed,10 skipped,1 xfailed; lint and structural pass, skill valid and generated command reference current. Docs build has80 existing warnings. Standard validation is LIVE in exec93693, /tmp/luna6-round15-standard.log, scratch XDG directories, two pytest workers; inspect it before any additional tests. Final context-hint edit and its existing regression assertion are included in this standard run. No evaluation is live. Launch confirmation5 only after this gate is assessed and the repair is committed.
+
+Round15 validation COMPLETE:224 focused,448 adjacent,5937 fast passes; lint, structural, skill validation and generated command reference pass. Docs build succeeds with80 existing warnings. Standard:9950 passed,4 failed,25 skipped,1 xfailed in454.85s, with exactly the existing fit-parameter-table and grouping-dialog sizing failures (the same four named in confirmation4), no worker errors/crashes. Standard remains NOT green; no GUI redesign. All tests used scratch XDG directories, at most2 workers and numerical threads1. Final context-aware CLI hints and their regression assertions are included. Round15 is ready to commit, then launch fresh confirmation5 using all24 first attempts,12 concurrent cases, wizard environment default1 and numerical threads1; preserve strict artifact fidelity and fixed rubrics.

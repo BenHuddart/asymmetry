@@ -1122,10 +1122,20 @@ its parameters have no physical meaning there. A law not established ends with
 the next step: for ``OrderParameter``
 with ``alpha`` free, refit with ``--fix alpha=1`` (points near T\ :sub:`c` fix
 only a power of T\ :sub:`c` − T, so α trades off against ``y0``); for
-``Redfield`` with ``m`` free, ``--fix m=2`` (a free ``m`` that is not positive
-is itself a reason the law is not established); otherwise,
+``Redfield`` with ``m`` free, ``--fix m=2``; otherwise,
 when some physical parameters are determined and others are not, hold the
 undetermined ones at a textbook value and report the rest with it stated.
+Trend hints defer mechanism selection to the supplied experiment context.
+Cooling-induced broadening and a line shift alone do not identify a
+superconducting phase; established magnetic systems require a magnetic
+interpretation rather than an automatic gap-law fit.
+
+Generalized Redfield exponents have a model-specific positive lower bound;
+this does not constrain Linear slopes. Initial Redfield fluctuation frequencies
+use the field scale converted to frequency, and the zero-field rate sets the
+initial field-distribution scale. These are optimizer seeds, not measured
+parameters or evidence that the law is established.
+
 Excluding a row is the analyst's call: every row with a
 value enters unless ``--exclude KEYS`` names it (a run number for an ordinary
 series, a member series name for one built with ``--from-fits``), and the
@@ -1248,6 +1258,12 @@ that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
 ``integral-scan``, ``fourier``) ends its text output with the step: write
 ``summary.md`` and run ``asymmetry audit summary.md`` before replying, preceded
 by a "Still unfitted:" line naming the surveyed measurements no fit holds yet.
+For the final send, run ``asymmetry audit summary.md --prepare-reply``.
+After all checks pass, this opt-in operation removes terminal line endings
+from the saved draft and prints that exact body. Repeat it after every edit;
+editors may restore a newline. Without the option, audit leaves the file
+unchanged. It cannot be combined with ``--json``.
+
 A clean audit prints the passed draft between ``----- BEGIN -----`` and
 ``----- END -----`` lines for the reply to copy whole, since agents that retype
 it add unaudited text. A ``COPY CHECK`` after the markers gives the report's
@@ -1262,7 +1278,12 @@ would be a field of about 21 G", "corresponds to roughly 16 G"),
 differences between printed columns — which the agent skill's number rule
 forbids. It also lists a law's vocabulary ("critical slowing",
 "activation energy", "correlation time") when every fit of that law in the
-logged session printed ``LAW NOT ESTABLISHED``, and a run with a correlation
+logged session printed ``LAW NOT ESTABLISHED``; explicit failed or rejected
+attempts remain valid descriptions. Integral scans with significant local
+minima are checked even before the first resonance fit. Testing a local window
+can end in an unresolved result; a candidate is not automatically a resonance.
+A fit of a co-added representative covers its recorded member runs, without
+requiring redundant repeat fits. The audit also lists a run with a correlation
 spectrum but no plain
 transform in the same work directory, whose two lines the summary needs.
 

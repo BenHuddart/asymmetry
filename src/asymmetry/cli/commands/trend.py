@@ -947,16 +947,18 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
         else:
             shift = _frequency_shift(trend, frequencies[0])
             widths = [p for p in rates if re.sub(r"_\d+$", "", p) == "sigma"] or rates
-            # A line pulled below its normal-state frequency on cooling while its
-            # width grows is the vortex lattice's diamagnetic shift and field
-            # distribution: the width is a superfluid-density measure.
+            # Width growth and a line shift alone do not identify the phase.
             if shift is not None and shift[0] < shift[1] and widths:
                 cold = _measured(trend, widths[0])
                 if len(cold) >= 2 and cold[0][widths[0]] > cold[-1][widths[0]]:
                     hints.append(
                         f"{frequencies[0]} falls below its warm value on cooling while "
                         f"{widths[0]} grows: compare a Gaussian-width temperature series "
-                        "before deciding the mechanism. A superconducting vortex-lattice "
+                        "before deciding the mechanism. Read the supplied experiment "
+                        "context first: in an established magnetic system discuss internal "
+                        "field distributions and magnetic ordering, not superconducting "
+                        "gap laws. The following gap-model test applies only when the "
+                        "experiment supports a superconducting hypothesis. A vortex-lattice "
                         "interpretation is a hypothesis to test, not established by this "
                         "trend or a sample abbreviation alone — "
                         + (
@@ -967,7 +969,7 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
                             "Oscillatory * Gaussian + Constant recipe. Fit SC_* to sigma, "
                             "not to this exponential Lambda; the two envelopes describe "
                             "different field distributions. A conditional gap-model test "
-                            "does not require declaring the sample superconducting first."
+                            "still needs a context-supported superconducting hypothesis."
                         )
                     )
             if shift is not None:

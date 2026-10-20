@@ -459,3 +459,18 @@ def test_a_tf_stamp_on_a_kilogauss_run_that_keeps_its_integral_is_contradicted()
     # calibration run (too few periods to average) and an unstamped run are not judged.
     stamped = {1: 3000.0, 2: 3000.0, 3: 4000.0, 4: 100.0}
     assert contradicted_tf_stamps(scan, stamped) == [2, 3]
+
+
+def test_stored_scan_restores_units_errors_and_exclusions() -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow.integral_scan import field_scan_from_payload
+
+    scan = replace(_scan(), excluded=[(999, "not in period")])
+    restored = field_scan_from_payload(field_scan_payload(scan))
+    np.testing.assert_array_equal(restored.x, scan.x)
+    np.testing.assert_array_equal(restored.value, scan.value)
+    np.testing.assert_array_equal(restored.error, scan.error)
+    assert restored.units == scan.units
+    assert restored.run_numbers == scan.run_numbers
+    assert restored.excluded == scan.excluded

@@ -529,3 +529,12 @@ def test_the_digest_covers_every_member_of_a_coadd(reduced, tmp_path: Path) -> N
     member.write_bytes(path.read_bytes() + b"\0")
     changed = reduction_digest(source_files=[path, member], grouping=grouping, settings=settings)
     assert changed != baseline
+
+
+def test_fitted_coadd_covers_its_members_but_reduction_alone_does_not(reduced) -> None:
+    workdir, dataset, entry, *_ = reduced
+    members = [entry.run_number, entry.run_number + 1]
+    workdir.write_reduced(dataset, dataclasses.replace(entry, members=members))
+    assert workdir.fitted_runs() == set()
+    workdir.write_fit(entry.run_number, "coadd", {"fit": {"success": False}})
+    assert workdir.fitted_runs() == set(members)
