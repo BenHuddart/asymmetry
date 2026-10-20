@@ -130,7 +130,7 @@
     },
     "authorization": "User requested one repair round and rerun, plus investigation of increased concurrency. Finish and score this full fresh gate, then pause; no unrestricted improvement loop."
   },
-  "status": "running; 5/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 7/24 scored; source frozen; finish all cases despite earlier failures",
   "scoring_policy": "Actual summary.md final replies only, against unchanged staged rubrics and tools/agent_eval/scoring_brief.md; manual Must/Should, number/units, boundary, exact-copy and independent physics-scope checks. Exclude audits/draft/log-report displays from numerical provenance; stored direct CLI outputs are valid. Preserve first attempts and do not pool historical passes.",
   "cases": {
     "plateau-redfield": {
@@ -700,7 +700,9 @@
         "Single-pair/no multi-group, count-domain or MaxEnt/domain analysis; foil orientation is not established.",
         "Exploratory40G-full series mixes fields; final explicitly rejects it as a physical scan and uses separate scan-specific products."
       ],
-      "judgement_calls": [],
+      "judgement_calls": [
+        "Approximate low-frequency bumps around0.25/0.5MHz are explicitly visual-only features in supplied FFT output, not detected peaks; treated as borderline plot description under the same policy as cuprate visual-only feature location."
+      ],
       "number_evidence_commands": [
         2,
         5,
@@ -749,12 +751,292 @@
         "summary.md": "4078005dc89a0fe540cf2173884054da6509f12d2c6c49d0296ad35514f3dfa7",
         "image-inputs.json": "296c0d397d52da9ccb7555ad432a36e70ebfa5f946d51bc7b3ef2acca351b5b8"
       }
+    },
+    "euo-psi": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies this as PSI GPS data (the `.bin` format), not an ISIS NeXus dataset.",
+          "pass": true,
+          "evidence": "Identifies \"51 GPS runs\" and GPS continuous-source reductions, five Forw/Back/Up/Down/Righ histograms and pre-t0 correction, rather than ISIS NeXus conventions. PSI/.bin is implicit in GPS identity, not written as an extension in the final report."
+        },
+        {
+          "requirement": "Separates the ZF block from the TF 60 G block as two distinct scans.",
+          "pass": true,
+          "evidence": "Separates2923–2960 ZF from2961–2973 TF60G scans, including measured/precession geometry evidence and TF titles."
+        },
+        {
+          "requirement": "Reports an internal field (from the TF block, or from ZF oscillations if present) that changes with temperature, growing as the sample is cooled below the ordering region.",
+          "pass": true,
+          "evidence": "Reports ZF internal line roughly30 MHz at low temperature decreasing to5.47 MHz at68.3 K, absent by68.5 K; cold2960 FFT30.1694 MHz independently supports the line despite nuisance-fit flags."
+        },
+        {
+          "requirement": "Reports the relaxation rate above the ordering region as this session's fits give it, and does not claim a critical divergence (critical slowing down) that those fits do not show. The paper finds the paramagnetic relaxation rate roughly constant, near 2 MHz, rather than diverging at the transition.",
+          "pass": true,
+          "evidence": "Explicit paramagnetic relaxation-only results:2.90965±0.119707 per microsecond at68.9 K and2.36617±0.0881409 at200 K, with provisional2.4061/2.5869 levels. Claims no critical divergence or intrinsic textbook rate; rising baseline/poor fits are caveated."
+        },
+        {
+          "requirement": "Contains no internal-field value, relaxation rate, or Curie temperature that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Internal frequencies/rates, reported line-loss interval and logged coordinates match direct CLI outputs; failed OrderParameter values are not promoted into an invented Curie temperature/exponent."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that both blocks revisit a narrow temperature window several times rather than assuming a single monotonic sweep.",
+          "pass": false,
+          "evidence": "Explicitly discusses ZF transition infill and non-monotonic run order, but does not clearly say both blocks repeatedly revisit the narrow transition window."
+        },
+        {
+          "requirement": "Treats run 2960 (1.5 K, out of sequence at the end of the ZF block) as a low-temperature reference point rather than ignoring it or assuming it belongs elsewhere in the sequence.",
+          "pass": true,
+          "evidence": "Uses out-of-sequence2960 at1.5 K as cold ZF reference, wizard seed and matched cold FFT, rather than dropping it."
+        },
+        {
+          "requirement": "Frames the comparison to theory (e.g. mean-field/Heisenberg critical behaviour) as the paper's stated goal. A critical exponent, if quoted, comes from a `trend --model OrderParameter` fit in this session with its fit range stated, and is labelled with the temperature axis it was measured against (the PSI header's logged sensor reading, or the setpoint with a reason).",
+          "pass": false,
+          "evidence": "Attempts and rejects an all-points OrderParameter law, but does not frame a mean-field/Heisenberg or paper-theory comparison as the experimental goal; quotes no unsupported exponent."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Matched actual corrected reductions(alpha1.4865 versus raw1.5148), ZF/paramagnetic/TF trend rows and errors, failed law score, FFT metadata/peak tables and direct stored spectrum reads45. Commands31/32 provide quoted clean/flagged ZF and warm relaxation tables;38/46 provide TF rows and Linear slope-0.002430±0.001952/intercept1.043711±0.224461. No manual field conversion or rate-law/Curie values; both checkers return no findings.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Musts pass with separate warm-ZF exponential rates and independent cold internal-line evidence. Should gaps concern coverage/theory narrative: ZF revisits are explicit but TF revisit structure is not, and no paper/theory framing appears. The full38-point OrderParameter fit includes incompatible regimes and is correctly rejected, rather than restricting to a supported line-bearing critical range. Pre-t0 correction was actually applied after initial reductions and relevant series rescreened/refit; late-time baseline defects remain. Scope remains magnetic, with no superconducting inference.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all48 completed commands inspected. All48 completed commands and summary-only file changes inspected. Staged skill/help/GPS .bin data, spectra JSON and project products only; no implementation/private corpus/arithmetic. Two-turn images complete; feature/cache/stream warnings are nonfatal and no approval denials occurred.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1379.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 7,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/euo-psi/data --series zf-euo --model OrderParameter --param frequency --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/euo-psi/data --series tf-euo-simple --model Linear --param Lambda --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "3b0c72696960a6e38ccc6954cc5d934b14d68e607e43d5376472566a4bc59392",
+      "audited_file_sha256": "3b0c72696960a6e38ccc6954cc5d934b14d68e607e43d5376472566a4bc59392",
+      "rubric_sha256": "fe9da3aa512839d6107beebcf6bbb0c343d0d6f7fc668e02e8a3d7ce74096600",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/euo-psi",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Most time-series fits are poor or nuisance-flagged; pre-t0 subtraction does not remove the visible rising late-time baseline, so rate amplitudes and envelopes are provisional.",
+        "All-span OrderParameter chi2_red78651.772/LAW NOT ESTABLISHED; line-loss68.3–68.5 K is not a fitted Curie temperature.",
+        "244 MHz survey outlier2923 is not used for the internal-field trend.",
+        "TF extra low-frequency maxima are close to transform resolution and failed two-line fitting; no resolved site/splitting claim.",
+        "GPS identity is correctly continuous-source; final omits literal PSI/.bin naming, treated as semantic identification rather than an ISIS misclassification."
+      ],
+      "judgement_calls": [
+        "Must1 passes on explicit GPS continuous-source/five-histogram identification, though PSI and .bin are not literally written in the report."
+      ],
+      "number_evidence_commands": [
+        2,
+        5,
+        6,
+        7,
+        9,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        20,
+        21,
+        24,
+        25,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        37,
+        38,
+        41,
+        43,
+        45,
+        46
+      ],
+      "scored_at": "2026-10-20T20:17:05.305398+00:00",
+      "reply_matches_saved_file": true,
+      "raw_artifact_sha256": {
+        "cost.json": "76e913eb30169bf4f8af0e580fec9a77bd8d4089983acc69ce79fd35ec81254c",
+        "transcript.jsonl": "854e654171c08a13248e356e6e04a4b583a71dab885a54077a536dfbfc8f031b",
+        "commands.txt": "73e2a610e38b1a73f1ee5c1a118b89e18f9779816906c906803cec2e576b4912",
+        "summary.md": "3b0c72696960a6e38ccc6954cc5d934b14d68e607e43d5376472566a4bc59392",
+        "image-inputs.json": "b6b5ab4812a42abc285397ff0e2e779a9d4ec5f7c094d38e773dacce221216f9"
+      }
+    },
+    "high-tc-cuprate": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the two instruments' runs (EMU vs MUSR) into distinct scans rather than treating the folder as one series.",
+          "pass": true,
+          "evidence": "Separates EMU BISCO76976–76993 at150G and MUSR HTC1274–1303;48-run survey with1274/1275 detector tests distinct from science scans."
+        },
+        {
+          "requirement": "Names both applied fields present on MUSR (400 G and 200 G) as separate field groups, not a single 400 G scan.",
+          "pass": true,
+          "evidence": "Explicit independent MUSR400G1276–1289 and200G1290–1303 temperature groups; thirteen TF field pairs are mapped without treating them as LF decoupling."
+        },
+        {
+          "requirement": "Reports a Gaussian (or Gaussian-like) TF relaxation rate that rises as temperature drops below the transition, for at least one of the field/instrument combinations.",
+          "pass": true,
+          "evidence": "400G Gaussian sigma grows on cooling:1.16101±0.02332 per microsecond at10.862 K versus0.065765±0.002394 at125.542 K; compares Gaussian envelopes and qualified SC_SWave law on logged temperature."
+        },
+        {
+          "requirement": "Discusses how the non-superconducting fraction of the signal was handled (e.g. a second, slowly-relaxing or non-relaxing component), rather than fitting a single Gaussian and ignoring it.",
+          "pass": true,
+          "evidence": "Explicitly discusses Constant offsets and missing separately constrained narrow oscillating background; no non-superconducting volume fraction is inferred. Tests two-component cold traces and explains their limits rather than silently ignoring residual signal."
+        },
+        {
+          "requirement": "Contains no sigma, Tc, or penetration-depth number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All sigma/Tc/gap/error quantities are actual CLI outputs. SC_SWave Tc107.326103±0.230620 K and sigma0/sigma_bg/errors are direct command47 values with chi2_red3.443; no penetration-depth number invented."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the data folders contain more runs than the worksheet's own tables list (76993 on EMU; 1274-1275 on MUSR) and reflects the survey's actual range rather than only the worksheet's table.",
+          "pass": true,
+          "evidence": "Includes actual full EMU76976–76993 and MUSR1274/1275 detector tests, not only worksheet subsets; explicitly handles76993 implausible411.19K log using85K setpoint."
+        },
+        {
+          "requirement": "Compares sigma(T) trends across the different fields/instruments rather than reporting only one.",
+          "pass": true,
+          "evidence": "Compares clear400G Gaussian width trend with poor/nonmonotonic200G fits and150G exponential-preferred BISCO; does not combine instruments into one fit."
+        },
+        {
+          "requirement": "Mentions the \"above Tc\" run (1276, 125 K) as a normal-state reference distinct from the temperature scan proper.",
+          "pass": false,
+          "evidence": "1276 at125K is the warm400G endpoint/calibration-style reference, but not explicitly identified as a separate above-Tc normal-state reference distinct from the temperature series."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Manually matched all decisive width/frequency/error rows, raw/corrected alpha blocks, law coefficients/scaled errors and FFT peaks against direct outputs. Command47 prints sigma0=1.064214±0.023338,Tc107.326103±0.230620,gap_ratio2.398081±0.059867,sigma_bg0.069801±0.003702;29/33/49/52 print temperature-series values,40/41 cold component parameters. Approximate2.02MHz is explicitly a visual-only feature read from the actually supplied FFT image, not claimed as a measured peak or line. Treat as borderline image-output description and do not validate it via coincident phase values. No physical arithmetic; numeric/unit checkers have no findings.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Musts pass. The field/instrument comparison is broad and scope is appropriately motivated by cuprate context. The main Should gap is explicit normal-state reference framing. Negative constant offsets and no separately fitted narrow oscillating background leave the nonsuperconducting fraction undetermined; this is discussed and is a literal Must4 pass, not a successful physical fraction measurement. 200G Gaussian and150G Gaussian fits are inadequate; these are retained as conditional controls rather than clean gap laws. Ordinary FFTs resolve only the central BISCO line, so time-domain component fits are not site assignments.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all54 completed commands inspected. All54 completed commands and summary-only file changes inspected. Staged skill/help/data/project products only. Supplied --x values restate printed logged coordinates/fallback input; no arithmetic scripts or implementation/personal skill reads. Two-turn images complete. Info syntax error and absent sigma on exponential series are ordinary recovered command errors, not approval denials.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 813.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 5,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/high-tc-cuprate/data --series bisco-150-tf --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/high-tc-cuprate/data --series htc-400-tf-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/high-tc-cuprate/data --series htc-200-tf-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/high-tc-cuprate/data --series htc-200-tf-gauss --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/high-tc-cuprate/data --series htc-400-tf-gauss --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/high-tc-cuprate/data --series htc-400-tf-gauss --model SC_SWave --param sigma --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry info /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/high-tc-cuprate/data --run 76976'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/high-tc-cuprate/data --series bisco-150-tf --model SC_SWave --param sigma --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "89cb2b34de10fcce7e4effa8398ef730204bbf091595b7323bd7700ccad984f3",
+      "audited_file_sha256": "89cb2b34de10fcce7e4effa8398ef730204bbf091595b7323bd7700ccad984f3",
+      "rubric_sha256": "6768523173dd08582c6c56642fe11ca2d276a0b467ea21494e31b1db78c59029",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/high-tc-cuprate",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "SC_SWave400G fit is approximate(chi2_red3.443); DWave law not established, no gap symmetry or precision penetration-depth conclusion.",
+        "No physical non-superconducting fraction: selected400G model has negative offset and no independent narrow oscillating background. Literal discussion Must passes with that limitation.",
+        "200G single-width trend is non-monotonic/poor and its law fits fail; BISCO exponential envelope is strongly preferred and most fits are poor.",
+        "Approximate visual-only feature location near2.02MHz is not a CLI peak-table frequency. Independently inspected actual FFT image supports nearby low-side structure, not a resolved extra line. Numeric checker can spuriously match phase values near2.02; those phase numbers are not valid provenance for this visual coordinate.",
+        "76993 temperature fallback is explicit; report says three instruments once but table and handling correctly distinguish two instruments/three field blocks."
+      ],
+      "judgement_calls": [
+        "Must4 passes explicit explanation of how offset/background is handled and why fraction is not determined; it does not mean a narrow non-superconducting component was successfully isolated.",
+        "Approximate visual-only2.02MHz feature coordinate is allowed as a qualified reading of the actually supplied FFT plot, not a numerical peak measurement. Strict text-only number provenance would flag it; image output and explicit no-extra-line caveat mitigate this borderline observation."
+      ],
+      "number_evidence_commands": [
+        2,
+        6,
+        7,
+        8,
+        10,
+        11,
+        13,
+        14,
+        15,
+        16,
+        17,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        28,
+        29,
+        30,
+        31,
+        33,
+        34,
+        35,
+        38,
+        39,
+        40,
+        41,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        52
+      ],
+      "scored_at": "2026-10-20T20:17:05.337973+00:00",
+      "reply_matches_saved_file": true,
+      "raw_artifact_sha256": {
+        "cost.json": "4fcb9dff1655da3e550176ba1acdca35ab3db67f36f21c2981d05540f7020c62",
+        "transcript.jsonl": "a0faf79acef02f1010637f56c5efefd35735870a038d86052f5b76356444c540",
+        "commands.txt": "2c38d31a0fff50201cc0362c5a2083771553cef04affa5e7c39ddf698999a1a7",
+        "summary.md": "89cb2b34de10fcce7e4effa8398ef730204bbf091595b7323bd7700ccad984f3",
+        "image-inputs.json": "e14180d3990147cf947b3ef22eb2b41c60cb951f2597b3441c459ea04c8724c2"
+      }
     }
   },
   "pending_cases": [
-    "euo-psi",
     "ferromagnetic-nickel",
-    "high-tc-cuprate",
     "copper-diffusion",
     "molecular-antiferromagnet",
     "spin-peierls",
@@ -773,17 +1055,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 5,
+    "scored": 7,
     "target": 24,
-    "scientific_pass": 3,
-    "must_pass": 22,
-    "must_total": 26,
-    "should_pass": 7,
-    "should_total": 19,
-    "exact_copy_pass": 5,
-    "literal_copy_pass": 5,
-    "combined_pass": 3,
-    "boundary_pass": 5
+    "scientific_pass": 5,
+    "must_pass": 32,
+    "must_total": 36,
+    "should_pass": 10,
+    "should_total": 25,
+    "exact_copy_pass": 7,
+    "literal_copy_pass": 7,
+    "combined_pass": 5,
+    "boundary_pass": 7
   },
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."
