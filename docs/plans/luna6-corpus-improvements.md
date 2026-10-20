@@ -1955,3 +1955,12 @@ do not duplicate a score or run. Resource pressure remains low. After all24,
 prioritize honest failed-law naming, physical parameter domains/fit recovery,
 co-add coverage, and a reliable finalization operation after every edit. No
 implementation has changed while this wave runs.
+
+
+Confirmation4 now9/24 scored: silicon6/6,CDS6/6,EuO5/5 Musts pass science and number/unit/boundary checks. Shoulds3/4,2/4,2/3 respectively. All three fail strict copying by one LF; EuO adds LF after truncating, opposite to other omissions. CDS visual triplet is explicitly qualified/no detected cold peaks; EuO GPS shorthand and invalid conditional law caveats retained. Totals48/50Musts,7/9science,0/9copy/combined,9/9boundary,18/33Shoulds. Source stays frozen; continue completed reports.
+
+
+Confirmation4 now12/24 scored: nickel7/7,molecularAFM5/5,highTF-AFM5/5 literalMusts pass; number/unit/boundary pass, allcopyfailoneLF. Shoulds2/4,2/3,2/3. Independent highTF-AFM physics_scope FAIL: generic unknown-phase/vortex interpretation despite magnetic context, noSCgapfit. Totals65/67Musts,10/12science,0/12copy/combined,12/12boundary,24/43Shoulds. CLI trend itself suggests superconducting diamagnetic shift, motivating general context-aware repair after freeze. Source remains frozen.
+
+
+Confirmation4 now16/24scored: maleicFAIL3/5Musts(no usableMu kineticrate/slope),RFbenzenePASS5/5(defaultintegralrepairworks),TCNQPASS6/6andLFbenzenePASS6/6. Allnumber/unit/boundarypass,allcopyfailoneLF. Shoulds1/4,2/5,4/4,4/5. Totals85/89Musts,13/16science,0/16copy/combined,16/16boundary,35/61Shoulds;independenthighTF-AFMscopeFAILretained. Noimplementationchanged;continueall24.

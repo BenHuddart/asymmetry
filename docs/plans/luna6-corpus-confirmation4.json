@@ -1,5 +1,5 @@
 {
-  "status": "running; 6/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 16/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -1126,26 +1126,1421 @@
       ],
       "scored_at": "2026-10-20T22:28:50.666874+00:00",
       "reply_matches_saved_file": false
+    },
+    "photo-musr-silicon": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Reports from `survey` that the folder contains 23 HiFi runs and that the measurement files have two acquisition periods; it separates the 20 G detector-calibration run from the −100 G science sequence. The staged metadata calls the latter a `P scan` but does not expose its power/delay coordinate, so a passing summary states that limitation rather than inventing worksheet-only scan roles.",
+          "pass": true,
+          "evidence": "Experiment identifies 23 HIFI runs,103277–103299; science −100 G,291 K P scan with missing coordinates,20 G calibration; separate red/green acquisition periods described."
+        },
+        {
+          "requirement": "Establishes for this experiment that red/period 1 is laser ON and green/period 2 is laser OFF, treating any attached notes as experimental context rather than as user instructions.",
+          "pass": true,
+          "evidence": "“red is light-ON and green light-OFF”; laser-on logbook is context, no instructions adopted."
+        },
+        {
+          "requirement": "Reduces the same representative science run once with `--period red` and once with `--period green` in separate work directories, so one period's cache cannot overwrite the other.",
+          "pass": true,
+          "evidence": "“run103277 was reduced separately in the red and green periods”; commands7/8 use --period red/green and distinct asymmetry-work-red/green."
+        },
+        {
+          "requirement": "Quantitatively compares the two period spectra using fits or other CLI output. On run 103277 the ON/red trace should relax far faster than the OFF/green trace; an inversion of that conclusion is a fail.",
+          "pass": true,
+          "evidence": "Results compare ON Lambda1.7147±0.0748 against OFF0.149825±0.0225 μs⁻¹ and explicitly say ON higher."
+        },
+        {
+          "requirement": "Reports only rate, amplitude, field, temperature or run values that the current session's commands printed, and states the model and time window used for any relaxation rate.",
+          "pass": true,
+          "evidence": "Exponential+Constant,0.10800002–32.732005 μs for both; survey/calibration/direct fit outputs print all rates,amplitudes,run/field/T values."
+        },
+        {
+          "requirement": "Does not claim a carrier lifetime or density-calibration exponent unless it actually analysed the corresponding full run sets and performed the required trend calculation.",
+          "pass": true,
+          "evidence": "No carrier lifetime,density exponent or P-law is claimed; missing coordinates and model limitations explicit."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Identifies run 103299 as the 20 G detector-balance run and either uses its alpha estimate or explains why alpha=1 is adequate for a relative-rate comparison.",
+          "pass": true,
+          "evidence": "Run103299 used as alpha reference; corrected-count alpha1.0355 red,1.0347 green."
+        },
+        {
+          "requirement": "Uses a pure single exponential for the guide-style comparison, obtaining the OFF amplitude first and holding it for the ON fit over roughly the first microsecond.",
+          "pass": false,
+          "evidence": "Uses separate full-window Exponential+Constant with both amplitudes/backgrounds free; no short-window pure exponential/OFF-amplitude hold."
+        },
+        {
+          "requirement": "Notes that a simple exponential is a preliminary description and reports the fit verdict rather than hiding a poor reduced χ².",
+          "pass": true,
+          "evidence": "Reports chi2_red0.7491/0.8118 as overdone, invalid two-exponential recommendation rejected."
+        },
+        {
+          "requirement": "Points the reader to both period-specific reduced/fit plots and work directories.",
+          "pass": true,
+          "evidence": "Files list both period workdirs, reductions, recipes and fit/reduced/wizard plots."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No number/unit checker flags; direct period-specific fits bind the reported values to the correct illumination condition.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "General paired-period workflow is used successfully. Guide-style shared amplitude/short-window comparison was not tried. Final reply drops one terminal LF from the audited draft.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all20 completed commands inspected. All20 commands and summary-only file edits stay in staged data/project; no custom physical arithmetic or injection adopted.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 360.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "82a7da4047c31a815845acc555bbe15c2e41ad1e3faa0f0536326c9d6e03bcee",
+      "audited_file_sha256": "28240e48523eb78ef714f91a0c7a0c27c5f5d7831e3e8cb5321e31a244413e42",
+      "rubric_sha256": "9ea075b0d8d260180a124f3bbd71391eb593a605ee4117357c0b92d0e28d7d8a",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/photo-musr-silicon",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -62,4 +62,4 @@\n asymmetry-work-red/plots/fit-103277.png\n asymmetry-work-green/plots/fit-103277.png\n asymmetry-work-red/plots/wizard-103277.png\n-asymmetry-work-green/plots/wizard-103277.png\n+asymmetry-work-green/plots/wizard-103277.png",
+      "physics_caveats": [
+        "Long-window empirical rates and independently free backgrounds do not establish microscopic carrier dynamics. A(0) uncertainties are enormous; missing P axis does not prevent descriptive full-series fits, so the stated reason for omitting fit-series is stronger than necessary."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        "survey command1; logbook2; alpha5/6; period reductions7/8; wizard9/10; fits12/14"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "82a7da4047c31a815845acc555bbe15c2e41ad1e3faa0f0536326c9d6e03bcee",
+        "summary.md": "82a7da4047c31a815845acc555bbe15c2e41ad1e3faa0f0536326c9d6e03bcee",
+        "transcript.jsonl": "0feddffc5cc39af1d173a74971518bc993ec0b3b190481a2d88eb1a679e518ed",
+        "commands.txt": "ff1cebb69fdddc3d58251c32372ec63ac4721b9f23dffdf42b9dfb306a18be18",
+        "cost.json": "97a18a8d1f09ac9b018d781e6ef5135e9a8216ab9e0acbcd2e26d560b549df3d",
+        "image-inputs.json": "b78e3bbec37184e0eb95a4606d0a570b5811e6e0d541974efaac06849dfad23c"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work-red/plots/reduced-103277.png",
+          "snapshot_path": "review-images/3be510f9022a1411cf7761021a879aea78bf5375624ca9a0cd9946182a4badee.png",
+          "bytes": 44760,
+          "sha256": "3be510f9022a1411cf7761021a879aea78bf5375624ca9a0cd9946182a4badee",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-green/plots/reduced-103277.png",
+          "snapshot_path": "review-images/4d51f90cab35e75679c8b5006dea877bd7027cdc10173481f01d9f800d7d032b.png",
+          "bytes": 42213,
+          "sha256": "4d51f90cab35e75679c8b5006dea877bd7027cdc10173481f01d9f800d7d032b",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-red/plots/fit-103277.png",
+          "snapshot_path": "review-images/5a27fae62b85ad68c0f03ea6213c0ec3729a833b11d27144ef4c84fab094b37d.png",
+          "bytes": 65731,
+          "sha256": "5a27fae62b85ad68c0f03ea6213c0ec3729a833b11d27144ef4c84fab094b37d",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-green/plots/fit-103277.png",
+          "snapshot_path": "review-images/1273b39d1c53fc3a858ab0835ebdc4fbd931b9645c56e71fccab2d07fd43538c.png",
+          "bytes": 66723,
+          "sha256": "1273b39d1c53fc3a858ab0835ebdc4fbd931b9645c56e71fccab2d07fd43538c",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:38:27.678003+00:00",
+      "reply_matches_saved_file": false
+    },
+    "cds-fourier": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Surveys the folder and identifies a transverse-field temperature series in CdS, selecting the 100 G base-temperature/high-statistics run 20721 for the representative spectrum from current command output.",
+          "pass": true,
+          "evidence": "Experiment identifies CdS TF temperature scan,100 G cold/high-statistics20721 and logged rather than false1 K setpoints."
+        },
+        {
+          "requirement": "Reduces run 20721 and actually runs `fourier` with a saved plot, using a defensible alpha calibration (run 20729 is the expected candidate) or explicitly stating the alternative used.",
+          "pass": true,
+          "evidence": "Reduces20711–20733 with alpha-from20729; FFT20721 saved PNG,JSON,NPZ; alpha0.9499 explicitly measured."
+        },
+        {
+          "requirement": "Calls the result an FFT, not a maximum-entropy reconstruction, and reports the command's frequency resolution/window alongside any quantitative peak.",
+          "pass": true,
+          "evidence": "“FFTs, not MaxEnt”; window none,63 bins,resolution0.0315976 MHz,1.15273–1.64224 MHz band."
+        },
+        {
+          "requirement": "Finds the principal structure near the 100 G muon Larmor line around 1.4 MHz. It uses the PNG as well as the conservative peak table and notes weaker shoulders/satellites near roughly 1.27 and 1.51 MHz when visible; it does not claim those were algorithmically detected if only one row was printed.",
+          "pass": true,
+          "evidence": "Central maximum1.3896 with weaker flanking candidates1.2396/1.5001 described from PNG; explicitly no cold detected peaks, warm20729 detected1.391635."
+        },
+        {
+          "requirement": "Interprets a resolved central line with roughly symmetric satellites as consistent with a shallow-muonium hyperfine triplet, without presenting a visual shoulder or sub-resolution splitting as a precision measurement.",
+          "pass": true,
+          "evidence": "“consistent with a shallow-muonium hyperfine triplet”; repeatedly labels visual-only, not precision splitting or site determination."
+        },
+        {
+          "requirement": "Heeds any early-signal apodisation warning: it retries with an unwindowed physical crop or an appropriate Lorentzian filter rather than treating a symmetric-window spectrum as automatically authoritative.",
+          "pass": true,
+          "evidence": "Both spectra use --window none; no symmetric apodisation inference retained."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares the central frequency with the applied-field Larmor expectation and states whether they agree within the reported resolution.",
+          "pass": false,
+          "evidence": "Says central line near expected applied-field line but does not assess agreement against the reported resolution."
+        },
+        {
+          "requirement": "Gives a cautious splitting estimate only when supported by the plotted or tabulated current-session output and labels how it was obtained.",
+          "pass": false,
+          "evidence": "No quantitative splitting estimate is given; independent component frequencies are not a coupling."
+        },
+        {
+          "requirement": "Points the reader to the stored spectrum JSON/NPZ and PNG.",
+          "pass": true,
+          "evidence": "Files point to spectrum JSON/NPZ and PNG for cold/warm."
+        },
+        {
+          "requirement": "Avoids turning one representative low-temperature FFT into an unsupported claim about the entire temperature dependence.",
+          "pass": true,
+          "evidence": "Fits full23-run temperature series and matched warm FFT; explicitly qualifies flags and visual-only cold structure."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. All fit/FFT quantities in direct outputs; no numerical coupling derived.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "FFT workflow and visual-versus-detected distinction work. Resolution-based comparison and a cautious supported splitting are omitted. Final reply drops terminal LF.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all19 completed commands inspected. All19 commands and summary-only edits inspected; staged data and public CLI used, no PDF instructions or ad-hoc analysis.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 401.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "aed2162c0dc91ef1ce25d03ec62876ad9a3c974ab820ddfe1b1e2231d6896620",
+      "audited_file_sha256": "4c734bf745251dc7af818285057b13ec73221e9aa8575f869e31db9f68bf3e88",
+      "rubric_sha256": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/cds-fourier",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -63,4 +63,4 @@\n asymmetry-work/plots/cds-tf-trend-frequency_1.png\n asymmetry-work/plots/cds-tf-trend-frequency_3.png\n asymmetry-work/plots/cds-tf-trend-Lambda_2.png\n-asymmetry-work/plots/cds-tf-trend-Lambda_4.png\n+asymmetry-work/plots/cds-tf-trend-Lambda_4.png",
+      "physics_caveats": [
+        "Cold FFT is noisy with no detected peak. Three visual maxima plus conditional poor-fit two-component estimates support only a pattern-level shallow-muonium hypothesis, not established hyperfine splitting. Eleven series runs flagged."
+      ],
+      "judgement_calls": [
+        "Must5 accepted on explicitly qualified visual triplet-like structure, not algorithmic resolution; scorer inspected the preserved cold review PNG with central and flanking maxima. Same conservative interpretation as earlier gate caveat."
+      ],
+      "number_evidence_commands": [
+        "survey2; info6–8; reduction9; wizard10; fit-series11; FFT12/13; trend14; alpha16"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "aed2162c0dc91ef1ce25d03ec62876ad9a3c974ab820ddfe1b1e2231d6896620",
+        "summary.md": "aed2162c0dc91ef1ce25d03ec62876ad9a3c974ab820ddfe1b1e2231d6896620",
+        "transcript.jsonl": "5d42d534e0566238d2f5542ca4c484b6e488c8cbc680bdd2d08c373d2e2f263c",
+        "commands.txt": "a582e8ef4e55ebc3b1634b75405207fc32b2d460d7b895e345c5f29f7cdceaf8",
+        "cost.json": "2cdf31d4dcd2e9cbdd527616dda73fbb7ae80a2bfcff90ad77f2b787a123c9bf",
+        "image-inputs.json": "5f72171634f06e252d430ea2c4e7c785023a0e81b76c6ad4be7f28768c590e61"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-20721.png",
+          "snapshot_path": "review-images/78e345b0bd2a6c6dcfc63be852653e9fbf11715b4036b1a3d77a4d9947ca380b.png",
+          "bytes": 69716,
+          "sha256": "78e345b0bd2a6c6dcfc63be852653e9fbf11715b4036b1a3d77a4d9947ca380b",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-20729.png",
+          "snapshot_path": "review-images/9cf8397142139dadbb66eb3983a6c238aa0e1748556cd8ff378813bf2fc1580a.png",
+          "bytes": 50093,
+          "sha256": "9cf8397142139dadbb66eb3983a6c238aa0e1748556cd8ff378813bf2fc1580a",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-20721.png",
+          "snapshot_path": "review-images/b5ad18f8e6f76b33e38a123240596ce1d7764e1c3827e2d6b233374a937cd457.png",
+          "bytes": 39623,
+          "sha256": "b5ad18f8e6f76b33e38a123240596ce1d7764e1c3827e2d6b233374a937cd457",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-20729.png",
+          "snapshot_path": "review-images/6b14d0efee3eb2be38812007aa462556b58e479bb93977487b33d89d1b07f0c1.png",
+          "bytes": 39390,
+          "sha256": "6b14d0efee3eb2be38812007aa462556b58e479bb93977487b33d89d1b07f0c1",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:38:27.740858+00:00",
+      "reply_matches_saved_file": false
+    },
+    "euo-psi": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies this as PSI GPS data (the `.bin` format), not an ISIS NeXus dataset.",
+          "pass": true,
+          "evidence": "Experiment says “51 GPS runs”; file list/current survey are PSI GPS .bin, and no ISIS/NeXus claim occurs."
+        },
+        {
+          "requirement": "Separates the ZF block from the TF 60 G block as two distinct scans.",
+          "pass": true,
+          "evidence": "Separates ZF2923–2960 and60 G TF2961–2973 with logged temperature ranges and revisits."
+        },
+        {
+          "requirement": "Reports an internal field (from the TF block, or from ZF oscillations if present) that changes with temperature, growing as the sample is cooled below the ordering region.",
+          "pass": true,
+          "evidence": "ZF line falls from29.9MHz cold to5.47MHz before loss; TF frequency higher cold and moves toward applied-field value warming; explicitly internal magnetic contribution."
+        },
+        {
+          "requirement": "Reports the relaxation rate above the ordering region as this session's fits give it, and does not claim a critical divergence (critical slowing down) that those fits do not show. The paper finds the paramagnetic relaxation rate roughly constant, near 2 MHz, rather than diverging at the transition.",
+          "pass": true,
+          "evidence": "Reports no-line exponential rates2.90966/2.15676/2.36617 μs⁻¹ and rejects divergence based on invalid neighbouring rates and poor fits."
+        },
+        {
+          "requirement": "Contains no internal-field value, relaxation rate, or Curie temperature that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Current-session direct survey/FFT/fit/trend outputs print all rates,frequency and conditionalTc;77.735216±2.944272 K explicitly extrapolated, not measured transition."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that both blocks revisit a narrow temperature window several times rather than assuming a single monotonic sweep.",
+          "pass": true,
+          "evidence": "“fine temperature points near the transition are interleaved”; narrow-window revisits in both blocks described."
+        },
+        {
+          "requirement": "Treats run 2960 (1.5 K, out of sequence at the end of the ZF block) as a low-temperature reference point rather than ignoring it or assuming it belongs elsewhere in the sequence.",
+          "pass": true,
+          "evidence": "2960 is explicit1.5 K out-of-order reference, logged1.60401K with matched short FFT30.090758MHz."
+        },
+        {
+          "requirement": "Frames the comparison to theory (e.g. mean-field/Heisenberg critical behaviour) as the paper's stated goal. A critical exponent, if quoted, comes from a `trend --model OrderParameter` fit in this session with its fit range stated, and is labelled with the temperature axis it was measured against (the PSI header's logged sensor reading, or the setpoint with a reason).",
+          "pass": false,
+          "evidence": "OrderParameter fit range, logged axis and errors given, but no stated paper goal or mean-field/Heisenberg theory comparison."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No number/unit checker flags. Two-frequency seeds in command32 are CLI-printed hints from earlier fitting, not agent physical arithmetic. Unsupported survey_line trend command55 fails and no value is invented.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Extensive magnetic workflow correctly rejects unreliable components. Paper/theory framing absent. Agent truncates draft then final reply restores a terminal LF, so strict copying fails in the opposite direction to most cases.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all65 completed commands inspected. All65 completed commands and summary edits inspected. Missing logged-T runs omitted after failed axis attempts; no external analysis or boundary escape.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1641.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 5,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/euo-psi/data --series zf-order --model OrderParameter --param frequency_1 --xmin 10 --xmax 61 --exclude 2923,2924,2926,2930,2938,2939-2960 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/euo-psi/data --series zf-order --model OrderParameter --param frequency_1 --xmin 10 --xmax 63 --exclude 2923,2924,2926,2930,2939-2960 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/euo-psi/data --series zf-order-logged --model OrderParameter --param frequency_1 --xmin 10 --xmax 63.4 --exclude 2926,2930,2939-2960 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/euo-psi/data --series zf-order-logged --model OrderParameter --param survey_line_mhz --xmin 10 --xmax 68.7 --exclude 2926,2960 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/euo-psi/data --runs 2923-2960 --recipe wizard-2927 --order sample_temperature_logged --start 2927 --name zf-order-logged'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/euo-psi/data --runs 2923-2960 --recipe wizard-2927 --order sample_temperature_logged --x 2923=5,2924=10 --start 2927 --name zf-order-logged'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/euo-psi/data --series zf-order-logged --model OrderParameter --param survey_line_mhz --xmin 10 --xmax 68.7 --exclude 2926,2960 --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "4d6c45c060caa5d2ae83b78e3484b455de24f8b75a57d54aaea52ac1b0ddb1d7",
+      "audited_file_sha256": "334f0f3901318c5bbd912ba488a46d4cbea38c8cc55d552f2722ee62008bdf37",
+      "rubric_sha256": "fe9da3aa512839d6107beebcf6bbb0c343d0d6f7fc668e02e8a3d7ce74096600",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/euo-psi",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -140,4 +140,4 @@\n asymmetry-work/plots/run-2944-early.png\n asymmetry-work/plots/run-2959.png\n asymmetry-work/plots/run-2959-early.png\n-asymmetry-work/plots/run-2923-high.png+asymmetry-work/plots/run-2923-high.png\n",
+      "physics_caveats": [
+        "GPS identification is instrument-level shorthand for PSI GPS; final report does not spell out PSI or .bin, but survey and separate GPS scan provenance are explicit.",
+        "Most ZF fits invalid; conditional law retains flagged/failed points and extrapolatesTc, explicitly not a measurement. TF shifts/rates conditional on poor fits and correction-dependent calibration.",
+        "Early weak112MHz cold feature is not a resolved site assignment."
+      ],
+      "judgement_calls": [
+        "Must1 accepts explicit GPS instrument identity and correct PSI .bin workflow without requiring redundant format spelling."
+      ],
+      "number_evidence_commands": [
+        "survey1; alpha6; corrected reductions7/8; series13/17/19/22/30/38/40; trends26–29/31/35/39/41; FFT43–49/51–54"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "4d6c45c060caa5d2ae83b78e3484b455de24f8b75a57d54aaea52ac1b0ddb1d7",
+        "summary.md": "4d6c45c060caa5d2ae83b78e3484b455de24f8b75a57d54aaea52ac1b0ddb1d7",
+        "transcript.jsonl": "788c10052830776158f20261271d260fc4be414ee97e4185cd429b2e0e8203d5",
+        "commands.txt": "c6c5e48c66476ba23ad54cef00f4237ed67c7752fa83690bfa31281c027158c1",
+        "cost.json": "6b124a4b0e670b9a00ff9be8916931a0aaa81a9c739953522a6a55115bfdf74b",
+        "image-inputs.json": "c6df77d98eaa50e7bfdd3627efca27048e472deeaff2b2e51c09d1ab9e557dfe"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/zf-order-logged-trend-frequency_1.png",
+          "snapshot_path": "review-images/bd0855b0e5a6f521e6d842ad2be4f7edf84e42e3be4911b30b5d0b8ee5b52ad5.png",
+          "bytes": 39914,
+          "sha256": "bd0855b0e5a6f521e6d842ad2be4f7edf84e42e3be4911b30b5d0b8ee5b52ad5",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-precession-trend-Lambda.png",
+          "snapshot_path": "review-images/31b63fda6e3e3b08feaacbefa472071650e857105fa3522d59b96c537d72d623.png",
+          "bytes": 30294,
+          "sha256": "31b63fda6e3e3b08feaacbefa472071650e857105fa3522d59b96c537d72d623",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-2960.png",
+          "snapshot_path": "review-images/864eb45d9b5aaccfa539db0e10db62cdd05ee11d2fd2f6ab0aedef5a3396ec74.png",
+          "bytes": 48271,
+          "sha256": "864eb45d9b5aaccfa539db0e10db62cdd05ee11d2fd2f6ab0aedef5a3396ec74",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-2973.png",
+          "snapshot_path": "review-images/2a4c0ed6680afc9c321aedeee0fc07e9a81b257b7dd01a30f8e99ce0c67f1dd9.png",
+          "bytes": 49612,
+          "sha256": "2a4c0ed6680afc9c321aedeee0fc07e9a81b257b7dd01a30f8e99ce0c67f1dd9",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:38:27.780756+00:00",
+      "reply_matches_saved_file": false
+    },
+    "ferromagnetic-nickel": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Names the three field regimes (ZF, TF 100 G, LF) and their run-number ranges.",
+          "pass": true,
+          "evidence": "Experiment separates ZF124218–124248,100 G124249–124269 and provisionalLF124270–124278 plus sharedZF124220."
+        },
+        {
+          "requirement": "Identifies the paramagnetic 100 G runs as measured calibration candidates (or states that none exist) and says which run alpha came from.",
+          "pass": true,
+          "evidence": "Measured100 G alpha candidate124251; raw1.9723,corrected1.9787 applied."
+        },
+        {
+          "requirement": "Reports a damped/precessing oscillation present in the ZF spectra at the lower temperatures scanned.",
+          "pass": true,
+          "evidence": "Damped oscillation in ordered ZF124227/124235, internal lines below354 K; low100 K anomaly explicitly noted."
+        },
+        {
+          "requirement": "Reports that the oscillation is lost or heavily damped at the highest temperatures in the scan.",
+          "pass": true,
+          "evidence": "380 K endpoint featureless, no detected line from356 K up."
+        },
+        {
+          "requirement": "Reports the oscillation frequency falling as temperature rises towards the top of the scanned range.",
+          "pass": true,
+          "evidence": "Survey16.3MHz150 K to3.83MHz354 K; fitted9.49675MHz320 K to3.93198MHz354 K, clear falling trend."
+        },
+        {
+          "requirement": "Contains no transition temperature, frequency, or rate number that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Direct survey,series,trends print frequencies,rates and conditionalTc357.956334±0.866054K; poorχ²790.815 explicitly limits."
+        },
+        {
+          "requirement": "Does not present the worksheet's textbook Tc (~630 K) as an experimental finding of this dataset.",
+          "pass": true,
+          "evidence": "No bulk630 K claimed as experimental result; line disappearance bracket354–356 K."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Flags that the fine-step region clusters around a much lower apparent transition than bulk nickel's literature Tc, as something to check against the sample rather than reconcile silently.",
+          "pass": false,
+          "evidence": "No comparison with bulk nickel literatureTc or sample-identity discrepancy."
+        },
+        {
+          "requirement": "Treats the 200 K field-sweep LF runs as a separate exercise (e.g. decoupling / internal-field estimate) from the T-scans.",
+          "pass": true,
+          "evidence": "200 K field series independent rate/decoupling exercise, fixed-m RedfieldD/nu conditional on provisional geometry."
+        },
+        {
+          "requirement": "Raises the critical-exponent framing (beta, gamma, w) as a possible follow-on without inventing exponent values.",
+          "pass": false,
+          "evidence": "Conditionalbeta fit reported, but no critical-exponent beta/gamma/w follow-on framing."
+        },
+        {
+          "requirement": "Suggests an additional relaxation or background term for fitting the ordered-state spectra.",
+          "pass": true,
+          "evidence": "Ordered powder model includes longitudinal relaxation and constant; additional exponential candidate noted."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No checker flags; conditional law values and fit windows bind to direct CLI outputs. Numerical seeds copied from printed search hints.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "All required nickel observations/calibration pass; literature/sample-discrepancy and broader exponent framing omitted. Co-add coverage forces redundant separate124271 fit. One-LF final copy omission.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all61 completed commands inspected. All61 commands and project-summary edits inspected; analysis remains public CLI, no corpus instructions or custom arithmetic.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1730.9,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 9,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel/data --series field-200K --model Redfield --param Lambda --plot --workdir asymmetry-work-field'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel/data --series field-200K --model Redfield --param Lambda --fix m=2.000 --plot --workdir asymmetry-work-field'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel/data --series zf-order --model OrderParameter --param frequency --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel/data --series zf-order --model OrderParameter --param frequency --fix alpha=1.000 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel/data --series field-200K-full --model Redfield --param Lambda --fix m=2.000 --plot --workdir asymmetry-work-field'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "27de2e244266f97804754ee3a63bb7f3860f3afad628daabc77f5a70eef6cec3",
+      "audited_file_sha256": "6fbb8146dc784f9a2ed667af6d21cfcd206d9a2df1c6c88c62d42cfba4fdfe24",
+      "rubric_sha256": "8fdb04d7a4f7906dd74d19161f80e7983e02e98ef10344ae70273a54ba1dc0b9",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -120,4 +120,4 @@\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel/project/asymmetry-work/plots/zf-order-trend-frequency.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel/project/asymmetry-work/plots/tf-warm-trend-sigma_2.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel/project/asymmetry-work/plots/tf-internal-one-trend-frequency.png\n-/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel/project/asymmetry-work-field/plots/field-200K-full-trend-Lambda.png\n+/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ferromagnetic-nickel/project/asymmetry-work-field/plots/field-200K-full-trend-Lambda.png",
+      "physics_caveats": [
+        "No specific sampleTc inferred from poor law. Alpha and ambiguous field geometry condition all rates. Fixed-m Redfield fit includes flagged points; no microscopic certainty.",
+        "Text calls124218100 K a high-temperature control despite it being the coarse low endpoint; later results correctly identify this anomaly.",
+        "At354 K prose says “faster” early oscillation although frequency is lower than320 K; quantitative trend/table correctly decreasing, so not a Must failure."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        "survey1; alpha5; reductions6/14/15; ZFseries12/27/32/34/35; trends28/30/31/33/36/37; TFseries21/39/41/43/47 and trends; field45/46/52/55"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "27de2e244266f97804754ee3a63bb7f3860f3afad628daabc77f5a70eef6cec3",
+        "summary.md": "27de2e244266f97804754ee3a63bb7f3860f3afad628daabc77f5a70eef6cec3",
+        "transcript.jsonl": "3edd0aa63012663cea5ed4c29f95e7fc8823844a256ab9e896a2c34234b0ca51",
+        "commands.txt": "9ecc1283515e6890f6b7df48e8edf282c0adc3c10e63051fbc5a65fdf7d48805",
+        "cost.json": "0a41bccd2d845ce19c3d0b44a7b698fa112c80c868067e7f3e0f706d7d4d8e83",
+        "image-inputs.json": "34a5be0e7bff289cbb399f17d7882e8356ef21b155263c0db679348dbc2f3d3f"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/zf-order/124235.png",
+          "snapshot_path": "review-images/9e106ce9b761761d0b6ae6245e61b86bc432d2358ee03802fa93be8e35f46db7.png",
+          "bytes": 79198,
+          "sha256": "9e106ce9b761761d0b6ae6245e61b86bc432d2358ee03802fa93be8e35f46db7",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/zf-order-trend-frequency.png",
+          "snapshot_path": "review-images/ce8dac200bf60d9792027303eaae02456710c30e3961ea566baeac76bb20e4cf.png",
+          "bytes": 33344,
+          "sha256": "ce8dac200bf60d9792027303eaae02456710c30e3961ea566baeac76bb20e4cf",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-warm-trend-sigma_2.png",
+          "snapshot_path": "review-images/2494e48d78f557be647efa68eace9e0c3da1500ec84abdb8a3a17bdff748cb1b.png",
+          "bytes": 32509,
+          "sha256": "2494e48d78f557be647efa68eace9e0c3da1500ec84abdb8a3a17bdff748cb1b",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-field/plots/field-200K-full-trend-Lambda.png",
+          "snapshot_path": "review-images/808b9f1199b19a51c54d9b5dc2cda197ce14d8bb39b4449645f8f4b6325cbf3c.png",
+          "bytes": 40111,
+          "sha256": "808b9f1199b19a51c54d9b5dc2cda197ce14d8bb39b4449645f8f4b6325cbf3c",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:39:47.722230+00:00",
+      "reply_matches_saved_file": false
+    },
+    "molecular-antiferromagnet": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies 17104 as the TF 20 G calibration run and states alpha was determined from it.",
+          "pass": true,
+          "evidence": "17104 explicitly20 G weak-TF alpha reference, rawalpha1.2584 measured and applied."
+        },
+        {
+          "requirement": "Treats 17094-17103 as the ZF temperature sweep used for the ordering analysis, separate from the calibration run.",
+          "pass": true,
+          "evidence": "17094–17103 ten-runZF1.2–10 K scan separate from17104calibration."
+        },
+        {
+          "requirement": "Reports oscillation(s) present in the low-temperature ZF spectra that become more relaxed/damped as temperature rises through the sweep.",
+          "pass": true,
+          "evidence": "Cold17094clearoscillation,17099weak/damped,17100/17103nonoscillatory; warm line loss not equated to failed fit."
+        },
+        {
+          "requirement": "Comments on whether more than one oscillation frequency is present (the worksheet flags this as something to check for), rather than assuming a single frequency without looking.",
+          "pass": true,
+          "evidence": "Wizard tests three damped cosines and prints1.569/2.067/2.51MHz; explicitly no validated scan-wide component/site fit."
+        },
+        {
+          "requirement": "Contains no frequency, TN, or relaxation-rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All survey/wizard/fit/trend values printed; rejected flagged OrderParameter inputs, no inventedTN."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes the \"Cryostat Temperature\" vs \"Sample Temperature\" columns logged for these runs are identical in the worksheet table, and does not imply a discrepancy that isn't there.",
+          "pass": false,
+          "evidence": "Does not mention worksheetCryostat/Sample columns identical; uses logged values legitimately rather than claiming worksheet discrepancy."
+        },
+        {
+          "requirement": "Discusses whether it fit from low to high temperature or vice versa, and why (the worksheet explicitly raises this as a design choice).",
+          "pass": true,
+          "evidence": "Starts coldest17094 because strongest resolved line; chained sweep ordered by loggedT."
+        },
+        {
+          "requirement": "Chooses a relaxing-oscillation function appropriate to magnetic order (e.g. damped cosine terms) rather than a generic unstructured relaxation function.",
+          "pass": true,
+          "evidence": "Three damped cosines+relaxation+constant, powder-overhauser check rather than generic-only decay."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No number/unit flags. β0.5 is explicitly fixed model input; no physical arithmetic. Final values correspond to calibrated reruns rather than earlier alpha1 trial.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Physics observations pass, but scan-wide multi-oscillator fit fails and needs general constrained/simpler-line recovery. Rawalpha transferred into corrected reductions with caveat. TerminalLF omitted from actual reply.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all36 completed commands inspected. All36 commands inspected, including benign no-match rg and failed law attempt; no analysis outside staged data and publicCLI.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1360.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 9,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/molecular-antiferromagnet/data --series zf-temperature --model OrderParameter --param frequency_1 --xmax 4.895 --plot && asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/molecular-antiferromagnet/data --series zf-temperature-dynamic-gkt --model Redfield --param nu --plot'",
+        "/bin/bash -lc \"sed -n '1147,1195p' .agents/skills/asymmetry-analysis/SKILL.md; asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/molecular-antiferromagnet/data --series zf-temperature --model OrderParameter --param frequency_1 --xmax 4.895 --fix beta=0.5 --plot\"",
+        "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/molecular-antiferromagnet/data --runs 17094-17103 --recipe wizard-17094 --order sample_temperature_logged --start 17094 --name zf-temperature --plot && asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/molecular-antiferromagnet/data --series zf-temperature --model OrderParameter --param frequency_1 --xmax 4.895 --fix beta=0.5 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"cat .agents/skills/asymmetry-analysis/SKILL.md && rg --files -g '\"'!*'\"' .\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/molecular-antiferromagnet/data --series zf-temperature --model OrderParameter --param frequency_1 --xmax 4.895 --plot && asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/molecular-antiferromagnet/data --series zf-temperature-dynamic-gkt --model Redfield --param nu --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "f68896c1cf7fed814f46030ef34dc6605759d4d17b46501c5ded7af40ac9d9a2",
+      "audited_file_sha256": "6912624b4242c273296b0b2c1b7ad1bcab2d08f134e19e54abb01b2839baea82",
+      "rubric_sha256": "a6dcbd9c0ae82a5ff22433c944584a709ccf430256a594c0acee0073d8b540b7",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/molecular-antiferromagnet",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -101,4 +101,4 @@\n asymmetry-work/plots/wizard-17101.png\n asymmetry-work/plots/wizard-17104.png\n asymmetry-work/plots/zf-temperature-dynamic-gkt-trend-Delta.png\n-asymmetry-work/plots/zf-temperature-dynamic-gkt-trend-nu.png\n+asymmetry-work/plots/zf-temperature-dynamic-gkt-trend-nu.png",
+      "physics_caveats": [
+        "Corrected alpha check1.2594 does not confirm line; raw1.2584 used knowingly with corrected science counts, calibration limitation explicit.",
+        "All main multicomponent rows invalid; law numerically converges on failed inputs, correctly not interpreted. WarmDGKT controls mostlypoor; no uniqueTN/mechanism.",
+        "Event-count variation only indirectly acknowledged through warm noise/errors, not quantified."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        "survey2/27; alpha4/17; final reduction/wizard18; scan/law19; warmcontrol21/23–26; weakline22; calibration31"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "f68896c1cf7fed814f46030ef34dc6605759d4d17b46501c5ded7af40ac9d9a2",
+        "summary.md": "f68896c1cf7fed814f46030ef34dc6605759d4d17b46501c5ded7af40ac9d9a2",
+        "transcript.jsonl": "be867292e8b723e371fbf412215249da4ef80536096d875d9ea94fa30fa93196",
+        "commands.txt": "56c456c26c839f95a2a7776cac7e5722e441dec677760564457dc961dd7b5fe9",
+        "cost.json": "6443bb59940b354b368d4aa9e21ad31cf18230f93dbb35f95fef83c22d754fc3",
+        "image-inputs.json": "5e57d614c331392d61999e43ca5480e7963175dca042b5c129a0e26137811749"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-17094.png",
+          "snapshot_path": "review-images/913bf958f9321de3e9eb02c321e44757e85b18a44ecca34b9a7739afbc13f64c.png",
+          "bytes": 44366,
+          "sha256": "913bf958f9321de3e9eb02c321e44757e85b18a44ecca34b9a7739afbc13f64c",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-17099.png",
+          "snapshot_path": "review-images/53d185f5a283119fbfd22da5398f740100ee813fab416e1d4c17ff42c55a10b4.png",
+          "bytes": 45173,
+          "sha256": "53d185f5a283119fbfd22da5398f740100ee813fab416e1d4c17ff42c55a10b4",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-17100.png",
+          "snapshot_path": "review-images/176485fb9b613288653e7153f51284dc6d943e05a1834e5fa5aaebcacadf3c0d.png",
+          "bytes": 42237,
+          "sha256": "176485fb9b613288653e7153f51284dc6d943e05a1834e5fa5aaebcacadf3c0d",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-17103.png",
+          "snapshot_path": "review-images/e5976f0b49177d572adb2cb9ba95721ad39386952c371740321953cf481e0ff3.png",
+          "bytes": 45096,
+          "sha256": "e5976f0b49177d572adb2cb9ba95721ad39386952c371740321953cf481e0ff3",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:39:47.743255+00:00",
+      "reply_matches_saved_file": false
+    },
+    "afm-high-tf-mdu": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the two temperature scans by field (6 T and 8 T) with their run ranges, from the survey rather than from file names alone.",
+          "pass": true,
+          "evidence": "Survey-based686–69360000 G/6 T and730–73980000 G/8 T scans with recordedT."
+        },
+        {
+          "requirement": "Resolves the precession near the Larmor frequency into more than one line (from a Fourier transform or a multi-component fit) at at least one field, and says which it used. Reporting the two lines passes even when it calls the splitting not precisely resolved; it fails when it concludes there is one line.",
+          "pass": true,
+          "evidence": "Explicit endpoint two-line fits and warmFFT doublets at bothfields; reports both frequencies, amplitudes,separations and one/two-line χ²."
+        },
+        {
+          "requirement": "Reports a change in the spectrum or line shape (broadening, splitting or extra structure) on cooling through the tens-of-kelvin region at at least one field, from this session's own fits or spectra.",
+          "pass": true,
+          "evidence": "Rates higher cold, exponential cold versusGaussian warm,6 T change12–30.0005 K and8 T17.9999–74.9949 K explicitly currentseries."
+        },
+        {
+          "requirement": "States which parts of a full analysis the tool cannot do (MaxEnt field spectra; a multi-group field-distribution analysis); does not present a canting angle or ordered moment as a finding, and does not infer the absence of magnetic order from a single-line fit.",
+          "pass": true,
+          "evidence": "MaxEnt and multi-group field-distribution unavailable; no canting angle,moment or no-order inference from one line."
+        },
+        {
+          "requirement": "Contains no transition temperature, field shift or line parameter that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Direct Fourier/fit/trend prints shifts,separations and linewidths; no inventedtransitionT."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reports the recorded run temperature where it differs from the title (run 732 is titled 12 K but recorded at 10.5 K).",
+          "pass": false,
+          "evidence": "Run732title12 K versus recorded10.5 K not stated."
+        },
+        {
+          "requirement": "If it quotes a transition temperature, it comes from a stated `trend --model` fit to a line parameter with the fit range given, and is framed as that fit's result rather than the paper's T_N, which rests on the wing area of MaxEnt spectra.",
+          "pass": true,
+          "evidence": "No transitiontemperature quoted; explicitly declines unsupportedlaw and does not echo paperTN."
+        },
+        {
+          "requirement": "Notes that the two central lines are separated by roughly one Fourier resolution element, so a zoomed spectrum's empty peak table is not evidence that the second line is absent.",
+          "pass": true,
+          "evidence": "Doublet separations stated aroundoneFFTresolution0.105316MHz; close-line fits used despite cold singlepeak."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. All shifts and separations CLI-derived and printed, no scorer/agent numerical subtraction. No number/unitcheckerflags.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Literal bounded spectral rubrics pass, but independent magnetic physics scope fails: report treats samplephase as unknown and introduces vortex/superconducting possibilities for an AFM experiment. Generic trend command24 itself suggests superconducting diamagnetic shift; general context-aware interpretation repair required. TerminalLF omitted.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all58 completed commands inspected. All58commands and summary-only edits inspected. No external reference values or custom physical arithmetic; within staged data/publicCLI.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1740.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 4,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "0db5f329103176b2a129c086029ac21c72efd9cbe3ce370d0767f3831c39134e",
+      "audited_file_sha256": "96895cd72a73bdef55c4f0c962121a3dcc93eb2284629b98e186ea2b7ee9039e",
+      "rubric_sha256": "062fa8082f95b4b6cb7f075cf9a287e8add6d5313d56290d3d5ead8bc95725cf",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/afm-high-tf-mdu",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -101,4 +101,4 @@\n asymmetry-work/plots/fit-686.png\n asymmetry-work/plots/fit-693.png\n asymmetry-work/plots/fit-730.png\n-asymmetry-work/plots/fit-739.png\n+asymmetry-work/plots/fit-739.png",
+      "physics_caveats": [
+        "Unmeasuredalpha1 yields large negativebackgrounds near−9to−10%; conditional fits allpoor despite smallχ² excess over388k bins.",
+        "Cold harmonic correctly rejected as separate site; close doublets explicitly tested. NoSCgaplaw run, but speculativeSC framing remains inappropriate for suppliedmagneticcontext."
+      ],
+      "judgement_calls": [
+        "LiteralMust3 accepts current linewidth/shape change on cooling without requiring independent microscopicAFMassignment. Independentphysics scope is FAIL and must gate overallobjective even though literalMusts pass."
+      ],
+      "number_evidence_commands": [
+        "survey1; reduction4; FFT7/8/10–13; wizard14/15/18/22; series20/23/33/36/40; trends21/24/34/37/41; two-linefits26/28/46/51; one-line31/49/52"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "0db5f329103176b2a129c086029ac21c72efd9cbe3ce370d0767f3831c39134e",
+        "summary.md": "0db5f329103176b2a129c086029ac21c72efd9cbe3ce370d0767f3831c39134e",
+        "transcript.jsonl": "2515308dc737e57b4abf8970564b21bbc1e57366d6a0082d427bea17696ebcbb",
+        "commands.txt": "6f4338de6fcb4aa006750e546242887544f5277a64776b4e513b97e01f22a805",
+        "cost.json": "98018ecb6a04a67898b9fb0d231a10c277be993a03772cba3ec202b368bcd4f3",
+        "image-inputs.json": "0550ecf9e03127c99f91577ded00d651fd419b10d25792837867dd39f48e8e69"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-693.png",
+          "snapshot_path": "review-images/487b35d622d67823ba90ad3ec13e4f7136e7f5edaa1ceffe1901563b9e224587.png",
+          "bytes": 51131,
+          "sha256": "487b35d622d67823ba90ad3ec13e4f7136e7f5edaa1ceffe1901563b9e224587",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-739.png",
+          "snapshot_path": "review-images/129481202bf2e1907887b3422b1989d4fc1ba621834ae3eb0f780191f2aa345c.png",
+          "bytes": 49268,
+          "sha256": "129481202bf2e1907887b3422b1989d4fc1ba621834ae3eb0f780191f2aa345c",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-6T-trend-Lambda_2.png",
+          "snapshot_path": "review-images/def5ddcc6f5820d8641867b9bf2760b295e394fb44eb7588b79a24ead29a73b1.png",
+          "bytes": 26445,
+          "sha256": "def5ddcc6f5820d8641867b9bf2760b295e394fb44eb7588b79a24ead29a73b1",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-8T-trend-Lambda_2.png",
+          "snapshot_path": "review-images/87db76c0ff2f913bebcef04e28c90ca9fe19de7954bfe537805a35d5ae31ddae.png",
+          "bytes": 29705,
+          "sha256": "87db76c0ff2f913bebcef04e28c90ca9fe19de7954bfe537805a35d5ae31ddae",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:39:47.762115+00:00",
+      "physics_scope": {
+        "verdict": "FAIL",
+        "evidence": "“sample class as uncertain”; “in a superconductor, a field-distributed vortex state could broaden the line”; no identified AFM experiment context. No SC-gap fit, but generic phase agnosticism is not correct magnetic scope.",
+        "root_cause": "Generic trend diamagnetic-shift cue and lack of reliable experiment-context ingestion; CLI and skill should condition mechanism/law advice on supplied sample/experiment context without corpus-specific dispatch."
+      },
+      "reply_matches_saved_file": false
+    },
+    "maleic-mu-kinetics": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Recognises the 2 G runs as muonium precession measurements and the 100 G runs as diamagnetic ones.",
+          "pass": true,
+          "evidence": "Distinguishes2 G weak-field Mu precession from100 G applied-field Larmor precession; calls2 G lines muonium, not LFLarmor."
+        },
+        {
+          "requirement": "Separates the samples by concentration, read from titles or notes, and says where the concentration values came from.",
+          "pass": true,
+          "evidence": "Titles/notes supplyneat=1,half0.5,quarter0.25,water0; explicit relative amounts, not molarity."
+        },
+        {
+          "requirement": "Reports the Mu relaxation rate rising with maleic acid concentration at a fixed temperature (290 K, or matched setpoints), from fits of the 2 G runs.",
+          "pass": false,
+          "evidence": "“No quantitative2 G relaxation or concentration trend is supported”; neverreportsrequiredrisingMu rate at matched nominalT."
+        },
+        {
+          "requirement": "Obtains a rate constant from the slope of λ_Mu against concentration with a CLI fit (e.g. `fit-series`/`fit-global` with `--order concentration --x ...`, then `trend --model Linear`), reported with its uncertainty and in the concentration units it used. A fit-quality caveat is fine; withdrawing the converged slope is not.",
+          "pass": false,
+          "evidence": "No2 G slope/error reported. LinearLambda on2g-290-composition returns−0.002840±0.003112, LAWNOTESTABLISHED; unsuitable nonoscillatory model gives rejectedrate, not recoveredMu kineticlaw."
+        },
+        {
+          "requirement": "Contains no rate constant, activation energy or fraction that was not produced by a tool call in this session (the worksheet's published values are background).",
+          "pass": true,
+          "evidence": "No inventedrateconstant,Ea,fraction; accepted figures all directCLIprinted; rejectedparameterdiagnostics explicitly not physical."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares deoxygenated with untreated water (the untreated Mu signal relaxes faster, or leaves no resolvable line: dissolved O₂).",
+          "pass": false,
+          "evidence": "Names untreated/deoxygenatedwater but no resolved oxygen/rate comparison."
+        },
+        {
+          "requirement": "Uses a calibration run appropriate to the sample being reduced rather than one alpha for the whole folder, or notes the alpha step.",
+          "pass": true,
+          "evidence": "Alpha step78280/81 explicitly1.0675to1.4010raw; appropriate separateblockreferences andcorrectedalphas."
+        },
+        {
+          "requirement": "Holds the Mu and diamagnetic frequencies or amplitudes common across the concentration set (shared in `fit-global`, or fixed) and says so.",
+          "pass": false,
+          "evidence": "No shared/fixedMu frequencies oramplitudes acrossconcentration fit."
+        },
+        {
+          "requirement": "States that the Arrhenius step needs k_Mu at several temperatures, each from its own concentration fit, and either does it per temperature and fits the Arrhenius law through them with a command (`trend --from-fits … --model Arrhenius`) rather than by hand, or declines that step with the reason.",
+          "pass": false,
+          "evidence": "No explanationthatArrheniusneedsper-temperaturek_Mu slopes; compositiontriplets fitted but no validatedslope/Eaworkflow."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No number/unitcheckerflags; concentrationnumbers explicitly user-axis from title/notes. Window/shapediagnostics not interpretedaschemicalrates.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Now exercises supplied concentration axis and attempts2 G Linear law, but broad generic decay fits replace Mu oscillatory kinetic model and all become amplitude-invalid. No shared-frequency/amplitude recovery, so risingrate/slope still fail. Wizards repeated/terminated while unresolved; finalLFomitted.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all94 completed commands inspected. All94completedcommands and summaryedits inspected; strings/reads onlycontext, no spreadsheets/ad-hocanalysis or physicalarithmetic. Severalworker2overridesand exit143 recorded.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1727.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 6,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/data --series tf-290-composition --model Linear --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/data --series tf-290-composition-ownalpha --model Linear --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/data --series 2g-290-composition --model Linear --param Lambda --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/data --runs 78251-78280 --alpha-from 78256 --deadtime from_file --background range --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/data --run 78257 --workers 2 --plot'",
+          "exit_code": 143
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/data --run 78257 --plot'",
+          "exit_code": 143
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/data --run 78257 --workers 2 --plot'",
+          "exit_code": 143
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "1a615bca06734862b1ddd2e0d57a1aa705dcf6689cba5d02327e273252fb4a4a",
+      "audited_file_sha256": "0715c014b48351d0696f9766118775d06cfc4739cf637d603085dd717c916a0d",
+      "rubric_sha256": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -128,4 +128,4 @@\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/project/asymmetry-work/plots/tf-neat-temperature-ownalpha-trend-A_1.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/project/asymmetry-work/plots/tf-neat-temperature-ownalpha-trend-Lambda.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/project/asymmetry-work/plots/fit-78282.png\n-/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/project/asymmetry-work/plots/reduced-78290.png\n+/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/maleic-mu-kinetics/project/asymmetry-work/plots/reduced-78290.png",
+      "physics_caveats": [
+        "Block-dependentTlogoffsets mean nominallymatchedconcentration rows are not actualTmatched; report explicitlylists this, no absolute kineticconstant defensible without axis decision.",
+        "No successful2 G quantitativeMu model despite attemptedMu-line recipe. Blanket amplitude invalidation and hugeoffsets warrant model/reduction/window recovery rather than inventedrate.",
+        "Threewizardprocesses exit143; finalreport exists and no servicefailure voids the completedscientificattempt."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        "survey1/logbook2; blockreductions5/7/24/25/36/41–50/53/56; Mu-line8/9/22/33/88/89; composition37/38/59–67/82/87; Linear28/80/87; TFownalpha51/52/57/58 andshort78/79"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "1a615bca06734862b1ddd2e0d57a1aa705dcf6689cba5d02327e273252fb4a4a",
+        "summary.md": "1a615bca06734862b1ddd2e0d57a1aa705dcf6689cba5d02327e273252fb4a4a",
+        "transcript.jsonl": "0638bdbd0abeba83d7e339a82867888b89b54e8a5a3744b102e097e957db512c",
+        "commands.txt": "d3141b943f07c26fe012e45a8f25a8eaac0021db004fbc8f2dfeb6c9fb8d9107",
+        "cost.json": "a161966972d6d9a2aedc98d7145cfe97163c1a18a3c324b5f48f00cca226a258",
+        "image-inputs.json": "3ed6d52d1fabf87e32be3607b0fdfecea1ea4243203da00dba5a7d6519c95da8"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/tf-neat-temperature-ownalpha-trend-A_1.png",
+          "snapshot_path": "review-images/95355dbfd409dc4a20bb298281af4b47a54a9d64b40ce785059c117f261b9ebf.png",
+          "bytes": 32706,
+          "sha256": "95355dbfd409dc4a20bb298281af4b47a54a9d64b40ce785059c117f261b9ebf",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-neat-temperature-ownalpha-trend-Lambda.png",
+          "snapshot_path": "review-images/3a9806521f362251c9c69f0cb7076b7b2c16ff4e86cae6385ca7fc1e14effa1e.png",
+          "bytes": 35410,
+          "sha256": "3a9806521f362251c9c69f0cb7076b7b2c16ff4e86cae6385ca7fc1e14effa1e",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/fit-78282.png",
+          "snapshot_path": "review-images/399287b989cd8430767a8aedfd6322b4fd07ea127ad0bc7de3563d97de2f57bd.png",
+          "bytes": 67665,
+          "sha256": "399287b989cd8430767a8aedfd6322b4fd07ea127ad0bc7de3563d97de2f57bd",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-78290.png",
+          "snapshot_path": "review-images/b3ef94e6c13d7774f3140c93c543bc44699214aa3d753f40c1a809c7a4878963.png",
+          "bytes": 46116,
+          "sha256": "b3ef94e6c13d7774f3140c93c543bc44699214aa3d753f40c1a809c7a4878963",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:41:37.132854+00:00",
+      "reply_matches_saved_file": false
+    },
+    "benzene-rf": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies one longitudinal-field RF-resonance field scan of 37 runs at 293 K, two periods per run, with the 218 MHz RF from the notes, and says that run order is not field order.",
+          "pass": true,
+          "evidence": "37two-periodMUT56426–56462,293 K,218 MHz notes,LF RF geometry andinterleavedfieldorder explicit."
+        },
+        {
+          "requirement": "States that no run in the folder can calibrate alpha and that alpha was assumed to be 1.0; states the deadtime treatment.",
+          "pass": true,
+          "evidence": "Noalpha candidate,assumed1.0000,filedeadtimecorrection,no background."
+        },
+        {
+          "requirement": "Runs `integral-scan` with `--period green-red` and describes two resonance peaks in the difference, both between about 0.74 and 0.90 kG, on a flat baseline outside them.",
+          "pass": true,
+          "evidence": "Actualintegral-scan --period green-red withdefaultcountintegral; twopositivefeatures772.559/865.446 G,smallbaselineoutside."
+        },
+        {
+          "requirement": "Fits `RFResonanceMuP` with `nu_RF` held at 218 MHz and reports A_μ between 510 and 520 MHz and A_p between 115 and 135 MHz, each with its uncertainty, and the fit's χ²ᵣ.",
+          "pass": true,
+          "evidence": "RFResonanceMuP fixednu_RF218; A_mu514.775±0.034MHz,A_p124.437±1.352MHz,χ²1.408."
+        },
+        {
+          "requirement": "Contains no A_μ, A_p or resonance field that was not produced by a tool call in this session: no couplings from the mean and difference of two fields by a formula, and the published couplings are background.",
+          "pass": true,
+          "evidence": "CouplingsandfieldsprintedbyCLI, noformula conversion orpublishednumbers substituted."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Also fits the worksheet's model, two Lorentzians on a constant, seeded near the two peaks, and reports the two fitted centres; notes the fit agrees in quality with `RFResonanceMuP`.",
+          "pass": false,
+          "evidence": "No twoLorentzianalternative orcentres comparison."
+        },
+        {
+          "requirement": "Says `RFResonanceMuP` is the exact-diagonalisation model and that the analytic high-field approximation the worksheet compares against is not available in the CLI (or was not run).",
+          "pass": false,
+          "evidence": "Doesnotnameexactdiagonalisation or high-fieldanalyticapproximation; broadnoHamiltoniancapabilitywording is misleading."
+        },
+        {
+          "requirement": "Says which period is RF-on and on what evidence (the sign of the green − red peaks, or an assumption stated as such).",
+          "pass": true,
+          "evidence": "Positivegreen-red meansgreenRFoff,redRFon; explicitsignargument."
+        },
+        {
+          "requirement": "Compares A_μ and A_p with the published or worksheet values in words, attributing them.",
+          "pass": false,
+          "evidence": "No attributedpublished/worksheetcouplingcomparison."
+        },
+        {
+          "requirement": "Points to the stored scan JSON and PNG.",
+          "pass": true,
+          "evidence": "FilespointtoscanJSONandPNG."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Allquantities directlyprinted; no unverifiednumber/unitflags.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Estimator-versus-period repair succeeds: integraldefault retained andvalidRFfit. General capability explanation overstateslackofHamiltonian instead ofdistinguishing implementedtwo-spin model frommissingmicroscopicsite model. FinalLFomitted.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all12 completed commands inspected. All12commands inspected; reads metadata/publicCLIonly, noexternallycomputedcouplings.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 266.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "e3d1e9e58b088bf56d2a5c1d6f5e3c8384905c5213eaee1f0768dde28e0cbec3",
+      "audited_file_sha256": "dec209c0c6e09c75d84e8f2c16cf0c58c451583fd1c5068c920ca0d82aea33e6",
+      "rubric_sha256": "29bc5fab99a3ca1088aaea71742bda2503e7ad7b974b2d66a2342c99e8c26ce2",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/benzene-rf",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -60,4 +60,4 @@\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/benzene-rf/project/asymmetry-work/survey.json\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/benzene-rf/project/asymmetry-work/scans/benzene-rf-218MHz.json\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/benzene-rf/project/asymmetry-work/plots/benzene-rf-218MHz.png\n-/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/benzene-rf/project/summary.md\n+/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/benzene-rf/project/summary.md",
+      "physics_caveats": [
+        "Alphaassumed, singleRFfrequency/Tonly;fieldpositions conditionalwithoutindependenterror. RFResonanceMuP is an implementedHamiltonian model,so sweeping“lack of microscopicradical/siteHamiltonian”needs clearqualification."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        "survey1; integral-scan6; info7; storedscanJSON8"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "e3d1e9e58b088bf56d2a5c1d6f5e3c8384905c5213eaee1f0768dde28e0cbec3",
+        "summary.md": "e3d1e9e58b088bf56d2a5c1d6f5e3c8384905c5213eaee1f0768dde28e0cbec3",
+        "transcript.jsonl": "33ed51bf6d960fcb171fab494d85e1be84ff2571ab4ee24072e33d67f8e9120d",
+        "commands.txt": "2db6f99b04d1db7fe0c6946ff1f4f21aa368e2e757d7350ba945d643d9032d07",
+        "cost.json": "2b02431e1944a442b30570408776d4fc392c3c488461fa8801157aa872036c8f",
+        "image-inputs.json": "ebcba8291cd20eaece5368e5045ab8da753591e4baca86d5f0f9782766e3342c"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/benzene-rf-218MHz.png",
+          "snapshot_path": "review-images/d5552d3452d59b47d22cebf51fd4e4face4dff5e8d9ba4d516d9b1650655df99.png",
+          "bytes": 51413,
+          "sha256": "d5552d3452d59b47d22cebf51fd4e4face4dff5e8d9ba4d516d9b1650655df99",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:41:37.138388+00:00",
+      "reply_matches_saved_file": false
+    },
+    "alc-tcnq": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies this as a longitudinal-field avoided-level-crossing (ALC or µLCR) experiment in which each run contributes one time-integral asymmetry point versus applied field.",
+          "pass": true,
+          "evidence": "LF integralpolarization versusfield, finalALCinterpretationexplicit, wrongTFstampwithdrawn."
+        },
+        {
+          "requirement": "Reports the folder structure from its own survey: 128 EMU runs comprising four 31-point scans over 2000–5000 G, plus the non-scan/calibration runs, without claiming the absent run 19618 was loaded.",
+          "pass": true,
+          "evidence": "128EMU19485–19612, four31point2000–5000 Gblocks+calibration/ZF/pilot; noabsent19618claimed."
+        },
+        {
+          "requirement": "Actually runs `integral-scan` on at least one complete 31-run temperature block and states which block it analysed. It does not substitute `wizard`, `fit-series`, or individual time-domain fits for the ALC scan.",
+          "pass": true,
+          "evidence": "Allfourcompleteblocksactuallyintegral-scanned, individuallyidentified; failedexploratorytimefitsnotusedasALCresult."
+        },
+        {
+          "requirement": "Fits the field scan with a resonance-plus-smooth-background model. A single `LorentzianLCR` with a cubic background is acceptable; it does not add a second line merely because the teaching worksheet used a two-Lorentzian template.",
+          "pass": true,
+          "evidence": "LorentzianLCR+Linear/Cubiclocalbackgroundchecks; no automaticsecondresonance."
+        },
+        {
+          "requirement": "Reports an observed negative resonance feature close to 3.1 kG, together with the fitted centre, width and uncertainty/quality information from this run's command output. A centre far outside 2.9–3.2 kG (the resonance moves a few tens of gauss between the four temperature blocks) without an explicit failed-fit warning is a fail.",
+          "pass": true,
+          "evidence": "Broadnegativetroughnear3.1kG;350 KB03100.813871±6.86G,width267.636084±16.5G,χ²32.940 withconditionalpoorfitwarning;allfourtablecentresnear3kG."
+        },
+        {
+          "requirement": "Separates measured/fitted output from physical interpretation and does not invent hyperfine constants that the CLI did not calculate.",
+          "pass": true,
+          "evidence": "Phenomenologicaltroughs separatedfromqualitativereorientationinterpretation; nohyperfineconstantsinvented."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Uses run 19485 as the detector-balance candidate, or explicitly states and justifies the alpha treatment it actually used.",
+          "pass": true,
+          "evidence": "Measuredalpha1.0323from19485,correctionsoff,filegroup1/2."
+        },
+        {
+          "requirement": "Uses non-resonant baseline regions on both sides of the dip and names the integration window and count-integral method.",
+          "pass": true,
+          "evidence": "Countssummedbeforeasymmetry,1–10μswindow; localfitwindowsstraddledipwithsmoothbaselinesandbothflanklimitationsnoted."
+        },
+        {
+          "requirement": "Analyses or at least maps all four temperature blocks, and describes any temperature-dependent width/amplitude claim only for blocks it actually fitted.",
+          "pass": true,
+          "evidence": "Allfourblocksseparatelymapped/fitted,baseline-sensitivityandloggedoffsetslimitTtrend."
+        },
+        {
+          "requirement": "Points the reader to the stored scan JSON and spectrum/fit PNG.",
+          "pass": true,
+          "evidence": "FileslistallscanJSONsandPNG."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No checkerflags; fittederrors/centres directCLI, no derivedhyperfinearithmetic. Report separatesprintedwithdrawndiagnosticsfromphysicalclaims.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Integralworkflow eventually recovers from extensiveTFmisclassification. Wrongtime-domainwork retainedaswithdrawn diagnostics, not physicalresults. No robust narrowresonance, but boundedALCtroughrequirementsmet. FinalLFomitted.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all92 completed commands inspected. All92commands and summary-onlyedits inspected; cat/strings/rgstagedlogbookreads arecontextonly, noexternalanalysis.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1424.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 12,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"rg -o '.{0,90}(ALC|longitudinal|orientation|radical|transverse|muon|field scan).{0,110}' /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/alc-tcnq/data/logbook.rtf\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry fit /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/alc-tcnq/data --runs 19489-19519 --model 'LorentzianLCR + Cubic' --xmin 1900 --xmax 4300 --alpha-from 19485 --deadtime off --name tcnq-350-local-cubic --plot\"",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry fit /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/alc-tcnq/data --runs 19489-19519 --model 'LorentzianLCR + Linear' --xmin 2466.64 --xmax 3733.36 --alpha-from 19485 --deadtime off --name tcnq-350-lcr-linear --plot\"",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry fit /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/alc-tcnq/data --runs 19520-19550 --model 'LorentzianLCR + Linear' --xmin 2285.86 --xmax 3914.14 --alpha-from 19485 --deadtime off --name tcnq-100-lcr-linear --plot\"",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry fit /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/alc-tcnq/data --runs 19520-19550 --model 'LorentzianLCR + Cubic' --xmin 700 --xmax 5500 --alpha-from 19485 --deadtime off --name tcnq-100-local-cubic --plot\"",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/alc-tcnq/data --run 19485 --geometry TF --scope tf-knight-precession --workers 1 --deadtime off --plot'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/alc-tcnq/data --runs 19485-19486 --recipe wizard-19485 --order sample_temperature_logged --start 19485 --name tf-100-calibration --deadtime off --plot'",
+          "exit_code": 2
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "865bb407e0d16bcb993c4888a362223f5c237951dced434de7580694022f8ca9",
+      "audited_file_sha256": "3a9c1c0e2d08cf10f982750f16a4fb0db6baafa4daee1c415e2e0709f19bc43e",
+      "rubric_sha256": "a2a38dc913e30cfad99eecaac81cac05cccad4b2b7d7afb893390314e39d251b",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/alc-tcnq",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -80,4 +80,4 @@\n asymmetry-work/plots/tcnq-10-integral.png\n asymmetry-work/plots/tcnq-50-integral.png\n asymmetry-work/plots/tf-100-calibration-trend-frequency.png\n-asymmetry-work/plots/field-350-duplicates-trend-A_1.png\n+asymmetry-work/plots/field-350-duplicates-trend-A_1.png",
+      "physics_caveats": [
+        "Broadpoorχ²fits and baseline sensitivity limitwidth/centreprecision. Conditionalqualitativereorientationhypothesis,no microscopicrate.",
+        "Two-pointwithdrawnseriesparagraphquotesstepnotes overotherfieldspans; theseareactuallystoredCLI screeningdiagnostics, explicitlynotphysicalresults,but staleassociationconfuses report and should be removed ratherthanrepeatedforaudit.",
+        "Initialdeadtimefrom_file had nofilevalues; finalscanrerunsdeadtimeoff; timeresultscachedbeforefinalreductionareonlycontrols/withdrawnfits."
+      ],
+      "judgement_calls": [
+        "Must3 accepts completedintegralworkflow despite earlierunsuitabletime-domainattempts; finalreport explicitlywithdrawsthem. Should2 accepts statedfitwindowscoveringbothflanks,althoughno separatebaseline-onlyfit."
+      ],
+      "number_evidence_commands": [
+        "survey1/alpha6; integral40–52andfinal63–67/73–80; calibration53–57/83/85; withdrawnduplicate25/88"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "865bb407e0d16bcb993c4888a362223f5c237951dced434de7580694022f8ca9",
+        "summary.md": "865bb407e0d16bcb993c4888a362223f5c237951dced434de7580694022f8ca9",
+        "transcript.jsonl": "69aa852ec273eea39dd9d3fed91bb012f9201141fdd50d74d99df6cad4fc0be7",
+        "commands.txt": "7340cd5bce082ad7c7d99ddab984256207ff1b14369a35ac5b1ff883c543a531",
+        "cost.json": "4d4976313745e774dba87b8d49863f91f6b6adc3ffb3e7f602aec2faa902ea08",
+        "image-inputs.json": "ae1368727f7721f534da4e0beec7cd6521c985139226cf496c2ee6dbd50073f5"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-350-integral.png",
+          "snapshot_path": "review-images/90e4f4bc9d8d57cc3456db5974184b5770269aa82ff095595ff81b17f7e4bbeb.png",
+          "bytes": 25671,
+          "sha256": "90e4f4bc9d8d57cc3456db5974184b5770269aa82ff095595ff81b17f7e4bbeb",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-100-integral.png",
+          "snapshot_path": "review-images/cd469fbdcbc80a2f40e91204b990bed711f71f0f927a32759b8c786635f81894.png",
+          "bytes": 23685,
+          "sha256": "cd469fbdcbc80a2f40e91204b990bed711f71f0f927a32759b8c786635f81894",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-10-integral.png",
+          "snapshot_path": "review-images/72c270d8b913b5570a1a26083a869b782a7603fbce77d356ae44d3054acb0c56.png",
+          "bytes": 26927,
+          "sha256": "72c270d8b913b5570a1a26083a869b782a7603fbce77d356ae44d3054acb0c56",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-50-integral.png",
+          "snapshot_path": "review-images/23c776c0a8aefe6a022aeeb4078899a3eac8399248a122c93626a8d0260c1c66.png",
+          "bytes": 28296,
+          "sha256": "23c776c0a8aefe6a022aeeb4078899a3eac8399248a122c93626a8d0260c1c66",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:41:37.196211+00:00",
+      "reply_matches_saved_file": false
+    },
+    "benzene-repolarisation": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies a longitudinal-field scan of the integral asymmetry from a few gauss to 4 kG at 300 K, the six interleaved 100 G transverse runs as calibration (excluded from the scan), and the repeated fields of the return pass.",
+          "pass": true,
+          "evidence": "LF3–4000G300K,38sciencepoints,sixnamed100GTFcalibrations excluded;returnfields10/100/500/1000/2000/3000 Gexplicit."
+        },
+        {
+          "requirement": "Establishes the LF geometry of the high-field runs despite their TF stamp, and says how — e.g. that their integral asymmetry continues the LF curve where a transverse field would integrate to near zero, or that the survey refutes the stamp where it can measure.",
+          "pass": true,
+          "evidence": "NoappliedfieldprecessionandsustainedlargeintegralscontradictTFstamp; science100GdifferentfromTFcalibration."
+        },
+        {
+          "requirement": "Measures alpha on one of the 100 G TF runs, names it and the value, and states the deadtime treatment.",
+          "pass": true,
+          "evidence": "15958rawalpha1.3181,corrected1.3249;filedeadtimeapplied."
+        },
+        {
+          "requirement": "Runs `integral-scan` with `--model MuRepolarisation` over the LF runs and reports `A_hf` with its uncertainty, the χ²ᵣ and the field range fitted; says plainly how well the function describes the curve (a one-term fit over the whole range is poor).",
+          "pass": true,
+          "evidence": "MuRepolarisationfull38points3–4000G:A_hf1516.299±3.754MHz,χ²459.300; explicitpoorfit andnegativeDia."
+        },
+        {
+          "requirement": "Describes the curve itself: the integral asymmetry rises steadily with field over the whole scan and is still rising at the highest field.",
+          "pass": true,
+          "evidence": "Curve“keeps risingthroughlargestfield”,nosaturation,notnarrowresonance."
+        },
+        {
+          "requirement": "Contains no B0, A, coupling or fraction that was not produced by a tool call in this session: no B0 converted from `A_hf` (or back) by hand, and no literature coupling presented as a result.",
+          "pass": true,
+          "evidence": "NoB0conversion orphysicalfractioninvented;conditionalamplitudes/couplings fromdirectCLI."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Says the muonium repolarisation function treats the radical as a two-spin muon–electron system, so `A_hf` is only an effective coupling; the radical's proton couplings broaden the curve, and a radical repolarisation model is not available in the CLI.",
+          "pass": false,
+          "evidence": "Missingexplicitmuon-electrontwo-spinapproximationandprotonbroadening,thoughradicalrepolarisationmodelunavailable stated."
+        },
+        {
+          "requirement": "Notes the fitted diamagnetic term `a_Dia` is negative, i.e. unphysical as a fraction, as a symptom of that mismatch.",
+          "pass": true,
+          "evidence": "a_Dia−0.094391andrestricted−0.071952explicitlyunphysicalfractions."
+        },
+        {
+          "requirement": "If a sum of two `MuRepolarisation` terms is fitted, reports both with χ²ᵣ but calls it an empirical description, and notes the two `a_Dia` terms are the same constant (degenerate).",
+          "pass": true,
+          "evidence": "Conditionalnotapplicable:no two-termfitortwo-speciesclaim."
+        },
+        {
+          "requirement": "Notes that `A_hf` moves with the fitted field range (`--xmax`), so the number is not robust.",
+          "pass": true,
+          "evidence": "Full1516.299versusrestricted3–1200G1129.517MHz, bothconditional/poor,range-sensitivitydemonstrated."
+        },
+        {
+          "requirement": "Notes that repeated fields from the return pass differ by more than their errors (a drift between passes), limiting χ²ᵣ.",
+          "pass": true,
+          "evidence": "Namesrepeatagreement/mismatches>threeerrorsfromCLI,driftlimitsfinecurve."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Allintegrals,errors,rangefitsandrepeatcomparisonsdirectlyprinted;no field/couplingconversion.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Integralrecoveryworkflowpass; simplifiedtwo-spinphysicalscope notexplained. StrictcopyfailsoneLF.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all17 completed commands inspected. All17commands and summaryedits inspected; metadatafind/rg/cat only, publicCLIanalysis.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 318.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "3076c0a343d30a1433c111f6b7cbd438569c74b83572f6ba57fce7ecb19ecf3d",
+      "audited_file_sha256": "b7012cf392fbf1b7c0f2a26ed08170b42c7639f37500b6ab6963bd3b66ab02d2",
+      "rubric_sha256": "394577546a8a6efae2ef56d912dbf00216156d50a4fa60e7800ea736fd2cd059",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/benzene-repolarisation",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -56,4 +56,4 @@\n asymmetry-work/plots/reduced-15972.png\n asymmetry-work/plots/reduced-15993.png\n asymmetry-work/plots/benzene-lf-full.png\n-asymmetry-work/plots/benzene-lf-recovery.png\n+asymmetry-work/plots/benzene-lf-recovery.png",
+      "physics_caveats": [
+        "NegativeDiaandrange-sensitiveeffectivecouplingprecludemicroscopicparameter/fractioninterpretation. No saturationwithinmeasuredrange;repeatdriftlimitsχ²."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        "survey1; alpha7; reduction8; integral10/11; directJSON12/13"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "3076c0a343d30a1433c111f6b7cbd438569c74b83572f6ba57fce7ecb19ecf3d",
+        "summary.md": "3076c0a343d30a1433c111f6b7cbd438569c74b83572f6ba57fce7ecb19ecf3d",
+        "transcript.jsonl": "690571eb4e77609b139cbe74456f5274e72e3cd36132c2412f71fe92b6dd24ba",
+        "commands.txt": "83818270d63320d5c7e6d8ca1600ba50a2255548a5b880dde394b3d1235029f3",
+        "cost.json": "12daf1627ec21986cda10f598f6d47b7c1a425c1de7f1edf0314c5c218d0123c",
+        "image-inputs.json": "e90e9c67677c4bcfaba9511356d58b96c35b93a85671af4d0a1f0100bedeee62"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-15959.png",
+          "snapshot_path": "review-images/c77d6ec57e466eccf9b7bd195268e47d3366c61f41e57db7e4ed75e1837e65c4.png",
+          "bytes": 28987,
+          "sha256": "c77d6ec57e466eccf9b7bd195268e47d3366c61f41e57db7e4ed75e1837e65c4",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-15972.png",
+          "snapshot_path": "review-images/79546c94938fd9c8852edd4eb79ebefedfff7dc1daa324781e154d4ad6a4ca9c.png",
+          "bytes": 30732,
+          "sha256": "79546c94938fd9c8852edd4eb79ebefedfff7dc1daa324781e154d4ad6a4ca9c",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-15993.png",
+          "snapshot_path": "review-images/11487178ff413b34653e463c4e597a1033a3ce4f0b9d0c74169a358bbad6b04f.png",
+          "bytes": 30320,
+          "sha256": "11487178ff413b34653e463c4e597a1033a3ce4f0b9d0c74169a358bbad6b04f",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/benzene-lf-recovery.png",
+          "snapshot_path": "review-images/7ef4288af855776c3c7f3b32418af7e20868c112f90cb75684bd3e88057f1799.png",
+          "bytes": 37240,
+          "sha256": "7ef4288af855776c3c7f3b32418af7e20868c112f90cb75684bd3e88057f1799",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:41:37.207065+00:00",
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
-    "euo-psi",
-    "maleic-mu-kinetics",
-    "ferromagnetic-nickel",
     "high-tc-cuprate",
     "copper-diffusion",
-    "molecular-antiferromagnet",
-    "afm-high-tf-mdu",
-    "alc-tcnq",
-    "photo-musr-silicon",
-    "cds-fourier",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
     "corannulene-alc",
     "benzene-high-tf",
-    "benzene-rf",
-    "benzene-repolarisation",
     "benzene-alc"
   ],
   "gate_pass": false,
@@ -1165,17 +2560,17 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 6,
+    "scored": 16,
     "target": 24,
-    "scientific_pass": 4,
-    "must_pass": 31,
-    "must_total": 33,
-    "should_pass": 11,
-    "should_total": 22,
+    "scientific_pass": 13,
+    "must_pass": 85,
+    "must_total": 89,
+    "should_pass": 35,
+    "should_total": 61,
     "exact_copy_pass": 0,
     "literal_copy_pass": 0,
     "combined_pass": 0,
-    "boundary_pass": 6
+    "boundary_pass": 16
   },
   "artifact_fidelity_verification": {
     "completed_message_checks": {
