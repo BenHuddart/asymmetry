@@ -470,3 +470,17 @@ If these three pass all scientific, exact-copy and boundary checks, launch a
 fresh full 24-case confirmation wave without pooling earlier results. Include
 the AFM magnetic-scope check. Otherwise make general improvements, commit and
 evaluate again. No full gate has run yet and the objective is not complete.
+
+First two round-four reports scored: Basics now passes 9/9 Musts, exact-copy
+and boundary, explicitly retaining the 13–15 saturation range/from-13 start.
+Benzene exact-copy also passes, but science regresses to 6/7 Musts because the
+second solid line is missed. Its local window 21450–21750 G puts the real broad
+feature near an edge; the fit locks a spurious narrow B0 at 21743.269249 G
+(at bound). It correctly withholds that failed identification but stops there.
+Current CLI prominently handles width bounds, not bound-centre/window-edge
+recovery when chi2 is modest. A general next step should widen/shift nearby
+windows to include both flanks and compare local baselines before concluding
+there is no line. No corpus-specific window/centre dispatch is allowed.
+Partial scores: 15/16 Musts, 1/2 scientific and combined, 2/2 copy/boundary.
+Corannulene remains live; keep source frozen until its final reply is scored.
+About 19 GiB available, no swap or PSI pressure. Full24 is still not launched.
