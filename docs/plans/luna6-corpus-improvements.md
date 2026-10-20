@@ -185,9 +185,13 @@ failures. Log: `/tmp/asymmetry-luna6-round2-validation.log`.
 Other logs: `/tmp/asymmetry-luna6-round2-{focused,fast,docs}.log`. No corpus
 evals are currently live; round one finished exit0.
 
-Commit round two and run nine targeted cases with Luna and
-three concurrent cases: `sn-critical-field`, `maleic-mu-kinetics`,
+Round two is committed as `a5047ae`. Its nine targeted cases are running with
+Luna and three concurrent cases: `sn-critical-field`, `maleic-mu-kinetics`,
 `copper-diffusion`, `lifeas-psi`, `trsb-re6zr`, `basics`, `corannulene-alc`,
 `benzene-alc`, and `afm-high-tf-mdu` (physics-scope regression check).
-Use fresh result root `/tmp/asymmetry-luna6-improvements/round2`; preserve
-first attempts, frozen commit and skill/runner/rubric hashes, then score all.
+Result root `/tmp/asymmetry-luna6-improvements/round2` contains first attempts
+and `wave-metadata.json` with frozen commit and skill/runner/rubric hashes.
+Exec session `19319`, console `/tmp/asymmetry-luna6-round2-wave.log`; inspect
+processes and outputs before relaunching. LifeAs, TRSB and Basics started
+successfully. No round-two reports are scored yet. Freeze CLI/skill until
+all nine finish; score each final report against the unchanged rubrics.
