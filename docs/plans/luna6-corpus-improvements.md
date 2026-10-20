@@ -484,3 +484,16 @@ there is no line. No corpus-specific window/centre dispatch is allowed.
 Partial scores: 15/16 Musts, 1/2 scientific and combined, 2/2 copy/boundary.
 Corannulene remains live; keep source frozen until its final reply is scored.
 About 19 GiB available, no swap or PSI pressure. Full24 is still not launched.
+
+Round four is complete; supervising session 64476 exited 0 and actual host
+inspection shows no remaining eval/model/test processes. Final score: 24/26
+Musts, 1/3 scientific passes, 3/3 exact-copy, 1/3 combined and 3/3 boundary.
+Corannulene improves to 9/10 Musts, explicitly resolving the cold narrow-line
+comparison. It still omits why one polynomial cannot follow the whole-scan
+background. Its local model definition incorrectly satisfies the audit's broad
+explanation regex; repair that general false positive. Both failures are now
+fully recorded in luna6-corpus-round4.json. Source freeze is lifted. Next:
+general bound-centre window-recovery advice and a genuine background-limitation
+audit check, focused tests/fast/docs, commit, then two targeted fresh cases.
+No full24 gate yet. Host has 19 GiB available, zero swap use/PSI and 9 GiB free
+in /tmp. Standard validation retains the four documented GUI sizing failures.
