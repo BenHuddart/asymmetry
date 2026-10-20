@@ -773,3 +773,11 @@ Failed multi-oscillation fits are withheld; independent survey/FFT line evidence
 and multi-frequency check satisfy the literal requirements without invented TN.
 Partial full24 now 43/43 Musts, 8/8 scientific/boundary, 7/8 exact-copy/combined.
 Sixteen remain. Keep the full gate running/frozen despite nickel's copy failure.
+
+High-Tc cuprate scored:5/5 Musts, exact-copy and boundary pass. Separate
+instrument/field series, cooling Gaussian broadening and explicit background
+handling retained. Conditional400 G gap description is not overextended to
+poor200 G/BISCO models; no normalized fraction or penetration-depth arithmetic.
+Partial full24:48/48 Musts,9/9 science/boundary,8/9 exact-copy/combined. Fifteen
+remain; source stays frozen, nickel copy failure still prevents full combined
+pass. Host14 GiB available,zero swap/PSI,5.3 GiB scratch free; max3 live cases.

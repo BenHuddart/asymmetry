@@ -735,16 +735,102 @@
       "boundary_pass": true,
       "boundary_check": "PASS: completed commands use staged skill, supplied data and installed CLI/products only; no host skill/source/network/ad hoc numerical scripting.",
       "permission_denials": 0
+    },
+    "high-tc-cuprate": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the two instruments' runs (EMU vs MUSR) into distinct scans rather than treating the folder as one series.",
+          "pass": true,
+          "evidence": "EMU150 G separate from MUSR400/200 G series and workdirs."
+        },
+        {
+          "requirement": "Names both applied fields present on MUSR (400 G and 200 G) as separate field groups, not a single 400 G scan.",
+          "pass": true,
+          "evidence": "MUSR400 G1276\u20131289 and200 G1290\u20131303 explicitly separate."
+        },
+        {
+          "requirement": "Reports a Gaussian (or Gaussian-like) TF relaxation rate that rises as temperature drops below the transition, for at least one of the field/instrument combinations.",
+          "pass": true,
+          "evidence": "400 G Gaussian width grows on cooling:1.16101 \u00b10.0233224 at10.8622 K versus0.0657648 \u00b10.00239411 at125.542 K; warm plateau and conditional SC law."
+        },
+        {
+          "requirement": "Discusses how the non-superconducting fraction of the signal was handled (e.g. a second, slowly-relaxing or non-relaxing component), rather than fitting a single Gaussian and ignoring it.",
+          "pass": true,
+          "evidence": "Explicit separate constant/background components, floated negative HTC offsets do not yield physical non-superconducting fraction; BISCO positive background and two-component checks discussed."
+        },
+        {
+          "requirement": "Contains no sigma, Tc, or penetration-depth number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Own scientific CLI sigma/Tc/gap values, no penetration-depth conversion or invented normalized volume fraction."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the data folders contain more runs than the worksheet's own tables list (76993 on EMU; 1274-1275 on MUSR) and reflects the survey's actual range rather than only the worksheet's table.",
+          "pass": true,
+          "evidence": "Actual48-run inventory includes MUSR1274\u20131275 detector tests and separately fitted EMU76993 impossible-temperature record, not just worksheet-listed subset."
+        },
+        {
+          "requirement": "Compares sigma(T) trends across the different fields/instruments rather than reporting only one.",
+          "pass": true,
+          "evidence": "400 G clean Gaussian downturn versus200 G nonmonotonic/shape-sensitive width versusBISCO exponential preference compared."
+        },
+        {
+          "requirement": "Mentions the \"above Tc\" run (1276, 125 K) as a normal-state reference distinct from the temperature scan proper.",
+          "pass": false,
+          "evidence": "1276 warm125 K endpoint shown but not explicitly distinguished as a separate above-Tc normal-state reference."
+        }
+      ],
+      "number_rule": "PASS: actual scientific CLI output supports conditional400 G SC_SWave Tc107.326103 \u00b10.230620 K, sigma0 1.064214 \u00b10.023338 and sigma_bg0.069801 \u00b10.003702 per microsecond; quoted sigma(T) and failed200 G law values trace to outputs. No penetration depth or fractional-volume arithmetic. Numeric check excludes audits/draft displays.",
+      "root_cause": "All Musts/copy/boundary pass. Conditional superconducting scope appropriate to sample context. 400 G law approximate,200 G Gaussian model inadequate, BISCO exponential trend and broad secondary time-domain component not promoted to detected FFT line/site. Negative offsets preclude physical fraction rather than being silently interpreted as volume.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 957.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/high-tc-cuprate/data --series htc-400G-alt --model SC_SWave --param sigma'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/high-tc-cuprate/data --series htc-400G-alt --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/high-tc-cuprate/data --series htc-200G --model SC_SWave --param sigma --workdir asymmetry-work-200G'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/high-tc-cuprate/data --series htc-200G --model SC_DWave --param sigma --plot --workdir asymmetry-work-200G'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/high-tc-cuprate/data --series htc-400G-alt --model SC_SWave --param sigma --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"cat .agents/skills/asymmetry-analysis/SKILL.md && rg --files -g '\"'!*'\"' .\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/high-tc-cuprate/data --series bisco-150G-exp --plot'",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "d5e1464e0b274245a7b75bb62cf5b89ed317aec732c416462b33443151ca6004",
+      "rubric_sha256": "6768523173dd08582c6c56642fe11ca2d276a0b467ea21494e31b1db78c59029",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/high-tc-cuprate",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: completed commands use staged skill/references, supplied datasets and installed CLI/products only; no host skill/source/network/ad hoc numerical scripting.",
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 8,
-    "scientific_pass": 8,
-    "must_pass": 43,
-    "must_total": 43,
-    "exact_copy_pass": 7,
-    "combined_pass": 7,
-    "boundary_pass": 8
+    "scored": 9,
+    "scientific_pass": 9,
+    "must_pass": 48,
+    "must_total": 48,
+    "exact_copy_pass": 8,
+    "combined_pass": 8,
+    "boundary_pass": 9
   },
   "gate_caveat": "Fresh full24 gate ongoing. First exact-copy failure on nickel prevents a full combined pass; complete/score remaining cases before changing frozen source."
 }
