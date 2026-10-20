@@ -1372,3 +1372,17 @@ frozen hashes verify. Totals58/60 Musts,9/11 science,8/11 copy,6/11 combined,
 invocations/attempts rather than --help requests;science judgements unchanged.
 Copper,high-TF AFM and LLZ remain live at check,concurrency3,22 GiB available,
 no swap/current PSI,652 GiB disk free,no tests/duplicates. Finish all24 frozen.
+
+
+Confirmation2 now12/24 scored:copper science PASS6/6 Musts and number/boundary
+pass. Literal reply equals saved summary byte-for-byte,but no final audit
+passed:ARGUS scans remain listed as unfitted despite stored field/ZF/TF products
+and repeated completed fit-series commands in required separate workdirs.
+The runner final_report_audited guard is false,so audited-copy/combined fails;
+this is a CLI/audit coverage limitation,not changed report text. Keep literal
+copy and passed-audit status separate. Totals64/66 Musts,10/12 science,
+8/12 audited-copy,9/12 literal-copy,6/12 combined,12/12 boundary.
+All126 commands inspected,actual rates/conditional Ea verified without audit
+or draft leakage,frozen hashes unchanged. Report explicitly discloses audit
+limitation and keeps both instrument campaigns separate. Do not void or retry
+this completed attempt;finish all24 and pause. No source repair while live.

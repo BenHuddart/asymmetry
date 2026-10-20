@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 11/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 12/24 scored; source frozen; finish all cases despite earlier failures",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -188,7 +188,8 @@
         "Free exponent/full-sweep fit is not a verified plateau-restricted Redfield-law test.",
         "No resolved ZF precession is not interpreted as absence of magnetic order."
       ],
-      "scored_at": "2026-10-20T16:50:30.339377+00:00"
+      "scored_at": "2026-10-20T16:50:30.339377+00:00",
+      "reply_matches_saved_file": true
     },
     "sn-critical-field": {
       "verdict": "PASS",
@@ -304,7 +305,8 @@
         "The Gaussian/exponential control is preliminary and cannot establish a vortex-lattice mechanism or microscopic distribution.",
         "Unresolved primary survey versus fit-series survey_line_mhz discrepancy for91488 is explicitly retained as a provenance limitation."
       ],
-      "scored_at": "2026-10-20T17:01:13.634881+00:00"
+      "scored_at": "2026-10-20T17:01:13.634881+00:00",
+      "reply_matches_saved_file": true
     },
     "euo-psi": {
       "verdict": "PASS",
@@ -406,7 +408,8 @@
         "Dynamic KT has unconstrained/failed rates and static width changes depend strongly on model/background sharing; no microscopic slowing law is claimed.",
         "One ordinary FFT is dominated by a near-zero feature and does not reproduce the independently detected internal magnetic line; the report keeps this mismatch distinct from wizard/fit evidence."
       ],
-      "scored_at": "2026-10-20T17:01:13.667293+00:00"
+      "scored_at": "2026-10-20T17:01:13.667293+00:00",
+      "reply_matches_saved_file": true
     },
     "fmuf-ptfe": {
       "verdict": "PASS",
@@ -523,7 +526,8 @@
         "The model parameter nu is not an established microscopic hopping rate or activation law.",
         "Early audit misread a separate workdir as missing coverage; the agent reran co-add/series in the main workdir to satisfy coverage, preserving original work."
       ],
-      "scored_at": "2026-10-20T17:10:34.341274+00:00"
+      "scored_at": "2026-10-20T17:10:34.341274+00:00",
+      "reply_matches_saved_file": false
     },
     "maleic-mu-kinetics": {
       "verdict": "FAIL",
@@ -690,7 +694,8 @@
         81,
         82
       ],
-      "scored_at": "2026-10-20T17:21:43.096979+00:00"
+      "scored_at": "2026-10-20T17:21:43.096979+00:00",
+      "reply_matches_saved_file": true
     },
     "spin-glass-ymnal": {
       "verdict": "PASS",
@@ -794,7 +799,8 @@
         14,
         15
       ],
-      "scored_at": "2026-10-20T17:21:43.113061+00:00"
+      "scored_at": "2026-10-20T17:21:43.113061+00:00",
+      "reply_matches_saved_file": true
     },
     "ferromagnetic-nickel": {
       "verdict": "PASS",
@@ -936,7 +942,8 @@
         "Bulk nickel Tc discrepancy remains a missing Should, not a claim that this dataset measures textbook Tc.",
         "Warm spurious full-record FFT line is explicitly rejected rather than promoted to a sample line."
       ],
-      "scored_at": "2026-10-20T17:30:25.657473+00:00"
+      "scored_at": "2026-10-20T17:30:25.657473+00:00",
+      "reply_matches_saved_file": false
     },
     "high-tc-cuprate": {
       "verdict": "PASS",
@@ -1059,7 +1066,8 @@
         38,
         43
       ],
-      "scored_at": "2026-10-20T17:41:17.242294+00:00"
+      "scored_at": "2026-10-20T17:41:17.242294+00:00",
+      "reply_matches_saved_file": true
     },
     "molecular-antiferromagnet": {
       "verdict": "PASS",
@@ -1181,7 +1189,8 @@
         35,
         36
       ],
-      "scored_at": "2026-10-20T17:41:17.260649+00:00"
+      "scored_at": "2026-10-20T17:41:17.260649+00:00",
+      "reply_matches_saved_file": true
     },
     "spin-peierls": {
       "verdict": "FAIL",
@@ -1290,7 +1299,8 @@
         22,
         24
       ],
-      "scored_at": "2026-10-20T17:50:24.492883+00:00"
+      "scored_at": "2026-10-20T17:50:24.492883+00:00",
+      "reply_matches_saved_file": true
     },
     "alc-tcnq": {
       "verdict": "PASS",
@@ -1412,11 +1422,214 @@
         31,
         32
       ],
-      "scored_at": "2026-10-20T18:00:40.294476+00:00"
+      "scored_at": "2026-10-20T18:00:40.294476+00:00",
+      "reply_matches_saved_file": false
+    },
+    "copper-diffusion": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Splits the folder into its TF, ZF, and LF run groups rather than treating it as one undifferentiated series.",
+          "pass": true,
+          "evidence": "Separates TF,ZF and fixed-temperature LF field groups for both EMU and ARGUS, with explicit complete run memberships and cross-listed points handled by actual geometry/measurement role."
+        },
+        {
+          "requirement": "Separates the EMU (2010) and ARGUS (2024) runs as two distinct measurement campaigns on the same sample.",
+          "pass": true,
+          "evidence": "EMU20882–20917 (2010) and ARGUS76924–76961 (2024) remain separate campaigns with independent calibrations20883/76934 and100/20 G TF fields."
+        },
+        {
+          "requirement": "Reports a change in TF line shape (Lorentzian-like to Gaussian-like) as temperature decreases, from at least one of the two TF series.",
+          "pass": true,
+          "evidence": "Explicit EMU TF envelope change: Gaussian at99.272 K (20885), exponential at252.784/287.587 K (20884/20883), with cold stronger damping and motional-narrowing interpretation."
+        },
+        {
+          "requirement": "Reports the ZF spectra as showing Kubo-Toyabe-like behaviour and states whether the relaxation (e.g. the fluctuation rate ν) at the lowest-temperature run differs from the next-lowest — the low-T upturn — whether or not it interprets it.",
+          "pass": true,
+          "evidence": "ZF KT dip/recovery and cold-end dynamic-rate upturn are explicit: nu0.101149 ±0.00432819 MHz at5.79554 K versus0.0185896 ±0.00356751 at38.2575 K, separated from mid-scan trend/Delta behavior."
+        },
+        {
+          "requirement": "Identifies the fixed-temperature, swept-field runs as the LF/QLCR data, distinct from the temperature scans.",
+          "pass": true,
+          "evidence": "Fixed40 K field sweeps20886,20888–20900 and76939–76955 are identified as distinct LF/decoupling data, not a temperature axis or TF series."
+        },
+        {
+          "requirement": "Contains no hop rate, activation energy, or rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Actual CLI supplies every consequential rate and conditional Arrhenius Ea28.720260 ±6.258723 meV over38.2575–109.1004 K,chi2_red6.897; no invented hop rate/physical arithmetic. Independent direct-output checker returns []."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares a hop rate or dynamics trend derived from TF against one derived from ZF, as the worksheet asks.",
+          "pass": true,
+          "evidence": "Qualitatively compares falling warm TF damping with ZF narrowing/dynamic-KT changes and distinguishes static Delta,nu and extra Lambda; no claim of one shared microscopic rate law."
+        },
+        {
+          "requirement": "Keeps the EMU and ARGUS scans on separate axes and notes their different fields, step sizes and ranges, rather than merging both eras' runs into one T-axis.",
+          "pass": true,
+          "evidence": "Separate EMU/ARGUS axes,workdirs,fields,temperature ranges and fixed-temperature field grids; no merged-era temperature fit."
+        },
+        {
+          "requirement": "Flags any run whose logged sample temperature deviates substantially from its nominal set-point.",
+          "pass": false,
+          "evidence": "Uses physically plausible logged temperatures and displays differing setpoint/logged scan ranges, but does not explicitly flag a named substantially offset-temperature run or give a run-specific discrepancy warning."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. unverified_numbers=[] against independent scientific outputs with all audit/draft/summary/log-read outputs excluded. Cold nu comparison, Gaussian/exponential envelope, Ea/errors/range and poor Redfield parameters spot-verified.",
+      "number_checker_flags": [],
+      "root_cause": "Science and literal copying pass, but the final post-image audit never passes: it repeatedly reports ARGUS field/ZF/TF scans unfitted despite stored products and repeated fit-series commands across two required instrument workdirs. It also mixes instrument-specific38-run coverage with whole-folder74-run coverage. The reply transparently reports this limitation and byte-matches the saved file; runner final_report_audited remains false. Record an audit/CLI coverage limitation, not model text corruption or an infrastructure-void attempt. General follow-up should reconcile multi-workdir/instrument coverage history; no repair/rerun while this gate is frozen.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all126 completed commands inspected. All126 completed commands inspected: staged skill, supplied data/logbook and installed CLI/products only. Workdir/instrument flags separate campaigns; no source/rubric/host-skill/network/subagents or numerical scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 2567.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 9,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --series emu-zf --model Arrhenius --param nu --plot --instrument EMU'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --series argus-field --model Redfield --param Lambda --plot --instrument ARGUS --workdir asymmetry-work-argus'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --series argus-field --model Redfield --param Lambda --fix m=2.000 --plot --instrument ARGUS --workdir asymmetry-work-argus'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --series argus-field --model Redfield --param Lambda --fix m=2.000 --xmin 40 --xmax 150 --plot --instrument ARGUS --workdir asymmetry-work-argus'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --series argus-field --model Redfield --param Lambda --fix m=2.000 --xmin 0 --xmax 20 --plot --instrument ARGUS --workdir asymmetry-work-argus'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --series emu-zf --model Arrhenius --param nu --xmin 38.2575 --xmax 109.1 --plot --instrument EMU'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --series emu-zf --model Arrhenius --param nu --xmin 38.2575 --xmax 110 --plot --instrument EMU'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --series emu-field-exp --model Redfield --param Lambda --fix m=2.000 --plot --instrument EMU'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --runs 20886,20888-20900 --recipe wizard-20893 --order field --start 20893 --name emu-field --plot --instrument EMU --geometry LF'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --runs 76925,76935-76940,76956-76961 --alpha-from 76934 --plot --plot-tmax 8 --instrument ARGUS'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --run 76950 --geometry LF --scope lf-dynamics --plot --instrument ARGUS --workdir asymmetry-work-argus'",
+          "exit_code": 130
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry recipe /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --expression 'Exponential + Constant' --run 76939 --name relax-76939\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --runs 76939-76955 --recipe relax-76939 --order field --name relax-76939'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry recipe /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --expression 'Exponential + Constant' --run 76925 --name relax-76925\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --runs 76925,76935-76940,76956-76961 --recipe relax-76925 --order temperature --name relax-76925'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion/data --runs 76924-76961 --instrument ARGUS'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "9c4ead0921fc1f58b1d81a0ac8418c8607339eca70cb2ca3c6e34196eee9c200",
+      "audited_file_sha256": "9c4ead0921fc1f58b1d81a0ac8418c8607339eca70cb2ca3c6e34196eee9c200",
+      "rubric_sha256": "4a0d496f6e89d82feb628d6378c6019071fd8813790f1b6b70a83a6e1e4459c6",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/copper-diffusion",
+      "exact_copy_evidence": "Actual reply and project/summary.md are byte-identical with identical SHA256. However no final audit passed: last audit still lists ARGUS field/ZF/TF coverage as unfitted. The unchanged runner therefore reports final_report_audited=false and the audited-copy gate fails. Distinguish this from the three actual formatting-copy failures.",
+      "physics_caveats": [
+        "Many ZF/TF/field fits are poor or flagged; conditional diffusion evidence is separated from unavailable site-specific hopping laws.",
+        "Restricted EMU Arrhenius result is rough and excludes the independent cold upturn and flagged warm points.",
+        "Neither full LF field scan supports a reliable single Redfield law; high-field constant dominance and flagged components are disclosed.",
+        "Multiple reruns overwrite product names but earlier printed results are retained in the report; current product versus quoted variant provenance must be checked before downstream quantitative reuse.",
+        "Audit coverage is inconsistent across instrument workdirs; saved file copies exactly, but required passed-audit guard is not satisfied."
+      ],
+      "judgement_calls": [
+        "Keep exact_copy=false under the existing final_report_audited guard, while separately recording reply_matches_saved_file=true. This is audit non-completion despite exact literal file copying, not added/deleted response text.",
+        "A completed scientific report with a CLI audit limitation is not a cut-short infrastructure run; preserve and score it instead of voiding or silently retrying."
+      ],
+      "number_evidence_commands": [
+        1,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        17,
+        18,
+        19,
+        20,
+        24,
+        31,
+        32,
+        35,
+        36,
+        37,
+        38,
+        40,
+        45,
+        47,
+        48,
+        51,
+        52,
+        55,
+        56,
+        57,
+        60,
+        62,
+        63,
+        66,
+        69,
+        102,
+        103,
+        104,
+        105,
+        106
+      ],
+      "scored_at": "2026-10-20T18:03:30.529870+00:00",
+      "reply_matches_saved_file": true,
+      "audit_completed_without_findings": false,
+      "copy_failure_kind": "audit_did_not_pass; literal_copy_intact",
+      "audit_evidence_commands": [
+        58,
+        70,
+        73,
+        76,
+        79,
+        80,
+        81,
+        84,
+        86,
+        91,
+        107,
+        108,
+        112,
+        113,
+        116,
+        121,
+        123,
+        124
+      ],
+      "coverage_products_verified": [
+        "asymmetry-work-argus/series/argus-field.json",
+        "asymmetry-work-argus/series/argus-zf.json",
+        "asymmetry-work-argus/series/argus-tf-full.json"
+      ]
     }
   },
   "pending_cases": [
-    "copper-diffusion",
     "afm-high-tf-mdu",
     "ionic-motion-llz",
     "photo-musr-silicon",
@@ -1431,18 +1644,20 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 11,
+    "scored": 12,
     "target": 24,
-    "scientific_pass": 9,
-    "must_pass": 58,
-    "must_total": 60,
-    "should_pass": 24,
-    "should_total": 39,
+    "scientific_pass": 10,
+    "must_pass": 64,
+    "must_total": 66,
+    "should_pass": 26,
+    "should_total": 42,
     "exact_copy_pass": 8,
+    "literal_copy_pass": 9,
     "combined_pass": 6,
-    "boundary_pass": 11
+    "boundary_pass": 12
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates.",
-  "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h."
+  "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
+  "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."
 }
