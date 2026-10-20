@@ -924,3 +924,15 @@ and poor critical-law caveats retained. Bulk-Tc discrepancy Should missing.
 Corannulene remains in image-review/final turn; freeze CLI/skill and do not
 launch full24 until it is scored. Host22 GiB available,PSI0,820 KiB swap,
 13 GiB scratch free; one wave/one model,no tests. No duplicate launches.
+
+Round8 COMPLETE:16/17 Musts,1/2 science/combined,2/2 copy/boundary.
+Nickel passes;corannulene9/10 Musts retains broad cold15341 G versus hot14818 G
+numbers but omits explicit cold-higher directional prose. Qualitative molecular
+motion averaging anisotropy now passes;copy passes despite not adopting plain
+paths. Control run-temperature label transposition recorded as provenance
+caveat. All source numbers verified from CLI and jq-selected stored CLI JSON,
+excluding audits/draft displays. Supervisor81306 exited0;no model/tests live.
+Do not launch full24 until targeted failure repaired. Next general repair:
+CLI comparison notes for significant non-bound fitted estimates with scaled
+errors and explicit conditional/no resolved-line-identification wording;
+resolved-line gates unchanged. Commit and evaluate fresh corannulene only.
