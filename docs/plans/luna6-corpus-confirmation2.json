@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 22/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 23/24 scored; source frozen; finish all cases despite earlier failures",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -3053,24 +3053,231 @@
       ],
       "scored_at": "2026-10-20T18:46:12.025940+00:00",
       "reply_matches_saved_file": true
+    },
+    "corannulene-alc": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Identifies the two high-field ALC scans (118259–118416 and 118417–118515) as separate longitudinal-field integral-asymmetry scans at two temperatures. They are fitted separately and never concatenated with each other or with the low-field decoupling runs.",
+          "pass": true,
+          "evidence": "Keeps dense118259–118416 and118417–118515 LF integral scans separate from each other and low-field runs;local fits name full parent run sets."
+        },
+        {
+          "requirement": "Separates the 20 G TF calibration runs and the low-field (≤ 5000 G) ZF/LF decoupling scans from the ALC scans, and names them as such.",
+          "pass": true,
+          "evidence": "Explicitly separates20 G TF calibration/temperature block and six coarse ZF/LF recovery scans from dense high-field ALC windows."
+        },
+        {
+          "requirement": "Reports that the logged sample temperature is several kelvin below the setpoint, and labels the two ALC scans by logged temperature or states the offset.",
+          "pass": true,
+          "evidence": "Lists logged-minus-setpoint offsets and physically plausible sensor interpretation,including cold block−7.89 to−7.01 K and hot−11.18 to−9.49 K;setpoint labels explicitly retained only as labels."
+        },
+        {
+          "requirement": "Runs `integral-scan` on both ALC scans, fitting resonances inside stated `--xmin/--xmax` windows, and reports each fitted centre, width, uncertainty and χ²ᵣ from its own output.",
+          "pass": true,
+          "evidence": "Actually integral-scans both dense scans and local windows;reports centre,width,scaled uncertainties and chi2 for cold13600–18000 G,hot13800–15800 G and6200–8200 G. Stored JSON/jq reads and direct comparison notes supply uncertainties."
+        },
+        {
+          "requirement": "Reports two resonances in the hot (~410 K) scan: one centred between 6.9 and 7.3 kG and one between 14.6 and 15.0 kG.",
+          "pass": true,
+          "evidence": "Reports resolved hot7076.94 ±7.93 G,width312.53 ±18.7 G,chi2_red1.589 and14826.2 ±17 G,width380.83 ±38.1 G,chi2_red2.238,with linear-background checks."
+        },
+        {
+          "requirement": "Reports the resonance in the cold (~43 K) scan centred between 15.1 and 15.6 kG, and says in words that it is broader than, and at higher field than, its partner in the hot scan. Also states that the cold scan shows no narrow line near 7 kG.",
+          "pass": true,
+          "evidence": "Cold15310.2 ±30.1 G,width725.77 ±66.8 G is conditional,but report explicitly says hot partner lower in field and narrower. Same-window cold7 kG fit width bound1000 G and no localized narrow dip reported."
+        },
+        {
+          "requirement": "States the headline in words: the lines are sharper at high temperature (and a line appears near 7 kG), consistent with molecular reorientation averaging the hyperfine anisotropy. This is presented as interpretation, not a fitted result.",
+          "pass": true,
+          "evidence": "States sharper hot line is consistent with molecular reorientation averaging hyperfine anisotropy,as possible interpretation rather than fitted motion rate/site assignment;also explicitly notes hot7 kG feature absent cold."
+        },
+        {
+          "requirement": "Says why there is no whole-scan fit: the background across a whole ALC scan is not a polynomial (e.g. a rise plus a step near 20 kG; the detail is illustrative — \"a cubic cannot follow the background over the whole range\" is enough).",
+          "pass": true,
+          "evidence": "Explains rising/stepped non-polynomial whole-scan backgrounds require local fits;wide-window failed fits and bound-limited broad curvature are not promoted to resonances."
+        },
+        {
+          "requirement": "Says why there are no hyperfine couplings or site assignments: no radical ALC or hyperfine model is available (not merely that the fields were not converted, or that the tool does not print couplings).",
+          "pass": true,
+          "evidence": "Explicit radical ALC/hyperfine model unavailable for coupling,motion-rate or site inference;does not merely say fields were not converted."
+        },
+        {
+          "requirement": "Contains no resonance field, width, hyperfine coupling, temperature, activation energy or run number that was not produced by a tool call in this session. The paper's 40 K/410 K and its couplings are background.",
+          "pass": false,
+          "evidence": "Misquotes low-field failed-fit A_hf values521.38 and565.72 as G. Actual commands21/23 print521.379431/565.719173 MHz. Although explicitly nonphysical failed-fit diagnostics,the reported quantity/unit is not the CLI output and is not a legitimate rounded/unit-converted value."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Says that two ALC temperatures show a change but support no activation law for the line positions or widths.",
+          "pass": false,
+          "evidence": "No explicit statement that just two ALC temperatures cannot support activation law for line centres/widths;general no-motion-rate/no-trend-law statements refer unavailable model or other controls."
+        },
+        {
+          "requirement": "Flags that the cold-scan line is asymmetric (a powder-like shape), so a single Lorentzian leaves χ²ᵣ well above 1 and the width depends on the window.",
+          "pass": false,
+          "evidence": "Reports chi2/background/window sensitivity but does not explicitly call cold line asymmetric/powder-like;also incorrectly says cold linear/cubic widths indistinguishable though STABILITY84 says linear width broader."
+        },
+        {
+          "requirement": "Chooses alpha from a TF run in the same block and beam configuration (e.g. 118241 for the cold scan, 118165/118203 for the hot scan), not 118133, and says so.",
+          "pass": false,
+          "evidence": "Final scans use118133 no-degrader calibration,despite initial118241 trials;final report names118133 without same-configuration calibration choice required."
+        },
+        {
+          "requirement": "Describes the low-field LF scans qualitatively: the integral asymmetry recovers from its ZF value over tens to hundreds of gauss, and the recovery is steeper, with a higher plateau, at the lowest temperature than at 350–440 K. States that a `MuRepolarisation` fit does not describe these curves (large χ²ᵣ, unphysical amplitudes) rather than quoting its `A_hf`.",
+          "pass": false,
+          "evidence": "Describes coarse recovery and failed MuRepolarisation,but no explicit lowest-temperature steeper/higher-plateau comparison;quotes failed A_hf diagnostics with wrong units instead."
+        },
+        {
+          "requirement": "Mentions the ZF temperature scan and that its integral asymmetry barely changes from 300 to 440 K, or says it was not analysed.",
+          "pass": false,
+          "evidence": "ZF temperature time-domain rates are analysed,but no near-constant ZF integral asymmetry300–440 K description or statement that integral-temperature check was not analysed."
+        },
+        {
+          "requirement": "Points the reader to the stored scan JSON and plot files.",
+          "pass": true,
+          "evidence": "Lists full/local scan JSON and supporting plots,including both high-field temperatures and cold7 kG control."
+        }
+      ],
+      "number_rule": "FAIL: Semantic unit failure despite zero raw-token flags:summary calls521.38/565.72 G,while actual scientific commands21/23 explicitly print A_hf521.379431/565.719173 MHz. No G-valued coupling with those numbers produced. Failed/nonphysical diagnostic qualification mitigates scientific interpretation but does not make the output quote accurate. All primary line values/errors/directions verified in direct commands66/68/70/84–86 and stored JSON71/87,excluding log/audit/draft displays.",
+      "number_checker_flags": [],
+      "root_cause": "FAIL on quantity-unit provenance:final low-field diagnostic prose changes A_hf units MHz to G for521.38/565.72. The numbers are actual failed-fit parameters and explicitly rejected physically,but the unit transcription is not CLI output,rounding or a valid conversion. All nine other Musts pass,including previously missing cold-higher/broader comparison and explicit molecular reorientation averaging hyperfine anisotropy. Raw numeric checker cannot detect unit substitution. Copy is exact,so error entered before audit and numeric audit passed it. General repair belongs in report/audit quantity-unit provenance after this frozen gate,not rubric relaxation.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all97 completed commands inspected. All97 completed commands inspected:staged skill/references,supplied data/logbook and installed CLI/products only. jq arithmetic is limited to array length metadata,not physical calculations;JSON read/format loops and log reads are not source/rubric/host-skill/network/subagents or numerical science scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1539.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 7,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/corannulene-alc/data --series tf-slits --model Linear --param Lambda_1 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"jq '.fit' asymmetry-work/scans/repol-440K.json && rg -n 'NOTE:|FIT|chi2|LOCAL DIP|PLATEAU|REPOL' asymmetry-work/scans/repol-440K.json\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"jq 'keys' asymmetry-work/scans/field-420K-a-0-5k.json && rg -n 'LOCAL DIP|NOTE:|RESONANCE|FIELD|geometry|message' asymmetry-work/scans/field-420K-a-0-5k.json\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/corannulene-alc/data --run 118259 --geometry LF --scope lf-dynamics --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"jq '{settings,t_min,t_max,fit:.fit}' asymmetry-work/scans/alc-50K.json && jq '{settings,t_min,t_max,fit:.fit}' asymmetry-work/scans/alc-420K.json && jq '.fit_scan | keys' asymmetry-work/scans/alc-50K.json\"",
+          "exit_code": 5
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "946688a1fe0987acdd867e355e25142f93aae43e20aff394743442bb09c5b217",
+      "audited_file_sha256": "946688a1fe0987acdd867e355e25142f93aae43e20aff394743442bb09c5b217",
+      "rubric_sha256": "db2d44507bcce99e2f21eb7efcbe45e707286c4f51ff591e669839e5000ee745",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/corannulene-alc",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Strict provenance failure is a unit transcription on rejected diagnostics,not a claimed measured radical coupling;the correct primary ALC headline now passes.",
+        "Final alpha118133 crosses beam configuration;same-block118241/118165/118203 would be preferable.",
+        "Cold Lorentzian width is highly background-sensitive and whole-fit chi2 elevated;final prose incorrectly says linear/cubic widths indistinguishable despite actual STABILITY84 saying linear broader.",
+        "Low-field/ZF controls are extensively fitted but do not replace requested integral-observable comparisons;no microscopic rate or activation law established."
+      ],
+      "judgement_calls": [
+        "Apply strict quantity-unit provenance to a diagnostic parameter even though explicitly rejected as physical;unit substitution MHz→G is not a permitted rounding or valid conversion. Raw-token checker alone would miss it.",
+        "Inverse relational wording hot lower/narrower satisfies cold higher/broader requirement;do not demand literal cold-first sentence.",
+        "Failed broad-fit numbers clearly labelled non-results are not treated as additional resonance claims;the distinct error is incorrect quoted unit on the low-field A_hf diagnostics."
+      ],
+      "number_evidence_commands": [
+        1,
+        6,
+        7,
+        10,
+        13,
+        17,
+        19,
+        20,
+        21,
+        23,
+        24,
+        25,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        37,
+        38,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        49,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        60,
+        61,
+        62,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        75,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        89,
+        92
+      ],
+      "scored_at": "2026-10-20T18:48:13.947596+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
-    "corannulene-alc",
     "benzene-alc"
   ],
   "totals": {
-    "scored": 22,
+    "scored": 23,
     "target": 24,
     "scientific_pass": 18,
-    "must_pass": 124,
-    "must_total": 130,
-    "should_pass": 48,
-    "should_total": 92,
-    "exact_copy_pass": 16,
-    "literal_copy_pass": 17,
+    "must_pass": 133,
+    "must_total": 140,
+    "should_pass": 49,
+    "should_total": 98,
+    "exact_copy_pass": 17,
+    "literal_copy_pass": 18,
     "combined_pass": 13,
-    "boundary_pass": 22
+    "boundary_pass": 23
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates.",

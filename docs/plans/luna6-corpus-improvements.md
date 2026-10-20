@@ -1492,3 +1492,21 @@ Negative baseline/alpha transfer and severe fit mismatch retained. All51
 commands inspected;frozen hashes unchanged. Totals124/130 Musts,18/22 science,
 16/22 audited-copy,17/22 literal-copy,13/22 combined,22/22 boundary. Only
 corannulene and benzene ALC remain;finish frozen gate then pause.
+
+
+Confirmation2 now23/24 scored:corannulene FAIL9/10 Musts and semantic number
+rule,copy/boundary pass. Previously missing main comparison/interpretation now
+PASS:hot line narrower/lower,cold no narrow7 kG line,and explicit molecular
+reorientation averaging hyperfine anisotropy as interpretation. New failure:
+low-field failed-fit A_hf521.38/565.72 are labelled G in final reply while
+actual commands21/23 print MHz. They are explicitly nonphysical diagnostics,
+not measured couplings,but strict quantity-unit provenance still fails;raw
+numeric checker has zero flags and cannot detect unit substitution. Record as
+judgement call with mitigation,not arithmetic or invented primary resonance.
+Also cold same-run stability prose wrongly calls widths indistinguishable;
+actual STABILITY84 says linear-background width broader. Alpha118133 final
+beam-configuration mismatch and other Should gaps retained. All97 commands
+inspected;actual line/error sources exclude audit/draft/log displays;frozen
+hashes unchanged. Totals133/140 Musts,18/23 science,17/23 audited-copy,18/23
+literal-copy,13/23 combined,23/23 boundary. Only benzene ALC remains;finish
+and score then pause,no repair or extra gate authorized.
