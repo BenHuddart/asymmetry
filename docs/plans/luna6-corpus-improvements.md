@@ -183,7 +183,7 @@ failures as round one in 453.56 s, using two workers and scratch XDG paths.
 No new failures appeared; the standard gate remains non-green for those GUI
 failures. Log: `/tmp/asymmetry-luna6-round2-validation.log`.
 Other logs: `/tmp/asymmetry-luna6-round2-{focused,fast,docs}.log`. No corpus
-evals are currently live; round one finished exit0.
+evals overlapped validation; round one had finished exit0 before it began.
 
 Round two is committed as `a5047ae`. Its nine targeted cases are running with
 Luna and three concurrent cases: `sn-critical-field`, `maleic-mu-kinetics`,
