@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Integral-scan comparisons retain qualified fitted estimates.** Significant
+  non-bound local fits print field/width directions even with incomplete
+  flanks, explicitly distinguished from resolved lines; resolution gates stay
+  unchanged.
 - **Agent reports reconcile comparisons with their labelled fit rows.**
   Qualitative mechanisms remain separate from quantitative model limitations,
   and plain file paths simplify exact copying of the final audited report.

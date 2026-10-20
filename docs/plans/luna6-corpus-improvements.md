@@ -936,3 +936,42 @@ Do not launch full24 until targeted failure repaired. Next general repair:
 CLI comparison notes for significant non-bound fitted estimates with scaled
 errors and explicit conditional/no resolved-line-identification wording;
 resolved-line gates unchanged. Commit and evaluate fresh corannulene only.
+
+## Round nine
+
+General CLI repair in progress after round8 fully scored: integral-scan
+COMPARE accepts significant,non-bound local fitted estimates even without
+both resolved flanks; labels possible counterparts conditional,not two
+resolved lines,and retains scaled-error/window-background caveats. Existing
+resolved-line gate unchanged. Comparison direction now reaches broad fitted
+features instead of disappearing with geometric-resolution failure. Skill
+keeps conditional estimated directions distinct from measured physical shifts;
+owning docs/changelog updated. Tests explicitly preserve unresolved status
+and exclude failed,bound-pinned or insignificant comparisons.
+Focused CLI checks197 pass7.38 s,lint/structural/skill pass. Fast suiteLIVE
+exec54355 (/tmp/asymmetry-luna6-round9-fast.log),docsLIVE exec78944
+(/tmp/asymmetry-luna6-round9-docs.log). No evals live,no broad overlap;pytest2.
+Finish checks before commit,then fresh corannulene-only gpt-6-luna wave.
+Standard remains recordedfour known GUI sizing failures;no GUI redesign or
+claim of green. Do not duplicate live tests/evals after interruption.
+
+Development smoke on stored round8 local-fit outputs confirms a conditional
+COMPARE note with cold15341.1 ±29.2 G versus hot14817.8 ±25.3 G and
+broader/higher direction,explicitly not two resolved lines. This is a
+post-wave development check,not eval evidence or an input to a model run.
+Docs built with85 existing warnings. Prepared /tmp/asymmetry-luna6-round9-wave.sh
+and manual /tmp/score-luna6-round9.py; do not launch until fast checks pass
+and implementation is committed. Round8 older models now fully stopped.
+
+USER PAUSE before next eval wave (2026-10-20): do not launch round9 or any
+other eval until the user resumes. Heartbeat automation paused. Round9 fast
+suite was already running and may finish; finish recording validation and
+commit prepared changes only. No evals currently live. Round8 is fully scored;
+next prepared script is /tmp/asymmetry-luna6-round9-wave.sh but MUST NOT run
+while paused. This instruction supersedes earlier unattended launch directions.
+
+Round9 validation finished before pausing:197 focused passes7.38 s,
+5906 fast passes/10 skipped/1xfail105.42 s,lint/structural/skill pass,
+docs85 existing warnings. No new eval launched. Commit prepared round9
+implementation and this pause record; leave automation PAUSED and wait for
+explicit user resume. Standard still has the four recorded GUI failures.

@@ -576,7 +576,26 @@ def _resolved_lines(fit: dict, fit_limit: float = _RESOLVED_FIT) -> list[str]:
 
 
 def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
-    """Each resolved line beside the same line resolved in another stored scan, with directions."""
+    """Compare significant fitted line estimates without requiring resolved flanks."""
+
+    def estimates(scan_fit: dict) -> list[str]:
+        if (
+            not scan_fit["success"]
+            or scan_fit["params_at_bound"]
+            or (scan_fit["x_min"] is None and scan_fit["x_max"] is None)
+        ):
+            return []
+        return [
+            name
+            for name, centre in scan_fit["parameters"].items()
+            if name.split("_")[0] == "B0"
+            and scan_fit["x_range"][0] < centre < scan_fit["x_range"][1]
+            and scan_fit["uncertainties"][name] > 0
+            and scan_fit["uncertainties"][name.replace("B0", "Bwid", 1)] > 0
+            and scan_fit["uncertainties"][name.replace("B0", "f", 1)] > 0
+            and abs(scan_fit["parameters"][name.replace("B0", "f", 1)])
+            >= _RESOLVED_DEPTH * scan_fit["uncertainties"][name.replace("B0", "f", 1)]
+        ]
 
     def described(scan_fit: dict, line: str) -> tuple[float, float, float, float]:
         """Centre, error, width, error — errors scaled by √chi2_red where it exceeds 1."""
@@ -595,19 +614,27 @@ def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
         return words[0] if a > b else words[1]
 
     notes = []
-    # A poor chi2_red only widens the errors here: the comparison is of two lines
-    # each fitted with both flanks, not a verdict that either is a resonance.
-    for line in _resolved_lines(fit, math.inf):
+    # Missing flanks limit identification, not the ordering of fitted estimates.
+    for line in estimates(fit):
         centre, centre_err, width, width_err = described(fit, line)
         for other, other_fit in stored.items():
-            for other_line in _resolved_lines(other_fit, math.inf):
+            for other_line in estimates(other_fit):
                 c2, c2_err, w2, w2_err = described(other_fit, other_line)
                 if abs(centre - c2) > width + w2:
                     continue
+                resolved = line in _resolved_lines(fit, math.inf) and other_line in _resolved_lines(
+                    other_fit, math.inf
+                )
+                qualification = (
+                    "are one line in two scans"
+                    if resolved
+                    else "are conditional fitted estimates of possible counterparts, not two "
+                    "resolved lines; window/background sensitivity still limits the comparison"
+                )
                 notes.append(
                     f"COMPARE: this line at {centre:g} ± {centre_err:.3g} (width {width:g} ± "
                     f"{width_err:.3g}) and scan {other}'s at {c2:g} ± {c2_err:.3g} (width {w2:g} ± "
-                    f"{w2_err:.3g}), errors scaled by √chi2_red, are one line in two scans: this "
+                    f"{w2_err:.3g}), errors scaled by √chi2_red, {qualification}: this "
                     f"one is "
                     + direction(
                         width,

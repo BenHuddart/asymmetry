@@ -1393,7 +1393,13 @@ centre ± width lies inside the dip's window) is not announced again. When a win
 another scan in the work directory fitted near the same field, a ``COMPARE``
 line prints both centres and widths, with errors scaled by
 √χ²\ :sub:`r`, and says which is broader and which higher in field — the
-direction a summary of two conditions must state. A resolved line that
+direction a summary of two conditions must state. A feature that
+has incomplete flanks can still be compared as a
+significant, non-bound fitted estimate. Such ``COMPARE`` notes explicitly say
+``conditional fitted estimates`` and ``not two resolved lines``; scaled errors
+and window/background sensitivity qualify the direction. Failed, bound-pinned
+or insignificant fits are excluded. This does not relax the resolved-line gate.
+A resolved line that
 another analysed scan covers, with no fitted line within five widths of it
 there, gets a NOTE with the command that fits that scan on the same window: a
 line one scan shows and another lacks is a finding to report either way. A run stamped TF at a kilogauss or more whose integral

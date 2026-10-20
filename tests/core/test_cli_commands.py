@@ -3533,7 +3533,7 @@ def test_a_result_command_ends_with_the_audit_step_and_a_reduction_does_not(
 
 
 def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
-    from asymmetry.cli.commands.integral_scan import _line_comparisons
+    from asymmetry.cli.commands.integral_scan import _line_comparisons, _resolved_lines
 
     def fit(centre: float, width: float, chi2: float) -> dict:
         return {
@@ -3554,6 +3554,18 @@ def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
     # Within two combined errors there is no direction to report.
     (same,) = _line_comparisons(fit(15390.0, 1150.0, 1.0), {"cold": cold})
     assert "of a width these errors cannot tell apart and at a field these errors" in same
+
+    # A broad fitted feature can be compared even without resolved flanks.
+    partial = cold | {"x_range": [14000.0, 17000.0], "x_min": 14000.0, "x_max": 17000.0}
+    assert _resolved_lines(partial) == []
+    (conditional,) = _line_comparisons(partial, {"hot": hot})
+    assert "conditional fitted estimates" in conditional
+    assert "not two resolved lines" in conditional
+    assert "this one is broader and higher in field" in conditional
+    assert _line_comparisons(partial | {"params_at_bound": ["Bwid"]}, {"hot": hot}) == []
+    assert _line_comparisons(partial | {"success": False}, {"hot": hot}) == []
+    shallow = partial | {"parameters": partial["parameters"] | {"f": -0.001}}
+    assert _line_comparisons(shallow, {"hot": hot}) == []
 
 
 def test_a_line_another_analysed_scan_covers_without_a_fit_there_is_named() -> None:
