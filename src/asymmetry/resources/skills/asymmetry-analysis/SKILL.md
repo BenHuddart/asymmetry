@@ -744,12 +744,19 @@ A width at its search bound is a reason to revisit the window and background,
 not to repeat the same failed fit on every scan. Include data on both flanks,
 compare local Linear, local Cubic and independently constrained backgrounds, and try a
 joint multi-line model when neighboring resonances share a baseline. The CLI's
-automatic width interval is conservative; `--bound Bwid=LO:HI` can replace it
+automatic width interval permits widths up to half the fitted field span;
+this is a search limit, not proof of enough baseline coverage.
+`--bound Bwid=LO:HI` can replace it
 when the data and baseline constrain a broader or narrower line. Refit nearby
 windows to test stability, and report unresolved values honestly if these
 checks still fail. A curved powder-like trough can pin a width under a Linear
 baseline; widening a still-linear window alone does not test that problem.
 Compare both bounds and baseline shape before abandoning a broad feature.
+Choose windows independently across conditions: a sharp line's window may
+truncate its broadened partner. When coverage fails, use the CLI's wider-window
+Cubic check before transferring an unresolved verdict to that partner or to
+every scan in a sample family. A fitted width with partial flanks can remain
+conditional; it does not satisfy the stricter isolated-resonance criterion.
 A centre at a search bound also requires recovery, even with modest chi-squared:
 inspect the full scan, widen or shift the window around the observed feature
 to include both flanks, and revisit seeds and local baselines. A fit to an edge

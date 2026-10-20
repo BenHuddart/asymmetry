@@ -633,3 +633,32 @@ span/4 automatic width ceiling is a geometric resolution criterion currently
 used as a hard fitting prior, truncating broad but potentially fitted widths.
 Test any change on synthetic broad lines and keep resolved-line criteria fixed.
 No full24 launch until targeted scientific/copy/boundary failures pass.
+
+## Round seven
+
+General repair in progress: automatic LCR width searches extend to half the
+fitted span, while the unchanged resolved-line gate still requires two widths
+on both flanks, significant amplitude and a non-bound converged fit. Search
+bounds no longer impose that geometric resolution criterion as a hard prior.
+Explicit positive bounds remain supported. The CLI's insufficient-coverage
+note prints a tripled-window Cubic check and explains that different conditions
+need independent windows when one feature broadens. Skill and owning docs
+retain conditional estimates without calling partial coverage a resolved line.
+
+Focused checks: 321 passed in 8.39 s; lint/structural/skill pass. Fast tier
+is running with two workers; docs built with 85 existing warnings. Development
+probes on stored points (outside repo, not supplied to eval agents) recover a
+non-bound broad cold fit in wider windows and a non-bound solution width with
+the expanded default. Probes are diagnostic development evidence, not scores;
+raw script /tmp/probe-luna6-round7.py. Synthetic tests verify broad-width
+recovery and continued rejection as an isolated resolved line when flanks are
+missing. No eval is live and no broad tests overlap one. Standard remains the
+recorded four pre-existing GUI failures; do not call it green. Finish fast,
+commit, then run fresh two-case targeted wave before any full24 confirmation.
+
+Round-seven validation complete: 321 focused passes (8.39 s), 5906 fast passes,
+10 skipped/one xfailed (104.49 s), lint/structural/skill pass and docs 85 existing
+warnings. Host inspection confirms no eval/model/test processes before launch;
+17 GiB available, zero swap use/PSI and 7.2 GiB free /tmp. No broad validation
+repeat; standard remains the recorded four known GUI failures. Commit these
+changes, then run both targeted cases with fixed rubrics/two-turn protocol.

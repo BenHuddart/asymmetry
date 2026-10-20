@@ -216,9 +216,8 @@ def _parameters(
     parameters = parameter_set_for_model(
         model, suggest_model_seeds(model, scan.x, scan.value, scan.error, known=known)
     )
-    # Default intervals discourage an LCR line from absorbing an unconstrained
-    # background. Explicit bounds can relax this when baseline data constrain
-    # a broader line; widths and differential field steps remain positive.
+    # Search bounds allow partial flanks; resolved-line checks separately
+    # require two widths on each side. A search bound is not that criterion.
     x_lo = float(np.min(scan.x))
     x_hi = float(np.max(scan.x))
     span = x_hi - x_lo
@@ -228,7 +227,7 @@ def _parameters(
             width = parameters[model.component_param_name(index, "Bwid")]
             centre.min, centre.max = x_lo, x_hi
             width.min = max(span / 1000.0, np.finfo(float).eps)
-            width.max = max(span / 4.0, width.min)
+            width.max = max(span / 2.0, width.min)
         if "dB" in component.param_names:
             offset = parameters[model.component_param_name(index, "dB")]
             offset.min = max(span / 1000.0, np.finfo(float).eps)

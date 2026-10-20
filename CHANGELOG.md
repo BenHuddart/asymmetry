@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Resonance width searches allow partial flank coverage.** The default upper
+  width bound is half the fitted span; resolved-line requirements remain
+  unchanged. Inadequate coverage prompts a wider local Cubic check independently
+  for each condition.
 - **Bound-pinned resonance centres prompt window recovery** even when the fit
   has modest chi-squared. The report audit distinguishes a whole-background
   limitation from a definition of a local polynomial.

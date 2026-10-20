@@ -751,7 +751,13 @@ def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
                 "baseline models. If a converged, non-bound centre stays stable with a "
                 "determined error, report it as a conditional fitted centre with those "
                 "checks and this limitation. Do not promote it to an isolated resonance "
-                "or report a bound-pinned width as measured."
+                "or report a bound-pinned width as measured. To investigate truncated "
+                "broad structure, widen independently for this condition, for example "
+                f"--model 'LorentzianLCR + Cubic' --xmin {low - (high - low):g} "
+                f"--xmax {high + (high - low):g}, then compare nearby windows. "
+                "A window suitable for a sharper line in another condition may cut off "
+                "this broader one; changing only the background inside that same narrow "
+                "window cannot recover missing flanks."
             )
         elif name in resolved:
             amplitude = name.replace("B0", "f", 1)

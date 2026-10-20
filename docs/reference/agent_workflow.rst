@@ -1369,6 +1369,13 @@ fitted centre. Keep that estimate distinct from an established isolated line;
 a failed fit or a bound-pinned width remains unmeasured. Poor chi-squared
 requires a model-mismatch caveat and stability checks, rather than discarding
 every fitted parameter solely because the model is approximate.
+The automatic width search extends to half the fitted field span. This allows
+a partially covered line to be investigated without falsely pinning it at the
+stricter two-width-flank resolution limit. Such a fit still needs coverage and
+stability qualifications. For inadequate flanks the CLI prints a wider-window
+Cubic command: compare it with nearby windows, independently for each condition,
+because a sharp line's window can truncate its broader partner. Explicit
+``--bound`` values still override the search interval.
 When no resonance model was selected, the CLI independently screens the field
 curve for significant interior minima and prints ``LOCAL DIP CANDIDATES``
 with exploratory windows. Five combined point errors of prominence reject

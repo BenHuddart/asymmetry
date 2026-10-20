@@ -82,17 +82,32 @@ def test_explicit_width_bounds_recover_a_broad_line_and_keep_the_interval() -> N
     from dataclasses import replace
 
     scan = _scan()
-    scan = replace(scan, value=0.18 - 0.04 / (1 + ((scan.x - 3500) / 1000) ** 2))
+    scan = replace(scan, value=0.18 - 0.04 / (1 + ((scan.x - 3500) / 1800) ** 2))
     _, default = fit_integral_scan(scan, "LorentzianLCR + Constant")
     _, expanded = fit_integral_scan(
         scan, "LorentzianLCR + Constant", bounds={"Bwid": (10.0, 2000.0)}
     )
-    assert default["parameters"]["Bwid"] <= 750.01
+    assert default["parameters"]["Bwid"] <= 1500.01
     assert expanded["success"]
-    assert expanded["parameters"]["Bwid"] == pytest.approx(1000, rel=0.01)
+    assert expanded["parameters"]["Bwid"] == pytest.approx(1800, rel=0.01)
     assert expanded["parameters"]["B0"] == pytest.approx(3500, abs=1)
     assert "Bwid" not in expanded["params_at_bound"]
     assert expanded["bounds"] == {"Bwid": [10.0, 2000.0]}
+
+
+def test_width_search_does_not_truncate_a_partially_covered_line() -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow.integral_scan import _holds_a_line
+
+    scan = _scan()
+    scan = replace(scan, value=0.18 - 0.04 / (1 + ((scan.x - 3500) / 1000) ** 2))
+    _, fit = fit_integral_scan(scan, "LorentzianLCR + Constant")
+    assert fit["success"]
+    assert fit["parameters"]["Bwid"] == pytest.approx(1000, rel=0.01)
+    assert "Bwid" not in fit["params_at_bound"]
+    # A fitted width with partial flanks still does not establish an isolated line.
+    assert not _holds_a_line(scan, {"x_min": 2000, "x_max": 5000})
 
 
 @pytest.mark.parametrize(

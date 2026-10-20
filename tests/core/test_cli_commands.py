@@ -3415,6 +3415,8 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
     assert "lacks two fitted widths" in edge
     assert "inside 5000–11000" in edge
     assert "conditional fitted centre" in edge
+    assert "--model 'LorentzianLCR + Cubic' --xmin -1000 --xmax 17000" in edge
+    assert "widen independently for this condition" in edge
     # A whole scan narrower than its line is not a window that cut it off.
     whole = {"x_min": None, "x_max": None}
     assert _poor_fit_note(fit | {"reduced_chi_squared": 1.5, "next_dip_windows": []} | whole) == []
