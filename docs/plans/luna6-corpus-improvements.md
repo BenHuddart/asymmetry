@@ -1164,3 +1164,13 @@ before fresh corannulene GPT-6 Luna rerun. Host22 GiB available,no swap/current
 PSI. Keep rubrics/runner/two-turn image-review protocol fixed and preserve raw
 first attempt on disk. Only this repair+rerun authorized;score then pause,
 without automatically launching full24 or another improvement round.
+
+Round12 committed b06981a;fresh corannulene-only GPT-6 Luna wave LIVE under
+/home/ben/.cache/asymmetry-luna6-overnight-20261020/round12,exec92991,
+console same parent round12-wave.log. Metadata records source/skill/runner/
+rubric hashes,first attempt,BLAS1,unchanged two-turn image review. Freeze CLI/
+skill until completion. Score actual final reply in
+ docs/plans/luna6-corpus-round12.json including all Must/Should evidence,number
+rule (excluding audit/draft displays),copy,boundary and hashes. Monitor this
+requested rerun,then commit score/plan and pause automation;no automatic next
+wave,full24 or extra improvement round. Raw evidence persists outside repo.
