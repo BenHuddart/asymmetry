@@ -385,15 +385,210 @@
       "boundary_check": "PASS: completed command inventory uses staged project skill, supplied data and CLI products only; no personal skill/source tree/network/ad hoc scientific scripting.",
       "boundary_pass": true,
       "permission_denials": 0
+    },
+    "maleic-mu-kinetics": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Recognises the 2 G runs as muonium precession measurements and the 100 G runs as diamagnetic ones.",
+          "pass": true,
+          "evidence": "Explicit 2 G Mu precession versus 100 G diamagnetic TF controls; unresolved members not reclassified as LF."
+        },
+        {
+          "requirement": "Separates the samples by concentration, read from titles or notes, and says where the concentration values came from.",
+          "pass": true,
+          "evidence": "Composition labels from notes/titles, blank 0, neat 1, half 0.5 and quarter 0.25; no molarity invented."
+        },
+        {
+          "requirement": "Reports the Mu relaxation rate rising with maleic acid concentration at a fixed temperature (290 K, or matched setpoints), from fits of the 2 G runs.",
+          "pass": true,
+          "evidence": "290 K matched-setpoint global fit reports Mu Lambda_2 rising from blank 0.4289 through 1.5764/2.0712 to neat 2.7747 us^-1, with control rate similar."
+        },
+        {
+          "requirement": "Obtains a rate constant from the slope of \u03bb_Mu against concentration with a CLI fit (e.g. `fit-series`/`fit-global` with `--order concentration --x ...`, then `trend --model Linear`), reported with its uncertainty and in the concentration units it used. A fit-quality caveat is fine; withdrawing the converged slope is not.",
+          "pass": true,
+          "evidence": "Retains CLI Linear slope 2.640652 \u00b1 0.530055 us^-1 per relative-concentration unit as an empirical coefficient with high-chi2/temperature-spread caveats. Does not withdraw the measured estimate; only intrinsic precision is disclaimed. Also computes multiple per-setpoint slopes."
+        },
+        {
+          "requirement": "Contains no rate constant, activation energy or fraction that was not produced by a tool call in this session (the worksheet's published values are background).",
+          "pass": true,
+          "evidence": "All coefficients, amplitudes/rates and alpha values are tool outputs; no hand activation energy or fraction ratio."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares deoxygenated with untreated water (the untreated Mu signal relaxes faster, or leaves no resolvable line: dissolved O\u2082).",
+          "pass": false,
+          "evidence": "Explains oxygen scavenging and distinguishes untreated water from blank, but does not report an observed faster relaxation/no-line comparison; untreated two-component fit fails."
+        },
+        {
+          "requirement": "Uses a calibration run appropriate to the sample being reduced rather than one alpha for the whole folder, or notes the alpha step.",
+          "pass": true,
+          "evidence": "Uses appropriate local 100 G alpha references by composition/block and explicitly identifies 78280/78281 balance step."
+        },
+        {
+          "requirement": "Holds the Mu and diamagnetic frequencies or amplitudes common across the concentration set (shared in `fit-global`, or fixed) and says so.",
+          "pass": true,
+          "evidence": "Fixed Mu/diamagnetic frequencies and shared amplitudes/phases within global groups are explicitly reported."
+        },
+        {
+          "requirement": "States that the Arrhenius step needs k_Mu at several temperatures, each from its own concentration fit, and either does it per temperature and fits the Arrhenius law through them with a command (`trend --from-fits \u2026 --model Arrhenius`) rather than by hand, or declines that step with the reason.",
+          "pass": true,
+          "evidence": "Obtains per-setpoint concentration slopes then declines Arrhenius due different logged temperatures, high chi2 and collapsed hot Mu amplitude; does not fit fixed-concentration Lambda(T) as reaction activation energy."
+        }
+      ],
+      "number_rule": "PASS: actual trend mu-concentration-290 prints m=2.640652 \u00b1 0.530055 us^-1 per unit concentration, b=0.531105 \u00b1 0.188166 and chi2_red 23.505. Grouped and control values, local corrected alphas and per-temperature slopes trace to actual CLI outputs. No invented molarity or hand-derived Ea/fractions.",
+      "root_cause": "Repairs the persistent withheld-slope failure. Primary coefficient label/units and general conditional-reporting guidance now preserve the empirical estimate without pretending to measure an intrinsic constant. Short chemistry fit window improves individual fit quality; later three-composition slope estimates are also retained with logged-temperature caveats. Exact-copy and boundary pass.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1058.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-concentration-290 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-1 --model Linear --param Lambda_2'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-2 --model Linear --param Lambda_2'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-3 --model Linear --param Lambda_2'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-4 --model Linear --param Lambda_2'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-5 --model Linear --param Lambda_2'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-6 --model Linear --param Lambda_2'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-1 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-2 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-3 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-4 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-5 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics/data --series mu-temp-composition-6 --model Linear --param Lambda_2 --plot'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "9f8c7a119e0d5951f308b456540917151e1529a9e9efbd43c0eb880b256be662",
+      "rubric_sha256": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round3/maleic-mu-kinetics",
+      "staged_skill_sha256": "584f7f167f99f5acf97434e2bf7c224226f3bd7adf3a1faf5171b549196de134",
+      "boundary_check": "PASS: completed commands use staged project skill and supplied data/CLI products only; no personal skill/source tree/network/ad hoc scientific scripting.",
+      "boundary_pass": true,
+      "permission_denials": 0
+    },
+    "benzene-alc": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Recognises the three sub-folders and analyses each separately, with its own work directory, never mixing runs between them.",
+          "pass": true,
+          "evidence": "Three subfolders/campaigns independently surveyed with separate work directories and no run mixing."
+        },
+        {
+          "requirement": "Treats every folder as longitudinal-field ALC scans fitted with `integral-scan`, uses the 20 G TF runs only for alpha (naming, for each sub-folder it reduced with a measured alpha, a run and its value \u2014 one of the liquid's two calibration runs is enough), and says alpha was assumed 1.0 for `solution`.",
+          "pass": true,
+          "evidence": "LF integral-scan treatment; liquid 29799 corrected alpha 1.1916, solid 59731 corrected 1.2809; solution explicitly alpha 1.0 assumed."
+        },
+        {
+          "requirement": "Liquid: reports from `integral-scan` fits one resonance in the CHMu(0) scan between 20.7 and 20.9 kG and two in the 28.5\u201330 kG scan, one between 28.9 and 29.0 kG and one between 29.5 and 29.6 kG, with uncertainties or fit quality.",
+          "pass": true,
+          "evidence": "Local fitted CHMu 20797.423 \u00b1 0.905 G and both ordinary ring features 28944.969 \u00b1 0.355 and 29540.446 \u00b1 0.415 G, with respective chi2. Upper ordinary fit retained conditionally despite failed differential control."
+        },
+        {
+          "requirement": "Does not integrate the red/green repeat 29800\u201329854 as an ordinary scan: either fits it as `--period green-red` with a pair model and the red\u2013green field step held from the command's printed offset, or sets it aside and says why.",
+          "pass": true,
+          "evidence": "Green-red repeat uses LorentzianLCRPair + Linear with dB=44.06 G fixed from printed offset; failed high-field differential fit not promoted."
+        },
+        {
+          "requirement": "Solid: reports two resonances from converged fits (a joint fit, or one windowed fit per resonance), one between 19.3 and 19.7 kG and one between 21.3 and 21.6 kG. A failed fit's position is not a fitted resonance.",
+          "pass": true,
+          "evidence": "Two converged local solid centres 19478.216 \u00b1 6.979 and 21474.575 \u00b1 8.056 G, with fit-quality/background caveats."
+        },
+        {
+          "requirement": "Solution: names the three samples and fits at least one scan, stating sample and temperature, with a resonance between 20.4 and 21.2 kG.",
+          "pass": true,
+          "evidence": "Names Benzene(aq), C6H6/C6H14 and C6H6/H2O 20mM; all seventeen scans fitted and labelled by sample/temperature, centres within required range."
+        },
+        {
+          "requirement": "Contains no A_\u03bc, A_p, D_\u03bc or resonance field that was not produced by a tool call in this session: no couplings from resonance fields by the worksheet's formulas.",
+          "pass": true,
+          "evidence": "All resonance fields/widths and calibrations trace to integral-scan output; no hand coupling conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Solid: from a converged joint fit of both resonances, notes that the lower one is the broader (separately windowed fits with their own backgrounds can hide the difference).",
+          "pass": false,
+          "evidence": "No converged joint solid two-resonance fit; separate-window relative widths are conditional."
+        },
+        {
+          "requirement": "Assigns in words: liquid lines are \u03940 (the 20.8 kG one the methylene CHMu proton, the pair near 29 kG ring protons); the solid's broad lower line is the \u03941 muon resonance and the narrower upper one a \u03940 line.",
+          "pass": false,
+          "evidence": "No Delta0/Delta1 or methylene/ring-proton assignment."
+        },
+        {
+          "requirement": "Solution: fits several temperatures of one sample and reports the resonance field rising with temperature, as a list of fitted fields.",
+          "pass": true,
+          "evidence": "Lists multiple fitted fields by temperature within each named sample and explicitly says systematic within-sample movement, keeping different references/compositions separate. Listed centres rise with temperature."
+        },
+        {
+          "requirement": "Solid: uses the logged sample temperature and notes the calibration run was taken colder than the scan.",
+          "pass": true,
+          "evidence": "Explicit initial logged solid temperature above setpoint and colder calibration offset -42.51 K."
+        },
+        {
+          "requirement": "Says the worksheet's time-domain questions (relaxation vs field, on-resonance oscillations) were or were not examined.",
+          "pass": true,
+          "evidence": "Explicitly no time-domain analysis because field integral is defining observable; no relaxation/on-resonance oscillation inference."
+        },
+        {
+          "requirement": "Names the stored scan JSON and PNG for each fitted scan.",
+          "pass": false,
+          "evidence": "Names work directories and representative plots, not stored JSON and PNG for every fitted scan."
+        }
+      ],
+      "number_rule": "PASS: actual integral-scan outputs provide liquid/solid centres and widths, solution aq350 B0=20951.188498 \u00b1 0.709130 G and width 53.543290 \u00b1 2.084051, and fixed differential dB=44.06 G. Conditional local centres are genuine tool results, not taken from failed differential fits; no couplings invented. Several errors are unscaled despite explicit chi2 caveats, a remaining precision limitation.",
+      "root_cause": "Repairs both prior scientific gaps: ordinary upper ring centre retained separately from failed differential fit, and all solution sample identities preserved with within-sample temperature trends. Scientific pass, boundary pass. Exact-copy fails solely by moving the closing backtick from after \"scan\" to after \"o-p\" in one experiment paragraph; no scientific numbers change.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 614.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry survey /tmp/asymmetry-luna6-improvements/round3/benzene-alc/data'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round3/benzene-alc/data/liquid --runs 29723-29798 --name liquid_op_dip2 --alpha-from 29799 --deadtime from_file --tmin 1 --tmax 10 --model \"LorentzianLCR + Linear\" --xmin 29484 --xmax 29597 --plot --workdir asymmetry-work-liquid'",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "f75751df072d968ba5384293c160fc3eba57256fcf3764d02b027a0a98bfd6b1",
+      "rubric_sha256": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round3/benzene-alc",
+      "staged_skill_sha256": "584f7f167f99f5acf97434e2bf7c224226f3bd7adf3a1faf5171b549196de134",
+      "boundary_check": "PASS: completed commands use staged project skill and supplied data/CLI products only; no personal skill/source tree/network/ad hoc scientific scripting.",
+      "boundary_pass": true,
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 3,
-    "scientific_pass": 1,
-    "must_pass": 23,
-    "must_total": 26,
-    "exact_copy_pass": 2,
-    "combined_pass": 1,
-    "boundary_pass": 3
+    "scored": 5,
+    "scientific_pass": 3,
+    "must_pass": 35,
+    "must_total": 38,
+    "exact_copy_pass": 3,
+    "combined_pass": 2,
+    "boundary_pass": 5
   }
 }

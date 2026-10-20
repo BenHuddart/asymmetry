@@ -402,3 +402,18 @@ completeness failure. Its final reply duplicates the sentence excluding run
 Partial totals: 23/26 Musts, 1/3 scientific/combined passes, 2/3 copy and
 3/3 boundary. Maleic acid, benzene ALC and LiFeAs are live. About 19 GiB
 available, zero swap and PSI; do not change frozen CLI/skill until they finish.
+
+Maleic acid and benzene ALC are scored and both now pass every scientific
+Must (5/5 and 7/7). Maleic retains the apparent concentration coefficient with
+its proper relative units and limitations, rather than withdrawing it; it
+also computes slopes from further composition groups without inventing an
+Arrhenius activation energy. Benzene retains both ordinary ring-proton fitted
+centres separately from the failed differential control and preserves the
+three solution identities/within-sample field trends. Maleic exact-copy passes;
+benzene fails only by moving one closing backtick in a scan label after audit.
+All five completed reports satisfy the tool boundary. Partial totals: 35/38
+Musts, 3/5 scientific passes, 3/5 exact-copy, 2/5 combined and 5/5 boundary.
+LiFeAs is the only live case; no source changes until it finishes. Memory
+20 GiB available, no swap/PSI pressure. Preserve scientific pass versus
+exact-copy failure as separate dimensions; never substitute the audited file
+for the actual final reply to force a copy pass.
