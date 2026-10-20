@@ -26,7 +26,11 @@ these obligations through the final reply, including after image review:
   Seed precession from each run's own measured line or field: a frequency fixed
   in a reference recipe cannot be carried unchanged through a field sweep.
   Free it or supply the appropriate per-run value before comparing amplitudes.
-  A Redfield fit to a time-domain rate does not measure integral recovery.
+  A Redfield fit to a time-domain rate does not measure integral recovery;
+  integral recovery does not measure a relaxation-rate law either. If the
+  question asks for field-dependent dynamics, fit the time spectra, extract
+  rates and try the appropriate rate law even when an integral scan also has
+  structure. One observable cannot close the other observable's workflow.
   LF geometry alone does not select a recovery model. Inspect non-monotonic
   curves for local dips even when a first recovery fit fails: investigate the
   CLI's `LOCAL DIP CANDIDATES` in nearby windows and compare local baselines.
@@ -812,6 +816,12 @@ of the whole-range background when the CLI identifies it.
   the experiment notes, since it is degenerate with the width when free).
 - **An RF resonance** (a DEVA/RF run, notes naming an RF frequency):
   `--period green-red --model RFResonanceMuP --fix nu_RF=<MHz from the notes>`
+  uses the default `--method integral`: sum each period's counts before forming
+  its asymmetry, then subtract periods. `--method differential` instead averages
+  per-bin asymmetries, giving late low-count bins equal weight; it does **not**
+  mean RF-on minus RF-off. If that estimator gives a noisy scan and unusable
+  couplings, retry the count integral with the same contrast and a justified
+  time window before declaring the resonance undetermined. A valid fit
   gives the muon and proton hyperfine couplings `A_mu`, `A_p`. Which period
   had the RF on is read from the sign, not a colour convention: the RF
   depolarises at resonance, so green − red peaking positive means green kept
@@ -1334,6 +1344,13 @@ data cannot answer at all. For a determined slope under imperfect conditions,
 report an **apparent fitted rate coefficient**, its uncertainty and the
 conditions; separate that empirical result from a validated intrinsic kinetic
 constant. A failed or undetermined fit still supplies no such result.
+Before stopping at an unsuccessful screen, recover the model for the requested
+observable: inspect residuals, seed resolved frequencies from the FFT, simplify
+the components and retry on a justified window. For concentration kinetics,
+use the supplied concentration axis and fit `Linear` to the resulting muonium
+rates; state the slope's conditional status if the individual spectra fit
+poorly. Do not replace the rate-law attempt with a different observable or
+with a generic statement that the first fit was poor.
 When the question is a comparison with an accepted
 value — a transition temperature checked against the literature to judge a
 thermometer, a rate against a published one — make it in words: name the
@@ -1385,7 +1402,14 @@ law on that σ — a gap-law fit is the expected result, not an optional extra.
 If the wizard supplies only an exponential, make and compare an explicit
 `Oscillatory * Gaussian + Constant` recipe. Do not substitute exponential
 `Lambda(T)` for `sigma(T)` in a superconducting gap law. These instructions
-use the experimental context to interpret the comparison. If classification
+require a usable Gaussian fit first: transfer the measured frequency, phase
+and amplitudes from the successful oscillatory fit when changing its envelope,
+then adjust the Gaussian width against the observed damping. A fresh generic
+frequency seed can miss a rapid oscillation entirely. If two components fail,
+try one Gaussian line plus background before abandoning the width trend.
+Report a failed conditional gap-law test as failed, rather than skipping the
+test solely because the first multi-line Gaussian recipe failed. Use the
+experimental context to interpret the comparison. If classification
 is uncertain, compare the Gaussian-width trend and a conditional gap model,
 saying which evidence would distinguish a vortex lattice from magnetic or
 multi-site broadening. Keep established sample physics in the wizard scope.
@@ -1680,11 +1704,20 @@ did not answer, with the reason: the model or method the tool lacks (MaxEnt
 field spectra, a radical ALC or hyperfine model, a multi-group analysis,
 count-domain fits), a fit that did not converge, a scan set aside and why.
 "Not analysed" without a reason is not an answer.
+Distinguish **not attempted**, **fit failed**, and **not implemented in this
+CLI** explicitly. If a microscopic radical/site Hamiltonian is unavailable,
+say that the CLI lacks it and therefore cannot extract those microscopic
+couplings or sites; "outside this analysis" alone does not explain whether
+the limitation is the software, the data, or a choice made in this session.
 
 **Files** — the work directory, stored scan/spectrum products, and PNGs worth
 looking at. Write complete plain paths, one per line, without inline backticks
 or abbreviated follow-on filenames. Finish this list before the last audit;
 the reply must retain its final line exactly as well as the scientific text.
+While editing the draft, finish at the last path's final character, with no
+terminal newline or blank lines. Then audit and copy the body without any
+further edits. The evaluation preserves exact reply whitespace; an invisible
+extra newline in the saved draft is still a character to reproduce.
 
 ## 7. Worked example
 

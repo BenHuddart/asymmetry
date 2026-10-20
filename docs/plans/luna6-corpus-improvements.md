@@ -1,11 +1,15 @@
 # GPT-6 Luna corpus improvement loop
 
-The current authorization is one repair round after confirmation2 and a fresh
-full 24-case rerun on `codex/luna6-corpus-improvements`, using Codex /
-`gpt-6-luna`, followed by scoring and a pause. The earlier unrestricted loop
-has ended. Keep rubrics fixed and retain every first attempt. General skill
-guidance and reusable CLI behavior are the allowed improvements; no run-number,
-expected-answer or corpus-name dispatch rules.
+The user resumed the improvement/evaluation loop on 20 October, with a hard
+stop at **07:00 Europe/London on 21 October 2026 (06:00 UTC)**. After each
+completed wave score actual replies, make general CLI/skill and eval-harness
+repairs, validate and commit before another wave. Scientific rubrics remain
+fixed. Trial twelve concurrent cases with one wizard worker each and numerical
+library threads one; resource measurements must determine whether to keep it.
+Do not launch a full gate after 04:30 UTC. The supervised evaluation process
+tree must stop by the deadline; retain interruption records for unfinished
+attempts. Pause the follow-up by the deadline or on a genuinely passing fresh
+full24 gate. No run-number, expected-answer or corpus-name dispatch rules.
 
 The baseline expansion is committed as `95edcb9`. Its detailed record is
 [agent-cli-skill-luna6-expansion-2026-10-19.json](agent-cli-skill-luna6-expansion-2026-10-19.json):
@@ -23,9 +27,9 @@ that warning must be resolved as well as the literal rubric failures.
   skill and rubrics frozen while the wave runs. Score the completed reports
   before starting the next round, recording Must/Should evidence, number and
   boundary checks, model/host, commit, skill/rubric hashes, and first attempts.
-- For confirmation3, run up to six eval cases concurrently, with wizard fit
-  workers limited to two per case and all BLAS thread counts pinned to one.
-  Earlier waves used three cases. Check available memory and CPU/memory PSI
+- For confirmation4, trial twelve eval cases concurrently, with wizard fit
+  workers limited to one per case and all BLAS thread counts pinned to one.
+  Confirmation3 used six cases/two wizard workers; earlier waves used three cases. Check available memory and CPU/memory PSI
   before launching and sample the process tree while running; reduce load
   if pressure rises. Never overlap broad tests with live evaluations. Cap
   pytest at two workers. Inspect live processes before resuming work to avoid
@@ -37,7 +41,7 @@ that warning must be resolved as well as the literal rubric failures.
 - The baseline full validation has four GUI sizing failures in unchanged GUI
   code; record these honestly. Do not expand this task into GUI redesign.
 - Quiet heartbeat `gpt-6-luna-corpus-improvements` wakes this chat every thirty
-  minutes initially, now every ten minutes to shorten idle gaps. Inspect this
+  minutes initially, now every five minutes to shorten idle gaps. Inspect this
   plan and current processes, continue real work, and
   notify only on meaningful scored rounds, completion or required input.
   Disable it once the objective is achieved.
@@ -1848,3 +1852,45 @@ skill pass anddocs80 warnings. Standard validation is not green: the original
 sandbox/autosave failures and the isolated rerun with two known GUI sizing
 failures are both preserved. No GUI redesign or new tests were undertaken
 while this gate ran.
+
+
+## Round14 resumed overnight (2026-10-20)
+
+Preparing general repairs after confirmation3. The Codex runner currently
+normalizes final whitespace, and the old audit trims the saved draft before
+printing it. The prior ALC trailing-blank-line mismatch may therefore be an
+artifact of those transformations rather than an agent edit. Keep its original
+score and flag this limitation; do not silently regrade it. The next runner
+preserves exact final text, compares exact audit bodies, and snapshots review
+images outside the agent project. The scientific prompt, rubrics and two-turn
+image protocol remain unchanged. CLI/skill changes separate RF estimator from
+period contrast, prompt conditional radical correlation, require completing
+requested rate-law workflows and recover Gaussian fits using measured seeds.
+Reports distinguish unavailable software models from analyses not attempted.
+Twelve-case concurrency is an experiment, not yet a validated speed increase.
+
+Round14 precommit checks: 326 focused passes; 5925 fast passes, 10 skips and
+one xfail. Lint/structural/skill validation pass; docs build has the same80
+warnings. A final small survey cue now states the alternative LF rate-series
+and Redfield workflow alongside integral recovery; standard validation covers
+this final version. Standard validation is running with all XDG directories
+on writable scratch and pytest2/BLAS1. No eval is live during these checks.
+
+Round14 standard validation completed: **9938 passed,25 skipped,one xfail,
+four known GUI sizing failures** in454.40s, with no worker crash/error. The
+failures are the same two FitParameterTable column-width tests and two
+GroupingDialog default-size tests documented earlier. A QScreen destruction
+warning appeared during GUI teardown and is preserved in the log; no GUI code
+changed. Standard is not green. The final runner emptiness check still rejects
+whitespace-only messages while preserving actual report whitespace. Final
+focused/package checks are being completed before the improvement commit.
+
+Final round14 focused/package checks: **377 passed** in9.46s. The previous
+fast5925-pass result and full standard run cover the CLI changes; final focused
+checks also cover the runner's retained empty-report rejection and package
+references. Lint/structural/skill pass; Sphinx retains80 existing warnings.
+The next fresh full24 wave uses12 concurrent cases, wizard workers1 and
+BLAS/OpenMP/Numexpr1, with30-second host resource samples. The external
+supervisor begins deadline termination at05:59:50 UTC and retains interruption
+evidence, so its eval process group and project-working descendants stop by
+06:00 UTC. All attempts stay on persistent disk. No broad tests remain live.

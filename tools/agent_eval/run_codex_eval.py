@@ -273,7 +273,7 @@ def _review_manifest_text(events: list[dict]) -> str:
 
 
 def review_images(events: list[dict], project: Path) -> list[dict[str, object]]:
-    """Validate the nominated project-local images and record their hashes."""
+    """Snapshot nominated project-local images before the agent can replace them."""
     images: list[dict[str, object]] = []
     project_root = project.resolve()
     for raw_line in _review_manifest_text(events).splitlines():
@@ -297,12 +297,18 @@ def review_images(events: list[dict], project: Path) -> list[dict[str, object]]:
         relative_text = safe_relative.as_posix()
         if any(item["relative_path"] == relative_text for item in images):
             continue
+        pixels = resolved.read_bytes()
+        digest = hashlib.sha256(pixels).hexdigest()
+        snapshot = project.parent / "review-images" / f"{digest}{resolved.suffix.lower()}"
+        snapshot.parent.mkdir(exist_ok=True)
+        snapshot.write_bytes(pixels)
         images.append(
             {
                 "relative_path": relative_text,
-                "path": resolved,
-                "bytes": resolved.stat().st_size,
-                "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+                "path": snapshot,
+                "snapshot_path": snapshot.relative_to(project.parent).as_posix(),
+                "bytes": len(pixels),
+                "sha256": digest,
             }
         )
         if len(images) == MAX_REVIEW_IMAGES:
@@ -459,9 +465,9 @@ def extract_summary(args: argparse.Namespace, events: list[dict]) -> str:
     """Read Codex's explicit last-message file, with an event fallback."""
     last = args.out / "last-message.md"
     if last.is_file():
-        return last.read_text(encoding="utf-8", errors="replace").strip()
+        return last.read_text(encoding="utf-8", errors="replace")
     texts = assistant_texts(events)
-    return texts[-1].strip() if texts else ""
+    return texts[-1] if texts else ""
 
 
 def usage(events: list[dict]) -> dict | None:
@@ -502,7 +508,7 @@ def final_report_audited(summary: str, events: list[dict]) -> bool:
         ):
             _, begin, body = item.get("aggregated_output", "").partition("----- BEGIN -----\n")
             report, end, _ = body.partition("\n----- END -----")
-            return bool(begin and end and report.strip() == summary.strip())
+            return bool(begin and end and report == summary)
     return False
 
 
@@ -517,7 +523,7 @@ def write_outputs(
 ) -> None:
     """Persist the report, evidence, metadata, produced work and rubric."""
     summary = extract_summary(args, events)
-    (args.out / "summary.md").write_text(summary + "\n", encoding="utf-8")
+    (args.out / "summary.md").write_text(summary, encoding="utf-8")
     (args.out / "assistant-text.md").write_text(
         "\n\n---\n\n".join(assistant_texts(events)) + "\n", encoding="utf-8"
     )
@@ -599,7 +605,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return returncode
-    if completed_turns(events) < 2 or not extract_summary(args, events):
+    if completed_turns(events) < 2 or not extract_summary(args, events).strip():
         print(
             "Codex did not complete both evaluation turns or produced no final report; "
             "nothing here is scoreable.",

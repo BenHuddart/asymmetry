@@ -39,7 +39,13 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     add_reduction_arguments(parser)
     parser.add_argument("--tmin", type=float, default=None, help="Integration-window start / µs")
     parser.add_argument("--tmax", type=float, default=None, help="Integration-window end / µs")
-    parser.add_argument("--method", choices=["integral", "differential"], default="integral")
+    parser.add_argument(
+        "--method",
+        choices=["integral", "differential"],
+        default="integral",
+        help="integral: sum counts before forming A (default); differential: mean per-bin A. "
+        "Independent of the --period green-red contrast",
+    )
     parser.add_argument("--order", choices=["field", "temperature", "run"], default="field")
     parser.add_argument(
         "--model",
@@ -334,6 +340,13 @@ def _render(result: dict, settings, notes: list[str]) -> str:
         "",
         describe(settings),
     ]
+    lines.append(
+        "Estimator: sum counts before forming A (integral); period subtraction is separate."
+        if result["scan"]["method"] == "integral"
+        else "Estimator: equal-weight mean of per-bin A (differential), not a period "
+        "difference. Late low-count bins can dominate its uncertainty; for an integrated "
+        "RF or field-scan contrast use --method integral with the same --period and window."
+    )
     offset = result["period_field_offset"]
     if offset is not None:
         lines.append(

@@ -1449,6 +1449,14 @@ from_file`` on an ISIS repolarisation or ALC scan, as in ``reduce``, and
 ``--background`` the same way (see `Reduction options`_ for how its error
 propagates into the integral).
 
+``--method integral`` (the default) sums corrected counts before forming each
+asymmetry. ``--method differential`` instead takes an equal-weight mean of
+per-bin asymmetries; late low-count bins can make it much noisier. This
+estimator choice is independent of period subtraction. An integrated RF
+contrast normally uses ``--method integral --period green-red``. The printed
+scan identifies the estimator so a failed resonance fit can be revisited
+without confusing the two operations.
+
 ``--period green-red`` builds the RF-resonance or differential-ALC scan: each
 point is the green period's integral asymmetry less the red period's, each
 formed from that period's own counts under the `Reduction options`_, with their
@@ -1892,7 +1900,13 @@ result so the two evaluation tracks remain comparable without being conflated.
 The Codex runner's image-review turn writes and audits the complete final
 report after inspecting the attached plots. ``cost.json`` records
 ``final_report_audited`` by comparing the reply with the last passed audit;
-an audited earlier draft does not verify a rewritten final reply.
+an audited earlier draft does not verify a rewritten final reply. The runner
+preserves the final message's whitespace without trimming or adding a newline,
+and its audit comparison is exact. Passed audits likewise print the saved
+report unchanged between their markers. Nominated review images are copied
+into ``review-images/`` outside the agent project before the second turn;
+``image-inputs.json`` records their snapshot paths and hashes. Later replots
+cannot replace the pixels supplied for review.
 Both turns explicitly request the workspace-write approval mode; the resume
 invocation must not fall back to a read-only sandbox.
 

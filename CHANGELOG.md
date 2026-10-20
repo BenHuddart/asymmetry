@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Integral scans identify their estimator.** The default count integral and
+  the per-bin asymmetry mean are distinguished from green-minus-red period
+  subtraction. Fourier output suggests a conditional radical correlation
+  test when several lines lie above the applied-field Larmor frequency.
+- **Agent evaluation artifacts retain their exact content.** Final replies
+  and passed audit bodies preserve whitespace; review-image snapshots survive
+  later replots at the original path. General skill guidance covers recovery
+  of failed fits, completion of rate-law workflows and explicit CLI limits.
+
 - **Report checks preserve quantity units and measurement coverage.** Named
   parameter units are checked against printed tables, illumination periods
   require paired time-spectrum fits, and mixed-instrument scans match each

@@ -235,6 +235,8 @@ options:
   --tmin TMIN           Integration-window start / µs
   --tmax TMAX           Integration-window end / µs
   --method {integral,differential}
+                        integral: sum counts before forming A (default); differential:
+                        mean per-bin A. Independent of the --period green-red contrast
   --order {field,temperature,run}
   --model MODEL         Optional field-scan expression, e.g. 'LorentzianLCR + Cubic'
   --initial NAME=VALUE  Fit start (repeatable)

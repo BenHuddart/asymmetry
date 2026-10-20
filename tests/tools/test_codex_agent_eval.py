@@ -115,6 +115,10 @@ def test_review_images_are_project_local_hashed_and_capped(tmp_path: Path) -> No
         f"asymmetry-work/plots/plot-{index}.png" for index in range(1, 5)
     ]
     assert all(len(item["sha256"]) == 64 for item in images)
+    # A second-turn replot must not change the pixels attached to that turn.
+    (plots / "plot-1.png").write_bytes(b"replacement")
+    assert images[0]["path"].read_bytes() == b"image-1"
+    assert images[0]["path"].parent == project.parent / "review-images"
 
 
 def test_resume_command_attaches_each_nominated_image(tmp_path: Path) -> None:
@@ -190,6 +194,8 @@ def test_final_report_must_match_the_last_passed_audit() -> None:
     }
     assert runner.final_report_audited("Full report", [event])
     assert not runner.final_report_audited("Shorter recap", [event])
+    assert not runner.final_report_audited("Full report\n", [event])
+    assert not runner.final_report_audited(" Full report", [event])
     failed = event | {"item": event["item"] | {"aggregated_output": "One unprinted number"}}
     assert not runner.final_report_audited("Full report", [event, failed])
     assert not runner.final_report_audited("Full report", [])
@@ -217,7 +223,7 @@ def test_summary_prefers_the_explicit_last_message(tmp_path: Path) -> None:
         }
     ]
 
-    assert runner.extract_summary(args, events) == "Final report"
+    assert runner.extract_summary(args, events) == "Final report\n"
 
 
 def test_cost_record_names_codex_and_exact_model(tmp_path: Path) -> None:
@@ -227,13 +233,14 @@ def test_cost_record_names_codex_and_exact_model(tmp_path: Path) -> None:
     project = args.out / "project"
     data.mkdir(parents=True)
     (project / ".agents" / "skills" / "asymmetry-analysis").mkdir(parents=True)
-    (args.out / "last-message.md").write_text("A report", encoding="utf-8")
+    (args.out / "last-message.md").write_text(" A report\n\n", encoding="utf-8")
     events = [
         {"type": "turn.completed", "usage": {"input_tokens": 1}},
         {"type": "turn.completed", "usage": {"input_tokens": 2}},
     ]
 
     runner.write_outputs(args, data, project, events, 1.25, 0, [])
+    assert (args.out / "summary.md").read_bytes() == b" A report\n\n"
 
     record = json.loads((args.out / "cost.json").read_text(encoding="utf-8"))
     assert record["agent"] == "Codex"

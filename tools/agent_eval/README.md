@@ -51,7 +51,8 @@ in `cost.json`; do not compare an unlabeled Codex run with the historical
 Sonnet table below. The Codex runner uses a persistent two-turn `codex exec`
 session with `--ignore-user-config --approve-for-me`: the first turn performs
 the analysis and nominates up to four decisive project-local plots, then the
-runner validates and hashes those files and attaches them explicitly with
+runner validates, hashes and snapshots those files outside the agent project
+under `<out>/review-images/`, then attaches the snapshots explicitly with
 `codex exec resume --image` for the final report. The staged project is
 writable, the sibling data copy is read-only to the nested sandbox, and
 user configuration is ignored. It enables `skip_host_skill_discovery`, disables
@@ -70,6 +71,11 @@ that option before `resume`, since the subcommand does not accept it after
 printed by the last passed audit. This prevents an audited first-turn draft
 from being mistaken for a different, shorter final report. Rubric scoring
 still checks the final report's scientific content and provenance.
+The comparison includes whitespace. The explicit last message is saved without
+trimming or appending a newline; the saved draft is never substituted for it.
+Snapshots preserve the actual reviewed pixels if a second-turn fit overwrites
+the original plot. These artifact-fidelity checks do not change the scientific
+prompt, rubric or two-turn protocol.
 
 Unlike the Claude runner's tool allowlist, Codex cannot mechanically hide
 every readable sibling path from shell commands. The generated project
@@ -208,7 +214,8 @@ Everything lands under `--out`, and nothing outside it is touched:
 | `summary.md` | the agent's final message — **the only thing the rubric scores** |
 | `commands.txt` | every Bash command the agent ran, in order |
 | `transcript.jsonl` | the raw Claude `stream-json` or Codex JSONL event stream |
-| `image-inputs.json` | validated relative paths, sizes and SHA-256 hashes of plots attached to the Codex review turn |
+| `image-inputs.json` | original relative paths, snapshot paths, sizes and SHA-256 hashes of plots attached to the Codex review turn |
+| `review-images/` | frozen copies of the pixels attached to the Codex review turn |
 | `cost.json` | host/model, wall time, usage, the CLI's `returncode`, completion state, and skill signal |
 | `workdir/` | the `asymmetry-work/` work directory the agent built, plots included |
 | `project/` | the directory the agent worked in: its work directory and the installed skill |

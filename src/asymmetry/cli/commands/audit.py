@@ -166,7 +166,7 @@ def run(args: argparse.Namespace) -> None:
             f"do not add Markdown line-break spaces, deduplicate paths or repair the tail. "
             f"Say nothing about this check in it."
         )
-        report = text.strip()
+        report = text
         print(f"{_REPLY_MARK} BEGIN {_REPLY_MARK}\n{report}\n{_REPLY_MARK} END {_REPLY_MARK}")
         lines = report.splitlines()
         last_line = "".join(lines[-1:])

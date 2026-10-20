@@ -453,6 +453,10 @@ def _render(survey, survey_path: Path) -> str:
                 "integral-scan --model MuRepolarisation and report recovery at the highest "
                 "field, including a poor-fit caveat if needed. Redfield on a time-domain "
                 "rate answers a different dynamics question and cannot replace that curve. "
+                "For an LF dynamics experiment instead fit one exponential relaxation "
+                "rate per run with fit-series --order field, then test trend --model "
+                "Redfield over the physically relevant field range. Integral trough fits "
+                "cannot replace this rate-law workflow. "
                 "Use local resonance models for dips and RFResonanceMuP for an RF contrast."
             )
     else:

@@ -181,7 +181,7 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     out = capsys.readouterr().out
     assert "your final message is this summary itself" in out
     # The passed text is printed whole, for the reply to copy rather than retype.
-    assert f"----- BEGIN -----\n{draft.read_text().strip()}\n----- END -----" in out
+    assert f"----- BEGIN -----\n{draft.read_text()}\n----- END -----" in out
     assert "COPY CHECK: 4 report lines; the final line is 'plots/review.png'" in out
 
 

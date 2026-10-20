@@ -424,6 +424,7 @@ def test_survey_points_a_red_green_field_scan_at_the_period_difference(
     survey = survey_folder(workflow_folder)
     text = _render(replace(survey, scans=[scan]), tmp_path / "survey.json")
     assert "T = 300 K, 2 periods (red/green): 3 runs" in text
+    assert "fit-series --order field, then test trend --model Redfield" in text
     assert (
         f"asymmetry integral-scan {workflow_folder} --runs 701-703 --period green-red; with a "
         "field step between the periods (differential ALC) fit --model LorentzianLCRPair "
@@ -3042,7 +3043,7 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
 
     result = {
         "name": "scan",
-        "scan": {"points": [], "order_key": "field"},
+        "scan": {"points": [], "order_key": "field", "method": "integral"},
         "period_field_offset": None,
         "settings": ReductionSettings().to_dict(),
         "fit": _failed_resonance_fit(),
@@ -3050,6 +3051,9 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
         "plot": None,
     }
     text = _render(result, ReductionSettings(), _notes(result, [], [], [], []))
+    assert "Estimator: sum counts before forming A" in text
+    differential = result | {"scan": result["scan"] | {"method": "differential"}}
+    assert "not a period difference" in _render(differential, ReductionSettings(), [])
     assert "FAILED (Fit failed: call limit reached, hesse failed; at a bound: B0_2)" in text
     assert (
         "Next: the scan's own largest dips are at B0_1 1200, B0_2 1800. The fit already "
@@ -3336,6 +3340,9 @@ def test_fourier_names_two_peaks_closer_than_two_resolution_elements() -> None:
     assert "maximum-entropy (MaxEnt) spectra and multi-group" in text
     # A line far from the applied field's Larmor frequency is a radical's, not a split one.
     assert "NOTE: the line at" not in _render(result | {"field_gauss": 3000.0})
+    assert "--correlation" in _render(result | {"field_gauss": 3000.0})
+    assert "not a radical assignment" in _render(result | {"field_gauss": 3000.0})
+    assert "--correlation" not in _render(result | {"field_gauss": None})
     # Lines the transform detected outside the band are named, not hidden.
     hidden = _render(result | {"outside_band": [{"frequency_mhz": 208.7, "snr": 35.0}]})
     assert "NOTE: the transform also holds lines outside this band — 208.7 MHz (SNR 35)" in hidden
