@@ -1278,3 +1278,19 @@ EuO repeated global-fit failures are disclosed,not turned into physical rates.
 At this check maleic acid,nickel and PTFE remain live,concurrency3,22 GiB RAM
 available,no swap/current PSI,653 GiB persistent disk free. No tests/duplicate
 runs. Continue all24 without source changes or another wave.
+
+
+Confirmation2 now4/24 scored:PTFE science PASS6/6 Musts and number/boundary
+pass,but strict exact-copy FAIL. Actual reply adds two trailing Markdown
+line-break spaces on18 Files entries after the passed audit. All scientific
+text and file names remain unchanged;tail is intact. COPY CHECK did print
+82 report lines and the correct final path. Do not normalize whitespace to
+award an exact-copy pass or replace reply with audited file. This is the first
+combined-gate failure;finish and score all24 anyway,with no source edits.
+Totals21/21 Musts,4/4 science and boundary,3/4 exact-copy/combined.
+PTFE reports r_muF and failed constant-distance test with strong model-quality
+caveats;remaining Should gaps are temperature uncertainty and hydrogen-bonding/
+entanglement context. All31 commands inspected;one --csv argument error was
+corrected. Corpus/source/skill/rubric hashes unchanged,first attempt preserved.
+At check maleic acid,nickel and YMnAl remain active,concurrency3,23 GiB RAM
+available,no swap/current PSI,653 GiB persistent disk free;no tests/duplicates.
