@@ -677,3 +677,16 @@ dimensions, launch a fresh `--set all` full24 wave from this source, including
 AFM magnetic scope; do not pool historical passes. Otherwise improve generally,
 test appropriately and commit before the next wave. Standard validation still
 has four known GUI sizing failures. No full24 gate has run; objective incomplete.
+
+First round-seven report scored: benzene passes 7/7 literal Musts, exact-copy
+and boundary. Expanded width searches recover non-bound solution dip estimates
+(e.g. aqueous 350 K width 62.77 ± 2.30 G). Both ordinary ring fitted centres
+are reported with uncertainties/fit quality; high mismatch and qualitative
+overcaution do not add an unstated validated-line requirement to that Must.
+This differs from round-six solution fits whose bound-pinned widths were all
+withdrawn as resonance results. Record limitations: ring stability checks not
+demonstrated, within-sample reference caution overextended, separate solid
+windows not a joint width assignment, and differential mean-asymmetry control
+remains weak/unresolved. Literal pass is not a claim of complete physics.
+Corannulene remains live; keep CLI/skill frozen. Host has 16 GiB available,
+zero swap/PSI and 6.3 GiB scratch free. Do not launch full24 until it is scored.
