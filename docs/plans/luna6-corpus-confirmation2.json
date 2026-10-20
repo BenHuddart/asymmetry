@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 23/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "complete; fresh full24 gate FAIL; follow-up PAUSED at user-authorized stopping point",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -189,7 +189,15 @@
         "No resolved ZF precession is not interpreted as absence of magnetic order."
       ],
       "scored_at": "2026-10-20T16:50:30.339377+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "454f37984e88d57371b9d5ef0655951eb06b4340bae4969ede64a30d604d1032",
+        "cost.json": "bddda71d1ca12f927337a2a09b585633fc01a6c97cf7bc3edea524e268e23de9",
+        "transcript.jsonl": "9f447b490626c01e6eb5d60727c2e9b6e30a03878054adfdc8f2fcbfa2bf4680",
+        "commands.txt": "66a92ae59d50db7999e13f735738e4d2b0ccf9eeaebd0798c881a6563bd8ce7d",
+        "rubric.md": "23bb04d9a398fa17dde7cf8fc51632eda64e51646ad926a80a7462453df6243e"
+      },
+      "number_rule_pass": true
     },
     "sn-critical-field": {
       "verdict": "PASS",
@@ -306,7 +314,15 @@
         "Unresolved primary survey versus fit-series survey_line_mhz discrepancy for91488 is explicitly retained as a provenance limitation."
       ],
       "scored_at": "2026-10-20T17:01:13.634881+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "d340e8d16913b94b43d1f02133ee06c68fbef2f86602ebc0a092d0c92becbd47",
+        "cost.json": "0c1e430ad7c7b97a564f20a9b5421882911e01ccf4168cd02d19e915054b0ce7",
+        "transcript.jsonl": "0980bb03e9a9ed1d8a322d68440a4cc12c9922fce7bbc82518d370f8077aa8e0",
+        "commands.txt": "263cfe8c9e573f062702fc15baba8ef778b90945e7301be95d27457b8fe5d726",
+        "rubric.md": "da9d2ae997537590c2ab33b031cfb6feb9f6394dcc5231e529b29eea9be97842"
+      },
+      "number_rule_pass": true
     },
     "euo-psi": {
       "verdict": "PASS",
@@ -409,7 +425,15 @@
         "One ordinary FFT is dominated by a near-zero feature and does not reproduce the independently detected internal magnetic line; the report keeps this mismatch distinct from wizard/fit evidence."
       ],
       "scored_at": "2026-10-20T17:01:13.667293+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "091c2a9974252b340d195b7de33f0be0cc50a2bf27a4921a40cc156bc63b03da",
+        "cost.json": "94618c1188caff936d74d6439b10ab76585d49d1a45abdba457811ae7c4b8c49",
+        "transcript.jsonl": "d2524c403e635ea0c076ca460a12ac3dd4716563434c09395b75c25f65258953",
+        "commands.txt": "cb1386375aa46ead571409128c32843fa7f5745457be5a9fda9beb2b0619a392",
+        "rubric.md": "fe9da3aa512839d6107beebcf6bbb0c343d0d6f7fc668e02e8a3d7ce74096600"
+      },
+      "number_rule_pass": true
     },
     "fmuf-ptfe": {
       "verdict": "PASS",
@@ -527,7 +551,15 @@
         "Early audit misread a separate workdir as missing coverage; the agent reran co-add/series in the main workdir to satisfy coverage, preserving original work."
       ],
       "scored_at": "2026-10-20T17:10:34.341274+00:00",
-      "reply_matches_saved_file": false
+      "reply_matches_saved_file": false,
+      "evidence_sha256": {
+        "summary.md": "3a247aa229920d13829986b7267400acfefe1cba6a5c81a0e89b71d47eef6129",
+        "cost.json": "aee2243686367e5a9c33d7c7bbd1a16c376c78e90b1c8a27df67827b80bfb1e8",
+        "transcript.jsonl": "08c34696d8e04ab9f445f96c66f450138ebe549077a7e5576bc94e2ba4907b8a",
+        "commands.txt": "acbdef7a538f9e93560f464078ef08f4a228dfc20f71917f7fa6685f4ab06cf5",
+        "rubric.md": "49ca7ef87b2b8eec6e518da9052579a255090e3fdb132bc0df381610155df82d"
+      },
+      "number_rule_pass": true
     },
     "maleic-mu-kinetics": {
       "verdict": "FAIL",
@@ -695,7 +727,15 @@
         82
       ],
       "scored_at": "2026-10-20T17:21:43.096979+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "6f8ff7fc8c3783d07ce380da5ef6a78a930a2db1bec9ec1008cd3d72dfaf661d",
+        "cost.json": "18c37bbc66a1c7ff593c98d3cad74d085454157ff6a6d42faa6b2fb4f9f891c1",
+        "transcript.jsonl": "dc89d4dc9ddc80319f4796642265c5859c96673b7fa79c2d75639d7d5ebed817",
+        "commands.txt": "d23db6295f14a3f49ba9c45f588db0d779bc4769bd4a07614a96f75c4be5d52a",
+        "rubric.md": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4"
+      },
+      "number_rule_pass": true
     },
     "spin-glass-ymnal": {
       "verdict": "PASS",
@@ -800,7 +840,15 @@
         15
       ],
       "scored_at": "2026-10-20T17:21:43.113061+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "c3ed1b8c2e41fc3d96244e49dc59f7dd449956652c6535076457f302ae9417ff",
+        "cost.json": "4428d75739b11fec375c650ffe1c6ca20f9ab360eaf329a8b2298c37471833c8",
+        "transcript.jsonl": "3c4d597fab9712fd2660cb6716cb14acceced7d710fa597cf8b990b884afe3f3",
+        "commands.txt": "205c3ff1882211a0e80ebfb603a6fb3d9b66e0499eadd9490516819a629c52bf",
+        "rubric.md": "c1fd733e78e7de397ebd0e533eaac4b698e4d47a33035f26348f9a8f9a7bdb6e"
+      },
+      "number_rule_pass": true
     },
     "ferromagnetic-nickel": {
       "verdict": "PASS",
@@ -943,7 +991,15 @@
         "Warm spurious full-record FFT line is explicitly rejected rather than promoted to a sample line."
       ],
       "scored_at": "2026-10-20T17:30:25.657473+00:00",
-      "reply_matches_saved_file": false
+      "reply_matches_saved_file": false,
+      "evidence_sha256": {
+        "summary.md": "291a4cdf676918bf335458c3d6bd7967c5c7e53c4726177d2bc0a13fe633ca66",
+        "cost.json": "5b59c178479dfa4bc7a55bd2f10aca508e36e8d9455bd4b641c2565df0e49084",
+        "transcript.jsonl": "a537d39e66979c7fa6d495290dba94bb8119ad03a5ff98b56ecc344b56c3fe34",
+        "commands.txt": "9fafce39ee132d55253ca6e88d47d7e090bad29b9ba33a6f74a56c38a233a9a5",
+        "rubric.md": "8fdb04d7a4f7906dd74d19161f80e7983e02e98ef10344ae70273a54ba1dc0b9"
+      },
+      "number_rule_pass": true
     },
     "high-tc-cuprate": {
       "verdict": "PASS",
@@ -1067,7 +1123,15 @@
         43
       ],
       "scored_at": "2026-10-20T17:41:17.242294+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "26465704c3b5a3bd1599afcfca4f2e545adba6bf359007560bcd2d8cd2b8408d",
+        "cost.json": "7c05b5a4d6bb35e8f6795274f9628f0548748495a79a065cc5faa1f249e6ff1d",
+        "transcript.jsonl": "31ff2fdfd5768ab925ba2912cd65ae3165d4299b519b9851cab48e173f2fee5d",
+        "commands.txt": "ab9be443d2f7016c6d38927509522aff18067faa2154baf3ee65664ffdaf86f6",
+        "rubric.md": "6768523173dd08582c6c56642fe11ca2d276a0b467ea21494e31b1db78c59029"
+      },
+      "number_rule_pass": true
     },
     "molecular-antiferromagnet": {
       "verdict": "PASS",
@@ -1190,7 +1254,15 @@
         36
       ],
       "scored_at": "2026-10-20T17:41:17.260649+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "cf49dd16123a690af0c44c046a79a0f75f957c29a3af409793f9da1854c506aa",
+        "cost.json": "26d4cb2aaf12d3fae47bcac9b52f7adeee686feb1b540d57b7d52e638d275161",
+        "transcript.jsonl": "b7c804527e8d45d8f8b298e3d7dbc8a32793875e6ad0cfd5577bda6bb32b77ad",
+        "commands.txt": "0109803337e1bd08878cc3555adc380de13fc976f894612a2e0e0cf5399415e8",
+        "rubric.md": "a6dcbd9c0ae82a5ff22433c944584a709ccf430256a594c0acee0073d8b540b7"
+      },
+      "number_rule_pass": true
     },
     "spin-peierls": {
       "verdict": "FAIL",
@@ -1300,7 +1372,15 @@
         24
       ],
       "scored_at": "2026-10-20T17:50:24.492883+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "8c028897938e8b0ab6732db1ab91c8b7e4b7a26d07c8046d526d40bba14094b4",
+        "cost.json": "99f1db7d41f50fa79e7024fad3f5ddcf10c127f3e5d02f798312076f883321a1",
+        "transcript.jsonl": "595420d5a56b15cd9f73fb9d0935ea7574828d1ba7253cf7f64adb96e249dfe7",
+        "commands.txt": "5f134a8136d62db2510e1a4e9512af7bf0ec5194182057acff959b70dd46b0f5",
+        "rubric.md": "45ec06c3c47445ea279531822116d0b68bbaaf3cb6a47c792093f64bc65b3bb6"
+      },
+      "number_rule_pass": true
     },
     "alc-tcnq": {
       "verdict": "PASS",
@@ -1423,7 +1503,15 @@
         32
       ],
       "scored_at": "2026-10-20T18:00:40.294476+00:00",
-      "reply_matches_saved_file": false
+      "reply_matches_saved_file": false,
+      "evidence_sha256": {
+        "summary.md": "d4cb423f0d6ef49056013cede70fea734f7fd33da7c3f71a027049908c666c17",
+        "cost.json": "802491565ff73de3844a71603c73aa53eb45c39b5e6b8e1b7406366d1c1aeab7",
+        "transcript.jsonl": "2f7f4a6bfe31e26c35000dfbd937290208bec978e8af1c49e38860279aef4392",
+        "commands.txt": "7c2655fc352530254386c6534f7b8b59ab3f5c1f47c5eb6d1ccfc1d0c9fe330d",
+        "rubric.md": "a2a38dc913e30cfad99eecaac81cac05cccad4b2b7d7afb893390314e39d251b"
+      },
+      "number_rule_pass": true
     },
     "copper-diffusion": {
       "verdict": "PASS",
@@ -1626,7 +1714,15 @@
         "asymmetry-work-argus/series/argus-field.json",
         "asymmetry-work-argus/series/argus-zf.json",
         "asymmetry-work-argus/series/argus-tf-full.json"
-      ]
+      ],
+      "evidence_sha256": {
+        "summary.md": "9c4ead0921fc1f58b1d81a0ac8418c8607339eca70cb2ca3c6e34196eee9c200",
+        "cost.json": "78250d8941e43160da78e8259ffb4a36a33bc2901f28dbe427ad0a05424e7ac7",
+        "transcript.jsonl": "f06fb6665357860e8251bea494de70fc287500b07531bf0e50dad9938bfc1b71",
+        "commands.txt": "a7e09ea2c29e0a5f3f441b92d3ac509e338b6e6f464e580d2c223d2431b56f55",
+        "rubric.md": "4a0d496f6e89d82feb628d6378c6019071fd8813790f1b6b70a83a6e1e4459c6"
+      },
+      "number_rule_pass": true
     },
     "afm-high-tf-mdu": {
       "verdict": "PASS",
@@ -1777,7 +1873,15 @@
       "physics_scope_status": "WARN; magnetic-scope objective unresolved",
       "physics_scope_pass": false,
       "physics_scope_evidence": "Wizard calls12/15/16/21/22/24 use tf-superconductor; trend58/59 fits SC_DWave/SC_SWave. Final report explicitly says no superconductivity or vortex lattice established and allows magnetic correlations, but does not supply a clean AFM-scoped workflow.",
-      "reply_matches_saved_file": false
+      "reply_matches_saved_file": false,
+      "evidence_sha256": {
+        "summary.md": "0623e9c95c672b28459e8139cb8adeadd4ebeebe9dc8f800e865c198ea37d11a",
+        "cost.json": "2840720f10c163e3eae148f72d9336cb8090fc80dc444b45b53390d7fbfd9c4f",
+        "transcript.jsonl": "dffe2ab50658248d97dcb8940144b3a5e97e5abfbddaa8dc1177daa26f069c37",
+        "commands.txt": "3ca9faf220c2c38610f287663d9951352788738a206250b86c7193b7605eb2a6",
+        "rubric.md": "062fa8082f95b4b6cb7f075cf9a287e8add6d5313d56290d3d5ead8bc95725cf"
+      },
+      "number_rule_pass": true
     },
     "ionic-motion-llz": {
       "verdict": "FAIL",
@@ -1907,7 +2011,15 @@
         20
       ],
       "scored_at": "2026-10-20T18:09:07.585548+00:00",
-      "reply_matches_saved_file": false
+      "reply_matches_saved_file": false,
+      "evidence_sha256": {
+        "summary.md": "98e38a3b791ee2ff759d9c682a551f8f22b5289ad5861ce79edc9953f489792a",
+        "cost.json": "5c4fb2f5784e81f6d31f58c7b67017b1f85f4cafab1ba8686166d004cb039eed",
+        "transcript.jsonl": "da884187de3694ad1ea02b180b97965cfdc4a33ca3232e7859a19c1bc4c8d5c8",
+        "commands.txt": "36fb76413200b4d0e9e8e89337c4e13e9103508804826aac71bbf16163cc35df",
+        "rubric.md": "26a96516c6b7d735288e5a79b9d63cd349de9e38850c4eba7367f47fc00a1b28"
+      },
+      "number_rule_pass": false
     },
     "photo-musr-silicon": {
       "verdict": "FAIL",
@@ -2022,7 +2134,15 @@
         18
       ],
       "scored_at": "2026-10-20T18:10:33.933808+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "750a51e7bebf1e03098150abf91fe88c6855aa5f83fd181d52fb2e3846884233",
+        "cost.json": "22a20d9b1a6e339500a88a07ac4ecfa62e114984af4ec46992feb59875b6e390",
+        "transcript.jsonl": "cedaf6978db195d1ca47c78086c597b1aee8c153a3d27b3f1798c835a2d2d493",
+        "commands.txt": "800365163e1e08587716470b39d26f7d63100abfdab80f6f48d31de091c034e6",
+        "rubric.md": "9ea075b0d8d260180a124f3bbd71391eb593a605ee4117357c0b92d0e28d7d8a"
+      },
+      "number_rule_pass": true
     },
     "cds-fourier": {
       "verdict": "PASS",
@@ -2131,7 +2251,15 @@
         14
       ],
       "scored_at": "2026-10-20T18:11:44.554991+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "41f53329269bc78aa454da38e192d4d901fe191e8892fe926406927190aba1cd",
+        "cost.json": "ba2ebad92620f92a988375250e476326ff595603a095a4766cbab9575c67fc68",
+        "transcript.jsonl": "964fce89ef2e3f8f607aaef072d75c86958aa98b634791a16aab06dc062b3542",
+        "commands.txt": "5f6702e31fbf8126eb6e10aa04888ecd6172e8d0e6d1db1a9c9ee4202d89b74b",
+        "rubric.md": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a"
+      },
+      "number_rule_pass": true
     },
     "lifeas-psi": {
       "verdict": "PASS",
@@ -2289,7 +2417,15 @@
         41
       ],
       "scored_at": "2026-10-20T18:24:53.504006+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "576b93436c4b9beea0af4ac73b6ac108b139bbe2e830e87a60fb1f0952421ea9",
+        "cost.json": "ec32785a9940195b0e9c37f839c1f45483eae4e2474d85ba745f53605462b818",
+        "transcript.jsonl": "e20c32d89dcc4af50d7f2cfb11e4179ab08a525fa602ca9190802a09e27fae0e",
+        "commands.txt": "aef7d1ec0170918a1024e15e73be06af544bfe2dd88c5291861729e1df26ab4d",
+        "rubric.md": "aec00fed822c67878ad9bf50a445b877c14e3eb85af4dfa06d6610dbacace608"
+      },
+      "number_rule_pass": true
     },
     "trsb-re6zr": {
       "verdict": "PASS",
@@ -2465,7 +2601,15 @@
         72
       ],
       "scored_at": "2026-10-20T18:35:09.549953+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "ea21e3134d341be1484d142e0bc79db7838503e2340dc4601a3b2ec7a169ae22",
+        "cost.json": "5fb5ddd05c6ebc8e4d8d9c7b2b1baf54adc5e3c94c1a5cd08f5ef74e4fbf2bb6",
+        "transcript.jsonl": "b3de4660f6a0e3287519c2ae19229e8e920548fad0d87b2510949e5948ac0578",
+        "commands.txt": "3a9ce432086580d719a599b9c717161b92e8d33d1103c570261eb4100008cc2b",
+        "rubric.md": "9b37cf0242fec13643391e4be4d75ce3791578ee9633fe4b675ce8fb1b19fdcc"
+      },
+      "number_rule_pass": true
     },
     "basics": {
       "verdict": "PASS",
@@ -2695,7 +2839,15 @@
         95
       ],
       "scored_at": "2026-10-20T18:37:03.581914+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "b1074fa96930f0bedde7f4e44ba2ac45b0038bf392c9dc2958cc7726a604b509",
+        "cost.json": "018b2bfad8881ae42aee76d06d5d90956e30875913ccee81a17087d1e4264199",
+        "transcript.jsonl": "99c5b9b77e3c3c1a79daa1dba0710a4e5e5b3c05767cc0070a4ecd989ac7d10e",
+        "commands.txt": "ecf86d567560ec4f51a14fddaeba315d6878e9a2c33e678c22668945c438114d",
+        "rubric.md": "9a7e1671e076193352ce4016016147c30a58b3f8098aef4a5b6383f19d34c8cc"
+      },
+      "number_rule_pass": true
     },
     "benzene-rf": {
       "verdict": "PASS",
@@ -2797,7 +2949,15 @@
         9
       ],
       "scored_at": "2026-10-20T18:44:44.935743+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "a518b3e5fd1eac24d8f10664b0c29eb475fcea0630af71dc617c3eb4b9f4add3",
+        "cost.json": "4da691e4f352f884725de7bdc2b07d8665f1c790ec08b1de3db1be78a0aa293f",
+        "transcript.jsonl": "cf50391dd62af37edb8416cb5ce3c7da065de4093cf95c1707b9270f2fbfa865",
+        "commands.txt": "79bd6d260a6381cce33595d2dbc2576773ddf98d163468f6c93d3e3aa2f99bdb",
+        "rubric.md": "29bc5fab99a3ca1088aaea71742bda2503e7ad7b974b2d66a2342c99e8c26ce2"
+      },
+      "number_rule_pass": true
     },
     "benzene-repolarisation": {
       "verdict": "PASS",
@@ -2908,7 +3068,15 @@
         12
       ],
       "scored_at": "2026-10-20T18:44:44.970610+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "7d8d86fd4ed492cb0d64dcc20a4c4260d784de2fa2c8097f2030fbc68c1ae689",
+        "cost.json": "1308b0c5bc4c719bcb66113f097be36acbee33ac5ddfd40a59618c6912153b59",
+        "transcript.jsonl": "ac3ceabc1f718f03000364dc840ec3338797f4ec3d05bdfd9eaaa6528a94637b",
+        "commands.txt": "8e979c526553eaf265a53fef37669ca729daf10d980f1e286ab868617a14ddc2",
+        "rubric.md": "394577546a8a6efae2ef56d912dbf00216156d50a4fa60e7800ea736fd2cd059"
+      },
+      "number_rule_pass": true
     },
     "benzene-high-tf": {
       "verdict": "PASS",
@@ -3052,7 +3220,15 @@
         48
       ],
       "scored_at": "2026-10-20T18:46:12.025940+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "f7ca40bdedc5aabfeceee6eb54bc4ec598e3fe55eb01d5b9e2b090f4c695b506",
+        "cost.json": "782e994a2bdc6f7ace70677ee7a120f8dc5e5ead4de281f184e5c02b8980a08c",
+        "transcript.jsonl": "d2efab0afc4223cb6af090c532ec263d0899efa69144529aacb2ef8710c157a4",
+        "commands.txt": "09d2dcb7c5f7c7d87c974105f2bb54987d691bbbc3fce4d185e2dab696dc86eb",
+        "rubric.md": "c080ca4eab2cbf81923ef269333af30e22043457aff88cce14dd7720f3fe7d24"
+      },
+      "number_rule_pass": true
     },
     "corannulene-alc": {
       "verdict": "FAIL",
@@ -3260,27 +3436,363 @@
         92
       ],
       "scored_at": "2026-10-20T18:48:13.947596+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "946688a1fe0987acdd867e355e25142f93aae43e20aff394743442bb09c5b217",
+        "cost.json": "142d1b374acf737010916b7ca787c823475f785780ca73c8c8bf2338fa61668a",
+        "transcript.jsonl": "d8ea5df9f092bc3a4373d7cbbcb0079466110bac3a871ac99e54353a605e4d89",
+        "commands.txt": "5db83c8aa6b40fb6cf1814d62df759a542155726c1a515c55ab33b85c5f284dc",
+        "rubric.md": "db2d44507bcce99e2f21eb7efcbe45e707286c4f51ff591e669839e5000ee745"
+      },
+      "number_rule_pass": false
+    },
+    "benzene-alc": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Recognises the three sub-folders and analyses each separately, with its own work directory, never mixing runs between them.",
+          "pass": true,
+          "evidence": "Recognises solid123/liquid263/solution360 subfolders with independent surveys/workdirs and no pooled cross-folder run lists."
+        },
+        {
+          "requirement": "Treats every folder as longitudinal-field ALC scans fitted with `integral-scan`, uses the 20 G TF runs only for alpha (naming, for each sub-folder it reduced with a measured alpha, a run and its value — one of the liquid's two calibration runs is enough), and says alpha was assumed 1.0 for `solution`.",
+          "pass": true,
+          "evidence": "Uses LF integral-asymmetry scans throughout,separates weak-TF calibrations and names solid59731 alpha1.2736/liquid29799 alpha1.1884 measurements;solution explicitly assumed1.0. File deadtime and1–10 microsecond integration stated."
+        },
+        {
+          "requirement": "Liquid: reports from `integral-scan` fits one resonance in the CHMu(0) scan between 20.7 and 20.9 kG and two in the 28.5–30 kG scan, one between 28.9 and 29.0 kG and one between 29.5 and 29.6 kG, with uncertainties or fit quality.",
+          "pass": true,
+          "evidence": "Reports liquid CHMu20797.6 ±1.78 G and o-p28944.9 ±0.90 G;second29538.5 ±2.98 G established by actual differential repeat,with poor single-period29539.7 G fit retained only conditionally. All within required ranges and fit quality disclosed."
+        },
+        {
+          "requirement": "Does not integrate the red/green repeat 29800–29854 as an ordinary scan: either fits it as `--period green-red` with a pair model and the red–green field step held from the command's printed offset, or sets it aside and says why.",
+          "pass": true,
+          "evidence": "Final repeat uses green-red differential LorentzianLCRPair with dB44.056 fixed from CLI red-minus-green−44.056 G offset;52 LF runs fitted after excluding three coil-confirmed TF runs. Initial ordinary/summed trial superseded in final report."
+        },
+        {
+          "requirement": "Solid: reports two resonances from converged fits (a joint fit, or one windowed fit per resonance), one between 19.3 and 19.7 kG and one between 21.3 and 21.6 kG. A failed fit's position is not a fitted resonance.",
+          "pass": true,
+          "evidence": "Actual converged solid windowed fits19463.8 ±5.08 G and21474.7 ±11.3 G are reported with widths/chi2. Second is explicitly conditional broad structure rather than a resolved narrow line,but its fitted position is neither failed nor withdrawn as a fit result."
+        },
+        {
+          "requirement": "Solution: names the three samples and fits at least one scan, stating sample and temperature, with a resonance between 20.4 and 21.2 kG.",
+          "pass": true,
+          "evidence": "Names Benzene(aq),C6H6/C6H14,C6H6/H2O20mM and fits many specified sample/temperature scans in20.4–21.2 kG range;aqueous275 K20731.5 G row is independently resolved."
+        },
+        {
+          "requirement": "Contains no A_μ, A_p, D_μ or resonance field that was not produced by a tool call in this session: no couplings from resonance fields by the worksheet's formulas.",
+          "pass": true,
+          "evidence": "All centres/widths/errors/fields appear in direct integral-scan or read stored CLI JSON. No manual hyperfine conversion,A_mu,A_p or D_mu measurement."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Solid: from a converged joint fit of both resonances, notes that the lower one is the broader (separately windowed fits with their own backgrounds can hide the difference).",
+          "pass": false,
+          "evidence": "No converged joint solid fit;separate windows give narrow lower55.27 G and broader upper251.7 G,so does not demonstrate required joint lower-broader comparison."
+        },
+        {
+          "requirement": "Assigns in words: liquid lines are Δ0 (the 20.8 kG one the methylene CHMu proton, the pair near 29 kG ring protons); the solid's broad lower line is the Δ1 muon resonance and the narrower upper one a Δ0 line.",
+          "pass": false,
+          "evidence": "No explicit Delta0/methylene/ring-proton or solid Delta1 muon assignment."
+        },
+        {
+          "requirement": "Solution: fits several temperatures of one sample and reports the resonance field rising with temperature, as a list of fitted fields.",
+          "pass": true,
+          "evidence": "Multiple temperatures for all solution samples with fitted centre tables and explicit increase with warming;new persistent-reference caveat retained."
+        },
+        {
+          "requirement": "Solid: uses the logged sample temperature and notes the calibration run was taken colder than the scan.",
+          "pass": false,
+          "evidence": "Names solid scan+2–3.5 K offset and much colder calibration,but results retain200 K setpoint label and no actual logged scan temperature span is used explicitly."
+        },
+        {
+          "requirement": "Says the worksheet's time-domain questions (relaxation vs field, on-resonance oscillations) were or were not examined.",
+          "pass": true,
+          "evidence": "Explicitly says no time-domain wizard/recipe/Redfield or FFT was run;integral-field analysis does not examine on-resonance time oscillations or relaxation-versus-field."
+        },
+        {
+          "requirement": "Names the stored scan JSON and PNG for each fitted scan.",
+          "pass": false,
+          "evidence": "Names JSON/PNG for principal solid/liquid and aqueous endpoints,but not every fitted solution scan in large table."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Calibrations30,corrected fitted centres/errors31/33,solution tables35 and final differential pair38 independently verified. Scaled centre/width errors are printed CLI RESONANCE notes,not arithmetic;fixed positive dB44.056 is printed CLI prescription for negative measured period offset. No audit/draft/report source.",
+      "number_checker_flags": [],
+      "root_cause": "All Musts and numeric/copy/boundary pass. Second solid fit is converged and its conditional broad-line position is reported,so Must5 does not require an unsupported claim of a narrow resolved line. Liquid second o-p resonance is independently fitted in the properly field-stepped differential repeat. Should gaps:joint solid comparison,Delta assignments,explicit logged-temperature span and complete per-scan product links. Calibration paragraph quotes raw alpha rather than corrected applied values,so actual --alpha-from correction provenance should be clearer.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all43 completed commands inspected. All43 completed commands inspected:staged skill/references,supplied subfolder data/logbooks and installed CLI/products only. Shell loops orchestrate CLI; jq selects/formats/counts metadata without physical arithmetic. No worksheet/source/rubric/host-skill/network/subagents or science scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1309.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"cat .agents/skills/asymmetry-analysis/SKILL.md && rg --files -g '\"'!*'\"' .\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"sed -n '197,510p' .agents/skills/asymmetry-analysis/SKILL.md; asymmetry survey /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/benzene-alc/data\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry survey /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/benzene-alc/data/solid --json > asymmetry-work-solid-survey.txt && asymmetry survey /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/benzene-alc/data/solution --json > asymmetry-work-solution-survey.txt && asymmetry survey /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/benzene-alc/data/liquid --json > asymmetry-work-liquid-survey.txt && wc -c asymmetry-work-*-survey.txt && head -c 3000 asymmetry-work-solution-survey.txt'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"for f in asymmetry-work-solution/sol-{0,1,2,3}-wide-cubic-output.json asymmetry-work-solution/sol-{4,5,6,7,8,9,10,11,12,13,14,15,16}-local-output.json; do jq -r '[.name,.fit.x_min,.fit.x_max,.fit.parameters.B0,.fit.uncertainties.B0,.fit.parameters.Bwid,.fit.uncertainties.Bwid,.fit.parameters.f,.fit.uncertainties.f,.fit.reduced_chi_squared,.fit.params_at_bound]|@tsv' \\\"\"'$f\"; done; for f in asymmetry-work-liquid/liq-chmu-local-output.json asymmetry-work-liquid/liq-op-first-output.json asymmetry-work-liquid/liq-op-4-output.json asymmetry-work-liquid/liq-op-repeat-diff-{first,second}-output.json; do jq -r '\"'[.name,.fit.x_min,.fit.x_max,.fit.parameters.B0,.fit.uncertainties.B0,.fit.parameters.Bwid,.fit.uncertainties.Bwid,.fit.parameters.f,.fit.uncertainties.f,.fit.reduced_chi_squared,.fit.params_at_bound]|@tsv' \\\"\"'$f\"; done'",
+          "exit_code": 5
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "696878e25465ed5e9f2b693bdf8e8c4280eafb7003bb9a2133703e81efae6176",
+      "audited_file_sha256": "696878e25465ed5e9f2b693bdf8e8c4280eafb7003bb9a2133703e81efae6176",
+      "rubric_sha256": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/benzene-alc",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Solid second broad conditional fit is not a failed fit and not proof of a separate narrow line;no microscopic site assignment.",
+        "Single-period liquid secondary features have poor/bound-limited fits;differential repeat provides independent o-p second-line evidence.",
+        "Most solution windows lack complete flank coverage;centres are conditional and widths/backgrounds not microscopic quantities.",
+        "Raw measured alpha1.2736/1.1884 differs from corrected applied alpha in integrals;named-source calibration is valid but report omits that distinction.",
+        "No joint solid decomposition supporting lower-broader physics;temperature-dependent solution fields do not directly yield couplings or rates."
+      ],
+      "judgement_calls": [
+        "Must5 accepts two actual converged conditional solid fits with qualified second broad component;requiring a second narrow resolved line would exceed rubric and expected broad Delta1 physics.",
+        "Must3 accepts second o-p resonance from independently fitted repeat in same28.5–30 kG range,with proper differential treatment and poor first-scan estimate disclosed."
+      ],
+      "number_evidence_commands": [
+        2,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        35,
+        36,
+        37,
+        38
+      ],
+      "scored_at": "2026-10-20T19:07:09.216581+00:00",
+      "reply_matches_saved_file": true,
+      "evidence_sha256": {
+        "summary.md": "696878e25465ed5e9f2b693bdf8e8c4280eafb7003bb9a2133703e81efae6176",
+        "cost.json": "f9aee130d61645ff18f335f563bc80ca52c10d3202c99921e58e3e7e6d63e4d7",
+        "transcript.jsonl": "0df23da04230b59d41a66658749749dbb82a8c15f30a89a5e20b52bc63cbf3e3",
+        "commands.txt": "dba8b26f0423a0ddeca5b27cd9e95f0b8920c6453a3a49625a96f0ebc56ddd40",
+        "rubric.md": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46"
+      },
+      "number_rule_pass": true
     }
   },
-  "pending_cases": [
-    "benzene-alc"
-  ],
+  "pending_cases": [],
   "totals": {
-    "scored": 23,
+    "scored": 24,
     "target": 24,
-    "scientific_pass": 18,
-    "must_pass": 133,
-    "must_total": 140,
-    "should_pass": 49,
-    "should_total": 98,
-    "exact_copy_pass": 17,
-    "literal_copy_pass": 18,
-    "combined_pass": 13,
-    "boundary_pass": 23
+    "scientific_pass": 19,
+    "must_pass": 140,
+    "must_total": 147,
+    "should_pass": 51,
+    "should_total": 104,
+    "exact_copy_pass": 18,
+    "literal_copy_pass": 19,
+    "combined_pass": 14,
+    "boundary_pass": 24
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates.",
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
-  "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."
+  "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
+  "gate_result": "FAIL",
+  "completed_at": "2026-10-20T19:08:59.307781+00:00",
+  "scientific_failures": [
+    {
+      "case": "maleic-mu-kinetics",
+      "failed_musts": [
+        2
+      ],
+      "number_rule_pass": true,
+      "root_cause": "FAIL on explicit concentration provenance: survey command1 prints0.25/0.5 sample titles, neat notes and supplied-axis suggestions, and the agent uses the correct --x mapping in commands36/54. The final report omits the source and normalization of that axis, so transcript knowledge cannot repair the report-only Must. General improvement would retain each supplied axis source/scale in the summary. The conditional slope itself is retained with uncertainty/units despite strong intrinsic-rate caveats, so Must4 passes; this is not scored as the earlier outright slope-withholding failure."
+    },
+    {
+      "case": "spin-peierls",
+      "failed_musts": [
+        5
+      ],
+      "number_rule_pass": true,
+      "root_cause": "FAIL on ZF endpoint line-shape Must. The agent screens middle-temperature ZF29934, carries its stretched model across the scan, then rejects coldest29923/29924 because of failed/amplitude-exceeding fits. It reports central-to-warm beta evolution but supplies no independent ZF cold/warm endpoint comparison. Most additional investigation concerns TF splitting and matched TF FFTs. General repair would inspect the primary-observable endpoints independently and describe supported shape differences even when a carried model fails, without accepting invalid fit parameters. No source changes or rerun during the gate."
+    },
+    {
+      "case": "ionic-motion-llz",
+      "failed_musts": [
+        5
+      ],
+      "number_rule_pass": false,
+      "root_cause": "FAIL on strict numeric provenance and exact copying: after final audit the reply changes one digit in the176.891 K shared-background error,0.0832516 to0.0832526, and drops a trailing blank line. The error difference is tiny and does not change physical interpretation, but it is neither rounding nor a printed value. The coupled workflow/model/groups themselves are correct; score the actual reply rather than substituting its audited file. General repair must preserve numeric text after audit. No source repair or rerun during this gate."
+    },
+    {
+      "case": "photo-musr-silicon",
+      "failed_musts": [
+        2,
+        3,
+        4
+      ],
+      "number_rule_pass": true,
+      "root_cause": "Period workflow regression: despite finding two acquisition periods, the agent substitutes integral-scan --period green-red for independent condition spectra, fits only red103288 and never states ON/OFF mapping. The survey unrecorded-P-coordinate warning dominates the analysis, although that limitation does not block a same-run period comparison. It reads the RTF notes using cat/strings/regex but does not establish laser condition labels. General repair should keep missing scan-axis metadata distinct from paired acquisition-condition analysis; CLI audit currently passes this incomplete period workflow. Source stays frozen until all24 are scored."
+    },
+    {
+      "case": "corannulene-alc",
+      "failed_musts": [
+        10
+      ],
+      "number_rule_pass": false,
+      "root_cause": "FAIL on quantity-unit provenance:final low-field diagnostic prose changes A_hf units MHz to G for521.38/565.72. The numbers are actual failed-fit parameters and explicitly rejected physically,but the unit transcription is not CLI output,rounding or a valid conversion. All nine other Musts pass,including previously missing cold-higher/broader comparison and explicit molecular reorientation averaging hyperfine anisotropy. Raw numeric checker cannot detect unit substitution. Copy is exact,so error entered before audit and numeric audit passed it. General repair belongs in report/audit quantity-unit provenance after this frozen gate,not rubric relaxation."
+    }
+  ],
+  "audit_copy_failures": [
+    {
+      "case": "fmuf-ptfe",
+      "reply_matches_saved_file": false,
+      "final_report_audited": false,
+      "evidence": "Unified diff changes only18 Files lines: reply appends two trailing spaces to each; all rstripped lines identical, no path/text deletion. Audited file has82 lines and COPY CHECK named the intact last plot path. Strict exact-copy requirement fails; no normalization applied to award a pass."
+    },
+    {
+      "case": "ferromagnetic-nickel",
+      "reply_matches_saved_file": false,
+      "final_report_audited": false,
+      "evidence": "Only difference: actual last path is asymmetry-work/plots/reduced-124278.png----- instead of asymmetry-work/plots/reduced-124278.png. All other report characters identical; strict exact copy and runner final_report_audited fail."
+    },
+    {
+      "case": "alc-tcnq",
+      "reply_matches_saved_file": false,
+      "final_report_audited": false,
+      "evidence": "Unified diff changes only25 Files entries by adding two trailing spaces each; rstripped lines identical, no file/path/scientific-text deletion. Strict exact copying and runner final_report_audited fail."
+    },
+    {
+      "case": "copper-diffusion",
+      "reply_matches_saved_file": true,
+      "final_report_audited": false,
+      "evidence": "Actual reply and project/summary.md are byte-identical with identical SHA256. However no final audit passed: last audit still lists ARGUS field/ZF/TF coverage as unfitted. The unchanged runner therefore reports final_report_audited=false and the audited-copy gate fails. Distinguish this from the three actual formatting-copy failures."
+    },
+    {
+      "case": "afm-high-tf-mdu",
+      "reply_matches_saved_file": false,
+      "final_report_audited": false,
+      "evidence": "Actual reply deletes first occurrence of duplicated tf8-exp2.json and tf8-gauss2.json entries from saved Files list; both unique paths remain later. No scientific-text change, but strict copy and runner final_report_audited fail."
+    },
+    {
+      "case": "ionic-motion-llz",
+      "reply_matches_saved_file": false,
+      "final_report_audited": false,
+      "evidence": "Diff changes only A_bg error in group51344–51346 from0.0832516 to0.0832526 and removes one trailing blank line. Unlike formatting-only failures, a numerical token changes after audit."
+    }
+  ],
+  "number_rule_pass_count": 22,
+  "physics_scope_gate": {
+    "pass": false,
+    "case": "afm-high-tf-mdu",
+    "status": "unresolved warning separate from literal fixed Must scores",
+    "evidence": "Wizard calls12/15/16/21/22/24 use tf-superconductor; trend58/59 fits SC_DWave/SC_SWave. Final report explicitly says no superconductivity or vortex lattice established and allows magnetic correlations, but does not supply a clean AFM-scoped workflow."
+  },
+  "completion_verification": {
+    "completed_cases": 24,
+    "first_attempts": 24,
+    "void_or_interrupted_cases": 0,
+    "host": "Codex CLI / Linux",
+    "model": "gpt-6-luna",
+    "protocol": "two_turn_image_review_v2",
+    "source_manifest_entries_verified": 403,
+    "source_manifest_sha256": "a7120b0c2c89af8cef2d52f9dc074bfb4979d0dc095c63e2dcbb2963ec393cd6",
+    "all_source_skill_runner_rubric_hashes_unchanged": true,
+    "all_actual_reply_and_saved_file_hashes_rechecked": true,
+    "cost_transcript_commands_hashes_recorded": true,
+    "no_live_eval_processes": true,
+    "raw_evidence_preserved": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
+    "automation_id": "gpt-6-luna-corpus-improvements",
+    "automation_status": "PAUSED",
+    "no_follow_on_wave_or_improvements_authorized": true
+  },
+  "ranked_general_repairs": [
+    {
+      "rank": 1,
+      "area": "CLI/report handoff and audit",
+      "proposal": "Preserve the audited report verbatim through final rendering and validate numeric quantity-unit pairs, not only numeric tokens. Cover whitespace/tail edits, digit transcriptions and units on diagnostic parameters.",
+      "evidence": [
+        "fmuf-ptfe",
+        "ferromagnetic-nickel",
+        "alc-tcnq",
+        "afm-high-tf-mdu",
+        "ionic-motion-llz",
+        "corannulene-alc"
+      ]
+    },
+    {
+      "rank": 2,
+      "area": "Skill/CLI workflow coverage",
+      "proposal": "Audit independently requested observables and their provenance: paired acquisition periods require separate spectra/workdirs, endpoint spectral-shape comparisons require both endpoints, and normalized inputs require their source/convention in the final report.",
+      "evidence": [
+        "photo-musr-silicon",
+        "spin-peierls",
+        "maleic-mu-kinetics"
+      ]
+    },
+    {
+      "rank": 3,
+      "area": "CLI scope and active-product provenance",
+      "proposal": "Keep physical model scope and active campaign/calibration/workdir products explicit. Repair cross-workdir fitted-coverage auditing and prevent stale trial notes or incompatible superconducting scope from defining the final scientific interpretation.",
+      "evidence": [
+        "copper-diffusion",
+        "afm-high-tf-mdu",
+        "trsb-re6zr",
+        "lifeas-psi"
+      ]
+    }
+  ],
+  "scoring_judgement_notes": [
+    "Corannulene quantity-unit transcription is a strict semantic provenance failure on explicitly rejected diagnostic fit values; raw-token checker has zero flags. Correct primary ALC mechanism/direction passes.",
+    "Maleic normalization provenance and spin-Peierls endpoint-comparison omissions are final-summary requirements; correct input commands or central-to-warm trends cannot replace missing final evidence.",
+    "Benzene ALC conditional converged broad fit and independently fitted differential o-p repeat count as actual fitted positions; fixed rubric does not demand unsupported narrow-line certainty.",
+    "Repolarisation conditional two-term Should is satisfied/not applicable because no two-term fit was attempted; Should count includes that conditional pass.",
+    "Physics-scope warning for AFM remains independent of literal fixed Must pass; it is not erased by conditional/no-superconductivity wording.",
+    "No rubric was changed, no earlier case passes were pooled, and no actual reply was replaced by its audited file."
+  ],
+  "validation_context": "Implementation unchanged during gate. Prior314 focused/5912 fast passes,lint/structural/skill pass,docs80 existing warnings. Standard remains9910 passes with four documented pre-existing GUI sizing failures and is not green. No broad tests repeated alongside live evals or for scoring-only changes."
 }

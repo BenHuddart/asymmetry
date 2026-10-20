@@ -1510,3 +1510,53 @@ inspected;actual line/error sources exclude audit/draft/log displays;frozen
 hashes unchanged. Totals133/140 Musts,18/23 science,17/23 audited-copy,18/23
 literal-copy,13/23 combined,23/23 boundary. Only benzene ALC remains;finish
 and score then pause,no repair or extra gate authorized.
+
+
+Confirmation2 all24 scored:benzene ALC PASS7/7 Musts,number/copy/boundary pass.
+Separate folder workdirs,measured named calibrations,converged solid windowed
+fits and correct differential repeated o-p pair are verified. Second solid
+fit is conditional broad structure,not failed or claimed narrow;proper repeat
+establishes second liquid o-p line. Solution temperature-centre tables retain
+window/reference caveats. All43 commands inspected;frozen hashes unchanged.
+Final totals140/147 Musts,19/24 science,18/24 audited-copy,19/24 literal-copy,
+14/24 combined,24/24 boundary,51/104 Shoulds. Full fresh gate FAIL;no historical
+passes pooled. Complete verification/aggregate record and pause automation.
+
+
+## Confirmation2 complete and paused (2026-10-20)
+
+Fresh full24 first-attempt Codex/gpt-6-luna gate on implementation b06981a
+(launch2d06bcf) is completely scored: **FAIL**. Final140/147 Musts,19/24
+scientific passes,18/24 audit-and-copy passes,19/24 literal-copy passes,
+14/24 combined passes,24/24 boundary passes,22/24 number-rule passes and
+51/104 Shoulds (includes one satisfied/not-applicable conditional Should).
+All24 returned0 and completed unchanged two-turn image review;no void/retry,
+no pooled historical passes. No live eval process remains.
+
+Scientific failures:maleic acid omitted concentration provenance/normalization;
+spin-Peierls omitted coldest-versus-warm ZF shape;LLZ changed an uncertainty
+after audit;silicon skipped independent ON/OFF period spectra;corannulene
+mislabelled failed diagnostic A_hf outputs MHz as G. Corannulene's main
+resonance direction and reorientation/anisotropy interpretation now pass.
+Copy failures:PTFE/TCNQ trailing spaces,nickel tail suffix,AFM duplicate file
+entry removal,LLZ digit/blank-line edit. Copper is byte-identical but final
+audit coverage fails across separate instrument workdirs.
+
+AFM magnetic-physics scope warning remains unresolved despite literal Must
+pass:superconducting screens/gap laws are still used,with no false phase
+claim but no clean magnetic workflow. Other calibration/stale-trial/model
+caveats remain in individual evidence. The record ranks future general
+repairs:verbatim final emission and quantity-unit audit;observable/period/
+endpoint/input-provenance coverage;physics-scope and active campaign/workdir
+provenance. These are findings,not authorization for another repair round.
+
+Reverified source-manifest entries,all staged skills/rubrics and actual final
+reply/saved-file hashes. Added SHA256 for every cost,transcript,commands and
+summary;all raw attempts remain in persistent cache outside repo. Implementation,
+CLI,skill,runner and rubrics remained frozen throughout. Validation unchanged:
+314 focused/5912 fast,lint/structural/skill pass,docs80 warnings;standard has
+four known GUI sizing failures and is not green. No new tests or source fixes.
+
+Automation gpt-6-luna-corpus-improvements is **PAUSED**,confirmed by app tool
+and saved configuration. User authorized this full wave only. Do not launch
+another wave or improvement round without further user instruction.
