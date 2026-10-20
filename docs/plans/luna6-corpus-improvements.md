@@ -1439,3 +1439,17 @@ tmax6.5 crop;printed resolution is correct,retained as method-quality caveat.
 All45 commands inspected;frozen source/skill/rubric hashes unchanged. Totals
 91/97 Musts,13/17 science,11/17 audited-copy,12/17 literal-copy,8/17 combined,
 17/17 boundary. Continue all24 frozen;no repairs/reruns authorized.
+
+
+Confirmation2 now18/24 scored:Re6Zr PASS7/7 Musts,number/copy/boundary pass.
+Independent dynamic-KT Delta step5.2–6.4 K with no matching sharp nu onset,
+flat100 G LF controls,and approximate TF SC_SWave Tc6.248179 K support an
+explicit cautious TRSB candidate. Actual staticGKT*Exponential comparison done.
+Should gaps:uses setpoint0.01 K38180 instead of logged temperature,no silver
+second TF line,no auxiliary-file classification. Stale trial descriptions
+remain:global onset prose maps earlier run-axis endpoints rather than later
+temperature-axis note;D-wave6.270 and200 G prestep table predate final alpha
+trial. These numbers were actually printed;selection caveats are retained
+separately from fixed number rule. All78 commands inspected,hashes unchanged.
+Totals98/104 Musts,14/18 science,12/18 audited-copy,13/18 literal-copy,9/18
+combined,18/18 boundary. Keep all24 frozen;score then pause,do not repair.
