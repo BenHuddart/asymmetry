@@ -193,5 +193,19 @@ Result root `/tmp/asymmetry-luna6-improvements/round2` contains first attempts
 and `wave-metadata.json` with frozen commit and skill/runner/rubric hashes.
 Exec session `19319`, console `/tmp/asymmetry-luna6-round2-wave.log`; inspect
 processes and outputs before relaunching. LifeAs, TRSB and Basics started
-successfully. No round-two reports are scored yet. Freeze CLI/skill until
-all nine finish; score each final report against the unchanged rubrics.
+successfully. First round-two report scored in
+[luna6-corpus-round2.json](luna6-corpus-round2.json): Basics fails with 5/9
+Musts, while exact-copy and boundary checks pass. Freeze CLI/skill until all
+nine finish; score each final report against the unchanged rubrics.
+
+Round-three candidate confirmed from Basics evidence: `_measured` censors
+entire trend rows when only a nuisance damping parameter has `bound_pinned`
+or `large_rel_err`. At 13–15 foils the amplitude errors are small, yet those
+rows disappear from the step analysis and it incorrectly reports an
+intermediate 9–11-foil plateau. Preserve parameter-specific reliability while
+retaining whole-fit exclusions for actual failure/reseed/amplitude pathology.
+Also print uncertainty-aware cold-pair comparisons: current endpoint wording
+lets the agent call statistically compatible rates different. The Ag
+frequency/phase observable is repaired, but MUSR calibration weak-TF context
+and irrelevant sensor-temperature treatment remain wrong. The quartz line
+amplitude series also failed; inspect frequency seeding before changing it.

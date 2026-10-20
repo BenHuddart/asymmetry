@@ -1,0 +1,173 @@
+{
+  "metadata": {
+    "host": "Codex CLI / Linux",
+    "model": "gpt-6-luna",
+    "commit": "a5047aeca77cb12b1eccbba17423f6eca7673cb7",
+    "branch": "codex/luna6-corpus-improvements",
+    "recorded_at": "2026-10-20T00:12:50.963281+00:00",
+    "parallel": 3,
+    "protocol": "two_turn_image_review_v2",
+    "skill_source_policy": "explicit_project_skill_with_personal_copies_disabled",
+    "BLAS_threads": 1,
+    "cases": [
+      "lifeas-psi",
+      "trsb-re6zr",
+      "basics",
+      "benzene-alc",
+      "copper-diffusion",
+      "maleic-mu-kinetics",
+      "corannulene-alc",
+      "sn-critical-field",
+      "afm-high-tf-mdu"
+    ],
+    "skill_sha256": "5a03b792caf69290af6284bf80974e8ac4d35b3f123c670a466b578adb936af3",
+    "runner_sha256": "78c829cce4e07d83b60a2abc20b2a7df58a73b01d9757a58b1bd395dfa97e7b8",
+    "rubric_sha256": {
+      "lifeas-psi": "aec00fed822c67878ad9bf50a445b877c14e3eb85af4dfa06d6610dbacace608",
+      "trsb-re6zr": "9b37cf0242fec13643391e4be4d75ce3791578ee9633fe4b675ce8fb1b19fdcc",
+      "basics": "9a7e1671e076193352ce4016016147c30a58b3f8098aef4a5b6383f19d34c8cc",
+      "benzene-alc": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46",
+      "copper-diffusion": "4a0d496f6e89d82feb628d6378c6019071fd8813790f1b6b70a83a6e1e4459c6",
+      "maleic-mu-kinetics": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "corannulene-alc": "db2d44507bcce99e2f21eb7efcbe45e707286c4f51ff591e669839e5000ee745",
+      "sn-critical-field": "da9d2ae997537590c2ab33b031cfb6feb9f6394dcc5231e529b29eea9be97842",
+      "afm-high-tf-mdu": "062fa8082f95b4b6cb7f075cf9a287e8add6d5313d56290d3d5ead8bc95725cf"
+    }
+  },
+  "status": "partial; remaining cases running or unscored",
+  "cases": {
+    "basics": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Treats the folder as several separate calibration exercises. It names at least the Ag TF field scan, the quartz range curve, the quartz low-field muonium scan and the steering scan, and analyses them separately. It does not present the survey's 24-run 100 G \"temperature scan\" or its 2-run ZF one as a temperature dependence.",
+          "pass": true,
+          "evidence": "Identifies separate Ag field, foil-count, weak-field quartz and steering exercises; mixed100 G grouping and ZF pair are not interpreted as a physical temperature campaign."
+        },
+        {
+          "requirement": "Keeps the EMU and MUSR runs 44989\u201344997 apart and says which set is which (EMU: haematite on Ag at 100 G, the steering scan; MUSR: Ag calibration). It does not read the MUSR runs' ~0.29 MHz line as spontaneous order in Ag: the header says 0 G, but the line comes from an unrecorded weak transverse field.",
+          "pass": false,
+          "evidence": "Instrument prefixes are separate, but MUSR Ag line is explicitly called spontaneous ZF precession; unrecorded weak TF is never identified."
+        },
+        {
+          "requirement": "Quotes no logged 943 K, ~640 K or ~550 K reading as a sample temperature. It says these logged values are faulty or irrelevant to these room-temperature calibrations, and claims no temperature trend.",
+          "pass": false,
+          "evidence": "Rejects943/643/550 K logs, but still treats MUSR142\u219299 K as a plausible sample-temperature axis and compares a supposed cold-end relaxation difference."
+        },
+        {
+          "requirement": "Steering: fits the Ag-mask asymmetry against the current taken from the run notes, and reports it smallest near zero current (between \u22120.25 and +0.25 A), rising on both sides.",
+          "pass": true,
+          "evidence": "Uses note currents and reports A_1 minimum at zero steering, rising toward both ends."
+        },
+        {
+          "requirement": "Range curve: reports the 100 G diamagnetic amplitude as small and roughly flat for thin stacks, then rising steeply and saturating for the thickest. It names, from its own fits, the foil count (as the run notes give it) where saturation begins \u2014 about 12\u201314 foils (a range such as \"13\u201315\" counts).",
+          "pass": false,
+          "evidence": "Quotes intermediate9\u201311-foil level and no final13\u201315 saturation; high-foil rows discarded because Lambda is bound/uncertain even though A_1 is precise."
+        },
+        {
+          "requirement": "Quartz scan: identifies the few-gauss lines as muonium (a line far faster per gauss than the bare muon's \u2014 the ratio itself need not be quoted). It reports the muonium amplitude falling as the frequency rises, and the line lost at the top fields, and presents the amplitude fall as the instrument's frequency-response limit (attributing the line's loss at the top fields to it too is a Should).",
+          "pass": false,
+          "evidence": "Identifies fast muonium lines and top-field loss, but withholds Mu amplitudes and never reports their fall with frequency as the instrument response; only Ag amplitude response is described."
+        },
+        {
+          "requirement": "Ag field scan: reports the fitted frequency tracking the applied field. It also reports the fitted phase against field. On the file's t0 the phase drifts steadily with field (a t0 offset), so calling it field-independent without a t0 test is a fail.",
+          "pass": true,
+          "evidence": "Ag frequency tracks field and fitted phase drifts linearly; CLI timing offset\u221239.5 ns reported with no corrected t0 claim."
+        },
+        {
+          "requirement": "States which run supplied alpha for each exercise it fits. It does not carry one alpha across the survey's ALPHA STEPs.",
+          "pass": true,
+          "evidence": "Names separate alpha sources/values for exercises and step blocks; MUSR assumed1.0."
+        },
+        {
+          "requirement": "Contains no t0 correction, stopping density (mg/cm\u00b2), steering centre, upper frequency, field offset or alpha that was not produced by a tool call in this session. The worksheet's Ti density and foil thickness are background.",
+          "pass": true,
+          "evidence": "No unprinted t0 correction, density or field conversion; \u0394t and FFT/calibration values are actual CLI output."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reads each exercise's pattern the right way round: the steering scan's silver signal is smallest where the beam is centred on the (depolarising) sample; the range curve's step is where the muons stop passing through the degraders into the sample. An inverted reading is a gap even when the Must's pattern is reported.",
+          "pass": false,
+          "evidence": "Does not explain steering minimum as beam on depolarising sample or foil step as stopping before sample; over-cautiously declines physical mechanism."
+        },
+        {
+          "requirement": "Does not dismiss a relative amplitude trend (the muonium frequency response) on the ground that alpha is uncertain: one alpha scales every amplitude alike.",
+          "pass": true,
+          "evidence": "Relative Mu amplitude is not dismissed because of alpha; it is withheld because fits fail, which is a different problem scored by the Must."
+        },
+        {
+          "requirement": "Deadtime: reduces ZF Ag 34998 with deadtime off and from the file, and describes the early-time sag in asymmetry that the correction removes, with both fits' \u03c7\u00b2\u1d63. Says the 2010 files carry no deadtime values.",
+          "pass": false,
+          "evidence": "No34998 deadtime-off/on fit comparison with both chi2 values/early sag."
+        },
+        {
+          "requirement": "Measures MUSR alpha on a MUSR Ag run and says why that is legitimate, since the survey lists no MUSR candidate because the header records 0 G. Alternatively, it says plainly that it assumed 1.0.",
+          "pass": true,
+          "evidence": "Explicitly says MUSR alpha1.0 assumed."
+        },
+        {
+          "requirement": "t0: tests `--t0-offset` (or fits `Linear` to phase against field), reports the shift in bins that flattens the phase, and checks the fitted frequency against the nominal field.",
+          "pass": false,
+          "evidence": "Phase slope reported but no t0 re-reduction/bin correction tested."
+        },
+        {
+          "requirement": "Treats 18864 as its own alpha block, or excludes it and says why.",
+          "pass": true,
+          "evidence": "18864 reduced in separate own-alpha block."
+        },
+        {
+          "requirement": "Says that turning the saturating foil count into mg/cm\u00b2 needs the foil thickness and Ti density, which the files lack, and does not present that conversion as Asymmetry output.",
+          "pass": false,
+          "evidence": "No explicit foil-thickness/Ti-density limitation for stopping-density conversion."
+        }
+      ],
+      "number_rule": "PASS: Ag \u0394t\u221239.5 ns, reported foil levels, FFT peak2.682226 MHz and key calibration alphas verified in actual non-audit command output. Final exactly equals passed audit; no invented conversion identified.",
+      "root_cause": "Scientific FAIL (MUSR weak-TF geometry, irrelevant temperature axis, final foil saturation and Mu amplitude-response Musts), exact-copy/boundary PASS. Ag field frequency/phase observable is repaired. A general CLI quality bug now explains the foil failure: _measured drops an entire row when only Lambda has bound_pinned/large_rel_err. At13\u201315 foils A_1 remains21.48\u00b10.122,22.10\u00b10.111,21.82\u00b10.115, but those rows are censored and the step note incorrectly levels at9\u201311. Next round should separate parameter-specific reliability from whole-fit failure, preserving trustworthy amplitudes/frequencies when nuisance damping is unresolved. Endpoint notes also need an uncertainty-aware comparison; current report calls statistically compatible rates different.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1055.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 11,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry alpha /tmp/asymmetry-luna6-improvements/round2/basics/data --run 18850 --background range'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry alpha /tmp/asymmetry-luna6-improvements/round2/basics/data --run 18850 --background range --instrument EMU'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /tmp/asymmetry-luna6-improvements/round2/basics/data --runs 62798 --alpha-from 62798 --deadtime from_file --background tail_fit --plot --instrument HIFI'",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "ad9d45c61a5bd366b0d4f99cbe98a5411aa4a826e22cb0082226d3da3c00edea",
+      "rubric_sha256": "9a7e1671e076193352ce4016016147c30a58b3f8098aef4a5b6383f19d34c8cc",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round2/basics",
+      "staged_skill_sha256": "5a03b792caf69290af6284bf80974e8ac4d35b3f123c670a466b578adb936af3",
+      "boundary_check": "PASS: command inspection found staged/project reads and Asymmetry commands; no personal/source read, network, external calculator or delegation.",
+      "boundary_pass": true,
+      "permission_denials": 0
+    }
+  },
+  "totals": {
+    "scored": 1,
+    "scientific_pass": 0,
+    "must_pass": 5,
+    "must_total": 9,
+    "exact_copy_pass": 1,
+    "combined_pass": 0,
+    "boundary_pass": 1
+  }
+}
