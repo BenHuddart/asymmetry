@@ -1294,3 +1294,22 @@ entanglement context. All31 commands inspected;one --csv argument error was
 corrected. Corpus/source/skill/rubric hashes unchanged,first attempt preserved.
 At check maleic acid,nickel and YMnAl remain active,concurrency3,23 GiB RAM
 available,no swap/current PSI,653 GiB persistent disk free;no tests/duplicates.
+
+
+Confirmation2 now6/24 scored:YMnAl PASS5/5 Musts,maleic acid FAIL4/5.
+Maleic failure is explicit relative-concentration provenance/normalization:
+correct sample groups and0/0.25/0.5/1 mapping are used,but the final report does
+not state title/notes source or neat=1 convention. This report-only omission
+is recorded as a judgement call;transcript input correctness cannot replace
+required summary provenance. The retained2.648567 ±0.528840 empirical slope
+with units passes Must4 despite rejecting intrinsic chemical-rate meaning;
+quality caveats alone do not erase that estimate. No invented rate/Ea/fraction.
+YMnAl retains calibrated stretched+constant LF fits,cold-end upturn and actual
+CriticalDivergence parameters;automatic/free nuisance treatment remains a
+Should gap,not proof of a microscopic freezing law. Actual24591 ZF metadata
+is kept separate despite worksheet/rubric nominal LF-range wording.
+Both actual replies byte-match audited reports and boundary/number checks pass;
+all111 maleic and20 YMnAl commands inspected,frozen hashes unchanged.
+Totals30/31 Musts,5/6 science,5/6 copy,4/6 combined,6/6 boundary. Continue all24
+without changes or reruns;nickel,cuprate and copper remain live. Resources
+healthy at23 GiB available,no swap/current PSI,653 GiB persistent disk free.

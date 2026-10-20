@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 4/24 reports scored; early PTFE exact-copy failure; finish full gate with source frozen",
+  "status": "running; 6/24 scored; PTFE exact-copy and maleic provenance failures; finish full gate with source frozen",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -524,12 +524,281 @@
         "Early audit misread a separate workdir as missing coverage; the agent reran co-add/series in the main workdir to satisfy coverage, preserving original work."
       ],
       "scored_at": "2026-10-20T17:10:34.341274+00:00"
+    },
+    "maleic-mu-kinetics": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Recognises the 2 G runs as muonium precession measurements and the 100 G runs as diamagnetic ones.",
+          "pass": true,
+          "evidence": "Identifies2 G weak-TF Muonium line measurements versus100 G diamagnetic/control Larmor precession, and correctly rejects LF recovery interpretation."
+        },
+        {
+          "requirement": "Separates the samples by concentration, read from titles or notes, and says where the concentration values came from.",
+          "pass": false,
+          "evidence": "Separates blank/quarter/half/neat run groups and tabulates relative concentrations0/0.25/0.5/1, but does not say those values were read from titles/notes or state neat=1 as its normalization. Final-report concentration provenance required by this Must is absent, despite correct transcript input mapping."
+        },
+        {
+          "requirement": "Reports the Mu relaxation rate rising with maleic acid concentration at a fixed temperature (290 K, or matched setpoints), from fits of the 2 G runs.",
+          "pass": true,
+          "evidence": "At nominal290 K the2 G fitted Lambda2 rises0.447278,1.59736,2.09997,2.80648 per microsecond at relative concentrations0,0.25,0.5,1, with uncertainty and logged-temperature spread caveats."
+        },
+        {
+          "requirement": "Obtains a rate constant from the slope of λ_Mu against concentration with a CLI fit (e.g. `fit-series`/`fit-global` with `--order concentration --x ...`, then `trend --model Linear`), reported with its uncertainty and in the concentration units it used. A fit-quality caveat is fine; withdrawing the converged slope is not.",
+          "pass": true,
+          "evidence": "CLI Linear slope2.648567 ±0.528840 per microsecond per concentration unit, intercept0.550220 ±0.188993 and chi2_red23.385 retained as an empirical model-conditional coefficient. It rejects an intrinsic chemical-rate interpretation, but does not discard the fitted estimate; fit-quality caveats are allowed."
+        },
+        {
+          "requirement": "Contains no rate constant, activation energy or fraction that was not produced by a tool call in this session (the worksheet's published values are background).",
+          "pass": true,
+          "evidence": "All rates, slope/error, calibration and spectral quantities are actual CLI outputs. No invented absolute molarity, hand-computed fraction or activation energy."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares deoxygenated with untreated water (the untreated Mu signal relaxes faster, or leaves no resolvable line: dissolved O₂).",
+          "pass": true,
+          "evidence": "Deoxygenated78251 FFT has2.774628 MHz line; straight-water78291 lacks comparable Mu line, consistent with oxygen scavenging rather than a fabricated oxygen rate."
+        },
+        {
+          "requirement": "Uses a calibration run appropriate to the sample being reduced rather than one alpha for the whole folder, or notes the alpha step.",
+          "pass": true,
+          "evidence": "Campaign-specific alpha sources and78280/78281 calibration step are explicitly retained; no single global alpha."
+        },
+        {
+          "requirement": "Holds the Mu and diamagnetic frequencies or amplitudes common across the concentration set (shared in `fit-global`, or fixed) and says so.",
+          "pass": true,
+          "evidence": "Mu/control frequencies fixed2.79/0.0271 MHz and amplitudes/phases shared across concentration groups, with per-run relaxation rates."
+        },
+        {
+          "requirement": "States that the Arrhenius step needs k_Mu at several temperatures, each from its own concentration fit, and either does it per temperature and fits the Arrhenius law through them with a command (`trend --from-fits … --model Arrhenius`) rather than by hand, or declines that step with the reason.",
+          "pass": true,
+          "evidence": "Declines activation barrier because too few reliable concentration points at each temperature; per-temperature Linear attempts with two points fail, rather than fitting a fixed-concentration Lambda(T) Arrhenius law."
+        }
+      ],
+      "number_rule": "PASS: independent direct scientific CLI outputs, excluding audit/draft/report displays and reads of cli-output.log, support all consequential values; unverified_numbers=[]. No unprinted physical arithmetic.",
+      "root_cause": "FAIL on explicit concentration provenance: survey command1 prints0.25/0.5 sample titles, neat notes and supplied-axis suggestions, and the agent uses the correct --x mapping in commands36/54. The final report omits the source and normalization of that axis, so transcript knowledge cannot repair the report-only Must. General improvement would retain each supplied axis source/scale in the summary. The conditional slope itself is retained with uncertainty/units despite strong intrinsic-rate caveats, so Must4 passes; this is not scored as the earlier outright slope-withholding failure.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all111 completed commands inspected; only staged skill/references, supplied data and installed CLI/products. No host-skill/source/rubric/network access, subagents or ad hoc numerical scripts. Supplied axes are CLI arguments, not physical arithmetic.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1866.9,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 7,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-1 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-2 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-3 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-4 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-5 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-6 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-7 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-8 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-9 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-10 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series composition-290-2g --model Linear --param Lambda_2 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-2 --model Linear --param Lambda_2 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-3 --model Linear --param Lambda_2 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-4 --model Linear --param Lambda_2 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-5 --model Linear --param Lambda_2 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-6 --model Linear --param Lambda_2 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-7 --model Linear --param Lambda_2 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-8 --model Linear --param Lambda_2 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-9 --model Linear --param Lambda_2 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-10 --model Linear --param Lambda_2 --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "6f8ff7fc8c3783d07ce380da5ef6a78a930a2db1bec9ec1008cd3d72dfaf661d",
+      "audited_file_sha256": "6f8ff7fc8c3783d07ce380da5ef6a78a930a2db1bec9ec1008cd3d72dfaf661d",
+      "rubric_sha256": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics",
+      "exact_copy_evidence": "Actual reply and audited project/summary.md are byte-identical, including complete file list; runner final_report_audited=true.",
+      "physics_caveats": [
+        "The imposed two-frequency model is not independently resolved on most runs; concentration slope is an apparent coefficient, not an intrinsic reaction constant.",
+        "Matched nominal290 K points span materially different logged temperatures, and linear-law chi2_red23.385 is poor.",
+        "Initial concentration and temperature grouping mistakenly used100 G controls with the Mu recipe before correction to the2 G membership; final report uses corrected groups.",
+        "Per-temperature two-point Linear laws have no degrees of freedom; no activation energy is inferred."
+      ],
+      "judgement_calls": [
+        "Must2 fails on the explicit source/normalization clause, not on wrong numeric assignments; provenance is partly implicit in the report survey narrative but never stated for the concentration axis.",
+        "Must4 passes as a retained empirical/condition-specific slope despite conclusion saying it should not be interpreted as a reaction rate constant. Interpret that warning as withholding intrinsic meaning, not deleting the fitted coefficient; caveats are allowed by the fixed rubric."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        30,
+        35,
+        36,
+        37,
+        38,
+        54,
+        56,
+        57,
+        62,
+        80,
+        81,
+        82
+      ],
+      "scored_at": "2026-10-20T17:21:43.096979+00:00"
+    },
+    "spin-glass-ymnal": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies 24563 as the TF calibration run, separate from the LF series.",
+          "pass": true,
+          "evidence": "Separates24563 as20 G TF calibration from110 G LF24573–24590 temperature series and the independent280 K ZF24591 run."
+        },
+        {
+          "requirement": "States that alpha (and detector grouping) came from 24563.",
+          "pass": true,
+          "evidence": "States24563 supplied alpha, raw1.2320 and corrected1.2373 with forward/backward groups1/2 and file deadtime."
+        },
+        {
+          "requirement": "Reports the LF series as fit with a relaxation function that combines a stretched-exponential (or comparable stretched decay) component with a flat/time-independent background.",
+          "pass": true,
+          "evidence": "Fits StretchedExponential + Constant to the LF scan, with A_1,Lambda,beta and time-independent A_bg explained; special slow-run A_bg=0 constraint stated."
+        },
+        {
+          "requirement": "States that the relaxation rate rises as temperature is lowered towards the glass transition (or explicitly says it could not establish this trend, rather than staying silent on direction).",
+          "pass": true,
+          "evidence": "Explicitly reports rising relaxation on cooling: Lambda1.011305 ±0.063382 at88.712 K versus0.513684 ±0.010299 at90.7236 K and small warm rates, preserving cold-end upturn separately from whole-scan change."
+        },
+        {
+          "requirement": "Contains no rate, background, A(0), or transition-temperature number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All rates, amplitudes/backgrounds and candidate CriticalDivergence Tc85.813828 ±1.279202 K are actual CLI outputs, with fit range and uncertainty; no invented transition or background fraction."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the full LF run range on disk (24573-24591) is wider than the worksheet's quoted 24576-24590, and does not silently restrict itself to only the quoted subset without saying so.",
+          "pass": true,
+          "evidence": "Covers all20 files and additional cold24573–24575 runs, treats24591 separately using actual zero-field metadata rather than silently restricting to the worksheet range."
+        },
+        {
+          "requirement": "Follows the worksheet's fixing strategy in spirit — background fixed from a low/representative-temperature fit, full-asymmetry A(0) fixed from a high-temperature (beta = 1) fit — or explains a deliberate departure from it.",
+          "pass": false,
+          "evidence": "Uses free per-run A_1 and background except automatic slow-relaxation fixes on24583–24584; neither follows nor explains departing from reference-based fixed-background/full-asymmetry strategy."
+        },
+        {
+          "requirement": "Mentions a glass-transition temperature Tg and critical exponent as a possible further fit (critically-divergent rate function) without inventing values for them.",
+          "pass": true,
+          "evidence": "Actually fits CriticalDivergence on logged88.712–149.845 K, reporting Tc85.813828 ±1.279202 K and nu1.252594 ±0.313327 with reduced chi2_red1.508 and conditional freezing interpretation."
+        }
+      ],
+      "number_rule": "PASS: independent direct scientific CLI outputs, excluding audit/draft/report displays and reads of cli-output.log, support all consequential values; unverified_numbers=[]. No unprinted physical arithmetic.",
+      "root_cause": "All Musts pass: LF stretching plus constant, calibrated grouping and explicit cold-end rate increase are retained. The remaining Should gap is nuisance treatment: free amplitudes/backgrounds and automatic zero-background handling replace the worksheet reference-fixing strategy without a stated methodological comparison. This affects physical confidence, not the literal directional Musts; no repair during the frozen gate.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all20 completed commands inspected; only staged skill/references, supplied data and installed CLI/products. No host-skill/source/rubric/network access, subagents or ad hoc numerical scripts. Supplied axes are CLI arguments, not physical arithmetic.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 555.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/spin-glass-ymnal/data --series lf-stretched --model CriticalDivergence --param Lambda --xmin 88.712 --xmax 149.845 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"sed -n '1547,1665p' .agents/skills/asymmetry-analysis/SKILL.md && \"",
+          "exit_code": 2
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "c3ed1b8c2e41fc3d96244e49dc59f7dd449956652c6535076457f302ae9417ff",
+      "audited_file_sha256": "c3ed1b8c2e41fc3d96244e49dc59f7dd449956652c6535076457f302ae9417ff",
+      "rubric_sha256": "c1fd733e78e7de397ebd0e533eaac4b698e4d47a33035f26348f9a8f9a7bdb6e",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/spin-glass-ymnal",
+      "exact_copy_evidence": "Actual reply and audited project/summary.md are byte-identical, including complete file list; runner final_report_audited=true.",
+      "physics_caveats": [
+        "CriticalDivergence temperature lies below the fitted data range and is explicitly a model-dependent characteristic scale rather than a thermodynamic transition.",
+        "Eight runs flagged; failed/amplitude-exceeding cold and warm fits are not physical estimates.",
+        "No oscillation is not taken as proof of absent magnetic order, and no single-field LF scan is overinterpreted as a field law."
+      ],
+      "judgement_calls": [
+        "The rubric lists24591 in its nominal full LF range, while actual metadata identifies it as separate280 K ZF. Score coverage from the real survey and preserve that distinction rather than forcing the worksheet label."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        7,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "scored_at": "2026-10-20T17:21:43.113061+00:00"
     }
   },
   "pending_cases": [
-    "maleic-mu-kinetics",
     "ferromagnetic-nickel",
-    "spin-glass-ymnal",
     "high-tc-cuprate",
     "copper-diffusion",
     "molecular-antiferromagnet",
@@ -549,16 +818,16 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 4,
+    "scored": 6,
     "target": 24,
-    "scientific_pass": 4,
-    "must_pass": 21,
-    "must_total": 21,
-    "should_pass": 6,
-    "should_total": 15,
-    "exact_copy_pass": 3,
-    "combined_pass": 3,
-    "boundary_pass": 4
+    "scientific_pass": 5,
+    "must_pass": 30,
+    "must_total": 31,
+    "should_pass": 12,
+    "should_total": 22,
+    "exact_copy_pass": 5,
+    "combined_pass": 4,
+    "boundary_pass": 6
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates."
