@@ -1776,3 +1776,75 @@ campaigns and is not a controlled material trend; its law is rejected. All82
 commands/file changes inspected, source hashes match. Totals129/137 Musts,
 18/23 science,19/23 audit-copy/literal-copy,15/23 combined,23/23 boundary,
 46/98 Shoulds. Onlycorannulene remains; finishandscore,thenpause.
+
+
+Confirmation3 all24 scored: corannulene FAIL9/10 Musts on a semantic
+judgement call. The cold/hot field/width direction and molecular-reorientation
+interpretation now pass. The report says a microscopic Hamiltonian is outside
+this analysis and no radical model was fitted, but does not clearly state that
+the CLI lacks that model as the reason couplings/sites are unavailable. The
+fixed Must9 requires that reason; retain the borderline nature of this failure.
+Copy also fails by adding 'the survey’s' to one table cell after audit.
+Number/unit/boundary pass,2/6 Shoulds. All105 commands/file changes inspected;
+source hashes unchanged. Final138/147 Musts,18/24science,19/24audit-copy/
+literal-copy,15/24combined,24/24boundary,48/104Shoulds. The fresh fullgate FAILS.
+No remaining live evalprocess; finalize aggregate/resources and pause.
+
+
+## Confirmation3 complete and paused (2026-10-20)
+
+The fresh full24 Codex/gpt-6-luna gate on round13 implementation `0b6e207`
+is fully scored: **FAIL**. Final results are **138/147 Musts,18/24 scientific
+passes,19/24 audit-and-copy passes,19/24 literal-copy passes,15/24 combined
+passes,24/24 boundary passes,24/24 number-rule passes and48/104 Shoulds**.
+All24 first attempts returned0 and completed the unchanged two-turn image
+protocol. No infrastructure void, retry or pooled historical result is used.
+
+Scientific failures are plateau Redfield, maleic kinetics, benzene RF,
+high-TF benzene, Re6Zr and corannulene. The last is an explicitly borderline
+semantic failure: its main line direction and molecular-reorientation result
+pass, but unavailable radical-model capability is not stated clearly as the
+reason no couplings/sites can be obtained. Fixed rubrics were not changed.
+AFM now passes its independent magnetic-physics scope check. Paired silicon
+period fits and copper cross-instrument audit coverage are repaired.
+
+Five copy failures remain: CDS skips audit and drops paths; Re6Zr drops paths;
+benzene repolarisation removes a phrase; benzene ALC removes a trailing blank
+line; corannulene adds wording to a table. The ALC runner guard is true, but
+independent byte identity fails and is recorded honestly. No actual reply was
+replaced with the saved report. Earlier borderline and calibration/model
+limitations remain visible in each case's evidence.
+
+Final verification rechecks403 frozen source entries and every actual reply,
+staged skill, rubric and raw artifact hash. Two image paths were overwritten
+after their review inputs were supplied: LiFeAs sigma(T) and Re6Zr TF rate
+trend. Both supplied and final file hashes are retained separately; final
+pixels are not substituted as the image-review evidence. All raw transcripts,
+commands, reports, costs and source/launch/resource metadata persist outside
+the repo. Agents removed some own temporary duplicate products; no claim is
+made that every intermediate plot/file survives. No eval process remains.
+
+The six-case run finished in about71.55 minutes. Across144 samples it retained
+at least20.82 GiB available RAM, used no swap and showed zero memory PSI;
+peak CPU PSI avg10 was0.46. Peak summed process-tree RSS was4.13 GiB, which
+double-counts shared pages. Observed CLI environments used wizard workers2
+and OpenBLAS/OMP/MKL threads1. Six concurrent cases is supported by these
+measurements; a higher limit and a controlled speed comparison were not tested.
+
+Ranked general findings for a future authorized round: complete the relevant
+observable workflow (rate laws and correlation spectra); distinguish estimator
+semantics and recover model fits with appropriate seeds/windows/backgrounds;
+preserve exact final emission and explain unavailable capabilities explicitly.
+These are findings, not authorization for another improvement or evaluation.
+Compared with confirmation2, combined passes improve14→15 and copy18→19, but
+science regresses19→18 and Musts140→138. This fresh gate does not establish
+reliable all-corpus performance.
+
+The app tool confirms follow-up `gpt-6-luna-corpus-improvements` is **PAUSED**.
+The requested single repair and rerun is complete; the broader all-pass
+objective remains unachieved. No more repairs or gates are authorized without
+new user instruction. Validation remains358 focused/5925 fast, lint/structural/
+skill pass anddocs80 warnings. Standard validation is not green: the original
+sandbox/autosave failures and the isolated rerun with two known GUI sizing
+failures are both preserved. No GUI redesign or new tests were undertaken
+while this gate ran.
