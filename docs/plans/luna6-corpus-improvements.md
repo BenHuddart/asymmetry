@@ -1932,3 +1932,6 @@ wave or call this a proven speed increase. Full source manifest matches.
 
 
 Confirmation4 first case scored: PTFE FAIL5/6 Musts and number rule on the unsupported claim that all failed17309 central values are zero; actual CLI values are nonzero with zero errors. Main F-mu-F identification/distance/variation findings pass. Copy fails by exactly one terminal newline, with visible body unchanged; strict runner guardfalse. Boundary passes,1/3 Shoulds. All23 commands,three file edits and four image snapshots checked. Co-add coverage audit also forces redundant standalone-repeat fitting, a general next-round repair candidate. Keep source frozen and finish all24; no changes or new wave while current cases run.
+
+
+Confirmation4 now2/24 scored: YMnAl scientific PASS5/5 Musts,2/3 Shoulds, number/unit/boundary pass, but strict copy fails by one terminal LF. LF stretched relaxation and cooling-rate direction are reported; critical law is attempted/rejected. Actual24591 is explicitly ZF; raw completed wizard contradicts the report's stale 'not returned' statement, retained as a caveat. All27 commands inspected and snapshot metadata/hashes recorded. Combined remains0/2. Keep all source frozen until remaining cases finish.
