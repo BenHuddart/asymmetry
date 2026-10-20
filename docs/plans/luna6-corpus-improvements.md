@@ -1929,3 +1929,6 @@ This is within each retained first attempt, not a duplicated case launch.
 Monitor recovery; sustained service throttling may justify8–10 cases on a
 future wave even though memory has headroom. Do not alter the frozen current
 wave or call this a proven speed increase. Full source manifest matches.
+
+
+Confirmation4 first case scored: PTFE FAIL5/6 Musts and number rule on the unsupported claim that all failed17309 central values are zero; actual CLI values are nonzero with zero errors. Main F-mu-F identification/distance/variation findings pass. Copy fails by exactly one terminal newline, with visible body unchanged; strict runner guardfalse. Boundary passes,1/3 Shoulds. All23 commands,three file edits and four image snapshots checked. Co-add coverage audit also forces redundant standalone-repeat fitting, a general next-round repair candidate. Keep source frozen and finish all24; no changes or new wave while current cases run.
