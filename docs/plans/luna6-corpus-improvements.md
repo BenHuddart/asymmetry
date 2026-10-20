@@ -273,3 +273,17 @@ only the diamagnetic damping being pinned, reinforcing the shared reliability
 fix. Six reports scored: 34/42 Musts, two scientific/combined passes,
 four exact-copy passes and six boundary passes. Corannulene, Sn and AFM are
 live; about 21 GiB available, no swap or memory pressure. Keep source frozen.
+
+Corannulene and Sn are scored, leaving only AFM live. Sn retains all five
+Musts and now passes exact-copy. Corannulene regresses to 5/10 Musts: hot
+local centres remain good, but cold local Linear-background fits pin their
+widths and no broader-bound/curved-baseline investigation follows. The cold
+centre, comparative width/field and molecular-reorientation interpretation are
+therefore absent. Dense ALC scans also remain labelled at nominal temperature
+without an explicit logged offset, and the non-polynomial whole-background
+reason is missing. Bound-pinned local fits should trigger a general sequence
+of bounds, window and baseline checks before concluding no stable centre.
+Eight reports scored: 44/57 Musts, three scientific/combined passes, six
+exact-copy passes and eight boundary passes. One host wave and one AFM model
+process remain; about 20 GiB available with no swap or memory pressure.
+No CLI/skill changes until AFM completes and is scored.
