@@ -2037,3 +2037,6 @@ Confirmation5 now11/24scored: CDS6/6Musts,2/4Shoulds,exact-copyPASS with explici
 
 
 Confirmation5 now13/24scored: EuO5/5Musts,2/3Shoulds andcopper6/6Musts,3/3Shoulds; both exact-copyPASS afterpreparation. Totals71/71Musts,13/13science,6/13copy/combined,13/13boundary,31/46Shoulds. Retain GPSshorthand judgement, conditionalpoorEuOorderlaw/window-sensitiveparamagnetism andrawversusscaledARGUSresonance-error caveat. Read-only next-round finding: integral-fit parameter table prints raw errors while later note requests scaled errors; align presentation to prevent understated uncertainties. Source remains frozen.
+
+
+Confirmation5 now16/24scored: maleic5/5Musts,4/4Shoulds andnickel7/7Musts,2/4Shoulds bothscience/exact-copyPASS; LFbenzene6/6Musts,2/5Shoulds sciencePASS/copyFAILoneLF. Totals89/89Musts,16/16science,8/16copy/combined,16/16boundary,39/59Shoulds. Maleic now reports conditional Mu concentration slope with error/units and properly declines bound Arrhenius Ea; nickel Redfield domains/recovery also work. Retain temperature-confounding, poor-law and degeneracy/raw-error caveats; source remains frozen.
