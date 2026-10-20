@@ -812,3 +812,16 @@ not resolved, recorded as a Should gap. Partial full24:89/89 Musts,16/16
 science/boundary,15/16 exact-copy/combined. Eight remain; source frozen, one
 wave/three models and no tests. Host14 GiB available,zero swap/PSI,4.7 GiB
 scratch free. Finish full gate despite nickel's existing copy failure.
+
+LiFeAs scored:8/8 literal Musts, exact-copy/boundary pass. Up/Down and
+independent campaigns retained; Gaussian400 G width rises strongly on cooling,
+warm plateau and conditional Tc15.348706 K are within expected onset bracket,
+and frequency falls cold. Separate warm/base TF field scans explicitly name
+unresolved7/12.5 G fits, satisfying the failed-field alternative to paired
+widths; cold exponential rates are not paired Gaussian widths. Should gaps:
+no cross-sample comparison, omitted linear nuclear-floor convention, and
+s-wave preference overextended by rejecting a successful low-chi2 d-wave fit.
+Partial full24:97/97 Musts,17/17 science/boundary,16/17 exact-copy/combined.
+Seven remain; keep whole wave frozen/running despite nickel copy failure.
+Host14 GiB available,zero swap/PSI,4.4 GiB scratch free; one wave/three models,
+no tests. No full-gate verdict yet.
