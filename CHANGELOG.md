@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Report audits check printed cross-condition comparisons.** Fitted-centre
+  and width directions must appear in prose with their limitations; same-run
+  stability notes do not imply a condition change. Passed reports include a
+  final-line copy cue to help preserve the complete file list.
 - **Agent summaries separate observations, candidate mechanisms and model
   parameters.** Missing microscopic models limit quantification without
   suppressing independently supported qualitative explanations; invalid fit

@@ -163,7 +163,14 @@ def run(args: argparse.Namespace) -> None:
             f"below exactly — no preface, no added lines (edit the file and audit again "
             f"instead) — and say nothing about this check in it."
         )
-        print(f"{_REPLY_MARK} BEGIN {_REPLY_MARK}\n{text.strip()}\n{_REPLY_MARK} END {_REPLY_MARK}")
+        report = text.strip()
+        print(f"{_REPLY_MARK} BEGIN {_REPLY_MARK}\n{report}\n{_REPLY_MARK} END {_REPLY_MARK}")
+        lines = report.splitlines()
+        last_line = "".join(lines[-1:])
+        print(
+            f"COPY CHECK: {len(lines)} report lines; the final line is {last_line!r}. "
+            "Keep every line through that final line in your reply, including the file list."
+        )
         return
     print(
         f"{len(found)} number(s) in {draft} appear in no logged command output — "

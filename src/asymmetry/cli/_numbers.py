@@ -347,6 +347,24 @@ _DIRECTION = (
 #: statement — so the check catches a reply that leaves the point out entirely.
 _SAY_SO: tuple[_SaySo, ...] = (
     _SaySo(
+        _pattern(r"^COMPARE:.*\b(?:higher|lower) in field"),
+        _pattern(
+            r"\b(?:higher|lower)(?:[^.\n]|\.(?=\d)){0,80}"
+            r"\b(?:cent(?:er|re)s?|positions?|lines?|features?|resonances?|estimates?)\b"
+            r"|\b(?:cent(?:er|re)s?|positions?|lines?|features?|resonances?|estimates?)\b"
+            r"(?:[^.\n]|\.(?=\d)){0,80}\b(?:higher|lower)"
+        ),
+        "state which condition's fitted centre is higher or lower in field; retain the "
+        "ordering of conditional estimates with its window/background caveat, without "
+        "claiming a precise physical shift",
+    ),
+    _SaySo(
+        _pattern(r"^COMPARE:.*this one is (?:broader|narrower)"),
+        _pattern(r"\b(?:broader|narrower)\b(?![- ]window)"),
+        "state which condition's fitted feature is broader or narrower, with its "
+        "window/background limitation; a fit table alone does not state the comparison",
+    ),
+    _SaySo(
         _pattern(r"A_mu = nu_1 \+ nu_2"),
         _pattern(r"\bsum\b|(?:ν|nu)_?₁?1?\s*\+\s*(?:ν|nu)_?₂?2?"),
         "say that A_μ is the sum of the radical's two precession lines, A_μ = ν₁ + ν₂",

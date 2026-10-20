@@ -1125,3 +1125,42 @@ commit score/plan then PAUSE follow-up. No new targeted or full24 wave launched.
 Full24 objective remains incomplete;confirmation1 remains prior23/24 science,
 23/24copy,22/24combined,24/24boundary,not a fresh all-pass gate. Standard still
 has four known GUI sizing failures. User must explicitly authorize next work.
+
+## Round twelve
+
+User authorized general skill+CLI repair and fresh rerun after round11.
+Audit now checks whether printed cross-condition COMPARE centre and width
+directions are stated in prose;STABILITY notes do not imply such obligations.
+Unrelated higher-field scan behaviour and merely broader-window wording do
+not satisfy the checks. Conditional estimate ordering remains separate from
+precise physical shifts. Passed audit prints COPY CHECK after unchanged report
+markers with line count/final line,to preserve file-list tail in final reply.
+Skill describes independent flank coverage and checking the final-line cue.
+Fixed rubrics and two-turn eval protocol untouched;no corpus/run-specific rules.
+Development check on actual round11 final report now identifies both missing
+comparison statements. New tests cover conditional direction/window caveats,
+same-run stability,unrelated field language,complete marker-framed output and
+runner compatibility with copy cue. Raw round11 evidence unchanged.
+Focused314 pass7.65 s after allowing valid "estimate is higher" wording;
+the initial focused attempt caught that overly restrictive pattern. Lint pass after formatting,
+structural/skill pass. Fast suite and docs running in round12 logs;no evals
+live,pytest2. Finish validation before commit/rerun. Standard remains four
+known GUI sizing failures;no claim of green. Automation still paused until
+new requested rerun is launched;no duplicate tests/evals.
+
+Round12 docs build80 existing warnings;focused314 pass7.65 s,lint/structural/
+skill pass. Initial fast run retained the pre-fix wording pattern in imported
+worker modules and failed the same valid-estimate phrase test (5911 other
+passes);that pattern is corrected and focused checks pass. Rerunning fast
+suite on final source,without other pytest jobs/evals. Initial fast log kept
+as /tmp/asymmetry-luna6-round12-fast-initial.log. Prepared persistent-output
+round12 wave script;do not launch until final fast passes and commit exists.
+
+Round12 final validation COMPLETE:314 focused passes7.65 s,5912 fast passes/
+10 skipped/1xfail107.11 s,lint/structural/skill pass,docs80 existing warnings.
+No eval overlapped tests. Standard tier not repeated as an iteration loop;
+its recorded four GUI sizing failures remain,not green. Commit these changes
+before fresh corannulene GPT-6 Luna rerun. Host22 GiB available,no swap/current
+PSI. Keep rubrics/runner/two-turn image-review protocol fixed and preserve raw
+first attempt on disk. Only this repair+rerun authorized;score then pause,
+without automatically launching full24 or another improvement round.

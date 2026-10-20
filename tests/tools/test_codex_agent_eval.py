@@ -182,7 +182,10 @@ def test_final_report_must_match_the_last_passed_audit() -> None:
         "item": {
             "type": "command_execution",
             "command": "asymmetry audit summary.md",
-            "aggregated_output": "Passed\n----- BEGIN -----\nFull report\n----- END -----\n",
+            "aggregated_output": (
+                "Passed\n----- BEGIN -----\nFull report\n----- END -----\n"
+                "COPY CHECK: 1 report lines; the final line is 'Full report'.\n"
+            ),
         },
     }
     assert runner.final_report_audited("Full report", [event])

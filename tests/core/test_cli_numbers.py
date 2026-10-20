@@ -160,7 +160,7 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     # The folder's files carry deadtimes this reduction left off, which a draft must say.
     draft.write_text(
         f"{len(ALL_RUNS)} runs; ZF scan {min(ZF_RUNS)} – {max(ZF_RUNS)}; "
-        "the reduction left deadtime off.\n",
+        "the reduction left deadtime off.\n\nFiles\nplots/review.png\n",
         encoding="utf-8",
     )
     capsys.readouterr()
@@ -182,6 +182,27 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     assert "your final message is this summary itself" in out
     # The passed text is printed whole, for the reply to copy rather than retype.
     assert f"----- BEGIN -----\n{draft.read_text().strip()}\n----- END -----" in out
+    assert "COPY CHECK: 4 report lines; the final line is 'plots/review.png'" in out
+
+
+@pytest.mark.parametrize(
+    ("draft", "missing"),
+    [
+        ("The fit table lists conditional centres and widths.", 2),
+        ("The cold fitted centre is higher in field, but window-sensitive.", 1),
+        ("The cold feature is broader, with a model-mismatch caveat.", 1),
+        ("The broader-window fit is not a stable centre comparison.", 2),
+        ("The field scan rises at higher fields; its width is uncertain.", 2),
+        ("The cold estimate is higher in field and broader; the shift is conditional.", 0),
+    ],
+)
+def test_audit_requires_the_printed_cross_condition_directions(draft: str, missing: int) -> None:
+    from asymmetry.cli._numbers import unstated
+
+    note = "COMPARE: conditional fitted estimates; this one is broader and higher in field.\n"
+    assert len(unstated(draft, note)) == missing
+    # Alternative windows of one measurement impose no condition-change claim.
+    assert unstated(draft, note.replace("COMPARE:", "STABILITY:")) == []
 
 
 def test_report_provenance_and_coupled_fits_are_required(

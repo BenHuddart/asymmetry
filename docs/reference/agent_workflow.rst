@@ -1242,7 +1242,10 @@ that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
 by a "Still unfitted:" line naming the surveyed measurements no fit holds yet.
 A clean audit prints the passed draft between ``----- BEGIN -----`` and
 ``----- END -----`` lines for the reply to copy whole, since agents that retype
-it add unaudited text; a report listing only numbers ends by asking for
+it add unaudited text. A ``COPY CHECK`` after the markers gives the report's
+line count and final line, so copying can be checked through the last file-list
+entry. The cue is outside the report and must not be included in the reply.
+A report listing only numbers ends by asking for
 another audit before replying. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions ("which
 would be a field of about 21 G", "corresponds to roughly 16 G"),
@@ -1252,6 +1255,14 @@ forbids. It also lists a law's vocabulary ("critical slowing",
 logged session printed ``LAW NOT ESTABLISHED``, and a run with a correlation
 spectrum but no plain
 transform in the same work directory, whose two lines the summary needs.
+
+Printed cross-condition ``COMPARE`` notes also require field-centre and
+width directions in prose. Conditional estimates retain their window and
+background limitations; listing numbers or describing a wider fit window
+does not state which feature is broader. ``STABILITY`` notes for alternative
+fits of the same runs do not impose a cross-condition claim. These are
+omission checks; the analyst still checks each direction against the two
+labelled estimates.
 
 It holds the reply, quoting the printed line back, when a command asked the
 summary to say something the draft leaves out: that ``A_bg`` was held at 0

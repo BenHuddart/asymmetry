@@ -115,6 +115,9 @@ these obligations through the final reply, including after image review:
   audited text once, without merging it with an earlier draft or recap.
   Complete file-list cleanup before that final audit too. Use plain paths,
   one per line, in Files; decorative path formatting adds copying errors.
+  Before sending, use the audit's COPY CHECK to verify the report's final line
+  is still present. Copy the file list through that line, then stop; the copy
+  cue itself is outside the report and is not part of the reply.
 
 ## 1. What this does, and what it does not
 
@@ -841,6 +844,12 @@ comparison's two scan names beside its conclusion.
 `COMPARE` also labels conditional fitted estimates when flanks are incomplete:
 retain the direction of those estimates with their window/background caveat,
 without calling either feature a resolved line or a measured physical shift.
+Different widths need windows that cover each feature's flanks, rather than
+identical absolute field limits. A window-sensitive magnitude and the ordering
+of conditional central estimates are separate statements: report both when
+the tested estimates keep the same ordering. The audit asks for printed
+cross-condition directions explicitly; a table or a stability caveat alone
+does not supply them.
 
 Report the quantities `integral-scan` actually emits — the resonance field,
 width, amplitude, uncertainties and fit quality. A field can *constrain* a
