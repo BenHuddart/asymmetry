@@ -745,6 +745,10 @@ windows to test stability, and report unresolved values honestly if these
 checks still fail. A curved powder-like trough can pin a width under a Linear
 baseline; widening a still-linear window alone does not test that problem.
 Compare both bounds and baseline shape before abandoning a broad feature.
+A centre at a search bound also requires recovery, even with modest chi-squared:
+inspect the full scan, widen or shift the window around the observed feature
+to include both flanks, and revisit seeds and local baselines. A fit to an edge
+does not establish absence of a line. Retain only stable, non-bound centres.
 
 Two-width flank coverage checks the outer baseline; failing it does not prove
 that a fitted centre is unconstrained. Compare nearby windows and backgrounds.
@@ -762,6 +766,8 @@ Compare field and width where both are determined, and presence/absence of the
 narrow component where they are not. Explain why local fits were necessary:
 a whole scan can contain a rising or stepped baseline that one polynomial
 cannot describe, even when a local Linear or Cubic background is adequate.
+Defining the local polynomial is not this explanation: state the limitation
+of the whole-range background when the CLI identifies it.
 
 - **Several resonances**: sum the components (`LorentzianLCR + LorentzianLCR +
   Cubic`); each is seeded on its own dip. `--xmin`/`--xmax` fit a window of a

@@ -486,6 +486,22 @@ def test_a_printed_request_the_draft_leaves_out_is_quoted_back(
     assert unstated(stated, log) == []
 
 
+@pytest.mark.parametrize(
+    ("draft", "explained"),
+    [
+        ("The polynomial describes the local non-resonant field dependence.", False),
+        ("The whole-scan recovery fit failed; local cubic fits describe the dips.", False),
+        ("A single polynomial cannot follow the stepped background across the scan.", True),
+        ("The background is not described by one cubic over the full range.", True),
+        ("The background rises or steps where no polynomial can follow.", True),
+    ],
+)
+def test_background_explanation_requires_a_limitation(draft: str, explained: bool) -> None:
+    from asymmetry.cli._numbers import unstated
+
+    assert (unstated(draft, _BACKGROUND_NOTE) == []) is explained
+
+
 def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     workdir = tmp_path / "asymmetry-work"

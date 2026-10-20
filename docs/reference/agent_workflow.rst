@@ -1773,6 +1773,12 @@ internal field. Calibration sensor drift is not automatically a sample scan.
 Broad local ALC troughs also require baseline checks: compare local Linear and
 Cubic backgrounds, bounds and adjacent windows before abandoning a bound-pinned
 width. A polynomial need not describe a whole scan containing a baseline step.
+A centre at a search bound prompts the same investigation even with modest
+chi-squared: inspect the full scan, widen or shift the window to include both
+flanks, and compare seeds and local backgrounds before concluding no line is
+resolved. The CLI prints ``BOUND-LIMITED CENTRE`` for this case. The summary
+audit requires an explanation of a reported whole-range background limitation;
+merely defining a local polynomial does not explain that limitation.
 
 
 The skill

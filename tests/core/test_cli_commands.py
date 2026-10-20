@@ -3394,6 +3394,12 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
     (bare,) = _poor_fit_note(fit | {"next_dip_windows": windows[:1]})
     assert "does not erase a determined fitted centre" in bare
     assert _poor_fit_note(fit | {"reduced_chi_squared": 1.2, "next_dip_windows": []}) == []
+    (bound,) = _poor_fit_note(
+        fit | {"params_at_bound": ["B0"], "reduced_chi_squared": 1.2, "next_dip_windows": []}
+    )
+    assert "BOUND-LIMITED CENTRE: B0" in bound
+    assert "widen or shift nearby windows" in bound
+    assert "both flanks" in bound
     # A line whose flank runs off the fitted range may be a step, not a dip.
     (edge,) = _poor_fit_note(
         fit

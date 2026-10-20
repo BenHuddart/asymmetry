@@ -497,3 +497,28 @@ general bound-centre window-recovery advice and a genuine background-limitation
 audit check, focused tests/fast/docs, commit, then two targeted fresh cases.
 No full24 gate yet. Host has 19 GiB available, zero swap use/PSI and 9 GiB free
 in /tmp. Standard validation retains the four documented GUI sizing failures.
+
+## Round five
+
+General CLI and skill repairs: a centre at a search bound now prints an explicit
+window-recovery sequence even when chi-squared is modest (inspect full scan,
+shift/widen around the feature, include both flanks, compare baselines/seeds).
+The existing background-explanation audit now requires a limitation rather
+than accepting a sentence that merely defines a local polynomial. Regression
+cases cover that false positive and legitimate alternative explanations.
+Skill and owning Sphinx page explain both behaviors; no rubric or runner edits.
+Focused checks: 296 passed in 7.05 s. An initial edit placed the centre note in
+the wrong helper; focused failures caught it, the note was moved into
+_poor_fit_note and the complete focused pair passed. Full lint, structural and
+skill validation pass; docs built with 85 existing warnings. Fast tier is in
+progress with two workers; do not launch an eval until it finishes. No repeat
+of the task's completed standard gate for this small CLI-output/audit repair;
+its four existing GUI sizing failures remain unresolved and explicitly recorded.
+
+Round-five fast tier completed: 5,902 passed, 10 skipped and one xfailed in
+104.21 s with two workers. Focused, fast, lint, structural, skill and docs checks
+are complete; no new failures. Standard validation remains the round-three
+record with four known GUI sizing failures. Commit this improvement round,
+then launch fresh corannulene-alc and benzene-alc cases using gpt-6-luna and
+fixed rubrics/two-turn review. Prelaunch memory 18 GiB available, zero swap
+use/PSI; /tmp has 8.9 GiB free. No evaluations overlapped the tests.

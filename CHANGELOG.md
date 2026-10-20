@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Bound-pinned resonance centres prompt window recovery** even when the fit
+  has modest chi-squared. The report audit distinguishes a whole-background
+  limitation from a definition of a local polynomial.
 - **Trend diagnostics follow the measured parameter.** Nuisance bounds and
   large errors no longer hide precise amplitudes or widths from summaries and
   plots. Cold endpoint differences include combined errors; fitted linear

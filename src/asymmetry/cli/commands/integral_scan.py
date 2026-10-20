@@ -700,6 +700,18 @@ def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
     if not lines:
         return []
     notes = []
+    pinned_centres = [name for name in lines if name in fit["params_at_bound"]]
+    if pinned_centres:
+        notes.append(
+            "BOUND-LIMITED CENTRE: "
+            + ", ".join(pinned_centres)
+            + " reached a search boundary. Even a modest chi2_red does not establish "
+            "absence of a resonance: a narrow window can fit an edge instead of the dip. "
+            "Inspect the full scan plot, widen or shift nearby windows to include both "
+            "flanks of the observed feature, and compare local baseline models. Revisit "
+            "centre bounds and seeds with those windows before abandoning the feature; "
+            "report a centre only if it becomes non-bound and stable."
+        )
     low, high = fit["x_range"]
     # Only a chosen --xmin/--xmax window can cut a line's flank off; a whole
     # scan narrower than its line just leaves the width unmeasured.
