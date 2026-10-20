@@ -374,3 +374,17 @@ skill frozen until all finish; score completed final replies while others run.
 Next: score in docs/plans/luna6-corpus-round3.json, investigate failures, make
 and commit the next general improvement round before another wave. A fresh
 all-24 gate still follows only after targeted failures pass; do not pool passes.
+
+First round-three report scored: corannulene improves from 5/10 to 8/10 Musts,
+with exact-copy and boundary pass. Local Cubic backgrounds recover the cold
+15401.6 G centre/1137.8 G width, and the report now gives logged ALC temperatures
+and conditional thermal-motion averaging of anisotropic hyperfine interactions.
+Remaining gaps: no explicit absence of a narrow cold 7 kG line (it instead
+emphasizes an unconstrained broad trough), and no explicit explanation that one
+polynomial cannot describe the whole-scan background. General next-round work
+should distinguish broad baseline curvature/undetermined width from a measured
+narrow resonance, and make local-versus-whole-background limitations visible.
+Hot fits quote real but unscaled errors despite printed scaled alternatives;
+recorded as a limitation. Source remains frozen; Basics, TRSB and maleic acid
+are live, with benzene ALC and LiFeAs pending. One wave/three model processes,
+20 GiB available, no swap or PSI pressure. Score completed final replies only.
