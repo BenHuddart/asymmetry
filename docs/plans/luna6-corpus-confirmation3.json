@@ -130,7 +130,7 @@
     },
     "authorization": "User requested one repair round and rerun, plus investigation of increased concurrency. Finish and score this full fresh gate, then pause; no unrestricted improvement loop."
   },
-  "status": "running; 7/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 8/24 scored; source frozen; finish all cases despite earlier failures",
   "scoring_policy": "Actual summary.md final replies only, against unchanged staged rubrics and tools/agent_eval/scoring_brief.md; manual Must/Should, number/units, boundary, exact-copy and independent physics-scope checks. Exclude audits/draft/log-report displays from numerical provenance; stored direct CLI outputs are valid. Preserve first attempts and do not pool historical passes.",
   "cases": {
     "plateau-redfield": {
@@ -1033,10 +1033,179 @@
         "summary.md": "89cb2b34de10fcce7e4effa8398ef730204bbf091595b7323bd7700ccad984f3",
         "image-inputs.json": "e14180d3990147cf947b3ef22eb2b41c60cb951f2597b3441c459ea04c8724c2"
       }
+    },
+    "ferromagnetic-nickel": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Names the three field regimes (ZF, TF 100 G, LF) and their run-number ranges.",
+          "pass": true,
+          "evidence": "Names ZF124218–124248,100G TF124249–124269,and200K provisional LF124270–124278,with124220 zero-field endpoint/repeated4000G coadd explicitly shared across campaigns."
+        },
+        {
+          "requirement": "Identifies the paramagnetic 100 G runs as measured calibration candidates (or states that none exist) and says which run alpha came from.",
+          "pass": true,
+          "evidence": "Paramagnetic100G Larmor candidates identified; alpha measured from124251 at376K:raw1.9723,deadtime-corrected/applied1.9787,default Group1/Group2 pair."
+        },
+        {
+          "requirement": "Reports a damped/precessing oscillation present in the ZF spectra at the lower temperatures scanned.",
+          "pass": true,
+          "evidence": "Reports spontaneous ZF line16.3MHz at150K,15.1 at200K and resolved damped ordered-side oscillations; actual100K endpoint is unresolved/collapsed rather than taken as absence of order."
+        },
+        {
+          "requirement": "Reports that the oscillation is lost or heavily damped at the highest temperatures in the scan.",
+          "pass": true,
+          "evidence": "Explicit actual380K ZF endpoint is a weak smooth decay with no oscillation; line present354K and unresolved356K,with higher-temperature flagged spectra not treated as ordered precession."
+        },
+        {
+          "requirement": "Reports the oscillation frequency falling as temperature rises towards the top of the scanned range.",
+          "pass": true,
+          "evidence": "Survey/fitted ZF frequencies fall on warming:9.41902±0.00382MHz at320K,6.95951±0.00165 at340K,and3.82606±0.00177 at354K."
+        },
+        {
+          "requirement": "Contains no transition temperature, frequency, or rate number that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All quoted rates/frequencies/transition-law parameters match direct CLI outputs. OrderParameter Tc357.922398±0.440431K andbeta0.392120±0.015748 come from command41 withalpha1 andchi2_red906.500,explicitly rough; no unsupported bulk transition value."
+        },
+        {
+          "requirement": "Does not present the worksheet's textbook Tc (~630 K) as an experimental finding of this dataset.",
+          "pass": true,
+          "evidence": "Does not quote worksheet bulkTc630K as measured; only session-fit parameter and observed line-loss interval are discussed."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Flags that the fine-step region clusters around a much lower apparent transition than bulk nickel's literature Tc, as something to check against the sample rather than reconcile silently.",
+          "pass": false,
+          "evidence": "Does not explicitly flag the apparent transition as much lower than bulk nickel literatureTc or suggest checking the sample against that discrepancy."
+        },
+        {
+          "requirement": "Treats the 200 K field-sweep LF runs as a separate exercise (e.g. decoupling / internal-field estimate) from the T-scans.",
+          "pass": true,
+          "evidence": "Treats200K field scan as separate provisional longitudinal decoupling exercise; reports recovered amplitude/falling rate and conditional Redfield parameters,with geometry ambiguity explicit."
+        },
+        {
+          "requirement": "Raises the critical-exponent framing (beta, gamma, w) as a possible follow-on without inventing exponent values.",
+          "pass": true,
+          "evidence": "Reports a CLI-fitted beta/error from an OrderParameter comparison and explicitly says chi2_red906.500 does not establish a precise exponent; warm-side critical-law fit is declined rather than inventing gamma/w values."
+        },
+        {
+          "requirement": "Suggests an additional relaxation or background term for fitting the ordered-state spectra.",
+          "pass": true,
+          "evidence": "Ordered-side model includes oscillatory Gaussian plus a separate exponential relaxing component and Constant; alternatives and nuisance degeneracy are explained."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Verified actual survey/calibration, ordered-ZF and TF trend/error tables, warm/cold relaxation branches, field-scan table and repeated4000G fit. Command30 prints D2.108693±0.077539MHz,nu89.320703±9.291963MHz,m2;41 prints actualTc/beta/scaled errors. Command39 table gives every quoted ordered-line row. Numeric/unit checkers return no flags. The TF124250 envelope statement in ZF prose is an attribution defect, not a newly generated number; recorded separately.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Musts and literal copy pass. Bulk-nickel discrepancy remains a Should gap. The final report appropriately qualifies the highly poor OrderParameter fit instead of precision/exponent claims, and separate field-scan Redfield is conditional on LF assignment. Report-quality defects remain: within ZF warm-branch discussion it cites run124250 at378K as an either-envelope case, but that row belongs to the TF branch(command33); the corresponding ZF scan has a different run member. Also the agent inserts its own COPY CHECK sentence into summary.md before the final audit. Actual reply copies that complete audited file exactly, so the unchanged copy guard passes, but this is audit-procedure pollution in the scientific artifact, not clean final-report presentation.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all61 completed commands inspected. All61 completed commands and summary-only file changes inspected; staged skill/help/data/info and project JSON only. No repository implementation/personal skill/hidden corpus/physical arithmetic. Two-turn images complete. Wrong component-name command55 is recovered with the CLI; no approval denials. Final file and actual reply byte-identical including the agent-added COPY CHECK sentence.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1552.3,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 8,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ferromagnetic-nickel/data --series nickel-field-200K --model Redfield --param Lambda --fix m=2 --plot --workdir asymmetry-work-field'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ferromagnetic-nickel/data --series nickel-ZF-order-line --model OrderParameter --param frequency --exclude 124228-124231 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ferromagnetic-nickel/data --series nickel-ZF-order-line --model OrderParameter --param frequency --exclude 124228-124231 --fix alpha=1 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ferromagnetic-nickel/data --series nickel-ZF-order-line --model OrderParameter --param frequency --exclude 124223 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ferromagnetic-nickel/data --series nickel-ZF-order-line --model OrderParameter --param frequency --exclude 124223 --fix alpha=1 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry recipe /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ferromagnetic-nickel/data --run 124233 --name nickel-overhauser-check --expression \"OverhauserCutoffPowder + Exponential + Constant\"'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "355b4ec108826b61c44936a92bb28f55b31b771e7c91879508bd0e1ca3c37bf4",
+      "audited_file_sha256": "355b4ec108826b61c44936a92bb28f55b31b771e7c91879508bd0e1ca3c37bf4",
+      "rubric_sha256": "8fdb04d7a4f7906dd74d19161f80e7983e02e98ef10344ae70273a54ba1dc0b9",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ferromagnetic-nickel",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Apparent magnetic transition is far below bulk nickel context but the final never investigates that discrepancy.",
+        "OrderParameter chi2_red906.500 is a poor global model despite fittedTc/beta/errors; no precise critical exponent is established.",
+        "ZF paragraph includes TF run124250 envelope aside, a campaign/observable provenance error outside literal Must scores.",
+        "Provisional LF geometry rests on decoupling-like evidence with internal/applied-line ambiguity at1200G; conditional D/nu are not geometry-independent measurements.",
+        "Own COPY CHECK sentence is present inside the audited summary and reply; byte-copy passes but user-facing report contains implementation/audit text contrary to the skill presentation guidance.",
+        "Ordered-side TF multi-component fits mostly fail; fractions/splitting are withheld. Cold100K unresolved line does not prove nonmagnetism."
+      ],
+      "judgement_calls": [
+        "Should3 passes on a real qualified beta fit and explicit rejection of precision, even though gamma/w follow-on vocabulary is not developed.",
+        "Own COPY CHECK line does not fail unchanged literal audit/copy guard because it is already part of the audited file; presentation violation remains recorded rather than silently ignored."
+      ],
+      "number_evidence_commands": [
+        2,
+        5,
+        6,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        25,
+        26,
+        27,
+        28,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        47,
+        50,
+        51,
+        52,
+        53,
+        58
+      ],
+      "scored_at": "2026-10-20T20:19:26.394169+00:00",
+      "reply_matches_saved_file": true,
+      "raw_artifact_sha256": {
+        "cost.json": "9ed34d959dd43173bd5169132df60df52523a35e199f83b01f6806ba9c1e76ee",
+        "transcript.jsonl": "59a2569358e7d4e9c2223d49ebb783aa48cc76a7827607114d882e60d3e93e6f",
+        "commands.txt": "1ffb7182add1536a5e0bb97964ccf9b09eebe865e383de910beda2dea1a918d9",
+        "summary.md": "355b4ec108826b61c44936a92bb28f55b31b771e7c91879508bd0e1ca3c37bf4",
+        "image-inputs.json": "c598ac388fcc4a8584b53d157abee70a86a9b1bb1e35b621d06e26bbfb47941d"
+      }
     }
   },
   "pending_cases": [
-    "ferromagnetic-nickel",
     "copper-diffusion",
     "molecular-antiferromagnet",
     "spin-peierls",
@@ -1055,17 +1224,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 7,
+    "scored": 8,
     "target": 24,
-    "scientific_pass": 5,
-    "must_pass": 32,
-    "must_total": 36,
-    "should_pass": 10,
-    "should_total": 25,
-    "exact_copy_pass": 7,
-    "literal_copy_pass": 7,
-    "combined_pass": 5,
-    "boundary_pass": 7
+    "scientific_pass": 6,
+    "must_pass": 39,
+    "must_total": 43,
+    "should_pass": 13,
+    "should_total": 29,
+    "exact_copy_pass": 8,
+    "literal_copy_pass": 8,
+    "combined_pass": 6,
+    "boundary_pass": 8
   },
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."
