@@ -767,3 +767,9 @@ repair: simpler report/file-list formatting, rather than further scientific
 restrictions. Keep exact final reply as evidence, never replace with audited file.
 Seventeen cases remain; one wave/three models, no tests, 15 GiB available,
 zero swap/PSI and 5.8 GiB scratch free. CLI/skill remain frozen through wave end.
+
+Molecular antiferromagnet also scored: 5/5 Musts, exact-copy/boundary pass.
+Failed multi-oscillation fits are withheld; independent survey/FFT line evidence
+and multi-frequency check satisfy the literal requirements without invented TN.
+Partial full24 now 43/43 Musts, 8/8 scientific/boundary, 7/8 exact-copy/combined.
+Sixteen remain. Keep the full gate running/frozen despite nickel's copy failure.

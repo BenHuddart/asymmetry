@@ -662,16 +662,89 @@
       "boundary_pass": true,
       "boundary_check": "PASS: complete command inventory uses staged project skill, supplied data and installed CLI/products only; no personal skill/source/network/ad hoc numerical scripts.",
       "permission_denials": 0
+    },
+    "molecular-antiferromagnet": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies 17104 as the TF 20 G calibration run and states alpha was determined from it.",
+          "pass": true,
+          "evidence": "17104 separate 20 G TF calibration, measured alpha1.2584 raw/1.2594 corrected explicitly."
+        },
+        {
+          "requirement": "Treats 17094-17103 as the ZF temperature sweep used for the ordering analysis, separate from the calibration run.",
+          "pass": true,
+          "evidence": "17094\u201317103 separate ZF ordering temperature scan, logged temperature used."
+        },
+        {
+          "requirement": "Reports oscillation(s) present in the low-temperature ZF spectra that become more relaxed/damped as temperature rises through the sweep.",
+          "pass": true,
+          "evidence": "Cold ZF oscillations/line become damped and disappear between logged4.90 and5.88 K; warm trace nonoscillatory."
+        },
+        {
+          "requirement": "Comments on whether more than one oscillation frequency is present (the worksheet flags this as something to check for), rather than assuming a single frequency without looking.",
+          "pass": true,
+          "evidence": "Explicit checks multiple frequencies: cold FFT detects1.555182 and2.543548 MHz; later1.096818 MHz line, warm no detected peaks. Failed three-component fits not promoted to physical sites."
+        },
+        {
+          "requirement": "Contains no frequency, TN, or relaxation-rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Survey/FFT frequencies and warm rates trace to actual CLI outputs; no invented TN from failed OrderParameter law."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes the \"Cryostat Temperature\" vs \"Sample Temperature\" columns logged for these runs are identical in the worksheet table, and does not imply a discrepancy that isn't there.",
+          "pass": false,
+          "evidence": "Does not discuss identical worksheet cryostat/sample columns; uses actual logged values without a false large discrepancy claim."
+        },
+        {
+          "requirement": "Discusses whether it fit from low to high temperature or vice versa, and why (the worksheet explicitly raises this as a design choice).",
+          "pass": false,
+          "evidence": "Temperature ordering and coldest screened run identified, but no explicit fit-direction rationale."
+        },
+        {
+          "requirement": "Chooses a relaxing-oscillation function appropriate to magnetic order (e.g. damped cosine terms) rather than a generic unstructured relaxation function.",
+          "pass": true,
+          "evidence": "Three damped oscillations plus exponential/constant for ordered side; warm relaxation separate. Failed fit parameters withheld."
+        }
+      ],
+      "number_rule": "PASS: actual scientific CLI commands support survey1.55932\u21921.07428 MHz and FFT1.555182/2.543548 cold versus1.096818 MHz warmer, resolution0.257202 MHz. Failed OrderParameter values not quoted as measurements. Numeric check excludes audits/draft displays.",
+      "root_cause": "All literal Musts/copy/boundary pass despite failed oscillatory fit series. Independent survey/FFT evidence establishes cold precession, multiple-frequency check and warming line loss; warm KT values mostly poor and qualified, no precise TN or site assignment. Better ordered-state model remains a scientific limitation.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 297.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/molecular-antiferromagnet/data --series zf-temperature --model OrderParameter --param frequency_1'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "7a9353f754548231bf9b06357c6e607131028d7dcb90004722c55ac93d358d2a",
+      "rubric_sha256": "a6dcbd9c0ae82a5ff22433c944584a709ccf430256a594c0acee0073d8b540b7",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/molecular-antiferromagnet",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: completed commands use staged skill, supplied data and installed CLI/products only; no host skill/source/network/ad hoc numerical scripting.",
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 7,
-    "scientific_pass": 7,
-    "must_pass": 38,
-    "must_total": 38,
-    "exact_copy_pass": 6,
-    "combined_pass": 6,
-    "boundary_pass": 7
+    "scored": 8,
+    "scientific_pass": 8,
+    "must_pass": 43,
+    "must_total": 43,
+    "exact_copy_pass": 7,
+    "combined_pass": 7,
+    "boundary_pass": 8
   },
   "gate_caveat": "Fresh full24 gate ongoing. First exact-copy failure on nickel prevents a full combined pass; complete/score remaining cases before changing frozen source."
 }
