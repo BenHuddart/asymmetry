@@ -1608,16 +1608,324 @@
       "boundary_pass": true,
       "boundary_check": "PASS: complete command inventory uses staged skill/references, supplied files and installed CLI/products only; no host skill/source/network/ad hoc numerical scripts. Text reads of stored CLI logs/JSON retain provenance.",
       "permission_denials": 0
+    },
+    "benzene-rf": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies one longitudinal-field RF-resonance field scan of 37 runs at 293 K, two periods per run, with the 218 MHz RF from the notes, and says that run order is not field order.",
+          "pass": true,
+          "evidence": "37 two-period runs56426\u201356462,293 K,218 MHz notes,interleaved field ordering and LF RF context explicitly identified."
+        },
+        {
+          "requirement": "States that no run in the folder can calibrate alpha and that alpha was assumed to be 1.0; states the deadtime treatment.",
+          "pass": true,
+          "evidence": "No measurable alpha candidate,assumed1.0; file deadtime applied with grouping/t0 provenance."
+        },
+        {
+          "requirement": "Runs `integral-scan` with `--period green-red` and describes two resonance peaks in the difference, both between about 0.74 and 0.90 kG, on a flat baseline outside them.",
+          "pass": true,
+          "evidence": "Actual integral-scan --period green-red; two positive resonances772.856/865.609 G with constant BG0.001472 and full560\u20131080 G plot, flat outer baseline visible."
+        },
+        {
+          "requirement": "Fits `RFResonanceMuP` with `nu_RF` held at 218 MHz and reports A_\u03bc between 510 and 520 MHz and A_p between 115 and 135 MHz, each with its uncertainty, and the fit's \u03c7\u00b2\u1d63.",
+          "pass": true,
+          "evidence": "RFResonanceMuP --fix nu_RF=218 gives A_mu514.764317 \u00b10.034846 MHz,A_p124.252414 \u00b11.382187 MHz,chi2_red1.351821,no bound parameters."
+        },
+        {
+          "requirement": "Contains no A_\u03bc, A_p or resonance field that was not produced by a tool call in this session: no couplings from the mean and difference of two fields by a formula, and the published couplings are background.",
+          "pass": true,
+          "evidence": "Couplings and transition fields come directly from physical CLI model output, no mean/difference arithmetic."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Also fits the worksheet's model, two Lorentzians on a constant, seeded near the two peaks, and reports the two fitted centres; notes the fit agrees in quality with `RFResonanceMuP`.",
+          "pass": false,
+          "evidence": "No independent two-Lorentzian constant-baseline comparison or centres."
+        },
+        {
+          "requirement": "Says `RFResonanceMuP` is the exact-diagonalisation model and that the analytic high-field approximation the worksheet compares against is not available in the CLI (or was not run).",
+          "pass": false,
+          "evidence": "Exact-diagonalisation nature and unavailable high-field analytic approximation not explained."
+        },
+        {
+          "requirement": "Says which period is RF-on and on what evidence (the sign of the green \u2212 red peaks, or an assumption stated as such).",
+          "pass": true,
+          "evidence": "Green RF-off/red RF-on identified conditionally from positive contrast and depolarising RF context."
+        },
+        {
+          "requirement": "Compares A_\u03bc and A_p with the published or worksheet values in words, attributing them.",
+          "pass": false,
+          "evidence": "No attributed worksheet/published-coupling comparison."
+        },
+        {
+          "requirement": "Points to the stored scan JSON and PNG.",
+          "pass": true,
+          "evidence": "Stored scan JSON and PNG explicitly named."
+        }
+      ],
+      "number_rule": "PASS: actual RFResonanceMuP output supports couplings514.764317 \u00b10.034846/124.252414 \u00b11.382187 MHz and resonance fields865.609/772.856 G with chi2_red1.351821. Number check excludes audits/draft displays and returns no unverified numbers; no hand coupling conversion.",
+      "root_cause": "All Musts/copy/boundary pass. Correct LF period contrast and physical RF model despite unknown survey geometry; alpha assumption remains conditional. Missing analytic-model explanation/empirical Lorentzian comparison are Should gaps.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 195.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'ls /tmp/asymmetry-luna6-improvements/confirmation1/benzene-rf/data | head; asymmetry info /tmp/asymmetry-luna6-improvements/confirmation1/benzene-rf/data/MUT0056445.nxs'",
+          "exit_code": 2
+        }
+      ],
+      "summary_sha256": "8f2b0ff71a838abc1e944a57c635bd7c83fd0dd79c5dcf03bdc9c68d2ac2c7f7",
+      "rubric_sha256": "29bc5fab99a3ca1088aaea71742bda2503e7ad7b974b2d66a2342c99e8c26ce2",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/benzene-rf",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged skill/references,supplied data and installed CLI/products only; no host skill/source/network/ad hoc numerical scripts. Stored CLI JSON/text reads preserve provenance.",
+      "permission_denials": 0
+    },
+    "benzene-high-tf": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the two sets: 3678\u20133682 as repeats at one condition for co-adding, and 1808\u20131813 as a field scan at fixed temperature. It does not report a temperature dependence between 294 K and 300 K.",
+          "pass": true,
+          "evidence": "Five3000 G300 K repeats3678\u20133682 co-added separately from six294 K field-scan runs1808\u20131813; explicitly no temperature dependence."
+        },
+        {
+          "requirement": "Co-adds 3678\u20133682 (`reduce --coadd`) and Fourier transforms the sum, calling it an FFT (not MaxEnt) and giving its resolution and window.",
+          "pass": true,
+          "evidence": "Actual reduce --coadd and plain Fourier on3678 with window none,full record,resolution0.127821 MHz; FFT distinguished from MaxEnt."
+        },
+        {
+          "requirement": "Reports, from the peak table of the co-added spectrum, the diamagnetic line near the 3000 G Larmor frequency (40\u201341.5 MHz) and the two radical lines, one between 208 and 210 MHz and one between 305 and 307 MHz.",
+          "pass": true,
+          "evidence": "Co-add peak table explicitly reports diamagnetic40.675980 MHz and radical pairs208.550638/208.729044 and305.521214/305.706334 MHz."
+        },
+        {
+          "requirement": "Reports A_\u03bc from the correlation spectrum (`fourier --correlation` on the co-add), with a peak between 510 and 518 MHz, and says in words that it is the sum of the two radical frequencies \u2014 not as a hand-added number.",
+          "pass": true,
+          "evidence": "Actual co-add fourier --correlation yields514.080755/514.446927 MHz, explicitly described as radical-line-pair sum, not hand addition."
+        },
+        {
+          "requirement": "Does not assign the strong line near 50.6 MHz to a muon species (it is neither the Larmor line nor a member of the radical pair).",
+          "pass": true,
+          "evidence": "50.630727 MHz line explicitly unassigned, not claimed as muon species or radical member."
+        },
+        {
+          "requirement": "Contains no A_\u03bc, frequency sum, splitting or proton coupling that was not produced by a tool call in this session (the worksheet's ~41, ~209, ~306 and ~500 MHz are background).",
+          "pass": true,
+          "evidence": "Quoted coupling/line coordinates are actual co-add CLI tables; no arithmetic splitting/proton coupling reported."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the radical lines and the correlation peak each appear as two close components (a small splitting of the hyperfine peak), quoting the printed values, saying the separation is only a few FFT resolution elements, and either offers a qualitative reason or says it was not established.",
+          "pass": false,
+          "evidence": "Close radical components and two correlation rows printed, but resolution comparison for correlation splitting and qualitative reason/not-established statement incomplete."
+        },
+        {
+          "requirement": "Transforms the 1808\u20131813 field scan and reports what changes as the field falls: the correlation spectrum still peaks near A_\u03bc at the higher fields and finds nothing convincing at the lowest; single-run radical lines are at most visual candidates at this statistics.",
+          "pass": false,
+          "evidence": "All field-scan plain FFTs run, but no corresponding correlation transforms/trend reported across fields."
+        },
+        {
+          "requirement": "Subtracts the pre-t0 background (`--background range`, a continuous source) and says so; states the alpha treatment (assumed 1.0, a named run from the other campaign, or a run of the set itself \u2014 each with its caveat).",
+          "pass": true,
+          "evidence": "Background range and alpha1813 from other scan campaign explicitly carried to co-add, corrected0.7588 versus raw0.8139 distinguished."
+        },
+        {
+          "requirement": "Identifies the ~50.6 MHz line (and the weaker ~101 MHz feature on the PNG) as instrumental, e.g. the cyclotron RF and its harmonic.",
+          "pass": false,
+          "evidence": "50.6 MHz remains unassigned; cyclotron RF/harmonic interpretation not supplied."
+        },
+        {
+          "requirement": "Says the four-detector views and the worksheet's \"average correlation\" are not done: the CLI transforms one forward/backward pair.",
+          "pass": false,
+          "evidence": "General multigroup limitation mentioned, but four-detector/average-correlation operation not explicitly accounted for."
+        },
+        {
+          "requirement": "Names the spectrum JSON/NPZ/PNG products for the co-add and its correlation spectrum.",
+          "pass": false,
+          "evidence": "Workdirs and plain FFT plots named, but no explicit co-add/correlation JSON/NPZ/PNG product names."
+        }
+      ],
+      "number_rule": "PASS: actual scientific CLI outputs support co-add diamagnetic/radical lines and direct correlation514.080755/514.446927 MHz with resolution0.127821 MHz. Number check excludes audits/draft displays and returns no unverified numbers; no manual frequency sum.",
+      "root_cause": "All Musts/copy/boundary pass. Correct campaign split and co-add provenance; hyperfine is explicitly radical-frequency sum. Poor time-domain MuoniumTF fits remain conditional; integral TF amplitudes correctly not promoted to an LF recovery curve. Instrumental-line attribution and field-dependent correlation analysis remain incomplete Shoulds.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 739.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 6,
+      "trend_laws": [],
+      "command_failures": [],
+      "summary_sha256": "d204473a50ab7ea644ee55abedcbb70888bb1ad3ad4adb7f8fb4d36278141026",
+      "rubric_sha256": "c080ca4eab2cbf81923ef269333af30e22043457aff88cce14dd7720f3fe7d24",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/benzene-high-tf",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged skill/references,supplied data and installed CLI/products only; no host skill/source/network/ad hoc numerical scripts. Stored CLI JSON/text reads preserve provenance.",
+      "permission_denials": 0
+    },
+    "basics": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Treats the folder as several separate calibration exercises. It names at least the Ag TF field scan, the quartz range curve, the quartz low-field muonium scan and the steering scan, and analyses them separately. It does not present the survey's 24-run 100 G \"temperature scan\" or its 2-run ZF one as a temperature dependence.",
+          "pass": true,
+          "evidence": "Separate Ag TF field,quartz foils,quartz few-G muonium and note-current steering analyses; mixed100 G/ZF groups not claimed as temperature trends."
+        },
+        {
+          "requirement": "Keeps the EMU and MUSR runs 44989\u201344997 apart and says which set is which (EMU: haematite on Ag at 100 G, the steering scan; MUSR: Ag calibration). It does not read the MUSR runs' ~0.29 MHz line as spontaneous order in Ag: the header says 0 G, but the line comes from an unrecorded weak transverse field.",
+          "pass": true,
+          "evidence": "Instrument-scoped EMU haematite steering and MUSR Ag reference kept separate; MUSR0.28 MHz interpreted as unrecorded weak TF, not spontaneous order."
+        },
+        {
+          "requirement": "Quotes no logged 943 K, ~640 K or ~550 K reading as a sample temperature. It says these logged values are faulty or irrelevant to these room-temperature calibrations, and claims no temperature trend.",
+          "pass": true,
+          "evidence": "Implausible640/550 K and foil logged anomalies rejected or treated as irrelevant; no MUSR temperature trend, no physical thermal transition claim."
+        },
+        {
+          "requirement": "Steering: fits the Ag-mask asymmetry against the current taken from the run notes, and reports it smallest near zero current (between \u22120.25 and +0.25 A), rising on both sides.",
+          "pass": true,
+          "evidence": "Note-current fit reports A1 minimum5.29286 \u00b10.149358% at zero, larger on both sides."
+        },
+        {
+          "requirement": "Range curve: reports the 100 G diamagnetic amplitude as small and roughly flat for thin stacks, then rising steeply and saturating for the thickest. It names, from its own fits, the foil count (as the run notes give it) where saturation begins \u2014 about 12\u201314 foils (a range such as \"13\u201315\" counts).",
+          "pass": true,
+          "evidence": "Actual note foil counts0/4/6/8/9/9/10\u201315; A1 low through6,rises6\u201313,explicit leveling13\u201315."
+        },
+        {
+          "requirement": "Quartz scan: identifies the few-gauss lines as muonium (a line far faster per gauss than the bare muon's \u2014 the ratio itself need not be quoted). It reports the muonium amplitude falling as the frequency rises, and the line lost at the top fields, and presents the amplitude fall as the instrument's frequency-response limit (attributing the line's loss at the top fields to it too is a Should).",
+          "pass": true,
+          "evidence": "Few-G faster line identified as muonium; amplitude4.60035\u21921.72009% as frequency1.29972\u21927.56968 MHz attributed to instrumental response; line not detected8.5\u20139 G."
+        },
+        {
+          "requirement": "Ag field scan: reports the fitted frequency tracking the applied field. It also reports the fitted phase against field. On the file's t0 the phase drifts steadily with field (a t0 offset), so calling it field-independent without a t0 test is a fail.",
+          "pass": true,
+          "evidence": "Fitted frequency follows field,explicit field-dependent phase offset identified and actual-2-bin timing correction tested; does not falsely call file-t0 phase flat. Final omits detailed phase gradient values."
+        },
+        {
+          "requirement": "States which run supplied alpha for each exercise it fits. It does not carry one alpha across the survey's ALPHA STEPs.",
+          "pass": true,
+          "evidence": "Exercise alpha source runs named;18864 has separate alpha1.0671, MUSR assumption1.0 explicit; no across-step pooled calibration."
+        },
+        {
+          "requirement": "Contains no t0 correction, stopping density (mg/cm\u00b2), steering centre, upper frequency, field offset or alpha that was not produced by a tool call in this session. The worksheet's Ti density and foil thickness are background.",
+          "pass": true,
+          "evidence": "All alpha,timing corrections,line limits and note-current/foil coordinates from actual CLI output; no hand field/density conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reads each exercise's pattern the right way round: the steering scan's silver signal is smallest where the beam is centred on the (depolarising) sample; the range curve's step is where the muons stop passing through the degraders into the sample. An inverted reading is a gap even when the Must's pattern is reported.",
+          "pass": false,
+          "evidence": "Correct trend directions but no explicit beam-centering-on-depolariser or stopping-before-quartz interpretation."
+        },
+        {
+          "requirement": "Does not dismiss a relative amplitude trend (the muonium frequency response) on the ground that alpha is uncertain: one alpha scales every amplitude alike.",
+          "pass": true,
+          "evidence": "Relative muonium amplitude fall retained despite calibration uncertainties."
+        },
+        {
+          "requirement": "Deadtime: reduces ZF Ag 34998 with deadtime off and from the file, and describes the early-time sag in asymmetry that the correction removes, with both fits' \u03c7\u00b2\u1d63. Says the 2010 files carry no deadtime values.",
+          "pass": false,
+          "evidence": "No paired deadtime-off/from_file34998 demonstration or early-sag/both-chi2 comparison."
+        },
+        {
+          "requirement": "Measures MUSR alpha on a MUSR Ag run and says why that is legitimate, since the survey lists no MUSR candidate because the header records 0 G. Alternatively, it says plainly that it assumed 1.0.",
+          "pass": true,
+          "evidence": "MUSR alpha assumed1.0 explicitly after biased own-count estimate rejected."
+        },
+        {
+          "requirement": "t0: tests `--t0-offset` (or fits `Linear` to phase against field), reports the shift in bins that flattens the phase, and checks the fitted frequency against the nominal field.",
+          "pass": true,
+          "evidence": "Actual-2-bin Ag t0 test, field-dependent phase offset and field-following frequency reported; final lacks residual phase slope detail."
+        },
+        {
+          "requirement": "Treats 18864 as its own alpha block, or excludes it and says why.",
+          "pass": true,
+          "evidence": "18864 separate own alpha block named."
+        },
+        {
+          "requirement": "Says that turning the saturating foil count into mg/cm\u00b2 needs the foil thickness and Ti density, which the files lack, and does not present that conversion as Asymmetry output.",
+          "pass": false,
+          "evidence": "No mg/cm2 invented, but missing foil-thickness/Ti-density requirement explanation."
+        }
+      ],
+      "number_rule": "PASS: scientific CLI output supports-2-bin Ag/-5-bin quartz timing tests, named alphas, note foil/current values, muonium frequencies/amplitudes and FFT endpoints. Number check excludes audits/draft displays and returns no unverified numbers; no hand field/density calculation.",
+      "root_cause": "All literal Musts/copy/boundary pass. Previously missing foil saturation count and unrecorded MUSR weak-TF interpretation repaired. Report still includes inappropriate failed MuoniumZF/Overhauser screening products for silver; these are not adopted as spontaneous order but do not establish silver physics. Detailed phase-gradient result, deadtime demonstration and physical centering/stopping interpretations remain incomplete.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1721.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 12,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/basics/data --series quartz-foils --model Linear --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/basics/data --series hematite-steering --model Linear --param Lambda --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /tmp/asymmetry-luna6-improvements/confirmation1/basics/data --runs 44989-44997 --alpha 1.0 --deadtime from_file --plot --instrument MUSR'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /tmp/asymmetry-luna6-improvements/confirmation1/basics/data --runs 34998,44999 --recipe wizard-34998 --order sample_temperature_logged --x 44999=295 --start 34998 --name ag-zf-temp-points --plot --instrument EMU'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend ag-field-unresolved-low --workdir asymmetry-work'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend . --series ag-field-unresolved-low --workdir asymmetry-work'",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "8d0b4f7675cfb92edd1ab590434690b53717a50a20236165ef2f853d57eb01d6",
+      "rubric_sha256": "9a7e1671e076193352ce4016016147c30a58b3f8098aef4a5b6383f19d34c8cc",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/basics",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged skill/references,supplied data and installed CLI/products only; no host skill/source/network/ad hoc numerical scripts. Stored CLI JSON/text reads preserve provenance.",
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 18,
-    "scientific_pass": 18,
-    "must_pass": 104,
-    "must_total": 104,
-    "exact_copy_pass": 17,
-    "combined_pass": 17,
-    "boundary_pass": 18
+    "scored": 21,
+    "scientific_pass": 21,
+    "must_pass": 124,
+    "must_total": 124,
+    "exact_copy_pass": 20,
+    "combined_pass": 20,
+    "boundary_pass": 21
   },
   "gate_caveat": "Fresh full24 gate ongoing. First exact-copy failure on nickel prevents a full combined pass; complete/score remaining cases before changing frozen source."
 }

@@ -836,3 +836,18 @@ file-type coverage is a Should gap. Partial full24:104/104 Musts,18/18
 science/boundary,17/18 exact-copy/combined. Six remain; CLI/skill stay frozen,
 whole gate continues despite nickel copy failure. Host14 GiB available,zero
 swap/PSI,4.3 GiB scratch free; one wave/three models,no tests.
+
+Basics,benzene high-TF and RF scored:9/9,6/6,5/5 literal Musts, all
+exact-copy/boundary pass. Basics retains explicit13–15 foil saturation,
+unrecorded MUSR weak TF, instrument-scoped alpha and timing tests; detailed
+phase-gradient result/deadtime exercise and physical steering/stopping meaning
+remain incomplete. Inappropriate silver model screens are not adopted as
+spontaneous order. High-TF co-add explicitly reports radical-frequency sum
+from correlation peaks near514 MHz;50.6 MHz unassigned, not a muon species.
+Field-dependent correlation/instrumental attribution remain Should gaps.
+RF fits correct LF green-minus-red contrast with fixed218 MHz and physical
+couplings514.764317/124.252414 MHz; comparison-model explanation incomplete.
+Partial full24:124/124 Musts,21/21 science/boundary,20/21 exact-copy/combined.
+Three remain; source frozen through whole gate despite nickel copy failure.
+Host13 GiB available,zero swap/PSI,3.7 GiB scratch free; max3 live models,
+no tests or duplicate runs. All raw first attempts retained outside repo.
