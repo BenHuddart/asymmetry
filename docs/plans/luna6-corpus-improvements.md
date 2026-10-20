@@ -1313,3 +1313,16 @@ all111 maleic and20 YMnAl commands inspected,frozen hashes unchanged.
 Totals30/31 Musts,5/6 science,5/6 copy,4/6 combined,6/6 boundary. Continue all24
 without changes or reruns;nickel,cuprate and copper remain live. Resources
 healthy at23 GiB available,no swap/current PSI,653 GiB persistent disk free.
+
+
+Confirmation2 now7/24 scored:nickel science PASS7/7 Musts,number/boundary
+pass,but exact-copy FAIL. Reply appends five hyphens to last plot path
+reduced-124278.png;unified diff otherwise identical. This is a second copy
+failure distinct from PTFE trailing spaces. All60 commands inspected;actual
+OrderParameter and restricted Redfield values/errors verified with strong
+fit-quality/provisional-geometry caveats. Bulk-Tc discrepancy remains missing
+Should. Source/skill/rubric hashes unchanged;raw first attempt preserved.
+Totals37/38 Musts,6/7 science,5/7 copy,4/7 combined,7/7 boundary. Keep all24
+running and score every case;no repair or extra wave authorized. Cuprate,copper
+and molecular antiferromagnet are live at this check;23 GiB RAM available,
+zero swap/current PSI,653 GiB persistent disk free,no broad tests/duplicates.
