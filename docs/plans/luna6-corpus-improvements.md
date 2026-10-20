@@ -1967,3 +1967,6 @@ Confirmation4 now16/24scored: maleicFAIL3/5Musts(no usableMu kineticrate/slope),
 
 
 Confirmation4 now17/24scored: highTc cupratePASS5/5Musts,1/3Shoulds,number/unit/boundarypass;copyfailoneLF. Cross-instrument200/400/150Gcoverageandconditional400GGaussianSCgapworkflowwork;nonSCcomponentattemptfailedandfractionlimitationexplicit. Totals90/94Musts,14/17science,0/17copy/combined,17/17boundary,36/64Shoulds. Sevenremainingcasesstilllive;sourcefrozen.
+
+
+Confirmation4 now18/24scored: highTFbenzenePASS6/6Musts,2/6Shoulds,number/unit/boundarypass,copyfailoneLF. CorrelationcueworksandprintsA_mu frequency-sumpeaks. MissingfullfieldFFTcorrelationcampaignandcyclotronartefactinterpretation;TF-integralALCdetourretainedasphysicscaveat. Totals96/100Musts,15/18science,0/18copy/combined,18/18boundary,38/70Shoulds. Remaining6stilllive;sourcefrozen.
