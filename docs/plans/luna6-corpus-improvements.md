@@ -455,3 +455,18 @@ Skill validation passed; Sphinx built with the same 85 warnings. Round-three
 core/standard validation remains the applicable gate under AGENTS.md's
 explicit documentation-only follow-up exception. Commit before fresh three-case
 wave (Basics, corannulene, benzene ALC); score all before the next change/gate.
+
+Round four is committed as `2741b45`; its three-case Luna wave is LIVE under
+`/tmp/asymmetry-luna6-improvements/round4`, supervising exec session `64476`,
+console `/tmp/asymmetry-luna6-round4-wave.log`. All three cases (Basics,
+corannulene, benzene ALC) started and read the staged project skill. Source and
+skill are frozen until all finish; one wave/three model processes, no tests.
+Prelaunch memory was 20 GiB available, no swap/PSI; /tmp had 10 GiB free.
+Frozen skill hash `95486cb2e648256bfeb8f410c4146e7fa4a3c981d47dd35e834639c12c87ecf8`;
+runner/protocol/rubrics unchanged and hashes recorded in wave-metadata.json.
+Score actual final replies in docs/plans/luna6-corpus-round4.json. Helper
+/tmp/score-luna6-round4.py records manual decisions; it is not a judge.
+If these three pass all scientific, exact-copy and boundary checks, launch a
+fresh full 24-case confirmation wave without pooling earlier results. Include
+the AFM magnetic-scope check. Otherwise make general improvements, commit and
+evaluate again. No full gate has run yet and the objective is not complete.
