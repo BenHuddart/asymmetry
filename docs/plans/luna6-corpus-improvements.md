@@ -1386,3 +1386,21 @@ All126 commands inspected,actual rates/conditional Ea verified without audit
 or draft leakage,frozen hashes unchanged. Report explicitly discloses audit
 limitation and keeps both instrument campaigns separate. Do not void or retry
 this completed attempt;finish all24 and pause. No source repair while live.
+
+
+Confirmation2 now14/24 scored:AFM literal science PASS5/5 Musts,LLZ FAIL5/6
+and number rule. Both audited-copy checks fail. AFM removes two duplicated
+file-list entries after audit (unique paths retained elsewhere). LLZ changes
+176.891 K shared-background error0.0832516 to unprinted0.0832526 in the reply,
+plus a trailing blank line;strict numeric provenance fails despite negligible
+physical effect. Its coupled13-triplet workflow and dynamic Gaussian model
+are correct. Never replace actual reply with audited file. All70 AFM and23
+LLZ commands inspected,frozen hashes unchanged.
+AFM PHYSICS-SCOPE WARNING remains:tf-superconductor screens and SC gap-law
+fits are used in this AFM context. The final report explicitly declines a
+superconducting/vortex-lattice claim and allows magnetic correlations,so no
+false phase claim is scored,but the magnetic-scope objective is unresolved.
+Record separately from fixed literal Musts. Two alpha checker flags are real
+output of the actual alpha subcommand in mixed command64,not audit leakage.
+Totals74/77 Musts,11/14 science,8/14 audited-copy,9/14 literal-copy,6/14
+combined,14/14 boundary. Continue all24 frozen;no new improvement or gate.

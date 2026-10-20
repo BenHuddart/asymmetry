@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 12/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 14/24 scored; source frozen; finish all cases despite earlier failures",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -1627,11 +1627,290 @@
         "asymmetry-work-argus/series/argus-zf.json",
         "asymmetry-work-argus/series/argus-tf-full.json"
       ]
+    },
+    "afm-high-tf-mdu": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the two temperature scans by field (6 T and 8 T) with their run ranges, from the survey rather than from file names alone.",
+          "pass": true,
+          "evidence": "Separates686–693 at60000 G (6 T) and730–739 at80000 G (8 T), with own survey temperature axes and measured TF precession on every run."
+        },
+        {
+          "requirement": "Resolves the precession near the Larmor frequency into more than one line (from a Fourier transform or a multi-component fit) at at least one field, and says which it used. Reporting the two lines passes even when it calls the splitting not precisely resolved; it fails when it concludes there is one line.",
+          "pass": true,
+          "evidence": "Reports nearby-line fits and FFT maxima, including813.595524/813.497046 MHz at6 T warm endpoint and1084.714829/1084.858022 MHz at8 T warm endpoint. Calls splitting marginal rather than concluding one line only."
+        },
+        {
+          "requirement": "Reports a change in the spectrum or line shape (broadening, splitting or extra structure) on cooling through the tens-of-kelvin region at at least one field, from this session's own fits or spectra.",
+          "pass": true,
+          "evidence": "Reports cooling-dependent local-field widths/rates across tens of kelvin, including broader8 T Gaussian components at cold end and changing6 T profiles, with failed-model caveats."
+        },
+        {
+          "requirement": "States which parts of a full analysis the tool cannot do (MaxEnt field spectra; a multi-group field-distribution analysis); does not present a canting angle or ordered moment as a finding, and does not infer the absence of magnetic order from a single-line fit.",
+          "pass": true,
+          "evidence": "Explicitly states MaxEnt and multi-group field-distribution analysis unavailable; no canting angle, ordered moment, site assignment or absence-of-order inference from a single-line fit."
+        },
+        {
+          "requirement": "Contains no transition temperature, field shift or line parameter that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Measured line/shift/width values and conditional law result are actual CLI outputs. Alpha0.8339 and weak-TF upper limit500 are printed by the actual alpha subcommand in mixed command64, not invented."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reports the recorded run temperature where it differs from the title (run 732 is titled 12 K but recorded at 10.5 K).",
+          "pass": false,
+          "evidence": "Does not explicitly identify run732 title12 K versus recorded10.4659 K discrepancy; a10.4659 K trend interval is quoted without mapping/calling out the mismatched run."
+        },
+        {
+          "requirement": "If it quotes a transition temperature, it comes from a stated `trend --model` fit to a line parameter with the fit range given, and is framed as that fit's result rather than the paper's T_N, which rests on the wing area of MaxEnt spectra.",
+          "pass": true,
+          "evidence": "Conditional SC_SWave Tc27.000652 ±0.000428 K comes from actual stated3.1189–100.0001 K width-law fit and is not claimed as paper TN or proof of a phase. Inappropriate superconducting scope is retained as an independent warning."
+        },
+        {
+          "requirement": "Notes that the two central lines are separated by roughly one Fourier resolution element, so a zoomed spectrum's empty peak table is not evidence that the second line is absent.",
+          "pass": true,
+          "evidence": "States nearby peaks are separated by roughly the0.105316 MHz FFT resolution; distinguishes visual shoulders and algorithmic detections, and does not infer a missing line from a zoom-empty table."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Two checker flags0.8339/500 are false positives from conservatively excluding mixed log-read command64: its final actual asymmetry alpha subcommand explicitly prints both. All consequential fit/shift/law values are printed in independent scientific commands, not audit/draft output.",
+      "number_checker_flags": [
+        {
+          "text": "0.8339",
+          "line": 11
+        },
+        {
+          "text": "500",
+          "line": 11
+        }
+      ],
+      "root_cause": "Literal Musts pass, but the reply removes two duplicated tf8-exp2/tf8-gauss2 file-list entries after audit; those paths remain elsewhere, yet exact copying fails. Independent AFM scope warning: screens use tf-superconductor and then SC_SWave/SC_DWave on a component width, instead of a clearly magnetic analysis. The report explicitly declines superconductivity and treats the law as conditional, mitigating the old false-phase claim, but the magnetic-scope requirement remains unresolved. Preserve that warning separately from fixed-rubric scores; no source edits during the gate.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all70 completed commands inspected. All70 completed commands inspected. Staged skill, supplied data, installed CLI/products and one operational ps filter for wizard runtime only; no external scientific input, source/rubric/host-skill/network/subagents or numerical scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1629.9,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 6,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/afm-high-tf-mdu/data --series tf8-doublet-gauss --model SC_DWave --param sigma_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/afm-high-tf-mdu/data --series tf8-doublet-gauss --model SC_SWave --param sigma_2 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"cat .agents/skills/asymmetry-analysis/SKILL.md && rg --files -g 'AGENTS.md' -g '\"'!data/**'\"' -g '\"'!**/.git/**'\"' . && rg --files data\"",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/afm-high-tf-mdu/data --run 686 --geometry TF --scope tf-superconductor --plot'",
+          "exit_code": 130
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "0623e9c95c672b28459e8139cb8adeadd4ebeebe9dc8f800e865c198ea37d11a",
+      "audited_file_sha256": "23b0b2589e474cfa61a4e284f1ce9907617d765919dab1998224745e11b194e8",
+      "rubric_sha256": "062fa8082f95b4b6cb7f075cf9a287e8add6d5313d56290d3d5ead8bc95725cf",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/afm-high-tf-mdu",
+      "exact_copy_evidence": "Actual reply deletes first occurrence of duplicated tf8-exp2.json and tf8-gauss2.json entries from saved Files list; both unique paths remain later. No scientific-text change, but strict copy and runner final_report_audited fail.",
+      "physics_caveats": [
+        "Superconducting wizard/gap-law scope is mismatched to this AFM evaluation context, despite explicit no-superconductivity caveats.",
+        "TF line/width changes and marginal doublets are valid bounded observations, not microscopic order/canting or site measurements.",
+        "Negative constant and no weak-TF alpha calibration preclude physical sample/background volume fractions.",
+        "Poor whole-scan fits and harmonic candidates are distinguished from nearby local-field lines."
+      ],
+      "judgement_calls": [
+        "Keep literal rubric pass separate from unresolved AFM physics-scope warning; conditional SC testing is not scored as a fabricated superconducting phase claim.",
+        "One ps command filters running asymmetry wizard processes for operational monitoring, with no external scientific data or source/rubric access; boundary remains pass."
+      ],
+      "number_evidence_commands": [
+        2,
+        8,
+        9,
+        10,
+        15,
+        16,
+        21,
+        22,
+        24,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        38,
+        39,
+        40,
+        41,
+        44,
+        45,
+        46,
+        47,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        64,
+        65
+      ],
+      "scored_at": "2026-10-20T18:09:07.564199+00:00",
+      "physics_scope_status": "WARN; magnetic-scope objective unresolved",
+      "physics_scope_pass": false,
+      "physics_scope_evidence": "Wizard calls12/15/16/21/22/24 use tf-superconductor; trend58/59 fits SC_DWave/SC_SWave. Final report explicitly says no superconductivity or vortex lattice established and allows magnetic correlations, but does not supply a clean AFM-scoped workflow.",
+      "reply_matches_saved_file": false
+    },
+    "ionic-motion-llz": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Reports the survey-level design: run 51315 is the weak-TF detector-balance run and the science data form 13 temperature groups, each containing the 0, 5 and 10 G longitudinal-field runs spanning roughly 160–400 K.",
+          "pass": true,
+          "evidence": "Separates51315 weak-TF calibration from13 complete0/5/10 G science triplets51341–51379 over160–404 K setpoints, and lists all members/mean logged group temperatures."
+        },
+        {
+          "requirement": "Reduces and jointly fits at least one complete field triplet with `fit-global`; the 160 K group is runs 51341–51343. It does not describe `fit-series --global` or three independent fits as simultaneous fitting.",
+          "pass": true,
+          "evidence": "Actual fit-global --groups jointly fits all13 triplets, including51341–51343; it is not three independent fits or fit-series --global."
+        },
+        {
+          "requirement": "Uses a physically appropriate dynamic Gaussian relaxation model (`Keren` or `DynamicGaussianKT`) plus a constant background.",
+          "pass": true,
+          "evidence": "Uses DynamicGaussianKT + Constant after a physical dense-nuclear/ionic-motion choice, rather than retaining unrelated empirical multi-exponential wizard terms."
+        },
+        {
+          "requirement": "Shares the sample amplitude, static width `Delta`, fluctuation rate `nu` and background amplitude across the triplet, while taking `B_L` from each file and holding it per run.",
+          "pass": true,
+          "evidence": "Actual command12 shares A_1,Delta,nu,A_bg within each group and uses --field-param B_L to fix each run recorded longitudinal field."
+        },
+        {
+          "requirement": "Reports the shared values and uncertainties produced by the coupled fit, including both amplitudes and fit-quality information. For the 160 K group, a defensible first pass has `Delta` approximately 0.25–0.45 µs⁻¹ and `nu` approximately 0.15–0.45 MHz; values outside those broad ranges must be called out as suspect rather than interpreted.",
+          "pass": false,
+          "evidence": "Shared values/quality and160 K Delta0.350669/nu0.344384 are valid, but actual reply changes176.891 K A_bg uncertainty from printed/audited0.0832516 to unprinted0.0832526. Therefore not every reported coupled-fit uncertainty is produced by the tool as required."
+        },
+        {
+          "requirement": "Does not claim a fluctuation-rate-versus-temperature result unless every group in that trend was fitted as a coupled group (with `fit-global --groups`, or one `fit-global` per group); one coupled group is not a trend.",
+          "pass": true,
+          "evidence": "Every group in the nu(T) trend is a true coupled field triplet, and high-temperature Arrhenius fit is derived from that coupled-series output rather than one group or independent fits."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Estimates alpha from run 51315 and reports the applied value, or clearly justifies another calibration choice.",
+          "pass": true,
+          "evidence": "Reports measured51315 alpha0.8567 and deadtime-corrected applied0.8561 with groups1/2."
+        },
+        {
+          "requirement": "Uses a fit window near 0–12 µs and the guide's order-of-magnitude seeds (`A_1` about 15%, `A_bg` about 5%, `Delta` about 0.3, `nu` about 0.2), then judges convergence from output rather than assuming the seeds worked.",
+          "pass": false,
+          "evidence": "Uses appropriate Delta0.3/nu0.2 seeds and judges convergence, but retained full0.177–32.609 microsecond window rather than guide near0–12 microseconds."
+        },
+        {
+          "requirement": "Notes the Keren low-rate/ZF caveat; retaining the ZF run is acceptable when this run's diagnostics show clean convergence.",
+          "pass": false,
+          "evidence": "Does not discuss the Keren low-rate/ZF limitation; uses exact DynamicGaussianKT instead."
+        },
+        {
+          "requirement": "Points the reader to the stored global-series JSON and per-run fit plots.",
+          "pass": false,
+          "evidence": "Lists global-series JSON,trend/reduction figures and a separate single-run line-check plot, but does not point to the per-run coupled-fit plot paths."
+        }
+      ],
+      "number_rule": "FAIL: Actual final reply has unprinted A_bg uncertainty0.0832526; all actual coupled/trend outputs and saved audited report give0.0832516. Not a rounding operation. All other consequential values verified, but fixed number rule fails on this transcription.",
+      "number_checker_flags": [
+        {
+          "text": "0.0832526",
+          "line": 48
+        }
+      ],
+      "root_cause": "FAIL on strict numeric provenance and exact copying: after final audit the reply changes one digit in the176.891 K shared-background error,0.0832516 to0.0832526, and drops a trailing blank line. The error difference is tiny and does not change physical interpretation, but it is neither rounding nor a printed value. The coupled workflow/model/groups themselves are correct; score the actual reply rather than substituting its audited file. General repair must preserve numeric text after audit. No source repair or rerun during this gate.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all23 completed commands inspected. All23 completed commands inspected: staged skill, supplied data/logbook and installed CLI/products only; no source/rubric/host-skill/network/subagents or numerical scripts. Invalid range-background and --csv calls are corrected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 579.3,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --xmin 295.738 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"sed -n '321,735p' .agents/skills/asymmetry-analysis/SKILL.md && sed -n '1,180p' data/logbook.rtf\"",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/ionic-motion-llz/data --runs 51341-51379 --alpha-from 51315 --deadtime from_file --background range --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/ionic-motion-llz/data --series dynamics --plot --csv'",
+          "exit_code": 2
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "98e38a3b791ee2ff759d9c682a551f8f22b5289ad5861ce79edc9953f489792a",
+      "audited_file_sha256": "0b6c74f7d293ecf90955810cc5f887d7f062496ff801dc641d22ba953d7a1296",
+      "rubric_sha256": "26a96516c6b7d735288e5a79b9d63cd349de9e38850c4eba7367f47fc00a1b28",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/ionic-motion-llz",
+      "exact_copy_evidence": "Diff changes only A_bg error in group51344–51346 from0.0832516 to0.0832526 and removes one trailing blank line. Unlike formatting-only failures, a numerical token changes after audit.",
+      "physics_caveats": [
+        "Numeric failure is a last-digit transcription error, not an invented physical model or inferred activation mechanism.",
+        "Coupled groups converge without parameter flags, but rising-temperature Arrhenius chi2_red8.687 is only an apparent rough barrier estimate.",
+        "A_bg is given in asymmetry units, not a normalized holder/sample fraction; microscopic sites/pathways remain unassigned."
+      ],
+      "judgement_calls": [
+        "Apply strict number rule to the actual last-digit transcription despite negligible scientific impact; do not silently normalize or replace the reply."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        6,
+        9,
+        10,
+        11,
+        12,
+        14,
+        16,
+        17,
+        19,
+        20
+      ],
+      "scored_at": "2026-10-20T18:09:07.585548+00:00",
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
-    "afm-high-tf-mdu",
-    "ionic-motion-llz",
     "photo-musr-silicon",
     "cds-fourier",
     "lifeas-psi",
@@ -1644,17 +1923,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 12,
+    "scored": 14,
     "target": 24,
-    "scientific_pass": 10,
-    "must_pass": 64,
-    "must_total": 66,
-    "should_pass": 26,
-    "should_total": 42,
+    "scientific_pass": 11,
+    "must_pass": 74,
+    "must_total": 77,
+    "should_pass": 29,
+    "should_total": 49,
     "exact_copy_pass": 8,
     "literal_copy_pass": 9,
     "combined_pass": 6,
-    "boundary_pass": 12
+    "boundary_pass": 14
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates.",
