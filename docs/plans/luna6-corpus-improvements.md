@@ -1716,3 +1716,17 @@ the rejected poorON rate is not a validated intrinsiccarrier result. Retain
 window, and missing endpointpixels. All27commands/filechanges inspected;
 frozen sources match. Totals80/84Musts,13/15science,14/15audit-copy/literal-copy,
 12/15combined,15/15boundary,28/54Shoulds. Continue all24frozen,thenpause.
+
+
+Confirmation3 now 18/24 scored: AFM PASS 5/5 Musts and the independent
+magnetic physics-scope check; no superconducting gap laws are used. Its assumed
+alpha, negative offset and model ambiguity remain caveats. Benzene RF FAIL
+3/5 Musts: --method differential selects a per-bin mean, distinct from the
+green-red period contrast. The noisy scan and invalid RF fit are left without
+estimator/window recovery. High-TF benzene FAIL 5/6: the ordinary coadd FFT
+finds the radical pair, but the required correlation spectrum and sum step
+are omitted. All three pass audit-copy, literal-copy, number/unit and boundary
+checks. All 84 commands and file changes were inspected; source hashes match.
+Totals 93/100 Musts, 14/18 science, 17/18 audit-copy/literal-copy, 13/18 combined,
+18/18 boundary and 31/68 Shoulds. Finish all24 frozen, then commit the complete
+gate and pause; no extra improvements or reruns are authorized.
