@@ -1675,4 +1675,19 @@ Confirmation3 now8/24 scored:Nickel PASS7/7Musts,3/4Shoulds,number/unit/copy/bou
 Confirmation3 now9/24 scored:molecular antiferromagnet PASS5/5Musts,1/3Shoulds,number/unit/copy/boundary pass. Multiple cold lines/warm damping and KT width/dynamics controls are explicit;no fittedTN with insufficientpoints. Retain raw-alpha/deadtime mismatch,early-signal deletion warning and stale coldFFT table frompre-alpha command14 rather thanretained corrected command34. Both table versions originate in actual session;qualitative result unchanged,but active artifact provenance is not clean. All45 commands inspected;frozen hashes match. Totals44/48Musts,7/9science/combined,9/9audit-copy/literal-copy/boundary,14/32Shoulds. Wave remains sixconcurrent,source frozen;finish all24thenpause.
 
 
-Confirmation3 now11/24scored:Copper PASS6/6Musts,3/3Shoulds,number/unit/copy/boundary;cross-instrumentauditrepair works withfolder/scopedworkdirs. Retain incorrectcross-eraSTABILITYattribution andgenericradical-model wording inmetalQLCRcontext. Spin-Peierls PASS6/6Musts,1/3Shoulds,number/unit/copy/boundary asaborderline literalactual-ZFendpointcomposite-shapecontrast:fastcoldExp+Gaussian versus warmdifferentGaussian/unconstrainedExp. Explicitfamilyprogression isTF;noZFendpointpixelsnominated andnosingletriplet/dimerisationexplanation. Do notsilentlytightenfixedMust intoanexplicitfamily-transitioncriterion;recordjudgementlimits. All87commandsinspected;frozensourcesverified. Totals56/60Musts,9/11science/combined,11/11audit-copy/literal-copy/boundary,18/38Shoulds. Continueall24frozen,thenpause.
+Confirmation3 now 11/24 scored: copper PASS 6/6 Musts, 3/3 Shoulds,
+number/unit/copy/boundary checks. The cross-instrument audit repair works with
+folder/scoped workdirs. Retain the incorrect cross-era STABILITY attribution
+and generic radical-model wording in the metal QLCR context.
+
+Spin-Peierls PASS 6/6 Musts, 1/3 Shoulds, number/unit/copy/boundary checks,
+with a borderline literal Must5 judgement: the actual ZF endpoint table
+contrasts a fast cold exponential plus Gaussian with a different warm Gaussian
+and unconstrained exponential. Explicit family progression is described for
+TF; no ZF endpoint pixels were nominated, and no singlet-triplet/dimerisation
+interpretation is given. Do not silently tighten the fixed Must into a named
+family-transition requirement; retain this judgement's limits.
+
+All87 commands inspected and frozen sources verified. Totals56/60 Musts,
+9/11 scientific/combined passes,11/11 audit-copy/literal-copy/boundary passes,
+18/38 Shoulds. Continue all24 frozen, then pause.

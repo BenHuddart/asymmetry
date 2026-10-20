@@ -1561,11 +1561,11 @@
       "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Verified exact actual cold/warm ZF component/error rows incommand12,TF rows13,FFT none-window18/19andwizard/alpha metadata. Command12 prints1.83684±0.0678075 andGaussian0.201382±0.00821444 at59.419K;warmGaussian0.136682±0.0051608 at297.874K survives rate-specific flag. FFT18/19 print1.390650/1.390087MHz,13bins,0.126775MHz resolution. No post-audit arithmetic;independentnumeric/unit checkers have nofindings.",
       "number_checker_flags": [],
       "unit_checker_flags": [],
-      "root_cause": "Actual coldZF endpoint is now retained and discussed through the composite-model table:fast exponential contribution plusGaussian at59.419K versus slowly relaxing/unconstrained exponential anddifferentGaussian contribution at297.874K. On the fixed rubric wording this is a literal shape-change pass,with a judgement caveat:the explicit exponential/Gaussian family progression is forTF,notZF,and the final narrative does not give a clear separate ZF family comparison. Image-review inputs aretwo rate-trend plots plusTF FFTs,no ZF endpoint data plots. Thus general endpoint advice improves coverage but image/observable selection and physical spin-Peierls interpretation remain incomplete. No source changes authorized during this wave.",
+      "root_cause": "The actual cold ZF endpoint is now retained in the composite-model table: a fast exponential contribution plus Gaussian at59.419K versus an unconstrained slow exponential and different Gaussian contribution at297.874K. On the fixed rubric wording this is a literal shape-change pass, with a judgement caveat: the explicit exponential/Gaussian family progression is for TF, and the narrative gives no clear separate ZF family comparison. The four image-review inputs are two rate-trend plots and TF FFTs, with no ZF endpoint data plots. General endpoint advice improves coverage, but observable/image selection and the physical spin-Peierls interpretation remain incomplete.",
       "exact_copy": true,
       "combined_pass": true,
       "boundary_pass": true,
-      "boundary_check": "PASS: all29 completed commands inspected. All29 completedcommands andsummary-onlyedits inspected;stagedskill/help/data/projectproducts only. Noimplementation/personal skill/hidden corpusorphysical arithmetic. Two-turn imagereview completed withfour inputs;limitedobservablecoverage is aquality caveat,notaboundary violation. Feature/cachewarnings nonfatal,noapproval denials.",
+      "boundary_check": "PASS: all29 completed commands and summary-only edits inspected. Reads stay within the staged skill/help/data and project products. No implementation/personal-skill/hidden-corpus access or physical arithmetic. Two-turn image review completed with four inputs; limited observable coverage is a quality caveat, not a boundary violation. Feature/cache warnings are nonfatal; no approval denials.",
       "attempt": 1,
       "execution": {
         "agent": "Codex",
@@ -1596,7 +1596,7 @@
         "Two-line TF fit is amplitude-invalid andmatchedFFT has onlyone coarse-resolution line;noresolvedsplitting."
       ],
       "judgement_calls": [
-        "Must5 passes the literal reportedactual-endpoint composite-shape contrast inZRcomponents/widths,thoughmostexplicitqualitativefamily-change prose concernsTF. A stricterrequirement for an explicit ZF family transition or reviewedZF endpoint pixels would fail;that addedrequirement is not silently inserted into the fixedrubric."
+        "Must5 passes on the reported actual-endpoint contrast in ZF components and widths, although the explicit qualitative family-change prose concerns TF. A stricter requirement for a named ZF family transition or reviewed ZF endpoint pixels would fail; that additional requirement is not silently inserted into the fixed rubric."
       ],
       "number_evidence_commands": [
         2,
