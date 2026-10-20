@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 15/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 16/24 scored; source frozen; finish all cases despite earlier failures",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -2023,10 +2023,118 @@
       ],
       "scored_at": "2026-10-20T18:10:33.933808+00:00",
       "reply_matches_saved_file": true
+    },
+    "cds-fourier": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Surveys the folder and identifies a transverse-field temperature series in CdS, selecting the 100 G base-temperature/high-statistics run 20721 for the representative spectrum from current command output.",
+          "pass": true,
+          "evidence": "Identifies23 CdS EMU TF runs20711–20733 at100 G, uses logged temperature through initial cooldown and selects cold high-statistics20721 with49,056,663 events."
+        },
+        {
+          "requirement": "Reduces run 20721 and actually runs `fourier` with a saved plot, using a defensible alpha calibration (run 20729 is the expected candidate) or explicitly stating the alternative used.",
+          "pass": true,
+          "evidence": "Reduces all23 with measured20729 alpha0.9499 and explicitly executes saved-plot Fourier transforms for20721 and warm20729."
+        },
+        {
+          "requirement": "Calls the result an FFT, not a maximum-entropy reconstruction, and reports the command's frequency resolution/window alongside any quantitative peak.",
+          "pass": true,
+          "evidence": "Calls the matched result FFT rather than MaxEnt and states window none, retained record0.105–31.753 microseconds,63 displayed bins and resolution0.0315976 MHz alongside peaks."
+        },
+        {
+          "requirement": "Finds the principal structure near the 100 G muon Larmor line around 1.4 MHz. It uses the PNG as well as the conservative peak table and notes weaker shoulders/satellites near roughly 1.27 and 1.51 MHz when visible; it does not claim those were algorithmically detected if only one row was printed.",
+          "pass": true,
+          "evidence": "Reports warm detected central1.391635 MHz and cold candidate maxima1.2396/1.3896/1.5001 from current outputs. Explicitly uses inspected PNGs and calls the cold side features visual candidates, not algorithmically detected FFT lines."
+        },
+        {
+          "requirement": "Interprets a resolved central line with roughly symmetric satellites as consistent with a shallow-muonium hyperfine triplet, without presenting a visual shoulder or sub-resolution splitting as a precision measurement.",
+          "pass": true,
+          "evidence": "Calls visual three-feature roughly symmetric pattern consistent with shallow-muonium hyperfine triplet while declining precise splitting, hyperfine constant or population. Warm single line supports bounded interpretation."
+        },
+        {
+          "requirement": "Heeds any early-signal apodisation warning: it retries with an unwindowed physical crop or an appropriate Lorentzian filter rather than treating a symmetric-window spectrum as automatically authoritative.",
+          "pass": true,
+          "evidence": "Uses unwindowed none transforms from the outset for both runs; no symmetric-window spectrum is treated as authoritative and no early-signal warning is ignored."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares the central frequency with the applied-field Larmor expectation and states whether they agree within the reported resolution.",
+          "pass": false,
+          "evidence": "Compares cold central candidate with warm detected line within one reported resolution, but does not explicitly compare with applied-field Larmor expectation within resolution."
+        },
+        {
+          "requirement": "Gives a cautious splitting estimate only when supported by the plotted or tabulated current-session output and labels how it was obtained.",
+          "pass": false,
+          "evidence": "No quantitative splitting estimate is given; conservatively declines precision because side maxima are candidates. Same treatment as prior confirmation1 Should2."
+        },
+        {
+          "requirement": "Points the reader to the stored spectrum JSON/NPZ and PNG.",
+          "pass": true,
+          "evidence": "Lists both cold/warm stored spectrum JSON/NPZ and PNG files."
+        },
+        {
+          "requirement": "Avoids turning one representative low-temperature FFT into an unsupported claim about the entire temperature dependence.",
+          "pass": true,
+          "evidence": "Uses matched cold/warm FFTs and full logged-temperature fit series; qualifies poor/flagged rows and declines activation law or unique microscopic transition."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. All peak candidates/detections, alpha, temperatures, rates, chi2/flags and endpoints originate in actual survey/reduction/Fourier/wizard/series/trend outputs. Quoted0.017546 versus printed0.0175468 is a last-place shortened error, not a new result; fixed rubric allows rounded printed values as borderline. No report/audit outputs used as numeric sources.",
+      "number_checker_flags": [],
+      "root_cause": "All Musts and numeric/copy/boundary checks pass. Remaining Should gaps are explicit comparison of central line with applied-field Larmor expectation and a supported cautious splitting estimate. No precision splitting is forced from low-SNR candidate shoulders. General CLI/skill residual caveat: automatic trend suggests OrderParameter for applied-field frequency even though the final report correctly avoids that unsupported law.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all19 completed commands inspected. All19 completed commands inspected: staged skill/references, supplied data and installed CLI/products only; no external paper/source/rubric/host-skill/network/subagents or numerical scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 392.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "41f53329269bc78aa454da38e192d4d901fe191e8892fe926406927190aba1cd",
+      "audited_file_sha256": "41f53329269bc78aa454da38e192d4d901fe191e8892fe926406927190aba1cd",
+      "rubric_sha256": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/cds-fourier",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Cold FFT has zero threshold detections; triplet interpretation is qualitative from the plotted/current candidate structure rather than three established algorithmic lines.",
+        "Two-cosine series has17 poor rows and11 flagged rows; excludes flagged estimates from physical conclusions and does not assign microscopic rates or activation law.",
+        "One quoted error0.017546 shortens printed0.0175468; recorded as harmless last-place rounding/truncation borderline under the fixed number rule, not physical arithmetic."
+      ],
+      "judgement_calls": [
+        "Side candidate frequencies differ from worksheet approximate positions but are current-session printed maxima and explicitly qualitative; do not replace them with expected paper positions.",
+        "No splitting estimate scored as a Should gap consistently with confirmation1, not a Must failure."
+      ],
+      "number_evidence_commands": [
+        1,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14
+      ],
+      "scored_at": "2026-10-20T18:11:44.554991+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
-    "cds-fourier",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
@@ -2037,17 +2145,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 15,
+    "scored": 16,
     "target": 24,
-    "scientific_pass": 11,
-    "must_pass": 77,
-    "must_total": 83,
-    "should_pass": 31,
-    "should_total": 53,
-    "exact_copy_pass": 9,
-    "literal_copy_pass": 10,
-    "combined_pass": 6,
-    "boundary_pass": 15
+    "scientific_pass": 12,
+    "must_pass": 83,
+    "must_total": 89,
+    "should_pass": 33,
+    "should_total": 57,
+    "exact_copy_pass": 10,
+    "literal_copy_pass": 11,
+    "combined_pass": 7,
+    "boundary_pass": 16
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates.",

@@ -1416,3 +1416,14 @@ audit passes despite missing period workflow. All21 commands inspected and
 actual numerical sources verified;frozen hashes unchanged. Totals77/83 Musts,
 11/15 science,9/15 audited-copy,10/15 literal-copy,6/15 combined,15/15 boundary.
 Keep all24 running and score actual replies;no source repair or extra wave.
+
+
+Confirmation2 now16/24 scored:CdS Fourier PASS6/6 Musts,number/copy/boundary
+pass. Matched none-window FFTs use reported0.0315976 MHz resolution;warm
+central line detected,cold triplet-like side maxima explicitly only candidates.
+No expected paper peaks substituted. Full-temperature series remains heavily
+poor/flagged and microscopic laws are declined. Explicit applied-field Larmor
+comparison and splitting estimate remain Should gaps;one shortened printed
+error is a recorded harmless rounding borderline. All19 commands inspected,
+frozen hashes unchanged. Totals83/89 Musts,12/16 science,10/16 audited-copy,
+11/16 literal-copy,7/16 combined,16/16 boundary. Continue frozen all24.
