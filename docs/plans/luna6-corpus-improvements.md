@@ -704,3 +704,31 @@ corpus data is 1.76 GiB; 6.3 GiB scratch free before launch is sufficient with
 headroom for logs/products. Inspect processes again, commit scores, then launch.
 Score every full-gate first attempt, including AFM physics scope; never pool
 older passes. The objective remains incomplete until that fresh gate passes.
+
+## Fresh full24 confirmation one
+
+LIVE under `/tmp/asymmetry-luna6-improvements/confirmation1`, supervising exec
+session `29211`, console `/tmp/asymmetry-luna6-confirmation1-wave.log`. All 24
+cases are fresh first attempts, Codex / gpt-6-luna, parallel3/BLAS1, unchanged
+two-turn image review and fixed rubrics. Implementation is dcac043; metadata
+records source HEAD edd2aa3 (score/docs-only commits since implementation) and
+frozen skill/runner/rubric hashes. Exactly one wave/three model processes, no
+tests. CLI/skill must remain frozen until the entire confirmation wave finishes.
+
+Score completed final reports while others run in
+`docs/plans/luna6-corpus-confirmation1.json`; manual helper
+`/tmp/score-luna6-confirmation1.py` is not an automatic judge. Record actual
+final reply, all Must/Should evidence, number rule excluding audit/draft output,
+exact-copy, boundary, host/model, first-attempt hashes and material physics
+scope (especially high-field AFM must remain magnetic, not superconducting).
+Inspect actual host processes and cost.json before any launch; never duplicate
+live runs. Max3 cases, BLAS1, pytest2 only after wave ends; no broad testing
+alongside live evals. Watch RAM/PSI and scratch (prelaunch 16 GiB available,
+no swap use/PSI, 6.2 GiB scratch free; corpus copies total 1.76 GiB).
+
+Do not stop or mutate source on early failures; finish and score this fresh
+gate, then make general improvements and commit before the next wave if needed.
+This is the first fresh full24 confirmation, not pooled previous passes. The
+objective is incomplete until the full gate passes; only then disable follow-up
+and report final commits/results. Standard test gate still has four known GUI
+sizing failures; do not report it green or expand into GUI redesign.
