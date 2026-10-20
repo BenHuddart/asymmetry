@@ -1632,3 +1632,26 @@ freeze CLI/skill/runner/rubrics until all24 finish, and score actual final
 replies including AFM magnetic scope. Do not pool historical passes. Once this
 requested wave is completely scored, commit scores/plan and pause the monitor;
 no unrestricted loop or further improvement/gate is authorized.
+
+
+### Confirmation3 launched
+
+Round13 implementation is committed as `0b6e207ecf32f61098248a2f8c659d8ce1265939`. Fresh full24
+Codex/gpt-6-luna confirmation3 is LIVE at
+`/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3`, exec session `59815`, wave PID337831.
+Console is `confirmation3-wave.log` in the parent cache directory. All24 are
+fresh first attempts; fixed rubrics and `two_turn_image_review_v2` are unchanged.
+Six concurrent cases, wizard workers2, BLAS/OpenMP/Numexpr1. Frozen source,
+skill, runner and rubric hashes are in source-manifest.json/wave-metadata.json.
+Validation logs and the external supervisor/manual score-record helper are
+preserved there. Resource samples are in resource-samples.jsonl every30s;
+resource-summary.json appears on completion. Inspect actual processes and
+cost/transcript files before resuming; never duplicate live runs.
+
+Score completed actual final replies into
+[luna6-corpus-confirmation3.json](luna6-corpus-confirmation3.json) while the
+rest run, retaining unit/provenance and AFM magnetic-scope caveats. The helper
+records supplied manual judgements; it is not an automatic judge. Keep all
+implementation/skill/runner/rubrics frozen until every case finishes. After
+all24 are scored, commit score/plan and PAUSE the monitor; this user request
+authorizes one repair+rerun, not a resumed unrestricted loop.
