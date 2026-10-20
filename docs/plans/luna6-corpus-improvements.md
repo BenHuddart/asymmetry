@@ -1453,3 +1453,15 @@ trial. These numbers were actually printed;selection caveats are retained
 separately from fixed number rule. All78 commands inspected,hashes unchanged.
 Totals98/104 Musts,14/18 science,12/18 audited-copy,13/18 literal-copy,9/18
 combined,18/18 boundary. Keep all24 frozen;score then pause,do not repair.
+
+
+Confirmation2 now19/24 scored:Basics PASS9/9 Musts,number/copy/boundary pass.
+Separate instruments/exercises,notes-basedsteering minimum0 A,foil plateau
+13–15,muonium amplitude response/top-field loss and actual−2-bin timing test
+are retained. No pooled temperature law or spontaneous Ag order. Should gaps
+remain beam/degrader explanation,paired deadtime comparison and density/
+thickness conversion context. Free/negative constants called fractions and
+unneeded rate-law trials remain quality caveats;no fabricated physicalnumber.
+All97 commands inspected;source/skill/rubric hashes unchanged. Totals107/113
+Musts,15/19 science,13/19 audited-copy,14/19 literal-copy,10/19 combined,19/19
+boundary. Five cases remain;finish this frozen gate then pause,no repairs.
