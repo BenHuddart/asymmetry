@@ -303,7 +303,7 @@ def run(args: argparse.Namespace) -> None:
                 "Report stable fitted centres with uncertainties, or why they remain unresolved."
             )
     if fit_payload is not None:
-        notes.extend(_line_comparisons(fit_payload, stored))
+        notes.extend(_line_comparisons(fit_payload, stored, same_scan))
         notes.extend(_absent_lines(args.folder, fit_payload, result_payload["runs"], payloads))
     from asymmetry.core.workflow.survey import has_file_deadtime
 
@@ -575,7 +575,9 @@ def _resolved_lines(fit: dict, fit_limit: float = _RESOLVED_FIT) -> list[str]:
     return resolved
 
 
-def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
+def _line_comparisons(
+    fit: dict, stored: dict[str, dict], same_scan: Sequence[dict] = ()
+) -> list[str]:
     """Compare significant fitted line estimates without requiring resolved flanks."""
 
     def estimates(scan_fit: dict) -> list[str]:
@@ -631,8 +633,22 @@ def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
                     else "are conditional fitted estimates of possible counterparts, not two "
                     "resolved lines; window/background sensitivity still limits the comparison"
                 )
+                stability = other_fit in same_scan
+                prefix = "STABILITY" if stability else "COMPARE"
+                purpose = (
+                    "These are alternative windows/backgrounds of the same runs, not "
+                    "different conditions. Agreement tests fit stability; it does not say "
+                    "whether another temperature or field condition differs."
+                    if stability
+                    else "Report both and that direction for these different run sets. "
+                    "For molecular ALC scans, sharper hot lines are consistent with molecular "
+                    "reorientation averaging hyperfine anisotropy. State that as a possible "
+                    "interpretation, not a fitted motion rate or site assignment."
+                )
+                if stability:
+                    qualification = "are alternative fits of the same measurement"
                 notes.append(
-                    f"COMPARE: this line at {centre:g} ± {centre_err:.3g} (width {width:g} ± "
+                    f"{prefix}: this line at {centre:g} ± {centre_err:.3g} (width {width:g} ± "
                     f"{width_err:.3g}) and scan {other}'s at {c2:g} ± {c2_err:.3g} (width {w2:g} ± "
                     f"{w2_err:.3g}), errors scaled by √chi2_red, {qualification}: this "
                     f"one is "
@@ -655,11 +671,8 @@ def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
                             "at a field these errors cannot tell apart",
                         ),
                     )
-                    + ". Report both and that direction — a width or field changing between "
-                    "conditions is the physics (motional narrowing, a changing coupling). "
-                    "For molecular ALC scans, sharper hot lines are consistent with "
-                    "molecular reorientation averaging hyperfine anisotropy. State that as "
-                    "a possible interpretation, not a fitted motion rate or site assignment."
+                    + ". "
+                    + purpose
                 )
     return notes
 

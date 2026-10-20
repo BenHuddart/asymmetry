@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Integral-scan notes distinguish fit stability from condition changes.**
+  Alternative windows of the same runs print ``STABILITY``; their agreement
+  cannot be mistaken for agreement between separate temperature scans.
 - **Integral-scan comparisons retain qualified fitted estimates.** Significant
   non-bound local fits print field/width directions even with incomplete
   flanks, explicitly distinguished from resolved lines; resolution gates stay

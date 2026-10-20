@@ -3555,6 +3555,13 @@ def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
     (same,) = _line_comparisons(fit(15390.0, 1150.0, 1.0), {"cold": cold})
     assert "of a width these errors cannot tell apart and at a field these errors" in same
 
+    (stability,) = _line_comparisons(fit(15390.0, 1150.0, 1.0), {"cold": cold}, [cold])
+    assert stability.startswith("STABILITY:")
+    assert "alternative fits of the same measurement" in stability
+    assert "not different conditions" in stability
+    assert "reorientation" not in stability
+    assert note.startswith("COMPARE:")
+
     # A broad fitted feature can be compared even without resolved flanks.
     partial = cold | {"x_range": [14000.0, 17000.0], "x_min": 14000.0, "x_max": 17000.0}
     assert _resolved_lines(partial) == []

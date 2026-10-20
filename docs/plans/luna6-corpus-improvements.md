@@ -1021,3 +1021,30 @@ label window/baseline stability separately from different-run/condition changes,
 so molecular interpretation is not suppressed by an unrelated stability note.
 No eval/tests live;freeze ends. Commit scored record,then improve/test/commit
 before next targeted wave. No full24 launch yet. Standard GUI failures persist.
+
+## Round ten
+
+General repair in progress: same-run local windows/backgrounds print STABILITY,
+different-run comparisons keep COMPARE and qualified physical interpretation.
+Same-scan agreement explicitly does not imply agreement between temperatures;
+mechanism guidance appears only with different-run comparisons. Uses existing
+scan membership;no new stored derived state,no rubric/corpus-specific changes.
+Skill and owning docs distinguish these comparisons with both scan names.
+Focused197 pass8.19 s,lint pass. Structural/skill/docs exec89927 and fast suite
+exec ID in current tool output (round10-fast.log) running;pytest2,no evals live.
+Complete validation before commit and fresh corannulene-only round10 launch.
+Standard remains four known GUI sizing failures;not green. No duplicate tests.
+
+Round10 fast suite exec86374;docs/structural/skill complete successfully,
+docs80 existing warnings in this build (previous builds had85). Development smoke on saved round9 fits produces
+STABILITY for two cold windows and COMPARE for cold/hot with broader/higher
+direction. This is development evidence only,not eval input/scoring. Prepared
+/tmp/asymmetry-luna6-round10-wave.sh uses persistent disk cache round10,
+GPT-6 Luna,fixed rubrics/two-turn images,BLAS1. Do not launch until fast passes
+and changes committed. Both original interrupted round9 and completed retry
+raw evidence remain preserved outside repo.
+
+Round10 validation COMPLETE:197 focused passes8.19 s,5906 fast passes/
+10 skipped/1xfail108.42 s,lint/structural/skill pass,docs80 existing warnings.
+No evals overlapped tests. Host23 GiB available,no swap/current PSI,disk657 GiB
+free. Commit before launch. Standard remains recorded four known GUI failures.

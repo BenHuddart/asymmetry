@@ -835,6 +835,9 @@ different lines can shift in opposite directions. The missing radical model
 limits coupling constants, site assignments and motion rates; it does not
 prevent a conditional explanation of narrowing by reorientation averaging
 hyperfine anisotropy when the measured comparison supports it.
+`STABILITY` compares windows/backgrounds for the same runs; agreement there
+cannot erase a `COMPARE` difference between separate conditions. Keep each
+comparison's two scan names beside its conclusion.
 `COMPARE` also labels conditional fitted estimates when flanks are incomplete:
 retain the direction of those estimates with their window/background caveat,
 without calling either feature a resolved line or a measured physical shift.

@@ -1399,6 +1399,10 @@ significant, non-bound fitted estimate. Such ``COMPARE`` notes explicitly say
 ``conditional fitted estimates`` and ``not two resolved lines``; scaled errors
 and window/background sensitivity qualify the direction. Failed, bound-pinned
 or insignificant fits are excluded. This does not relax the resolved-line gate.
+Fits with identical run membership instead print ``STABILITY``: these test
+window/background sensitivity of the same measurement. Agreement there does
+not imply agreement between different temperatures. Only comparisons of
+different run sets carry the cross-condition interpretation guidance.
 A resolved line that
 another analysed scan covers, with no fitted line within five widths of it
 there, gets a NOTE with the command that fits that scan on the same window: a
