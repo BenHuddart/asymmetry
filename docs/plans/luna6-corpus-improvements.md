@@ -1894,3 +1894,38 @@ BLAS/OpenMP/Numexpr1, with30-second host resource samples. The external
 supervisor begins deadline termination at05:59:50 UTC and retains interruption
 evidence, so its eval process group and project-working descendants stop by
 06:00 UTC. All attempts stay on persistent disk. No broad tests remain live.
+
+
+## Confirmation4 LIVE (round14)
+
+Implementation committed as `242938ea3dd07691a718521515cce842d6e3fd68`.
+Fresh full24 Codex/gpt-6-luna wave started under
+`/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4`.
+Exec session4546; wave PID493815; parent console `confirmation4-wave.log`.
+All24 are fresh first attempts, fixed rubrics, two_turn_image_review_v2.
+Twelve concurrent cases, one wizard worker per case, all numerical threads1.
+`source-manifest.json` and `wave-metadata.json` freeze implementation/skill/
+runner/rubrics. Keep them frozen until all24 finish, including early failures.
+Score completed ACTUAL replies while others run into
+`docs/plans/luna6-corpus-confirmation4.json`; persistent `score-record-helper.py`
+(or `/tmp/luna6_confirmation4_score_utils.py`) records manual judgements only.
+Image snapshots now survive replots; strict copying includes actual whitespace.
+Do not silently regrade earlier normalized outputs or substitute a saved draft.
+Inspect actual processes, cost.json, transcripts and resource-samples.jsonl
+before launching anything. Never duplicate runs. No broad tests during evals.
+After all24 score, make general improvements against failures, validate/commit,
+and continue targeted waves/fresh full gates as appropriate until the deadline.
+Do not pool historical passes or omit AFM magnetic scope. Follow-up ACTIVE;
+user authorized the overnight loop until07:00 BST21Oct (06:00 UTC). No fresh
+full gate after04:30 UTC; reserve time to score/commit/pause before06:00 UTC.
+The supervisor has deadline termination with retained interruption evidence.
+
+Initial confirmation4 monitoring:12 case runners active, about22.9GiB RAM
+available, memory PSI0 and CPU PSI avg10 around0.01. About616KiB swap was
+already used at preflight and unchanged. The observed CLI environment is
+workers/OpenBLAS/OMP/MKL =1/1/1/1. High-Tc cuprate and molecular AFM initially
+received HTTP429 sampling responses and began the CLI's internal retries.
+This is within each retained first attempt, not a duplicated case launch.
+Monitor recovery; sustained service throttling may justify8–10 cases on a
+future wave even though memory has headroom. Do not alter the frozen current
+wave or call this a proven speed increase. Full source manifest matches.
