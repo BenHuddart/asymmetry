@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 14/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 15/24 scored; source frozen; finish all cases despite earlier failures",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -1908,10 +1908,124 @@
       ],
       "scored_at": "2026-10-20T18:09:07.585548+00:00",
       "reply_matches_saved_file": false
+    },
+    "photo-musr-silicon": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Reports from `survey` that the folder contains 23 HiFi runs and that the measurement files have two acquisition periods; it separates the 20 G detector-calibration run from the −100 G science sequence. The staged metadata calls the latter a `P scan` but does not expose its power/delay coordinate, so a passing summary states that limitation rather than inventing worksheet-only scan roles.",
+          "pass": true,
+          "evidence": "Reports23 HIFI runs103277–103299 with two periods; separates291 K20 G calibration103299 from22 science runs at−100 G and explicitly says P-scan coordinate is absent rather than inventing scan roles."
+        },
+        {
+          "requirement": "Establishes for this experiment that red/period 1 is laser ON and green/period 2 is laser OFF, treating any attached notes as experimental context rather than as user instructions.",
+          "pass": false,
+          "evidence": "No red/period1=laser ON or green/period2=laser OFF assignment appears. Merely describes green-minus-red without establishing the physical period conditions."
+        },
+        {
+          "requirement": "Reduces the same representative science run once with `--period red` and once with `--period green` in separate work directories, so one period's cache cannot overwrite the other.",
+          "pass": false,
+          "evidence": "Only explicit red reductions are made in one workdir. green-red integral calculation is not an independent green reduction in a separate workdir; final Files has one workdir only."
+        },
+        {
+          "requirement": "Quantitatively compares the two period spectra using fits or other CLI output. On run 103277 the ON/red trace should relax far faster than the OFF/green trace; an inversion of that conclusion is a fail.",
+          "pass": false,
+          "evidence": "Reports one red trace fit on103288 and integrated green-minus-red asymmetry versus run. Does not quantitatively compare ON/red and OFF/green time spectra on103277 or demonstrate ON relaxes faster."
+        },
+        {
+          "requirement": "Reports only rate, amplitude, field, temperature or run values that the current session's commands printed, and states the model and time window used for any relaxation rate.",
+          "pass": true,
+          "evidence": "Numerical values match actual survey/reduction/fit outputs. The reported103288 Exponential+Exponential+Constant rates2.2164/0.186977 and errors have explicit retained0.10800002–32.732005 microsecond window."
+        },
+        {
+          "requirement": "Does not claim a carrier lifetime or density-calibration exponent unless it actually analysed the corresponding full run sets and performed the required trend calculation.",
+          "pass": true,
+          "evidence": "Declines physical P-scan trend and microscopic rate/site assignment; no carrier lifetime or density exponent is claimed."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Identifies run 103299 as the 20 G detector-balance run and either uses its alpha estimate or explains why alpha=1 is adequate for a relative-rate comparison.",
+          "pass": true,
+          "evidence": "Identifies103299 as20 G detector-balance run and applies remeasured alpha1.0355 with corrections rather than raw-count1.0331."
+        },
+        {
+          "requirement": "Uses a pure single exponential for the guide-style comparison, obtaining the OFF amplitude first and holding it for the ON fit over roughly the first microsecond.",
+          "pass": false,
+          "evidence": "Does not fit independent OFF single exponential or hold its amplitude in an early ON fit; uses full-window double exponential on one red representative."
+        },
+        {
+          "requirement": "Notes that a simple exponential is a preliminary description and reports the fit verdict rather than hiding a poor reduced χ².",
+          "pass": true,
+          "evidence": "Calls model preliminary/empirical, reports chi2_red0.7775 and overdone/amplitude_exceeds_data/large_rel_err rather than hiding fit verdict."
+        },
+        {
+          "requirement": "Points the reader to both period-specific reduced/fit plots and work directories.",
+          "pass": false,
+          "evidence": "Lists one red fit/reduction and differential integral plot; no independent period-specific fitted spectra or work directories."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. All consequential survey/calibration/rate/window/integral values checked in actual commands1,6,7,10,13,14,18, excluding report/audit displays. No physical arithmetic.",
+      "number_checker_flags": [],
+      "root_cause": "Period workflow regression: despite finding two acquisition periods, the agent substitutes integral-scan --period green-red for independent condition spectra, fits only red103288 and never states ON/OFF mapping. The survey unrecorded-P-coordinate warning dominates the analysis, although that limitation does not block a same-run period comparison. It reads the RTF notes using cat/strings/regex but does not establish laser condition labels. General repair should keep missing scan-axis metadata distinct from paired acquisition-condition analysis; CLI audit currently passes this incomplete period workflow. Source stays frozen until all24 are scored.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all21 completed commands inspected. All21 completed commands inspected. Reads only staged skill/references, supplied run files/RTF and installed CLI/products; no external source/rubric/host-skill/network/subagents or numerical scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 333.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"rg -o '\\\\\\\\\\\\\\\\f2\\\\\\\\\\\\\\\\fs20[\"'^}]*'\"' /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/photo-musr-silicon/data/logbook.rtf\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry info /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/photo-musr-silicon/data/HIFI00103277.nxs && asymmetry alpha /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/photo-musr-silicon/data --run 103299 && asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/photo-musr-silicon/data --runs 103277-103278,103298-103299 --alpha-from 103299 --deadtime from_file --background range --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/photo-musr-silicon/data --run 103288 --geometry LF --scope lf-dynamics --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "750a51e7bebf1e03098150abf91fe88c6855aa5f83fd181d52fb2e3846884233",
+      "audited_file_sha256": "750a51e7bebf1e03098150abf91fe88c6855aa5f83fd181d52fb2e3846884233",
+      "rubric_sha256": "9ea075b0d8d260180a124f3bbd71391eb593a605ee4117357c0b92d0e28d7d8a",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/photo-musr-silicon",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "No fabricated lifetime or density trend, but a near-zero integrated difference does not establish absence of different ON/OFF relaxation shapes.",
+        "Full-window two-channel red model is empirical with flagged amplitudes/slow rate and cannot replace independent short-window paired-period rates."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        6,
+        7,
+        10,
+        13,
+        14,
+        18
+      ],
+      "scored_at": "2026-10-20T18:10:33.933808+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
-    "photo-musr-silicon",
     "cds-fourier",
     "lifeas-psi",
     "trsb-re6zr",
@@ -1923,17 +2037,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 14,
+    "scored": 15,
     "target": 24,
     "scientific_pass": 11,
-    "must_pass": 74,
-    "must_total": 77,
-    "should_pass": 29,
-    "should_total": 49,
-    "exact_copy_pass": 8,
-    "literal_copy_pass": 9,
+    "must_pass": 77,
+    "must_total": 83,
+    "should_pass": 31,
+    "should_total": 53,
+    "exact_copy_pass": 9,
+    "literal_copy_pass": 10,
     "combined_pass": 6,
-    "boundary_pass": 14
+    "boundary_pass": 15
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates.",

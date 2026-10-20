@@ -1404,3 +1404,15 @@ Record separately from fixed literal Musts. Two alpha checker flags are real
 output of the actual alpha subcommand in mixed command64,not audit leakage.
 Totals74/77 Musts,11/14 science,8/14 audited-copy,9/14 literal-copy,6/14
 combined,14/14 boundary. Continue all24 frozen;no new improvement or gate.
+
+
+Confirmation2 now15/24 scored:photo-muSR silicon FAIL3/6 Musts;number,copy
+and boundary pass. It never establishes red=ON/green=OFF,never independently
+reduces green in a separate workdir,and substitutes a green-red integrated
+scan for the required same-run spectral/rate comparison. Only red103288 is
+fit. Missing P-scan coordinates are correctly stated but do not prevent a
+paired-period comparison;no lifetime/density exponent is fabricated. The CLI
+audit passes despite missing period workflow. All21 commands inspected and
+actual numerical sources verified;frozen hashes unchanged. Totals77/83 Musts,
+11/15 science,9/15 audited-copy,10/15 literal-copy,6/15 combined,15/15 boundary.
+Keep all24 running and score actual replies;no source repair or extra wave.
