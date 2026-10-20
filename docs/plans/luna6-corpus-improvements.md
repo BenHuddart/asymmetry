@@ -1326,3 +1326,20 @@ Totals37/38 Musts,6/7 science,5/7 copy,4/7 combined,7/7 boundary. Keep all24
 running and score every case;no repair or extra wave authorized. Cuprate,copper
 and molecular antiferromagnet are live at this check;23 GiB RAM available,
 zero swap/current PSI,653 GiB persistent disk free,no broad tests/duplicates.
+
+
+Confirmation2 now9/24 scored:cuprate and molecular antiferromagnet both PASS
+5/5 Musts,number/exact-copy/boundary checks. Totals47/48 Musts,8/9 science,
+7/9 copy,6/9 combined,9/9 boundary. Cuprate retains robust400 G Gaussian
+broadening with conditional BISCO/failed200 G gap-law caveats and independent
+instruments/calibrations. Molecular case separates two cold FFT detections
+from warm non-detection despite failed time-domain decompositions;poor-input
+OrderParameter Tc is explicitly conditional. Number heuristic flags only its
+requested FFT tmax7.938,which is literal in both Fourier command inputs and
+not physical arithmetic;accepted with recorded provenance note. Temperature
+wording below setpoint throughout contradicts the cold logged1.22032 K versus
+1.2 K setpoint;recorded as quality/Should caveat,not a fabricated number.
+All49 cuprate and40 molecular commands inspected;frozen hashes unchanged.
+At check copper,spin-Peierls and high-TF AFM remain live,concurrency3,19 GiB
+RAM available,zero swap/current PSI,652 GiB disk free,no tests/duplicates.
+Keep all24 running with source frozen;no follow-on repair or wave authorized.

@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 7/24 scored; PTFE/nickel copy failures and maleic provenance failure; finish frozen gate",
+  "status": "running; 9/24 scored; source frozen; finish all cases despite earlier failures",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -937,12 +937,255 @@
         "Warm spurious full-record FFT line is explicitly rejected rather than promoted to a sample line."
       ],
       "scored_at": "2026-10-20T17:30:25.657473+00:00"
+    },
+    "high-tc-cuprate": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the two instruments' runs (EMU vs MUSR) into distinct scans rather than treating the folder as one series.",
+          "pass": true,
+          "evidence": "Separates MUSR1274–1303 and EMU76976–76993, with independent calibrations and temperature scans."
+        },
+        {
+          "requirement": "Names both applied fields present on MUSR (400 G and 200 G) as separate field groups, not a single 400 G scan.",
+          "pass": true,
+          "evidence": "Explicitly names MUSR400 G1276–1289 and200 G1290–1303 as separate TF groups, plus EMU150 G; paired two-field controls are distinct from LF decoupling."
+        },
+        {
+          "requirement": "Reports a Gaussian (or Gaussian-like) TF relaxation rate that rises as temperature drops below the transition, for at least one of the field/instrument combinations.",
+          "pass": true,
+          "evidence": "400 G Gaussian sigma rises on cooling from0.065765 ±0.002394 at125.5417 K to1.16101 ±0.02332 at10.8622 K, with superconducting local-field broadening interpretation and rough-law caveats."
+        },
+        {
+          "requirement": "Discusses how the non-superconducting fraction of the signal was handled (e.g. a second, slowly-relaxing or non-relaxing component), rather than fitting a single Gaussian and ignoring it.",
+          "pass": true,
+          "evidence": "Each model includes Constant/background handling; negative constants are not physical nonsuperconducting fractions. Cold200 G two-Gaussian fit distinguishes broad/narrow contributions without inventing a volume fraction."
+        },
+        {
+          "requirement": "Contains no sigma, Tc, or penetration-depth number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Actual CLI supplies all sigma, Tc and scaled uncertainties, including SC_SWave107.326103 ±0.230620 K (400 G) and70.428543 ±1.509629 K (BISCO). No invented penetration depth or gap symmetry."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the data folders contain more runs than the worksheet's own tables list (76993 on EMU; 1274-1275 on MUSR) and reflects the survey's actual range rather than only the worksheet's table.",
+          "pass": true,
+          "evidence": "Full48-run survey includes extra76993 and unscanned zero-field detector tests1274–1275; no restriction to worksheet tabulation."
+        },
+        {
+          "requirement": "Compares sigma(T) trends across the different fields/instruments rather than reporting only one.",
+          "pass": true,
+          "evidence": "Compares150/200/400 G sigma trends: robust400 G broadening, conditional BISCO Gaussian test despite preferred exponential, and unreliable200 G one-line endpoint replaced by a local two-component check."
+        },
+        {
+          "requirement": "Mentions the \"above Tc\" run (1276, 125 K) as a normal-state reference distinct from the temperature scan proper.",
+          "pass": true,
+          "evidence": "Explicitly calls1276 the Above Tc Run at125 K, retained as the warm reference/endpoint rather than an independent new acquisition."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. unverified_numbers=[]; decisive widths, law coefficients/errors and two-component fit values checked against actual CLI.",
+      "number_checker_flags": [],
+      "root_cause": "All Musts pass. The model-selection path rejects flagged composite fits and retains a meaningful400 G Gaussian-width trend. BISCO exponential preference and200 G one-line failures are reported rather than forcing a clean Gaussian gap interpretation. No further repair is authorized during this gate.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all49 completed commands inspected. Staged skill/references, supplied data and installed CLI/products only; no source/rubric/host-skill/network/subagents or numerical scripts. Explicit EMU temperature fallback axis is entered through CLI --x, not physical arithmetic.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 947.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/high-tc-cuprate/data --series bisco-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/high-tc-cuprate/data --series bisco-gauss --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/high-tc-cuprate/data --series htc-400-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/high-tc-cuprate/data --series htc-400-gauss --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/high-tc-cuprate/data --series htc-200-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/high-tc-cuprate/data --series htc-200-gauss --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/high-tc-cuprate/data --series htc-200-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/high-tc-cuprate/data --series htc-400-gauss --model SC_SWave --param sigma --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "26465704c3b5a3bd1599afcfca4f2e545adba6bf359007560bcd2d8cd2b8408d",
+      "audited_file_sha256": "26465704c3b5a3bd1599afcfca4f2e545adba6bf359007560bcd2d8cd2b8408d",
+      "rubric_sha256": "6768523173dd08582c6c56642fe11ca2d276a0b467ea21494e31b1db78c59029",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/high-tc-cuprate",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "SC_SWave descriptions are rough (chi2_red3.443/5.383), not precision gap or penetration-depth measurements.",
+        "BISCO Gaussian interpretation is conditional because exponential damping is strongly preferred at every temperature.",
+        "200 G single-width trend is unreliable; two fitted components are not assigned sites or independent Fourier lines.",
+        "Negative constants cannot yield physical nonsuperconducting fractions; logged76993 temperature fallback is explicit."
+      ],
+      "judgement_calls": [
+        "Actual full survey range and normal-state reference role satisfy coverage Shoulds without excluding legitimate scan endpoints."
+      ],
+      "number_evidence_commands": [
+        1,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        14,
+        15,
+        16,
+        17,
+        22,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        32,
+        33,
+        34,
+        36,
+        37,
+        38,
+        43
+      ],
+      "scored_at": "2026-10-20T17:41:17.242294+00:00"
+    },
+    "molecular-antiferromagnet": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies 17104 as the TF 20 G calibration run and states alpha was determined from it.",
+          "pass": true,
+          "evidence": "Separates17104 as20 G TF alpha reference; raw1.2584 and applied1.2594 with groups1/2 and deadtime explicitly stated."
+        },
+        {
+          "requirement": "Treats 17094-17103 as the ZF temperature sweep used for the ordering analysis, separate from the calibration run.",
+          "pass": true,
+          "evidence": "17094–17103 identified as independent ZF temperature ordering scan;17104 excluded from that series."
+        },
+        {
+          "requirement": "Reports oscillation(s) present in the low-temperature ZF spectra that become more relaxed/damped as temperature rises through the sweep.",
+          "pass": true,
+          "evidence": "Cold survey/internal line and oscillatory plots weaken/relax on warming: resolved down to4.89531 K, absent by5.88354 K and above, with unresolved-line versus absent-order distinction."
+        },
+        {
+          "requirement": "Comments on whether more than one oscillation frequency is present (the worksheet flags this as something to check for), rather than assuming a single frequency without looking.",
+          "pass": true,
+          "evidence": "Explicitly tests multiple components: cold wizard has three candidates, matched FFT detects1.568406 and2.509852 MHz; weaker shoulders are not promoted, warm FFT has no finite-frequency detections."
+        },
+        {
+          "requirement": "Contains no frequency, TN, or relaxation-rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All measured frequencies, rates and conditional Tc5.466372 ±0.225572 K are actual CLI outputs. Requested FFT tmax7.938 is a literal input setting in both commands, not a computed or fabricated result."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes the \"Cryostat Temperature\" vs \"Sample Temperature\" columns logged for these runs are identical in the worksheet table, and does not imply a discrepancy that isn't there.",
+          "pass": false,
+          "evidence": "Does not note worksheet cryostat/sample columns being identical. Prose says sample logs are below setpoints throughout, although its own cold1.22032 K value exceeds the1.2 K setpoint; this is an additional wording/provenance caveat."
+        },
+        {
+          "requirement": "Discusses whether it fit from low to high temperature or vice versa, and why (the worksheet explicitly raises this as a design choice).",
+          "pass": false,
+          "evidence": "Says scan is ordered by temperature and screens the cold run, but does not explicitly discuss fit direction and why that direction was chosen."
+        },
+        {
+          "requirement": "Chooses a relaxing-oscillation function appropriate to magnetic order (e.g. damped cosine terms) rather than a generic unstructured relaxation function.",
+          "pass": true,
+          "evidence": "Tests damped cosine components plus exponential relaxation/constant for ordered spectra and separates warm KT relaxation; failed decompositions are not accepted as microscopic line assignments."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Heuristic flags only FFT window limit7.938; both actual Fourier command inputs18/19 explicitly contain --tmax7.938. Accept as a stated configuration input, not a new physical result. All decisive measured values/uncertainties are independently printed.",
+      "number_checker_flags": [
+        {
+          "text": "7.938",
+          "line": 41
+        }
+      ],
+      "root_cause": "All Musts pass using independent survey/FFT evidence despite failed multicomponent time fits. Number heuristic flags only7.938 because the CLI FFT output omits the requested time limit; commands18/19 explicitly set --tmax7.938, so this is accepted input provenance, not unprinted physical arithmetic. Remaining Should gaps are temperature-column/direction explanation. The conditional order-law result rests on poor/flagged inputs and is not a precision Neel estimate.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all40 completed commands inspected. Staged skill/references, supplied data and installed CLI/products only; no source/rubric/host-skill/network/subagents or ad hoc physical arithmetic. Two invalid trend requests are corrected through CLI parameters.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 763.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/molecular-antiferromagnet/data --series zf-main-line-logged --model OrderParameter --param frequency --xmax 4.89531 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/molecular-antiferromagnet/data --series zf-main-line-logged --model OrderParameter --param survey_line_mhz --fix alpha=1 --xmax 4.89531 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/molecular-antiferromagnet/data --series zf-main-line-logged --model OrderParameter --param frequency --fix alpha=1 --xmax 4.89531 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/molecular-antiferromagnet/data --series zf-main-line-logged --model OrderParameter --param frequency --fix alpha=1 --xmax 4.90 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/molecular-antiferromagnet/data --series zf-main-line-logged --model OrderParameter --param frequency --xmax 4.89531 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/molecular-antiferromagnet/data --series zf-main-line-logged --model OrderParameter --param survey_line_mhz --fix alpha=1 --xmax 4.89531 --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "cf49dd16123a690af0c44c046a79a0f75f957c29a3af409793f9da1854c506aa",
+      "audited_file_sha256": "cf49dd16123a690af0c44c046a79a0f75f957c29a3af409793f9da1854c506aa",
+      "rubric_sha256": "a6dcbd9c0ae82a5ff22433c944584a709ccf430256a594c0acee0073d8b540b7",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/molecular-antiferromagnet",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "OrderParameter chi2_red92.876 and three failed/amplitude-exceeding underlying rows make its Tc/exponent conditional; independent survey/FFT line evolution remains separate.",
+        "Logged-versus-setpoint wording below throughout contradicts cold1.22032 K versus1.2 K nominal; no numerical offset is invented.",
+        "Warm KT rows are mostly poor, and no Delta/nu onset or microscopic fluctuation law is established."
+      ],
+      "judgement_calls": [
+        "Literal configured FFT window is known from actual commands even though not echoed by the FFT output; do not fail number provenance solely on that input setting."
+      ],
+      "number_evidence_commands": [
+        1,
+        2,
+        3,
+        4,
+        6,
+        8,
+        15,
+        16,
+        18,
+        19,
+        23,
+        25,
+        32,
+        33,
+        35,
+        36
+      ],
+      "scored_at": "2026-10-20T17:41:17.260649+00:00"
     }
   },
   "pending_cases": [
-    "high-tc-cuprate",
     "copper-diffusion",
-    "molecular-antiferromagnet",
     "spin-peierls",
     "afm-high-tf-mdu",
     "alc-tcnq",
@@ -959,16 +1202,16 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 7,
+    "scored": 9,
     "target": 24,
-    "scientific_pass": 6,
-    "must_pass": 37,
-    "must_total": 38,
-    "should_pass": 15,
-    "should_total": 26,
-    "exact_copy_pass": 5,
-    "combined_pass": 4,
-    "boundary_pass": 7
+    "scientific_pass": 8,
+    "must_pass": 47,
+    "must_total": 48,
+    "should_pass": 19,
+    "should_total": 32,
+    "exact_copy_pass": 7,
+    "combined_pass": 6,
+    "boundary_pass": 9
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates."
