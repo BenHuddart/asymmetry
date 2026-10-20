@@ -2025,3 +2025,6 @@ Confirmation5 now4/24 scored: plateau5/5 Musts repaired by converged fixed-m=2 R
 
 
 Confirmation5 now5/24 scored: PTFE6/6 Musts repairs prior falsezero claim, science/number/unit/boundary PASS; copy FAIL one terminalLF from plain audit.1/3Shoulds, same uncertainty/entanglement gaps. Full F–mu–F poor-fit and repeat/axis-sensitivity caveats retained. Totals27/27Musts,5/5science,1/5copy/combined,5/5boundary,11/17Shoulds. Keep frozen source through remaining19cases.
+
+
+Confirmation5 now7/24scored: highTF-AFM5/5 literalMusts and independent magnetic physics_scope PASS; noSCgaplaw, copyFAILoneLF. HighTc5/5Musts and exact-copy PASS; all3field/instrument groups and13fieldpairs exercised. Shoulds3/3 (recorded732temperature/limitedresolution judgements explicit) and2/3. Totals37/37Musts,7/7science,2/7copy/combined,7/7boundary,16/23Shoulds. NegativeAFMbaseline, poorfit, conditionalcuprategaplaw/overwrittenDwaveplot and detector-test wording caveats retained. Source remains frozen.

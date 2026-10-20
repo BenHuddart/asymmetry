@@ -1,5 +1,5 @@
 {
-  "status": "running; 5/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 7/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -879,6 +879,352 @@
       ],
       "scored_at": "2026-10-20T23:36:22.174458+00:00",
       "reply_matches_saved_file": false
+    },
+    "afm-high-tf-mdu": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the two temperature scans by field (6 T and 8 T) with their run ranges, from the survey rather than from file names alone.",
+          "pass": true,
+          "evidence": "Experiment survey table identifies6T686–693 and8T730–739 temperature scans and their actual ranges."
+        },
+        {
+          "requirement": "Resolves the precession near the Larmor frequency into more than one line (from a Fourier transform or a multi-component fit) at at least one field, and says which it used. Reporting the two lines passes even when it calls the splitting not precisely resolved; it fails when it concludes there is one line.",
+          "pass": true,
+          "evidence": "Reports two close time-domain components in both scans and two detected warm FFT peaks813.595524/813.497046 and1084.714829/1084.858022MHz, with limited-resolution caveats."
+        },
+        {
+          "requirement": "Reports a change in the spectrum or line shape (broadening, splitting or extra structure) on cooling through the tens-of-kelvin region at at least one field, from this session's own fits or spectra.",
+          "pass": true,
+          "evidence": "Reports stronger cold damping and its tens-of-kelvin evolution:6T Lambda_4 change12–30.0005K and8T component changes10.4659–49.9994K/17.9999–23.9999K, with matched spectral structure."
+        },
+        {
+          "requirement": "States which parts of a full analysis the tool cannot do (MaxEnt field spectra; a multi-group field-distribution analysis); does not present a canting angle or ordered moment as a finding, and does not infer the absence of magnetic order from a single-line fit.",
+          "pass": true,
+          "evidence": "Not done explicitly names MaxEnt and multi-group field distributions; no canting angle or ordered moment, and no inference of absent magnetic order from one cold FFT peak."
+        },
+        {
+          "requirement": "Contains no transition temperature, field shift or line parameter that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All line parameters, FFT resolution, shifts and damping coordinates match actual direct CLI outputs; no unprinted transition temperature."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reports the recorded run temperature where it differs from the title (run 732 is titled 12 K but recorded at 10.5 K).",
+          "pass": true,
+          "evidence": "Table explicitly reports run732 at recorded10.4659K rather than its12K title; title discrepancy itself is not spelled out."
+        },
+        {
+          "requirement": "If it quotes a transition temperature, it comes from a stated `trend --model` fit to a line parameter with the fit range given, and is framed as that fit's result rather than the paper's T_N, which rests on the wing area of MaxEnt spectra.",
+          "pass": true,
+          "evidence": "No transition temperature claimed; no paper TN substituted, and unsupported damping-law fit explicitly declined."
+        },
+        {
+          "requirement": "Notes that the two central lines are separated by roughly one Fourier resolution element, so a zoomed spectrum's empty peak table is not evidence that the second line is absent.",
+          "pass": true,
+          "evidence": "Reports0.105316MHz resolution and close peaks within two resolution elements, barely FFT-separated; distinguishes shoulders/single cold detection from absent second component."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No numeric/unit checker flags. Survey/raw JSON, full trend parameter tables, printed frequency-shift notes and matched FFT peak tables/windows verified. Recipe seeds813.656/813.527 are printed CLI doublet hints. No hand-derived line shifts.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Literal science and independent magnetic physics scope pass. Agent now explicitly treats the experiment as a high-field magnet, uses tf-knight-precession and explains magnetic sublattice/site field distributions without superconducting gap fits. Strict copy still fails by one terminal LF because both final audits are plain audit. Poor fits, alpha uncertainty and unsupported microscopic assignments remain explicit.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all40 completed commands inspected. 40 commands and summary-only edits inspected; all analysis via asymmetry, only staged skill/data and project products read. No network/repository/calculator. Raw final matches exposed last-message/summary; image hashes verified and6T cold/warm FFT pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1088.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "5157ce19286323149b3613994f7ec0e6f7954951a23a841061b400d2e944e7ce",
+      "audited_file_sha256": "d9f0f8baf9aa450cc6515c1bfb45fd4a1586baf1df4cb831aef8a01da7fd6507",
+      "rubric_sha256": "062fa8082f95b4b6cb7f075cf9a287e8add6d5313d56290d3d5ead8bc95725cf",
+      "staged_skill_sha256": "7ecd7452b20d1ccb95973faf3b3ffcf9b350b2b17cface1afcdc0cc8c2392882",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/afm-high-tf-mdu",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -105,4 +105,4 @@\n asymmetry-work/plots/tf-8T-two-line-trend-Lambda_2.png\n asymmetry-work/plots/tf-8T-two-line-trend-Lambda_4.png\n asymmetry-work/plots/tf-6T-two-line-gaussian-trend-sigma_4.png\n-asymmetry-work/plots/tf-8T-two-line-gaussian-trend-sigma_2.png\n+asymmetry-work/plots/tf-8T-two-line-gaussian-trend-sigma_2.png",
+      "physics_caveats": [
+        "Alpha assumed1.0 and Octant1/Octant5 file pair uncalibrated; large negative constant near−10% makes component fractions unreliable. Summary does not infer them.",
+        "All18 exponential two-line fits have poor whole-fit chi-square despite no parameter flags. Gaussian alternatives have flagged widths; no precise microscopic line/site assignment.",
+        "Cold FFT tables have one peak with side structure; warm tables have two close peaks. Limited resolution and restricted bands mean this is not a MaxEnt wings/field-distribution analysis.",
+        "No transition-law fit, wing-area order parameter, DFT site, canting angle or ordered moment measurement is supplied."
+      ],
+      "judgement_calls": [
+        "Should1 accepted because run732 is explicitly listed at10.4659K; summary does not additionally quote its12K title.",
+        "Should3 uses CLI wording within two resolution elements rather than exactly one; it explicitly calls the FFT pair barely separated and does not equate one detected cold peak with one physical component."
+      ],
+      "number_evidence_commands": [
+        1,
+        2,
+        4,
+        7,
+        8,
+        11,
+        12,
+        14,
+        15,
+        16,
+        18,
+        21,
+        23,
+        26,
+        27,
+        28,
+        30,
+        32,
+        33,
+        34,
+        36,
+        37
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "5157ce19286323149b3613994f7ec0e6f7954951a23a841061b400d2e944e7ce",
+        "summary.md": "5157ce19286323149b3613994f7ec0e6f7954951a23a841061b400d2e944e7ce",
+        "transcript.jsonl": "8e15672da0abe567732e34f0e7a08412f80551e7e73806f95fc142c7a7a3d10f",
+        "commands.txt": "4935125b8113bcaaee36f13702e200709201cf03978a9c246debef9ede13d565",
+        "cost.json": "c1f4b870039e8bb2e142be7b59396566703825c2ae34c147c8344c3c4fc7c04c",
+        "image-inputs.json": "1609624b8fc3dff5de62017613046bb031a93e34ce6d9abd0585f9b29c4d82ee"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-686.png",
+          "snapshot_path": "review-images/6988406dcae1b35d414255fd8c6b1c9ba537797238e9917b839918b4272eeb30.png",
+          "bytes": 47804,
+          "sha256": "6988406dcae1b35d414255fd8c6b1c9ba537797238e9917b839918b4272eeb30",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-693.png",
+          "snapshot_path": "review-images/8d9792d30c03f1a2b0154ed048ebcb512e090458a35b8130571e4d58dd8ccee1.png",
+          "bytes": 48975,
+          "sha256": "8d9792d30c03f1a2b0154ed048ebcb512e090458a35b8130571e4d58dd8ccee1",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-730.png",
+          "snapshot_path": "review-images/b9a10fa69776c9869baa13972e0dcbaa04ce37a2204714019dd5709026c9dffb.png",
+          "bytes": 49300,
+          "sha256": "b9a10fa69776c9869baa13972e0dcbaa04ce37a2204714019dd5709026c9dffb",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-739.png",
+          "snapshot_path": "review-images/fcb1e33fde37522799a9f4b39e5e6b18eeefdc24da5e75f8810f3fa77df21425.png",
+          "bytes": 49400,
+          "sha256": "fcb1e33fde37522799a9f4b39e5e6b18eeefdc24da5e75f8810f3fa77df21425",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T23:44:56.328958+00:00",
+      "physics_scope": {
+        "pass": true,
+        "verdict": "PASS",
+        "evidence": "Summary explicitly screens high-field magnetic sample with tf-knight-precession, discusses magnetic environments/sublattices and changing internal-field distributions, rejects inference of superconducting vortex broadening and runs no SC-gap law. Microscopic structure remains properly conditional."
+      },
+      "reply_matches_saved_file": false
+    },
+    "high-tc-cuprate": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the two instruments' runs (EMU vs MUSR) into distinct scans rather than treating the folder as one series.",
+          "pass": true,
+          "evidence": "Experiment separates MUSR HTC and EMU BISCO into independently calibrated400G/200G/150G scans; all relevant series are separate."
+        },
+        {
+          "requirement": "Names both applied fields present on MUSR (400 G and 200 G) as separate field groups, not a single 400 G scan.",
+          "pass": true,
+          "evidence": "MUSR400G1276–1289 and200G1290–1303 explicitly identified as separate temperature groups, with13 field-pair comparisons also mapped."
+        },
+        {
+          "requirement": "Reports a Gaussian (or Gaussian-like) TF relaxation rate that rises as temperature drops below the transition, for at least one of the field/instrument combinations.",
+          "pass": true,
+          "evidence": "Reports400G Gaussian sigma1.161010±0.023322μs−1 cold versus0.065765±0.002394 warm, and interprets cold broadening conditionally in supplied cuprate context."
+        },
+        {
+          "requirement": "Discusses how the non-superconducting fraction of the signal was handled (e.g. a second, slowly-relaxing or non-relaxing component), rather than fitting a single Gaussian and ignoring it.",
+          "pass": true,
+          "evidence": "Compound slow/constant component attempted and rejected on amplitude flags; explains retained constants/two-component amplitudes and inability to extract nonSC volume fractions rather than ignoring them."
+        },
+        {
+          "requirement": "Contains no sigma, Tc, or penetration-depth number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All sigma/Tc/gap-law values and uncertainties match actual session outputs; no invented penetration depth or microscopic fraction."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the data folders contain more runs than the worksheet's own tables list (76993 on EMU; 1274-1275 on MUSR) and reflects the survey's actual range rather than only the worksheet's table.",
+          "pass": true,
+          "evidence": "Accounts for all48 surveyed runs, including detector tests1274–1275 and separate actual76993 endpoint despite implausible logged411.19K sensor."
+        },
+        {
+          "requirement": "Compares sigma(T) trends across the different fields/instruments rather than reporting only one.",
+          "pass": true,
+          "evidence": "Compares400G Gaussian progression,200G two-Gaussian components/nonmonotonic widths and150G two-exponential damping;13 matched field-pair fits are actually exercised."
+        },
+        {
+          "requirement": "Mentions the \"above Tc\" run (1276, 125 K) as a normal-state reference distinct from the temperature scan proper.",
+          "pass": false,
+          "evidence": "Names1276 warm125K calibration/reference endpoint but does not explicitly identify it as worksheet above-Tc normal-state reference."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No numeric/unit checker flags. Direct reduction/alpha outputs, Gaussian and two-line trend tables, all field-pair outputs and SC-law scaled-error tables checked. No hand conversions or unprinted volume fractions.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science and strict-copy PASS. Cross-instrument and field-pair coverage is complete, compound-fit failure is recovered with a usable400G Gaussian series, S-wave/D-wave laws are compared with honest limits, and --prepare-reply yields byte-identical final report. Remaining gaps are quantitative sample/background separation, usable200G warm decomposition and explicit normal-state reference context.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all70 completed commands inspected. 70 completed commands and summary-only edits inspected. One missing alternate recipe exits1 and is recovered by creating a new recipe; no boundary violation. All source/skill/data stays staged/project, no network/calculator. Snapshot hashes verified; sigma plot pixels reviewed. Final report byte-identical to prepared saved file.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 941.3,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/high-tc-cuprate/data --series htc-400g-alt --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/high-tc-cuprate/data --series htc-400g-alt --model SC_DWave --param sigma --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/high-tc-cuprate/data --runs 1290-1303 --recipe wizard-1291-alt --order sample_temperature_logged --start 1291 --name htc-200g-alt --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "d93559f64d1f958b06773a7e0b99a3409f9d08415aee8f39916a9146af36d625",
+      "audited_file_sha256": "d93559f64d1f958b06773a7e0b99a3409f9d08415aee8f39916a9146af36d625",
+      "rubric_sha256": "6768523173dd08582c6c56642fe11ca2d276a0b467ea21494e31b1db78c59029",
+      "staged_skill_sha256": "7ecd7452b20d1ccb95973faf3b3ffcf9b350b2b17cface1afcdc0cc8c2392882",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/high-tc-cuprate",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Conditional400G SC_SWave Tc107.326103±0.230620K and gap_ratio2.398081±0.059867 have chi2_red3.443; SC_DWave chi2_red60.790 is rejected. This is not a precise gap-symmetry determination.",
+        "Reviewed sigma plot is the later SC_DWave overlay; earlier S-wave plotting uses same filename. Summary correctly rejects the visibly poor D-wave curve but S-wave visual support is less direct.",
+        "200G two-line warm fits flagged and150G single-line fits poor; no microscopic sample/background volume fraction assigned. Retained constant is a small negative offset, not physical volume.",
+        "Opening sentence calls the two detector tests EMU, but later correctly calls1274/1275 MUSR and all actual fitting/calibration scans use correct instrument groups; preserve local wording inconsistency.",
+        "76993 has implausible logged411.19K; separate85K-setpoint spectrum is fitted, two-line convergence failure disclosed."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        11,
+        12,
+        13,
+        14,
+        15,
+        20,
+        21,
+        22,
+        25,
+        26,
+        27,
+        28,
+        29,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        67
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "d93559f64d1f958b06773a7e0b99a3409f9d08415aee8f39916a9146af36d625",
+        "summary.md": "d93559f64d1f958b06773a7e0b99a3409f9d08415aee8f39916a9146af36d625",
+        "transcript.jsonl": "ee848d871182faf7c3cdce17e0d012d4c6e23a0f39d7e7fbd528ee940e9d3b8e",
+        "commands.txt": "4e1f964de0567d96aa1906f46286a8abc2c00f6ca55a38f8a11fc45c02ee658d",
+        "cost.json": "08cae15dfeec8f4db3b0875d3fbf819de0150d08f3be9657760da6fd7bd09bf4",
+        "image-inputs.json": "feabab56be0f2fedc43b2aa5b83c01543ac0082f3b3762d4450194f6ac51ad77"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/htc-400g-alt-trend-sigma.png",
+          "snapshot_path": "review-images/8d36f52109d281ba639c95c8409a39f123d86cdfdb2c7fc85dd29899ce7b7eeb.png",
+          "bytes": 36549,
+          "sha256": "8d36f52109d281ba639c95c8409a39f123d86cdfdb2c7fc85dd29899ce7b7eeb",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/htc-200g-two-line/1291.png",
+          "snapshot_path": "review-images/676bea5d5b7c169fcee74f7d74e396aa151b686bde0bed0b6ae5f60b35fe99de.png",
+          "bytes": 103534,
+          "sha256": "676bea5d5b7c169fcee74f7d74e396aa151b686bde0bed0b6ae5f60b35fe99de",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/bisco-150g-two-line-trend-Lambda_4.png",
+          "snapshot_path": "review-images/acb62332ac81346499cb7bb02882cc6a34f7290535b283229abad1e96e66123f.png",
+          "bytes": 37177,
+          "sha256": "acb62332ac81346499cb7bb02882cc6a34f7290535b283229abad1e96e66123f",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-76993.png",
+          "snapshot_path": "review-images/35a60cb96e745c98086dbd6217bc9a497bd5793d1f177f0b567b38c9f08861d1.png",
+          "bytes": 41287,
+          "sha256": "35a60cb96e745c98086dbd6217bc9a497bd5793d1f177f0b567b38c9f08861d1",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T23:44:56.370742+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -886,9 +1232,7 @@
     "euo-psi",
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
-    "high-tc-cuprate",
     "copper-diffusion",
-    "afm-high-tf-mdu",
     "alc-tcnq",
     "ionic-motion-llz",
     "photo-musr-silicon",
@@ -928,16 +1272,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 5,
+    "scored": 7,
     "target": 24,
-    "scientific_pass": 5,
-    "must_pass": 27,
-    "must_total": 27,
-    "should_pass": 11,
-    "should_total": 17,
-    "exact_copy_pass": 1,
-    "literal_copy_pass": 1,
-    "combined_pass": 1,
-    "boundary_pass": 5
+    "scientific_pass": 7,
+    "must_pass": 37,
+    "must_total": 37,
+    "should_pass": 16,
+    "should_total": 23,
+    "exact_copy_pass": 2,
+    "literal_copy_pass": 2,
+    "combined_pass": 2,
+    "boundary_pass": 7
   }
 }
