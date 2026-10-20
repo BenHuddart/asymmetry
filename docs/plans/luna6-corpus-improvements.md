@@ -535,3 +535,15 @@ record helper, not a judge. If both pass science, exact-copy and boundary,
 launch a fresh `--set all` 24-case confirmation wave with the same committed
 source; score every case, including AFM physics scope. Otherwise improve again
 and commit before the next targeted wave. No full confirmation has run yet.
+
+First round-five report scored: corannulene regresses to 4/10 Musts while
+exact-copy and boundary pass. It applies MuRepolarisation to all LF scans and
+stops after the failed whole-scan fits, never investigating local ALC lines.
+The new centre-bound/background guidance is therefore never reached. The
+report's numbers verify against actual non-audit CLI outputs, but the main
+resonance science is absent. Next general candidate: expose non-monotonic
+local-dip investigation independently of the initially requested recovery model;
+a failed global model must not be interpreted as absence of another observable.
+Benzene remains live in its review turn; keep CLI/skill frozen. One wave/one
+model, no tests, 18 GiB available, zero swap use/PSI, 8 GiB free /tmp. Do not
+launch a confirmation gate from these results.
