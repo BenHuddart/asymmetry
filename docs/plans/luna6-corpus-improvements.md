@@ -1655,3 +1655,9 @@ records supplied manual judgements; it is not an automatic judge. Keep all
 implementation/skill/runner/rubrics frozen until every case finishes. After
 all24 are scored, commit score/plan and PAUSE the monitor; this user request
 authorizes one repair+rerun, not a resumed unrestricted loop.
+
+
+Confirmation3 first3 cases scored:PTFE PASS6/6 Musts,plateau FAIL3/5 andmaleic FAIL3/5. Total12/16 Musts,1/3science/combined,3/3audit-copy/literal-copy/boundary,3/12Shoulds. All3 number/unit checks pass. PTFE final cat preserves exact copy; poor/reseeded fits and Constant-law mismatch remain caveats. Plateau substitutes LF integral trough/recovery analysis for required Lambda(B)/Redfield. Maleic now attributes relative labels to titles/notes but skips concentration slope after poor one-line diagnostic fits; supplied-axis kinetics is not recovered. All86 commands and file changes inspected, hashes/frozen sources verified; no implementation edits or retries. Six-case resource samples so far retain >=20.82GiB available,zero swap/CPU-memory PSI,peak summed RSS4.13GiB (shared pages double-counted). Finish all24 frozen,then score/commit/pause; do not change source or launch another gate.
+
+
+Confirmation3 now4/24 scored:spin-glass PASS5/5 Musts,2/3Shoulds,number/unit/copy/boundary pass. Uses stretched LF series, explicit warm/cold actual endpoints and qualified critical-law limits. Reference-run amplitude/background fixing remains a Should gap; geometry inference is caveated. Direct survey makes24591 a loneZF reference,despite rubric LF shorthand; full coverage retained and rubric unchanged. All17 commands inspected; frozen hashes match. Totals17/21Musts,2/4science/combined,4/4audit-copy/literal-copy/boundary,5/15Shoulds. Wave continues at six cases; no source changes or new runs.

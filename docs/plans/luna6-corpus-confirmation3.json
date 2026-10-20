@@ -130,17 +130,482 @@
     },
     "authorization": "User requested one repair round and rerun, plus investigation of increased concurrency. Finish and score this full fresh gate, then pause; no unrestricted improvement loop."
   },
-  "status": "running; 0/24 scored; source frozen; finish all cases despite early failures",
+  "status": "running; 4/24 scored; source frozen; finish all cases despite earlier failures",
   "scoring_policy": "Actual summary.md final replies only, against unchanged staged rubrics and tools/agent_eval/scoring_brief.md; manual Must/Should, number/units, boundary, exact-copy and independent physics-scope checks. Exclude audits/draft/log-report displays from numerical provenance; stored direct CLI outputs are valid. Preserve first attempts and do not pool historical passes.",
-  "cases": {},
+  "cases": {
+    "plateau-redfield": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Uses run 9023 for alpha and says so.",
+          "pass": true,
+          "evidence": "Calibration: \"Run 9023 is the measured weak-TF calibration\"; raw alpha1.0069 and corrected applied1.0097 are distinguished."
+        },
+        {
+          "requirement": "Treats the longitudinal-field runs from 9035 to 9051 (with or without the zero-field 15.9 K runs 9031–9034 before them) as the 15 K field sweep, and does not present 9024–9030 as 15 K points of that sweep.",
+          "pass": true,
+          "evidence": "Explicitly separates cooldown9024–9030 (logged285.169→75.719 K), near15.9 K ZF9031–9034, and the isothermal LF sweep9035–9051 at1000–38000 G."
+        },
+        {
+          "requirement": "Reports the relaxation rate falling as the longitudinal field rises through the sweep, from a series fitted along field.",
+          "pass": false,
+          "evidence": "LF Results report \"integral asymmetry\" versus field, not a fitted time-domain Lambda(B) series; the falling Lambda table is the ZF cooldown along temperature."
+        },
+        {
+          "requirement": "Fits Redfield's law to λ(B) with the CLI (`trend --model Redfield` or a sum containing it), states the field range fitted, and reports the fitted parameters with uncertainties as the command printed them.",
+          "pass": false,
+          "evidence": "No Redfield fit or parameters. Model explicitly says \"the observable is integral asymmetry versus field, not a time-domain Redfield rate\" and only LorentzianLCR baseline/window fits are performed."
+        },
+        {
+          "requirement": "Contains no correlation time, field width or rate that was not produced by a tool call in this session (the handout's and paper's values are background).",
+          "pass": true,
+          "evidence": "Quoted alpha, rates, temperatures, coupled KT parameters and empirical line parameters are actual CLI outputs with ordinary rounding; no invented correlation time or rate-law conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits over the plateau (roughly 0.5–3.6 T) rather than the whole sweep, or says why not.",
+          "pass": false,
+          "evidence": "No plateau-restricted Redfield fit; full LF integral scans and local trough windows replace the requested time-domain plateau analysis."
+        },
+        {
+          "requirement": "Holds the Redfield exponent `m` at 2 (the handout's equation) or says why it was left free.",
+          "pass": false,
+          "evidence": "No Redfield exponent m is fitted or fixed; no explanation for an alternative exponent."
+        },
+        {
+          "requirement": "Says how the initial and background asymmetries were handled as the field rises (the handout's first question).",
+          "pass": false,
+          "evidence": "Explains tail_fit count-background correction and held-zero A_bg for the cooldown, but not initial/background asymmetries in a rate-fit LF series as field rises."
+        },
+        {
+          "requirement": "Comments on whether the plateau edges show in λ(B) (a change of slope near 0.5 T, flattening near 3.6 T), marked as a qualitative reading.",
+          "pass": false,
+          "evidence": "Discusses a broad integral minimum near7000 G and continued recovery to38000 G, without a qualitative test of the magnetisation-plateau edges in Lambda(B)."
+        },
+        {
+          "requirement": "Notes the cooldown in 9024–9030 from the logged temperature.",
+          "pass": true,
+          "evidence": "Experiment explicitly identifies9024–9030 as cooldown despite nominal15 K, using285.169→75.719 K logged temperatures."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Checked survey/calibration, integral tables and fit parameters, wizard diagnostics, both ZF trend tables and coupled fits against direct outputs. 9129.271±25.808 G rounds command10 B0=9129.270658±25.807564 G; no hand conversions. Separate source checker and named-unit checker return no findings. Integral fit windows are requested bounds; actual covered points can stop short of those bounds.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Commands9–12 fit LF integral asymmetry with LorentzianLCR plus polynomial baselines; no LF time-domain fit-series or Redfield law follows. Survey command2 prints FIELD OBSERVABLE and distinguishes a rate law from integral recovery, but the agent promotes the integral route into the defining question and treats a poor global baseline as a local-resonance exercise. ZF cooldown/coupled-KT work is substantial but cannot substitute for Lambda(B). The audit accepts scan coverage from integral fits and has no requested-observable completeness check. General repair belongs in CLI/skill experiment-to-observable selection, not numeric answer hints; keep both LF observables distinct and establish a time-rate trend before a Redfield inference.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all34 completed commands inspected. All34 completed commands inspected; reads stay within staged skill, data/logbook and project products. File changes only project/summary.md. Error items are skip_host_skill_discovery warnings; stream-fd/matplotlib cache warnings are nonfatal output, not approval denials. Two-turn image inputs completed.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 495.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/plateau-redfield/data --runs 9031-9034 --coadd --alpha-from 9023 --deadtime from_file --background range --plot --workdir asymmetry-work-zf'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "a6849b62e552a67caefef814b3358b93dba48180a4f24c54a8cb9d6f7e1e4f6d",
+      "audited_file_sha256": "a6849b62e552a67caefef814b3358b93dba48180a4f24c54a8cb9d6f7e1e4f6d",
+      "rubric_sha256": "23bb04d9a398fa17dde7cf8fc51632eda64e51646ad926a80a7462453df6243e",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/plateau-redfield",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "LF integral trough/recovery is not the required magnetic relaxation-rate decoupling law; no quantitative plateau dynamics result is established.",
+        "Conditional integral centres are correctly bounded by unstable windows/backgrounds; the global width is bound-pinned and not treated as measured.",
+        "Coupled Gaussian/Lorentzian ZF fits are both acceptable; chemistry preference does not resolve the actual distribution. KT parameter units are not fully explicit in the prose."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        2,
+        5,
+        7,
+        9,
+        10,
+        11,
+        12,
+        14,
+        16,
+        17,
+        18,
+        19,
+        21,
+        29,
+        30,
+        32
+      ],
+      "scored_at": "2026-10-20T20:04:39.720783+00:00",
+      "reply_matches_saved_file": true,
+      "raw_artifact_sha256": {
+        "cost.json": "7355e98f009437de0c6b6bff750f99530a0a0f609fbb68f02516be0e500d0f1c",
+        "transcript.jsonl": "58d9431b1a75735ab3af65bba1d08b0adb2b69c4ef4c35ff2aeed5094cc16a18",
+        "commands.txt": "ba9fbed9331762804302b91a80ae72cef56a8884100853c431f3d913212ec727",
+        "summary.md": "a6849b62e552a67caefef814b3358b93dba48180a4f24c54a8cb9d6f7e1e4f6d",
+        "image-inputs.json": "d0fa1a59087c0bc3b56c5ea89db3c99d5fd89116fa97cb631f48e0df5ce6fc1c"
+      }
+    },
+    "fmuf-ptfe": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies run 17293 as the TF calibration run and the remainder as the ZF temperature series.",
+          "pass": true,
+          "evidence": "Experiment identifies17293 as20 G measured-TF calibration and17294–17322 as the29-run ZF temperature scan."
+        },
+        {
+          "requirement": "States that alpha was determined from 17293 (or explains why not, if it used a different run).",
+          "pass": true,
+          "evidence": "Calibration reports alpha measured from17293: raw0.9566, corrected/applied0.9553 under file deadtimes."
+        },
+        {
+          "requirement": "Recommends or applies an F-mu-F–family relaxation function (three-spin dipolar / Brewer-type), not a generic Kubo-Toyabe or exponential, for the ZF data.",
+          "pass": true,
+          "evidence": "Applies \"Dynamic F-mu-F + Constant\" from scoped fluoride-fmuf screening to all29 ZF runs, with coadd verification."
+        },
+        {
+          "requirement": "Reports the muon–fluorine dipolar coupling extracted from the fits, as the coupling frequency or as the muon–fluorine distance `r_muF` (the CLI parameterises the F–μ–F family by `r_muF`, with ω_D ∝ r⁻³).",
+          "pass": true,
+          "evidence": "Reports fitted r_muF values/errors, e.g.1.22688±0.000693871 Å at20.0618 K, and Constant-law1.244541±0.004593 Å; explicitly limits precision because fit quality is poor."
+        },
+        {
+          "requirement": "States whether that dipolar coupling frequency is roughly constant (temperature independent) or varies across the scan.",
+          "pass": true,
+          "evidence": "States \"unconstrained r_muF values do not support a temperature-independent distance\"; Constant-fit chi2_red134.882 and fixed-distance sensitivity fails to resolve the poor fits."
+        },
+        {
+          "requirement": "Contains no coupling-frequency, alpha, or temperature number that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Distance, alpha, temperatures and rate/error tables match actual CLI outputs; no unprinted coupling conversion or activation law."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the ZF runs are not in monotonic temperature order and that later runs revisit/infill earlier temperature gaps, rather than assuming run number tracks temperature.",
+          "pass": true,
+          "evidence": "Explicit coarse sequence, infill and low-temperature revisits; fits ordered by sample_temperature_logged rather than run number."
+        },
+        {
+          "requirement": "Mentions the sample-temperature column (with its uncertainty) as distinct from the nominal set-point temperature.",
+          "pass": false,
+          "evidence": "Distinguishes logged sample temperature from setpoints and quotes offsets, but does not give sample-temperature uncertainties."
+        },
+        {
+          "requirement": "References the muon-fluorine \"hydrogen bonding\" / entanglement picture from the worksheet background when interpreting the result.",
+          "pass": false,
+          "evidence": "Describes a muon bound between fluorine nuclei and dipolar beat, but omits the worksheet hydrogen-bonding/entanglement interpretation."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Manually matched reported trend rows/errors, Constant coefficient/scaled and unscaled errors, model scores, corrected/raw alpha, fit-quality counts and actual temperature endpoints. Command14 prints1.244541/0.004593/0.000395 andchi2_red134.882; cold/next rate comparison comes from command10 CLI endpoint output. Independent numeric and unit checkers return no findings.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Scientific Musts pass. Should gaps are final-report interpretation/temperature-uncertainty omissions: log/setpoint distinctions and F–mu–F physics are described, but no uncertainty on temperature or explicit hydrogen-bond/entanglement context appears. Poor Constant law and almost entirely poor time-series fits are reported honestly rather than promoted into a precise geometry change. Final cat summary.md follows audit; actual reply is byte-identical, repairing the prior hard-break-space copy failure.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all24 completed commands inspected. All24 completed commands and file changes inspected; staged skill/reference, staged data and project products only. No personal skill/repository implementation or physical arithmetic. Summary file only changed, two-turn image review complete; warnings are nonfatal setup/cache messages, no approval denials.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 503.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/fmuf-ptfe/data --series fmuf-zf --model Constant --param r_muF --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "2b1327d2dec4265a3419e86bf1e045b59c146eba9e7dee46d0d252567f1c00bc",
+      "audited_file_sha256": "2b1327d2dec4265a3419e86bf1e045b59c146eba9e7dee46d0d252567f1c00bc",
+      "rubric_sha256": "49ca7ef87b2b8eec6e518da9052579a255090e3fdb132bc0df381610155df82d",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/fmuf-ptfe",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "27/29 primary fits are poor,17 flagged; constrained-distance series is28 poor/18 flagged. The changing fitted distance is model instability/conditional fit evidence, not measured bond-length change.",
+        "Warm endpoint195.78/200.799 K values have large errors/reseeding and are not used as a reliable upturn or plateau.",
+        "Single detector pair, no count-domain/microscopic-site inference; non-relaxing amplitude is not claimed as sample fraction."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        2,
+        5,
+        6,
+        8,
+        9,
+        10,
+        12,
+        13,
+        14,
+        17,
+        18,
+        19,
+        20
+      ],
+      "scored_at": "2026-10-20T20:04:39.733323+00:00",
+      "reply_matches_saved_file": true,
+      "raw_artifact_sha256": {
+        "cost.json": "278e021906ce4854de6123e54433b355882ad7086fe00e1d629b2883f82f3d2c",
+        "transcript.jsonl": "547d8c7ad2ef65435720bf489ac55630fdf0032cb9939138df5731edc6a99b90",
+        "commands.txt": "a1533d79bb27f95d3ec86c00a716ff17c1546cd4e145a48914e13f70758e58e8",
+        "summary.md": "2b1327d2dec4265a3419e86bf1e045b59c146eba9e7dee46d0d252567f1c00bc",
+        "image-inputs.json": "051dd426cb7a24418e7ee60fd85b9065385baecfa7857f6d5e00291e73433667"
+      }
+    },
+    "maleic-mu-kinetics": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Recognises the 2 G runs as muonium precession measurements and the 100 G runs as diamagnetic ones.",
+          "pass": true,
+          "evidence": "Identifies2 G weak-TF muonium measurements and distinguishes100 G measured-Larmor alpha/reference precession. The bare-muon/diamagnetic identification is implicit in that Larmor description; no100 G Mu assignment is made."
+        },
+        {
+          "requirement": "Separates the samples by concentration, read from titles or notes, and says where the concentration values came from.",
+          "pass": true,
+          "evidence": "Names neat,0.5 and0.25 as \"title/note labels for relative composition, not molar concentrations\", with pure solvent as zero reference and separate sample groups. Does not actually construct a normalized concentration axis."
+        },
+        {
+          "requirement": "Reports the Mu relaxation rate rising with maleic acid concentration at a fixed temperature (290 K, or matched setpoints), from fits of the 2 G runs.",
+          "pass": false,
+          "evidence": "Explicitly says the fits \"do not establish a reliable relaxation-rate change with maleic-acid amount or temperature\"; no fixed-temperature concentration trend is fitted."
+        },
+        {
+          "requirement": "Obtains a rate constant from the slope of λ_Mu against concentration with a CLI fit (e.g. `fit-series`/`fit-global` with `--order concentration --x ...`, then `trend --model Linear`), reported with its uncertainty and in the concentration units it used. A fit-quality caveat is fine; withdrawing the converged slope is not.",
+          "pass": false,
+          "evidence": "\"The per-setpoint composition series and Linear concentration-law fits were not completed\". No CLI concentration regression or rate-constant slope/error exists."
+        },
+        {
+          "requirement": "Contains no rate constant, activation energy or fraction that was not produced by a tool call in this session (the worksheet's published values are background).",
+          "pass": true,
+          "evidence": "No invented rate constant, activation energy or fraction. Exploratory rates/errors, FFT lines and alpha values are direct CLI outputs and explicitly diagnostic rather than kinetic estimates."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares deoxygenated with untreated water (the untreated Mu signal relaxes faster, or leaves no resolvable line: dissolved O₂).",
+          "pass": false,
+          "evidence": "Deoxygenated water is identified, but no comparison to untreated-water signal decay or dissolved-oxygen interpretation is made."
+        },
+        {
+          "requirement": "Uses a calibration run appropriate to the sample being reduced rather than one alpha for the whole folder, or notes the alpha step.",
+          "pass": true,
+          "evidence": "Reports alpha step78280→78281 from1.0675 to1.4010 and uses block-specific alpha references, distinguishing raw/corrected values."
+        },
+        {
+          "requirement": "Holds the Mu and diamagnetic frequencies or amplitudes common across the concentration set (shared in `fit-global`, or fixed) and says so.",
+          "pass": false,
+          "evidence": "Only independent seeded single-line recipes; no shared/fixed Mu plus diamagnetic frequencies/amplitudes across a concentration set."
+        },
+        {
+          "requirement": "States that the Arrhenius step needs k_Mu at several temperatures, each from its own concentration fit, and either does it per temperature and fits the Arrhenius law through them with a command (`trend --from-fits … --model Arrhenius`) rather than by hand, or declines that step with the reason.",
+          "pass": false,
+          "evidence": "Declines per-setpoint concentration fits, but never explains the Arrhenius step as a fit of multiple per-temperature k_Mu values or executes it."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Verified survey coordinates/run groups and temperature-offset blocks, alpha step and reductions, FFT peak/resolution tables and both actual trend/error tables. Command16 prints2.801672 MHz/48.09912 and0.247393 MHz/47.47652; command26 prints2.0888±0.0425288,2.75785±0.00289511 MHz andLambda0.512939±0.0187566. No rate-law or fraction arithmetic; numeric/unit checkers return no findings.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Survey command2 MUONIUM cue selects only four line-detected runs and suggests ordering them along field, although all are2 G and cross samples/temperatures. Commands14/20 follow that one-oscillation recipe; both fit sets are poor and miss a decaying baseline, instead of separating Mu and diamagnetic components at matched compositions. The agent correctly notices constant field and logged-temperature offsets, but treats the failed exploratory fit and temperature caveat as reasons to abandon the supplied-axis kinetics workflow. The new title/notes provenance cue is used; the rate-versus-composition and slope Musts regress. General repairs belong in observable/component choice and controlled supplied-axis workflow, preserving conditional slopes with honest limitations.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all28 completed commands inspected. All28 completed commands inspected; staged skill/help/data and project products only. No implementation access, spreadsheet reading, hidden corpus path or physical arithmetic. File changes only summary.md; two-turn image review completed. Error items only under-development-feature warnings; matplotlib cache fallback nonfatal, no approval denials.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 618.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "1750ccc1184893d9bf8c8dcb5c16821f82a33d41b1246c96608890a8ef7bfd64",
+      "audited_file_sha256": "1750ccc1184893d9bf8c8dcb5c16821f82a33d41b1246c96608890a8ef7bfd64",
+      "rubric_sha256": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/maleic-mu-kinetics",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Correctly withholds physical interpretation of poor/unresolved one-line fit parameters, but that caution does not satisfy the required kinetics analysis.",
+        "No invented molarity; neat=1 normalization is not stated because no concentration axis is constructed.",
+        "Larmor/diamagnetic classification is implicit rather than using the diamagnetic name; scored as semantic pass with this judgement noted."
+      ],
+      "judgement_calls": [
+        "Must1 passes on the explicit100 G Larmor-reference versus2 G Mu distinction even though the final report does not call the former diamagnetic in that sentence."
+      ],
+      "number_evidence_commands": [
+        2,
+        6,
+        7,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        23,
+        24,
+        26
+      ],
+      "scored_at": "2026-10-20T20:04:39.753148+00:00",
+      "reply_matches_saved_file": true,
+      "raw_artifact_sha256": {
+        "cost.json": "d45ee3f0d9d75ffc3bc92fc79c6d0a99f19ddab3237a16a3b8da19d6f0d9f35d",
+        "transcript.jsonl": "e15cd55acf4ec5d5163870851965b82d71e647e2d8874b9e0504c549d1f03e0c",
+        "commands.txt": "be42f461d64ea2f7d2602f245f5657590dd165aa83e1a8cfa2192e5a92106f7b",
+        "summary.md": "1750ccc1184893d9bf8c8dcb5c16821f82a33d41b1246c96608890a8ef7bfd64",
+        "image-inputs.json": "7a45d88b582c57421b962fc046408e9992ae3c902efa4269d71e5829190e3ddf"
+      }
+    },
+    "spin-glass-ymnal": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies 24563 as the TF calibration run, separate from the LF series.",
+          "pass": true,
+          "evidence": "Identifies24563 as measured20 G weak-TF calibration and separates18-run110 G temperature series24573–24590 plus loneZF24591."
+        },
+        {
+          "requirement": "States that alpha (and detector grouping) came from 24563.",
+          "pass": true,
+          "evidence": "\"Alpha was measured from weak-TF run24563\"; raw1.2320/corrected1.2373, forwardgroup1/backwardgroup2 and filedeadtime corrections are explicit."
+        },
+        {
+          "requirement": "Reports the LF series as fit with a relaxation function that combines a stretched-exponential (or comparable stretched decay) component with a flat/time-independent background.",
+          "pass": true,
+          "evidence": "High-confidence Stretched Exponential + Constant selected in lf-dynamics scope; beta is distributed-rate stretching and A_bg is the flat term, with full-window series fits."
+        },
+        {
+          "requirement": "States that the relaxation rate rises as temperature is lowered towards the glass transition (or explicitly says it could not establish this trend, rather than staying silent on direction).",
+          "pass": true,
+          "evidence": "\"fitted Lambda decreases overall on warming\" from low-temperature level0.5265 to high-temperature0.0305 per microsecond; cold endpoint failures and lack of a monotonic critical approach are explicit."
+        },
+        {
+          "requirement": "Contains no rate, background, A(0), or transition-temperature number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Rates/backgrounds/A(0)/temperatures and model/FFT numbers match actual direct CLI tables. No fitted transition/exponent, hand significance or unprinted physical fraction."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the full LF run range on disk (24573-24591) is wider than the worksheet's quoted 24576-24590, and does not silently restrict itself to only the quoted subset without saying so.",
+          "pass": true,
+          "evidence": "Includes full on-disk range24573–24591 and handles24591 explicitly as a lone280 K ZF reference rather than silently restricting to worksheet24576–24590; does not name the worksheet subset itself."
+        },
+        {
+          "requirement": "Follows the worksheet's fixing strategy in spirit — background fixed from a low/representative-temperature fit, full-asymmetry A(0) fixed from a high-temperature (beta = 1) fit — or explains a deliberate departure from it.",
+          "pass": false,
+          "evidence": "Fits A_1 and beta freely and fixes A_bg to0 only where slow-decay degeneracy requires it. Explains that local fix but not departure from reference-run-fixed background/full-asymmetry strategy."
+        },
+        {
+          "requirement": "Mentions a glass-transition temperature Tg and critical exponent as a possible further fit (critically-divergent rate function) without inventing values for them.",
+          "pass": true,
+          "evidence": "Explicitly mentions CriticalDivergence, supported one-sided critical-rate regime, and that neither glass/ordering temperature nor critical exponent is established; invents no parameter values."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Matched direct survey, raw/applied alpha, all quoted trend/error rows and flags, actual endpoint A(0) reductions, wizard scores/window and FFT resolution/candidate maxima. Command9 printsCLI weighted levels0.5265/0.0305 and lowest-reliable-point comparison; command10 prints3921 bins,0.031904 MHz and3.1x candidate heights. Numeric/unit checkers exclude summary-writing/audit/readback commands and find no flags.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Musts pass. The main Should gap is lack of the reference-run fixing strategy: the automatic slow-relaxation fallback sets background to0 in selected runs, while full asymmetry is not fixed from a beta=1 warm reference. The report explains local degeneracy but not the alternative calibration strategy. The new actual-endpoint cue is used to distinguish failed cold/warm fits from observed shapes. Survey-confirmed full coverage includes a separate ZF24591, contrary to the rubric run-structure shorthand that groups it with LF; no rubric edited.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all17 completed commands inspected. All17 completed commands inspected, including the summary heredoc and sed edits. Only staged skill/help/data/project products; initial relative data listing failed with missing project-local data directory, not a boundary escape. No physical arithmetic or implementation access; two-turn images complete. Error items are feature warnings, no approval denials.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 271.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"cat .agents/skills/asymmetry-analysis/SKILL.md && rg --files -g 'AGENTS.md' -g '\"'!data/**'\"' -g '\"'!**/.git/**'\"' && rg --files data\"",
+          "exit_code": 2
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "8ad93d6fce9d42e38ccf5e8c01de145c0ada6ab5afa64935cab59eb709b3e55e",
+      "audited_file_sha256": "8ad93d6fce9d42e38ccf5e8c01de145c0ada6ab5afa64935cab59eb709b3e55e",
+      "rubric_sha256": "c1fd733e78e7de397ebd0e533eaac4b698e4d47a33035f26348f9a8f9a7bdb6e",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/spin-glass-ymnal",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Absence of applied-field precession is not independent proof of LF coil geometry; final report labels the override an inference requiring experimental confirmation.",
+        "Failed/large-amplitude fits include both actual endpoints; their observed spectra are described without treating fitted rates as physical estimates.",
+        "No glass-transition temperature or critical exponent established; no detected FFT line or proof of absent static order.",
+        "Run24591 is actually0 G in the direct survey, although rubric run-structure text lists24573–24591 as LF. Full-range coverage is scored on actual data, without editing the fixed rubric."
+      ],
+      "judgement_calls": [
+        "Should1 passes full folder coverage with24591 correctly treated as the actual ZF reference, despite the rubric run-structure shorthand calling it part of the LF series."
+      ],
+      "number_evidence_commands": [
+        3,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        12
+      ],
+      "scored_at": "2026-10-20T20:06:11.933813+00:00",
+      "reply_matches_saved_file": true,
+      "raw_artifact_sha256": {
+        "cost.json": "d9961bf470b28f2eadca3e9fd3dc78f0fe342e6fc03f1106cf3be4e661a4c009",
+        "transcript.jsonl": "62e354e664cf13832241cdc15cfa2f5d842c69763de7014f9830393c75aab223",
+        "commands.txt": "62542ec1aad2eea6171dc0e65a6d27975901d9fea78e291f2926a642053ffe01",
+        "summary.md": "8ad93d6fce9d42e38ccf5e8c01de145c0ada6ab5afa64935cab59eb709b3e55e",
+        "image-inputs.json": "8e21abf984e3f7eb47f00a4d3545f3a489243202ccbaf51dff12d9b67b8e69e5"
+      }
+    }
+  },
   "pending_cases": [
-    "plateau-redfield",
     "sn-critical-field",
     "euo-psi",
-    "maleic-mu-kinetics",
     "ferromagnetic-nickel",
-    "fmuf-ptfe",
-    "spin-glass-ymnal",
     "high-tc-cuprate",
     "copper-diffusion",
     "molecular-antiferromagnet",
@@ -160,16 +625,18 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 0,
+    "scored": 4,
     "target": 24,
-    "scientific_pass": 0,
-    "must_pass": 0,
-    "must_total": 0,
-    "should_pass": 0,
-    "should_total": 0,
-    "exact_copy_pass": 0,
-    "literal_copy_pass": 0,
-    "combined_pass": 0,
-    "boundary_pass": 0
-  }
+    "scientific_pass": 2,
+    "must_pass": 17,
+    "must_total": 21,
+    "should_pass": 5,
+    "should_total": 15,
+    "exact_copy_pass": 4,
+    "literal_copy_pass": 4,
+    "combined_pass": 2,
+    "boundary_pass": 4
+  },
+  "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
+  "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."
 }
