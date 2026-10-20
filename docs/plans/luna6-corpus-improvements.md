@@ -662,3 +662,18 @@ warnings. Host inspection confirms no eval/model/test processes before launch;
 17 GiB available, zero swap use/PSI and 7.2 GiB free /tmp. No broad validation
 repeat; standard remains the recorded four known GUI failures. Commit these
 changes, then run both targeted cases with fixed rubrics/two-turn protocol.
+
+Round seven committed as `dcac043`; two-case gpt-6-luna wave LIVE under
+`/tmp/asymmetry-luna6-improvements/round7`, exec session `67269`, console
+`/tmp/asymmetry-luna6-round7-wave.log`. Both cases started; host shows one
+wave/two model processes, no tests. Freeze CLI/skill until both finish and are
+scored. Metadata records frozen source/skill/runner/rubric hashes and unchanged
+protocol. Scores go in `docs/plans/luna6-corpus-round7.json`; manual record
+helper `/tmp/score-luna6-round7.py` is not a judge. Check actual processes/costs
+before any launch; never duplicate live runs. Score actual final replies with
+Must/Should evidence, number-rule excluding audit/draft displays, boundary,
+exact-copy and physics limitations. If both targeted cases pass all required
+dimensions, launch a fresh `--set all` full24 wave from this source, including
+AFM magnetic scope; do not pool historical passes. Otherwise improve generally,
+test appropriately and commit before the next wave. Standard validation still
+has four known GUI sizing failures. No full24 gate has run; objective incomplete.
