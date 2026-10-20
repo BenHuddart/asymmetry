@@ -1058,3 +1058,21 @@ docs/plans/luna6-corpus-round10.json with fixed rubrics and physics caveats.
 If pass,launch fresh full24 confirmation2 with same implementation;otherwise
 make general repair,test and commit before next wave. Never pool old passes.
 Heartbeat updated;no tests or duplicate model processes alongside wave.
+
+USER INSTRUCTION: score completed round10,make required general changes,
+validate/commit,then pause. Do not launch another gate or targeted eval until
+explicit user resume. Heartbeat automation paused immediately to prevent a
+concurrent launch;remaining authorized work is scoring and the repair only.
+
+Round10 COMPLETE:9/10 Musts,science FAIL,copy/boundary PASS. Cold15347.803 G
+and hot14838.102 G now correctly compared explicitly as cold higher/broader;
+7-kG warm narrow/cold broad distinction retained. STABILITY/COMPARE repair
+resolved the previous directional/significance confusion. Remaining Must7
+omitted: report invokes local-field distribution/overlap and unavailable
+microscopic model,but never gives reorientation averaging hyperfine anisotropy
+as a conditional explanation. This attempt's failure is explicit omission,
+not merely terminology. All source numbers verified excluding audits/drafts.
+Full raw evidence retained in persistent round10 root. Score record committed
+before general skill repair. User requested no next eval:make/validate/commit
+repair then remain paused. Latest full24 remains confirmation1 FAIL;no pooled
+or fresh all-pass gate claim. Memory22 GiB available,no swap/PSI,models stopped.
