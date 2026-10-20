@@ -74,7 +74,9 @@ from asymmetry.core.workflow.reduction import ALPHA_ESTIMATED_PREFIX, ReductionS
 #: string ``key`` (a run number or a member series) instead of ``run``, its
 #: ``trend_fits`` are keyed ``param:expression``, and a derived series records
 #: its ``members`` with their digests.
-SCHEMA = 4
+#: 5: trend rows retain the names of bound-pinned parameters so diagnostics
+#: and plotting distinguish an observable from an unconstrained nuisance term.
+SCHEMA = 5
 
 #: Series built from other stored series rather than from runs: a batch of
 #: simultaneous fits (``global-batch``) and a stored law's parameter trended

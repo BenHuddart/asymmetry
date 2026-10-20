@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Trend diagnostics follow the measured parameter.** Nuisance bounds and
+  large errors no longer hide precise amplitudes or widths from summaries and
+  plots. Cold endpoint differences include combined errors; fitted linear
+  coefficients retain their units. Work-directory schema 5 requires older
+  reduced caches and series to be regenerated.
+
 - **Preliminary fits distinguish estimates from interpretations.** The agent
   CLI reports inconclusive envelope comparisons, directs TF scans to their
   frequency/phase observables, and explains how to qualify stable line centres

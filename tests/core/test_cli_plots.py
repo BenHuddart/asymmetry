@@ -153,6 +153,7 @@ def _trend_rows(values, errors):
             "key": str(100 + index),
             "lam": value,
             "lam_err": error,
+            "params_at_bound": [],
             "flags": ["bad"],
         }
         for index, (value, error) in enumerate(zip(values, errors))
@@ -586,3 +587,30 @@ def test_a_stored_scan_spectrum_and_global_fit_name_their_own_path_and_plots(
     assert stored["plots"] == reported["plots"] and len(stored["plots"]) == 2
     for path in stored["plots"]:
         _assert_real_png(Path(path))
+
+
+def test_nuisance_errors_do_not_clip_a_measured_width(tmp_path, monkeypatch):
+    frames = []
+
+    def save(figure, out_path):
+        frames.append(figure.axes[0].get_ylim())
+        return Path(out_path)
+
+    monkeypatch.setattr(plots, "_save", save)
+    rows = [
+        {
+            "key": str(i),
+            "x": float(i),
+            "sigma": width,
+            "sigma_err": 0.01,
+            "A_bg": 0.0,
+            "A_bg_err": 0.1,
+            "params_at_bound": [],
+            "flags": ["large_rel_err"] if i == 2 else [],
+        }
+        for i, width in enumerate([0.7, 0.6, 0.15])
+    ]
+    plots.plot_trend(
+        rows, param_name="sigma", order_key="temperature", out_path=tmp_path / "width.png"
+    )
+    assert frames[0][0] < 0.15 and frames[0][1] > 0.7

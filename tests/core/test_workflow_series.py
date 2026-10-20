@@ -531,6 +531,7 @@ def test_a_frequency_trend_sets_the_surveyed_line_beside_the_fit() -> None:
             "parameters": {"frequency": f},
             "uncertainties": {"frequency": 0.1},
             "quality_flags": [],
+            "params_at_bound": [],
         }
         for key, x, f in (("1", 10.0, 29.8), ("2", 60.0, 0.4))
     }
@@ -652,7 +653,13 @@ def test_the_lineless_end_of_a_precession_scan_is_named() -> None:
     from asymmetry.core.workflow.series import TrendTable, lineless_end
 
     def row(run: int, line: float | None, flags: list[str]) -> dict:
-        return {"key": str(run), "x": float(run), "survey_line_mhz": line, "flags": flags}
+        return {
+            "key": str(run),
+            "x": float(run),
+            "survey_line_mhz": line,
+            "params_at_bound": [],
+            "flags": flags,
+        }
 
     def keys(rows: list[dict]) -> list[str]:
         return [entry["key"] for entry in lineless_end(TrendTable("temperature", columns, rows))]

@@ -429,7 +429,11 @@ def _notes(
             "baseline. If an independently constrained baseline supports a broad line, "
             "override its automatic width interval with --bound Bwid=LO:HI "
             "(use the indexed name for a multi-line model), and test stability against "
-            "window and baseline changes. A bound-pinned width is not a measured width."
+            "window and baseline changes. For a broad curved trough, compare a local Cubic "
+            "background or a baseline constrained outside the dip; a Linear baseline "
+            "may force a real broad feature onto the width bound. A whole-scan rise "
+            "or step may not be polynomial, so keep this check local. A bound-pinned "
+            "width is not a measured width."
         )
     if summed:
         lines.append(

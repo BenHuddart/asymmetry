@@ -208,6 +208,9 @@ def fit_global_batch(
             "x": batch_axis.values[name],
             "parameters": outcome.shared,
             "uncertainties": outcome.shared_uncertainties,
+            "params_at_bound": sorted(
+                {name for result in outcome.results for name in result["params_at_bound"]}
+            ),
             "quality_flags": sorted(
                 {flag for result in outcome.results for flag in result["quality_flags"]}
             ),

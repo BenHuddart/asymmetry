@@ -927,6 +927,18 @@ def survey_line(dataset: MuonDataset) -> float | None:
     return float(dataset.metadata["precession_frequency_mhz"])
 
 
+def parameter_quality_flags(row: Mapping[str, Any], param: str) -> set[str]:
+    """Diagnostics for one observable, retaining whole-fit failures."""
+    from asymmetry.core.fitting.member_quality import large_relative_error
+
+    flags = set(row["flags"]) - {"bound_pinned", "large_rel_err"}
+    if param in row["params_at_bound"]:
+        flags.add("bound_pinned")
+    if large_relative_error(row[param], row[f"{param}_err"]):
+        flags.add("large_rel_err")
+    return flags
+
+
 def build_trend_table(
     entries: Mapping[str, Mapping[str, Any]],
     free_params: Sequence[str],
@@ -936,7 +948,7 @@ def build_trend_table(
     """The trend table: member key, scan coordinate, each free parameter, flags.
 
     *entries* maps each row's key, in scan order, to a fit summary carrying
-    ``x``, ``parameters``, ``uncertainties`` and ``quality_flags``. Every member
+    ``x``, ``parameters``, ``uncertainties``, ``params_at_bound`` and ``quality_flags``. Every member
     that was fitted has a row, flagged or not — see the module docstring. With
     *survey_lines*, a ``survey_line_mhz`` column sets each run's surveyed line
     beside its fitted frequencies, so a fit that has drifted off the measured
@@ -963,6 +975,7 @@ def build_trend_table(
         if compared:
             row["envelope"] = entry["envelope"]["preferred"]
             row["envelope_dchi2"] = entry["envelope"]["delta_chi2"]
+        row["params_at_bound"] = list(entry["params_at_bound"])
         row["flags"] = list(entry["quality_flags"])
         rows.append(row)
     return TrendTable(order_key=order_key, columns=columns, rows=rows)
@@ -983,6 +996,7 @@ __all__ = [
     "TrendTable",
     "amplitude_exceeds_data",
     "build_trend_table",
+    "parameter_quality_flags",
     "envelope_summary",
     "envelope_preference",
     "fit_one",

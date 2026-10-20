@@ -310,3 +310,52 @@ without corpus-specific branches. Keep the rubrics and two-turn protocol fixed.
 Run focused and fast checks with at most two workers on this now-quiet host,
 then the required standard gate (known four GUI sizing failures remain).
 Commit all round-three changes before starting its evaluation wave.
+
+Round-three implementation is in the working tree (not committed yet).
+The shared per-parameter quality reader retains precise measurements when a
+nuisance term is pinned/uncertain; summaries, law diagnostics and plot framing
+use it. Trend rows now retain bound names under workdir schema 5, deliberately
+requiring old caches/series to be regenerated. Cold endpoint comparisons print
+the difference, combined error and consistency verdict. Linear rate fits store
+supplied-axis units and prominently report a determined apparent coefficient.
+Survey prints the unrecorded weak-TF alternative for a zero-field header with
+a line, and local broad-dip guidance compares curved baselines as well as bounds.
+The skill's blanket "flagged runs are never results" instruction was a direct
+contradiction and is replaced by per-parameter interpretation. Report guidance
+now reconciles versions, sample identity, qualified estimates and final copying.
+
+Focused checks: 339 passed in 13.74 s (before the final move of the coefficient
+label into the converged-result branch; rerun that focused check before gate).
+Structural passed. Lint initially requested formatting for three files; fixed,
+full lint passed. Skill validation passed. Docs built with the same 85 warnings;
+a docs prose update followed. Fast tier is running in exec session 58290 with
+exactly two workers, log /tmp/asymmetry-luna6-round3-fast.log. A prior fast
+invocation was rejected by argparse because -n needed a -- separator; no tests
+ran in that rejected invocation. No eval wave is live. Finish fast, then standard
+validation with two workers/scratch XDG paths, record the known GUI failures
+honestly, commit and launch a fresh targeted Luna wave. Inspect actual state
+before resuming; do not duplicate tests or evaluations.
+
+Fast tier completed: 5,897 passed, 10 skipped, one xfailed in 104.99 s,
+with two workers. The moved coefficient check passed separately; docs rebuilt
+with 85 warnings and lint is clean. Standard validation is now running in
+exec session 41829, log /tmp/asymmetry-luna6-round3-validation.log, two workers,
+BLAS pinned to one and scratch /tmp/asymmetry-luna6-round3-xdg directories.
+Do not launch another test pool or any eval until it finishes. Next wave is
+prepared but NOT launched: /tmp/asymmetry-luna6-round3-wave.sh, six cases
+(basics, TRSB, corannulene, maleic acid, benzene ALC and LiFeAs plotting
+regression). It requires committed source and a fresh round3 output directory.
+Record gate results and commit the whole improvement round before running it.
+
+Round-three validation completed: 339 focused passes in 13.74 s, the final
+coefficient-result branch check passed separately (1.34 s), and fast tier
+5,897 passed / 10 skipped / one xfailed in 104.99 s. Structural, full Ruff
+and skill validation passed; docs rebuilt with the same 85 warnings.
+Standard gate finished with 9,910 passed, 25 skipped, one xfailed and exactly
+the four known GUI sizing failures in 453.53 s. No new failures appeared;
+validation is not green. No GUI source was changed. Logs are
+/tmp/asymmetry-luna6-round3-{focused,coefficient,fast,docs,validation}.log.
+Scratch /tmp currently has about 12 GiB free; memory has no PSI/swap pressure.
+Commit the source now, then start the prepared six-case wave with three
+concurrent Luna cases and one BLAS thread. Source/skill must remain frozen
+until that wave finishes. Keep all first attempts and score each final reply.

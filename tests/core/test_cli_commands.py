@@ -2753,6 +2753,7 @@ def test_a_frequency_held_along_the_scan_is_not_called_an_order_parameter(
             "frequency_err": 0.001 if value > 1.0 else 0.01,
             "sigma": 0.3,
             "sigma_err": 0.01,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, value in enumerate(frequencies, start=1)
@@ -2853,7 +2854,14 @@ def _gap_trend():
     sigma = law(x, sigma_0=0.4, Tc=7.0, gap_ratio=1.764, sigma_bg=0.1)
     noise = np.random.default_rng(3).normal(0.0, 0.004, x.size)
     rows = [
-        {"key": str(run), "x": float(t), "sigma": float(s), "sigma_err": 0.004, "flags": []}
+        {
+            "key": str(run),
+            "x": float(t),
+            "sigma": float(s),
+            "sigma_err": 0.004,
+            "params_at_bound": [],
+            "flags": [],
+        }
         for run, (t, s) in enumerate(zip(x, sigma + noise, strict=True), start=1)
     ]
     return TrendTable("temperature", ["key", "x", "sigma", "sigma_err", "flags"], rows)
@@ -3118,7 +3126,14 @@ def test_a_small_step_in_a_width_is_named_with_where_it_happens() -> None:
     # A Kubo–Toyabe width that rises by a few percent below a transition near
     # 6 K: small against the value, large against the errors.
     rows = [
-        {"key": str(run), "x": x, "Delta": delta, "Delta_err": 0.001, "flags": []}
+        {
+            "key": str(run),
+            "x": x,
+            "Delta": delta,
+            "Delta_err": 0.001,
+            "params_at_bound": [],
+            "flags": [],
+        }
         for run, (x, delta) in enumerate(
             [(0.3, 0.261), (2.0, 0.260), (4.0, 0.259), (6.8, 0.253), (8.0, 0.252), (10.0, 0.253)]
         )
@@ -3140,7 +3155,7 @@ def test_an_amplitude_lowest_inside_a_supplied_scan_is_a_minimum_not_a_step() ->
     points = [(-1.0, 7.6), (-0.75, 7.2), (-0.5, 6.4), (-0.25, 5.6), (0.0, 5.3), (0.25, 5.7)]
     points += [(0.5, 6.3), (0.75, 6.8), (1.0, 7.0)]
     rows = [
-        {"key": str(run), "x": x, "A_1": a, "A_1_err": 0.05, "flags": []}
+        {"key": str(run), "x": x, "A_1": a, "A_1_err": 0.05, "params_at_bound": [], "flags": []}
         for run, (x, a) in enumerate(points)
     ]
     columns = ["key", "x", "A_1", "A_1_err", "flags"]
@@ -3166,7 +3181,14 @@ def test_a_gradual_step_is_bracketed_by_where_the_width_leaves_each_level() -> N
         *((x, 0.2534) for x in (6.8, 7.5, 8.0, 9.0, 10.0)),
     ]
     rows = [
-        {"key": str(run), "x": x, "Delta": delta, "Delta_err": 0.0002, "flags": []}
+        {
+            "key": str(run),
+            "x": x,
+            "Delta": delta,
+            "Delta_err": 0.0002,
+            "params_at_bound": [],
+            "flags": [],
+        }
         for run, (x, delta) in enumerate(points)
     ]
 
@@ -3196,6 +3218,7 @@ def test_a_phase_linear_in_field_is_named_a_t0_offset(delay_us: float, direction
             - 2.0 * math.pi * field_gauss_to_frequency_mhz(field) * delay_us
             + (0.01 if run % 2 else -0.01),
             "phase_err": 0.01,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, field in enumerate(fields)
@@ -3226,6 +3249,7 @@ def test_a_precession_amplitude_falling_with_frequency_is_the_instruments_respon
             "frequency_err": 0.001,
             "A_bg": 2.0,
             "A_bg_err": 0.1,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, field in enumerate(fields)
@@ -3257,6 +3281,7 @@ def test_a_held_high_field_line_is_offered_a_two_line_fit() -> None:
             "frequency_err": 0.001,
             "Lambda": rate,
             "Lambda_err": 0.01,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, x, rate in ((686, 5.0, 0.2), (690, 30.0, 0.1), (693, 50.0, 0.1))
@@ -3330,6 +3355,7 @@ def test_a_muonium_phase_drift_is_timed_against_its_own_frequency() -> None:
             "frequency_err": 0.001,
             "phase": -2 * math.pi * 1.394 * field * 0.040,
             "phase_err": 0.01,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, field in enumerate((1.0, 2.0, 3.0, 4.0))
@@ -3437,10 +3463,17 @@ def test_readings_leave_out_unreliable_rows_and_small_frequency_drifts() -> None
 
     # A flat width with one bound-pinned row at a wild value draws no step.
     rows = [
-        {"key": str(run), "x": 10.0 * run, "Lambda": 0.077, "Lambda_err": 0.001, "flags": []}
+        {
+            "key": str(run),
+            "x": 10.0 * run,
+            "Lambda": 0.077,
+            "Lambda_err": 0.001,
+            "params_at_bound": [],
+            "flags": [],
+        }
         for run in range(1, 7)
     ]
-    rows[0] = rows[0] | {"Lambda": 1e-14, "flags": ["bound_pinned"]}
+    rows[0] = rows[0] | {"Lambda": 1e-14, "params_at_bound": ["Lambda"], "flags": ["bound_pinned"]}
     steps = TrendTable("temperature", ["key", "x", "Lambda", "Lambda_err", "flags"], rows)
     assert _rate_steps(steps, ["Lambda"]) == []
 
@@ -3454,6 +3487,7 @@ def test_readings_leave_out_unreliable_rows_and_small_frequency_drifts() -> None
             "A_1_err": 0.05,
             "frequency": frequency,
             "frequency_err": 0.0001,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, (x, amplitude, frequency) in enumerate(
@@ -3566,7 +3600,9 @@ def test_relaxing_amplitude_moving_between_shapes_is_named() -> None:
     def row(t: float, a1: float, lam: float, a2: float, sig: float) -> dict:
         values = dict(zip(names, (a1, lam, a2, sig), strict=True))
         return (
-            {"key": str(int(t)), "x": t, "flags": []} | values | {f"{n}_err": 0.05 for n in names}
+            {"key": str(int(t)), "x": t, "params_at_bound": [], "flags": []}
+            | values
+            | {f"{n}_err": 0.05 for n in names}
         )
 
     # Cold: an exponential carries the relaxation; warm: its rate is zero and a
@@ -3635,6 +3671,7 @@ def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
             "frequency_err": 0.0005,
             "sigma": w,
             "sigma_err": 0.005,
+            "params_at_bound": [],
             "flags": [],
         }
         for i, (t, f, w) in enumerate(zip(temperatures, frequencies, widths, strict=True))
@@ -3678,6 +3715,7 @@ def test_temperature_edge_comparison_preserves_a_cold_upturn_and_kt_control() ->
             "nu_err": 0.001,
             "Delta": 0.3,
             "Delta_err": 0.01,
+            "params_at_bound": [],
             "flags": flags,
         }
         for index, (temperature, rate, flags) in enumerate(
@@ -3837,3 +3875,81 @@ def test_fmuf_temperature_trend_checks_coupling_separately_from_dynamics() -> No
     assert not any(
         note.startswith("DIPOLAR COUPLING") for note in _law_hints("rates", trend, ["Lambda"])
     )
+
+
+def test_a_nuisance_bound_does_not_hide_a_precise_observable() -> None:
+    from asymmetry.cli.commands.trend import _measured
+    from asymmetry.core.workflow.series import TrendTable
+
+    row = {
+        "key": "1",
+        "x": 1.0,
+        "A_1": 20.0,
+        "A_1_err": 0.1,
+        "Lambda": 0.0,
+        "Lambda_err": 0.02,
+        "params_at_bound": ["Lambda"],
+        "flags": ["bound_pinned", "large_rel_err"],
+    }
+    trend = TrendTable("foils", ["A_1", "Lambda"], [row])
+    assert _measured(trend, "A_1") == [row]
+    assert _measured(trend, "Lambda") == []
+    failed = row | {"flags": ["failed", "bound_pinned"]}
+    assert _measured(TrendTable("foils", trend.columns, [failed]), "A_1") == []
+
+
+def test_compatible_cold_rates_are_not_called_an_upturn() -> None:
+    from asymmetry.cli.commands.trend import _edge_comparisons
+    from asymmetry.core.workflow.series import TrendTable
+
+    rows = [
+        {
+            "key": str(i),
+            "x": float(i),
+            "Lambda": value,
+            "Lambda_err": 0.004,
+            "params_at_bound": [],
+            "flags": [],
+        }
+        for i, value in [(1, 0.040), (2, 0.037), (3, 0.038)]
+    ]
+    (note,) = _edge_comparisons(TrendTable("temperature", ["Lambda"], rows), ["Lambda"])
+    assert "Coldest minus next: 0.003000 ± 0.005657" in note
+    assert "consistent within two combined errors" in note
+
+
+def test_linear_rate_fit_records_the_supplied_axis_units(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    axis = ",".join(f"{run}={i}" for i, run in enumerate(SCAN_RUNS))
+    _fit_scan(workflow_folder, fitting_workdir, "--order", "concentration", "--x", axis)
+    capsys.readouterr()
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "trend",
+        "--series",
+        "scan",
+        "--model",
+        "Linear",
+        "--param",
+        "Lambda",
+    )
+    assert "APPARENT FITTED COEFFICIENT:" in capsys.readouterr().out
+    stored = json.loads((fitting_workdir / "series/scan.json").read_text())
+    assert stored["trend_fits"]["Lambda:Linear"]["units"]["m"] == "µs⁻¹ per unit concentration"
+
+
+def test_zero_header_line_retains_the_unrecorded_field_alternative(workflow_folder, tmp_path):
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import survey_folder
+
+    survey = survey_folder(workflow_folder)
+    row = survey.row(CALIBRATION_RUN)
+    row = replace(row, field=0.0, precession=replace(row.precession, state="other"))
+    text = _render(replace(survey, runs=[row]), tmp_path / "survey.json")
+    assert "ZERO-FIELD HEADER:" in text
+    assert "unrecorded weak TF" in text
+    assert "sensor drift is not a sample-temperature campaign" in text

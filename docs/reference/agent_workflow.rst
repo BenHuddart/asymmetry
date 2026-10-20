@@ -1625,11 +1625,11 @@ already belongs to another folder or instrument is refused:
 
 ``survey`` and ``reduce`` write the manifest, so the first of them run against
 a fresh directory claims it; a directory with no manifest yet is unclaimed. A
-manifest written by an older ``asymmetry`` (a lower schema version — the
-current one added the bound instrument) is read as the whole folder, with no
-instrument bound, and upgraded the next time ``survey`` or ``reduce`` writes
-it; every reduced run and series under the old schema is recomputed rather
-than trusted, the same as any other stale digest. The same folder named
+manifest written before instrument selection was recorded (schema below 4)
+is read as the whole folder, with no instrument bound. An older manifest is
+upgraded the next time ``survey`` or ``reduce`` writes it; its recorded
+instrument is preserved when present. Reduced runs and series under an older
+schema must be regenerated rather than trusted. The same folder named
 relatively, absolutely, or through a symlink is one
 folder — both paths are resolved before they are compared.
 
@@ -1727,9 +1727,21 @@ Every per-run result carries quality flags, read from ``fit_result_summary``:
 
 **Nothing is dropped.** A flagged run still appears in ``series/<name>.json``
 and in the ``trend`` table, with its flags attached, so the full scan is
-always visible; a flagged run's value is simply not a result to quote, which
-is a judgement made when writing up the summary, not something the tool
-does for you by omitting the row.
+always visible. Bounds and large errors are assessed per parameter: an
+unconstrained nuisance damping term does not invalidate a precise amplitude,
+frequency or Gaussian width. Trend rows retain ``params_at_bound`` in JSON;
+whole-fit failures, unresolved frequencies, spurious reseeds and unphysical
+amplitudes still qualify the entire fit. The stored work-directory schema is
+now 5; older reduced caches and series must be regenerated rather than read
+without this diagnostic metadata.
+
+Temperature endpoints print the coldest-minus-next difference and its combined
+error. Values within two combined errors are described as consistent; a
+whole-scan step does not prove an endpoint upturn. Linear rate fits against a
+supplied axis print ``APPARENT FITTED COEFFICIENT:`` with the fitted uncertainty
+and units per unit of that axis. This preserves an empirical estimate while
+leaving intrinsic kinetic interpretation conditional on the experimental
+conditions and model adequacy.
 
 Plots
 -----
@@ -1746,11 +1758,22 @@ Each PNG framed by ``--plot`` follows the same two rules:
   bunched to about 400 points for display only; the underlying fit or reduced
   record is untouched.
 
-``trend`` plots frame the y-axis on the **clean** (unflagged) points, so one
+``trend`` plots frame the y-axis on points unflagged **for the plotted
+parameter**, so a nuisance offset's large error cannot clip a measured width.
+One
 wildly flagged run cannot squash every other point onto the axis edge; a
 flagged point outside that range is still drawn, clamped to it, with a
 distinct marker, and counted in the frame note, rather than silently moved or
 dropped.
+
+A zero recorded field plus a detected line is ambiguous without sample context.
+``survey`` prints ``ZERO-FIELD HEADER:`` for these runs: a nonmagnetic reference
+may carry an unrecorded weak TF, while a magnetic sample may precess in an
+internal field. Calibration sensor drift is not automatically a sample scan.
+Broad local ALC troughs also require baseline checks: compare local Linear and
+Cubic backgrounds, bounds and adjacent windows before abandoning a bound-pinned
+width. A polynomial need not describe a whole scan containing a baseline step.
+
 
 The skill
 ---------

@@ -23,6 +23,9 @@ these obligations through the final reply, including after image review:
   `integral-scan --model MuRepolarisation`. A TF field scan instead needs
   precession frequency/phase or amplitude: integrating its oscillations can
   cancel the signal. Two-field TF/calibration pairs are not LF recovery scans.
+  Seed precession from each run's own measured line or field: a frequency fixed
+  in a reference recipe cannot be carried unchanged through a field sweep.
+  Free it or supply the appropriate per-run value before comparing amplitudes.
   A Redfield fit to a time-domain rate does not measure integral recovery.
   RF-resonance context establishes the LF
   experiment even when the survey cannot resolve precession.
@@ -77,7 +80,15 @@ these obligations through the final reply, including after image review:
   visual shoulders into precise hyperfine constants.
 - The final report is the complete section 6 template, not a recap. Preserve
   folder count, per-scan run ranges, component meanings and every fit/FFT window.
-  After any image-review changes, audit that final file and send it verbatim.
+  Before finalising, reconcile the report with the retained CLI estimates:
+  preserve sample/campaign names, logged-temperature offsets, each fit's own
+  calibration, run subset, model, uncertainty and chi-squared. Different
+  field references limit cross-campaign comparisons, not trends within a
+  single unchanged reference. Keep the successful ordinary scan distinct
+  from an unsuccessful differential/control fit. A conditional estimate in
+  Results must remain a conditional estimate in the conclusion, with its
+  quantity and units. After image-review changes, audit the final file and
+  send the exact text returned by that last audit; do not recompose it.
   Once that audit passes, preserve every character, including rounded errors
   and punctuation; do not regenerate the reply from memory or make final edits.
   Complete file-list cleanup before that final audit too.
@@ -716,12 +727,14 @@ the plotted field dependence support that interpretation.
 
 A width at its search bound is a reason to revisit the window and background,
 not to repeat the same failed fit on every scan. Include data on both flanks,
-compare local linear and independently constrained backgrounds, and try a
+compare local Linear, local Cubic and independently constrained backgrounds, and try a
 joint multi-line model when neighboring resonances share a baseline. The CLI's
 automatic width interval is conservative; `--bound Bwid=LO:HI` can replace it
 when the data and baseline constrain a broader or narrower line. Refit nearby
 windows to test stability, and report unresolved values honestly if these
-checks still fail.
+checks still fail. A curved powder-like trough can pin a width under a Linear
+baseline; widening a still-linear window alone does not test that problem.
+Compare both bounds and baseline shape before abandoning a broad feature.
 
 Two-width flank coverage checks the outer baseline; failing it does not prove
 that a fitted centre is unconstrained. Compare nearby windows and backgrounds.
@@ -1267,8 +1280,16 @@ fitting a series to satisfy the request.
 its own recipe and its own series name. Report both. Do not put runs from two
 geometries, two fields or two instruments into one `fit-series`.
 
-**Flagged runs are never results.** Do not quote a flagged run's parameter as a
-measurement. List the flagged runs, their flags, and what you think went wrong.
+**Read flags per parameter.** Failed, reseeded, unresolved-frequency or
+unphysical-amplitude fits do not supply reliable line parameters. A bound or
+large error on a nuisance term does not invalidate a precise amplitude,
+frequency or width in the same fit. Read `params_at_bound` and the individual
+errors; the trend summaries and plots assess the requested parameter. Report
+an undetermined damping rate as an upper-limit/compatible-with-zero result
+when appropriate, without discarding the measured precession amplitude.
+A `poor` chi-squared verdict is model mismatch, not failed minimisation;
+near-unity chi-squared can be formally poor for a high-statistics record.
+Keep determined estimates with their errors and mismatch caveats.
 
 **TF superconductors.** The physically meaningful quantity is the Gaussian
 width σ of the vortex-lattice field distribution, so prefer a Gaussian-envelope
@@ -1303,7 +1324,10 @@ below Tc while Λ stays flat, and that a small longitudinal field decouples, is
 a *static* spontaneous field — the time-reversal-symmetry-breaking result
 itself, not a lesser candidate for being in Δ rather than Λ. Place its onset
 where Δ leaves its normal-state level (the `trend` note brackets it), and set
-it beside the TF Tc.
+it beside the TF Tc. Name the candidate interpretation explicitly: extra
+quasi-static fields appearing near the superconducting transition are a
+candidate for broken time-reversal symmetry. Background/systematic checks
+still limit proof of microscopic origin; they do not erase that candidate.
 For a dynamic-KT model, make the corresponding comparison with `nu`: state
 whether it has an onset at the width change, stays roughly level, or is too
 uncertain to decide. A table of endpoint values without this comparison does

@@ -26,6 +26,7 @@ from asymmetry.cli._output import (
 from asymmetry.cli._recipes import parse_fix
 from asymmetry.cli._runs import parse_run_spec, reduced_datasets
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+from asymmetry.core.workflow.series import parameter_quality_flags
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -182,6 +183,12 @@ def run(args: argparse.Namespace) -> None:
             ).to_dict()
         except ValueError as exc:
             raise UserError(str(exc)) from None
+        if (
+            args.model.strip() == "Linear"
+            and re.sub(r"_\d+$", "", args.param) in _RATE_BASES
+            and trend.order_key not in _FILE_AXES
+        ):
+            fit["units"].update({"m": f"µs⁻¹ per unit {trend.order_key}", "b": "µs⁻¹"})
         series["trend_fits"][trend_fit_key(args.param, args.model)] = fit
     if args.from_fits is not None or fit is not None:
         workdir.write_series(name, series)
@@ -425,7 +432,7 @@ _STEP_SIGNIFICANCE = 5.0
 _LEVEL_DEPARTURE = 3.0
 
 
-#: Flags that say a row's values are not a measurement (``large_rel_err`` is
+#: Flags that say the requested parameter is not a measurement (``large_rel_err`` is
 #: carried by its own error bar and stays).
 _UNRELIABLE = frozenset(
     {
@@ -445,7 +452,7 @@ def _measured(trend, *params: str) -> list[dict[str, Any]]:
             row
             for row in trend.rows
             if all(row[param] is not None and row[f"{param}_err"] for param in params)
-            and not _UNRELIABLE & set(row["flags"])
+            and all(not _UNRELIABLE & parameter_quality_flags(row, param) for param in params)
         ),
         key=lambda row: row["x"],
     )
@@ -472,6 +479,16 @@ def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
         following = next((row for row in rows[1:] if row["x"] > first["x"]), None)
         if following is None:
             continue
+        difference = first[param] - following[param]
+        error = math.hypot(first[f"{param}_err"], following[f"{param}_err"])
+        significance = abs(difference) / error
+        comparison = (
+            "consistent within two combined errors"
+            if significance < 2.0
+            else "higher at the coldest point"
+            if difference > 0
+            else "lower at the coldest point"
+        )
         shown = [first, following] + ([rows[-1]] if rows[-1] is not following else [])
         notes.append(
             f"ENDPOINTS: {param}: "
@@ -480,9 +497,10 @@ def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
                 f"at {trend.order_key}={row['x']:g} (run {row['key']})"
                 for row in shown
             )
-            + ". These are individual reliable rows: compare the coldest with the next "
-            "temperature explicitly before describing a plateau or a monotonic trend. "
-            "A whole-scan step note does not rule out an endpoint upturn."
+            + f". Coldest minus next: {format_number(difference, 6)} ± "
+            f"{format_number(error, 6)} ({significance:.2f} combined errors): {comparison}. "
+            "A whole-scan step note does not rule out an endpoint upturn; central values "
+            "alone do not establish one."
         )
     if {"Delta", "nu"}.issubset({re.sub(r"_\d+$", "", p) for p in rates}):
         notes.append(
@@ -1118,14 +1136,15 @@ def _render_fit(
         )
         lines.extend(law_steps)
         if fit["expression"].strip() == "Linear" and fit["order_key"] not in _FILE_AXES:
+            slope = fit["parameters"]["m"]
+            unit = fit["units"].get("m") or f"{fit['param']} per unit {fit['order_key']}"
             lines.append(
-                f"The slope m is the change in {fit['param']} per unit {fit['order_key']}: for a "
-                f"rate against a concentration it is the rate constant. Report m with its "
-                f"error, in {fit['param']}'s unit per unit {fit['order_key']}. If temperature "
-                "spread or poor fit quality limits the interpretation, call it an apparent "
-                "fitted rate coefficient under these conditions. Report that estimate "
-                "and its limitations separately from any claim of an intrinsic constant."
+                f"APPARENT FITTED COEFFICIENT: {format_number(slope, 6)} ± {error('m', scale)} "
+                f"{unit}. This is the empirical slope under the fitted conditions; model "
+                "mismatch or temperature spread limits an intrinsic interpretation, not "
+                "the existence of this estimate."
             )
+
     for law in misplaced:
         lines.append(
             f"NOTE: {law} is a law in {' or '.join(sorted(_LAW_AXES[law]))}, and this trend is "

@@ -306,6 +306,19 @@ def _render(survey, survey_path: Path) -> str:
             f"instrument's frequency response) and the field where it is lost."
         )
         lines.append("")
+    unrecorded = [
+        row.run_number for row in survey.runs if row.field == 0 and row.precession.state == "other"
+    ]
+    if unrecorded:
+        lines.append(
+            f"ZERO-FIELD HEADER: runs {run_spec(unrecorded)} have a measured line but "
+            "a zero recorded field. Establish sample context before calling it spontaneous "
+            "magnetism: a nonmagnetic calibration/reference sample can carry an unrecorded "
+            "weak TF. Fit its precession and check the experimental notes; an unrelated "
+            "sensor drift is not a sample-temperature campaign. For a magnetic sample, "
+            "compare the internal line across the actual temperature scan."
+        )
+        lines.append("")
     if survey.temperature_departures:
         lines.append(
             "TEMPERATURE: the logged sample temperature (T log) and the setpoint (T/K) "

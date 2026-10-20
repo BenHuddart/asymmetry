@@ -26,6 +26,7 @@ def _trend() -> TrendTable:
             "x": float(temperature),
             "frequency": _frequency(temperature),
             "frequency_err": 0.05,
+            "params_at_bound": [],
             "flags": [],
         }
         for index, temperature in enumerate(_TEMPERATURES)
@@ -36,6 +37,7 @@ def _trend() -> TrendTable:
             "x": 68.0,
             "frequency": 25.0,
             "frequency_err": 0.05,
+            "params_at_bound": [],
             "flags": ["spurious_reseeded"],
         }
     )
