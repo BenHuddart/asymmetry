@@ -1,5 +1,5 @@
 {
-  "status": "running; 2/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 4/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -432,16 +432,310 @@
       ],
       "scored_at": "2026-10-20T23:33:25.926482+00:00",
       "reply_matches_saved_file": false
+    },
+    "plateau-redfield": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Uses run 9023 for alpha and says so.",
+          "pass": true,
+          "evidence": "Calibration explicitly names9023 weak-TF20G, raw alpha1.0069 and corrected applied1.0097."
+        },
+        {
+          "requirement": "Treats the longitudinal-field runs from 9035 to 9051 (with or without the zero-field 15.9 K runs 9031–9034 before them) as the 15 K field sweep, and does not present 9024–9030 as 15 K points of that sweep.",
+          "pass": true,
+          "evidence": "Separates scientific9035–9051 LF1000–38000G sweep from cooling9024–9030 ZF controls; uses logged temperatures for controls."
+        },
+        {
+          "requirement": "Reports the relaxation rate falling as the longitudinal field rises through the sweep, from a series fitted along field.",
+          "pass": true,
+          "evidence": "Results state Lambda falls with increasing field, with fitted9035/9039/.../9051 rates and field-ordered series."
+        },
+        {
+          "requirement": "Fits Redfield's law to λ(B) with the CLI (`trend --model Redfield` or a sum containing it), states the field range fitted, and reports the fitted parameters with uncertainties as the command printed them.",
+          "pass": true,
+          "evidence": "Reports fixed-m=2 Redfield fits over1000–38000G and5000–38000G, with D/nu uncertainties and chi2_red exactly printed."
+        },
+        {
+          "requirement": "Contains no correlation time, field width or rate that was not produced by a tool call in this session (the handout's and paper's values are background).",
+          "pass": true,
+          "evidence": "D/nu remain in CLI MHz units; no hand-converted correlation time/field width, and quoted rates all printed."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits over the plateau (roughly 0.5–3.6 T) rather than the whole sweep, or says why not.",
+          "pass": true,
+          "evidence": "Restricts second fit to5000–38000G because full fit misses lowest-field points; approximately plateau range, with slight extension beyond nominal36000G retained as judgement caveat."
+        },
+        {
+          "requirement": "Holds the Redfield exponent `m` at 2 (the handout's equation) or says why it was left free.",
+          "pass": true,
+          "evidence": "Explicitly states m fixed at2 for both Redfield fits."
+        },
+        {
+          "requirement": "Says how the initial and background asymmetries were handled as the field rises (the handout's first question).",
+          "pass": true,
+          "evidence": "Defines relaxing A_1/flat A_bg, gives per-field fitted values and discusses nonmonotonic amplitude and increasing background without assigning site fractions."
+        },
+        {
+          "requirement": "Comments on whether the plateau edges show in λ(B) (a change of slope near 0.5 T, flattening near 3.6 T), marked as a qualitative reading.",
+          "pass": false,
+          "evidence": "Reports generic level change5000–29000G and flattening but does not explicitly compare the known magnetization plateau edges near5000/36000G."
+        },
+        {
+          "requirement": "Notes the cooldown in 9024–9030 from the logged temperature.",
+          "pass": true,
+          "evidence": "Explicitly distinguishes9024–9030 cooldown using logged285.17–75.72K from nominal15K."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. All fields, rates, amplitudes, calibration, logged offsets, retained windows and Redfield D/nu scaled uncertainties verified in direct command output. No numeric/unit checker flags and no physical conversions.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Previous Redfield scientific failure is repaired: model-specific positive exponent/domain and physically scaled seeds now converge, and the agent reports conditional D/nu plus fixed-m=2 fit diagnostics. Strict copy still fails by one terminal LF; final command uses plain audit rather than --prepare-reply. General remaining gaps are footer/preparation consistency and connecting observed features to supplied physical context without inventing a plateau interpretation.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all27 completed commands inspected. 27 commands and summary-only edits inspected; staged logbook is context, all scientific calculations use asymmetry, no external source/network/calculator. Stream-fd startup warnings do not prevent commands. Image snapshot hashes verified; Redfield rate plot visually checked.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 561.9,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 4,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/plateau-redfield/data --series lf-field-rates --model Redfield --param Lambda --fix m=2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/plateau-redfield/data --series lf-field-rates --model Redfield --param Lambda --fix m=2 --xmin 5000 --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "a09280380a204dc22a74ba714754c9ccbbb1998c8e51a96bcaee2f114d7a9d32",
+      "audited_file_sha256": "c0f6a69e597147e468b6e725e12a85ea6f2502e04e90b4d54d157f4939f40e1d",
+      "rubric_sha256": "23bb04d9a398fa17dde7cf8fc51632eda64e51646ad926a80a7462453df6243e",
+      "staged_skill_sha256": "7ecd7452b20d1ccb95973faf3b3ffcf9b350b2b17cface1afcdc0cc8c2392882",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/plateau-redfield",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -69,4 +69,4 @@\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/plateau-redfield/project/asymmetry-work/plots/reduced-9051.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/plateau-redfield/project/asymmetry-work/plots/zf-thermalisation/9024.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/plateau-redfield/project/asymmetry-work/plots/zf-thermalisation/9034.png\n-/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/plateau-redfield/project/asymmetry-work-coadd/plots/reduced-9031.png\n+/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/plateau-redfield/project/asymmetry-work-coadd/plots/reduced-9031.png",
+      "physics_caveats": [
+        "10/17 per-run LF fits have poor whole-fit chi-square despite no parameter flags; Redfield full-span chi2_red2.852 and restricted1.543 are explicitly conditional, not microscopic proof.",
+        "High-field A_1 is nonmonotonic and A_bg substantial; summary appropriately qualifies the CLI weighted-level cue instead of claiming flat amplitude plateau.",
+        "Coadded9031–9034 are near15.9–16.0K settled control, not nominal15K; retained as separate work directory.",
+        "No explicit assessment of expected5000/36000G magnetization-plateau edges; broad field suppression does not establish those phase boundaries."
+      ],
+      "judgement_calls": [
+        "Should1 accepted as approximately plateau-restricted:5000–38000G rather than full1000–38000G, with reported low-field misfit rationale. Nominal plateau upper edge36000G was not independently imposed; preserve this limited acceptance."
+      ],
+      "number_evidence_commands": [
+        1,
+        2,
+        5,
+        6,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        16,
+        18,
+        22,
+        23,
+        24
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "a09280380a204dc22a74ba714754c9ccbbb1998c8e51a96bcaee2f114d7a9d32",
+        "summary.md": "a09280380a204dc22a74ba714754c9ccbbb1998c8e51a96bcaee2f114d7a9d32",
+        "transcript.jsonl": "e385dd52d8479bbb48daf2e1e409867947a7bd45e8d8d656a2a1cca4b3410ded",
+        "commands.txt": "7915b6ddc0a9c5a4d56236f4422db4661759de050840818582b1567a5817cba2",
+        "cost.json": "fa3bfdcfb9173bb0d118b187f449094f2cc1ed9c2161e40f9f23ec63a19a7bfc",
+        "image-inputs.json": "297f127e71c18615475a75c09c2d40269c8f4dc9bd84de13d0966f2f83887cb2"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/lf-field-rates-trend-Lambda.png",
+          "snapshot_path": "review-images/de10c8691361bae668a03b922f3edbbaafd6257b2419ed1239a01fb520a0c0e0.png",
+          "bytes": 25308,
+          "sha256": "de10c8691361bae668a03b922f3edbbaafd6257b2419ed1239a01fb520a0c0e0",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lf-field-rates-trend-A_1.png",
+          "snapshot_path": "review-images/01b52bc0b1bb39d3fc3087c895aeddc52b851eb6e15c1c765ba817eb882304bd.png",
+          "bytes": 23211,
+          "sha256": "01b52bc0b1bb39d3fc3087c895aeddc52b851eb6e15c1c765ba817eb882304bd",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-9024.png",
+          "snapshot_path": "review-images/b6ca795a9c4f11234ab6d1ac4c162ce359a9c73776f93a1e7712ef114f5ffa79.png",
+          "bytes": 41447,
+          "sha256": "b6ca795a9c4f11234ab6d1ac4c162ce359a9c73776f93a1e7712ef114f5ffa79",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-9051.png",
+          "snapshot_path": "review-images/47ee904c6f5cb08ebb6eed54b8c6a163779f953877e29d401bd19dcb9ca33e1f.png",
+          "bytes": 44489,
+          "sha256": "47ee904c6f5cb08ebb6eed54b8c6a163779f953877e29d401bd19dcb9ca33e1f",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T23:35:18.597983+00:00",
+      "reply_matches_saved_file": false
+    },
+    "spin-glass-ymnal": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies 24563 as the TF calibration run, separate from the LF series.",
+          "pass": true,
+          "evidence": "Experiment separates24563 weak-TF20G calibration from110G LF24573–24590 and isolated ZF24591."
+        },
+        {
+          "requirement": "States that alpha (and detector grouping) came from 24563.",
+          "pass": true,
+          "evidence": "Calibration names24563 as alpha source, raw1.2320/corrected1.2373, with file detector groups1/2."
+        },
+        {
+          "requirement": "Reports the LF series as fit with a relaxation function that combines a stretched-exponential (or comparable stretched decay) component with a flat/time-independent background.",
+          "pass": true,
+          "evidence": "Model explicitly fits Stretched Exponential + Constant LF series; defines A_1/Lambda/beta/A_bg and compares exponential alternative."
+        },
+        {
+          "requirement": "States that the relaxation rate rises as temperature is lowered towards the glass transition (or explicitly says it could not establish this trend, rather than staying silent on direction).",
+          "pass": true,
+          "evidence": "Results and interpretation explicitly state faster relaxation on cooling through reliable part, with low-temperature signal loss/failed endpoint fits qualified."
+        },
+        {
+          "requirement": "Contains no rate, background, A(0), or transition-temperature number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Reported rates, A(0), background and conditional rejected CriticalDivergence values all match direct session outputs; no established Tg invented."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the full LF run range on disk (24573-24591) is wider than the worksheet's quoted 24576-24590, and does not silently restrict itself to only the quoted subset without saying so.",
+          "pass": true,
+          "evidence": "Accounts for full on-disk24573–24591, with actual24591 identified/reduced as separate0G control rather than silently dropping it."
+        },
+        {
+          "requirement": "Follows the worksheet's fixing strategy in spirit — background fixed from a low/representative-temperature fit, full-asymmetry A(0) fixed from a high-temperature (beta = 1) fit — or explains a deliberate departure from it.",
+          "pass": false,
+          "evidence": "Does not follow reference-run background/full-asymmetry fixing strategy or explain a deliberate departure; describes per-run free fits and automatic zero-background recovery only."
+        },
+        {
+          "requirement": "Mentions a glass-transition temperature Tg and critical exponent as a possible further fit (critically-divergent rate function) without inventing values for them.",
+          "pass": true,
+          "evidence": "CriticalDivergence fit actually attempted and rejected; conditional Tc/exponent and invalidity are stated, not promoted to measured Tg."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. All table values, rounded uncertainties, applied alpha, isolated24591 A(0), rate crossover and rejected-law parameters have direct provenance. No numeric/unit checker flags.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science and strict-copy PASS. The agent used --prepare-reply after final edits and the actual reply is byte-identical to the saved draft. General method gap remains free background/amplitude fitting instead of a justified reference-run constraint strategy, producing collapsed warm stretched fits and unstable cold amplitudes. No further source changes while wave runs.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all26 completed commands inspected. 26 commands and summary-only edits inspected; only staged/project data and skill read. No network, external repository or calculator. Raw final matches saved file, snapshot hashes verified; scorer inspected Lambda trend pixels.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 500.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/spin-glass-ymnal/data --series lf-mn-stretched --model CriticalDivergence --param Lambda --xmin 88.712 --xmax 99.815 --exclude 24573,24574,24575,24579 --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "3a1363a25e1bb8d433f7b4806bb027934dc6bbd3c4a6dba4f63006c399426523",
+      "audited_file_sha256": "3a1363a25e1bb8d433f7b4806bb027934dc6bbd3c4a6dba4f63006c399426523",
+      "rubric_sha256": "c1fd733e78e7de397ebd0e533eaac4b698e4d47a33035f26348f9a8f9a7bdb6e",
+      "staged_skill_sha256": "7ecd7452b20d1ccb95973faf3b3ffcf9b350b2b17cface1afcdc0cc8c2392882",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/spin-glass-ymnal",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Actual24591 has0G header and is separate ZF control; preserve dataset correction to worksheet shorthand.",
+        "Seven stretched rows flagged, including failed280.289K endpoint; report uses separate unflagged exponential rate there rather than treating220.866K as actual warm endpoint.",
+        "Conditional CriticalDivergence Tc86.157958±2.938202K is not an established transition because nu1.121316±1.195067; report explicitly rejects critical-law inference.",
+        "LF geometry inferred from context/no applied-field line, not uniquely proven by a nonoscillatory trace; summary states limitation.",
+        "Wizard recommends stretched despite a lower-AICc biexponential candidate; summary notes the discrepancy and does not claim unique statistical preference."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        5,
+        7,
+        8,
+        11,
+        12,
+        13,
+        15,
+        19,
+        20,
+        21
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "3a1363a25e1bb8d433f7b4806bb027934dc6bbd3c4a6dba4f63006c399426523",
+        "summary.md": "3a1363a25e1bb8d433f7b4806bb027934dc6bbd3c4a6dba4f63006c399426523",
+        "transcript.jsonl": "8c166a2e9e2d45e9e50cc4809d9833242550d900cf44a43d0d58eb127c8d5728",
+        "commands.txt": "4ee25238230c5411fd54f8d83f6a46ff293e5a677201774ae095f0a01b7d5754",
+        "cost.json": "0dc11f42858d368d570775f4a0e84e28780bc4f31fd6ef9d34bf031149540f81",
+        "image-inputs.json": "28a006897e57ae482999c8e7242a92f4d7c8fc95a53b6b1bc6f0a456f20563be"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-24573.png",
+          "snapshot_path": "review-images/cb5fcd8776519ed52fafe1aa56bfc6318c6ae6a26c412203760f873101111e5c.png",
+          "bytes": 37679,
+          "sha256": "cb5fcd8776519ed52fafe1aa56bfc6318c6ae6a26c412203760f873101111e5c",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/wizard-24577.png",
+          "snapshot_path": "review-images/5146d0458c44072932ce38cfa55982cad04bc3039afae1a5b8701b5c37560789.png",
+          "bytes": 68843,
+          "sha256": "5146d0458c44072932ce38cfa55982cad04bc3039afae1a5b8701b5c37560789",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lf-mn-stretched-trend-Lambda.png",
+          "snapshot_path": "review-images/1b3bbab539ccb3df0cdb02ba6b0cccae43198c3d472f27a70d423e36b0a63ed8.png",
+          "bytes": 32775,
+          "sha256": "1b3bbab539ccb3df0cdb02ba6b0cccae43198c3d472f27a70d423e36b0a63ed8",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-24590.png",
+          "snapshot_path": "review-images/5d5edf8f72cb33d5c34ad39028699ccf268f90654d708e4c645aac9b5f413a32.png",
+          "bytes": 42476,
+          "sha256": "5d5edf8f72cb33d5c34ad39028699ccf268f90654d708e4c645aac9b5f413a32",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T23:35:18.614784+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
-    "plateau-redfield",
     "sn-critical-field",
     "euo-psi",
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
     "fmuf-ptfe",
-    "spin-glass-ymnal",
     "high-tc-cuprate",
     "copper-diffusion",
     "afm-high-tf-mdu",
@@ -484,16 +778,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 2,
+    "scored": 4,
     "target": 24,
-    "scientific_pass": 2,
-    "must_pass": 11,
-    "must_total": 11,
-    "should_pass": 4,
-    "should_total": 6,
-    "exact_copy_pass": 0,
-    "literal_copy_pass": 0,
-    "combined_pass": 0,
-    "boundary_pass": 2
+    "scientific_pass": 4,
+    "must_pass": 21,
+    "must_total": 21,
+    "should_pass": 10,
+    "should_total": 14,
+    "exact_copy_pass": 1,
+    "literal_copy_pass": 1,
+    "combined_pass": 1,
+    "boundary_pass": 4
   }
 }

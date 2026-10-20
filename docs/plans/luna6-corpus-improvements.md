@@ -2019,3 +2019,6 @@ Fresh full24 confirmation5 is LIVE, implementation4c7c1fb08dca6f8fe6a0706dc6e22a
 
 
 Confirmation5 now2/24 scored: molecular AFM5/5 and spin-Peierls6/6 Musts pass science and number/unit/boundary checks; both fail strict copy. Molecular AFM uses plain audit and drops terminal LF. Spin-Peierls uses --prepare-reply but changes one uncertainty from0.002323 to0.00232319 in the actual reply; both printed, still not byte-identical. Shoulds2/3 each. Preserve molecular warm-FFT attribution caveat and spin-Peierls missing dimerisation/incorrect spontaneous-line prerequisite. Read-only repair finding: repeated CLI footers still recommend plain audit, competing with new preparation guidance. Source remains frozen until all24 complete.
+
+
+Confirmation5 now4/24 scored: plateau5/5 Musts repaired by converged fixed-m=2 Redfield D/nu estimates; science PASS, copy FAIL one terminalLF. YMnAl5/5 Musts and exact-copy PASS after --prepare-reply. Shoulds4/5 (explicit plateau-range acceptance caveat) and2/3. Totals21/21 Musts,4/4 science,1/4copy/combined,4/4boundary,10/14Shoulds. All command/evidence/image hashes recorded. Retain conditional per-run/Redfield diagnostics and actual24591ZF correction; CLI/skill/runner/rubrics remain frozen.
