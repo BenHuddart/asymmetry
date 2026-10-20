@@ -253,7 +253,8 @@
       "staged_skill_sha256": "0f9857b9c93ef7ed0b352cef0cbfe8d768f98e623883006081b9f2b038061d92",
       "boundary_pass": true,
       "boundary_check": "PASS: completed command inventory uses staged skill, supplied datasets/logbook and CLI products only; no host skill/source/network or ad hoc numerical scripts.",
-      "permission_denials": 0
+      "permission_denials": 0,
+      "copy_failure": "Final reply deletes plots/ from solution plot directory; actual reply is scored, not substituted with the audited file."
     }
   },
   "totals": {
