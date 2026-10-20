@@ -1358,3 +1358,17 @@ reply byte-matches audit,frozen hashes unchanged. Totals52/54 Musts,8/10
 science,8/10 copy,6/10 combined,10/10 boundary. Copper,high-TF AFM and TCNQ
 remain live at this check;22 GiB RAM available,no swap/current PSI,652 GiB
 disk free. Finish all24 with no source changes,rereuns or broad tests.
+
+
+Confirmation2 now11/24 scored:TCNQ science/workflow PASS6/6 Musts and
+number/boundary pass,but exact-copy FAIL. Actual reply adds two trailing
+Markdown hard-break spaces to25 file-list lines;all prose/names/tail unchanged.
+This repeats PTFE formatting failure;do not normalize it into a copy pass.
+All four complete31-run blocks independently use integral-scan with local
+Lorentzian/background checks;high-chi-squared caveats retained. One Should
+misses explicit Poisson/count-integral method. All35 commands inspected and
+frozen hashes verify. Totals58/60 Musts,9/11 science,8/11 copy,6/11 combined,
+11/11 boundary. Wizard-call statistics corrected to count actual analytical
+invocations/attempts rather than --help requests;science judgements unchanged.
+Copper,high-TF AFM and LLZ remain live at check,concurrency3,22 GiB available,
+no swap/current PSI,652 GiB disk free,no tests/duplicates. Finish all24 frozen.

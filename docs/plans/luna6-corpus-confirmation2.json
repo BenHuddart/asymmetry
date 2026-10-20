@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 10/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 11/24 scored; source frozen; finish all cases despite earlier failures",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -155,7 +155,7 @@
         "skill_invoked": true,
         "final_report_audited": true
       },
-      "wizard_calls": 4,
+      "wizard_calls": 3,
       "trend_laws": [
         "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/plateau-redfield/data --series lf-field-single-exp --plot --model Redfield --param Lambda'"
       ],
@@ -594,7 +594,7 @@
         "skill_invoked": true,
         "final_report_audited": true
       },
-      "wizard_calls": 7,
+      "wizard_calls": 6,
       "trend_laws": [
         "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-1 --model Linear --param Lambda_2 --plot'",
         "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/maleic-mu-kinetics/data --series chemistry-by-temperature-2 --model Linear --param Lambda_2 --plot'",
@@ -756,7 +756,7 @@
         "skill_invoked": true,
         "final_report_audited": true
       },
-      "wizard_calls": 3,
+      "wizard_calls": 2,
       "trend_laws": [
         "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/spin-glass-ymnal/data --series lf-stretched --model CriticalDivergence --param Lambda --xmin 88.712 --xmax 149.845 --plot'"
       ],
@@ -1291,12 +1291,133 @@
         24
       ],
       "scored_at": "2026-10-20T17:50:24.492883+00:00"
+    },
+    "alc-tcnq": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies this as a longitudinal-field avoided-level-crossing (ALC or µLCR) experiment in which each run contributes one time-integral asymmetry point versus applied field.",
+          "pass": true,
+          "evidence": "Identifies LF avoided-level-crossing integral-asymmetry versus field observable, and separates weak-TF temperature/calibration pair plus low-field prelude."
+        },
+        {
+          "requirement": "Reports the folder structure from its own survey: 128 EMU runs comprising four 31-point scans over 2000–5000 G, plus the non-scan/calibration runs, without claiming the absent run 19618 was loaded.",
+          "pass": true,
+          "evidence": "Survey covers128 EMU19485–19612 and four independent31-point2000–5000 G scans19489–19519,19520–19550,19551–19581,19582–19612; no absent19618 claim."
+        },
+        {
+          "requirement": "Actually runs `integral-scan` on at least one complete 31-run temperature block and states which block it analysed. It does not substitute `wizard`, `fit-series`, or individual time-domain fits for the ALC scan.",
+          "pass": true,
+          "evidence": "Actually executes integral-scan for all four complete blocks, not time-domain fits substituted for ALC; integration1–10 microseconds and temperature/run sets stated."
+        },
+        {
+          "requirement": "Fits the field scan with a resonance-plus-smooth-background model. A single `LorentzianLCR` with a cubic background is acceptable; it does not add a second line merely because the teaching worksheet used a two-Lorentzian template.",
+          "pass": true,
+          "evidence": "Fits LorentzianLCR + Linear/Cubic backgrounds with local windows and alternate-baseline checks; does not invent second lines from worksheet templates."
+        },
+        {
+          "requirement": "Reports an observed negative resonance feature close to 3.1 kG, together with the fitted centre, width and uncertainty/quality information from this run's command output. A centre far outside 2.9–3.2 kG (the resonance moves a few tens of gauss between the four temperature blocks) without an explicit failed-fit warning is a fail.",
+          "pass": true,
+          "evidence": "Observed negative dip near3.1 kG; warm local B0=3101.792 ±1.031 G,Bwid238.879 ±2.050 G,chi2_red34.334. Cooler fitted centres3001.842–3030.825 G and all errors/quality from actual CLI, with scaled-comparison uncertainties explicitly distinct."
+        },
+        {
+          "requirement": "Separates measured/fitted output from physical interpretation and does not invent hyperfine constants that the CLI did not calculate.",
+          "pass": true,
+          "evidence": "Separates empirical field-centre/width fits from conditional reorientation/anisotropy interpretation; unavailable radical/hyperfine/site model acknowledged and no couplings or motion rate invented."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Uses run 19485 as the detector-balance candidate, or explicitly states and justifies the alpha treatment it actually used.",
+          "pass": true,
+          "evidence": "Uses measured19485 alpha1.0323 throughout, notes19486 as other candidate/no reported alpha step, groups1/2 and deadtime-off treatment."
+        },
+        {
+          "requirement": "Uses non-resonant baseline regions on both sides of the dip and names the integration window and count-integral method.",
+          "pass": false,
+          "evidence": "Both local flanks/baseline checks and1–10 microsecond integration window are named, but count-integral/Poisson-weighted count method is not explicitly described."
+        },
+        {
+          "requirement": "Analyses or at least maps all four temperature blocks, and describes any temperature-dependent width/amplitude claim only for blocks it actually fitted.",
+          "pass": true,
+          "evidence": "Fits all four temperature blocks independently before describing warm higher-field/narrower dip; does not concatenate scans or assert an unresolved monotonic cool-series trend."
+        },
+        {
+          "requirement": "Points the reader to the stored scan JSON and spectrum/fit PNG.",
+          "pass": true,
+          "evidence": "Complete Files list points to stored scan JSON and fit PNG products despite post-audit whitespace changes."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. unverified_numbers=[]; all decisive field centres,widths/errors,geometry/calibration,TF shift and integration settings verified from actual commands. No arithmetic or invented microscopic constants.",
+      "number_checker_flags": [],
+      "root_cause": "All scientific/workflow Musts pass. Exact copying fails because actual reply appends two Markdown hard-break spaces to25 Files entries, while all scientific prose, file names and final path remain unchanged. This repeats the PTFE formatting failure despite COPY CHECK; formatting must be completed before audit and copied unchanged afterward. No source changes/reruns authorized during this full gate. Remaining Should gap is naming the count-integral method explicitly.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all35 completed commands inspected. All35 completed commands inspected: staged skill/references, supplied data and installed CLI/products only; no source/rubric/host-skill/network/subagents or ad hoc numerical scripts. One invalid trend --order attempt is corrected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 607.9,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/alc-tcnq/data --series tcnq-100G-temperature --order sample_temperature_logged --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "d4cb423f0d6ef49056013cede70fea734f7fd33da7c3f71a027049908c666c17",
+      "audited_file_sha256": "9ff796ec24e2ef246828a9ad807f52503c6c835841ff524aca81ed6ad2a9e5a9",
+      "rubric_sha256": "a2a38dc913e30cfad99eecaac81cac05cccad4b2b7d7afb893390314e39d251b",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/alc-tcnq",
+      "exact_copy_evidence": "Unified diff changes only25 Files entries by adding two trailing spaces each; rstripped lines identical, no file/path/scientific-text deletion. Strict exact copying and runner final_report_audited fail.",
+      "physics_caveats": [
+        "All local ALC fits have substantial chi-squared mismatch; widths/centres remain conditional empirical estimates, not precision hyperfine quantities.",
+        "Raw fit errors and chi-squared-scaled comparison errors are both given and labelled; no hand-calculated uncertainty scaling.",
+        "Four-condition scan comparison supports warm narrowing/field shift, not a fitted activation law or monotonic ordering of all cooler points."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        14,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        25,
+        26,
+        28,
+        31,
+        32
+      ],
+      "scored_at": "2026-10-20T18:00:40.294476+00:00"
     }
   },
   "pending_cases": [
     "copper-diffusion",
     "afm-high-tf-mdu",
-    "alc-tcnq",
     "ionic-motion-llz",
     "photo-musr-silicon",
     "cds-fourier",
@@ -1310,17 +1431,18 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 10,
+    "scored": 11,
     "target": 24,
-    "scientific_pass": 8,
-    "must_pass": 52,
-    "must_total": 54,
-    "should_pass": 21,
-    "should_total": 35,
+    "scientific_pass": 9,
+    "must_pass": 58,
+    "must_total": 60,
+    "should_pass": 24,
+    "should_total": 39,
     "exact_copy_pass": 8,
     "combined_pass": 6,
-    "boundary_pass": 10
+    "boundary_pass": 11
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
-  "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates."
+  "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates.",
+  "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h."
 }
