@@ -975,3 +975,21 @@ Round9 validation finished before pausing:197 focused passes7.38 s,
 docs85 existing warnings. No new eval launched. Commit prepared round9
 implementation and this pause record; leave automation PAUSED and wait for
 explicit user resume. Standard still has the four recorded GUI failures.
+
+USER RESUME: eval loop resumed by explicit user request after the pause.
+Host has no prior eval/test processes,25 GiB available RAM,zero swap/PSI.
+/tmp was cleared during pause (memory PSI counters also reset); prepared scripts,
+confirmation1 and round8 raw results are no longer present. Their committed
+score/evidence records remain; rounds1–7 survive in disk cache with hash
+manifests. Do not invent missing raw evidence or reuse scores as new attempts.
+To preserve new raw first attempts across restarts, round9 now writes directly
+to /home/ben/.cache/asymmetry-luna6-overnight-20261020/round9 outside repo.
+Fresh corannulene gpt-6-luna wave LIVE,exec23708,console same cache parent
+round9-wave.log. Frozen implementation e2a0d81;metadata records source,
+skill/runner/rubric hashes,BLAS1,unchanged two-turn image review. No duplicate
+launches/tests. Freeze CLI/skill until completion,then score actual final
+reply in docs/plans/luna6-corpus-round9.json with fixed Must/Should,number,
+copy,boundary checks. If it passes,launch fresh full24 confirmation2 from same
+implementation;otherwise improve generally,test,commit before next wave.
+Standard remains four known GUI sizing failures. Resume heartbeat every10min
+with quiet unchanged-state behavior; objective still incomplete.
