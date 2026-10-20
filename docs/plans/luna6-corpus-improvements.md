@@ -1691,3 +1691,17 @@ family-transition requirement; retain this judgement's limits.
 All87 commands inspected and frozen sources verified. Totals56/60 Musts,
 9/11 scientific/combined passes,11/11 audit-copy/literal-copy/boundary passes,
 18/38 Shoulds. Continue all24 frozen, then pause.
+
+
+Confirmation3 now14/24 scored: CDS, LLZ and TCNQ PASS6/6 Musts each;
+number/unit and boundary checks pass. LLZ and TCNQ preserve exact audited
+copies. CDS skips audit entirely and deletes the last two warm-spectrum paths
+from the saved report, so both audit-copy and literal-copy fail. Its noisy cold
+FFT visual-triplet interpretation remains explicitly qualified; inspected
+cold/warm PNGs and retained the borderline semantic judgement. LLZ uses all13
+actual coupled triplets; its endpoint pixels compare different fields, limiting
+pure-temperature shape claims. TCNQ keeps actual fit/background limits and
+molecular interpretation separate. All86 commands/file changes inspected and
+frozen source hashes verified. Totals74/78 Musts,12/14 scientific passes,
+13/14 audit-copy/literal-copy,11/14 combined,14/14 boundary,25/50 Shoulds.
+Continue all24 frozen, then commit complete record and pause.

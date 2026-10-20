@@ -130,7 +130,7 @@
     },
     "authorization": "User requested one repair round and rerun, plus investigation of increased concurrency. Finish and score this full fresh gate, then pause; no unrestricted improvement loop."
   },
-  "status": "running; 11/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 14/24 scored; source frozen; finish all cases despite earlier failures",
   "scoring_policy": "Actual summary.md final replies only, against unchanged staged rubrics and tools/agent_eval/scoring_brief.md; manual Must/Should, number/units, boundary, exact-copy and independent physics-scope checks. Exclude audits/draft/log-report displays from numerical provenance; stored direct CLI outputs are valid. Preserve first attempts and do not pool historical passes.",
   "cases": {
     "plateau-redfield": {
@@ -1627,14 +1627,400 @@
         "summary.md": "390aae2f6885d71ba6b8990c33ef6766a397daaf354b36be749d253660d7d251",
         "image-inputs.json": "88b83b6502166df1635b0add5ff6c6935ce48ccce34e23be602817efe87fee0d"
       }
+    },
+    "cds-fourier": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Surveys the folder and identifies a transverse-field temperature series in CdS, selecting the 100 G base-temperature/high-statistics run 20721 for the representative spectrum from current command output.",
+          "pass": true,
+          "evidence": "Reports 23 EMU CdS runs at100G as a temperature scan; chooses high-statistics cold20721 at logged5.17541K, distinguishing cooldown setpoints."
+        },
+        {
+          "requirement": "Reduces run 20721 and actually runs `fourier` with a saved plot, using a defensible alpha calibration (run 20729 is the expected candidate) or explicitly stating the alternative used.",
+          "pass": true,
+          "evidence": "Explicitly reduces20721 with measured20729 alpha0.9499, and gives saved unwindowed cold FFT PNG/JSON/NPZ; commands11/12 verify."
+        },
+        {
+          "requirement": "Calls the result an FFT, not a maximum-entropy reconstruction, and reports the command's frequency resolution/window alongside any quantitative peak.",
+          "pass": true,
+          "evidence": "Calls both spectra FFT, not MaxEnt; reports window none, full0.105–31.753us record and0.0315976MHz resolution."
+        },
+        {
+          "requirement": "Finds the principal structure near the 100 G muon Larmor line around 1.4 MHz. It uses the PNG as well as the conservative peak table and notes weaker shoulders/satellites near roughly 1.27 and 1.51 MHz when visible; it does not claim those were algorithmically detected if only one row was printed.",
+          "pass": true,
+          "evidence": "Uses actual attached cold/warm PNGs; central1.3896 and side maxima1.2396/1.5001MHz are explicitly candidates below threshold, not detected peaks."
+        },
+        {
+          "requirement": "Interprets a resolved central line with roughly symmetric satellites as consistent with a shallow-muonium hyperfine triplet, without presenting a visual shoulder or sub-resolution splitting as a precision measurement.",
+          "pass": true,
+          "evidence": "Calls roughly symmetric visual side structure consistent with a shallow-muonium hyperfine triplet, explicitly not a clean three-line set or precision splitting."
+        },
+        {
+          "requirement": "Heeds any early-signal apodisation warning: it retries with an unwindowed physical crop or an appropriate Lorentzian filter rather than treating a symmetric-window spectrum as automatically authoritative.",
+          "pass": true,
+          "evidence": "Uses window none from the first cold FFT; no authoritative symmetric-window/apodisation claim or ignored warning."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares the central frequency with the applied-field Larmor expectation and states whether they agree within the reported resolution.",
+          "pass": false,
+          "evidence": "Quotes survey Larmor1.355MHz and line near1.39MHz but does not state agreement within reported resolution; do not infer that comparison for the reader."
+        },
+        {
+          "requirement": "Gives a cautious splitting estimate only when supported by the plotted or tabulated current-session output and labels how it was obtained.",
+          "pass": false,
+          "evidence": "Gives candidate feature locations but no cautiously quantified splitting estimate."
+        },
+        {
+          "requirement": "Points the reader to the stored spectrum JSON/NPZ and PNG.",
+          "pass": true,
+          "evidence": "Lists cold JSON/NPZ/PNG and names warm JSON/NPZ in the Fourier paragraph, despite deleting two warm path entries from final Files list."
+        },
+        {
+          "requirement": "Avoids turning one representative low-temperature FFT into an unsupported claim about the entire temperature dependence.",
+          "pass": true,
+          "evidence": "Runs actual23-run time-domain series and matched cold/warm FFTs; limits side-structure interpretation and does not claim a quantitative hyperfine/hopping trend."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No heuristic number/unit flags. Fitted rows, FFT candidates, resolution, calibration and endpoint significance come from direct CLI commands. Rounded ranges are treated as rounded printed estimates, not new arithmetic. No precision satellite splitting is invented.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science passes with a borderline qualitative triplet interpretation, but the audit/copy gate fails. Command22 writes summary.md and no audit is invoked despite repeated CLI instructions (e.g. command17). Actual final reply then deletes the last two warm-spectrum file paths. This is final-emission/audit noncompliance, not an infrastructure interruption or missing analysis. Future repair would belong to general final-report workflow/CLI enforcement, after the frozen full wave finishes.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all22 completed commands inspected. Only staged skill/references, supplied data/logs and project products read; no scripts for physical arithmetic or unrelated host data. Command22 is a summary heredoc, not numerical computation.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 330.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "1487f397e718459f8ecccc8006fbf009c3223f2bc2bb49ac422d2a363e69e356",
+      "audited_file_sha256": "950896d68ed4e1e161e0e88b393e7eb69bd3f614be3ca40638883ebc9aa13179",
+      "rubric_sha256": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/cds-fourier",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -72,5 +72,3 @@\n asymmetry-work/plots/cds-tf/20729.png\n asymmetry-work/spectra/run-20721.json\n asymmetry-work/spectra/run-20721.npz\n-asymmetry-work/spectra/run-20729.json\n-asymmetry-work/spectra/run-20729.npz\n",
+      "physics_caveats": [
+        "Cold FFT has no above-threshold detected peaks; irregular roughly symmetric side maxima support only the explicitly qualified visual interpretation. Independently inspected cold/warm PNGs during scoring.",
+        "The actual warm time-domain endpoint20711 is described as viewed, but supplied review images show20721/20729; do not equate reference20729 with the hottest endpoint.",
+        "Most Gaussian fits are poor; a muonium triplet was not quantitatively fit. Full-record single-line sigma is conditional; no hopping rate or coupling follows.",
+        "At50K the final says Gaussian/exponential nearly tied though printed dchi2=12.708; model comparison is less indeterminate than that prose."
+      ],
+      "judgement_calls": [
+        "Must5 borderline semantic PASS: noisy cold visual side structure is explicitly qualified as consistent with a triplet; the conditional rubric does not require fabricating a resolved third detected peak. Should1 FAIL because no explicit within-resolution comparison is stated."
+      ],
+      "number_evidence_commands": [
+        2,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        14,
+        15,
+        16,
+        17,
+        18,
+        21
+      ],
+      "scored_at": "2026-10-20T20:32:58.527137+00:00",
+      "raw_artifact_sha256": {
+        "cost.json": "55a56810d0a92372e68c5dd92eea20e260e95b823bb8f90efca850f57aa447d7",
+        "transcript.jsonl": "38cea2af99bbb72b51a4289b3ffbbb1bc2f436d062c027520023b39212b750c1",
+        "commands.txt": "a1bde787ac03df4d944c35d4709eb2b0ce765bf22d25be76f8081745e7f27aa9",
+        "summary.md": "1487f397e718459f8ecccc8006fbf009c3223f2bc2bb49ac422d2a363e69e356",
+        "image-inputs.json": "c012f32111e093e3d50955028ff67092718da5bd2304fb6dfc03b6c56b18ac5e"
+      },
+      "reply_matches_saved_file": false
+    },
+    "ionic-motion-llz": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Reports the survey-level design: run 51315 is the weak-TF detector-balance run and the science data form 13 temperature groups, each containing the 0, 5 and 10 G longitudinal-field runs spanning roughly 160–400 K.",
+          "pass": true,
+          "evidence": "Reports51315 as20G TF balance calibration and thirteen ZF/5/10G triplets spanning160–404K setpoints,157.327–391.212K logged temperatures."
+        },
+        {
+          "requirement": "Reduces and jointly fits at least one complete field triplet with `fit-global`; the 160 K group is runs 51341–51343. It does not describe `fit-series --global` or three independent fits as simultaneous fitting.",
+          "pass": true,
+          "evidence": "Describes joint field-triplet fits and command11 really invokes fit-global --groups for all thirteen triples, including51341–51343."
+        },
+        {
+          "requirement": "Uses a physically appropriate dynamic Gaussian relaxation model (`Keren` or `DynamicGaussianKT`) plus a constant background.",
+          "pass": true,
+          "evidence": "Uses DynamicGaussianKT + Constant for the coupled trend, separate from the single-run static-GKT wizard recommendation."
+        },
+        {
+          "requirement": "Shares the sample amplitude, static width `Delta`, fluctuation rate `nu` and background amplitude across the triplet, while taking `B_L` from each file and holding it per run.",
+          "pass": true,
+          "evidence": "Explicit shared A1,Delta,nu,A_bg within each triplet and fixed file-specific B_L; command11 confirms shared/field flags."
+        },
+        {
+          "requirement": "Reports the shared values and uncertainties produced by the coupled fit, including both amplitudes and fit-quality information. For the 160 K group, a defensible first pass has `Delta` approximately 0.25–0.45 µs⁻¹ and `nu` approximately 0.15–0.45 MHz; values outside those broad ranges must be called out as suspect rather than interpreted.",
+          "pass": true,
+          "evidence": "Table gives both amplitudes and Delta/nu with errors for every group, plus per-run chi2. Cold sharedDelta0.350523±0.002141 andnu0.344499±0.006240 are in defensible ranges."
+        },
+        {
+          "requirement": "Does not claim a fluctuation-rate-versus-temperature result unless every group in that trend was fitted as a coupled group (with `fit-global --groups`, or one `fit-global` per group); one coupled group is not a trend.",
+          "pass": true,
+          "evidence": "All13 temperature groups were coupled separately in one batch before the nu trend/Arrhenius analysis; no independent-fit trend masquerades as coupled."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Estimates alpha from run 51315 and reports the applied value, or clearly justifies another calibration choice.",
+          "pass": true,
+          "evidence": "Distinguishes raw51315 alpha0.8567 from corrected applied0.8561."
+        },
+        {
+          "requirement": "Uses a fit window near 0–12 µs and the guide's order-of-magnitude seeds (`A_1` about 15%, `A_bg` about 5%, `Delta` about 0.3, `nu` about 0.2), then judges convergence from output rather than assuming the seeds worked.",
+          "pass": false,
+          "evidence": "Uses full0.17700006–32.609005us interval, not the preferred near0–12us; Delta0.3/nu0.2 seeds and convergence checks do not satisfy the window preference."
+        },
+        {
+          "requirement": "Notes the Keren low-rate/ZF caveat; retaining the ZF run is acceptable when this run's diagnostics show clean convergence.",
+          "pass": false,
+          "evidence": "No Keren low-rate/ZF caveat is stated; the actual model is exact DynamicGaussianKT rather than Keren. Same literal Should interpretation as earlier gates."
+        },
+        {
+          "requirement": "Points the reader to the stored global-series JSON and per-run fit plots.",
+          "pass": true,
+          "evidence": "Names dynamics.json and all per-group JSON plus actual coupled endpoint fit PNGs51341/51379, not merely reduction/trend figures."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No heuristic number/unit flags; shared values/errors and quality counts verified against command11, trends/significance against20, conditional Arrhenius values against14/17/18. Actual reply equals audited saved file; no digit changed.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "All Musts and exact-copy checks pass; prior digit-change failure is absent. Remaining Should gaps concern preferred fit-window sensitivity and absent Keren-caveat wording (the selected exact dynamic-GKT model is not Keren). The full-range Arrhenius law is correctly rejected as inadequate, while the warm conditional result retains poor chi2. No additional repair is authorized during the wave.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all23 completed commands inspected. Inspected23 commands and file-change events: staged skill, suppliedlogbook/data and own summary/products only. No physical arithmetic script or unrelated host paths.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 569.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --order sample_temperature_logged --plot --csv asymmetry-work/series/dynamics-arrhenius.csv'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --plot --csv asymmetry-work/series/dynamics-arrhenius.csv'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --xmin 234.349 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --xmax 234.349 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --order sample_temperature_logged --plot --csv asymmetry-work/series/dynamics-arrhenius.csv'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "99caca9b1a0542827bc46678a8706fb492a73fc32386a97de602a76cf7513d19",
+      "audited_file_sha256": "99caca9b1a0542827bc46678a8706fb492a73fc32386a97de602a76cf7513d19",
+      "rubric_sha256": "26a96516c6b7d735288e5a79b9d63cd349de9e38850c4eba7367f47fc00a1b28",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/ionic-motion-llz",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Broad decreasingDelta and increasingnu are interpreted conditionally as ionic motion; changing fitted constant amplitude limits population claims.",
+        "No constrained coupled comparison of competing dynamic/static families or full-versus-short-window sensitivity is reported.",
+        "Full Arrhenius chi2_red64.849 and warm chi2_red26.964 do not establish one activation law; only warm conditional44.312989±8.671749meV is quoted.",
+        "Cold and warm nominated endpoint images are different field members(0G vs10G), so their shape contrast contains a field contribution and should not be attributed purely to temperature."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        2,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        14,
+        17,
+        18,
+        20
+      ],
+      "scored_at": "2026-10-20T20:32:58.549428+00:00",
+      "raw_artifact_sha256": {
+        "cost.json": "35f8c3b1e7b3f7ae1d0e5c54691ce29eef40d3a7c6fdb4bad5221d3fdd86dd44",
+        "transcript.jsonl": "37ea3c2826287cf7a8bfc5c0ff5c35ad810594f2dfe297f6d052a820a9daa624",
+        "commands.txt": "32244b87d297f46160bceecd229f41e51f68fcbd90da62358d978d936675fdee",
+        "summary.md": "99caca9b1a0542827bc46678a8706fb492a73fc32386a97de602a76cf7513d19",
+        "image-inputs.json": "446030b05aa4956f5782b7639185948e11744f257b762b8416ca6b049807a39e"
+      },
+      "reply_matches_saved_file": true
+    },
+    "alc-tcnq": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies this as a longitudinal-field avoided-level-crossing (ALC or µLCR) experiment in which each run contributes one time-integral asymmetry point versus applied field.",
+          "pass": true,
+          "evidence": "Explicitly identifies longitudinal ALC field scans with one1–10us integral point perrun, refuting falseTF stamps using sustained large integrals."
+        },
+        {
+          "requirement": "Reports the folder structure from its own survey: 128 EMU runs comprising four 31-point scans over 2000–5000 G, plus the non-scan/calibration runs, without claiming the absent run 19618 was loaded.",
+          "pass": true,
+          "evidence": "Maps128EMU runs19485–19612, four complete31-point2000–5000G blocks, separate100G reference pair and extraZF/repeat acquisitions; no19618 loaded."
+        },
+        {
+          "requirement": "Actually runs `integral-scan` on at least one complete 31-run temperature block and states which block it analysed. It does not substitute `wizard`, `fit-series`, or individual time-domain fits for the ALC scan.",
+          "pass": true,
+          "evidence": "Actually integral-scans allfour31-run blocks(commands11–14); separateTF reference wizard/series is not used as ALC substitute."
+        },
+        {
+          "requirement": "Fits the field scan with a resonance-plus-smooth-background model. A single `LorentzianLCR` with a cubic background is acceptable; it does not add a second line merely because the teaching worksheet used a two-Lorentzian template.",
+          "pass": true,
+          "evidence": "Fits each with LorentzianLCR + Cubic and localLinear checks; does not add a worksheet-motivated second line."
+        },
+        {
+          "requirement": "Reports an observed negative resonance feature close to 3.1 kG, together with the fitted centre, width and uncertainty/quality information from this run's command output. A centre far outside 2.9–3.2 kG (the resonance moves a few tens of gauss between the four temperature blocks) without an explicit failed-fit warning is a fail.",
+          "pass": true,
+          "evidence": "Reports negative trough near3kG withB0/Bwid/errors/chi2 for allfour;350K scan3098.659±1.014G,width266.840±2.673G,chi2_red12.952 is directcommand27 output."
+        },
+        {
+          "requirement": "Separates measured/fitted output from physical interpretation and does not invent hyperfine constants that the CLI did not calculate.",
+          "pass": true,
+          "evidence": "Separates conditional empirical centres/widths from molecular reorientation/anisotropy interpretation and explicitly lacks microscopic couplings/site/rate model."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Uses run 19485 as the detector-balance candidate, or explicitly states and justifies the alpha treatment it actually used.",
+          "pass": true,
+          "evidence": "Measures and uses19485 alpha1.0323, naming unused alternate19486."
+        },
+        {
+          "requirement": "Uses non-resonant baseline regions on both sides of the dip and names the integration window and count-integral method.",
+          "pass": false,
+          "evidence": "Names1–10us integration and both2000–2600/3800–5000G baseline regions, but does not explain Poisson-weighted count-integral method in summary."
+        },
+        {
+          "requirement": "Analyses or at least maps all four temperature blocks, and describes any temperature-dependent width/amplitude claim only for blocks it actually fitted.",
+          "pass": true,
+          "evidence": "Fits/maps allfour and qualifies width/centre comparisons with actual baseline/window sensitivity andloggedT offsets."
+        },
+        {
+          "requirement": "Points the reader to the stored scan JSON and spectrum/fit PNG.",
+          "pass": true,
+          "evidence": "Files section points to allscanJSON and integral/fit PNGs including selected wideCubic fits."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No heuristic number/unit flags. Centres,widths/errors,integrals andTF parameter rows verified against actual commands, excluding audits/report displays. G-to-kG location in prose is the permitted passing unit restatement. No hyperfine constants or arithmetic quantities invented.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science, audit and exact copying pass. General CLI COMPARE/STABILITY guidance is used correctly for different-condition ordering versus same-run background sensitivity. The unchanged count-integral-method Should remains unstated despite the actual integral-scan workflow. Formal fit errors are reported with clear high-chi2 and conditional-width limits.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all41 completed commands inspected. Inspected41commands and summary-only file changes. Reads staged skill and suppliedlogbook/data; failedrelative data lookup and baseline-option retries are local execution issues, not boundary/approval failures.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 800.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'rg --files data'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/alc-tcnq/data --runs 19489-19519 --alpha-from 19485 --tmin 1 --tmax 10 --name fit-350-cubicbase --baseline Cubic --baseline-regions 2000:2600,3800:5000 --model LorentzianLCR --xmin 2600 --xmax 3800 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/alc-tcnq/data --runs 19489-19519 --alpha-from 19485 --tmin 1 --tmax 10 --name fit-350-cubicbase --baseline Cubic --baseline-regions 2000:2700,3800:5000 --model LorentzianLCR --xmin 2600 --xmax 3800 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/alc-tcnq/data --run 19486 --geometry TF --scope auto --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "dd2f013bf25bbfa61c4e75eb3bebb1c5ae5f0e0a830fcc7372cad2af24dde236",
+      "audited_file_sha256": "dd2f013bf25bbfa61c4e75eb3bebb1c5ae5f0e0a830fcc7372cad2af24dde236",
+      "rubric_sha256": "a2a38dc913e30cfad99eecaac81cac05cccad4b2b7d7afb893390314e39d251b",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/alc-tcnq",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Allprimarychi2_red values are11–19; formal table errors are not total uncertainty.350K width depends strongly on baseline, as acknowledged.",
+        "Some advertised700–5500G fit windows contain measured data only2000–5000G; the report explicitly discloses this and does not claim unmeasured flanks.",
+        "Temperature drift/offsets prevent interpreting nominal350K as measured350K; broadline motion is a candidate interpretation, not a fitted motion rate.",
+        "Near3kG is a passing restatement of printedG field coordinates in kG, not a new coupling or derived physical measurement."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        4,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        34,
+        37,
+        39
+      ],
+      "scored_at": "2026-10-20T20:32:58.588038+00:00",
+      "raw_artifact_sha256": {
+        "cost.json": "6f740021541fa3c2e2b1cd7b4b0b13b53da32ada049fd1d4d295d9be7fe4edff",
+        "transcript.jsonl": "a6e6b4eeb89911b9a3fcd26647e63fccd006afcaf88ca20def266656743b2afb",
+        "commands.txt": "f2025e4b363b91c58bf7e8f6a84e7f2478237ec70813f40d3e8159f9c06368da",
+        "summary.md": "dd2f013bf25bbfa61c4e75eb3bebb1c5ae5f0e0a830fcc7372cad2af24dde236",
+        "image-inputs.json": "2d479a5d3a6ef1bcedc82528259f642368f9e7993b8bd5d1c3cafb6b568c36f4"
+      },
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
     "afm-high-tf-mdu",
-    "alc-tcnq",
-    "ionic-motion-llz",
     "photo-musr-silicon",
-    "cds-fourier",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
@@ -1645,17 +2031,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 11,
+    "scored": 14,
     "target": 24,
-    "scientific_pass": 9,
-    "must_pass": 56,
-    "must_total": 60,
-    "should_pass": 18,
-    "should_total": 38,
-    "exact_copy_pass": 11,
-    "literal_copy_pass": 11,
-    "combined_pass": 9,
-    "boundary_pass": 11
+    "scientific_pass": 12,
+    "must_pass": 74,
+    "must_total": 78,
+    "should_pass": 25,
+    "should_total": 50,
+    "exact_copy_pass": 13,
+    "literal_copy_pass": 13,
+    "combined_pass": 11,
+    "boundary_pass": 14
   },
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."
