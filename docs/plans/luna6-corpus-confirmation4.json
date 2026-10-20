@@ -1,5 +1,5 @@
 {
-  "status": "running; 16/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 17/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -2531,10 +2531,167 @@
       ],
       "scored_at": "2026-10-20T22:41:37.207065+00:00",
       "reply_matches_saved_file": false
+    },
+    "high-tc-cuprate": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the two instruments' runs (EMU vs MUSR) into distinct scans rather than treating the folder as one series.",
+          "pass": true,
+          "evidence": "SeparateEMU76976–76993/MUSR1276–1303 scans, instrument-specific recipes/calibrations and explicitdetector-tests1274/75notconflated."
+        },
+        {
+          "requirement": "Names both applied fields present on MUSR (400 G and 200 G) as separate field groups, not a single 400 G scan.",
+          "pass": true,
+          "evidence": "MUSR400G1276–1289and200G1290–1303separategroups."
+        },
+        {
+          "requirement": "Reports a Gaussian (or Gaussian-like) TF relaxation rate that rises as temperature drops below the transition, for at least one of the field/instrument combinations.",
+          "pass": true,
+          "evidence": "400GGaussianσ1.16101±0.0233224μs⁻¹coldto0.0657648±0.00239411warm,explicitcoolingrise/vortexinterpretation."
+        },
+        {
+          "requirement": "Discusses how the non-superconducting fraction of the signal was handled (e.g. a second, slowly-relaxing or non-relaxing component), rather than fitting a single Gaussian and ignoring it.",
+          "pass": true,
+          "evidence": "Extra relaxationalcomponent attempted andfails, thenconstantoffsetidentifiedasnotnonSCfraction; explicitlystates reliablefractionnotseparated."
+        },
+        {
+          "requirement": "Contains no sigma, Tc, or penetration-depth number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Allsigma,Tc andconditionalgapparamsdirectCLIprinted; no penetrationdepthconversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the data folders contain more runs than the worksheet's own tables list (76993 on EMU; 1274-1275 on MUSR) and reflects the survey's actual range rather than only the worksheet's table.",
+          "pass": false,
+          "evidence": "Usesactual76993and1274/75, butdoesnotnotetheworksheetomissions."
+        },
+        {
+          "requirement": "Compares sigma(T) trends across the different fields/instruments rather than reporting only one.",
+          "pass": true,
+          "evidence": "Compares400GstrongGaussianwidth,200Gcoldanomaly/shapevariationandEMUexponentialratherthanGaussian."
+        },
+        {
+          "requirement": "Mentions the \"above Tc\" run (1276, 125 K) as a normal-state reference distinct from the temperature scan proper.",
+          "pass": false,
+          "evidence": "1276is125KwarmFFT/controlandcalibration, butnotexplicitlyidentifiedasaboveTc normalstatereference distinctfromscan."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No number/unitcheckerflags. All111completedcommands inspected; printedCLI seeds and user-suppliedcorrectedTcoordinatesfromsurvey, no arithmetic. SCfit64prints107.326103±0.230620 K andrange10.8622–125.5417K.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Scienceandcross-instrumentcoveragepass. AdditionalnonSCcomponentwasattemptedandfailed; transparentlimitationretained. StrictcopyfailsoneLF; worksheet/referenceframingShouldgaps.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all111 completed commands inspected. All111commands and summary-onlyedits inspected; instrumentfilters/publicCLI preserved, failedrelativepathqueries recovered; no customphysicalanalysis.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 2124.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 5,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/high-tc-cuprate/data --series bisco-150g-logcorrected --model Linear --param Lambda --plot --instrument EMU'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/high-tc-cuprate/data --series bisco-150g-logcorrected --model Linear --param Lambda --xmax 20.19 --plot --instrument EMU'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/high-tc-cuprate/data --series bisco-150g-logcorrected --model Linear --param Lambda --xmin 20.19 --plot --instrument EMU'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/high-tc-cuprate/data --series htc-400g-log --model SC_SWave --param sigma --plot --instrument MUSR'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/high-tc-cuprate/data --series htc-400g-log --model SC_DWave --param sigma --plot --instrument MUSR'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/high-tc-cuprate/data --series htc-200g-log --model SC_SWave --param sigma --plot --instrument MUSR'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/high-tc-cuprate/data --series htc-200g-log --model SC_DWave --param sigma --plot --instrument MUSR'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry trend data --series bisco-150g-logged --workdir asymmetry-work'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend data --series bisco-150g --workdir asymmetry-work'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend data --series htc-200g --workdir asymmetry-work'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend data --series htc-field-30K --workdir asymmetry-work'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend data --series htc-400g --workdir asymmetry-work'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "5d94537ce2c3247da18f902a993f9b8437c79e278e7f7aca1a41c6766a5d77ac",
+      "audited_file_sha256": "3a9350a25a83272933a2c69a28bfb20ca88ed6321352ebf7f69ec94ac5325c03",
+      "rubric_sha256": "6768523173dd08582c6c56642fe11ca2d276a0b467ea21494e31b1db78c59029",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/high-tc-cuprate",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -155,4 +155,4 @@\n asymmetry-work/plots/htc-200g-log/1303.png\n asymmetry-work/plots/htc-400g-log-trend-sigma.png\n asymmetry-work/plots/htc-200g-log-trend-sigma.png\n-asymmetry-work/plots/bisco-150g-logcorrected-trend-Lambda.png\n+asymmetry-work/plots/bisco-150g-logcorrected-trend-Lambda.png",
+      "physics_caveats": [
+        "400GSC_SWaveχ²3.443conditional fullygappedestimate, DWavefailuredoesnotestablishuniquegap; no reliablevolume fraction.",
+        "200Gsinglelinefreqmismatch/coldwidthanomalyandpoorSCfits preclude robustwidthlaw; successfulcoldtwo-linecheckisconditional.",
+        "EMU76993logged411.19Kdiscardedbecause stickoutnote; mixedlogged/setpointcorrectedaxisexplicit, no inventedthermometerarithmetic.",
+        "1274/75actualinstrumentidentitycomesfromsurveyEMUdetectortest, despitehistoricalrubricassumingMUSRrange."
+      ],
+      "judgement_calls": [
+        "Must4 accepts explicitattemptedextra nonSCrelaxation component and transparentfailure, not a claimedresolvedfraction. Both finalconstantoffsets explicitlynotvolume fractions."
+      ],
+      "number_evidence_commands": [
+        "survey1; instrumentreductions6–8; wizard12/13/16; series18–21/25/53–55; FFT30–33; trends56–67; pairseries38–51/84/85; coldlinefits28/81/100/103"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "5d94537ce2c3247da18f902a993f9b8437c79e278e7f7aca1a41c6766a5d77ac",
+        "summary.md": "5d94537ce2c3247da18f902a993f9b8437c79e278e7f7aca1a41c6766a5d77ac",
+        "transcript.jsonl": "f333cc0ce8e926013f81e154a2d9b500c7f57dcb44182d1bcd01dcd5e10077d9",
+        "commands.txt": "1e9fc35f13ecb434d2c6ccfb32a8e65ada990bb2e800f71f7df14324f3909693",
+        "cost.json": "190cf27e3fc6512edb730c16cfaaff1f134ef98434be94c102fd35784bf546d6",
+        "image-inputs.json": "585b97bd5bfe612cbcfda89a201f19c82f01b0dfee5d77d952f797ceca1d8961"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-1277.png",
+          "snapshot_path": "review-images/65ca8e4e7ef473583830abdb59f0566ff17518f12c9ac725fee9436e20471947.png",
+          "bytes": 90978,
+          "sha256": "65ca8e4e7ef473583830abdb59f0566ff17518f12c9ac725fee9436e20471947",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-1276.png",
+          "snapshot_path": "review-images/208eba643835ad1bae5c81b0db3d4b3ab1e239929426914ebe86c6520775deb4.png",
+          "bytes": 86835,
+          "sha256": "208eba643835ad1bae5c81b0db3d4b3ab1e239929426914ebe86c6520775deb4",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/htc-400g-log/1277.png",
+          "snapshot_path": "review-images/1a127887847c1e17c49b42a4f98f325da1b92b6e780ae62ff975d864b9822f65.png",
+          "bytes": 74910,
+          "sha256": "1a127887847c1e17c49b42a4f98f325da1b92b6e780ae62ff975d864b9822f65",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/htc-400g-log/1276.png",
+          "snapshot_path": "review-images/44f68e2ca65581c3ff03993d513d6057ac7760bf153f7f0f101ef354e9072032.png",
+          "bytes": 121658,
+          "sha256": "44f68e2ca65581c3ff03993d513d6057ac7760bf153f7f0f101ef354e9072032",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:42:28.491859+00:00",
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
-    "high-tc-cuprate",
     "copper-diffusion",
     "lifeas-psi",
     "trsb-re6zr",
@@ -2560,17 +2717,17 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 16,
+    "scored": 17,
     "target": 24,
-    "scientific_pass": 13,
-    "must_pass": 85,
-    "must_total": 89,
-    "should_pass": 35,
-    "should_total": 61,
+    "scientific_pass": 14,
+    "must_pass": 90,
+    "must_total": 94,
+    "should_pass": 36,
+    "should_total": 64,
     "exact_copy_pass": 0,
     "literal_copy_pass": 0,
     "combined_pass": 0,
-    "boundary_pass": 16
+    "boundary_pass": 17
   },
   "artifact_fidelity_verification": {
     "completed_message_checks": {

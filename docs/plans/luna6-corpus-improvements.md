@@ -1964,3 +1964,6 @@ Confirmation4 now12/24 scored: nickel7/7,molecularAFM5/5,highTF-AFM5/5 literalMu
 
 
 Confirmation4 now16/24scored: maleicFAIL3/5Musts(no usableMu kineticrate/slope),RFbenzenePASS5/5(defaultintegralrepairworks),TCNQPASS6/6andLFbenzenePASS6/6. Allnumber/unit/boundarypass,allcopyfailoneLF. Shoulds1/4,2/5,4/4,4/5. Totals85/89Musts,13/16science,0/16copy/combined,16/16boundary,35/61Shoulds;independenthighTF-AFMscopeFAILretained. Noimplementationchanged;continueall24.
+
+
+Confirmation4 now17/24scored: highTc cupratePASS5/5Musts,1/3Shoulds,number/unit/boundarypass;copyfailoneLF. Cross-instrument200/400/150Gcoverageandconditional400GGaussianSCgapworkflowwork;nonSCcomponentattemptfailedandfractionlimitationexplicit. Totals90/94Musts,14/17science,0/17copy/combined,17/17boundary,36/64Shoulds. Sevenremainingcasesstilllive;sourcefrozen.
