@@ -1990,3 +1990,6 @@ nonnegative ParamInfo minima, while m lacks a physical positive domain and
 _redfield uses abs(m), creating a sign-degenerate objective. Investigate
 model-specific domain ownership rather than globally bounding Linear slopes.
 No frozen source was edited; these are next-round design findings only.
+
+
+Confirmation4 now23/24scored:Re6ZrPASS7/7Musts,3/6Shoulds,exactcopyPASS(secondcase),setpoint/harmonicbackgroundcaveatsretained;benzeneALCPASS7/7,4/6Shoulds,copyfailoneLF. Allnumber/unit/boundarypass. Totals130/138Musts,19/23science,2/23copy/combined,23/23boundary,53/97Shoulds. OnlyBasicsstillrunning;sourcefrozen.
