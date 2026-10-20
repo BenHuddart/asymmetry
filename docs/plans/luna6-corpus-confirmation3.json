@@ -130,7 +130,7 @@
     },
     "authorization": "User requested one repair round and rerun, plus investigation of increased concurrency. Finish and score this full fresh gate, then pause; no unrestricted improvement loop."
   },
-  "status": "running; 8/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 9/24 scored; source frozen; finish all cases despite earlier failures",
   "scoring_policy": "Actual summary.md final replies only, against unchanged staged rubrics and tools/agent_eval/scoring_brief.md; manual Must/Should, number/units, boundary, exact-copy and independent physics-scope checks. Exclude audits/draft/log-report displays from numerical provenance; stored direct CLI outputs are valid. Preserve first attempts and do not pool historical passes.",
   "cases": {
     "plateau-redfield": {
@@ -1203,11 +1203,162 @@
         "summary.md": "355b4ec108826b61c44936a92bb28f55b31b771e7c91879508bd0e1ca3c37bf4",
         "image-inputs.json": "c598ac388fcc4a8584b53d157abee70a86a9b1bb1e35b621d06e26bbfb47941d"
       }
+    },
+    "molecular-antiferromagnet": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies 17104 as the TF 20 G calibration run and states alpha was determined from it.",
+          "pass": true,
+          "evidence": "Identifies17104 as separate20G weak-TF calibration and measuredalpha1.2584 from that run; explicitly distinguishes deadtime-on alpha1.2594 and explains the chosen correction mismatch."
+        },
+        {
+          "requirement": "Treats 17094-17103 as the ZF temperature sweep used for the ordering analysis, separate from the calibration run.",
+          "pass": true,
+          "evidence": "Treats17094–17103 as the ten-run ZF temperature sweep,ordered on logged1.22032–9.82616K,with17104 excluded from ordering analysis."
+        },
+        {
+          "requirement": "Reports oscillation(s) present in the low-temperature ZF spectra that become more relaxed/damped as temperature rises through the sweep.",
+          "pass": true,
+          "evidence": "Cold ZF oscillations and declining internal line are explicit;17099 has weak rapidly damped shape and warm17103 smooth non-oscillatory decay. Loss of algorithmic line is not equated to all local fields vanishing."
+        },
+        {
+          "requirement": "Comments on whether more than one oscillation frequency is present (the worksheet flags this as something to check for), rather than assuming a single frequency without looking.",
+          "pass": true,
+          "evidence": "Explicit multiple-frequency check: cold wizard detects three lines while matched FFT table reports two; third2.067MHz wizard line is not relabelled as an FFT detection or site assignment."
+        },
+        {
+          "requirement": "Contains no frequency, TN, or relaxation-rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Quoted frequencies/KT controls/rates and line-loss temperature bracket are actual session CLI outputs; no fittedTN/exponent invented after too-few-point/unsupported-column fit errors. Stale pre-alpha cold FFT values are actual command14 outputs,with retention/provenance caveat recorded separately."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes the \"Cryostat Temperature\" vs \"Sample Temperature\" columns logged for these runs are identical in the worksheet table, and does not imply a discrepancy that isn't there.",
+          "pass": false,
+          "evidence": "Distinguishes logged sample temperatures from setpoints but does not discuss identical Cryostat/Sample Temperature columns in the worksheet; no worksheet table was used."
+        },
+        {
+          "requirement": "Discusses whether it fit from low to high temperature or vice versa, and why (the worksheet explicitly raises this as a design choice).",
+          "pass": false,
+          "evidence": "Explains selecting cold17094 as the clearest wizard seed,but does not explicitly discuss low-to-high versus high-to-low fit propagation and its rationale."
+        },
+        {
+          "requirement": "Chooses a relaxing-oscillation function appropriate to magnetic order (e.g. damped cosine terms) rather than a generic unstructured relaxation function.",
+          "pass": true,
+          "evidence": "Uses three exponentially damped cosines plus non-oscillating exponential and Constant for magnetic ordered spectra,rather than a generic featureless decay; warm KT/stretched models are separate controls."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Manually matched calibration4/25/26, early ordered rows42, warmKT38/stretched40 and FFT metadata/tables14–17/34–37. Original coldFFT14 prints1.567545/0.27928/SNR8.58 and2.508022/0.29495/SNR6.12; retained new34 instead prints1.567536/0.27931/8.59 and2.508012/0.29524/6.11. Thus numeric origin passes but active-reduction provenance is stale. Frequency bracket uses directly printed temperatures/survey detection states,not hand-fittedTN. Independent numeric/unit checkers exclude audits/drafts and find no flags.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Musts pass. The report explores multiple lines,retains actual endpoints and rejects unsupported law/site claims. Should gaps are temperature-column/fit-direction explanations. Calibration is corrected late: it first reduces atalpha1,then remeasures and reruns atalpha1.2584 with file deadtimes. Cold FFT table nevertheless quotes the earlier command14(1.567545,2.508022MHz and widths/SNR)rather than overwritten final command34(1.567536,2.508012MHz). Both exist in the session and give the same qualitative conclusion,so this is stale campaign/provenance rather than invented numbers. The period/quantity audit cannot ensure every quoted row matches the active reduction. Also the weak17099 Hann FFT warns of early-signal deletion; no no-taper sensitivity check is reported.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all45 completed commands inspected. All45 completed commands and summary-only file changes inspected. Staged skill/help/data and project products only; no implementation/personal skill/hidden corpus/physical arithmetic. Two-turn image review complete. Too-few-points/absent trend-column command failures are analytical limitations,not infrastructure/approval denials; setup/cache warnings nonfatal.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1098.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 8,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry fit --help; asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/molecular-antiferromagnet/data --series zf-ordered-series --model OrderParameter --param frequency_1 --exclude 17098-17103 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/molecular-antiferromagnet/data --series zf-ordered-early --model OrderParameter --param survey_line_mhz --exclude 17099-17103 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/molecular-antiferromagnet/data --series zf-ordered-early --model OrderParameter --param frequency_1 --exclude 17098-17103 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry fit --help; asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/molecular-antiferromagnet/data --series zf-ordered-series --model OrderParameter --param frequency_1 --exclude 17098-17103 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/molecular-antiferromagnet/data --series zf-ordered-early --model OrderParameter --param survey_line_mhz --exclude 17099-17103 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/molecular-antiferromagnet/data --series zf-ordered-early --model OrderParameter --param frequency_1 --exclude 17098-17103 --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "41687bc37d5fd054d523abb707b724495308c94d90421d8fd5cf211cdacbfe23",
+      "audited_file_sha256": "41687bc37d5fd054d523abb707b724495308c94d90421d8fd5cf211cdacbfe23",
+      "rubric_sha256": "a6dcbd9c0ae82a5ff22433c944584a709ccf430256a594c0acee0073d8b540b7",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/molecular-antiferromagnet",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Raw-count alpha1.2584 is applied with file deadtimes after corrected-count alpha1.2594 loses the Larmor classification; explicit mismatch limits amplitude/background fractions.",
+        "Cold FFT row reports earlier alpha1 output although retained spectra were regenerated atalpha1.2584; differences are tiny relative to resolution but the active artifact/provenance does not match the table exactly.",
+        "Most multi-cosine fits are poor/flagged; valid primary frequency is independently supported,but amplitudes are not reliable magnetic volume fractions.",
+        "17099 Hann transform warns91.4% early-time power deletion; the lack of a reliable line cannot be attributed only to physical damping without a window check.",
+        "No fittedTN or microscopic model:four reliable points forfour free law parameters; primary line-loss bracket is an observation,not a fitted transition."
+      ],
+      "judgement_calls": [
+        "Must5 passes session-output provenance for pre-alpha cold FFT values,with explicit stale-retained-artifact caveat; do not treat numeric origin as validation of the active correction state."
+      ],
+      "number_evidence_commands": [
+        2,
+        4,
+        5,
+        6,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        20,
+        21,
+        22,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        42,
+        43,
+        44
+      ],
+      "scored_at": "2026-10-20T20:22:40.489500+00:00",
+      "reply_matches_saved_file": true,
+      "raw_artifact_sha256": {
+        "cost.json": "2f69f8b9cc0eead14dc529ee3de5773fa684d4040f5de15a61b734aa9345aa52",
+        "transcript.jsonl": "2962320b922974c0d6dc19b92ba9a0da5432b3ea10091b49caac10cf47188612",
+        "commands.txt": "740dbfe994bb2e1870950a1a7ba1546d6c3082cf311dcbfe110bca25712234bb",
+        "summary.md": "41687bc37d5fd054d523abb707b724495308c94d90421d8fd5cf211cdacbfe23",
+        "image-inputs.json": "2ff3293554d043927d043e436e4facaee1f7d78e2b05bb8f9a5738d7a20ff4da"
+      }
     }
   },
   "pending_cases": [
     "copper-diffusion",
-    "molecular-antiferromagnet",
     "spin-peierls",
     "afm-high-tf-mdu",
     "alc-tcnq",
@@ -1224,17 +1375,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 8,
+    "scored": 9,
     "target": 24,
-    "scientific_pass": 6,
-    "must_pass": 39,
-    "must_total": 43,
-    "should_pass": 13,
-    "should_total": 29,
-    "exact_copy_pass": 8,
-    "literal_copy_pass": 8,
-    "combined_pass": 6,
-    "boundary_pass": 8
+    "scientific_pass": 7,
+    "must_pass": 44,
+    "must_total": 48,
+    "should_pass": 14,
+    "should_total": 32,
+    "exact_copy_pass": 9,
+    "literal_copy_pass": 9,
+    "combined_pass": 7,
+    "boundary_pass": 9
   },
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."
