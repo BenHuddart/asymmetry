@@ -230,3 +230,19 @@ round-two isolation is working so far. All nine first attempts remain frozen;
 benzene ALC, copper and maleic acid are running, with three more queued.
 Host process inspection confirms one wave and three model subprocesses;
 about 22 GiB is available with no swap/PSI pressure. Do not relaunch live runs.
+
+Benzene ALC is also scored: 5/7 Musts, exact-copy and boundary pass. All
+seventeen solution centres are now reported after width-bound expansion,
+repairing the previous withholding of every centre. However sample identities
+(aqueous, hexane, 20mM aqueous) disappear, and the report applies the
+cross-sample field-reference warning to valid within-sample temperature trends.
+The upper ordinary-scan ring line is fitted at 29538.289717 G, non-bound and
+consistent with the broad fit, but omitted in favour of discussing a failed
+high-field differential fit. Keep ordinary and differential evidence distinct;
+large chi2 requires a mismatch caveat and stability check rather than erasing
+all quantitative results. One differential fit's quoted chi2 belongs to an
+earlier variant (3.076 versus final LF-only 4.410); a general provenance check
+must bind each reported estimate to its own calibration/model/run subset.
+Four reports are scored so far: 24/31 Musts, one scientific/combined pass,
+three exact-copy passes, four boundary passes. Corannulene has started in the
+freed slot; copper and maleic acid remain live. No source changes yet.
