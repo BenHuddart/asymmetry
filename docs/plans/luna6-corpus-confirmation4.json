@@ -1,5 +1,5 @@
 {
-  "status": "running; 3/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 6/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -613,20 +613,530 @@
         "note": "The sampler verifies inherited environment1 but this agent explicitly requests two workers in several commands. Do not call one worker a mechanically enforced per-case ceiling."
       },
       "reply_matches_saved_file": false
+    },
+    "sn-critical-field": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the 40 G temperature scan 91516–91529 and treats it as the Hc(T) measurement.",
+          "pass": true,
+          "evidence": "Experiment table names91516–91529 within the40G temperature sequence; Results interprets its decreasing internal line as the Hc(T) measurement, withholding an invalid quantitative critical-field curve."
+        },
+        {
+          "requirement": "Reports that the logged sample temperature differs from the setpoint, and orders or reports the scan against the logged temperature.",
+          "pass": true,
+          "evidence": "Explicit logged-versus-setpoint distinction; line sequence is reported against logged2.25–3.28K and full temperature trend uses sample_temperature_logged."
+        },
+        {
+          "requirement": "Reports a precession signal from the sample away from the applied field's Larmor frequency, whose frequency falls on warming (the critical field decreasing towards Tc).",
+          "pass": true,
+          "evidence": "Reports the non-applied-field survey line falling from about1.95MHz to0.958MHz on warming; cold FFT detects1.970131MHz and warm FFT no peak. This is separated from invalid time-domain oscillation fits."
+        },
+        {
+          "requirement": "Does not treat 91501–91515 as sub-Tc data at their setpoints.",
+          "pass": true,
+          "evidence": "Scan table and discussion explicitly place91501–91515 at logged8.18–8.41K, rather than their nominal sub-Tc setpoints."
+        },
+        {
+          "requirement": "Contains no Hc, Tc or thermometer offset that was not produced by a tool call in this session (the worksheet's 3.7 K and textbook Hc(0) are background).",
+          "pass": true,
+          "evidence": "No measured Hc, Tc or thermometer offset is invented. Failed OrderParameter values are rejected; survey/FFT and additional relaxation-law values are directly printed."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits a critical-field law (e.g. `trend --model OrderParameter` with `alpha=2`, `beta=1`, i.e. Hc0[1 − (T/Tc)²]) to the frequency trend and reports Tc and the amplitude with uncertainties, with the fit range stated.",
+          "pass": false,
+          "evidence": "Attempts OrderParameter on flagged frequencies but fit fails and no valid Tc/amplitude/errors are reported; requested critical-field-law result remains unavailable."
+        },
+        {
+          "requirement": "Compares that Tc with tin's in words to discuss the thermometer error, without presenting a hand-computed offset as Asymmetry output.",
+          "pass": false,
+          "evidence": "No valid fitted Tc or accepted-Tc comparison is given, so no thermometer-error discussion from that comparison."
+        },
+        {
+          "requirement": "Notes the sample signal is small against a large background and says which runs' fits are flagged or were excluded.",
+          "pass": false,
+          "evidence": "Describes a weak internal line and lists flagged fits comprehensively, but does not explicitly explain the tiny sample-line component against a large background; this Should is only partially met."
+        },
+        {
+          "requirement": "Mentions the other fields (20, 80, 160 G) and what they add, or why they were not analysed.",
+          "pass": true,
+          "evidence": "Discusses20,80,160G and their field/temperature fits, limitations and complementary information."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Survey line/temperature readings, explicit cold/warm FFT tables and law diagnostics were checked against actual outputs. Additional rate/background/Redfield tables have direct CLI provenance. Machine number/unit flags are empty; no invalid critical-law value becomes a reported physical result.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Scientific Musts pass through survey/FFT evidence despite unusable time-domain line fits and failed critical-field law. Exact copying fails only by the saved terminal LF. Fit-law recovery and small-signal/background explanation remain general Should gaps.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all69 completed commands inspected. All69 completed commands and three project-summary file edits inspected. Reads are staged data, installed project skill/reference and generated outputs/help. No arbitrary physical arithmetic, external/source/private/other-case consultation, network or delegation. Wizard13 was stopped with exit130 and its absence is accurately disclosed.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1123.3,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn1K-field --model Redfield --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn40-line --model OrderParameter --param frequency --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn1K-field --model Redfield --param Lambda --fix m=2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn1p65-field --model Redfield --param Lambda --fix m=2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn1p75-field --model Redfield --param Lambda --fix m=2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn1p85-field --model Redfield --param Lambda --fix m=2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn1p95-field --model Redfield --param Lambda --fix m=2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn2p05-field --model Redfield --param Lambda --fix m=2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn2p15-field --model Redfield --param Lambda --fix m=2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn2p25-field --model Redfield --param Lambda --fix m=2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --series sn2p35-field --model Redfield --param Lambda --fix m=2'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/data --run 91521 --geometry LF --scope lf-dynamics --include Oscillatory --plot'",
+          "exit_code": 130
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "f1e51277a1ed81c3fc822e486a116ad0c1d31d2ad4d3de0db48bceee9043b522",
+      "audited_file_sha256": "f6a1efdfae835716d12733495b3cb28e6cef5f1c1e9e36cfe4b715fe400da836",
+      "rubric_sha256": "da9d2ae997537590c2ab33b031cfb6feb9f6394dcc5231e529b29eea9be97842",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field",
+      "exact_copy_evidence": "Actual reply omits the single terminal LF from saved project/summary.md; all visible body text and final file paths otherwise match. Raw runner guard=false; no normalization or substitution.\n--- audited\n+++ reply\n@@ -91,4 +91,4 @@\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/project/asymmetry-work/plots/run-91517.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/project/asymmetry-work/plots/run-91529.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/project/asymmetry-work/plots/reduced-91517.png\n-/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/project/asymmetry-work/plots/reduced-91514.png\n+/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/sn-critical-field/project/asymmetry-work/plots/reduced-91514.png",
+      "physics_caveats": [
+        "No valid critical-field curve, Tc, thermometer offset or domain fraction is obtained. The actual warm8K block is kept separate from cold Sn interpretation.",
+        "All23 oscillatory40G series fits are frequency_unresolved and many exceed data amplitude. Frequencies used for the main qualitative result come from the survey and a detected cold FFT line, not rejected time fits.",
+        "Candidate maxima at91521/91525 are not promoted to detections; only91517 FFT passes its peak threshold. Hann window,0.1–4us and0.257202MHz resolution are stated.",
+        "Additional Redfield fits are conditional sparse3/4-point relaxation laws; flagged endpoints, poor chi-squared and variable envelope shapes limit intrinsic dynamics interpretation. Higher-temperature laws are rejected.",
+        "Should3 is partial: weak signal and flags are described, but the relative tiny line versus large baseline is not made explicit. No scientific Must is failed for that omission."
+      ],
+      "judgement_calls": [
+        "Must3 accepts actual survey-detected frequency trend plus the independent detected cold FFT, notwithstanding unusable time-domain fits. The report clearly separates them.",
+        "Should3 is incomplete rather than inferred solely from the word weak; the required large-background comparison is not explicit."
+      ],
+      "number_evidence_commands": [
+        3,
+        6,
+        7,
+        10,
+        11,
+        16,
+        18,
+        19,
+        21,
+        23,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "f1e51277a1ed81c3fc822e486a116ad0c1d31d2ad4d3de0db48bceee9043b522",
+        "summary.md": "f1e51277a1ed81c3fc822e486a116ad0c1d31d2ad4d3de0db48bceee9043b522",
+        "transcript.jsonl": "20551a06cad775a6d1cb269b4cd657141cd61f69ff43c86922afe4bc179187e7",
+        "commands.txt": "bf7eba016e6d106a4f94588712caa5b0647f50ca3cecef9e653f2b2a46507ba5",
+        "cost.json": "8ffed4ac15212316bfd826bbde74a1bff3883b14f0bca30cb7667e64210da7f4",
+        "image-inputs.json": "25fac6e3c7f2000fd6f4f632b431f5f96162d2a6318dfd7e5e4bd5ea0d95b989"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-91517.png",
+          "snapshot_path": "review-images/14e56ae8f821bed6ad5615862a751a984ec8894931b11cb36ffeb06ece0a74dc.png",
+          "bytes": 99423,
+          "sha256": "14e56ae8f821bed6ad5615862a751a984ec8894931b11cb36ffeb06ece0a74dc",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-91529.png",
+          "snapshot_path": "review-images/c58c5b27dc442e563ecf72f599e63fec9f22ac5013ce713b1c6ee3c8a99c02ce.png",
+          "bytes": 122393,
+          "sha256": "c58c5b27dc442e563ecf72f599e63fec9f22ac5013ce713b1c6ee3c8a99c02ce",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-91517.png",
+          "snapshot_path": "review-images/6de4ef5e75e3c996ff839c463d09cd27b026e32f5b977e9db51c2d64c3525c45.png",
+          "bytes": 40098,
+          "sha256": "6de4ef5e75e3c996ff839c463d09cd27b026e32f5b977e9db51c2d64c3525c45",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-91514.png",
+          "snapshot_path": "review-images/a66269fbb0b8b4408fdbed82109a2e117e98de57e6083264f7619bd593b59b18.png",
+          "bytes": 40683,
+          "sha256": "a66269fbb0b8b4408fdbed82109a2e117e98de57e6083264f7619bd593b59b18",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:26:56.016846+00:00",
+      "reply_matches_saved_file": false
+    },
+    "ionic-motion-llz": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Reports the survey-level design: run 51315 is the weak-TF detector-balance run and the science data form 13 temperature groups, each containing the 0, 5 and 10 G longitudinal-field runs spanning roughly 160–400 K.",
+          "pass": true,
+          "evidence": "Experiment identifies51315 weak-TF detector-balance reference and13 temperature triplets at0/5/10G over160–404K, with geometry caveat."
+        },
+        {
+          "requirement": "Reduces and jointly fits at least one complete field triplet with `fit-global`; the 160 K group is runs 51341–51343. It does not describe `fit-series --global` or three independent fits as simultaneous fitting.",
+          "pass": true,
+          "evidence": "Actual command12 uses fit-global --groups for every complete triplet, including51341–51343. Final report describes within-triplet simultaneous fitting, not independent fits or fit-series --global."
+        },
+        {
+          "requirement": "Uses a physically appropriate dynamic Gaussian relaxation model (`Keren` or `DynamicGaussianKT`) plus a constant background.",
+          "pass": true,
+          "evidence": "Uses DynamicGaussianKT + Constant and explains Gaussian nuclear width and fluctuation rate."
+        },
+        {
+          "requirement": "Shares the sample amplitude, static width `Delta`, fluctuation rate `nu` and background amplitude across the triplet, while taking `B_L` from each file and holding it per run.",
+          "pass": true,
+          "evidence": "Explicitly shares A_1,Delta,nu,A_bg within each triplet and supplies recorded field with --field-param B_L, held per run."
+        },
+        {
+          "requirement": "Reports the shared values and uncertainties produced by the coupled fit, including both amplitudes and fit-quality information. For the 160 K group, a defensible first pass has `Delta` approximately 0.25–0.45 µs⁻¹ and `nu` approximately 0.15–0.45 MHz; values outside those broad ranges must be called out as suspect rather than interpreted.",
+          "pass": true,
+          "evidence": "Cold shared table gives Delta0.350523±0.0021405us^-1, nu0.344499±0.00623982MHz, A_115.5272±0.0743437 and A_bg2.74972±0.0784361, plus per-run fit-quality caveats; values lie in rubric ranges."
+        },
+        {
+          "requirement": "Does not claim a fluctuation-rate-versus-temperature result unless every group in that trend was fitted as a coupled group (with `fit-global --groups`, or one `fit-global` per group); one coupled group is not a trend.",
+          "pass": true,
+          "evidence": "Every one of13 trend rows comes from its coupled global group, confirmed by command12 and grouped trend table; no lone-group trend substitution."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Estimates alpha from run 51315 and reports the applied value, or clearly justifies another calibration choice.",
+          "pass": true,
+          "evidence": "Names51315 alpha reference and distinguishes raw0.8567 from applied corrected0.8561."
+        },
+        {
+          "requirement": "Uses a fit window near 0–12 µs and the guide's order-of-magnitude seeds (`A_1` about 15%, `A_bg` about 5%, `Delta` about 0.3, `nu` about 0.2), then judges convergence from output rather than assuming the seeds worked.",
+          "pass": false,
+          "evidence": "Uses Delta0.3/nu0.2 seeds and checks convergence, but full0.177–32.609us window instead of the requested near0–12us window."
+        },
+        {
+          "requirement": "Notes the Keren low-rate/ZF caveat; retaining the ZF run is acceptable when this run's diagnostics show clean convergence.",
+          "pass": false,
+          "evidence": "Does not mention the Keren low-rate/ZF caveat; it uses full DynamicGaussianKT instead, so this omission does not invalidate its selected model."
+        },
+        {
+          "requirement": "Points the reader to the stored global-series JSON and per-run fit plots.",
+          "pass": true,
+          "evidence": "Files point to combined dynamics JSON, per-group JSON and actual per-run group fit plots."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Calibration, all13 shared-group rows, member fit quality and Arrhenius values/range/errors checked against direct CLI output. Machine number/unit checks are empty; explicit table quantities and conditional interpretation agree with source.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "All coupled-workflow Musts pass; strict final-copy fails by one terminal LF. Full-window modelling and omitted Keren caveat are Should gaps, with model/coupled-fit quality limitations retained.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all21 completed commands inspected. All21 commands and two project-summary file edits inspected. Reads are staged data/logbook, project-installed skill/reference and generated recipes/products. No arbitrary physical arithmetic, source/personal-skill/other-case reads, external network or delegation. All supplied image snapshot hashes verified.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 556.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --xmin 276.724 --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "2de9b8e1a63d1c514332b5933c18c0d9ffb571f50df102a5656d282c6c6d5622",
+      "audited_file_sha256": "f89dd44df60bc4badcd585835be836a262375a111cf28ecce927c9fb92882ede",
+      "rubric_sha256": "26a96516c6b7d735288e5a79b9d63cd349de9e38850c4eba7367f47fc00a1b28",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/ionic-motion-llz",
+      "exact_copy_evidence": "Actual reply omits the single terminal LF from saved project/summary.md; all visible body text and final file paths otherwise match. Raw runner guard=false; no normalization or substitution.\n--- audited\n+++ reply\n@@ -102,4 +102,4 @@\n asymmetry-work/plots/dynamics-1/51341.png\n asymmetry-work/plots/dynamics-13/51379.png\n asymmetry-work/plots/dynamics-trend-Delta.png\n-asymmetry-work/plots/dynamics-trend-nu.png\n+asymmetry-work/plots/dynamics-trend-nu.png",
+      "physics_caveats": [
+        "LF assignment at weak fields is inferred from triplet design/nonprecessing traces, not claimed to be independently measured by the unresolved survey geometry.",
+        "Four cold member fits are poor without parameter flags; all39 are retained. The report states structured cold residuals and does not infer a changing physical sample fraction from amplitudes.",
+        "Arrhenius Ea73.854540±9.134882meV over276.7244–391.212K has chi2_red9.278 and is explicitly an apparent conditional barrier, not a validated intrinsic diffusion barrier or species assignment.",
+        "Endpoint visual comparison uses coldZF51341 and warm10G51379, so it is confounded by field as well as temperature. Labels are explicit; the stronger temperature conclusion comes from the coupled triplet parameter trends, not that visual comparison alone.",
+        "Uses full DynamicGaussianKT rather than the Keren approximation. Missing Keren caveat is recorded as a Should omission only."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        2,
+        5,
+        8,
+        9,
+        10,
+        11,
+        12,
+        15,
+        17
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "2de9b8e1a63d1c514332b5933c18c0d9ffb571f50df102a5656d282c6c6d5622",
+        "summary.md": "2de9b8e1a63d1c514332b5933c18c0d9ffb571f50df102a5656d282c6c6d5622",
+        "transcript.jsonl": "15a1d1a1b933b525cf9d36768e3b1dae216b0b853ccd82fbbaa8c61cb4cea1b1",
+        "commands.txt": "69915f542fcf7b6e170ae246cce99613959c7c4a06750e71a5158280ddaa90c7",
+        "cost.json": "52b47f53be7019b92ec23d47413d51ff5f81a7d09437a7124188f96c582dd0c9",
+        "image-inputs.json": "0de80961fcfec86ec070525c1ac0a1796fa92caa038e5c6ddab0985c03a18171"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-trend-Delta.png",
+          "snapshot_path": "review-images/e12f5c2c3a011e5e18a96cda1dae23774f8abbe0c1ff4a4bef12e02e10923dc6.png",
+          "bytes": 30651,
+          "sha256": "e12f5c2c3a011e5e18a96cda1dae23774f8abbe0c1ff4a4bef12e02e10923dc6",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-trend-nu.png",
+          "snapshot_path": "review-images/a9c3554781176160c827a45180968413c477be63b617101faccf29d2aa117704.png",
+          "bytes": 27596,
+          "sha256": "a9c3554781176160c827a45180968413c477be63b617101faccf29d2aa117704",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-1/51341.png",
+          "snapshot_path": "review-images/e0ddcfb7e52f7715328a30de2fc716f44fa8cb02e29da4018b8560c3f6c188b0.png",
+          "bytes": 67306,
+          "sha256": "e0ddcfb7e52f7715328a30de2fc716f44fa8cb02e29da4018b8560c3f6c188b0",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-13/51379.png",
+          "snapshot_path": "review-images/93f3ac7e6adaab89f64ea67158ebf0df1f54fae23e70932319009bb0ce60d919.png",
+          "bytes": 66991,
+          "sha256": "93f3ac7e6adaab89f64ea67158ebf0df1f54fae23e70932319009bb0ce60d919",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:26:56.031560+00:00",
+      "reply_matches_saved_file": false
+    },
+    "spin-peierls": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the TF 100 G runs from the ZF scan rather than fitting them as one series.",
+          "pass": true,
+          "evidence": "Experiment separately enumerates16 ZF and10 TF100G members; separate ZF multi-rate/F-mu-F and TF Gaussian/exponential series are actually fitted."
+        },
+        {
+          "requirement": "States what was used for alpha (a TF 100 G run, named), rather than silently assuming 1.0.",
+          "pass": true,
+          "evidence": "Calibration explicitly names29929 as measured alpha0.9717 and identifies its TF line/detector pair rather than assuming unity."
+        },
+        {
+          "requirement": "Reports on the full run range actually present (29919-29944), not only the subset the worksheet happens to tabulate.",
+          "pass": true,
+          "evidence": "Covers all26 present runs29919–29944 through the two member lists and complete separate fits, including low-setpoint/logged-temperature exceptions."
+        },
+        {
+          "requirement": "Does not report findings for runs 29945-29951 as if they were analyzed — they are not present in this data folder.",
+          "pass": true,
+          "evidence": "No findings are claimed for nonexistent29945–29951; reported membership is the actual folder block only."
+        },
+        {
+          "requirement": "Reports a change in ZF line shape between the highest- and lowest-temperature runs actually available.",
+          "pass": true,
+          "evidence": "ZF Results describes the actual cold29923 endpoint as fast initial fall with slowly relaxing tail, and actual warm29920 as weaker smooth decay/no oscillation; thus reports qualitative endpoint-shape change. Stronger explicit exponential-to-Gaussian family progression is chiefly TF; quantitative ZF shape inference remains flagged."
+        },
+        {
+          "requirement": "Contains no relaxation rate, frequency, or transition-temperature number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Rates, frequencies, Gaussian widths, conditional r_muF law and uncertainty/temperature values have direct CLI provenance. Flagged screening/two-line components are explicitly not physical estimates; no transition temperature invented."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Accounts for every run in the block — the ZF runs below 130 K and the interleaved TF runs — rather than silently dropping any.",
+          "pass": true,
+          "evidence": "All16 ZF and10 TF members accounted for, including low-temperature ZF runs and interleaved TF cases."
+        },
+        {
+          "requirement": "Discusses candidate fit functions for above vs below the transition, without inventing fitted values.",
+          "pass": true,
+          "evidence": "Compares ZF multirate and F-mu-F candidate functions and cold/warm envelope preferences; separately compares TF exponential/Gaussian and two-line candidates, with tool-derived values and flags."
+        },
+        {
+          "requirement": "Connects the observed line-shape change to the singlet-triplet / dimerisation physics described in the worksheet background.",
+          "pass": false,
+          "evidence": "Interpretation discusses changing magnetic correlations and local-field spread but does not connect the shape change to singlet-triplet/dimerisation or explicitly identify spin-Peierls physics."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct survey/calibration, separate ZF/TF series and trend rows checked. Conditional law and two-line diagnostics are labelled appropriately; exact trial seeds originate from CLI hints. Machine number/unit flags are empty.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science passes with an explicitly borderline qualitative ZF endpoint-shape interpretation; main family progression is best evidenced in TF and the ZF fits are heavily flagged. Exact copy fails by one terminal LF. Mechanistic spin-Peierls/dimerisation explanation remains a Should gap.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all36 completed commands inspected. All36 completed commands and four project-summary file edits inspected. Reads are staged data, installed project skill/reference, generated screening/recipe/fit products and own summary. No other-case/private/source reads, external networking, arbitrary physical arithmetic or delegation. Two-line seed numbers are explicitly verified against earlier direct CLI output; all four supplied image snapshot hashes verified.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1306.3,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 3,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/spin-peierls/data --series zf-fmuf --model Constant --param r_muF --exclude 29923-29924,29921,29931-29932 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"rg --files -g 'summary.md'\"",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "5295c04d9ff45012042ec62b1829b5d29e54bc96b4d0f546483d2d9ab106f54e",
+      "audited_file_sha256": "05834e47b82be0c7de0ac10b385b2e81af5c176ed7bb6fc5598381c2a4aaec62",
+      "rubric_sha256": "45ec06c3c47445ea279531822116d0b68bbaaf3cb6a47c792093f64bc65b3bb6",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/spin-peierls",
+      "exact_copy_evidence": "Saved project/summary.md has a single terminal LF; actual reply ends at the final path character. All visible text/path content otherwise matches; raw runner guard=false.\n--- audited\n+++ reply\n@@ -85,4 +85,4 @@\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/spin-peierls/project/asymmetry-work/plots/tf-exponential/29922.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/spin-peierls/project/asymmetry-work/plots/tf-exponential/29919.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/spin-peierls/project/asymmetry-work/plots/zf-multirate-trend-sigma.png\n-/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/spin-peierls/project/asymmetry-work/plots/zf-fmuf-trend-r_muF.png\n+/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/spin-peierls/project/asymmetry-work/plots/zf-fmuf-trend-r_muF.png",
+      "physics_caveats": [
+        "Must5 is a literal qualitative pass, not a claim of a reliable quantitative ZF transition. Cold ZF has fast early relaxation/tail and warm ZF a slower curved decay; report rejects strong ZF parameter interpretation because15/16 multirate fits are flagged.",
+        "Only cold ZF and two TF endpoints were nominated for image review; the warm ZF plot was not among attached snapshots. Scorer inspected the retained warm-ZF reduced plot for consistency, without substituting it for an actual model input or claiming the agent received it.",
+        "F-mu-F beat is not established. The warm conditional r_muF constant-law fit is a model parameter, not proof of a state or muon site; excluded runs and nonconstant shape are explicit.",
+        "All two-line trial component parameters are invalidated by amplitude_exceeds_data; no splitting is established. No FFT resolution is claimed. The seed frequencies in commands27/32 were printed by prior CLI trend hints in commands20/31, not arbitrary agent arithmetic.",
+        "TF line remains near applied-field Larmor frequency and its width/envelope change is not a frequency order parameter. No superconducting interpretation is introduced.",
+        "Nominal30K points were logged much warmer, so the report does not claim the actual low-temperature state at30K. Recorded deadtime-request versus missing-file-value caveat is kept."
+      ],
+      "judgement_calls": [
+        "Must5 passes on explicit actual ZF endpoint descriptions (fast initial fall plus tail versus weaker smooth warm decay). It does not establish a trusted ZF family transition; preserve the same limited interpretation used for earlier endpoint-composite passes.",
+        "Should2 counts candidate-function/envelope comparisons with flags, not a validated transition model. Should3 remains failed because dimerisation/singlet-triplet connection is absent."
+      ],
+      "number_evidence_commands": [
+        2,
+        5,
+        6,
+        7,
+        12,
+        13,
+        16,
+        17,
+        18,
+        19,
+        20,
+        22,
+        23,
+        24,
+        26,
+        28,
+        31,
+        33
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "5295c04d9ff45012042ec62b1829b5d29e54bc96b4d0f546483d2d9ab106f54e",
+        "summary.md": "5295c04d9ff45012042ec62b1829b5d29e54bc96b4d0f546483d2d9ab106f54e",
+        "transcript.jsonl": "bd911182648e81711c572fef48ad20698b850077559986db6053b560b5d16d38",
+        "commands.txt": "b196e9e599bdec58bc8cdcc08f92c43ee67e3535b86a39aad1a4f776f8e9583b",
+        "cost.json": "ad6b6e36e292d5b7afad5cb20ff4ebeefa1c62e0e71386e1e28dceb5270a6058",
+        "image-inputs.json": "c6bfba48b5d43090b0261264acdb15732a83107fbe69aca96ee01f09b8e5e6b0"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-29923.png",
+          "snapshot_path": "review-images/877d609d230e823a61a2a7c1c8d931907e927c49458c2d552735e97b649c8079.png",
+          "bytes": 43121,
+          "sha256": "877d609d230e823a61a2a7c1c8d931907e927c49458c2d552735e97b649c8079",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-exponential-trend-Lambda.png",
+          "snapshot_path": "review-images/6824444c3d0cfb024afa2a1ca84a284dc8a1fdb529f992045772ab593f167c95.png",
+          "bytes": 32852,
+          "sha256": "6824444c3d0cfb024afa2a1ca84a284dc8a1fdb529f992045772ab593f167c95",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-exponential/29922.png",
+          "snapshot_path": "review-images/8c4b3b4d91bb5eb7e6d286ea066d7d5e2b64471b41a7a05fd596501e8763ac6e.png",
+          "bytes": 87969,
+          "sha256": "8c4b3b4d91bb5eb7e6d286ea066d7d5e2b64471b41a7a05fd596501e8763ac6e",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-exponential/29919.png",
+          "snapshot_path": "review-images/f092de32009866ffbe01a2eae1db7e021c75e9c21a151219399deccef8e2a967.png",
+          "bytes": 94447,
+          "sha256": "f092de32009866ffbe01a2eae1db7e021c75e9c21a151219399deccef8e2a967",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:28:50.666874+00:00",
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
-    "sn-critical-field",
     "euo-psi",
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
     "high-tc-cuprate",
     "copper-diffusion",
     "molecular-antiferromagnet",
-    "spin-peierls",
     "afm-high-tf-mdu",
     "alc-tcnq",
-    "ionic-motion-llz",
     "photo-musr-silicon",
     "cds-fourier",
     "lifeas-psi",
@@ -655,16 +1165,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 3,
+    "scored": 6,
     "target": 24,
-    "scientific_pass": 1,
-    "must_pass": 14,
-    "must_total": 16,
-    "should_pass": 6,
-    "should_total": 11,
+    "scientific_pass": 4,
+    "must_pass": 31,
+    "must_total": 33,
+    "should_pass": 11,
+    "should_total": 22,
     "exact_copy_pass": 0,
     "literal_copy_pass": 0,
     "combined_pass": 0,
-    "boundary_pass": 3
+    "boundary_pass": 6
   }
 }
