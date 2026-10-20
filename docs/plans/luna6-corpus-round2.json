@@ -582,15 +582,106 @@
       "boundary_check": "PASS: completed commands use staged project skill and supplied data/products; no personal skill/source-tree/network/ad hoc scientific scripting.",
       "boundary_pass": true,
       "permission_denials": 0
+    },
+    "maleic-mu-kinetics": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Recognises the 2 G runs as muonium precession measurements and the 100 G runs as diamagnetic ones.",
+          "pass": true,
+          "evidence": "Explicit 2 G fast Mu precession versus 100 G bare/diamagnetic Larmor calibration; rejects LF recovery interpretation."
+        },
+        {
+          "requirement": "Separates the samples by concentration, read from titles or notes, and says where the concentration values came from.",
+          "pass": true,
+          "evidence": "Separates neat, half, quarter and water references using notes/titles; relative concentration x=1,0.5,0.25 with no molarity invented."
+        },
+        {
+          "requirement": "Reports the Mu relaxation rate rising with maleic acid concentration at a fixed temperature (290 K, or matched setpoints), from fits of the 2 G runs.",
+          "pass": true,
+          "evidence": "Joint 290 K setpoint fit reports Mu Lambda_2 increasing from blank 0.426948 to quarter 1.53811, half 2.02505 and neat 2.75105 us^-1, with temperature mismatch caveat."
+        },
+        {
+          "requirement": "Obtains a rate constant from the slope of \u03bb_Mu against concentration with a CLI fit (e.g. `fit-series`/`fit-global` with `--order concentration --x ...`, then `trend --model Linear`), reported with its uncertainty and in the concentration units it used. A fit-quality caveat is fine; withdrawing the converged slope is not.",
+          "pass": false,
+          "evidence": "Linear slope m=2.619214 \u00b1 0.505370 is printed but report explicitly withdraws it as a rate constant in Results, interpretation and Not done, despite the CLI giving the general apparent-coefficient interpretation. It also omits rate-per-relative-concentration units for that estimate."
+        },
+        {
+          "requirement": "Contains no rate constant, activation energy or fraction that was not produced by a tool call in this session (the worksheet's published values are background).",
+          "pass": true,
+          "evidence": "All quoted rate/fraction parameters occur in actual CLI fit outputs; no worksheet result, invented molarity or hand activation energy."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares deoxygenated with untreated water (the untreated Mu signal relaxes faster, or leaves no resolvable line: dissolved O\u2082).",
+          "pass": false,
+          "evidence": "Discusses blank and untreated water separately but never compares their Mu relaxation/line detectability as an oxygen effect."
+        },
+        {
+          "requirement": "Uses a calibration run appropriate to the sample being reduced rather than one alpha for the whole folder, or notes the alpha step.",
+          "pass": true,
+          "evidence": "Names alpha step 78280/78281, sources 78278 and 78281 and independent later validation 78293; separate reductions."
+        },
+        {
+          "requirement": "Holds the Mu and diamagnetic frequencies or amplitudes common across the concentration set (shared in `fit-global`, or fixed) and says so.",
+          "pass": true,
+          "evidence": "Joint fit fixes Mu/diamagnetic frequencies and shares amplitudes/phases; reports them and model interpretation."
+        },
+        {
+          "requirement": "States that the Arrhenius step needs k_Mu at several temperatures, each from its own concentration fit, and either does it per temperature and fits the Arrhenius law through them with a command (`trend --from-fits \u2026 --model Arrhenius`) rather than by hand, or declines that step with the reason.",
+          "pass": true,
+          "evidence": "Declines Arrhenius with correct need for per-temperature concentration slopes; does not mistake fixed-concentration Lambda(T) for k(T)."
+        }
+      ],
+      "number_rule": "PASS: actual trend composition-290 prints Lambda_2 0.426948/1.53811/2.02505/2.75105 and Linear m=2.619214 \u00b1 0.505370, b=0.521726 \u00b1 0.175586, chi2_red 21.391; all shared amplitudes/phases, rates and alpha values trace to actual fit/reduce output. No fabricated rate constant or activation energy.",
+      "root_cause": "Same remaining scientific failure as round one: agent treats poor chi2 and temperature mismatch as grounds to withdraw a converged apparent slope rather than report it with its conditional units and limitations. Round-two CLI advice was printed explicitly but ignored in final report. Per-parameter nuisance bounds again suppress useful Mu-rate warm points in plots. Exact-copy fails by removing \"in 78294\" from one table cell and the terminal period on the final plot entry after audit.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1300.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 5,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/maleic-mu-kinetics/data --series composition-290 --param Lambda_2 --model Linear --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"sed -n '120,300p' .agents/skills/asymmetry-analysis/SKILL.md && sed -n '1,240p' data/logbook.rtf\"",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /tmp/asymmetry-luna6-improvements/round2/maleic-mu-kinetics/data --runs 78251-78280 --alpha-from 78278 --deadtime from_file --background range --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /tmp/asymmetry-luna6-improvements/round2/maleic-mu-kinetics/data --run 78277 --scope muonium --plot'",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "244cebc377b2958ab084fd827fddb15e605db9aafa766e5d80652d87e9104426",
+      "rubric_sha256": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round2/maleic-mu-kinetics",
+      "staged_skill_sha256": "5a03b792caf69290af6284bf80974e8ac4d35b3f123c670a466b578adb936af3",
+      "boundary_check": "PASS: completed command inventory uses staged project skill and supplied data/CLI outputs only; no personal skill/source-tree/network/ad hoc numerical scripting.",
+      "boundary_pass": true,
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 5,
+    "scored": 6,
     "scientific_pass": 2,
-    "must_pass": 30,
-    "must_total": 37,
+    "must_pass": 34,
+    "must_total": 42,
     "exact_copy_pass": 4,
     "combined_pass": 2,
-    "boundary_pass": 5
+    "boundary_pass": 6
   }
 }

@@ -258,3 +258,18 @@ Five of nine reports scored: 30/37 Musts, two scientific/combined passes,
 four exact-copy passes, five boundary passes. Three live cases are maleic acid,
 corannulene and Sn; AFM is still queued. Host has 22 GiB available, zero swap
 and zero memory PSI. Source remains frozen at round-two implementation.
+
+Maleic acid is scored: 4/5 Musts, boundary pass, exact-copy fail. The final
+report again withdraws the converged concentration slope as a rate constant
+rather than retaining an apparent fitted coefficient with units and caveats.
+The new CLI advice was printed explicitly, so merely repeating it in another
+NOTE is unlikely to solve this. Consider making the result's quantity and units
+part of the structured/primary fit output and reconciling the final report's
+conclusions with its own retained estimates. Geometry is now appropriate:
+no physically mismatched integral recovery fit was attempted. The copy failure
+removes "in 78294" from one table cell and a final period from the last plot
+entry after audit. Nuisance-bound flags also clip warm Mu-rate points despite
+only the diamagnetic damping being pinned, reinforcing the shared reliability
+fix. Six reports scored: 34/42 Musts, two scientific/combined passes,
+four exact-copy passes and six boundary passes. Corannulene, Sn and AFM are
+live; about 21 GiB available, no swap or memory pressure. Keep source frozen.
