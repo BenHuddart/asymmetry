@@ -1,5 +1,5 @@
 {
-  "status": "running; 9/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 11/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -1528,6 +1528,289 @@
       ],
       "scored_at": "2026-10-20T23:46:52.062867+00:00",
       "reply_matches_saved_file": true
+    },
+    "cds-fourier": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Surveys the folder and identifies a transverse-field temperature series in CdS, selecting the 100 G base-temperature/high-statistics run 20721 for the representative spectrum from current command output.",
+          "pass": true,
+          "evidence": "Surveys23 EMU CdS100G TF temperature runs and chooses cold high-statistics20721 using actual logged5.17541K/current survey."
+        },
+        {
+          "requirement": "Reduces run 20721 and actually runs `fourier` with a saved plot, using a defensible alpha calibration (run 20729 is the expected candidate) or explicitly stating the alternative used.",
+          "pass": true,
+          "evidence": "Reduces20721 with explicit20729 alpha0.9499 and runs saved-plot fourier on20721 plus matched20729 warm reference."
+        },
+        {
+          "requirement": "Calls the result an FFT, not a maximum-entropy reconstruction, and reports the command's frequency resolution/window alongside any quantitative peak.",
+          "pass": true,
+          "evidence": "Explicitly FFT not MaxEnt, full retained record/no crop, window none, resolution0.0315976MHz, actual band1.15273–1.64224MHz and padding4 not physical resolution improvement."
+        },
+        {
+          "requirement": "Finds the principal structure near the 100 G muon Larmor line around 1.4 MHz. It uses the PNG as well as the conservative peak table and notes weaker shoulders/satellites near roughly 1.27 and 1.51 MHz when visible; it does not claim those were algorithmically detected if only one row was printed.",
+          "pass": true,
+          "evidence": "Reports principal1.39MHz structure and cold visual maxima near1.28/1.50MHz while clearly saying cold peak table detects none; warm1.391635MHz is algorithmically detected."
+        },
+        {
+          "requirement": "Interprets a resolved central line with roughly symmetric satellites as consistent with a shallow-muonium hyperfine triplet, without presenting a visual shoulder or sub-resolution splitting as a precision measurement.",
+          "pass": true,
+          "evidence": "Explicitly interprets central line plus roughly symmetric cold side structure as consistent with shallow-muonium triplet, not precision hyperfine splitting/site measurement."
+        },
+        {
+          "requirement": "Heeds any early-signal apodisation warning: it retries with an unwindowed physical crop or an appropriate Lorentzian filter rather than treating a symmetric-window spectrum as automatically authoritative.",
+          "pass": true,
+          "evidence": "Uses unwindowed spectra from outset; no symmetric taper is treated as authoritative and no early-signal warning ignored."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares the central frequency with the applied-field Larmor expectation and states whether they agree within the reported resolution.",
+          "pass": false,
+          "evidence": "Calls central line applied-field precession but does not compare numerical Larmor expectation against reported resolution."
+        },
+        {
+          "requirement": "Gives a cautious splitting estimate only when supported by the plotted or tabulated current-session output and labels how it was obtained.",
+          "pass": false,
+          "evidence": "No supported numerical splitting estimate supplied; model component frequencies and visual shoulders are explicitly not precision coupling."
+        },
+        {
+          "requirement": "Points the reader to the stored spectrum JSON/NPZ and PNG.",
+          "pass": true,
+          "evidence": "Files lists both spectra JSON/NPZ and PNGs."
+        },
+        {
+          "requirement": "Avoids turning one representative low-temperature FFT into an unsupported claim about the entire temperature dependence.",
+          "pass": true,
+          "evidence": "Fits full23-run temperature series and14-run cold alternative, compares warm FFT and actual endpoints, with flags/model limits explicit."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No numeric/unit checker flags. Calibration, actual retained FFT JSON settings, candidate maxima versus detections, full selected trend rows, printed frequency-shift note and weak-line diagnostics inspected. Visual1.28MHz is explicitly a rough pixel-local maximum, not a fitted or detector measurement.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science and strict-copy PASS after --prepare-reply. Cold noisy FFT side structure is qualified as visual and not a detected triplet; warm central line/time-fit comparisons provide bounded shallow-muonium interpretation. Remaining gaps are explicit resolution-versus-Larmor comparison and a supported splitting estimate. Generic no-Hamiltonian wording also needs model-specific capability distinctions rather than blanket claims.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all26 completed commands inspected. 26 completed commands and summary-only edits inspected; only staged skill/data and project products read, calculations via asymmetry. No network/repository/calculator. JSON reads valid stored CLI provenance. Raw final/canonical saved bytes agree, snapshot hashes verified and matched FFT pixels reviewed.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 575.9,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "4ca2aefd31a2a21e3630c86b8a35fcd0a0040e95f4046cd8a208bba64fca6d75",
+      "audited_file_sha256": "4ca2aefd31a2a21e3630c86b8a35fcd0a0040e95f4046cd8a208bba64fca6d75",
+      "rubric_sha256": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a",
+      "staged_skill_sha256": "7ecd7452b20d1ccb95973faf3b3ffcf9b350b2b17cface1afcdc0cc8c2392882",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/cds-fourier",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Cold FFT has no detected peaks and several similarly tall irregular maxima. Conditional shallow-muonium interpretation is accepted with explicit visual-only/no precision-splitting caveat, consistent with prior wave judgement; not a clean detected triplet.",
+        "Cold wizard1.205/1.574MHz spectral lines differ from plotted candidate maxima; two-frequency fitχ²6.333 and all14 cold fits poor, so fitted components are not precise microscopic hyperfine parameters.",
+        "Full single-line series17/23 poor; late sensor cooldown is handled via logged temperatures. Whole-scan sigma trend is descriptive rather than a unique mechanism.",
+        "Weak17.68MHz added line has bound-pinned/large-error damping and is rejected;20.52MHz candidate remains untested, not used in shallow-muonium interpretation."
+      ],
+      "judgement_calls": [
+        "Must4/5 accepted only as qualified visual-side-structure/consistent-with triplet interpretation: cold peaks are noisy and algorithmically undetected. Scorer independently inspected matched cold/warm snapshots. No precision splitting inferred."
+      ],
+      "number_evidence_commands": [
+        2,
+        5,
+        6,
+        7,
+        8,
+        9,
+        11,
+        12,
+        14,
+        15,
+        16,
+        17,
+        19,
+        20,
+        22
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "4ca2aefd31a2a21e3630c86b8a35fcd0a0040e95f4046cd8a208bba64fca6d75",
+        "summary.md": "4ca2aefd31a2a21e3630c86b8a35fcd0a0040e95f4046cd8a208bba64fca6d75",
+        "transcript.jsonl": "2b5488664d4b8b41b47210f95abd14ce194fcc57d1bc8b0c3d6b59424e95f1c3",
+        "commands.txt": "25b456f4c1820ca6ca9bf10f600ac7c68c7607f787281df0aa0985b419375ddb",
+        "cost.json": "97724f963429ab62806217f42787ea055562215755108b407a2bb8172012b77e",
+        "image-inputs.json": "561e4d4501d525d0d8c3c85523e8ffdc9ff56359f9aed03ee0907a9de79c7570"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-20721.png",
+          "snapshot_path": "review-images/78e345b0bd2a6c6dcfc63be852653e9fbf11715b4036b1a3d77a4d9947ca380b.png",
+          "bytes": 69716,
+          "sha256": "78e345b0bd2a6c6dcfc63be852653e9fbf11715b4036b1a3d77a4d9947ca380b",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-20729.png",
+          "snapshot_path": "review-images/9cf8397142139dadbb66eb3983a6c238aa0e1748556cd8ff378813bf2fc1580a.png",
+          "bytes": 50093,
+          "sha256": "9cf8397142139dadbb66eb3983a6c238aa0e1748556cd8ff378813bf2fc1580a",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/cds-tf-singleline/20721.png",
+          "snapshot_path": "review-images/24b427c6c1b88309eaf9635d3e0d3364314f09cbfe83d2dfcde3fbc2fe2fed04.png",
+          "bytes": 74763,
+          "sha256": "24b427c6c1b88309eaf9635d3e0d3364314f09cbfe83d2dfcde3fbc2fe2fed04",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/cds-tf-singleline-trend-sigma.png",
+          "snapshot_path": "review-images/090b01159e59258b7f636d1b1611982be609e2b3afdf5102deb11b53ee6c9dbf.png",
+          "bytes": 32018,
+          "sha256": "090b01159e59258b7f636d1b1611982be609e2b3afdf5102deb11b53ee6c9dbf",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T23:49:15.687650+00:00",
+      "reply_matches_saved_file": true
+    },
+    "benzene-rf": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies one longitudinal-field RF-resonance field scan of 37 runs at 293 K, two periods per run, with the 218 MHz RF from the notes, and says that run order is not field order.",
+          "pass": true,
+          "evidence": "Experiment identifies37 MUT two-period293K LF RF-resonance runs56426–56462, notes218MHz60W, nonmonotonic/interleaved field acquisition."
+        },
+        {
+          "requirement": "States that no run in the folder can calibrate alpha and that alpha was assumed to be 1.0; states the deadtime treatment.",
+          "pass": true,
+          "evidence": "Explicit no alpha candidate, assumed1.0000 and per-file deadtime correction/file pair/background settings."
+        },
+        {
+          "requirement": "Runs `integral-scan` with `--period green-red` and describes two resonance peaks in the difference, both between about 0.74 and 0.90 kG, on a flat baseline outside them.",
+          "pass": true,
+          "evidence": "Actual integral-scan --period green-red with count-integral estimator, two model/plot-supported peaks772.576/865.446G on residual BG baseline outside features."
+        },
+        {
+          "requirement": "Fits `RFResonanceMuP` with `nu_RF` held at 218 MHz and reports A_μ between 510 and 520 MHz and A_p between 115 and 135 MHz, each with its uncertainty, and the fit's χ²ᵣ.",
+          "pass": true,
+          "evidence": "Reports RFResonanceMuP with nu_RF218MHz fixed, A_mu514.775±0.034MHz,A_p124.437±1.352MHz andχ²1.408."
+        },
+        {
+          "requirement": "Contains no A_μ, A_p or resonance field that was not produced by a tool call in this session: no couplings from the mean and difference of two fields by a formula, and the published couplings are background.",
+          "pass": true,
+          "evidence": "Couplings and resonance fields are actual CLI fit outputs, not mean/difference algebra or published values."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Also fits the worksheet's model, two Lorentzians on a constant, seeded near the two peaks, and reports the two fitted centres; notes the fit agrees in quality with `RFResonanceMuP`.",
+          "pass": false,
+          "evidence": "No seeded two-Lorentzian+constant comparison or fitted-centre comparison was performed."
+        },
+        {
+          "requirement": "Says `RFResonanceMuP` is the exact-diagonalisation model and that the analytic high-field approximation the worksheet compares against is not available in the CLI (or was not run).",
+          "pass": false,
+          "evidence": "Does not identify exact diagonalisation or analytic-high-field approximation limit; generic unavailable-Hamiltonian statement is overbroad for this supported model."
+        },
+        {
+          "requirement": "Says which period is RF-on and on what evidence (the sign of the green − red peaks, or an assumption stated as such).",
+          "pass": true,
+          "evidence": "Explains positive green−red peaks mean greenRFoff/redRFon based on CLI sign note and observed contrast."
+        },
+        {
+          "requirement": "Compares A_μ and A_p with the published or worksheet values in words, attributing them.",
+          "pass": false,
+          "evidence": "No attributed published/worksheet coupling comparison in words."
+        },
+        {
+          "requirement": "Points to the stored scan JSON and PNG.",
+          "pass": true,
+          "evidence": "Files points to final scan JSON and PNG."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No numeric/unit checker flags. Couplings/errors rounded from printed514.774997±0.033723 and124.437272±1.352327, plus χ²1.408/widths/BG/fitted transition fields verified. Rounding is supported, no derived coupling formulas used.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Scientific RF workflow remains repaired: correct summed-count integral/period contrast produces valid RFResonanceMuP couplings and model geometry. Strict copy fails only by terminal LF after plain audits. General capability guidance remains too broad: RFResonanceMuP already diagonalises a spin Hamiltonian, whereas microscopic site/DFT analysis and analytic high-field comparison are different capabilities.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all14 completed commands inspected. 14 commands and summary-only edits inspected; staged RTF treated as context, strings/rg inspect staged files only. One startup rg exits1 for no matches, no scientific boundary violation. All calculations asymmetry; no network/calculator. Raw reply preserved, image snapshot hash verified and RF PNG visually inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 194.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"cat .agents/skills/asymmetry-analysis/SKILL.md && rg --files -g '\"'!*'\"' .\"",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "8a4aebdbeb125b9569b7ff17cbcd82e778007bc171945152943259bad2fcd106",
+      "audited_file_sha256": "d0cf1d67b766eca7420fddc07f9c0086df526831ae8ab347ea61cde07c37fc6c",
+      "rubric_sha256": "29bc5fab99a3ca1088aaea71742bda2503e7ad7b974b2d66a2342c99e8c26ce2",
+      "staged_skill_sha256": "7ecd7452b20d1ccb95973faf3b3ffcf9b350b2b17cface1afcdc0cc8c2392882",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/benzene-rf",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -49,4 +49,4 @@\n \n asymmetry-work/survey.json\n asymmetry-work/scans/benzene-rf-dt.json\n-asymmetry-work/plots/benzene-rf-dt.png\n+asymmetry-work/plots/benzene-rf-dt.png",
+      "physics_caveats": [
+        "Alpha assumed1 and exact integration limits unset/default; provenance is explicit. Difference amplitudes/BG are not absolute muon population fractions.",
+        "Two-Lorentzian empirical comparison and analytic approximation comparison not run; no literature consistency claimed.",
+        "Unsupported microscopic site/extra-coupling analysis is distinct from the exact-diagonalisation RF model already fitted; report omits that distinction.",
+        "Resonance geometry inferred from RF context and sign, not from absent precession alone; summary correctly states limitation."
+      ],
+      "judgement_calls": [
+        "Must3 residual flat baseline accepted through explicit BG model term and observed off-resonance plot baseline, even though final prose does not use the exact word flat."
+      ],
+      "number_evidence_commands": [
+        1,
+        3,
+        4,
+        6,
+        7,
+        8,
+        9,
+        12
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "8a4aebdbeb125b9569b7ff17cbcd82e778007bc171945152943259bad2fcd106",
+        "summary.md": "8a4aebdbeb125b9569b7ff17cbcd82e778007bc171945152943259bad2fcd106",
+        "transcript.jsonl": "f90b29d4948d2b58a8a88295ec9c77502a3118d49246a1d46632bdd383f8c322",
+        "commands.txt": "a491105f826b1568c8bf7d1e29be653a5e25e00163327e3d1953cdbacee2583c",
+        "cost.json": "0f54788ba2b2ff4b7b8bc87c7d54b616838155e42e02fc4a97aa208e9097e0e3",
+        "image-inputs.json": "0a23a429598ef4a64b6df63661d92e4c9c4af3c8f39465871ab77c6d89bdb300"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/benzene-rf-dt.png",
+          "snapshot_path": "review-images/878b2ab3de5012a7e83d299de519ba53a62081b172acbab5201f7fea6be4efb3.png",
+          "bytes": 50315,
+          "sha256": "878b2ab3de5012a7e83d299de519ba53a62081b172acbab5201f7fea6be4efb3",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T23:49:15.692747+00:00",
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
@@ -1537,13 +1820,11 @@
     "ferromagnetic-nickel",
     "copper-diffusion",
     "alc-tcnq",
-    "cds-fourier",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
     "corannulene-alc",
     "benzene-high-tf",
-    "benzene-rf",
     "benzene-repolarisation",
     "benzene-alc"
   ],
@@ -1573,16 +1854,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 9,
+    "scored": 11,
     "target": 24,
-    "scientific_pass": 9,
-    "must_pass": 49,
-    "must_total": 49,
-    "should_pass": 22,
-    "should_total": 31,
-    "exact_copy_pass": 3,
-    "literal_copy_pass": 3,
-    "combined_pass": 3,
-    "boundary_pass": 9
+    "scientific_pass": 11,
+    "must_pass": 60,
+    "must_total": 60,
+    "should_pass": 26,
+    "should_total": 40,
+    "exact_copy_pass": 4,
+    "literal_copy_pass": 4,
+    "combined_pass": 4,
+    "boundary_pass": 11
   }
 }

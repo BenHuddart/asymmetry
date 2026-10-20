@@ -2031,3 +2031,6 @@ Confirmation5 now7/24scored: highTF-AFM5/5 literalMusts and independent magnetic
 
 
 Confirmation5 now9/24scored: silicon6/6Musts and4/4Shoulds; same-run periodfit/guide-styleOFF-amplitudehold exercised, flaggedONrate retainedasdiagnostic, copyFAILoneLF. LLZ6/6Musts,2/4Shoulds, exact-copyPASS; all13coupledgroups pluscompetingfamily/optimizercomparison andpoorArrheniuscaveats verified. Totals49/49Musts,9/9science,3/9copy/combined,9/9boundary,22/31Shoulds. Source remains frozen; score remaining actual replies as completed.
+
+
+Confirmation5 now11/24scored: CDS6/6Musts,2/4Shoulds,exact-copyPASS with explicit noisyvisualtriplet judgement retained; RFbenzene5/5Musts,2/5Shoulds,copyFAILoneLF. Totals60/60Musts,11/11science,4/11copy/combined,11/11boundary,26/40Shoulds. RFdefaultintegral remains repaired. Read-only next-round finding: distinguish built-in RF exactdiagonalisation from unsupported microscopic site/DFT and analytic high-field comparison; generic no-Hamiltonian prose is misleading. No source edits during frozen wave.
