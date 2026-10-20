@@ -388,3 +388,17 @@ Hot fits quote real but unscaled errors despite printed scaled alternatives;
 recorded as a limitation. Source remains frozen; Basics, TRSB and maleic acid
 are live, with benzene ALC and LiFeAs pending. One wave/three model processes,
 20 GiB available, no swap or PSI pressure. Score completed final replies only.
+
+Basics and TRSB are scored. TRSB now passes all seven Musts, exact-copy and
+boundary checks: it explicitly identifies candidate TRSB from the small ZF
+width onset, stable control rate and LF decoupling, retaining model/sharing
+sensitivity rather than claiming proof. Basics improves from 5/9 to 8/9 Musts:
+MUSR unrecorded weak-TF context/sensor logging, usable Mu response amplitudes,
+alpha blocks and Ag t0 test are all repaired. The foil CLI now correctly prints
+saturation over 13–15 beginning at 13, but the final report omits the numeric
+plateau coordinate despite tabulating those rows; this remains a report
+completeness failure. Its final reply duplicates the sentence excluding run
+18894, so exact-copy fails. All three completed reports obey the boundary.
+Partial totals: 23/26 Musts, 1/3 scientific/combined passes, 2/3 copy and
+3/3 boundary. Maleic acid, benzene ALC and LiFeAs are live. About 19 GiB
+available, zero swap and PSI; do not change frozen CLI/skill until they finish.

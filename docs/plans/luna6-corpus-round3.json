@@ -147,15 +147,253 @@
       "boundary_check": "PASS: completed command inventory reads staged project skill and supplied data/CLI products only; no personal skill/source tree/network/ad hoc scientific scripting.",
       "boundary_pass": true,
       "permission_denials": 0
+    },
+    "basics": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Treats the folder as several separate calibration exercises. It names at least the Ag TF field scan, the quartz range curve, the quartz low-field muonium scan and the steering scan, and analyses them separately. It does not present the survey's 24-run 100 G \"temperature scan\" or its 2-run ZF one as a temperature dependence.",
+          "pass": true,
+          "evidence": "Distinct Ag field, quartz Mu response, foil and steering exercises; mixed 24-run grouping and two-point ZF comparison explicitly not interpreted as temperature dependencies."
+        },
+        {
+          "requirement": "Keeps the EMU and MUSR runs 44989\u201344997 apart and says which set is which (EMU: haematite on Ag at 100 G, the steering scan; MUSR: Ag calibration). It does not read the MUSR runs' ~0.29 MHz line as spontaneous order in Ag: the header says 0 G, but the line comes from an unrecorded weak transverse field.",
+          "pass": true,
+          "evidence": "Separates instrument-qualified EMU haematite steering and MUSR Ag calibration. Explicitly interprets 0.28 MHz MUSR signal as unrecorded weak TF, not spontaneous magnetism."
+        },
+        {
+          "requirement": "Quotes no logged 943 K, ~640 K or ~550 K reading as a sample temperature. It says these logged values are faulty or irrelevant to these room-temperature calibrations, and claims no temperature trend.",
+          "pass": true,
+          "evidence": "Faulty 943/644/550 K readings rejected or identified as irrelevant; MUSR plausible sensor drift explicitly calibration logging, not a sample-temperature campaign."
+        },
+        {
+          "requirement": "Steering: fits the Ag-mask asymmetry against the current taken from the run notes, and reports it smallest near zero current (between \u22120.25 and +0.25 A), rising on both sides.",
+          "pass": true,
+          "evidence": "Fits supplied notes-current axis and reports amplitude minimum at zero current, rising both sides; gives full measured table."
+        },
+        {
+          "requirement": "Range curve: reports the 100 G diamagnetic amplitude as small and roughly flat for thin stacks, then rising steeply and saturating for the thickest. It names, from its own fits, the foil count (as the run notes give it) where saturation begins \u2014 about 12\u201314 foils (a range such as \"13\u201315\" counts).",
+          "pass": false,
+          "evidence": "Primary amplitude table correctly rises from about 3.5 at 0\u20134 foils to about 22 at 13\u201315, with nuisance bounds retained. Report only says plateau toward largest/high-foil end; it never names the saturation-start count or 13\u201315 range in connection with saturation. CLI explicitly printed level 21.9113 over 13\u201315 and start 13, but that result is omitted."
+        },
+        {
+          "requirement": "Quartz scan: identifies the few-gauss lines as muonium (a line far faster per gauss than the bare muon's \u2014 the ratio itself need not be quoted). It reports the muonium amplitude falling as the frequency rises, and the line lost at the top fields, and presents the amplitude fall as the instrument's frequency-response limit (attributing the line's loss at the top fields to it too is a Should).",
+          "pass": true,
+          "evidence": "Explicit weak-TF Mu field-tracking frequency, falling amplitude as frequency rises attributed to instrument response, no detected line at 8.5/9 G. Fits now usable over much of field range."
+        },
+        {
+          "requirement": "Ag field scan: reports the fitted frequency tracking the applied field. It also reports the fitted phase against field. On the file's t0 the phase drifts steadily with field (a t0 offset), so calling it field-independent without a t0 test is a fail.",
+          "pass": true,
+          "evidence": "Ag fitted frequency tracks field and t0 test changes phase-gradient timing offset from -39.3 ns to -7.05 ns using -2 bins; does not call file-t0 phase flat."
+        },
+        {
+          "requirement": "States which run supplied alpha for each exercise it fits. It does not carry one alpha across the survey's ALPHA STEPs.",
+          "pass": true,
+          "evidence": "Names all exercise alpha source runs and separates 18864/other alpha steps; MUSR explicitly assumed 1.0."
+        },
+        {
+          "requirement": "Contains no t0 correction, stopping density (mg/cm\u00b2), steering centre, upper frequency, field offset or alpha that was not produced by a tool call in this session. The worksheet's Ti density and foil thickness are background.",
+          "pass": true,
+          "evidence": "Reported t0, frequencies, alpha values and control values verified in non-audit CLI output; no hand stopping-density or field conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reads each exercise's pattern the right way round: the steering scan's silver signal is smallest where the beam is centred on the (depolarising) sample; the range curve's step is where the muons stop passing through the degraders into the sample. An inverted reading is a gap even when the Must's pattern is reported.",
+          "pass": false,
+          "evidence": "Correct amplitude directions, but does not explicitly interpret steering minimum as centring on depolarising sample and foil step as stopping in Ti rather than reaching quartz."
+        },
+        {
+          "requirement": "Does not dismiss a relative amplitude trend (the muonium frequency response) on the ground that alpha is uncertain: one alpha scales every amplitude alike.",
+          "pass": true,
+          "evidence": "Uses relative Mu amplitude decline despite calibration limitations; does not dismiss response due to alpha."
+        },
+        {
+          "requirement": "Deadtime: reduces ZF Ag 34998 with deadtime off and from the file, and describes the early-time sag in asymmetry that the correction removes, with both fits' \u03c7\u00b2\u1d63. Says the 2010 files carry no deadtime values.",
+          "pass": false,
+          "evidence": "No paired off/from_file deadtime demonstration or early-time-sag comparison with both chi2 values."
+        },
+        {
+          "requirement": "Measures MUSR alpha on a MUSR Ag run and says why that is legitimate, since the survey lists no MUSR candidate because the header records 0 G. Alternatively, it says plainly that it assumed 1.0.",
+          "pass": true,
+          "evidence": "MUSR alpha assumption 1.0 clearly stated with lack of header-field calibration candidate."
+        },
+        {
+          "requirement": "t0: tests `--t0-offset` (or fits `Linear` to phase against field), reports the shift in bins that flattens the phase, and checks the fitted frequency against the nominal field.",
+          "pass": true,
+          "evidence": "Tests -2-bin t0 correction, reports residual phase-gradient timing offset and field-frequency agreement."
+        },
+        {
+          "requirement": "Treats 18864 as its own alpha block, or excludes it and says why.",
+          "pass": true,
+          "evidence": "18864 is explicitly a separate alpha block with its own measured balance."
+        },
+        {
+          "requirement": "Says that turning the saturating foil count into mg/cm\u00b2 needs the foil thickness and Ti density, which the files lack, and does not present that conversion as Asymmetry output.",
+          "pass": false,
+          "evidence": "No mg/cm2 result invented, but does not state thickness/density information needed for the conversion."
+        }
+      ],
+      "number_rule": "PASS: actual trend foils prints A_1 21.5233/22.0765/21.8308 and level 21.9113 over 13\u201315; Mu response, alpha and t0 values trace to actual fit/reduce/trend output. MUSR fourier prints 0.273327 MHz; no hand frequency-to-field or stopping-density conversion. All consequential quoted calibration values are tool-produced.",
+      "root_cause": "Major repair: unrecorded weak-TF context, irrelevant MUSR sensor axis, Mu response amplitudes and per-parameter nuisance bounds now handled correctly. The remaining Must is report completeness: source CLI explicitly computes saturation at 13 but prose omits the count. Exact-copy fails by duplicating the complete sentence excluding run 18894 in the final reply; audited file contains it once. General final-report reconciliation should retain quantified onset/plateau coordinates and avoid recomposing long audited prose.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1837.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 15,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"jq -r '.survey.runs[] | [.run_number,.prefix,.instrument,.title,.temperature,.sample_temperature_logged,.field,.geometry,.precession,.notes] | @tsv' asymmetry-work/survey.json\"",
+          "exit_code": 5
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /tmp/asymmetry-luna6-improvements/round3/basics/data --runs 18854,34999,44998 --recipe wizard-34999 --order sample_temperature_logged --start 34999 --name ag-tf-temp --plot --instrument EMU --workdir asymmetry-work-emu-tf-temp'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /tmp/asymmetry-luna6-improvements/round3/basics/data --runs 18854,34999,44998 --recipe wizard-34999 --order sample_temperature_logged --x 18854=350,34999=294.51596,44998=295 --start 34999 --name ag-tf-temp --plot --instrument EMU --workdir asymmetry-work-emu-tf-temp'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /tmp/asymmetry-luna6-improvements/round3/basics/data --runs 18854,34999,44998 --recipe wizard-34999 --order temperature --x 18854=350,34999=294.51596,44998=295 --start 34999 --name ag-tf-temp --plot --instrument EMU --workdir asymmetry-work-emu-tf-temp'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /tmp/asymmetry-luna6-improvements/round3/basics/data --runs 18864 --alpha-from 18864 --t0-offset -2.5 --plot --instrument EMU --workdir asymmetry-work-emu350'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /tmp/asymmetry-luna6-improvements/round3/basics/data --runs 18850,18852-18863 --alpha-from 18863 --t0-offset -2.5 --plot --instrument EMU --workdir asymmetry-work-emu350'",
+          "exit_code": 2
+        }
+      ],
+      "summary_sha256": "4c9c8a2f3cf0316e66bdb7adbecbf170e907908686eaa3aa22b0b20146582e26",
+      "rubric_sha256": "9a7e1671e076193352ce4016016147c30a58b3f8098aef4a5b6383f19d34c8cc",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round3/basics",
+      "staged_skill_sha256": "584f7f167f99f5acf97434e2bf7c224226f3bd7adf3a1faf5171b549196de134",
+      "boundary_check": "PASS: completed command inventory uses staged project skill, supplied data and CLI products only; no personal skill/source tree/network/ad hoc scientific scripting.",
+      "boundary_pass": true,
+      "permission_denials": 0
+    },
+    "trsb-re6zr": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the three science scans and their geometry from its own survey: the 400 G TF temperature scan (38178\u201338219), the ZF temperature scan (38223\u201338260) and the 100 G LF scan (38263\u201338273, 38275), and analyses them separately.",
+          "pass": true,
+          "evidence": "Separately identifies/analyzes 400 G TF 38178\u201338219, later ZF 38223\u201338260 and 100 G LF 38263\u201338273/38275; mixed field slices kept distinct."
+        },
+        {
+          "requirement": "Reports the alpha step between the TF block and the ZF/LF block and calibrates each from a run inside it (38222 for ZF/LF; a TF run of 38176\u201338221 for TF), naming the runs.",
+          "pass": true,
+          "evidence": "Alpha step 38221/38222; pre-step run 38220 gives corrected 0.5586 and post-step 38222 gives 1.3232, both named."
+        },
+        {
+          "requirement": "Treats the 50\u2013200 G field runs as longitudinal, not transverse, and reports that the 100 G LF runs show little or no relaxation at any temperature: the ZF relaxation is decoupled, so its fields are static.",
+          "pass": true,
+          "evidence": "50\u2013200 G controls treated as LF; 100 G traces lose at most 3.2% by 8 us versus 88.3% ZF, explicitly static-field decoupling."
+        },
+        {
+          "requirement": "Fits the ZF scan with a static Gaussian Kubo\u2013Toyabe \u00d7 exponential + constant (or an equivalent KT model) and says there is no spontaneous precession. It does not adopt a precession model (the wizard has ranked Bessel or Overhauser forms first on some runs) as the ZF physics.",
+          "pass": true,
+          "evidence": "Uses static GKT times exponential plus Constant and dynamic-GKT comparison. No spectral line, no spontaneous precession model adopted despite Bessel ranking."
+        },
+        {
+          "requirement": "States the headline in words: the ZF KT rate (`Delta`, the paper's \u03c3) rises on cooling below a temperature at or near the TF Tc (within a point spacing of the Tc this session's TF fit gives, or 6\u20137.5 K) while \u039b (or, in a dynamic KT fit, the fluctuation rate \u03bd) shows no such change; the extra relaxation is small against the nuclear rate and is read as spontaneous static fields appearing at Tc \u2014 broken time-reversal symmetry. Calling it a candidate pending a check passes; explaining it away (as nuclear, or as \"not TRSB because it is not in \u039b\") does not.",
+          "pass": true,
+          "evidence": "Explicit candidate TRSB headline: small ZF width step near superconducting transition with constant Lambda and LF decoupling indicates additional quasi-static fields; model/sharing sensitivity limits proof rather than erasing candidate. Static onset bracket 5.60009\u20136.00006 is near fitted Tc 6.248922 within scan spacing; dynamic bracket also contains Tc."
+        },
+        {
+          "requirement": "Reports the TF Gaussian rate \u03c3 rising below a Tc between 6 and 7 K from a flat normal-state value, fits \u03c3(T) with an `SC_*` gap law, quotes Tc and the gap parameter with uncertainties, \u03c7\u00b2\u1d63 and the temperature axis, and says whether a fully gapped (s-wave) law describes it.",
+          "pass": true,
+          "evidence": "Gaussian TF width rises below warm plateau; SC_SWave logged-T Tc 6.248922 \u00b1 0.029525 K, gap_ratio 2.196538 \u00b1 0.049324, chi2_red 2.285. Says fully gapped curve describes broadly/roughly; nodal law not established."
+        },
+        {
+          "requirement": "Contains no Tc, gap, rate or alpha not produced by a tool call in this session (the paper's 6.75/6.78 K, 1.21 meV, 2\u0394/k_BTc = 4.2 and Hc2 are background), and no gap converted to meV or 2\u0394/k_BTc by hand.",
+          "pass": true,
+          "evidence": "All consequential gap/rate/alpha values verified in own non-audit CLI output; no paper values or hand conversion imported."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Orders the TF scan by the logged sample temperature, noting 38180's 0.01 K setpoint is not the sample's temperature.",
+          "pass": true,
+          "evidence": "Logged T explicitly used, including setpoint 0.01 K versus actual about 0.30 K."
+        },
+        {
+          "requirement": "Models the silver-holder background (a second, weakly damped line at the applied field in TF; the constant in ZF), reports the diamagnetic shift of the sample line below Tc, and says how the non-superconducting fraction was handled.",
+          "pass": false,
+          "evidence": "Reports line shift and offset/fraction limitations but no resolved second narrow silver-holder line."
+        },
+        {
+          "requirement": "Compares the s-wave law with a nodal one (e.g. `SC_DWave`) and says which the data prefer and why.",
+          "pass": true,
+          "evidence": "Compares D-wave chi2_red 6.432 and undetermined gap with S-wave 2.285, giving approximate fully gapped preference without pairing-state claim."
+        },
+        {
+          "requirement": "Compares the ZF onset with the TF Tc in words, and gives the ZF Tc an honest uncertainty (see traps).",
+          "pass": true,
+          "evidence": "Explicitly places bracketed independent ZF width onset near conditional TF Tc; reports model-dependent interval rather than spuriously precise ZF Tc."
+        },
+        {
+          "requirement": "Accounts for 38176\u201338177 and the 200 G pair 38220\u201338221: analysed, or said why not.",
+          "pass": true,
+          "evidence": "38176\u201338177 negative calibrated amplitudes/failed fits accounted for, 200 G TF pair analyzed separately from LF 38274."
+        },
+        {
+          "requirement": "Says only the `.nxs` files were analysed and what the other files are.",
+          "pass": false,
+          "evidence": "Does not explicitly state only .nxs files analyzed or explain RAW/nxs_v2/log sidecars."
+        }
+      ],
+      "number_rule": "PASS: actual reduce prints corrected alpha 0.5586 and 1.3232; logged-T SC_SWave trend prints Tc 6.248922 \u00b1 0.029525, ratio 2.196538 \u00b1 0.049324 and chi2_red 2.285. Fit-global prints cold triplet nu 0.0328876 \u00b1 0.00292506; independent KT width/rate values and 3.2%/88.3% LF comparison trace to CLI outputs. No hand-derived gap or field.",
+      "root_cause": "Repairs remaining candidate-TRSB headline and exact-copy check while preserving static/dynamic model-sensitivity caveats. General per-parameter quality and uncertainty-aware endpoints help avoid false cold-rate onset. Literal Musts pass; silver background decomposition and sidecar provenance remain Should gaps.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1544.3,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 8,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/trsb-re6zr/data --series tf400-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/trsb-re6zr/data --series tf400-gauss --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/trsb-re6zr/data --series tf400-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/trsb-re6zr/data --series tf400-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round3/trsb-re6zr/data --series tf400-gauss --model SC_SWave --param sigma'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "80d5f390da16af47d7e722e9694d2cdd96c15b424d674f6d8221c159031e8fdd",
+      "rubric_sha256": "9b37cf0242fec13643391e4be4d75ce3791578ee9633fe4b675ce8fb1b19fdcc",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round3/trsb-re6zr",
+      "staged_skill_sha256": "584f7f167f99f5acf97434e2bf7c224226f3bd7adf3a1faf5171b549196de134",
+      "boundary_check": "PASS: completed command inventory uses staged project skill, supplied data and CLI products only; no personal skill/source tree/network/ad hoc scientific scripting.",
+      "boundary_pass": true,
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 1,
-    "scientific_pass": 0,
-    "must_pass": 8,
-    "must_total": 10,
-    "exact_copy_pass": 1,
-    "combined_pass": 0,
-    "boundary_pass": 1
+    "scored": 3,
+    "scientific_pass": 1,
+    "must_pass": 23,
+    "must_total": 26,
+    "exact_copy_pass": 2,
+    "combined_pass": 1,
+    "boundary_pass": 3
   }
 }
