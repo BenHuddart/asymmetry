@@ -64,6 +64,9 @@ EVALUATION_INSTRUCTIONS = """# Agent evaluation boundary
 Analyse only the staged data named in the user's prompt, using the installed
 `asymmetry-analysis` skill and the `asymmetry` CLI.
 
+Read `.agents/skills/asymmetry-analysis/SKILL.md` under this project. Use this
+project copy even when another skill with the same name is advertised.
+
 - Read only the staged data directory and files under this project directory.
   Do not inspect the Asymmetry source repository, documentation checkout,
   personal skill directories, or other files elsewhere on the machine.
@@ -203,6 +206,21 @@ asymmetry-work/plots/example.png
 """
 
 
+def skill_source_options() -> list[str]:
+    """Disable the evaluated skill's personal copies while leaving the staged copy enabled."""
+    roots = [
+        Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")),
+        Path.home() / ".agents",
+    ]
+    entries = ",".join(
+        "{path="
+        + json.dumps(str(root / "skills" / "asymmetry-analysis" / "SKILL.md"))
+        + ",enabled=false}"
+        for root in roots
+    )
+    return ["--config", f"skills.config=[{entries}]"]
+
+
 def build_command(args: argparse.Namespace, data: Path, project: Path) -> list[str]:
     """Build the controlled non-interactive Codex invocation.
 
@@ -222,6 +240,7 @@ def build_command(args: argparse.Namespace, data: Path, project: Path) -> list[s
         "view_image",
         "--enable",
         "skip_host_skill_discovery",
+        *skill_source_options(),
         "--model",
         args.model,
         "--cd",
@@ -310,6 +329,7 @@ def build_resume_command(
         "view_image",
         "--enable",
         "skip_host_skill_discovery",
+        *skill_source_options(),
         "--model",
         args.model,
     ]

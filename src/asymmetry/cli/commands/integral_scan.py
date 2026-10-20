@@ -602,7 +602,10 @@ def _line_comparisons(fit: dict, stored: dict[str, dict]) -> list[str]:
                         ),
                     )
                     + ". Report both and that direction — a width or field changing between "
-                    "conditions is the physics (motional narrowing, a changing coupling)."
+                    "conditions is the physics (motional narrowing, a changing coupling). "
+                    "For molecular ALC scans, sharper hot lines are consistent with "
+                    "molecular reorientation averaging hyperfine anisotropy. State that as "
+                    "a possible interpretation, not a fitted motion rate or site assignment."
                 )
     return notes
 
@@ -702,12 +705,14 @@ def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
         width = abs(fit["parameters"][name.replace("B0", "Bwid", 1)])
         if centre - DIP_FLANK_WIDTHS * width < low or centre + DIP_FLANK_WIDTHS * width > high:
             notes.append(
-                f"NOTE: the line at {centre:g} (width {width:g}) runs off the fitted range "
-                f"{low:g}–{high:g}: without data rising again on both sides it may be a step "
-                f"or the background's edge, not a resonance — or a broad shape stretched over "
-                f"a narrower dip. Look at the plot: refit a narrower window around the dip's "
-                f"minimum, or a wider one if the dip itself runs to the edge, before reporting "
-                f"it."
+                f"NOTE: the line at {centre:g} (width {width:g}) lacks two fitted widths "
+                f"of coverage on each side inside {low:g}–{high:g}; this limits the outer "
+                "baseline check. It does not establish that the data lack a dip or that its "
+                "centre is unconstrained. Inspect the plot and compare nearby windows and "
+                "baseline models. If a converged, non-bound centre stays stable with a "
+                "determined error, report it as a conditional fitted centre with those "
+                "checks and this limitation. Do not promote it to an isolated resonance "
+                "or report a bound-pinned width as measured."
             )
         elif name in resolved:
             amplitude = name.replace("B0", "f", 1)
@@ -745,8 +750,10 @@ def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
         notes.append(
             f"NOTE: the fit converged at chi2_red {format_number(fit['reduced_chi_squared'], 3)}: "
             "over a long range the background may rise or step where no polynomial can "
-            "follow — a fit that cannot is not a result, and the summary should say that is "
-            "why — or the range holds more dips than the model. Look at the plot (--plot) "
+            "follow, or the range holds more dips than the model. A poor chi2 alone does "
+            "not erase a determined fitted centre: test its stability across windows and "
+            "backgrounds, report a stable estimate with the fit mismatch, and withhold "
+            "unstable or bound-pinned parameters. Look at the plot (--plot) "
             "and fit one resonance per --xmin/--xmax window on its own local background"
             + (
                 ": "

@@ -568,7 +568,7 @@ def test_a_frequency_below_the_records_resolution_is_flagged() -> None:
 
 
 def test_the_series_weighs_a_gaussian_against_an_exponential_envelope_run_by_run() -> None:
-    from asymmetry.core.workflow.series import envelope_change
+    from asymmetry.core.workflow.series import envelope_summary
 
     time = np.linspace(0.0, 10.0, 1000)
     rng = np.random.default_rng(3)
@@ -601,18 +601,37 @@ def test_the_series_weighs_a_gaussian_against_an_exponential_envelope_run_by_run
         "Exponential",
     ]
     assert outcome.trend.rows[0]["envelope_dchi2"] > 0 > outcome.trend.rows[3]["envelope_dchi2"]
-    note = envelope_change(outcome.trend)
+    note = envelope_summary(outcome.trend)
     assert "Gaussian on 1, 2 (temperature 50–100)" in note
     assert "Exponential on 3, 4 (temperature 200–300)" in note
     assert "motional narrowing" in note
     # Along a field the same change is reported without the narrowing reading.
-    by_field = envelope_change(replace(outcome.trend, order_key="field"))
+    by_field = envelope_summary(replace(outcome.trend, order_key="field"))
     assert "motional narrowing" not in by_field
     assert "A change of shape along field is a result" in by_field
     # Exponential when cold is the other way round: a skewed distribution, not narrowing.
     reversed_rows = [row | {"x": 400.0 - row["x"]} for row in outcome.trend.rows]
-    reversed_note = envelope_change(replace(outcome.trend, rows=reversed_rows))
+    reversed_note = envelope_summary(replace(outcome.trend, rows=reversed_rows))
     assert "is not motional narrowing" in reversed_note
+
+
+def test_envelope_summary_keeps_indeterminate_warm_points_visible() -> None:
+    from asymmetry.core.workflow.series import TrendTable, envelope_summary
+
+    trend = TrendTable(
+        "temperature",
+        ["envelope"],
+        [
+            {"key": "1", "x": 50.0, "envelope": "Gaussian"},
+            {"key": "2", "x": 200.0, "envelope": "either"},
+            {"key": "3", "x": 300.0, "envelope": "either"},
+        ],
+    )
+    note = envelope_summary(trend)
+    assert "Gaussian on 1 (temperature 50)" in note
+    assert "either on 2, 3 (temperature 200–300)" in note
+    assert "does not establish a shape change" in note
+    assert "motional narrowing" not in note
 
 
 def test_a_model_with_two_envelopes_is_not_weighed() -> None:

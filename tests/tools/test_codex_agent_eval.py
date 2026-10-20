@@ -51,6 +51,19 @@ def test_codex_runner_defaults_to_luna(tmp_path: Path) -> None:
     assert args.model == "gpt-6-luna"
 
 
+def test_personal_skill_copies_are_disabled_without_disabling_project_skill(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runner = _load_runner()
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    flag, value = runner.skill_source_options()
+    assert flag == "--config"
+    expected = json.dumps(str(tmp_path / "codex-home/skills/asymmetry-analysis/SKILL.md"))
+    assert value.startswith(f"skills.config=[{{path={expected},enabled=false}},")
+    assert value.count("enabled=false") == 2
+    assert ".agents/skills/asymmetry-analysis/SKILL.md" in runner.EVALUATION_INSTRUCTIONS
+
+
 def test_command_is_persistent_and_uses_the_controlled_workspace(tmp_path: Path) -> None:
     runner = _load_runner()
     args = _args(runner, tmp_path)

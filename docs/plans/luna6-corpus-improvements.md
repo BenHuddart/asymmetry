@@ -150,3 +150,44 @@ prevent the LiFeAs read. Sources checked:
 https://learn.chatgpt.com/docs/config-file/config-reference and
 https://learn.chatgpt.com/docs/build-skills. Test any runner isolation change
 separately after this frozen wave; do not silently change its protocol.
+
+## Round two
+
+Implementation complete after all round-one results were scored:
+
+- Survey guidance checks TF/LF geometry before suggesting recovery models;
+  TF frequency/phase/amplitude observables are named explicitly.
+- Envelope summaries retain indeterminate warm points. Conditional Gaussian
+  and gap-model comparisons no longer require a firm material identification.
+- Stable non-bound line centres may be reported as conditional fit estimates
+  after window/background checks. Two-width coverage limits baseline certainty;
+  it is no longer described as proof that no dip exists. Poor fits retain their
+  mismatch caveats. Resolved-line gates and bound-width rejection are unchanged.
+- Molecular ALC comparisons include a conditional reorientation/anisotropy
+  interpretation; concentration slopes may be apparent fitted rate coefficients.
+- Skill guidance addresses nonmagnetic calibration headers, unrelated sensor
+  drift, static/dynamic KT and nuisance-sharing comparisons, and final copying.
+- The runner explicitly names the project skill and disables personal copies
+  through per-skill config on both turns. The scientific prompt, two-turn image
+  review and rubrics are unchanged; record the runner hash with new waves.
+
+Validation so far: 268 focused tests passed in 7.39 s, structural and lint
+passed (one import-order issue repaired), skill quick validation passed.
+The GPT-6 Luna isolation smoke at `/tmp/asymmetry-luna6-round2-isolation-smoke`
+completed exit0 and read the project copy. It is not a scientific score.
+Fast tier passed: 5,892 passed, 10 skipped, one xfailed in 102.92 s. Docs built
+with 85 existing warnings. Standard validation first stopped at a leftover
+import-spacing lint failure before tests; repaired and restarted. The completed
+gate has 9,905 passed, 25 skipped, one xfailed and the same four known GUI sizing
+failures as round one in 453.56 s, using two workers and scratch XDG paths.
+No new failures appeared; the standard gate remains non-green for those GUI
+failures. Log: `/tmp/asymmetry-luna6-round2-validation.log`.
+Other logs: `/tmp/asymmetry-luna6-round2-{focused,fast,docs}.log`. No corpus
+evals are currently live; round one finished exit0.
+
+Commit round two and run nine targeted cases with Luna and
+three concurrent cases: `sn-critical-field`, `maleic-mu-kinetics`,
+`copper-diffusion`, `lifeas-psi`, `trsb-re6zr`, `basics`, `corannulene-alc`,
+`benzene-alc`, and `afm-high-tf-mdu` (physics-scope regression check).
+Use fresh result root `/tmp/asymmetry-luna6-improvements/round2`; preserve
+first attempts, frozen commit and skill/runner/rubric hashes, then score all.

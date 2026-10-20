@@ -228,13 +228,28 @@ def envelope_preference(
     return {"preferred": preferred, "delta_chi2": delta}
 
 
-def envelope_change(trend: TrendTable) -> str | None:
-    """A note naming where the preferred envelope changes along the scan, or ``None``."""
+def envelope_summary(trend: TrendTable) -> str | None:
+    """Describe measured envelope preferences, including an inconclusive comparison."""
     if "envelope" not in trend.columns:
         return None
     decided = [row for row in trend.rows if row["envelope"] in RIVAL_ENVELOPES]
     if len({row["envelope"] for row in decided}) < 2:
-        return None
+        groups = [
+            (shape, [row for row in trend.rows if row["envelope"] == shape])
+            for shape in (*sorted(RIVAL_ENVELOPES), "either")
+        ]
+        described = "; ".join(
+            f"{shape} on {', '.join(row['key'] for row in rows)} ({trend.order_key} {_span(rows)})"
+            for shape, rows in groups
+            if rows
+        )
+        return (
+            f"NOTE: envelope comparison — {described or 'no reliable comparison'}. "
+            "Rows marked 'either' cannot distinguish Gaussian from exponential; this "
+            "does not establish a shape change. Report the comparison as well as the "
+            "rate. If slow warm envelopes are indistinguishable in a short fit window, "
+            "check background and window stability before interpreting the scan."
+        )
     blocks: list[tuple[str, list[dict[str, Any]]]] = []
     for row in decided:
         if blocks and blocks[-1][0] == row["envelope"]:
@@ -968,7 +983,7 @@ __all__ = [
     "TrendTable",
     "amplitude_exceeds_data",
     "build_trend_table",
-    "envelope_change",
+    "envelope_summary",
     "envelope_preference",
     "fit_one",
     "fit_series",

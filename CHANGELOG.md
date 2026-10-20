@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Preliminary fits distinguish estimates from interpretations.** The agent
+  CLI reports inconclusive envelope comparisons, directs TF scans to their
+  frequency/phase observables, and explains how to qualify stable line centres
+  and apparent rate coefficients without claiming a validated physical model.
 - **Agent guidance distinguishes physical observables and controls.** Field
   scans distinguish integral polarisation recovery from rate decoupling;
   temperature trends keep reliable cold/next-temperature endpoints visible

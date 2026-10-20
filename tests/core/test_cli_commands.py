@@ -3366,7 +3366,7 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
     assert poor.endswith("--model 'LorentzianLCR + Linear' --xmin 18880 --xmax 20080.")
     # With no further dip found it says the background may be why.
     (bare,) = _poor_fit_note(fit | {"next_dip_windows": windows[:1]})
-    assert "a fit that cannot is not a result" in bare
+    assert "does not erase a determined fitted centre" in bare
     assert _poor_fit_note(fit | {"reduced_chi_squared": 1.2, "next_dip_windows": []}) == []
     # A line whose flank runs off the fitted range may be a step, not a dip.
     (edge,) = _poor_fit_note(
@@ -3380,7 +3380,9 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
             "next_dip_windows": [],
         }
     )
-    assert "runs off the fitted range 5000–11000" in edge
+    assert "lacks two fitted widths" in edge
+    assert "inside 5000–11000" in edge
+    assert "conditional fitted centre" in edge
     # A whole scan narrower than its line is not a window that cut it off.
     whole = {"x_min": None, "x_max": None}
     assert _poor_fit_note(fit | {"reduced_chi_squared": 1.5, "next_dip_windows": []} | whole) == []
@@ -3640,7 +3642,7 @@ def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
     text = "\n".join(
         _law_hints("tf", TrendTable("temperature", columns, rows), ["frequency", "sigma"])
     )
-    assert "if the sample is a superconductor" in text
+    assert "interpretation is a hypothesis to test" in text
     assert "--model SC_SWave --param sigma" in text
     # A width that narrows on cooling (no vortex lattice) gets no gap law.
     flipped = [row | {"sigma": w} for row, w in zip(rows, widths[::-1], strict=True)]

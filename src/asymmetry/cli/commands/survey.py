@@ -412,8 +412,11 @@ def _render(survey, survey_path: Path) -> str:
             )
         if any(scan.axis == "field" and scan.geometry != "TF" for scan in survey.scans):
             lines.append(
-                "FIELD OBSERVABLE: choose the question before fitting. In a muonium/radical "
-                "repolarisation experiment, measure integral asymmetry versus field with "
+                "FIELD OBSERVABLE: establish geometry before choosing the quantity. A TF "
+                "field scan measures precession frequency, phase or amplitude; its full-time "
+                "integral can cancel and is not an LF recovery curve. Unresolved geometry "
+                "does not establish LF. Only for an LF muonium/radical repolarisation "
+                "experiment, measure integral asymmetry versus field with "
                 "integral-scan --model MuRepolarisation and report recovery at the highest "
                 "field, including a poor-fit caveat if needed. Redfield on a time-domain "
                 "rate answers a different dynamics question and cannot replace that curve. "

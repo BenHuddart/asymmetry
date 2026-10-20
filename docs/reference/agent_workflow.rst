@@ -1080,6 +1080,16 @@ pair fits as one line. A superconducting gap-law suggestion uses Gaussian
 recipe comparison before a gap law is fitted. Broadening alone does not
 identify the sample as superconducting.
 
+Envelope comparisons are reported even when only one shape is preferred and
+the remaining points are marked ``either``. Such a comparison does not
+establish a shape change; short-window results should be checked against
+background and window choices before interpreting slow warm envelopes.
+For a cold-broadened, downward-shifted TF line, the CLI suggests comparing a
+Gaussian-width series and a conditional gap model while keeping the material
+classification separate. A determined concentration slope can be reported as
+an apparent fitted rate coefficient, with fit-quality and temperature caveats,
+without claiming a validated intrinsic constant.
+
 Temperature trends also print ``ENDPOINTS:`` values and errors for the first
 two distinct reliable temperatures and the warm end. Compare these individual
 rows before treating a weighted cold block as a plateau: a cold-end upturn can
@@ -1351,7 +1361,15 @@ errors, that window is named with the command that fits it. A line fitted
 inside an ``--xmin``/``--xmax`` window with data on both flanks, an amplitude
 five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 8 is
 called a resolved ``RESONANCE`` to report, with its errors qualified when
-χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. A scan that measures one field (or other x) more than once is noted with the
+χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse.
+The two-width coverage test checks the outer baseline. A shorter window can
+still constrain a centre: compare nearby windows and baseline models and
+report a stable, non-bound estimate with a determined error as a conditional
+fitted centre. Keep that estimate distinct from an established isolated line;
+a failed fit or a bound-pinned width remains unmeasured. Poor chi-squared
+requires a model-mismatch caveat and stability checks, rather than discarding
+every fitted parameter solely because the model is approximate.
+A scan that measures one field (or other x) more than once is noted with the
 runs and whether each repeat came back within three errors — a return pass to
 report — and a dip another stored fit of the same scan holds (a line whose
 centre ± width lies inside the dip's window) is not announced again. When a windowed line (both flanks in range, five errors deep) matches one

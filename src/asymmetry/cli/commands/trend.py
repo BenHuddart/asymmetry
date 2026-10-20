@@ -347,11 +347,11 @@ def _render(
         "",
         render_trend(trend),
     ]
-    from asymmetry.core.workflow.series import envelope_change
+    from asymmetry.core.workflow.series import envelope_summary
 
     # What the trend itself shows is printed whether or not a law is fitted
     # to it: a law answers one question, these name the others.
-    change = envelope_change(trend)
+    change = envelope_summary(trend)
     readings = [
         *([change] if change is not None else []),
         *_rate_steps(trend, series["free_params"]),
@@ -922,16 +922,19 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
                 if len(cold) >= 2 and cold[0][widths[0]] > cold[-1][widths[0]]:
                     hints.append(
                         f"{frequencies[0]} falls below its warm value on cooling while "
-                        f"{widths[0]} grows: if the sample is a superconductor, that is its "
-                        "diamagnetic shift and vortex lattice — "
+                        f"{widths[0]} grows: compare a Gaussian-width temperature series "
+                        "before deciding the mechanism. A superconducting vortex-lattice "
+                        "interpretation is a hypothesis to test, not established by this "
+                        "trend or a sample abbreviation alone — "
                         + (
                             f"fit the Gaussian width: {command} SC_SWave --param {widths[0]}, "
                             "then SC_DWave."
                             if re.sub(r"_\d+$", "", widths[0]) == "sigma"
-                            else "first obtain a Gaussian-width series with an "
+                            else "obtain a Gaussian-width series with an "
                             "Oscillatory * Gaussian + Constant recipe. Fit SC_* to sigma, "
                             "not to this exponential Lambda; the two envelopes describe "
-                            "different field distributions."
+                            "different field distributions. A conditional gap-model test "
+                            "does not require declaring the sample superconducting first."
                         )
                     )
             if shift is not None:
@@ -1118,7 +1121,10 @@ def _render_fit(
             lines.append(
                 f"The slope m is the change in {fit['param']} per unit {fit['order_key']}: for a "
                 f"rate against a concentration it is the rate constant. Report m with its "
-                f"error, in {fit['param']}'s unit per unit {fit['order_key']}."
+                f"error, in {fit['param']}'s unit per unit {fit['order_key']}. If temperature "
+                "spread or poor fit quality limits the interpretation, call it an apparent "
+                "fitted rate coefficient under these conditions. Report that estimate "
+                "and its limitations separately from any claim of an intrinsic constant."
             )
     for law in misplaced:
         lines.append(

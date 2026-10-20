@@ -18,26 +18,42 @@ these obligations through the final reply, including after image review:
 
 - Identify the experiment's question before selecting a model. An integrated
   polarisation-recovery curve, a relaxation rate versus field, and a resonance
-  scan are different observables. In muonium/radical chemistry, test recovery
-  with `integral-scan --model MuRepolarisation`; a Redfield fit to a time-domain
-  rate does not answer that question. RF-resonance context establishes the LF
+  scan are different observables. First establish LF geometry and a
+  muonium/radical recovery question before using
+  `integral-scan --model MuRepolarisation`. A TF field scan instead needs
+  precession frequency/phase or amplitude: integrating its oscillations can
+  cancel the signal. Two-field TF/calibration pairs are not LF recovery scans.
+  A Redfield fit to a time-domain rate does not measure integral recovery.
+  RF-resonance context establishes the LF
   experiment even when the survey cannot resolve precession.
 - Establish the sample class from experimental context, not from broadening
   alone or a familiar material abbreviation. A high-TF magnet can broaden or
   split at magnetic order; this is not by itself evidence for a vortex lattice.
   A nonmagnetic calibration sample with a nominal zero-field header can carry
   an unrecorded weak TF. Do not turn its line or sensor readings into an
-  ordered-state temperature campaign.
+  ordered-state temperature campaign. Fit the calibration precession with a
+  damped cosine and treat unrelated sensor drift as calibration logging, not
+  a sample-temperature scan. When material identity is uncertain, compare
+  plausible physical models conditionally; uncertainty is not a reason to
+  skip a Gaussian-width test of a cooling-broadened, down-shifted TF line.
 - Keep the required observable separate from its controls. In a KT analysis,
   compare both the field width and the dynamic/exponential rate across the
   same temperature interval, explicitly reporting when a control has no onset.
   Compare the coldest run with the next temperature before averaging a cold
   block: an endpoint upturn can coexist with a warmer activated trend.
+  If a small width onset reverses under global nuisance sharing, compare
+  `StaticGKT_ZF * Exponential + Constant` with dynamic Gaussian KT using the
+  same window and plausible background constraints. Report sensitivity to
+  sharing rather than treating one coupled fit as proof of absence.
 - Continuous-source reductions need the pre-t0 background check (`--background
   range`). A systematically rising late-time baseline is a reduction/model
   problem to resolve before accepting a static KT or a paramagnetic rate.
   Above magnetic order, test a relaxing paramagnetic model even if a static
   KT screen ranks first; a poor dip-shaped fit does not measure that rate.
+  Resolve baseline effects separately for each geometry. Report the TF
+  Gaussian/exponential envelope comparison, including indeterminate warm
+  points, and test window stability before discarding the late-time data
+  needed to distinguish slow envelopes.
 - Decide geometry from the scan, notes and reduced plots; an unresolved survey
   does not restore a refuted TF stamp. Pass the geometry and physics scope to
   every wizard call (Steps 3a–3b).
@@ -64,6 +80,7 @@ these obligations through the final reply, including after image review:
   After any image-review changes, audit that final file and send it verbatim.
   Once that audit passes, preserve every character, including rounded errors
   and punctuation; do not regenerate the reply from memory or make final edits.
+  Complete file-list cleanup before that final audit too.
 
 ## 1. What this does, and what it does not
 
@@ -706,6 +723,13 @@ when the data and baseline constrain a broader or narrower line. Refit nearby
 windows to test stability, and report unresolved values honestly if these
 checks still fail.
 
+Two-width flank coverage checks the outer baseline; failing it does not prove
+that a fitted centre is unconstrained. Compare nearby windows and backgrounds.
+A converged, non-bound centre with a determined error that remains stable may
+be reported as a conditional fitted centre with the mismatch and coverage
+limits. Keep that estimate distinct from an established isolated resonance;
+neither a bound-pinned width nor a failed fit becomes a measurement.
+
 - **Several resonances**: sum the components (`LorentzianLCR + LorentzianLCR +
   Cubic`); each is seeded on its own dip. `--xmin`/`--xmax` fit a window of a
   long scan when one background shape does not span it all.
@@ -1214,7 +1238,11 @@ for a quantity — a rate constant, a transition temperature, a correlation
 time — and the data allow a fit, do the fit and report it with its caveat (a
 temperature offset between samples, a poor χ²ᵣ, a short range), rather than
 declining because the comparison is imperfect. Declining is for a question the
-data cannot answer at all. When the question is a comparison with an accepted
+data cannot answer at all. For a determined slope under imperfect conditions,
+report an **apparent fitted rate coefficient**, its uncertainty and the
+conditions; separate that empirical result from a validated intrinsic kinetic
+constant. A failed or undetermined fit still supplies no such result.
+When the question is a comparison with an accepted
 value — a transition temperature checked against the literature to judge a
 thermometer, a rate against a published one — make it in words: name the
 accepted value as literature, and say whether this session's fitted value sits
@@ -1257,8 +1285,12 @@ law on that σ — a gap-law fit is the expected result, not an optional extra.
 If the wizard supplies only an exponential, make and compare an explicit
 `Oscillatory * Gaussian + Constant` recipe. Do not substitute exponential
 `Lambda(T)` for `sigma(T)` in a superconducting gap law. These instructions
-apply once superconductivity is established by the experimental context;
-they do not classify every cooling-broadened TF line as superconducting.
+use the experimental context to interpret the comparison. If classification
+is uncertain, compare the Gaussian-width trend and a conditional gap model,
+saying which evidence would distinguish a vortex lattice from magnetic or
+multi-site broadening. Keep established sample physics in the wizard scope.
+A model test is not a materials identification; broadening alone does not
+classify a sample as superconducting.
 
 **Zero field in a superconductor** tests time-reversal symmetry breaking: a
 spontaneous field appears below Tc as extra relaxation — in the Kubo–Toyabe

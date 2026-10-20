@@ -5,8 +5,9 @@ nothing else, produces a defensible analysis with the `asymmetry` CLI and the
 packaged `asymmetry-analysis` skill. `run_eval.py` drives Claude Code;
 `run_codex_eval.py` drives Codex. They implement the loop Phase 4 of
 [`docs/plans/agent-cli-skill.md`](../../docs/plans/agent-cli-skill.md) runs:
-run the agent, score its summary against the dataset's rubric, and fix **the
-skill text** — never the rubric, never the CLI.
+run the agent, score its summary against the dataset's rubric, and improve
+general skill guidance or reusable CLI behavior. Keep the rubric fixed and
+record which skill, CLI and runner version each wave evaluated.
 
 The datasets come from the WiMDA muon-school corpus, which is never in this
 repository: extract its release and set `ASYMMETRY_CORPUS_ROOT` to it (see
@@ -53,9 +54,12 @@ the analysis and nominates up to four decisive project-local plots, then the
 runner validates and hashes those files and attaches them explicitly with
 `codex exec resume --image` for the final report. The staged project is
 writable, the sibling data copy is read-only to the nested sandbox, and
-personal plugins, instructions and host-installed skills do not vary the run.
-It enables `skip_host_skill_discovery` and installs the evaluated skill under
-`<out>/project/.agents/skills/`.
+user configuration is ignored. It enables `skip_host_skill_discovery`, disables
+the evaluated skill's personal copies using per-skill configuration overrides,
+and installs the evaluated skill under `<out>/project/.agents/skills/`.
+The project boundary names that copy explicitly. These discovery controls are
+not a read sandbox: inspect transcripts for personal/source reads and record
+violations separately, even if a personal symlink has identical skill bytes.
 
 Protocol `two_turn_image_review_v2` requires the second turn to save and audit
 the complete final report after image inspection, then return it verbatim.
