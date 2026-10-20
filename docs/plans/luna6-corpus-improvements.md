@@ -1343,3 +1343,18 @@ All49 cuprate and40 molecular commands inspected;frozen hashes unchanged.
 At check copper,spin-Peierls and high-TF AFM remain live,concurrency3,19 GiB
 RAM available,zero swap/current PSI,652 GiB disk free,no tests/duplicates.
 Keep all24 running with source frozen;no follow-on repair or wave authorized.
+
+
+Confirmation2 now10/24 scored:spin-Peierls FAIL5/6 Musts,number/copy/boundary
+pass. It reports central-to-warm ZF beta evolution but rejects the actual
+coldest59/89 K ZF fits without comparing their supported spectral shape to
+the warm endpoint. Required ZF endpoint comparison is absent;TF envelope and
+matched FFT investigations do not substitute. This literal endpoint judgement
+is recorded:earlier confirmation1 explicitly contrasted cold29923 and warm
+29920 model/shape,while this attempt only characterizes reliable107 K onward.
+No invalid fit parameter is demanded or accepted;the gap is independent ZF
+endpoint inspection/description. All27 commands inspected,all values verified,
+reply byte-matches audit,frozen hashes unchanged. Totals52/54 Musts,8/10
+science,8/10 copy,6/10 combined,10/10 boundary. Copper,high-TF AFM and TCNQ
+remain live at this check;22 GiB RAM available,no swap/current PSI,652 GiB
+disk free. Finish all24 with no source changes,rereuns or broad tests.

@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 9/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 10/24 scored; source frozen; finish all cases despite earlier failures",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -1182,11 +1182,119 @@
         36
       ],
       "scored_at": "2026-10-20T17:41:17.260649+00:00"
+    },
+    "spin-peierls": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Separates the TF 100 G runs from the ZF scan rather than fitting them as one series.",
+          "pass": true,
+          "evidence": "Separates16-run ZF membership29920–29921,29923–29924,29931–29934,29936–29941,29943–29944 from10 measured100 G TF runs; no mixed fit-series."
+        },
+        {
+          "requirement": "States what was used for alpha (a TF 100 G run, named), rather than silently assuming 1.0.",
+          "pass": true,
+          "evidence": "Names measured alpha source29929:0.9717 with forward/backward groups1/2 and appropriate no-deadtime/no-background reduction."
+        },
+        {
+          "requirement": "Reports on the full run range actually present (29919-29944), not only the subset the worksheet happens to tabulate.",
+          "pass": true,
+          "evidence": "Accounts for all26 present files29919–29944, including interleaved TF and low-temperature ZF runs absent from worksheet subset."
+        },
+        {
+          "requirement": "Does not report findings for runs 29945-29951 as if they were analyzed — they are not present in this data folder.",
+          "pass": true,
+          "evidence": "No observations or invented results are attributed to absent29945–29951."
+        },
+        {
+          "requirement": "Reports a change in ZF line shape between the highest- and lowest-temperature runs actually available.",
+          "pass": false,
+          "evidence": "Reports reliable ZF beta near0.923 at107 K and near2 at144–298 K, but explicitly rejects59.419/89.3697 K ZF fits and says no low-temperature ZF rate/beta trend is established. It never reports the required coldest-available versus highest-temperature ZF line-shape comparison. TF envelope/FFT comparisons cannot replace this ZF Must."
+        },
+        {
+          "requirement": "Contains no relaxation rate, frequency, or transition-temperature number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Every consequential rate, beta, alpha, frequency and temperature is actual CLI or direct stored-series output; no hand transition temperature, splitting or kinetic law. Independent number checker excluding audit/draft/report text returns []."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Accounts for every run in the block — the ZF runs below 130 K and the interleaved TF runs — rather than silently dropping any.",
+          "pass": true,
+          "evidence": "Explicit complete membership and flagged low-temperature rows account for every ZF and TF run; no silent worksheet-only restriction."
+        },
+        {
+          "requirement": "Discusses candidate fit functions for above vs below the transition, without inventing fitted values.",
+          "pass": true,
+          "evidence": "Discusses stretched/compressed versus single-exponential ZF relaxation and alternative F–mu–F screening, with measured beta evolution and no invented fitted values. TF envelope alternatives are kept separate."
+        },
+        {
+          "requirement": "Connects the observed line-shape change to the singlet-triplet / dimerisation physics described in the worksheet background.",
+          "pass": false,
+          "evidence": "Does not connect the observed shape evolution to singlet-triplet excitation/dimerisation; only a general correlated-moment/local-field interpretation is offered and unique spin-Peierls identification is declined."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. unverified_numbers=[]; alpha, per-run beta/rates, printed endpoint difference/significance and matched FFT peak/resolution values verified directly.",
+      "number_checker_flags": [],
+      "root_cause": "FAIL on ZF endpoint line-shape Must. The agent screens middle-temperature ZF29934, carries its stretched model across the scan, then rejects coldest29923/29924 because of failed/amplitude-exceeding fits. It reports central-to-warm beta evolution but supplies no independent ZF cold/warm endpoint comparison. Most additional investigation concerns TF splitting and matched TF FFTs. General repair would inspect the primary-observable endpoints independently and describe supported shape differences even when a carried model fails, without accepting invalid fit parameters. No source changes or rerun during the gate.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all27 completed commands inspected. All27 completed commands inspected: staged skill/references, supplied data and installed CLI/products only. Direct JSON text reads verify parameter-specific flags; no source/rubric/host-skill/network/subagents or numerical scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 688.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "8c028897938e8b0ab6732db1ab91c8b7e4b7a26d07c8046d526d40bba14094b4",
+      "audited_file_sha256": "8c028897938e8b0ab6732db1ab91c8b7e4b7a26d07c8046d526d40bba14094b4",
+      "rubric_sha256": "45ec06c3c47445ea279531822116d0b68bbaaf3cb6a47c792093f64bc65b3bb6",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/spin-peierls",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Reliable central/warm ZF shape evolution is reported, but the actual lowest logged-temperature ZF portion is not characterized physically after fit failure.",
+        "The nominal30 K points log79.5941/107 K and are correctly not interpreted at nominal30 K.",
+        "No resolved ZF line is not proof of absent order; TF two-line amplitudes fail and do not establish a splitting."
+      ],
+      "judgement_calls": [
+        "Must5 is interpreted literally for the coldest available ZF measurements, not the lowest usable central fit. The report does establish a central-to-warm shape change, but explicitly leaves the actual cold endpoint uncharacterized. Earlier confirmation1 passed this Must through explicit cold29923 versus warm29920 model/shape comparison; this new attempt lacks that independent endpoint statement."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        14,
+        18,
+        19,
+        20,
+        21,
+        22,
+        24
+      ],
+      "scored_at": "2026-10-20T17:50:24.492883+00:00"
     }
   },
   "pending_cases": [
     "copper-diffusion",
-    "spin-peierls",
     "afm-high-tf-mdu",
     "alc-tcnq",
     "ionic-motion-llz",
@@ -1202,16 +1310,16 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 9,
+    "scored": 10,
     "target": 24,
     "scientific_pass": 8,
-    "must_pass": 47,
-    "must_total": 48,
-    "should_pass": 19,
-    "should_total": 32,
-    "exact_copy_pass": 7,
+    "must_pass": 52,
+    "must_total": 54,
+    "should_pass": 21,
+    "should_total": 35,
+    "exact_copy_pass": 8,
     "combined_pass": 6,
-    "boundary_pass": 9
+    "boundary_pass": 10
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates."
