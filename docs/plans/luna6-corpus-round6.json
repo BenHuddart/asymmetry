@@ -1,0 +1,144 @@
+{
+  "metadata": {
+    "host": "Codex CLI / Linux",
+    "model": "gpt-6-luna",
+    "commit": "a24043a8605db79906e5b1cb6a870477a8951ec8",
+    "branch": "codex/luna6-corpus-improvements",
+    "recorded_at": "2026-10-20T03:33:11.846879+00:00",
+    "parallel": 3,
+    "protocol": "two_turn_image_review_v2",
+    "skill_source_policy": "explicit_project_skill_with_personal_copies_disabled",
+    "BLAS_threads": 1,
+    "cases": [
+      "corannulene-alc",
+      "benzene-alc"
+    ],
+    "skill_sha256": "1dfe7417c70d80ab5e328ea7cb55b9599c3e0097d7095f57c49d0fa3465a52b1",
+    "runner_sha256": "78c829cce4e07d83b60a2abc20b2a7df58a73b01d9757a58b1bd395dfa97e7b8",
+    "rubric_sha256": {
+      "corannulene-alc": "db2d44507bcce99e2f21eb7efcbe45e707286c4f51ff591e669839e5000ee745",
+      "benzene-alc": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46"
+    }
+  },
+  "status": "partial; remaining cases running or unscored",
+  "cases": {
+    "benzene-alc": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Recognises the three sub-folders and analyses each separately, with its own work directory, never mixing runs between them.",
+          "pass": true,
+          "evidence": "Separate liquid, solid and solution campaigns/workdirs, independent surveys/run lists."
+        },
+        {
+          "requirement": "Treats every folder as longitudinal-field ALC scans fitted with `integral-scan`, uses the 20 G TF runs only for alpha (naming, for each sub-folder it reduced with a measured alpha, a run and its value \u2014 one of the liquid's two calibration runs is enough), and says alpha was assumed 1.0 for `solution`.",
+          "pass": true,
+          "evidence": "LF integral scans; liquid alpha 1.1916 from 29799, solid 1.2809 from 59731; solution explicitly assumed alpha 1.0."
+        },
+        {
+          "requirement": "Liquid: reports from `integral-scan` fits one resonance in the CHMu(0) scan between 20.7 and 20.9 kG and two in the 28.5\u201330 kG scan, one between 28.9 and 29.0 kG and one between 29.5 and 29.6 kG, with uncertainties or fit quality.",
+          "pass": true,
+          "evidence": "CHMu 20797.364959 G and ordinary ring centres 28944.553236/29538.7 G with uncertainties and mismatch caveats."
+        },
+        {
+          "requirement": "Does not integrate the red/green repeat 29800\u201329854 as an ordinary scan: either fits it as `--period green-red` with a pair model and the red\u2013green field step held from the command's printed offset, or sets it aside and says why.",
+          "pass": true,
+          "evidence": "Repeat green-minus-red with pair dB fixed +44.06 G from printed -44.06 period offset; unresolved lower differential feature kept distinct."
+        },
+        {
+          "requirement": "Solid: reports two resonances from converged fits (a joint fit, or one windowed fit per resonance), one between 19.3 and 19.7 kG and one between 21.3 and 21.6 kG. A failed fit's position is not a fitted resonance.",
+          "pass": true,
+          "evidence": "Two converged local solid lines 19471.947296 \u00b1 3.160592 G and 21469.727020 \u00b1 4.760447 G, checked against cubic backgrounds."
+        },
+        {
+          "requirement": "Solution: names the three samples and fits at least one scan, stating sample and temperature, with a resonance between 20.4 and 21.2 kG.",
+          "pass": false,
+          "evidence": "Three solution samples identified and all seventeen scans attempted, but every width remains bound-pinned; summary explicitly withdraws all centres as resonance measurements and says local-window/baseline work is outstanding. No supported solution resonance is retained."
+        },
+        {
+          "requirement": "Contains no A_\u03bc, A_p, D_\u03bc or resonance field that was not produced by a tool call in this session: no couplings from resonance fields by the worksheet's formulas.",
+          "pass": true,
+          "evidence": "Fields and uncertainties verified in actual non-audit CLI output, no manual coupling conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Solid: from a converged joint fit of both resonances, notes that the lower one is the broader (separately windowed fits with their own backgrounds can hide the difference).",
+          "pass": false,
+          "evidence": "Only local fits; no converged joint solid-line width comparison."
+        },
+        {
+          "requirement": "Assigns in words: liquid lines are \u03940 (the 20.8 kG one the methylene CHMu proton, the pair near 29 kG ring protons); the solid's broad lower line is the \u03941 muon resonance and the narrower upper one a \u03940 line.",
+          "pass": false,
+          "evidence": "No Delta0/Delta1 or methylene/ring assignment."
+        },
+        {
+          "requirement": "Solution: fits several temperatures of one sample and reports the resonance field rising with temperature, as a list of fitted fields.",
+          "pass": false,
+          "evidence": "Lists numeric centre locators but explicitly declines within-sample temperature interpretation because of overextended cross-campaign reference caution."
+        },
+        {
+          "requirement": "Solid: uses the logged sample temperature and notes the calibration run was taken colder than the scan.",
+          "pass": false,
+          "evidence": "Logged drift noted, calibration called outlier rather than explicitly colder."
+        },
+        {
+          "requirement": "Says the worksheet's time-domain questions (relaxation vs field, on-resonance oscillations) were or were not examined.",
+          "pass": true,
+          "evidence": "Explicitly says time-domain wizard fits/FFT not performed for LF integral measurements."
+        },
+        {
+          "requirement": "Names the stored scan JSON and PNG for each fitted scan.",
+          "pass": false,
+          "evidence": "Names workdirs/scans/*.json and decisive PNGs, not each fitted scan JSON and PNG."
+        }
+      ],
+      "number_rule": "PASS: unverified_numbers against completed non-audit commands returns no unsupported values. Actual solid local output gives 19471.947296 \u00b1 3.160592 and 21469.727020 \u00b1 4.760447 G; stored scans corroborate centres, widths and fit quality. No inferred couplings. Interpretation caveat: sentence that the two ordinary dips are indistinguishable misreads a same-feature cross-fit comparison; the two fields themselves are distinctly reported.",
+      "root_cause": "Exact-copy repaired, solid science retained, solution recovery regresses. Agent stops after all seventeen default-bound whole scans and replaces follow-up with a limitation paragraph. Existing width warning asks for bounds/window/baseline checks but audit accepts attempts without that investigation. General next repair: preserve model-independent candidate versus failed-model distinction and require a representative bound-limited line check before transferring an unresolved verdict to a whole homogeneous scan family. Also state which two fits a comparison refers to; different line identities must not be conflated.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 845.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry survey /tmp/asymmetry-luna6-improvements/round6/benzene-alc/data'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry survey /tmp/asymmetry-luna6-improvements/round6/benzene-alc/data/liquid'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry integral-scan /tmp/asymmetry-luna6-improvements/round6/benzene-alc/data/liquid --runs 29800-29854 --period green-red --alpha-from 29799 --deadtime from_file --name liquid-op-differential-29540-pairlocal --model 'LorentzianLCRPair + Linear' --fix dB=44.06 --xmin 29460 --xmax 29620 --plot --workdir asymmetry-work-liquid\"",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "cfba3cb72969a5ef4bf5fdfeca607011e498ddb71aea630098a53e847e9498bf",
+      "rubric_sha256": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round6/benzene-alc",
+      "staged_skill_sha256": "1dfe7417c70d80ab5e328ea7cb55b9599c3e0097d7095f57c49d0fa3465a52b1",
+      "boundary_pass": true,
+      "boundary_check": "PASS: completed commands use staged project skill, supplied datasets and installed CLI/products only; no host skills/source/network/ad hoc scientific scripting.",
+      "permission_denials": 0
+    }
+  },
+  "totals": {
+    "scored": 1,
+    "scientific_pass": 0,
+    "must_pass": 6,
+    "must_total": 7,
+    "exact_copy_pass": 1,
+    "combined_pass": 0,
+    "boundary_pass": 1
+  }
+}

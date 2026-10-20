@@ -605,3 +605,15 @@ source; include AFM magnetic scope and never pool historical passes. Otherwise
 make general improvements and commit before the next wave. Do not repeat broad
 tests while the eval wave runs. Standard validation still has four known GUI
 failures; the objective is not complete and no full24 gate has run yet.
+
+First round-six report scored: benzene 6/7 Musts, exact-copy and boundary pass.
+Both solid lines and ordinary liquid lines remain fitted, but all seventeen
+solution widths remain at default bounds and no representative recovery is
+attempted. The report explicitly withholds every solution resonance pending
+local-window/baseline work; the solution Must therefore fails. It also extends
+cross-campaign field-reference caution to within-sample temperature trends and
+misreads one same-feature cross-fit comparison as comparing the two distinct
+ordinary lines. These are recorded science limitations, not number inventions;
+all numbers verify against actual non-audit CLI output. Corannulene is still
+live in review; do not change CLI/skill until it finishes and is scored. Host
+has 17 GiB available, zero swap use/PSI, 7.2 GiB scratch free. No full24 launch.
