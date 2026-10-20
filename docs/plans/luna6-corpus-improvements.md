@@ -1730,3 +1730,13 @@ checks. All 84 commands and file changes were inspected; source hashes match.
 Totals 93/100 Musts, 14/18 science, 17/18 audit-copy/literal-copy, 13/18 combined,
 18/18 boundary and 31/68 Shoulds. Finish all24 frozen, then commit the complete
 gate and pause; no extra improvements or reruns are authorized.
+
+
+Confirmation3 now 19/24 scored: benzene repolarisation PASS 6/6 Musts,
+3/5 Shoulds, number/unit and boundary checks. Proper LF recovery, actual
+calibration, negative diamagnetic term, poor law fit and return-pass drift are
+reported. Exact-copy fails: the reply removes ', respectively' from a paragraph
+after passing audit. Preserve the actual reply, not the saved report. All25
+commands/file changes inspected; source hashes match. Totals99/106 Musts,
+15/19 science,17/19 audit-copy/literal-copy,13/19 combined,19/19 boundary,
+34/73 Shoulds. Continue the remaining frozen cases, then score and pause.
