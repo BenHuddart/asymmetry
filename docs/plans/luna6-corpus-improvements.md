@@ -210,3 +210,23 @@ lets the agent call statistically compatible rates different. The Ag
 frequency/phase observable is repaired, but MUSR calibration weak-TF context
 and irrelevant sensor-temperature treatment remain wrong. The quartz line
 amplitude series also failed; inspect frequency seeding before changing it.
+
+Three round-two reports are now scored: 19/24 Musts, one scientific/combined
+pass, two exact-copy passes and three boundary passes. LiFeAs repairs the
+Gaussian-width requirement (8/8 Musts), with conditional gap-model fits and
+separate campaigns. Its report quotes earlier real fits before a later t0
+revision while describing final reduction settings; retain this provenance
+limitation. Inspection confirms a further general plotting problem: nuisance
+flags remove the warm sigma points from axis scaling, leaving them clipped
+below the frame. The agent reads that clipping as poor model agreement.
+Parameter-specific reliability must also govern plotting and its limits.
+TRSB improves to 6/7 Musts: both KT forms recover the cold width increase and
+the control rate lacks an onset, but the report stops at additional static
+broadening rather than identifying candidate spontaneous fields/TRSB at Tc.
+Its exact-copy check fails because the reply adds "sample temperatures" after
+"logged" in one table row. Both cases read only the staged skill with frozen
+hash `5a03b792caf69290af6284bf80974e8ac4d35b3f123c670a466b578adb936af3`;
+round-two isolation is working so far. All nine first attempts remain frozen;
+benzene ALC, copper and maleic acid are running, with three more queued.
+Host process inspection confirms one wave and three model subprocesses;
+about 22 GiB is available with no swap/PSI pressure. Do not relaunch live runs.

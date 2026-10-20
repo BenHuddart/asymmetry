@@ -159,15 +159,233 @@
       "boundary_check": "PASS: command inspection found staged/project reads and Asymmetry commands; no personal/source read, network, external calculator or delegation.",
       "boundary_pass": true,
       "permission_denials": 0
+    },
+    "lifeas-psi": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Reduces the data on the `Up/Down` pair (or names another pair transverse to the field) and says so. It does not conclude from the default pair that the runs are longitudinal or do not precess.",
+          "pass": true,
+          "evidence": "Survey on default pair is rejected; all reductions use Up/Down, with Larmor evidence from 3366."
+        },
+        {
+          "requirement": "Treats `LFA` (3366\u20133387) and `LFA_2` (3662\u20133697) as two separate samples or campaigns, not one series.",
+          "pass": true,
+          "evidence": "WED 3366\u20133387 and Veto 3662\u20133697 are separated in scan inventory, calibration, fits and results; no merged series."
+        },
+        {
+          "requirement": "Identifies 3366\u20133373 as the 400 G temperature scan. Reports that the Gaussian TF width \u03c3 is roughly flat at the warm end and rises steeply on cooling (or, with a two-line fit, that the broad vortex component appears on cooling). The onset lies between 14 and 17 K.",
+          "pass": true,
+          "evidence": "Explicit 400 G scan 3366\u20133373; Gaussian sigma rises from warm floor 0.146318 to cold 0.690551; conditional SC fits place onset at 15.346053 or 15.448876 K. The caution about identifying superconductivity does not erase the measured Gaussian trend."
+        },
+        {
+          "requirement": "Reports that the line shifts to lower frequency below the transition (a diamagnetic shift), in words or from fitted frequencies.",
+          "pass": true,
+          "evidence": "Reports cold 5.38432 MHz versus warm 5.39775 MHz; says line shifts upward on warming, hence lower frequency cold."
+        },
+        {
+          "requirement": "Describes the other runs as pairs above and below Tc at each field (a field dependence at base temperature) \u2014 two field scans, at ~20 K and at base, compared field by field, count \u2014 not as a temperature scan or an LF decoupling scan. Reports the paired widths for at least one campaign, or names the fields whose fits failed.",
+          "pass": true,
+          "evidence": "Field scans explicitly interleave warm/base pairs, not LF decoupling. Names cold WED failures at 3200/4000 G and flagged 6000 G; reports Veto widths at 50/100 G."
+        },
+        {
+          "requirement": "Does not present a penetration depth \u03bb, a superfluid density \u03c1_s, or an Uemura-plot position as Asymmetry output. It either omits them or says that converting \u03c3 to \u03bb is not something the tool does.",
+          "pass": true,
+          "evidence": "No penetration depth, superfluid density or Uemura result claimed."
+        },
+        {
+          "requirement": "Does not claim evidence for the paper's field-induced magnetism. The `LFA_2` runs in this folder stop at 200 G.",
+          "pass": true,
+          "evidence": "No field-induced magnetism claim; Veto explicitly stops at 200 G and ordered-state interpretation withheld."
+        },
+        {
+          "requirement": "Contains no \u03c3, Tc, gap ratio, frequency shift, \u03bb or field value that was not produced by a tool call in this session. The paper's Tc values, \u03bb_ab values and exponent n are background.",
+          "pass": true,
+          "evidence": "Consequential sigma, transition, gap, frequency and field values occur in actual survey/reduce/trend/fit/fourier output, not just audit text. No hand conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits an `SC_*` gap law (`trend --model SC_SWave`, `SC_DWave`, \u2026) to \u03c3 against the logged temperature. Reports Tc and \u03c3_0 with their errors and the fit range. States that \u03c3_bg holds the normal-state nuclear width and is added linearly, not in quadrature (a `SC_* + Constant` with the background held counts; freeing both \u03c3_bg and the constant is degenerate).",
+          "pass": false,
+          "evidence": "Fits both SC laws against logged T and quotes errors, but omits the linear-versus-quadrature background convention; fit range available through tabulated T, not explicitly tied to law."
+        },
+        {
+          "requirement": "Does not claim a pairing symmetry that eight points cannot settle. If both s- and d-wave fit, it says so. It notes in words whether \u03c3 is still rising at the lowest temperature.",
+          "pass": true,
+          "evidence": "Does not assert pairing symmetry and lists cold sigma above next point; strong caution about model adequacy."
+        },
+        {
+          "requirement": "Compares the two samples in words at their common fields (100 and 200 G).",
+          "pass": false,
+          "evidence": "Separates campaigns but does not compare them explicitly at their common 100/200 G fields."
+        },
+        {
+          "requirement": "Discusses the background or non-superconducting fraction of the signal, for example a second narrow line at the applied field. If a two-component fit was tried and became unstable near Tc, it says so.",
+          "pass": true,
+          "evidence": "Discusses additive background and unresolved two-line test; does not turn offset into a volume fraction."
+        },
+        {
+          "requirement": "States the reduction provenance: `--background range` (continuous source), which run each campaign's alpha came from, and whether one alpha was carried across both campaigns.",
+          "pass": true,
+          "evidence": "Names all alpha-source runs, Up/Down and background range separately; no alpha shared across campaigns."
+        },
+        {
+          "requirement": "Orders the temperature scan by the logged temperature. Notes that the logged temperature sits above the setpoint (about 1 K higher on the 20 K runs).",
+          "pass": true,
+          "evidence": "Uses logged T and notes the approximately 21.2 K readings for nominal 20 K."
+        }
+      ],
+      "number_rule": "PASS: sigma 0.690551/0.146318, S-wave Tc 15.346053 \u00b1 0.080218, gap_ratio 1.642002 \u00b1 0.044735 and chi2_red 0.821 are printed by trend before the t0 revision. New fits after t0=-3 print 15.348289 \u00b1 0.080311, ratio 1.630297 \u00b1 0.044019 and chi2_red 0.852. Report quotes earlier real outputs without distinguishing calibration versions; provenance limitation recorded separately, not invented numbers.",
+      "root_cause": "Repairs the missing Gaussian trend Must and personal-skill boundary. Remaining issues: plot clips warm sigma points because whole-row flags affect scaling; report mistakes clipping for physical law failure. It quotes pre-t0-revision fits while describing the final t0=-3 reduction. General per-parameter reliability and provenance consistency need improvement. Literal Musts pass; scientific interpretation remains excessively cautious.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1608.3,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 11,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/lifeas-psi/data --series tf-gaussian-temp --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/lifeas-psi/data --series tf-gaussian-temp --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/lifeas-psi/data --series tf-gaussian-temp --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/lifeas-psi/data --series tf-gaussian-temp --model SC_SWave --param sigma --plot'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "e30793cc7ba7d49db567240c402ce7a6364b77cf0d0c5e5011be9c5163fc67a3",
+      "rubric_sha256": "aec00fed822c67878ad9bf50a445b877c14e3eb85af4dfa06d6610dbacace608",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round2/lifeas-psi",
+      "staged_skill_sha256": "5a03b792caf69290af6284bf80974e8ac4d35b3f123c670a466b578adb936af3",
+      "boundary_check": "PASS: completed command inventory reads only staged project skill and staged data/products; no personal skill, source tree, network or ad hoc scientific scripting.",
+      "boundary_pass": true,
+      "permission_denials": 0
+    },
+    "trsb-re6zr": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Identifies the three science scans and their geometry from its own survey: the 400 G TF temperature scan (38178\u201338219), the ZF temperature scan (38223\u201338260) and the 100 G LF scan (38263\u201338273, 38275), and analyses them separately.",
+          "pass": true,
+          "evidence": "Separately inventories and analyses 400 G TF 38178\u201338219, ZF 38223\u201338260 and 100 G LF 38263\u201338273/38275, with geometry from measured precession/flat traces."
+        },
+        {
+          "requirement": "Reports the alpha step between the TF block and the ZF/LF block and calibrates each from a run inside it (38222 for ZF/LF; a TF run of 38176\u201338221 for TF), naming the runs.",
+          "pass": true,
+          "evidence": "Explicit alpha step 38221/38222; sources 38178 for TF and 38222 for ZF/LF, corrected values 0.5556 and 1.3232."
+        },
+        {
+          "requirement": "Treats the 50\u2013200 G field runs as longitudinal, not transverse, and reports that the 100 G LF runs show little or no relaxation at any temperature: the ZF relaxation is decoupled, so its fields are static.",
+          "pass": true,
+          "evidence": "50\u2013200 G controls identified as LF; all twelve 100 G curves lose at most 5.3% by 8 us, versus 88.9% ZF; interprets static-field decoupling."
+        },
+        {
+          "requirement": "Fits the ZF scan with a static Gaussian Kubo\u2013Toyabe \u00d7 exponential + constant (or an equivalent KT model) and says there is no spontaneous precession. It does not adopt a precession model (the wizard has ranked Bessel or Overhauser forms first on some runs) as the ZF physics.",
+          "pass": true,
+          "evidence": "Fits both dynamic GKT and StaticGKT_ZF * Exponential + Constant; no resolved spontaneous precession, no Bessel physics adopted."
+        },
+        {
+          "requirement": "States the headline in words: the ZF KT rate (`Delta`, the paper's \u03c3) rises on cooling below a temperature at or near the TF Tc (within a point spacing of the Tc this session's TF fit gives, or 6\u20137.5 K) while \u039b (or, in a dynamic KT fit, the fluctuation rate \u03bd) shows no such change; the extra relaxation is small against the nuclear rate and is read as spontaneous static fields appearing at Tc \u2014 broken time-reversal symmetry. Calling it a candidate pending a check passes; explaining it away (as nuclear, or as \"not TRSB because it is not in \u039b\") does not.",
+          "pass": false,
+          "evidence": "Recovers cold Delta increase in both KT models and constant Lambda/nu control, and calls additional static broadening below the transition region. However it never identifies spontaneous fields appearing at Tc as a candidate for broken time-reversal symmetry: the only TRSB statement declines to establish/prove it. Static step interval 5.60009\u20136.00006 K is not explicitly compared with TF Tc 6.248918 K; dynamic interval is much broader. This is a substantially improved near miss, not the required candidate headline."
+        },
+        {
+          "requirement": "Reports the TF Gaussian rate \u03c3 rising below a Tc between 6 and 7 K from a flat normal-state value, fits \u03c3(T) with an `SC_*` gap law, quotes Tc and the gap parameter with uncertainties, \u03c7\u00b2\u1d63 and the temperature axis, and says whether a fully gapped (s-wave) law describes it.",
+          "pass": true,
+          "evidence": "Gaussian sigma rises from 0.170107 to 0.456366; logged-T SC_SWave Tc 6.248918 \u00b1 0.029524, gap_ratio 2.196557 \u00b1 0.049324, chi2_red 2.285; says approximately fully gapped and D-wave poorer."
+        },
+        {
+          "requirement": "Contains no Tc, gap, rate or alpha not produced by a tool call in this session (the paper's 6.75/6.78 K, 1.21 meV, 2\u0394/k_BTc = 4.2 and Hc2 are background), and no gap converted to meV or 2\u0394/k_BTc by hand.",
+          "pass": true,
+          "evidence": "All consequential fitted rates, alphas, gap values and decoupling quantities verified in non-audit CLI outputs; no hand meV/ratio conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Orders the TF scan by the logged sample temperature, noting 38180's 0.01 K setpoint is not the sample's temperature.",
+          "pass": true,
+          "evidence": "Logged T axis explicitly used, including 38180 setpoint 0.01 K versus actual 0.30069 K."
+        },
+        {
+          "requirement": "Models the silver-holder background (a second, weakly damped line at the applied field in TF; the constant in ZF), reports the diamagnetic shift of the sample line below Tc, and says how the non-superconducting fraction was handled.",
+          "pass": false,
+          "evidence": "Reports cold-to-warm frequency shift and offset limitation but does not fit a second weakly damped silver-holder line."
+        },
+        {
+          "requirement": "Compares the s-wave law with a nodal one (e.g. `SC_DWave`) and says which the data prefer and why.",
+          "pass": true,
+          "evidence": "D-wave chi2_red 6.432 with undetermined ratio, versus S-wave 2.285; compares curves and supports S-wave approximately."
+        },
+        {
+          "requirement": "Compares the ZF onset with the TF Tc in words, and gives the ZF Tc an honest uncertainty (see traps).",
+          "pass": false,
+          "evidence": "Gives ZF width-change intervals but does not explicitly compare onset with TF Tc or give uncertainty/point-spacing interpretation."
+        },
+        {
+          "requirement": "Accounts for 38176\u201338177 and the 200 G pair 38220\u201338221: analysed, or said why not.",
+          "pass": true,
+          "evidence": "Explains failed 38176\u201338177 pilot and the 200 G pair versus mixed 38274 control."
+        },
+        {
+          "requirement": "Says only the `.nxs` files were analysed and what the other files are.",
+          "pass": false,
+          "evidence": "Names MUSR files but does not say only .nxs analysed or explain RAW/nxs_v2/log/text sidecars."
+        }
+      ],
+      "number_rule": "PASS: actual reduce prints corrected alpha 1.3232; trend prints logged-T S-wave Tc 6.248918 \u00b1 0.029524, ratio 2.196557 \u00b1 0.049324, chi2_red 2.285, Delta 0.276719 \u00b1 0.000939 and static-model Delta 0.262410 \u00b1 0.000796. LF comparison prints 5.3%, 88.9%, 0.258 us^-1 and 3 G. Endpoint values and failed-fit caveats are traceable; no hand-derived gaps.",
+      "root_cause": "Static versus dynamic comparison repairs the previous fit-dependent rejection of the width change, but the final physical headline still stops at extra static broadening rather than candidate TRSB at Tc. Exact-copy fails solely because final response inserts the words \"sample temperatures\" after \"logged\" in the 100 G scan row after the report was audited.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1701.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 8,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --series tf-400-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --series tf-400-gauss --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --series tf-400-gauss --model SC_DWave --param sigma --json'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --series tf-400-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --series tf-400-gauss --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --series tf-400-gauss --model SC_SWave --param sigma --json'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --series tf-400-gauss --model SC_DWave --param sigma --json --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --series tf-400-gauss --model SC_SWave --param sigma'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --series tf-400-gauss --model SC_SWave --param sigma'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --series tf-400-gauss --model SC_DWave --param sigma'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /tmp/asymmetry-luna6-improvements/round2/trsb-re6zr/data --runs 38260-38261,38273-38274 --recipe lfkt-fields --order field --start 38273 --field-param B_L --name lf-10k-decoupling --plot'",
+          "exit_code": 2
+        }
+      ],
+      "summary_sha256": "a5b903166db89cbc2a95009cb371683f67ca902ee0a3215d49d5fb42cc134279",
+      "rubric_sha256": "9b37cf0242fec13643391e4be4d75ce3791578ee9633fe4b675ce8fb1b19fdcc",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round2/trsb-re6zr",
+      "staged_skill_sha256": "5a03b792caf69290af6284bf80974e8ac4d35b3f123c670a466b578adb936af3",
+      "boundary_check": "PASS: completed command inventory reads only staged project skill and staged data/products; no personal skill, source tree, network or ad hoc scientific scripting.",
+      "boundary_pass": true,
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 1,
-    "scientific_pass": 0,
-    "must_pass": 5,
-    "must_total": 9,
-    "exact_copy_pass": 1,
-    "combined_pass": 0,
-    "boundary_pass": 1
+    "scored": 3,
+    "scientific_pass": 1,
+    "must_pass": 19,
+    "must_total": 24,
+    "exact_copy_pass": 2,
+    "combined_pass": 1,
+    "boundary_pass": 3
   }
 }
