@@ -522,3 +522,16 @@ record with four known GUI sizing failures. Commit this improvement round,
 then launch fresh corannulene-alc and benzene-alc cases using gpt-6-luna and
 fixed rubrics/two-turn review. Prelaunch memory 18 GiB available, zero swap
 use/PSI; /tmp has 8.9 GiB free. No evaluations overlapped the tests.
+
+Round five is committed as `31bff2a`; the two-case Luna wave is LIVE under
+`/tmp/asymmetry-luna6-improvements/round5`, exec session `49577`, console
+`/tmp/asymmetry-luna6-round5-wave.log`. Host inspection confirms one wave, two
+model processes and no tests. Both case runners started successfully. Freeze
+CLI/skill until both finish and are scored. Metadata records frozen skill
+`0f9857b9c93ef7ed0b352cef0cbfe8d768f98e623883006081b9f2b038061d92`,
+runner/rubric hashes and first-attempt source commit. Record scores in
+`docs/plans/luna6-corpus-round5.json`; `/tmp/score-luna6-round5.py` is a manual
+record helper, not a judge. If both pass science, exact-copy and boundary,
+launch a fresh `--set all` 24-case confirmation wave with the same committed
+source; score every case, including AFM physics scope. Otherwise improve again
+and commit before the next targeted wave. No full confirmation has run yet.
