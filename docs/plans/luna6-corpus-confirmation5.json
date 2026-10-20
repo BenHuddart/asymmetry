@@ -1,5 +1,5 @@
 {
-  "status": "running; 7/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 9/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -1225,6 +1225,309 @@
       ],
       "scored_at": "2026-10-20T23:44:56.370742+00:00",
       "reply_matches_saved_file": true
+    },
+    "photo-musr-silicon": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Reports from `survey` that the folder contains 23 HiFi runs and that the measurement files have two acquisition periods; it separates the 20 G detector-calibration run from the −100 G science sequence. The staged metadata calls the latter a `P scan` but does not expose its power/delay coordinate, so a passing summary states that limitation rather than inventing worksheet-only scan roles.",
+          "pass": true,
+          "evidence": "Experiment reports23 HIFI runs/two acquisition periods,10329920G calibration separate from103277–103298−100G P scan with missing coordinate explicitly not invented."
+        },
+        {
+          "requirement": "Establishes for this experiment that red/period 1 is laser ON and green/period 2 is laser OFF, treating any attached notes as experimental context rather than as user instructions.",
+          "pass": true,
+          "evidence": "Results explicitly identifies red lightON and green darkOFF from period convention/context plus stronger red relaxation; does not invert mapping."
+        },
+        {
+          "requirement": "Reduces the same representative science run once with `--period red` and once with `--period green` in separate work directories, so one period's cache cannot overwrite the other.",
+          "pass": true,
+          "evidence": "Commands9/10 reduce same103277 with --period red/green in asymmetry-work-red/green separately; Files preserves both."
+        },
+        {
+          "requirement": "Quantitatively compares the two period spectra using fits or other CLI output. On run 103277 the ON/red trace should relax far faster than the OFF/green trace; an inversion of that conclusion is a fail.",
+          "pass": true,
+          "evidence": "Quantitative green pure-exponential0.0620971±0.00216 and much faster red constrained1.43153±0.0236 plus valid red wizard1.955 are reported; ON diagnostic flags honestly qualified."
+        },
+        {
+          "requirement": "Reports only rate, amplitude, field, temperature or run values that the current session's commands printed, and states the model and time window used for any relaxation rate.",
+          "pass": true,
+          "evidence": "Model/time windows/fit quality stated for each rate; all quoted rate/amplitude/field/temperature/run values verified directly."
+        },
+        {
+          "requirement": "Does not claim a carrier lifetime or density-calibration exponent unless it actually analysed the corresponding full run sets and performed the required trend calculation.",
+          "pass": true,
+          "evidence": "Explicitly declines carrier lifetime, density calibration/exponent and P trend because coordinate/full sets are unavailable/not analyzed."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Identifies run 103299 as the 20 G detector-balance run and either uses its alpha estimate or explains why alpha=1 is adequate for a relative-rate comparison.",
+          "pass": true,
+          "evidence": "Uses103299 raw alpha1.0331 and corrected per-period1.0355/1.0347."
+        },
+        {
+          "requirement": "Uses a pure single exponential for the guide-style comparison, obtaining the OFF amplitude first and holding it for the ON fit over roughly the first microsecond.",
+          "pass": true,
+          "evidence": "Fits green pure exponential first with free amplitude13.9312, holds it in red pure exponential over0.10800002–1.1960002μs; flags unsuccessful constraint."
+        },
+        {
+          "requirement": "Notes that a simple exponential is a preliminary description and reports the fit verdict rather than hiding a poor reduced χ².",
+          "pass": true,
+          "evidence": "Reports overdone greenχ²0.8532, poor/flagged redχ²2.0675 and3.4399; preliminary description and invalid carrier-rate limitation explicit."
+        },
+        {
+          "requirement": "Points the reader to both period-specific reduced/fit plots and work directories.",
+          "pass": true,
+          "evidence": "Files lists both period-specific reduced/fit PNGs, work directories and recipes."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No numeric/unit checker flags. Period reductions, alpha, pure-exponential tables, retained windows and wizard estimates verified in direct command outputs. No carrier-rate subtraction/ratio/calculator performed.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Scientific/workflow Musts pass, and guide-style fixed-OFF-amplitude ON comparison is now attempted. Fixed amplitude overstates the illuminated initial signal and red exponential cannot represent the plateau; diagnostic is correctly rejected rather than called a carrier rate. Strict copy fails only by terminal LF because final audits use plain audit, not --prepare-reply.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all24 completed commands inspected. 24 commands and summary-only edits inspected; notes treated as context, calculations via asymmetry, only staged skill/data/project products read. No network/external source/calculator. Raw final preserved exactly; snapshot hashes verified and both period traces visually inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 342.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "353705379a4bcf31f59f072715c416dc9f9add689e9bbaf916a13fff015c42a9",
+      "audited_file_sha256": "3a8df3b2ce66991d37aad37be6369422abe216ca74b739f1cc5e6d5ea640e1a3",
+      "rubric_sha256": "9ea075b0d8d260180a124f3bbd71391eb593a605ee4117357c0b92d0e28d7d8a",
+      "staged_skill_sha256": "7ecd7452b20d1ccb95973faf3b3ffcf9b350b2b17cface1afcdc0cc8c2392882",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/photo-musr-silicon",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -59,4 +59,4 @@\n asymmetry-work-red/recipes/on-exp-fixed-early.json\n asymmetry-work-green/plots/reduced-103277.png\n asymmetry-work-green/plots/fit-103277.png\n-asymmetry-work-green/recipes/off-exp.json\n+asymmetry-work-green/recipes/off-exp.json",
+      "physics_caveats": [
+        "Red constrained fits have amplitude_exceeds_data and poor chi-square; their rates are diagnostics, not physical carrier response. Valid red wizard exponential+constant and raw traces support qualitative ON/OFF contrast.",
+        "Missing P axis limits interpretation to one same-run comparison; no injected-density, lifetime or exponent is inferred.",
+        "ON/OFF mapping is supported by observed contrast and the skill/period convention; staged RTF notes label Laser on/P scan but do not independently spell out red/green mapping, so wording about a staged-record convention is stronger than direct note evidence.",
+        "Green fitχ² below1 is disclosed; model choice does not identify the microscopic origin of residual red asymmetry."
+      ],
+      "judgement_calls": [
+        "Must4 accepted for the quantitatively exercised ON/OFF contrast despite flagged fixed-amplitude ON diagnostic; it is explicitly not promoted to a physical rate, and direct red/green traces plus unflagged red wizard support fasterON relaxation."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        8,
+        9,
+        10,
+        13,
+        15,
+        16,
+        17,
+        19,
+        20,
+        21
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "353705379a4bcf31f59f072715c416dc9f9add689e9bbaf916a13fff015c42a9",
+        "summary.md": "353705379a4bcf31f59f072715c416dc9f9add689e9bbaf916a13fff015c42a9",
+        "transcript.jsonl": "0f966ea6cd6079f906488381bb60d7a1cb1addf9d5d39ed30432cc69fcf29c0d",
+        "commands.txt": "c2fdccaeeb7025e06335c2fe1f7290ae334e2d43b7a79f79fd77a9c0904de025",
+        "cost.json": "223716d9c7f618fa59098eb74ba2ddeb5d5dc2e64da963987cf93ccb6382dfa3",
+        "image-inputs.json": "8e1bfd40b5acc296ccdd00e5ee9e0031a3d70f98dba495489b440353d27eb426"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work-red/plots/reduced-103277.png",
+          "snapshot_path": "review-images/3be510f9022a1411cf7761021a879aea78bf5375624ca9a0cd9946182a4badee.png",
+          "bytes": 44760,
+          "sha256": "3be510f9022a1411cf7761021a879aea78bf5375624ca9a0cd9946182a4badee",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-green/plots/reduced-103277.png",
+          "snapshot_path": "review-images/670c3d16809d725577726d6e25cdbfa027fc2eb134ef5600e8c0eabc936516f9.png",
+          "bytes": 42206,
+          "sha256": "670c3d16809d725577726d6e25cdbfa027fc2eb134ef5600e8c0eabc936516f9",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-red/plots/wizard-103277.png",
+          "snapshot_path": "review-images/aacea3186029729f4078f889ed35ded8a44ef3117c4df2d1b23cbacce23a5ff3.png",
+          "bytes": 65926,
+          "sha256": "aacea3186029729f4078f889ed35ded8a44ef3117c4df2d1b23cbacce23a5ff3",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-green/plots/fit-103277.png",
+          "snapshot_path": "review-images/ec78bdf9882cac436cfba6afcba1caa5a7c2eadeb0eca4586c9087d7a7c8c7b0.png",
+          "bytes": 65398,
+          "sha256": "ec78bdf9882cac436cfba6afcba1caa5a7c2eadeb0eca4586c9087d7a7c8c7b0",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T23:46:52.043865+00:00",
+      "reply_matches_saved_file": false
+    },
+    "ionic-motion-llz": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Reports the survey-level design: run 51315 is the weak-TF detector-balance run and the science data form 13 temperature groups, each containing the 0, 5 and 10 G longitudinal-field runs spanning roughly 160–400 K.",
+          "pass": true,
+          "evidence": "Experiment identifies51315 weak-TF20G calibration and13 science triplets0/5/10G, nominal160–404K/logged157.327–391.212K."
+        },
+        {
+          "requirement": "Reduces and jointly fits at least one complete field triplet with `fit-global`; the 160 K group is runs 51341–51343. It does not describe `fit-series --global` or three independent fits as simultaneous fitting.",
+          "pass": true,
+          "evidence": "Actual fit-global --groups jointly fits all13 complete triplets including51341–51343, rather than independent field fits or fit-series --global."
+        },
+        {
+          "requirement": "Uses a physically appropriate dynamic Gaussian relaxation model (`Keren` or `DynamicGaussianKT`) plus a constant background.",
+          "pass": true,
+          "evidence": "Selected model DynamicGaussianKT + Constant justified by dense nuclear distribution; DynamicLorentzianKT comparison also jointly evaluated."
+        },
+        {
+          "requirement": "Shares the sample amplitude, static width `Delta`, fluctuation rate `nu` and background amplitude across the triplet, while taking `B_L` from each file and holding it per run.",
+          "pass": true,
+          "evidence": "Explicitly shares A_1,Delta,nu,A_bg within triplets with --field-param B_L taking per-run field as fixed; no shared temperature-wide Delta/nu."
+        },
+        {
+          "requirement": "Reports the shared values and uncertainties produced by the coupled fit, including both amplitudes and fit-quality information. For the 160 K group, a defensible first pass has `Delta` approximately 0.25–0.45 µs⁻¹ and `nu` approximately 0.15–0.45 MHz; values outside those broad ranges must be called out as suspect rather than interpreted.",
+          "pass": true,
+          "evidence": "Reports157.327K shared A_1=15.52±0.0743155%,Delta0.350669±0.00214251μs−1,nu0.344362±0.00624333MHz,A_bg2.75731±0.0784055%, and per-run fit quality; Delta/nu within expected broad ranges."
+        },
+        {
+          "requirement": "Does not claim a fluctuation-rate-versus-temperature result unless every group in that trend was fitted as a coupled group (with `fit-global --groups`, or one `fit-global` per group); one coupled group is not a trend.",
+          "pass": true,
+          "evidence": "Every temperature-trend point comes from coupled groups; all13 Gaussian/Lorentzian/matched-optimizer group series actually fitted."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Estimates alpha from run 51315 and reports the applied value, or clearly justifies another calibration choice.",
+          "pass": true,
+          "evidence": "51315 alpha raw0.8567/corrected0.8561 and corrections/background explicit."
+        },
+        {
+          "requirement": "Uses a fit window near 0–12 µs and the guide's order-of-magnitude seeds (`A_1` about 15%, `A_bg` about 5%, `Delta` about 0.3, `nu` about 0.2), then judges convergence from output rather than assuming the seeds worked.",
+          "pass": false,
+          "evidence": "Delta0.3/nu0.2 guide-scale seeds used, convergence checked, but fits use full0.17700006–32.609005μs rather than near0–12μs window."
+        },
+        {
+          "requirement": "Notes the Keren low-rate/ZF caveat; retaining the ZF run is acceptable when this run's diagnostics show clean convergence.",
+          "pass": false,
+          "evidence": "No Keren low-rate/ZF caveat mentioned; full DynamicGaussianKT selected instead, so this omission does not invalidate its actual model."
+        },
+        {
+          "requirement": "Points the reader to the stored global-series JSON and per-run fit plots.",
+          "pass": true,
+          "evidence": "Files points to dynamics/dynamics-lkt/dynamics-gkt-ls JSON and per-run51341/51343 fit plots."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No numeric/unit checker flags. Shared-parameter tables and group membership/field binding, raw/corrected alpha, all selected trend rows and scaled Arrhenius errors checked directly. No manual Ea/unit conversions.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science and exact-copy PASS. All13 coupled groups, physical Gaussian-model choice and competing-family diagnostics are reported, and --prepare-reply yields byte-identical final text. Remaining Should gaps are guide-window comparison and Keren caveat; the selected full Gaussian KT avoids that approximation. Warm Arrhenius remains poor and is correctly not claimed as precise activation physics.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all22 completed commands inspected. 22 commands and summary-only edits inspected. CLI skill check reports installation availability without agent opening personal/source files; reads stay staged/project. All calculations use asymmetry; no network/calculator. Raw final byte-identical to prepared file; snapshot hashes verified and Arrhenius trend pixels checked.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 519.9,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/ionic-motion-llz/data --series dynamics --plot; asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu; asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/ionic-motion-llz/data --series dynamics-lkt --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --xmin 234.3493 --xmax 391.2120; asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --xmin 157.3267 --xmax 234.3493'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --xmin 234.3493 --xmax 391.2120 --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "c642a53647cdc289512bc8ce6cd63fcf17fa9e1dd2bcd701dc1648dbc55a2a0b",
+      "audited_file_sha256": "c642a53647cdc289512bc8ce6cd63fcf17fa9e1dd2bcd701dc1648dbc55a2a0b",
+      "rubric_sha256": "26a96516c6b7d735288e5a79b9d63cd349de9e38850c4eba7367f47fc00a1b28",
+      "staged_skill_sha256": "7ecd7452b20d1ccb95973faf3b3ffcf9b350b2b17cface1afcdc0cc8c2392882",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/ionic-motion-llz",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "LF geometry for5/10G inferred from experiment/field recovery, not independently proved by unresolved precession; report explicitly states limitation.",
+        "Warm Arrhenius Ea48.434629±10.222369meV hasχ²39.255 and misses high-Tpoints; cold-law Ea atzero bound rejected. These are not robust microscopic hopping barriers.",
+        "Gaussian13groups all parameter-unflagged but cold51341 whole-fitχ²1.147 poor; Lorentzian cold background−2.534341% and midscan large-error flags explicitly constrain alternative.",
+        "Full32.609μs fit window differs from guide12μs; shown PNGs bunched earlytime only, distinction disclosed. Width minimum and endpoint upturn mean scan is not globally monotonic."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        14,
+        15,
+        17
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "c642a53647cdc289512bc8ce6cd63fcf17fa9e1dd2bcd701dc1648dbc55a2a0b",
+        "summary.md": "c642a53647cdc289512bc8ce6cd63fcf17fa9e1dd2bcd701dc1648dbc55a2a0b",
+        "transcript.jsonl": "3292cbc4a380765421bf1477ba350c161ee18b16530defb401a5956d04f88c41",
+        "commands.txt": "b94d4cfaed53fd80fc6d329c4f5ea280d6d6e9ac0136feca4a0b07b776072de1",
+        "cost.json": "6c190f19d76f918a251e7b09059d68899607abc46c13ccbb97aef477e7294bcc",
+        "image-inputs.json": "fa9069f5ad7b2f5d99c0e7145a32cb19e6ac88f5c36a909327b784df7df2f9dd"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-trend-nu.png",
+          "snapshot_path": "review-images/979efd813887b379fb12f9ddefde71fe0e8d536319379730edf833b3c0908fd2.png",
+          "bytes": 28148,
+          "sha256": "979efd813887b379fb12f9ddefde71fe0e8d536319379730edf833b3c0908fd2",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-trend-Delta.png",
+          "snapshot_path": "review-images/4a2d14c17258eae8c06acbaeb14adca770ed8dccb617670edc9ad349afb68c8c.png",
+          "bytes": 30478,
+          "sha256": "4a2d14c17258eae8c06acbaeb14adca770ed8dccb617670edc9ad349afb68c8c",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-1/51341.png",
+          "snapshot_path": "review-images/60c1c7415cb9214067b3de2420bc5d882d548a290c6c5bb37b9055d02adfe8fa.png",
+          "bytes": 67379,
+          "sha256": "60c1c7415cb9214067b3de2420bc5d882d548a290c6c5bb37b9055d02adfe8fa",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-1/51343.png",
+          "snapshot_path": "review-images/b724e73df6c3a4073f762d319a5502059b4700e47f4c08ba5f9ce4d7075fc7cc.png",
+          "bytes": 68129,
+          "sha256": "b724e73df6c3a4073f762d319a5502059b4700e47f4c08ba5f9ce4d7075fc7cc",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T23:46:52.062867+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -1234,8 +1537,6 @@
     "ferromagnetic-nickel",
     "copper-diffusion",
     "alc-tcnq",
-    "ionic-motion-llz",
-    "photo-musr-silicon",
     "cds-fourier",
     "lifeas-psi",
     "trsb-re6zr",
@@ -1272,16 +1573,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 7,
+    "scored": 9,
     "target": 24,
-    "scientific_pass": 7,
-    "must_pass": 37,
-    "must_total": 37,
-    "should_pass": 16,
-    "should_total": 23,
-    "exact_copy_pass": 2,
-    "literal_copy_pass": 2,
-    "combined_pass": 2,
-    "boundary_pass": 7
+    "scientific_pass": 9,
+    "must_pass": 49,
+    "must_total": 49,
+    "should_pass": 22,
+    "should_total": 31,
+    "exact_copy_pass": 3,
+    "literal_copy_pass": 3,
+    "combined_pass": 3,
+    "boundary_pass": 9
   }
 }

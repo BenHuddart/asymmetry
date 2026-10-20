@@ -2028,3 +2028,6 @@ Confirmation5 now5/24 scored: PTFE6/6 Musts repairs prior falsezero claim, scien
 
 
 Confirmation5 now7/24scored: highTF-AFM5/5 literalMusts and independent magnetic physics_scope PASS; noSCgaplaw, copyFAILoneLF. HighTc5/5Musts and exact-copy PASS; all3field/instrument groups and13fieldpairs exercised. Shoulds3/3 (recorded732temperature/limitedresolution judgements explicit) and2/3. Totals37/37Musts,7/7science,2/7copy/combined,7/7boundary,16/23Shoulds. NegativeAFMbaseline, poorfit, conditionalcuprategaplaw/overwrittenDwaveplot and detector-test wording caveats retained. Source remains frozen.
+
+
+Confirmation5 now9/24scored: silicon6/6Musts and4/4Shoulds; same-run periodfit/guide-styleOFF-amplitudehold exercised, flaggedONrate retainedasdiagnostic, copyFAILoneLF. LLZ6/6Musts,2/4Shoulds, exact-copyPASS; all13coupledgroups pluscompetingfamily/optimizercomparison andpoorArrheniuscaveats verified. Totals49/49Musts,9/9science,3/9copy/combined,9/9boundary,22/31Shoulds. Source remains frozen; score remaining actual replies as completed.
