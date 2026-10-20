@@ -79,10 +79,119 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; fresh full24 gate; no reports scored yet",
-  "cases": {},
+  "status": "running; 1/24 reports scored; remaining cases pending; source frozen",
+  "cases": {
+    "plateau-redfield": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Uses run 9023 for alpha and says so.",
+          "pass": true,
+          "evidence": "\"Alpha calibration came from run9023, groups1/2\"; raw alpha1.0069 and corrected applied1.0097 with file deadtime/tail_fit are stated."
+        },
+        {
+          "requirement": "Treats the longitudinal-field runs from 9035 to 9051 (with or without the zero-field 15.9 K runs 9031–9034 before them) as the 15 K field sweep, and does not present 9024–9030 as 15 K points of that sweep.",
+          "pass": true,
+          "evidence": "Separates cooling9024–9030 (logged285.169–75.7193 K despite15 K setpoint) from LF9035–9051 at logged15.46–15.85 K,1000–38000 G; ZF9031–9034 co-added separately."
+        },
+        {
+          "requirement": "Reports the relaxation rate falling as the longitudinal field rises through the sweep, from a series fitted along field.",
+          "pass": true,
+          "evidence": "Reports field-ordered single-exponential series for all17 LF runs, Lambda6.14224 ±1.45424 at1000 G falling toward0.3013 at29000–38000 G, with flagged/fit-quality and multichannel caveats."
+        },
+        {
+          "requirement": "Fits Redfield's law to λ(B) with the CLI (`trend --model Redfield` or a sum containing it), states the field range fitted, and reports the fitted parameters with uncertainties as the command printed them.",
+          "pass": true,
+          "evidence": "Actual trend command14 uses --model Redfield --param Lambda; final report gives fitted1000–38000 G range, D25.714501 ±0.653354 MHz, nu109.943462 ±16.972454 MHz, m1.504408 ±0.099556, chi2_red1.752 and visible low-field mismatch."
+        },
+        {
+          "requirement": "Contains no correlation time, field width or rate that was not produced by a tool call in this session (the handout's and paper's values are background).",
+          "pass": true,
+          "evidence": "All decisive values occur in actual survey/reduction/wizard/fit-series/trend outputs, with scaled Redfield errors verified in command14. No hand conversion to correlation time or field width; independent number checker excludes audit/draft displays and returns []."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits over the plateau (roughly 0.5–3.6 T) rather than the whole sweep, or says why not.",
+          "pass": false,
+          "evidence": "Fits the whole1000–38000 G span; explains rough/multichannel interpretation but does not justify choosing the whole sweep over the plateau-only interval."
+        },
+        {
+          "requirement": "Holds the Redfield exponent `m` at 2 (the handout's equation) or says why it was left free.",
+          "pass": false,
+          "evidence": "Reports fitted m1.504408 ±0.099556 but neither fixes m=2 nor explains leaving the Redfield exponent free."
+        },
+        {
+          "requirement": "Says how the initial and background asymmetries were handled as the field rises (the handout's first question).",
+          "pass": true,
+          "evidence": "Explicitly distinguishes relaxing A_1 from strongly increasing nonrelaxing/background A_bg, tabulates both and cautions that A_1 is not total recovered asymmetry."
+        },
+        {
+          "requirement": "Comments on whether the plateau edges show in λ(B) (a change of slope near 0.5 T, flattening near 3.6 T), marked as a qualitative reading.",
+          "pass": false,
+          "evidence": "Discusses general flattening/high-field level and says plateau boundaries are not identified; does not specifically assess both expected plateau edges in Lambda(B)."
+        },
+        {
+          "requirement": "Notes the cooldown in 9024–9030 from the logged temperature.",
+          "pass": true,
+          "evidence": "Explicitly describes9024–9030 as cooldown from285.169 to75.7193 K and rejects the misleading constant15 K setpoint interpretation."
+        }
+      ],
+      "number_rule": "PASS: independent scientific-command source text excludes summary/audit/draft displays; unverified_numbers=[]; all consequential rates, fitted coefficients, uncertainties, calibrations and run ranges checked against actual CLI output. No unprinted physical arithmetic or conversion.",
+      "root_cause": "All Musts pass. Remaining Should gaps concern law scope: trend command14 accepts the default full field span and free exponent, with no plateau-window comparison or stated reason for relaxing the textbook exponent. The report retains rough-fit and multichannel caveats but does not evaluate both expected plateau edges. General interval/parameter-assumption comparison would address these gaps; no implementation changes are authorized during the gate.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all22 completed commands inspected; staged skill/references, supplied data/logbook and installed CLI/products only. No source/rubric/host-skill/network reads or ad hoc numerical scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 450.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 4,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/plateau-redfield/data --series lf-field-single-exp --plot --model Redfield --param Lambda'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "runtime_caveats": "CLI printed sandbox stream-fd and unwritable Matplotlib-cache warnings, but all commands exited0 and analysis/plots completed; no permission-denied agent action or outside-boundary access observed.",
+      "summary_sha256": "454f37984e88d57371b9d5ef0655951eb06b4340bae4969ede64a30d604d1032",
+      "audited_file_sha256": "454f37984e88d57371b9d5ef0655951eb06b4340bae4969ede64a30d604d1032",
+      "rubric_sha256": "23bb04d9a398fa17dde7cf8fc51632eda64e51646ad926a80a7462453df6243e",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/plateau-redfield",
+      "exact_copy_evidence": "Final reply is byte-identical to audited project/summary.md, including complete file list; runner final_report_audited=true.",
+      "number_evidence_commands": [
+        1,
+        3,
+        5,
+        6,
+        7,
+        10,
+        11,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18
+      ],
+      "physics_caveats": [
+        "Redfield is a rough empirical field-rate parameterization of single-exponential rates despite multichannel screening; low-field fit mismatch is stated.",
+        "Free exponent/full-sweep fit is not a verified plateau-restricted Redfield-law test.",
+        "No resolved ZF precession is not interpreted as absence of magnetic order."
+      ],
+      "scored_at": "2026-10-20T16:50:30.339377+00:00"
+    }
+  },
   "pending_cases": [
-    "plateau-redfield",
     "sn-critical-field",
     "euo-psi",
     "maleic-mu-kinetics",
@@ -108,14 +217,16 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 0,
+    "scored": 1,
     "target": 24,
-    "scientific_pass": 0,
-    "must_pass": 0,
-    "must_total": 0,
-    "exact_copy_pass": 0,
-    "combined_pass": 0,
-    "boundary_pass": 0
+    "scientific_pass": 1,
+    "must_pass": 5,
+    "must_total": 5,
+    "should_pass": 2,
+    "should_total": 5,
+    "exact_copy_pass": 1,
+    "combined_pass": 1,
+    "boundary_pass": 1
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates."

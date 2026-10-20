@@ -1246,3 +1246,17 @@ transcripts before any launch; never duplicate live runs. Stay quiet when
 unchanged/non-actionable and notify on meaningful scores,completion,failure or
 required input. Standard validation still has the four known GUI failures;
 no validation was repeated for this unchanged implementation.
+
+
+Confirmation2 first completed report scored:plateau-redfield PASS,5/5 Musts,
+number rule/exact-copy/boundary pass,2/5 Shoulds. It separates the real cooldown
+from the LF sweep and reports actual converged Redfield D,nu,m/errors over
+1000–38000 G with rough-fit/multichannel caveats. Remaining Should gaps:whole-
+sweep rather than justified plateau interval,free exponent without explanation,
+and no explicit assessment of both plateau edges. All22 commands inspected;
+no ad hoc physical arithmetic/source access. Actual final reply matches saved
+report byte-for-byte. Source manifest/skill/rubric hashes remain frozen.
+At this check Sn,EuO and maleic acid are running;one wave/three model processes,
+24 GiB RAM available,no swap/current memory PSI,653 GiB persistent disk free.
+No tests or duplicate evals. Keep all24 running and score as reports finish;
+do not infer a full-gate result from this first pass or alter source.
