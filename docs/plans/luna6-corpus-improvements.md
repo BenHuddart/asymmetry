@@ -287,3 +287,26 @@ Eight reports scored: 44/57 Musts, three scientific/combined passes, six
 exact-copy passes and eight boundary passes. One host wave and one AFM model
 process remain; about 20 GiB available with no swap or memory pressure.
 No CLI/skill changes until AFM completes and is scored.
+
+Round two is complete (supervising session 19319 exited 0; host inspection
+shows no remaining eval/model processes). Final result: 49/62 Musts,
+4/9 scientific passes, 7/9 exact-copy passes, 4/9 combined and 9/9 boundary.
+Same nine cases in round one: 52/62 Musts, 2/9 scientific, 8/9 copy and 1/9
+combined. Scientific case count improved but Must coverage regressed, mainly
+corannulene and Basics; this is not an all-pass gate. AFM retains all five
+Musts and the corrected magnetic scope without a superconducting-gap fit.
+All first attempts, host/model and frozen hashes are in the completed score
+record. The CLI/skill freeze is now lifted for round three.
+
+## Round three
+
+Implement general repairs before launching the next Luna wave:
+parameter-specific pinned/large-error diagnostics for summaries and plots;
+uncertainty-aware endpoint differences; primary fitted quantity/units for
+concentration slopes; a report reconciliation step preserving qualified
+estimates, sample identities, calibration/model versions and final audited
+text. Investigate broader local bounds/curved baselines for broad ALC dips
+without corpus-specific branches. Keep the rubrics and two-turn protocol fixed.
+Run focused and fast checks with at most two workers on this now-quiet host,
+then the required standard gate (known four GUI sizing failures remain).
+Commit all round-three changes before starting its evaluation wave.

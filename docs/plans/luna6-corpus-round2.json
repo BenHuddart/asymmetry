@@ -34,7 +34,7 @@
       "afm-high-tf-mdu": "062fa8082f95b4b6cb7f075cf9a287e8add6d5313d56290d3d5ead8bc95725cf"
     }
   },
-  "status": "partial; remaining cases running or unscored",
+  "status": "complete; all nine first attempts scored",
   "cases": {
     "basics": {
       "verdict": "FAIL",
@@ -880,15 +880,100 @@
       "boundary_check": "PASS: completed command inventory uses staged project skill and supplied data/CLI products only; no personal skill/source tree/network/ad hoc scientific scripting.",
       "boundary_pass": true,
       "permission_denials": 0
+    },
+    "afm-high-tf-mdu": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the two temperature scans by field (6 T and 8 T) with their run ranges, from the survey rather than from file names alone.",
+          "pass": true,
+          "evidence": "Own survey gives separate 60000 G runs 686\u2013693 and 80000 G runs 730\u2013739 with temperature axes and measured TF Larmor signal."
+        },
+        {
+          "requirement": "Resolves the precession near the Larmor frequency into more than one line (from a Fourier transform or a multi-component fit) at at least one field, and says which it used. Reporting the two lines passes even when it calls the splitting not precisely resolved; it fails when it concludes there is one line.",
+          "pass": true,
+          "evidence": "Explicit two-line fits in both fields plus tabulated FFT peaks; calls fine splitting provisional rather than concluding a single line."
+        },
+        {
+          "requirement": "Reports a change in the spectrum or line shape (broadening, splitting or extra structure) on cooling through the tens-of-kelvin region at at least one field, from this session's own fits or spectra.",
+          "pass": true,
+          "evidence": "Reports cooling broadening/damping changes: 6 T Lambda_4 changes 12\u201330 K and 8 T Lambda_2 over 10.4659\u201349.9994 K, with individual values and poor-fit caveats."
+        },
+        {
+          "requirement": "States which parts of a full analysis the tool cannot do (MaxEnt field spectra; a multi-group field-distribution analysis); does not present a canting angle or ordered moment as a finding, and does not infer the absence of magnetic order from a single-line fit.",
+          "pass": true,
+          "evidence": "Explicit MaxEnt/multi-group limitations, no canting angle or moment claimed, no absent-magnetism inference. Magnetic tf-knight-precession scope used; no superconducting gap fit or vortex-lattice assertion."
+        },
+        {
+          "requirement": "Contains no transition temperature, field shift or line parameter that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All line parameters, shifts and temperatures verified in own survey/fit/trend/fourier output, no paper transition/canting parameters."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reports the recorded run temperature where it differs from the title (run 732 is titled 12 K but recorded at 10.5 K).",
+          "pass": true,
+          "evidence": "Tabulates recorded 10.4659 K for run 732, though does not explicitly contrast its 12 K title."
+        },
+        {
+          "requirement": "If it quotes a transition temperature, it comes from a stated `trend --model` fit to a line parameter with the fit range given, and is framed as that fit's result rather than the paper's T_N, which rests on the wing area of MaxEnt spectra.",
+          "pass": true,
+          "evidence": "No transition temperature quoted or external T_N imported; explicitly declines physical-law fit for poor/model-dependent trends."
+        },
+        {
+          "requirement": "Notes that the two central lines are separated by roughly one Fourier resolution element, so a zoomed spectrum's empty peak table is not evidence that the second line is absent.",
+          "pass": true,
+          "evidence": "States fitted cold pair closer than 0.105316 MHz FFT resolution, and warm 8 T pair within two resolution elements; not interpreted as absence of a second line."
+        }
+      ],
+      "number_rule": "PASS: actual 6t-two-line trend prints cold Lambda_4 0.670215 \u00b1 0.028808 and warm 0.0802009 \u00b1 0.00921704; actual Fourier 730 prints 1084.848567/1084.623985 MHz. Gaussian comparison prints shift -0.01995 \u00b1 0.00183 MHz. Detailed line tables match non-audit CLI outputs; no invented transition/canting result.",
+      "root_cause": "Retains literal pass and resolved physics-scope warning. Uses magnetic TF scope, two-line comparisons and tentative local-field interpretation; no superconducting-gap model. Calibration/background and model mismatch remain preliminary limitations, honestly reported.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1406.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry info /tmp/asymmetry-luna6-improvements/round2/afm-high-tf-mdu/data/HIFI00686.nxs'",
+          "exit_code": 2
+        }
+      ],
+      "summary_sha256": "402524f2471d349427f8440652cc054f894030a40a688bec626cfa54dfb76fcd",
+      "rubric_sha256": "062fa8082f95b4b6cb7f075cf9a287e8add6d5313d56290d3d5ead8bc95725cf",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round2/afm-high-tf-mdu",
+      "staged_skill_sha256": "5a03b792caf69290af6284bf80974e8ac4d35b3f123c670a466b578adb936af3",
+      "boundary_check": "PASS: completed commands use staged project skill and supplied data/products only; no personal skill/source-tree/network/ad hoc scientific scripting.",
+      "boundary_pass": true,
+      "permission_denials": 0,
+      "physics_scope_warning_resolved": true
     }
   },
   "totals": {
-    "scored": 8,
-    "scientific_pass": 3,
-    "must_pass": 44,
-    "must_total": 57,
-    "exact_copy_pass": 6,
-    "combined_pass": 3,
-    "boundary_pass": 8
+    "scored": 9,
+    "scientific_pass": 4,
+    "must_pass": 49,
+    "must_total": 62,
+    "exact_copy_pass": 7,
+    "combined_pass": 4,
+    "boundary_pass": 9
+  },
+  "comparison": "Targeted first-attempt comparison only. A fresh full 24-case gate is still required; latest per-case passes cannot be pooled into that gate.",
+  "same_case_round1": {
+    "scientific_pass": 2,
+    "must_pass": 52,
+    "must_total": 62,
+    "exact_copy_pass": 8,
+    "combined_pass": 1
   }
 }
