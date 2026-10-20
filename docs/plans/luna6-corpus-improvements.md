@@ -442,3 +442,16 @@ Sphinx docs rather than rerunning the already completed standard/core gates
 (AGENTS.md explicitly exempts doc/comment-only follow-up edits). Commit before
 a fresh targeted wave covering Basics, corannulene and benzene exact-copy;
 then fresh all24 only if those pass. Keep rubrics/protocol unchanged.
+
+Round-four changes are skill/owning-documentation only. The workflow contract
+and summary template now retain numeric plateau/onset coordinates explicitly,
+compare resolved narrow components separately from unconstrained broad troughs,
+and explain whole-scan versus local baseline suitability. Long exploratory
+tables stay in the CLI products; decisive values and all provenance/windows
+remain in the report. Final copying forbids Markdown cleanup or merging drafts
+and repeated sentences. Remaining summary-template blanket flag wording is
+reconciled with per-parameter reliability. No CLI, runner or rubric changed.
+Skill validation passed; Sphinx built with the same 85 warnings. Round-three
+core/standard validation remains the applicable gate under AGENTS.md's
+explicit documentation-only follow-up exception. Commit before fresh three-case
+wave (Basics, corannulene, benzene ALC); score all before the next change/gate.

@@ -1778,6 +1778,16 @@ width. A polynomial need not describe a whole scan containing a baseline step.
 The skill
 ---------
 
+Reports retain the printed coordinates and ranges of onsets, extrema and
+plateaus explicitly in prose. For long scans the decisive points belong in
+the report and full tables remain in the named CLI products. Local resonance
+comparisons distinguish a resolved narrow component from broad curvature
+with an unconstrained width; they also explain why one whole-scan polynomial
+baseline was inadequate. A failed observable is kept separate from a precise
+parameter beside an unconstrained nuisance term. Final copy checks apply to
+all characters, including Markdown punctuation: any cleanup happens in the
+saved report before its final audit.
+
 The packaged ``asymmetry-analysis`` skill tells an agent to work through
 seven steps: survey the folder; decide alpha (and never guess it); reduce the
 scan; confirm the geometry of every non-zero-field scan from the survey's

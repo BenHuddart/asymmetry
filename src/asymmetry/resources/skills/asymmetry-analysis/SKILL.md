@@ -78,6 +78,13 @@ these obligations through the final reply, including after image review:
   satellites that disappear in the warm reference is consistent with a
   shallow-muonium hyperfine triplet; say that cautiously, without turning
   visual shoulders into precise hyperfine constants.
+- Complete the comparisons, not only the fit tables. State the printed
+  coordinate/range of an onset, minimum or saturation plateau in prose. For
+  resonances, say whether a narrow line is resolved under each condition;
+  broad curvature with an unconstrained width is not a resolved narrow line.
+  Explain when a whole-scan baseline needs local windows because one
+  polynomial cannot describe it. Keep full tables in the named CLI products
+  and use decisive points in the report, retaining windows and provenance.
 - The final report is the complete section 6 template, not a recap. Preserve
   folder count, per-scan run ranges, component meanings and every fit/FFT window.
   Before finalising, reconcile the report with the retained CLI estimates:
@@ -91,6 +98,9 @@ these obligations through the final reply, including after image review:
   send the exact text returned by that last audit; do not recompose it.
   Once that audit passes, preserve every character, including rounded errors
   and punctuation; do not regenerate the reply from memory or make final edits.
+  Do not repair backticks, wording, table labels or repeated sentences while
+  copying: fix the saved file first and run the audit again. Send the last
+  audited text once, without merging it with an earlier draft or recap.
   Complete file-list cleanup before that final audit too.
 
 ## 1. What this does, and what it does not
@@ -742,6 +752,16 @@ A converged, non-bound centre with a determined error that remains stable may
 be reported as a conditional fitted centre with the mismatch and coverage
 limits. Keep that estimate distinct from an established isolated resonance;
 neither a bound-pinned width nor a failed fit becomes a measurement.
+
+A broad trough and a narrow resonance are distinct observations. When one
+condition has a resolved narrow line but another shows only broad curvature
+with an undetermined width, state whether a narrow line is resolved in each
+condition. Do not imply that the broad fit establishes that narrow component;
+"no resolved narrow line" does not assert the absence of every broad feature.
+Compare field and width where both are determined, and presence/absence of the
+narrow component where they are not. Explain why local fits were necessary:
+a whole scan can contain a rising or stepped baseline that one polynomial
+cannot describe, even when a local Linear or Cubic background is adequate.
 
 - **Several resonances**: sum the components (`LorentzianLCR + LorentzianLCR +
   Cubic`); each is seeded on its own dip. `--xmin`/`--xmax` fit a window of a
@@ -1483,6 +1503,13 @@ order, seen through a field much larger than it.
 
 Use these headings. Fill only from command output.
 
+Keep the report focused on the measurements and comparisons that answer the
+experiment's question. Put full per-run tables and exploratory fit details in
+the named CLI products; retain the decisive values, uncertainties, windows,
+geometry, calibration and limitations in the report. Do not repeat a result
+in several large tables or copy the same exclusion sentence twice. A concise
+complete report is easier to check and reproduce than a transcript recap.
+
 > **Every number in the summary must appear in a command's output.** A
 > temperature, field, frequency, rate, exponent, run number, alpha, χ² or count
 > that no command printed does not go in. Textbook or literature values may be
@@ -1501,7 +1528,9 @@ qualitative relation and leave the number out.
 **Fits you flag do not carry physics.** A series whose runs are
 `frequency_unresolved` or `amplitude_exceeds_data`, or that you call unreliable
 yourself, supports no conclusion about the system — not even a qualitative
-one ("consistent with critical slowing"). Say what failed and why.
+one ("consistent with critical slowing"). Say what failed and why. Apply this
+to the failed observable: a nuisance term's bound or large error does not
+erase an independently measured amplitude, frequency or width in that fit.
 
 **A law that did not fit does not get to tell the story.** When `trend
 --model` prints `LAW NOT ESTABLISHED` — it did not converge, a parameter sits at
@@ -1533,7 +1562,13 @@ what each term of the model represents physically, the `Constant` included.
 **Results** — a table from `trend`: the scan variable and, per key parameter,
 value ± error. Include the amplitudes, not only the rate or frequency, and say
 what fraction of the asymmetry is *not* in the component you are interpreting.
-Only rows and values the tool produced. Also close the qualitative loop across
+Only rows and values the tool produced. For a long scan, show the decisive
+endpoints and points defining a change, then name the stored full table; do
+not reproduce every parameter of every exploratory model. Preserve the
+coordinate of any onset, minimum or saturation level explicitly in prose,
+including its printed range. "At the high end" or "at low temperature" does
+not substitute for the measured coordinate, even if the reader could infer
+it from a table. Also close the qualitative loop across
 the scan endpoints: state plainly whether the defining spectral feature is
 present, weakened, unresolved, heavily damped or absent at each end, using the
 survey and inspected reduced/fit PNGs as evidence. If the feature disappears
@@ -1546,7 +1581,9 @@ resolution the command printed — and take the lines you quote from that
 spectrum's own peak table.
 
 **Excluded or flagged runs** — every flagged run, its flag, and what you think
-went wrong. State plainly that these values are not results.
+went wrong. Name the particular quantities that are not results, distinguishing
+whole-fit failure from an unconstrained nuisance parameter. Group repeated
+flags compactly instead of repeating unusable parameter tables.
 
 **What this suggests** — the physics, in words: what the trend means, what it is
 consistent with, what would need checking. Interpretation belongs here, and
