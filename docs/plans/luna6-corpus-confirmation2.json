@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 19/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 21/24 scored; source frozen; finish all cases despite earlier failures",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -2696,27 +2696,238 @@
       ],
       "scored_at": "2026-10-20T18:37:03.581914+00:00",
       "reply_matches_saved_file": true
+    },
+    "benzene-rf": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies one longitudinal-field RF-resonance field scan of 37 runs at 293 K, two periods per run, with the 218 MHz RF from the notes, and says that run order is not field order.",
+          "pass": true,
+          "evidence": "Identifies37 MUT runs56426–56462 at293 K,two periods,560–1080 G and218 MHz RF notes;explicitly says infill means run order is not monotonic field order and context establishes LF RF scan."
+        },
+        {
+          "requirement": "States that no run in the folder can calibrate alpha and that alpha was assumed to be 1.0; states the deadtime treatment.",
+          "pass": true,
+          "evidence": "States no alpha candidate and assumed1.0000,with final from_file deadtime and correction provenance;initial deadtime-off trial explicitly superseded."
+        },
+        {
+          "requirement": "Runs `integral-scan` with `--period green-red` and describes two resonance peaks in the difference, both between about 0.74 and 0.90 kG, on a flat baseline outside them.",
+          "pass": true,
+          "evidence": "Actually uses integral-scan --period green-red and describes two peaks770–780/860–870 G,with constant residual BG0.001427 and fitted fields772.559/865.446 G. Constant-baseline model supplies the flat off-resonance background description."
+        },
+        {
+          "requirement": "Fits `RFResonanceMuP` with `nu_RF` held at 218 MHz and reports A_μ between 510 and 520 MHz and A_p between 115 and 135 MHz, each with its uncertainty, and the fit's χ²ᵣ.",
+          "pass": true,
+          "evidence": "Actual RFResonanceMuP --fix nu_RF=218 returns A_mu514.774997 ±0.033723 MHz,A_p124.437272 ±1.352327 MHz,chi2_red1.408 over all37 points."
+        },
+        {
+          "requirement": "Contains no A_μ, A_p or resonance field that was not produced by a tool call in this session: no couplings from the mean and difference of two fields by a formula, and the published couplings are background.",
+          "pass": true,
+          "evidence": "Couplings and resonance fields are explicit CLI outputs,not by-hand mean/separation conversion or paper values."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Also fits the worksheet's model, two Lorentzians on a constant, seeded near the two peaks, and reports the two fitted centres; notes the fit agrees in quality with `RFResonanceMuP`.",
+          "pass": false,
+          "evidence": "No independent two-Lorentzian constant-baseline fit or fitted-centre comparison."
+        },
+        {
+          "requirement": "Says `RFResonanceMuP` is the exact-diagonalisation model and that the analytic high-field approximation the worksheet compares against is not available in the CLI (or was not run).",
+          "pass": false,
+          "evidence": "Does not explain exact diagonalisation or state analytic high-field approximation unavailable/not run."
+        },
+        {
+          "requirement": "Says which period is RF-on and on what evidence (the sign of the green − red peaks, or an assumption stated as such).",
+          "pass": false,
+          "evidence": "Explicitly avoids assigning RF-on colour;does not establish red=ON/green=OFF from contrast sign or an acknowledged assumption."
+        },
+        {
+          "requirement": "Compares A_μ and A_p with the published or worksheet values in words, attributing them.",
+          "pass": false,
+          "evidence": "No attributed worksheet/published coupling comparison."
+        },
+        {
+          "requirement": "Points to the stored scan JSON and PNG.",
+          "pass": true,
+          "evidence": "Names stored corrected scan JSON and PNG."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. All couplings/errors/resonance fields/BG/widths from corrected actual command7 and stored scan9;survey1 supplies run/period/RF conditions. Visual770–780/860–870 brackets use printed sampled fields,not new precision peak detections. No report/audit source or physical arithmetic.",
+      "number_checker_flags": [],
+      "root_cause": "Musts and numeric/copy/boundary pass. Four Should gaps remain:independent Lorentzian comparison,exact-diagonalisation versus high-field approximation explanation,physical RF-on/off period assignment,and attributed coupling context. The final report follows the correct differential integral and fitted couplings,so absent explanatory extras do not erase the demonstrated workflow.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all11 completed commands inspected. All11 completed commands inspected:staged skill/references,supplied runs/logbook and installed CLI/products only;no worksheet/source/rubric/host-skill/network/subagents or numerical scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 132.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "a518b3e5fd1eac24d8f10664b0c29eb475fcea0630af71dc617c3eb4b9f4add3",
+      "audited_file_sha256": "a518b3e5fd1eac24d8f10664b0c29eb475fcea0630af71dc617c3eb4b9f4add3",
+      "rubric_sha256": "29bc5fab99a3ca1088aaea71742bda2503e7ad7b974b2d66a2342c99e8c26ce2",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/benzene-rf",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Couplings are conditional on assumed alpha and fixed RF frequency,not a microscopic site assignment.",
+        "No RF-on/off colour assignment despite positive contrast;Should gap rather than incorrect sum-period analysis.",
+        "Constant BG and two peaks describe observed background,but explicit flat off-resonance prose would be clearer."
+      ],
+      "judgement_calls": [
+        "Constant residual BG model plus two localized peaks accepted as flat-baseline description for Must3;no requirement to repeat the literal adjective flat."
+      ],
+      "number_evidence_commands": [
+        1,
+        6,
+        7,
+        9
+      ],
+      "scored_at": "2026-10-20T18:44:44.935743+00:00",
+      "reply_matches_saved_file": true
+    },
+    "benzene-repolarisation": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies a longitudinal-field scan of the integral asymmetry from a few gauss to 4 kG at 300 K, the six interleaved 100 G transverse runs as calibration (excluded from the scan), and the repeated fields of the return pass.",
+          "pass": true,
+          "evidence": "Identifies44 EMU runs at300 K,38 science points3–4000 G,six named interleaved100 G TF calibrations excluded,and repeated return-field measurements with reproducibility check."
+        },
+        {
+          "requirement": "Establishes the LF geometry of the high-field runs despite their TF stamp, and says how — e.g. that their integral asymmetry continues the LF curve where a transverse field would integrate to near zero, or that the survey refutes the stamp where it can measure.",
+          "pass": true,
+          "evidence": "Explains kilogauss stamped-TF points keep large integral whereas true TF would average near zero;retains them as LF rather than treating unresolved geometry alone as proof."
+        },
+        {
+          "requirement": "Measures alpha on one of the 100 G TF runs, names it and the value, and states the deadtime treatment.",
+          "pass": true,
+          "evidence": "Names measured15958 raw alpha1.3181 and corrected applied1.3249 with file deadtime and detector-pair/background provenance."
+        },
+        {
+          "requirement": "Runs `integral-scan` with `--model MuRepolarisation` over the LF runs and reports `A_hf` with its uncertainty, the χ²ᵣ and the field range fitted; says plainly how well the function describes the curve (a one-term fit over the whole range is poor).",
+          "pass": true,
+          "evidence": "Actual MuRepolarisation fit on38 LF points over3–4000 G gives A_hf1516.299 ±3.754 MHz and chi2_red459.300;plainly poor and physically unreliable,not reported as precise benzene radical coupling."
+        },
+        {
+          "requirement": "Describes the curve itself: the integral asymmetry rises steadily with field over the whole scan and is still rising at the highest field.",
+          "pass": true,
+          "evidence": "Describes steadily rising integral0.053292 at3 G to0.225483 at4000 G and no established saturation/high-field plateau;highest field still elevated above model."
+        },
+        {
+          "requirement": "Contains no B0, A, coupling or fraction that was not produced by a tool call in this session: no B0 converted from `A_hf` (or back) by hand, and no literature coupling presented as a result.",
+          "pass": true,
+          "evidence": "A_hf/amplitudes are actual printed fit parameters;no derived B0,manual conversion,literature coupling or unprinted fraction."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Says the muonium repolarisation function treats the radical as a two-spin muon–electron system, so `A_hf` is only an effective coupling; the radical's proton couplings broaden the curve, and a radical repolarisation model is not available in the CLI.",
+          "pass": false,
+          "evidence": "Says muonium-like model is not radical-specific and fails,but omits explicit two-spin muon–electron approximation and proton-coupling broadening explanation."
+        },
+        {
+          "requirement": "Notes the fitted diamagnetic term `a_Dia` is negative, i.e. unphysical as a fraction, as a symptom of that mismatch.",
+          "pass": true,
+          "evidence": "Calls negative a_Dia−0.094391 and poor curve mismatch physically unreliable rather than accepting a negative diamagnetic population."
+        },
+        {
+          "requirement": "If a sum of two `MuRepolarisation` terms is fitted, reports both with χ²ᵣ but calls it an empirical description, and notes the two `a_Dia` terms are the same constant (degenerate).",
+          "pass": true,
+          "evidence": "Conditional requirement not applicable:sums of two MuRepolarisation terms were not fitted or claimed,so no two-species or degenerate-background inference occurs.",
+          "applicability": "not_applicable; no two-term fit"
+        },
+        {
+          "requirement": "Notes that `A_hf` moves with the fitted field range (`--xmax`), so the number is not robust.",
+          "pass": false,
+          "evidence": "No restricted-xmax refit or demonstration of A_hf fit-range sensitivity."
+        },
+        {
+          "requirement": "Notes that repeated fields from the return pass differ by more than their errors (a drift between passes), limiting χ²ᵣ.",
+          "pass": true,
+          "evidence": "Names10/500/1000/2000 G return pairs differing by more than three printed errors and limits precision/reproducibility;100/3000 G agreement also reported."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Actual commands8/9 print endpoints,all repeated-field discrepancy checks,corrected alpha and fit parameters;11 prints raw calibration. Rounded1516.299 ±3.754 directly matches1516.298738 ±3.753865,with no physical arithmetic or report/audit numeric source.",
+      "number_checker_flags": [],
+      "root_cause": "Musts and numeric/copy/boundary pass. Effective two-spin/proton-broadening explanation and fit-range robustness test are missing Shoulds;conditional two-term-fit rule is satisfied/not applicable because no such fit is attempted. The full-range A_hf is retained as an actual poor-model parameter,explicitly not a physical radical coupling. No extra fit is demanded or run during scoring.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all16 completed commands inspected. All16 completed commands inspected:staged skill/references,supplied runs/logbook and installed CLI/products only;no worksheet/source/rubric/host-skill/network/subagents or numerical scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 281.9,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "7d8d86fd4ed492cb0d64dcc20a4c4260d784de2fa2c8097f2030fbc68c1ae689",
+      "audited_file_sha256": "7d8d86fd4ed492cb0d64dcc20a4c4260d784de2fa2c8097f2030fbc68c1ae689",
+      "rubric_sha256": "394577546a8a6efae2ef56d912dbf00216156d50a4fa60e7800ea736fd2cd059",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/benzene-repolarisation",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "One-term MuRepolarisation is a gross mismatch with chi2_red459.300 and negative a_Dia;nominal precision is not physical coupling precision.",
+        "No fit-range stability check,so A_hf robustness untested.",
+        "Repeated-field discrepancies make perfectly smooth/monotonic wording only an overall trend description,not point-by-point reproducibility."
+      ],
+      "judgement_calls": [
+        "Conditional Should3 counted satisfied/not applicable when no two-term fit is attempted;do not require an unnecessary empirical second term to pass a conditional safety rule."
+      ],
+      "number_evidence_commands": [
+        1,
+        6,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "scored_at": "2026-10-20T18:44:44.970610+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
     "corannulene-alc",
     "benzene-high-tf",
-    "benzene-rf",
-    "benzene-repolarisation",
     "benzene-alc"
   ],
   "totals": {
-    "scored": 19,
+    "scored": 21,
     "target": 24,
-    "scientific_pass": 15,
-    "must_pass": 107,
-    "must_total": 113,
-    "should_pass": 43,
-    "should_total": 76,
-    "exact_copy_pass": 13,
-    "literal_copy_pass": 14,
-    "combined_pass": 10,
-    "boundary_pass": 19
+    "scientific_pass": 17,
+    "must_pass": 118,
+    "must_total": 124,
+    "should_pass": 47,
+    "should_total": 86,
+    "exact_copy_pass": 15,
+    "literal_copy_pass": 16,
+    "combined_pass": 12,
+    "boundary_pass": 21
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates.",

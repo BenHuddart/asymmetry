@@ -1465,3 +1465,17 @@ unneeded rate-law trials remain quality caveats;no fabricated physicalnumber.
 All97 commands inspected;source/skill/rubric hashes unchanged. Totals107/113
 Musts,15/19 science,13/19 audited-copy,14/19 literal-copy,10/19 combined,19/19
 boundary. Five cases remain;finish this frozen gate then pause,no repairs.
+
+
+Confirmation2 now21/24 scored:benzene RF PASS5/5 Musts and repolarisation
+PASS6/6,both number/copy/boundary pass. RF actual218 MHz differential model
+returns514.775/124.437 MHz couplings;missing explanatory/Lorentzian/period
+assignment Shoulds retained. Repolarisation separates38 LF points from six
+calibrations,refutes high-field TF stamps,shows ongoing recovery and calls
+A_hf1516.299 MHz,chi2_red459.300 physically unreliable with negative a_Dia.
+Missing two-spin/proton explanation and fit-range check retained. Conditional
+two-term Should is satisfied/not applicable because no two-term fit attempted.
+All11 RF/16 repolarisation commands inspected;frozen hashes unchanged.
+Totals118/124 Musts,17/21 science,15/21 audited-copy,16/21 literal-copy,12/21
+combined,21/21 boundary. Corannulene/high-TF benzene/benzene ALC remain;
+finish all24 frozen then pause,with no improvement or extra gate.
