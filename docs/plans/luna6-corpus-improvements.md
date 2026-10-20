@@ -1427,3 +1427,15 @@ comparison and splitting estimate remain Should gaps;one shortened printed
 error is a recorded harmless rounding borderline. All19 commands inspected,
 frozen hashes unchanged. Totals83/89 Musts,12/16 science,10/16 audited-copy,
 11/16 literal-copy,7/16 combined,16/16 boundary. Continue frozen all24.
+
+
+Confirmation2 now17/24 scored:LiFeAs PASS8/8 Musts,number/copy/boundary pass.
+Uses Up/Down and independent sample calibrations,correct400 G logged-T scan,
+cold broadening/lower line and conditional15.346 K law,plus paired TF fields.
+No penetration depth or paper field-induced magnetic claim. Should gaps remain
+nuclear floor convention,coldest-end slope in words and direct common-field
+cross-sample comparison. Ancillary FFT described full-record despite actual
+tmax6.5 crop;printed resolution is correct,retained as method-quality caveat.
+All45 commands inspected;frozen source/skill/rubric hashes unchanged. Totals
+91/97 Musts,13/17 science,11/17 audited-copy,12/17 literal-copy,8/17 combined,
+17/17 boundary. Continue all24 frozen;no repairs/reruns authorized.
