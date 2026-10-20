@@ -1,5 +1,5 @@
 {
-  "status": "running; 23/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "complete; fresh full24 gate FAIL; all24 manually scored; implementation frozen through evidence verification",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -3681,11 +3681,186 @@
       ],
       "scored_at": "2026-10-20T22:59:35.329700+00:00",
       "reply_matches_saved_file": false
+    },
+    "basics": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Treats the folder as several separate calibration exercises. It names at least the Ag TF field scan, the quartz range curve, the quartz low-field muonium scan and the steering scan, and analyses them separately. It does not present the survey's 24-run 100 G \"temperature scan\" or its 2-run ZF one as a temperature dependence.",
+          "pass": true,
+          "evidence": "SeparateAgfield,quartzfoil,muoniumweakTFandsteeringexercises; mixed24-run100GsetandZFpairnotTdependence."
+        },
+        {
+          "requirement": "Keeps the EMU and MUSR runs 44989–44997 apart and says which set is which (EMU: haematite on Ag at 100 G, the steering scan; MUSR: Ag calibration). It does not read the MUSR runs' ~0.29 MHz line as spontaneous order in Ag: the header says 0 G, but the line comes from an unrecorded weak transverse field.",
+          "pass": true,
+          "evidence": "EMUsteeringversusMUSRcandlestick44989–44997explicit,unrecordedweakTFline—notAgmagnetism."
+        },
+        {
+          "requirement": "Quotes no logged 943 K, ~640 K or ~550 K reading as a sample temperature. It says these logged values are faulty or irrelevant to these room-temperature calibrations, and claims no temperature trend.",
+          "pass": true,
+          "evidence": "943/550Klogsimplausible,steeringuses295Ksetpoint,nofaultyhighlogtemperaturetrend."
+        },
+        {
+          "requirement": "Steering: fits the Ag-mask asymmetry against the current taken from the run notes, and reports it smallest near zero current (between −0.25 and +0.25 A), rising on both sides.",
+          "pass": true,
+          "evidence": "Notes-suppliedsteeringaxis,minimumA_15.29286%at0A,risesatboth−1/+1A."
+        },
+        {
+          "requirement": "Range curve: reports the 100 G diamagnetic amplitude as small and roughly flat for thin stacks, then rising steeply and saturating for the thickest. It names, from its own fits, the foil count (as the run notes give it) where saturation begins — about 12–14 foils (a range such as \"13–15\" counts).",
+          "pass": true,
+          "evidence": "Foilamplitudeflat0–6,rises6–14,saturates14–15fromCLI,notworksheetfoilcounts."
+        },
+        {
+          "requirement": "Quartz scan: identifies the few-gauss lines as muonium (a line far faster per gauss than the bare muon's — the ratio itself need not be quoted). It reports the muonium amplitude falling as the frequency rises, and the line lost at the top fields, and presents the amplitude fall as the instrument's frequency-response limit (attributing the line's loss at the top fields to it too is a Should).",
+          "pass": true,
+          "evidence": "Few-Gmuoniumlines,fittedAfallswithincreasingfrequencyandlossofline8.5/9G; instrumentfrequencyresponseexplicit."
+        },
+        {
+          "requirement": "Ag field scan: reports the fitted frequency tracking the applied field. It also reports the fitted phase against field. On the file's t0 the phase drifts steadily with field (a t0 offset), so calling it field-independent without a t0 test is a fail.",
+          "pass": true,
+          "evidence": "Agfrequencytracksfield,initialphaseΔt−39.3nsandafter−2binsresidual−7.02ns,notfalsefield-independentclaim."
+        },
+        {
+          "requirement": "States which run supplied alpha for each exercise it fits. It does not carry one alpha across the survey's ALPHA STEPs.",
+          "pass": false,
+          "evidence": "Noalpha-source/valuegivenforsteeringexercise. ActualsteeringusesEMU44989alpha1.1036(command23);reportonlynameslateAgreferences44998alpha0.9345,notthisexercise."
+        },
+        {
+          "requirement": "Contains no t0 correction, stopping density (mg/cm²), steering centre, upper frequency, field offset or alpha that was not produced by a tool call in this session. The worksheet's Ti density and foil thickness are background.",
+          "pass": true,
+          "evidence": "Allretainedt0bininputs,delays,frequency/alpharesultsdirectCLI;no stoppingdensity orfieldconversionfabricated."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reads each exercise's pattern the right way round: the steering scan's silver signal is smallest where the beam is centred on the (depolarising) sample; the range curve's step is where the muons stop passing through the degraders into the sample. An inverted reading is a gap even when the Must's pattern is reported.",
+          "pass": false,
+          "evidence": "Patterndirectionsright,butnoexplicitdepolarisinghaematitebeamcentreinterpretationorfoil-stoppingphysics;genericmaterialfractions."
+        },
+        {
+          "requirement": "Does not dismiss a relative amplitude trend (the muonium frequency response) on the ground that alpha is uncertain: one alpha scales every amplitude alike.",
+          "pass": true,
+          "evidence": "RelativeMuamplitudetrendretaineddespitecalibrationlimitations."
+        },
+        {
+          "requirement": "Deadtime: reduces ZF Ag 34998 with deadtime off and from the file, and describes the early-time sag in asymmetry that the correction removes, with both fits' χ²ᵣ. Says the 2010 files carry no deadtime values.",
+          "pass": false,
+          "evidence": "No34998deadtimeoff/oncomparisonorχ²pair;2010missingdeadtimenotedonly."
+        },
+        {
+          "requirement": "Measures MUSR alpha on a MUSR Ag run and says why that is legitimate, since the survey lists no MUSR candidate because the header records 0 G. Alternatively, it says plainly that it assumed 1.0.",
+          "pass": true,
+          "evidence": "MUSRalphaassumed1.000explicit."
+        },
+        {
+          "requirement": "t0: tests `--t0-offset` (or fits `Linear` to phase against field), reports the shift in bins that flattens the phase, and checks the fitted frequency against the nominal field.",
+          "pass": false,
+          "evidence": "Tests−2binsandfrequency,butphasehasresidual−7.02nsdrift,no correctionthatflattensitverified."
+        },
+        {
+          "requirement": "Treats 18864 as its own alpha block, or excludes it and says why.",
+          "pass": true,
+          "evidence": "18864separateownalphablockexplicit."
+        },
+        {
+          "requirement": "Says that turning the saturating foil count into mg/cm² needs the foil thickness and Ti density, which the files lack, and does not present that conversion as Asymmetry output.",
+          "pass": false,
+          "evidence": "Noexplanationmissingfoilthickness/Tidensitypreventsmg/cm²conversion."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No number/unitcheckerflags;manualquantity-bindingfindsM8provenanceomission,notanunprintednumber. −2binsischosenreductioninputfollowingprintedphasehint;−39.3/−7.02nsareCLImeasuredresults.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Allmajorcalibrationpatternsrecovered,butsteeringalpha provenance omitted. Auditchecksnumberpresencewithoutassociatingeachreduction/exercisetoitsactualcalibrant. ExactcopyPASSafterfinaltruncate/audit.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all88 completed commands inspected. All88commandsandsummary-onlyeditsinspected;publicCLIwithinstrumentfilters,nocustomnumericalanalysisorhandcouplingconversion.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 2114.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 9,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/basics/data --runs 62798 --instrument HIFI --alpha-from 62798 --deadtime from_file --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/basics/data --runs 18850,18852-18863 --instrument EMU --alpha-from 18850 --t0-offset -2.46 --plot'",
+          "exit_code": 2
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "58412fbf6e969f3fa3f79c203263648bb6eee70edc1d998e0ec46cd396b2f83b",
+      "audited_file_sha256": "58412fbf6e969f3fa3f79c203263648bb6eee70edc1d998e0ec46cd396b2f83b",
+      "rubric_sha256": "9a7e1671e076193352ce4016016147c30a58b3f8098aef4a5b6383f19d34c8cc",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/basics",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Steeringactualalpha1.1036differentfromlateAgreference0.9345;reportmustnameactualsteeringprovenanceinsteadofimplyingcompleteblockcoverage.",
+        "Onlypartialtimingcorrection:residualphase-linearityremainssignificant; nofinalt0calibrationclaimed.",
+        "Quartzlowest/upperfrequencyflagsandresidualmisfitslimitmicroscopicinterpretations;samplefractionsnotcalibrated."
+      ],
+      "judgement_calls": [
+        "M8failsbecauseeachfittedexercise mustidentifyitsalphasource,andsteeringisabsent;correctotherblockalphasdonotfillthisgap."
+      ],
+      "number_evidence_commands": [
+        "survey2/7; reduction8/10/13/19/23/29/31/32/34/46/47/60/61; notesaxisseries21/25; trends12/18/22/26/65; FFT42/44/45/71; refs50/53/55/70"
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "58412fbf6e969f3fa3f79c203263648bb6eee70edc1d998e0ec46cd396b2f83b",
+        "summary.md": "58412fbf6e969f3fa3f79c203263648bb6eee70edc1d998e0ec46cd396b2f83b",
+        "transcript.jsonl": "02c49175c411a77011695197ba91f3fbdd01625fad95ea640b52c4b828f71fe7",
+        "commands.txt": "f21d5637c1dcb1589dc65829b044e6c492d84b7c414497a7d69eebe2f8a14b60",
+        "cost.json": "65e25a6c632255cf725fab816967ddf6fa0f9af8b367f6c8225fb0b84d7f2e03",
+        "image-inputs.json": "c6029c932e3124767cdbc36da0af46e26a2eacc34bcd552b259e5dc4bf74c1d8"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/ag-field350-corrected-trend-frequency.png",
+          "snapshot_path": "review-images/e41c2128adcc8fab8f99699a21c516568555610590c2021d80f6a43fec64c59d.png",
+          "bytes": 33351,
+          "sha256": "e41c2128adcc8fab8f99699a21c516568555610590c2021d80f6a43fec64c59d",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/quartz-mu-field-trend-A_1.png",
+          "snapshot_path": "review-images/7cdcf8fe38edaee5c654820e1b534ad8d361765bfba42b78b9a4ac269d45ca9e.png",
+          "bytes": 27145,
+          "sha256": "7cdcf8fe38edaee5c654820e1b534ad8d361765bfba42b78b9a4ac269d45ca9e",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/quartz-foils-trend-A_1.png",
+          "snapshot_path": "review-images/b7738570088bf9b72b2682c190157c3646d925f4680d92ad44514250295a2f07.png",
+          "bytes": 21468,
+          "sha256": "b7738570088bf9b72b2682c190157c3646d925f4680d92ad44514250295a2f07",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/haematite-steering-trend-A_1.png",
+          "snapshot_path": "review-images/bc5b3866d616939a8f71d3aa9a8a99538e30d4a869f76ca6a4e6f01c72673cbb.png",
+          "bytes": 29537,
+          "sha256": "bc5b3866d616939a8f71d3aa9a8a99538e30d4a869f76ca6a4e6f01c72673cbb",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T23:04:41.576262+00:00",
+      "reply_matches_saved_file": true
     }
   },
-  "pending_cases": [
-    "basics"
-  ],
+  "pending_cases": [],
   "gate_pass": false,
   "objective_achieved": false,
   "rubric_policy": "Scientific Must/Should rubrics unchanged. Actual final reply only; manual judgement, numerical/unit provenance and independent AFM magnetic scope.",
@@ -3703,61 +3878,193 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 23,
+    "scored": 24,
     "target": 24,
     "scientific_pass": 19,
-    "must_pass": 130,
-    "must_total": 138,
-    "should_pass": 53,
-    "should_total": 97,
-    "exact_copy_pass": 2,
-    "literal_copy_pass": 2,
+    "must_pass": 138,
+    "must_total": 147,
+    "should_pass": 56,
+    "should_total": 104,
+    "exact_copy_pass": 3,
+    "literal_copy_pass": 3,
     "combined_pass": 2,
-    "boundary_pass": 23
+    "boundary_pass": 24
   },
   "artifact_fidelity_verification": {
-    "completed_message_checks": {
-      "euo-psi": {
-        "raw_final_event_matches_last_message_and_summary": true,
-        "terminal_LF": true
-      },
-      "cds-fourier": {
-        "raw_final_event_matches_last_message_and_summary": true,
-        "terminal_LF": false
-      },
-      "sn-critical-field": {
-        "raw_final_event_matches_last_message_and_summary": true,
-        "terminal_LF": false
-      },
+    "verified_at": "2026-10-20T23:04:41.745902+00:00",
+    "source_manifest_matches": true,
+    "all_first_attempts": true,
+    "all_raw_artifact_hashes_match": true,
+    "all_review_snapshots_match": true,
+    "case_checks": {
       "fmuf-ptfe": {
-        "raw_final_event_matches_last_message_and_summary": true,
-        "terminal_LF": false
-      },
-      "plateau-redfield": {
-        "raw_final_event_matches_last_message_and_summary": true,
-        "terminal_LF": false
-      },
-      "photo-musr-silicon": {
-        "raw_final_event_matches_last_message_and_summary": true,
-        "terminal_LF": false
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "35dd389f4c428b846b662f6194d6e180e819af0a394cea21b5f16108a6eb6216",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
       },
       "spin-glass-ymnal": {
-        "raw_final_event_matches_last_message_and_summary": true,
-        "terminal_LF": false
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "2fce57809f9f45f4e6ba70f7d5cd2e447dc99db2dcdcb5105aa6b1be080bef7d",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "plateau-redfield": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "a29322e6d814cfdce92c595d96260a0329050d64d61182afcf7ca18167627aab",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "sn-critical-field": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "f1e51277a1ed81c3fc822e486a116ad0c1d31d2ad4d3de0db48bceee9043b522",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
       },
       "ionic-motion-llz": {
-        "raw_final_event_matches_last_message_and_summary": true,
-        "terminal_LF": false
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "2de9b8e1a63d1c514332b5933c18c0d9ffb571f50df102a5656d282c6c6d5622",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
       },
       "spin-peierls": {
-        "raw_final_event_matches_last_message_and_summary": true,
-        "terminal_LF": false
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "5295c04d9ff45012042ec62b1829b5d29e54bc96b4d0f546483d2d9ab106f54e",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "photo-musr-silicon": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "82a7da4047c31a815845acc555bbe15c2e41ad1e3faa0f0536326c9d6e03bcee",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "cds-fourier": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "aed2162c0dc91ef1ce25d03ec62876ad9a3c974ab820ddfe1b1e2231d6896620",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "euo-psi": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "4d6c45c060caa5d2ae83b78e3484b455de24f8b75a57d54aaea52ac1b0ddb1d7",
+        "terminal_LF": true,
+        "saved_file_terminal_LF": false
+      },
+      "ferromagnetic-nickel": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "27de2e244266f97804754ee3a63bb7f3860f3afad628daabc77f5a70eef6cec3",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
       },
       "molecular-antiferromagnet": {
-        "raw_final_event_matches_last_message_and_summary": true,
-        "terminal_LF": false
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "f68896c1cf7fed814f46030ef34dc6605759d4d17b46501c5ded7af40ac9d9a2",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "afm-high-tf-mdu": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "0db5f329103176b2a129c086029ac21c72efd9cbe3ce370d0767f3831c39134e",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "maleic-mu-kinetics": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "1a615bca06734862b1ddd2e0d57a1aa705dcf6689cba5d02327e273252fb4a4a",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "benzene-rf": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "e3d1e9e58b088bf56d2a5c1d6f5e3c8384905c5213eaee1f0768dde28e0cbec3",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "alc-tcnq": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "865bb407e0d16bcb993c4888a362223f5c237951dced434de7580694022f8ca9",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "benzene-repolarisation": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "3076c0a343d30a1433c111f6b7cbd438569c74b83572f6ba57fce7ecb19ecf3d",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "high-tc-cuprate": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "5d94537ce2c3247da18f902a993f9b8437c79e278e7f7aca1a41c6766a5d77ac",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "benzene-high-tf": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "caa27570ccd4a2f8d875b76fa7bed3c8aee7e885b10ddc5b2be6c6d2bd151496",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "lifeas-psi": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "b697daac76a97e617f98992bb648515852039a4a0b4754fc8ad4722aa465100a",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": false
+      },
+      "copper-diffusion": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "731f7cae5ab62d7a2ed3f8e5ce0ea12b8f0a9246c7a039155c7cacacafb0d633",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "corannulene-alc": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "1b3c63507a7d5910f5aece5d4299deb3bd01545c3bb91411dd3a5fbbc123807c",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "trsb-re6zr": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "ec9931bebc563ab5dec5dfcfcad2ae93e937a9034a00c4f0dc1b7c41c17c92c3",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": false
+      },
+      "benzene-alc": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "07cda6601a9583d1c4c8dd9ba4d6326a7f590451825fdfb7503258b6d4491957",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": true
+      },
+      "basics": {
+        "raw_final_matches_summary_and_last_message": true,
+        "summary_sha256": "58412fbf6e969f3fa3f79c203263648bb6eee70edc1d998e0ec46cd396b2f83b",
+        "terminal_LF": false,
+        "saved_file_terminal_LF": false
       }
-    },
-    "note": "Raw final agent_message text, explicit last-message.md and summary.md are exactly equal. EuO preserves a terminal LF, demonstrating the CLI does not universally strip it. Already-scored LF omissions are actual emitted-message differences, not runner normalization."
-  }
+    }
+  },
+  "resource_summary": {
+    "finished_at": "2026-10-20T23:00:28.044602+00:00",
+    "wave_returncode": 0,
+    "samples": 117,
+    "minimum_available_bytes": 21060526080,
+    "peak_sum_RSS_bytes": 8912674816,
+    "peak_swap_used_bytes": 1003520,
+    "peak_memory_PSI_avg10": 0.0,
+    "peak_cpu_PSI_avg10": 2.42,
+    "note": "Summed RSS double-counts shared pages; this is a conservative process-tree total.",
+    "wall_seconds": 3482.799461,
+    "parallel_limit": 12,
+    "wizard_worker_policy": "Inherited default1; explicit agent --workers2 overrides observed. No hard cap was enforced.",
+    "service_throttling": "Two initial HTTP429 sampling retries recovered inside retained first attempts; no case restarts.",
+    "conclusion": "Twelve cases fit host memory/CPU comfortably; initial service retries advise keeping twelve rather than raising further. Wall time is descriptive, not controlled implementation-independent speedup."
+  },
+  "independent_physics_scope_gate": "FAIL: high-fieldAFM unknown-phase/vortex speculation; retain separate from fixed literal scientific rubric.",
+  "ranked_general_repairs": [
+    "Reliable opt-in report finalization after all edits, retaining strict actual message copying.",
+    "Positive generalizedRedfield physical domain and appropriate fixed-shape recovery; preserve honest failed-law descriptions.",
+    "Audit local dip candidates before first resonance fit, prioritize primary observables over redundant overlapping scan coverage.",
+    "Per-exercise calibration/coadd provenance and constrained oscillatory kinetic-model recovery.",
+    "Condition mechanism/law suggestions on experiment context without sample-specific dispatch."
+  ]
 }

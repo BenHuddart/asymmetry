@@ -1993,3 +1993,9 @@ No frozen source was edited; these are next-round design findings only.
 
 
 Confirmation4 now23/24scored:Re6ZrPASS7/7Musts,3/6Shoulds,exactcopyPASS(secondcase),setpoint/harmonicbackgroundcaveatsretained;benzeneALCPASS7/7,4/6Shoulds,copyfailoneLF. Allnumber/unit/boundarypass. Totals130/138Musts,19/23science,2/23copy/combined,23/23boundary,53/97Shoulds. OnlyBasicsstillrunning;sourcefrozen.
+
+
+Confirmation4 COMPLETE24/24scored:138/147Musts,19/24science,3/24audit-copy/literalcopy,2/24combined,24/24boundary,56/104Shoulds. BasicsFAIL8/9Musts:steeringalphasourceomitted(actualEMU44989alpha1.1036),exactcopyPASS. Five sciencefails:plateau,PTFE,maleic,corannulene,Basics. IndependenthighTF-AFMscopeFAILretaineddespiteallliteralMusts. All24return0/two-turnfreshfirstattempts;waveended23:00:28UTC. Sourcefreezeendsafterhash/fidelityverification;nextgeneralrepairroundauthorized.
+
+
+Final confirmation4 evidence verified: all24 raw final agent_messages equal last-message.md and actual summary.md byte-for-byte; all raw artifact and review snapshot hashes match; complete source manifest unchanged. Gate FAIL, including independent AFM scope. Twelve-case wave wall58.05min, minimum19.61GiBavailable, peak summedRSS8.30GiB(sharedpagesdoublecount), memoryPSI0, CPU PSIpeak2.42; about0.96MiBswappeak versus0.60MiBbaseline. Two initial429retries recovered, no restarts. Keep12 for nextwave; hostheadroom is ample, service latency and longcase tail dominate, no controlledspeedupclaim. Generalround15repairs can now begin; noevalprocessis live.
