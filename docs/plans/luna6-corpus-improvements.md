@@ -1260,3 +1260,21 @@ At this check Sn,EuO and maleic acid are running;one wave/three model processes,
 24 GiB RAM available,no swap/current memory PSI,653 GiB persistent disk free.
 No tests or duplicate evals. Keep all24 running and score as reports finish;
 do not infer a full-gate result from this first pass or alter source.
+
+
+Confirmation2 now3/24 reports scored:Sn and EuO both PASS5/5 Musts each,
+number/exact-copy/boundary pass. Totals15/15 Musts,3 science/copy/combined/
+boundary passes. Sn retains the independent falling40 G survey line despite
+unresolved time-domain fits and separates logged8 K runs;no numerical critical-
+field law/Tc is claimed. EuO reports actual warm ZF rates2.4489 at75 K and
+2.0406 at200 K without inventing critical divergence;GPS/PSI geometry,spontaneous
+frequency and approximate order-parameter fit remain separate from TF signal.
+Remaining Should gaps and fit-quality/provenance caveats recorded in JSON;
+EuO internally calls all TF rows poor while also calling2963 good.
+All48 Sn and34 EuO commands inspected;number sources exclude audit/draft
+reports;actual replies byte-match audited files and frozen hashes verify.
+Sn wizard attempts exit130 twice and recipe frequency_1 error corrected;
+EuO repeated global-fit failures are disclosed,not turned into physical rates.
+At this check maleic acid,nickel and PTFE remain live,concurrency3,22 GiB RAM
+available,no swap/current PSI,653 GiB persistent disk free. No tests/duplicate
+runs. Continue all24 without source changes or another wave.

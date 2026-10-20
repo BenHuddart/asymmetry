@@ -79,7 +79,7 @@
     },
     "authorization": "User requested the full evaluation after round12. Run and score this full wave, then pause; no automatic improvement rounds or repeat gates."
   },
-  "status": "running; 1/24 reports scored; remaining cases pending; source frozen",
+  "status": "running; 3/24 reports scored; remaining cases pending; source frozen",
   "cases": {
     "plateau-redfield": {
       "verdict": "PASS",
@@ -189,11 +189,227 @@
         "No resolved ZF precession is not interpreted as absence of magnetic order."
       ],
       "scored_at": "2026-10-20T16:50:30.339377+00:00"
+    },
+    "sn-critical-field": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the 40 G temperature scan 91516–91529 and treats it as the Hc(T) measurement.",
+          "pass": true,
+          "evidence": "Explicitly identifies dense40 G91516–91529 sequence as the temperature-dependent internal-field/critical-field measurement; includes the earlier40 G controls separately."
+        },
+        {
+          "requirement": "Reports that the logged sample temperature differs from the setpoint, and orders or reports the scan against the logged temperature.",
+          "pass": true,
+          "evidence": "Uses sample_temperature_logged and states measured setpoint offsets; dense sequence logs about2.25–3.28 K and anomalous8 K block stays separate."
+        },
+        {
+          "requirement": "Reports a precession signal from the sample away from the applied field's Larmor frequency, whose frequency falls on warming (the critical field decreasing towards Tc).",
+          "pass": true,
+          "evidence": "Reports non-applied-field sample line decreasing along40 G sequence from1.94529 MHz (91517) to0.960551 MHz (91525), then absent at91526–91529, consistent with changing normal-domain internal field."
+        },
+        {
+          "requirement": "Does not treat 91501–91515 as sub-Tc data at their setpoints.",
+          "pass": true,
+          "evidence": "States91501–91515 have logged temperatures around8 K and does not treat them as superconducting at low nominal setpoints."
+        },
+        {
+          "requirement": "Contains no Hc, Tc or thermometer offset that was not produced by a tool call in this session (the worksheet's 3.7 K and textbook Hc(0) are background).",
+          "pass": true,
+          "evidence": "FFT1.941401 MHz at91490 and dense survey-line/temperature values are actual CLI outputs. No invented Hc,Tc or computed thermometer offset; no numerical critical law claimed from unresolved time-domain fits."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits a critical-field law (e.g. `trend --model OrderParameter` with `alpha=2`, `beta=1`, i.e. Hc0[1 − (T/Tc)²]) to the frequency trend and reports Tc and the amplitude with uncertainties, with the fit range stated.",
+          "pass": false,
+          "evidence": "No critical-field law is fit: all time-domain frequencies are flagged unresolved. Valid independent survey lines are reported, but a survey-line law workflow was not completed."
+        },
+        {
+          "requirement": "Compares that Tc with tin's in words to discuss the thermometer error, without presenting a hand-computed offset as Asymmetry output.",
+          "pass": false,
+          "evidence": "No fitted Tc is available and no comparison with accepted tin Tc/thermometer error is made; no fabricated offset."
+        },
+        {
+          "requirement": "Notes the sample signal is small against a large background and says which runs' fits are flagged or were excluded.",
+          "pass": false,
+          "evidence": "Flagged/unresolved and invalid component amplitudes are detailed, and FFT has a smaller feature over a strong low-frequency contribution, but the sample asymmetry is not explicitly identified as small against a large background."
+        },
+        {
+          "requirement": "Mentions the other fields (20, 80, 160 G) and what they add, or why they were not analysed.",
+          "pass": true,
+          "evidence": "20/80 G temperature series and1 K field scan including160 G are separately fitted/reported with their line presence, disappearance or unresolved-fit limitations."
+        }
+      ],
+      "number_rule": "PASS: unverified_numbers=[] against independent scientific CLI/direct stored-output sources, excluding summary/audit/draft displays. Consequential values and uncertainties checked in the evidence commands; rounded restatements are not hand-derived new results.",
+      "root_cause": "All Musts pass through independent survey/FFT evidence despite unresolved time-domain line fits. Wizard attempts exited130 twice and a frequency_1 recipe-name error was corrected to frequency; the agent then used manually seeded models. Remaining Should gaps follow from lacking a usable fitted-frequency critical-law workflow and omitting the physical small-signal/background description. No repair is made during this frozen full gate.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all48 completed commands inspected. Only staged skill/references, supplied data/logbook and installed CLI/products; no source/rubric/host-skill/network or ad hoc numerical scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 979.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/sn-critical-field/data --run 91490 --geometry LF --scope lf-dynamics --include Oscillatory --plot'",
+          "exit_code": 130
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/sn-critical-field/data --run 91490 --geometry LF --scope lf-dynamics --include Oscillatory'",
+          "exit_code": 130
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry recipe /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/sn-critical-field/data --name sn-line --run 91490 --expression 'Oscillatory * Gaussian + Constant' --initial frequency_1=1.91 --tmin 0.1 --tmax 7.8\"",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "d340e8d16913b94b43d1f02133ee06c68fbef2f86602ebc0a092d0c92becbd47",
+      "audited_file_sha256": "d340e8d16913b94b43d1f02133ee06c68fbef2f86602ebc0a092d0c92becbd47",
+      "rubric_sha256": "da9d2ae997537590c2ab33b031cfb6feb9f6394dcc5231e529b29eea9be97842",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/sn-critical-field",
+      "exact_copy_evidence": "Actual final reply and audited project/summary.md are byte-identical, including complete final file list; runner final_report_audited=true.",
+      "number_evidence_commands": [
+        1,
+        4,
+        6,
+        14,
+        15,
+        17,
+        19,
+        20,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38
+      ],
+      "physics_caveats": [
+        "Independent spectral evidence is retained despite unusable time-domain frequencies; no numerical Hc(T) law or precise Tc is claimed.",
+        "Logged8 K control block is correctly excluded from sub-Tc interpretation.",
+        "The Gaussian/exponential control is preliminary and cannot establish a vortex-lattice mechanism or microscopic distribution.",
+        "Unresolved primary survey versus fit-series survey_line_mhz discrepancy for91488 is explicitly retained as a provenance limitation."
+      ],
+      "scored_at": "2026-10-20T17:01:13.634881+00:00"
+    },
+    "euo-psi": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies this as PSI GPS data (the `.bin` format), not an ISIS NeXus dataset.",
+          "pass": true,
+          "evidence": "Title identifies GPS data; Calibration explicitly names PSI pre-t0 background and GPS Back/Forw grouping. This identifies PSI GPS acquisition rather than ISIS NeXus."
+        },
+        {
+          "requirement": "Separates the ZF block from the TF 60 G block as two distinct scans.",
+          "pass": true,
+          "evidence": "Separates ZF2923–2960 from60 G TF2961–2973 with independent geometry and reduction/calibration evidence."
+        },
+        {
+          "requirement": "Reports an internal field (from the TF block, or from ZF oscillations if present) that changes with temperature, growing as the sample is cooled below the ordering region.",
+          "pass": true,
+          "evidence": "ZF internal frequency falls from29.8596 ±0.0543 MHz at10 K to5.0920 ±0.1846 at68.3 K, interpreted as magnetic order growing on cooling; approximate Tc69.359697 ±0.515398 K comes from this session."
+        },
+        {
+          "requirement": "Reports the relaxation rate above the ordering region as this session's fits give it, and does not claim a critical divergence (critical slowing down) that those fits do not show. The paper finds the paramagnetic relaxation rate roughly constant, near 2 MHz, rather than diverging at the transition.",
+          "pass": true,
+          "evidence": "Warm ZF StretchedExponential fits report Lambda2.4489 ±0.0953 at75 K and2.0406 ±0.0758 at200 K, similar exploratory rates rather than critical divergence; model/quality/background caveats explicit."
+        },
+        {
+          "requirement": "Contains no internal-field value, relaxation rate, or Curie temperature that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All internal-frequency, warm-rate, Tc and scaled-error values supported by actual CLI commands. No literature Tc presented as measured or unprinted physical arithmetic."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that both blocks revisit a narrow temperature window several times rather than assuming a single monotonic sweep.",
+          "pass": true,
+          "evidence": "Describes non-monotonic ZF revisits and60 G high-temperature start before the denser69.2–74 K sequence; temperature axes use metadata rather than run-number endpoints."
+        },
+        {
+          "requirement": "Treats run 2960 (1.5 K, out of sequence at the end of the ZF block) as a low-temperature reference point rather than ignoring it or assuming it belongs elsewhere in the sequence.",
+          "pass": true,
+          "evidence": "Explicitly screens2960 as1.5 K low-temperature reference, detects30.19 MHz, and rejects its failed/pinned fit parameters while retaining spectral evidence."
+        },
+        {
+          "requirement": "Frames the comparison to theory (e.g. mean-field/Heisenberg critical behaviour) as the paper's stated goal. A critical exponent, if quoted, comes from a `trend --model OrderParameter` fit in this session with its fit range stated, and is labelled with the temperature axis it was measured against (the PSI header's logged sensor reading, or the setpoint with a reason).",
+          "pass": false,
+          "evidence": "OrderParameter fit, range10–68.3 K and setpoint axis are explicit with large-chi-squared caution, but no comparison with mean-field/Heisenberg theory or the paper stated goal."
+        }
+      ],
+      "number_rule": "PASS: unverified_numbers=[] against independent scientific CLI/direct stored-output sources, excluding summary/audit/draft displays. Consequential values and uncertainties checked in the evidence commands; rounded restatements are not hand-derived new results.",
+      "root_cause": "All Musts pass, including the formerly missing paramagnetic relaxation rate: a separate warm ZF recipe with pre-t0 background is fit and reported without claiming divergence. The Should theory-comparison gap remains because the empirical order-parameter fit is discussed only as an approximate line trend. Repeated KT/global fits fail or depend on nuisance sharing; their limited physical scope is mostly acknowledged. No implementation changes during this gate.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all34 completed commands inspected. Only staged skill/references, supplied data/logbook and installed CLI/products; no source/rubric/host-skill/network or ad hoc numerical scripts.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1142.3,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 11,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/euo-psi/data --runs 2923-2924 --recipe wizard-2923 --order temperature --start 2923 --name euo-zf-no-line --plot && asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/euo-psi/data --series euo-gkt-exp-sharedbg --plot && asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/euo-psi/data --series euo-dgkt-sharedbg --plot && asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/euo-psi/data --series euo-zf-ordered --model OrderParameter --param frequency --xmax 68.3 --exclude 2944-2945 --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "091c2a9974252b340d195b7de33f0be0cc50a2bf27a4921a40cc156bc63b03da",
+      "audited_file_sha256": "091c2a9974252b340d195b7de33f0be0cc50a2bf27a4921a40cc156bc63b03da",
+      "rubric_sha256": "fe9da3aa512839d6107beebcf6bbb0c343d0d6f7fc668e02e8a3d7ce74096600",
+      "staged_skill_sha256": "7ccbad6ff8946c51b02e817a92eb51d4637d2aa8300325dcadce4e82f45fe596",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2/euo-psi",
+      "exact_copy_evidence": "Actual final reply and audited project/summary.md are byte-identical, including complete final file list; runner final_report_audited=true.",
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        7,
+        9,
+        10,
+        12,
+        13,
+        14,
+        18,
+        23,
+        24,
+        26,
+        27,
+        29
+      ],
+      "physics_caveats": [
+        "OrderParameter chi2_red28.551 makes Tc/exponent approximate; flagged or unresolved line rows are separately rejected.",
+        "Warm relaxation fits are poor and empirical, not a demonstrated intrinsic paramagnetic law.",
+        "The prose calls all TF rows poor while also describing2963 as the only good row: internal fit-quality wording is inconsistent and should be reconciled in future work.",
+        "Dynamic KT has unconstrained/failed rates and static width changes depend strongly on model/background sharing; no microscopic slowing law is claimed.",
+        "One ordinary FFT is dominated by a near-zero feature and does not reproduce the independently detected internal magnetic line; the report keeps this mismatch distinct from wizard/fit evidence."
+      ],
+      "scored_at": "2026-10-20T17:01:13.667293+00:00"
     }
   },
   "pending_cases": [
-    "sn-critical-field",
-    "euo-psi",
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
     "fmuf-ptfe",
@@ -217,16 +433,16 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 1,
+    "scored": 3,
     "target": 24,
-    "scientific_pass": 1,
-    "must_pass": 5,
-    "must_total": 5,
-    "should_pass": 2,
-    "should_total": 5,
-    "exact_copy_pass": 1,
-    "combined_pass": 1,
-    "boundary_pass": 1
+    "scientific_pass": 3,
+    "must_pass": 15,
+    "must_total": 15,
+    "should_pass": 5,
+    "should_total": 12,
+    "exact_copy_pass": 3,
+    "combined_pass": 3,
+    "boundary_pass": 3
   },
   "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2",
   "authorization": "Run and score this full wave, then pause. No automatic improvement rounds or additional gates."
