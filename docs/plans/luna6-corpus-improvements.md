@@ -1765,3 +1765,14 @@ runner guardtrue. Also retain the lower-ring comparison misreading against
 command89. All174 commands/file changes inspected; frozen source matches.
 Totals120/128 Musts,17/22 science,18/22 audit-copy/literal-copy,14/22combined,
 22/22 boundary,43/91 Shoulds. OnlyBasics/corannulene remain; finish thenpause.
+
+
+Confirmation3 now23/24 scored: Basics PASS9/9 Musts,3/7 Shoulds and
+number/unit/copy/boundary checks. Notes-based steering minimum0A and foil
+plateau13–15 are retained; EMU/MUSR overlap and railed sensors handled. Gaps
+remain the reversed/unclear degrader interpretation, paired deadtime exercise
+and actual t0 test. The synthetic three-Ag-reference temperature trial spans
+campaigns and is not a controlled material trend; its law is rejected. All82
+commands/file changes inspected, source hashes match. Totals129/137 Musts,
+18/23 science,19/23 audit-copy/literal-copy,15/23 combined,23/23 boundary,
+46/98 Shoulds. Onlycorannulene remains; finishandscore,thenpause.
