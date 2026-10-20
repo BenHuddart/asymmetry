@@ -915,3 +915,12 @@ briefly during verified copy. Broad tests must not overlap wave. If both pass,
 run fresh full24 confirmation2 from same committed implementation; otherwise
 make general improvements and commit before next wave. Heartbeat updated to
 this state. Objective incomplete; full24 confirmation1 remains honest FAIL.
+
+First round8 result,nickel:7/7 Musts,science/copy/boundary pass. Plain complete
+file paths copied exactly,including last line,repairing prior closing-backtick
+failure on this fresh attempt. Internal-line cooling/warming progression and
+warm disappearance retained independently of failed series; provisional LF
+and poor critical-law caveats retained. Bulk-Tc discrepancy Should missing.
+Corannulene remains in image-review/final turn; freeze CLI/skill and do not
+launch full24 until it is scored. Host22 GiB available,PSI0,820 KiB swap,
+13 GiB scratch free; one wave/one model,no tests. No duplicate launches.
