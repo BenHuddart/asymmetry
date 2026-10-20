@@ -547,3 +547,13 @@ a failed global model must not be interpreted as absence of another observable.
 Benzene remains live in its review turn; keep CLI/skill frozen. One wave/one
 model, no tests, 18 GiB available, zero swap use/PSI, 8 GiB free /tmp. Do not
 launch a confirmation gate from these results.
+
+Round five completed; host inspection shows no remaining eval/model/test
+processes. Benzene passes all 7/7 Musts, exact-copy and boundary, including the
+two converged broad solid lines at 19478.2/21474.6 G with stated mismatch.
+Final two-case totals: 11/17 Musts, 1/2 scientific and combined, 2/2 exact-copy
+and boundary. Corannulene's 4/10 regression prevents a full24 launch. Freeze
+lifted only after both first attempts scored. Next round should make local dip
+investigation available even when the initial whole-scan model is recovery;
+the current core only finds next-dip windows for existing LCR models. This is
+an observable/model-selection gap, not a reason for corpus-specific rules.
