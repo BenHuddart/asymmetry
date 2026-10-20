@@ -486,15 +486,111 @@
       "boundary_check": "PASS: completed command inventory reads staged project skill, data and CLI outputs only; no personal skill/source tree/network/ad hoc numerical scripting.",
       "boundary_pass": true,
       "permission_denials": 0
+    },
+    "copper-diffusion": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Splits the folder into its TF, ZF, and LF run groups rather than treating it as one undifferentiated series.",
+          "pass": true,
+          "evidence": "Six scan inventory separates TF, ZF and fixed-temperature LF-like field sweeps, with measured/precession evidence and shared membership caveats."
+        },
+        {
+          "requirement": "Separates the EMU (2010) and ARGUS (2024) runs as two distinct measurement campaigns on the same sample.",
+          "pass": true,
+          "evidence": "EMU and ARGUS have separate work directories, calibrations and trends; identifies distinct measurement blocks."
+        },
+        {
+          "requirement": "Reports a change in TF line shape (Lorentzian-like to Gaussian-like) as temperature decreases, from at least one of the two TF series.",
+          "pass": true,
+          "evidence": "Now explicitly reports Gaussian envelope at cold EMU 20885 and exponential at warmer 20884/20883. Calls temperature-dependent line shape with appropriate model-comparison caveat."
+        },
+        {
+          "requirement": "Reports the ZF spectra as showing Kubo-Toyabe-like behaviour and states whether the relaxation (e.g. the fluctuation rate \u03bd) at the lowest-temperature run differs from the next-lowest \u2014 the low-T upturn \u2014 whether or not it interprets it.",
+          "pass": true,
+          "evidence": "ZF KT-like dip/recovery; EMU lowest nu 0.101149 \u00b1 0.00432819 versus next 0.0185896 \u00b1 0.00356751 is explicitly a cold-end upturn. Also compares cold Delta and ARGUS cold pair."
+        },
+        {
+          "requirement": "Identifies the fixed-temperature, swept-field runs as the LF/QLCR data, distinct from the temperature scans.",
+          "pass": true,
+          "evidence": "Identifies 40 K swept-field runs as separate LF-like scans rather than temperature scans. QLCR microscopic interpretation is not established, but field group/geometry distinction required here is present."
+        },
+        {
+          "requirement": "Contains no hop rate, activation energy, or rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Rates and activation energy verified in actual trend output; no hand-computed or imported rate."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares a hop rate or dynamics trend derived from TF against one derived from ZF, as the worksheet asks.",
+          "pass": false,
+          "evidence": "Discusses TF damping and ZF dynamics separately but does not compare a TF-derived hop/dynamics rate against ZF."
+        },
+        {
+          "requirement": "Keeps the EMU and ARGUS scans on separate axes and notes their different fields, step sizes and ranges, rather than merging both eras' runs into one T-axis.",
+          "pass": true,
+          "evidence": "Separate EMU/ARGUS axes and work directories with 100 G versus 20 G TF and respective field ranges; does not merge eras."
+        },
+        {
+          "requirement": "Flags any run whose logged sample temperature deviates substantially from its nominal set-point.",
+          "pass": true,
+          "evidence": "Explicit setpoint/logged departures and named affected ranges; logged temperature used with caveats."
+        }
+      ],
+      "number_rule": "PASS: trend emu-zf prints nu 0.101149 \u00b1 0.00432819 and 0.0185896 \u00b1 0.00356751; emu-tf prints Lambda 0.231235/0.0211639/0.00746666 and Gaussian/Exponential comparison. Arrhenius output prints Ea 20.430487 \u00b1 5.381023 meV, chi2_red 153.453; Redfield prints D 0.411153 \u00b1 3.825768 and nu 85.834095 \u00b1 1359.124421, chi2_red 34.722. Invalid law parameters are explicitly not physical results.",
+      "root_cause": "Repairs round-one missing TF envelope-change Must by using full retained window and reporting comparison explicitly. Literal Musts pass. Remaining quality limitation: ARGUS TF was mechanically fit with the ZF KT recipe, then all fits abandoned rather than using a geometry-appropriate oscillation model. LF field scans also remain weakly modelled; avoid treating ZF models as universal scan templates.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 556.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 5,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/copper-diffusion/data --series argus-field --model Redfield --param Lambda --plot --instrument ARGUS --workdir asymmetry-work-argus'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/round2/copper-diffusion/data --series emu-zf --model Arrhenius --param nu --plot --instrument EMU'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"cat .agents/skills/asymmetry-analysis/SKILL.md && rg --files -g 'AGENTS.md' -g '\"'!data/**'\"' -g '\"'!**/.git/**'\"' . && rg --files data\"",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /tmp/asymmetry-luna6-improvements/round2/copper-diffusion/data --runs 76925,76935-76940,76956-76961 --alpha-from 76924 --plot --instrument ARGUS'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /tmp/asymmetry-luna6-improvements/round2/copper-diffusion/data --runs 76924,76926-76934,76942 --alpha-from 76924 --plot --instrument ARGUS'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /tmp/asymmetry-luna6-improvements/round2/copper-diffusion/data --runs 76939-76955 --alpha-from 76924 --plot --instrument ARGUS'",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "cdcaef713c81421fa93b498b9553bcf6279a2e78976624d3b18cc1a7af9c61ea",
+      "rubric_sha256": "4a0d496f6e89d82feb628d6378c6019071fd8813790f1b6b70a83a6e1e4459c6",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round2/copper-diffusion",
+      "staged_skill_sha256": "5a03b792caf69290af6284bf80974e8ac4d35b3f123c670a466b578adb936af3",
+      "boundary_check": "PASS: completed commands use staged project skill and supplied data/products; no personal skill/source-tree/network/ad hoc scientific scripting.",
+      "boundary_pass": true,
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 4,
-    "scientific_pass": 1,
-    "must_pass": 24,
-    "must_total": 31,
-    "exact_copy_pass": 3,
-    "combined_pass": 1,
-    "boundary_pass": 4
+    "scored": 5,
+    "scientific_pass": 2,
+    "must_pass": 30,
+    "must_total": 37,
+    "exact_copy_pass": 4,
+    "combined_pass": 2,
+    "boundary_pass": 5
   }
 }

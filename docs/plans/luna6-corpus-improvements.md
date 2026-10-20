@@ -246,3 +246,15 @@ must bind each reported estimate to its own calibration/model/run subset.
 Four reports are scored so far: 24/31 Musts, one scientific/combined pass,
 three exact-copy passes, four boundary passes. Corannulene has started in the
 freed slot; copper and maleic acid remain live. No source changes yet.
+
+Copper is scored and now passes all six Musts, exact-copy and boundary checks.
+It uses the full retained TF window and explicitly reports Gaussian cold versus
+exponential warm envelopes, repairing the round-one omission. Its EMU ZF nu
+cold-end upturn remains clear. Literal pass does not imply complete analysis:
+ARGUS TF was mechanically fitted with the ZF KT recipe then abandoned, and the
+LF scans remain weakly modelled. General model selection must match geometry
+for every scan, rather than reusing one era's ZF recipe indiscriminately.
+Five of nine reports scored: 30/37 Musts, two scientific/combined passes,
+four exact-copy passes, five boundary passes. Three live cases are maleic acid,
+corannulene and Sn; AFM is still queued. Host has 22 GiB available, zero swap
+and zero memory PSI. Source remains frozen at round-two implementation.
