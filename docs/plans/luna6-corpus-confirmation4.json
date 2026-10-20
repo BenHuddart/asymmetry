@@ -1,5 +1,5 @@
 {
-  "status": "running; 2/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 3/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -434,10 +434,188 @@
       ],
       "scored_at": "2026-10-20T22:17:19.426073+00:00",
       "reply_matches_saved_file": false
+    },
+    "plateau-redfield": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Uses run 9023 for alpha and says so.",
+          "pass": true,
+          "evidence": "Calibration explicitly measures alpha on9023, distinguishing raw1.0069 from corrected1.0097 and naming detector groups."
+        },
+        {
+          "requirement": "Treats the longitudinal-field runs from 9035 to 9051 (with or without the zero-field 15.9 K runs 9031–9034 before them) as the 15 K field sweep, and does not present 9024–9030 as 15 K points of that sweep.",
+          "pass": true,
+          "evidence": "Experiment separates9024–9030 logged-temperature cooldown from the LF9035–9051 field sweep near15K; repeated9031–9034 are co-added ZF controls."
+        },
+        {
+          "requirement": "Reports the relaxation rate falling as the longitudinal field rises through the sweep, from a series fitted along field.",
+          "pass": true,
+          "evidence": "LF field-ordered fit-series and final rate table show Lambda falling from6.47902±1.56939 at1000G to0.253721±0.0387277 at38000G, with amplitude/background caveats."
+        },
+        {
+          "requirement": "Fits Redfield's law to λ(B) with the CLI (`trend --model Redfield` or a sum containing it), states the field range fitted, and reports the fitted parameters with uncertainties as the command printed them.",
+          "pass": false,
+          "evidence": "The CLI does attempt Redfield in commands19/20/27 and the report gives ranges and failed diagnostics, but the actual reply never names Redfield or reports its D/nu parameters with uncertainties. It reports only rejected negative m and says no dynamics parameters established. The audit itself forced removal of the Redfield name despite explicit failure context."
+        },
+        {
+          "requirement": "Contains no correlation time, field width or rate that was not produced by a tool call in this session (the handout's and paper's values are background).",
+          "pass": true,
+          "evidence": "No unprinted physical rate, field scale or correlation time is asserted. Rejected m, diagnostic chi-squared and direct LF/ZF parameter tables match actual tool outputs; invalid law parameters are not physical results."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits over the plateau (roughly 0.5–3.6 T) rather than the whole sweep, or says why not.",
+          "pass": false,
+          "evidence": "Tries1000–38000G and1000–10000G, not the plateau range, without explaining that choice relative to plateau bounds."
+        },
+        {
+          "requirement": "Holds the Redfield exponent `m` at 2 (the handout's equation) or says why it was left free.",
+          "pass": true,
+          "evidence": "Reports the explicit fixed-m=2 trial and its failed diagnostics, alongside the free-m trial."
+        },
+        {
+          "requirement": "Says how the initial and background asymmetries were handled as the field rises (the handout's first question).",
+          "pass": true,
+          "evidence": "States A_1/A_bg were fitted independently, defines relaxing/nonrelaxing contributions, lists their field evolution and warns against interpreting them as magnetization."
+        },
+        {
+          "requirement": "Comments on whether the plateau edges show in λ(B) (a change of slope near 0.5 T, flattening near 3.6 T), marked as a qualitative reading.",
+          "pass": false,
+          "evidence": "Discusses overall suppression and grouped levels/candidate plateau but does not explicitly assess the expected plateau-edge slope/flattening features."
+        },
+        {
+          "requirement": "Notes the cooldown in 9024–9030 from the logged temperature.",
+          "pass": true,
+          "evidence": "Explicit logged-temperature cooldown9024–9030 and comparison with nominal15K setpoint."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct survey, alpha, retained-window, series and trend tables were checked, including geometry counts, cooldown offsets, corrected alpha and LF/ZF rates/errors. Rejected negative m and chi-squared are explicitly diagnostic, not physical estimates. Machine number/unit flags are empty.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Requested LF rate-series workflow is repaired, but Redfield optimization/domain diagnostics fail and final required law parameters are missing. Audit unsupported_laws rejects the word Redfield even in a clearly failed-law description, causing name removal. Copy still fails by one terminal LF after later edits restore it, despite earlier truncate calls. Co-add coverage prompts redundant individual fits.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all45 completed commands inspected. All45 completed command records and the project-summary file-change event inspected, including full heredoc, sed/truncate edits and generated-log read. Sources are staged data, project skill/products and CLI help. No arbitrary physical arithmetic, other-case/private/source consultation, network or delegation by the eval agent. Diagnostic source inspection was performed only by the parent scorer, outside the eval input boundary.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1012.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 6,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/plateau-redfield/data --series lf-field --model Redfield --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/plateau-redfield/data --series lf-field --model Redfield --param Lambda --fix m=2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/plateau-redfield/data --series lf-field --model Redfield --param Lambda --xmin 1000 --xmax 10000 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/plateau-redfield/data --run 9035 --geometry LF --scope lf-dynamics --plot'",
+          "exit_code": 130
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "a29322e6d814cfdce92c595d96260a0329050d64d61182afcf7ca18167627aab",
+      "audited_file_sha256": "19d8820c4046979c2e35a1a644eb2a6139cd4603d2dd9205002ddc5f71a891c2",
+      "rubric_sha256": "23bb04d9a398fa17dde7cf8fc51632eda64e51646ad926a80a7462453df6243e",
+      "staged_skill_sha256": "545d13e7131f5a58466e7ed2a7cc5c7adbc2f9d3f76fa3e5a9a5e803c516f918",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation4/plateau-redfield",
+      "exact_copy_evidence": "Saved draft ends in one LF; the actual reply does not. No other visible-body difference. Last passed audit body includes the LF and runner guard=false. Earlier truncate operations were followed by edits that restored a newline.\n--- audited\n+++ reply\n@@ -75,4 +75,4 @@\n asymmetry-work/plots/wizard-9035.png\n asymmetry-work/plots/wizard-9024.png\n asymmetry-work/plots/wizard-9031.png\n-asymmetry-work-coadd/plots/reduced-9031.png\n+asymmetry-work-coadd/plots/reduced-9031.png",
+      "physics_caveats": [
+        "Actual free fit prints D28.767917±0.853626MHz, nu148.220024±26.356401MHz and m=-1.766588±0.211185, then LAW NOT ESTABLISHED because m is negative. Fixed-m=2 and low-field trial have undetermined nu/errors and are correctly rejected as physical mechanisms.",
+        "Read-only implementation inspection identifies _redfield evaluating abs(m) and abs(nu), while the verdict rejects negative stored signs. This sign-degenerate fit/domain interaction and poor fixed-shape starting basin are general repair candidates; no source or evidence is changed during this wave.",
+        "The supplied rate image is the rejected low-field fit, with a visibly flat poor curve; report explicitly rejects it. Per-run LF rate decrease remains a measured trend even though the law fails.",
+        "LF amplitudes/backgrounds vary strongly, nine fits are poor and the isolated32000G Gaussian preference is not a bulk transition. No magnetization or plateau is asserted as measured.",
+        "ZF cooldown fits and failed dynamic Gaussian KT test are separate from the15K LF field series. Unusable ZF endpoints are identified, and co-added controls are explicitly labelled."
+      ],
+      "judgement_calls": [
+        "Must4 remains failed although the intended command workflow now runs: actual reply removes the law name and lacks the requested D/nu uncertainty report. Correct rejection of invalid fits is retained; no rubric is relaxed to count an unusable law as established.",
+        "Should2 passes for actually attempting/reporting fixed m=2, even though the resulting trial is invalid."
+      ],
+      "number_evidence_commands": [
+        2,
+        6,
+        7,
+        8,
+        9,
+        13,
+        15,
+        18,
+        19,
+        20,
+        24,
+        25,
+        26,
+        27,
+        31,
+        33,
+        34,
+        35,
+        36,
+        37
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "a29322e6d814cfdce92c595d96260a0329050d64d61182afcf7ca18167627aab",
+        "summary.md": "a29322e6d814cfdce92c595d96260a0329050d64d61182afcf7ca18167627aab",
+        "transcript.jsonl": "596ad35c9a89aa531d4d300f19486bd6ac1e475b7e39bb5a910bdf4f6a74d388",
+        "commands.txt": "bdb7c678adf75f82d0e72dc9d448c42fbb58792246164059690568106a0b0bad",
+        "cost.json": "a87c0306ea5cdd1c105390473ee40c5424b640c2272808967d499132da258670",
+        "image-inputs.json": "304662e429c0d8b138d9bb32bc45396e1e1b7557635f287959c830fb30270a85"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/lf-field-trend-Lambda.png",
+          "snapshot_path": "review-images/069618cb9b7e2dc8fc3c4947b00eae6de08101713a531e220fe2eda667c38553.png",
+          "bytes": 19597,
+          "sha256": "069618cb9b7e2dc8fc3c4947b00eae6de08101713a531e220fe2eda667c38553",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lf-field-trend-A_1.png",
+          "snapshot_path": "review-images/fbf2cdba6d9a440cdce90073cedca983be15f22da0b1065ea1f9e0246f3e7397.png",
+          "bytes": 22730,
+          "sha256": "fbf2cdba6d9a440cdce90073cedca983be15f22da0b1065ea1f9e0246f3e7397",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/zf-cooling/9031.png",
+          "snapshot_path": "review-images/a64a0847a1044e25d222ec8f45f2fea82f53f22eb3df5ffe34cad6d397a3ef5c.png",
+          "bytes": 62666,
+          "sha256": "a64a0847a1044e25d222ec8f45f2fea82f53f22eb3df5ffe34cad6d397a3ef5c",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/zf-cooling/9024.png",
+          "snapshot_path": "review-images/143e1ed66cf4de94c2a29bc137f1f5d57b8cbb9191580e03b996ad74e8459aae.png",
+          "bytes": 64188,
+          "sha256": "143e1ed66cf4de94c2a29bc137f1f5d57b8cbb9191580e03b996ad74e8459aae",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T22:23:50.169884+00:00",
+      "execution_resources": {
+        "wizard_worker_environment_default": 1,
+        "explicit_worker_overrides": {
+          "13": 2,
+          "17": 2,
+          "22": 2,
+          "23": 2
+        },
+        "note": "The sampler verifies inherited environment1 but this agent explicitly requests two workers in several commands. Do not call one worker a mechanically enforced per-case ceiling."
+      },
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
-    "plateau-redfield",
     "sn-critical-field",
     "euo-psi",
     "maleic-mu-kinetics",
@@ -477,16 +655,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 2,
+    "scored": 3,
     "target": 24,
     "scientific_pass": 1,
-    "must_pass": 10,
-    "must_total": 11,
-    "should_pass": 3,
-    "should_total": 6,
+    "must_pass": 14,
+    "must_total": 16,
+    "should_pass": 6,
+    "should_total": 11,
     "exact_copy_pass": 0,
     "literal_copy_pass": 0,
     "combined_pass": 0,
-    "boundary_pass": 2
+    "boundary_pass": 3
   }
 }
