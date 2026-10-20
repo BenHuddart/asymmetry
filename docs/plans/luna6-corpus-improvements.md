@@ -1479,3 +1479,16 @@ All11 RF/16 repolarisation commands inspected;frozen hashes unchanged.
 Totals118/124 Musts,17/21 science,15/21 audited-copy,16/21 literal-copy,12/21
 combined,21/21 boundary. Corannulene/high-TF benzene/benzene ALC remain;
 finish all24 frozen then pause,with no improvement or extra gate.
+
+
+Confirmation2 now22/24 scored:high-TF benzene PASS6/6 Musts,number/copy/
+boundary pass. Coadd ordinary FFT gives diamagnetic/radical lines and actual
+correlation gives514.522326/514.004241 MHz with explicit sum interpretation.
+Two-line splits/resolution warning are printed by CLI,no arithmetic. Strong
+50.6 MHz remains unassigned (Must pass,Should instrumental-origin gap).
+Field-scan correlation coverage,correlation-doublet resolution discussion,
+four-view/average-correlation limitations and NPZ names remain Should gaps.
+Negative baseline/alpha transfer and severe fit mismatch retained. All51
+commands inspected;frozen hashes unchanged. Totals124/130 Musts,18/22 science,
+16/22 audited-copy,17/22 literal-copy,13/22 combined,22/22 boundary. Only
+corannulene and benzene ALC remain;finish frozen gate then pause.
