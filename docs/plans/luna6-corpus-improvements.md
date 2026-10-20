@@ -1207,3 +1207,42 @@ is still incomplete:confirmation1 remains145/147 Musts,23/24 science,23/24 copy,
 all-pass gate claim. Latest implementation validation314focused/5912fast,
 lint/structural/skill pass,docs80 existing warnings;standard still has four known
 GUI sizing failures and is not green. Host22 GiB available,no swap/current PSI.
+
+## Second fresh full24 confirmation gate
+
+The user explicitly authorized the full evaluation after round12. Run all24
+from fresh projects using the same implementation b06981a; launch HEAD is
+2d06bcf (only score/plan commits follow the implementation). Do not pool prior
+passes. Keep CLI, skill, runner and rubrics frozen until every case finishes,
+including any early failures. Score completed actual final replies while the
+remaining cases run, following tools/agent_eval/scoring_brief.md and fixed
+Must/Should rubrics. Verify numbers independently of audit/draft displays,
+exact copying, boundary, first-attempt hashes and AFM magnetic physics scope.
+
+Concurrency remains three cases, with BLAS thread counts pinned to one.
+Preflight:20 logical CPUs,23 GiB available of30 GiB RAM,zero swap and current
+memory PSI,655 GiB free on persistent disk. No evals or tests were live.
+Three is the previously demonstrated stable setting and preserves memory for
+analysis-command peaks and the desktop. No broad tests may overlap this gate;
+pytest remains capped at two workers when tests are next authorized.
+
+Confirmation2 is LIVE at
+/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation2,
+exec60302; console is confirmation2-wave.log in that parent cache directory.
+First three cases plateau-redfield,sn-critical-field and euo-psi started.
+One wave supervisor and exactly three Codex/model processes verified; inherited
+BLAS settings are all1 and RAM/PSI remain healthy. Every case uses gpt-6-luna,
+unchanged two_turn_image_review_v2 and an independent first attempt. Corpus
+discovery uses only ASYMMETRY_CORPUS_ROOT. All24 source folders are present.
+Raw attempts and corpus copies remain on persistent disk outside this repo.
+Wave metadata and source-manifest.json record commit and frozen source,skill,
+runner and all rubric hashes. No previous results were overwritten.
+
+Score record:docs/plans/luna6-corpus-confirmation2.json (currently pending).
+Follow-up may monitor and score this user-requested full wave, then commit the
+complete scores and PAUSE again. Do not automatically make another improvement
+round or launch a further gate. Inspect actual host processes,cost.json and
+transcripts before any launch; never duplicate live runs. Stay quiet when
+unchanged/non-actionable and notify on meaningful scores,completion,failure or
+required input. Standard validation still has the four known GUI failures;
+no validation was repeated for this unchanged implementation.
