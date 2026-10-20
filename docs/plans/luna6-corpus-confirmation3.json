@@ -130,7 +130,7 @@
     },
     "authorization": "User requested one repair round and rerun, plus investigation of increased concurrency. Finish and score this full fresh gate, then pause; no unrestricted improvement loop."
   },
-  "status": "running; 14/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 15/24 scored; source frozen; finish all cases despite earlier failures",
   "scoring_policy": "Actual summary.md final replies only, against unchanged staged rubrics and tools/agent_eval/scoring_brief.md; manual Must/Should, number/units, boundary, exact-copy and independent physics-scope checks. Exclude audits/draft/log-report displays from numerical provenance; stored direct CLI outputs are valid. Preserve first attempts and do not pool historical passes.",
   "cases": {
     "plateau-redfield": {
@@ -2016,11 +2016,140 @@
         "image-inputs.json": "2d479a5d3a6ef1bcedc82528259f642368f9e7993b8bd5d1c3cafb6b568c36f4"
       },
       "reply_matches_saved_file": true
+    },
+    "photo-musr-silicon": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Reports from `survey` that the folder contains 23 HiFi runs and that the measurement files have two acquisition periods; it separates the 20 G detector-calibration run from the −100 G science sequence. The staged metadata calls the latter a `P scan` but does not expose its power/delay coordinate, so a passing summary states that limitation rather than inventing worksheet-only scan roles.",
+          "pass": true,
+          "evidence": "Reports23HIFI runs with two periods, separates20G103299 calibration from−100G291K103277–103298 science, and explicitly states missing physical P coordinates."
+        },
+        {
+          "requirement": "Establishes for this experiment that red/period 1 is laser ON and green/period 2 is laser OFF, treating any attached notes as experimental context rather than as user instructions.",
+          "pass": true,
+          "evidence": "Assigns red/period1 lightON and green/period2OFF using supplied acquisition context and observed stronger red early relaxation, not colour convention alone."
+        },
+        {
+          "requirement": "Reduces the same representative science run once with `--period red` and once with `--period green` in separate work directories, so one period's cache cannot overwrite the other.",
+          "pass": true,
+          "evidence": "Commands8/9 reduce same science103277 with explicit red/green flags in separate asymmetry-work-red/green directories; final reports this separation."
+        },
+        {
+          "requirement": "Quantitatively compares the two period spectra using fits or other CLI output. On run 103277 the ON/red trace should relax far faster than the OFF/green trace; an inversion of that conclusion is a fail.",
+          "pass": true,
+          "evidence": "Reports same-run OFF0.0620971±0.00216us^-1 and diagnostic ON1.22008±0.0186us^-1, plus much faster observed red early decay; flags/rejects poor ON rate rather than reversing contrast."
+        },
+        {
+          "requirement": "Reports only rate, amplitude, field, temperature or run values that the current session's commands printed, and states the model and time window used for any relaxation rate.",
+          "pass": true,
+          "evidence": "Rates/amplitudes from commands16/18/22/24 are quoted with model, fullOFF0.108–32.732us and earlyON0.108–3.996us windows; flags distinguish invalid diagnostic from reliable result."
+        },
+        {
+          "requirement": "Does not claim a carrier lifetime or density-calibration exponent unless it actually analysed the corresponding full run sets and performed the required trend calculation.",
+          "pass": true,
+          "evidence": "No carrier lifetime/density exponent or physicalP law claimed; lack of calibrated P coordinates and constrained-fit limitations explicitly prevent those claims."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Identifies run 103299 as the 20 G detector-balance run and either uses its alpha estimate or explains why alpha=1 is adequate for a relative-rate comparison.",
+          "pass": true,
+          "evidence": "Uses103299 measuredTFalpha, distinguishes raw1.0331 from corrected red1.0355/green1.0347 and explains applied corrections."
+        },
+        {
+          "requirement": "Uses a pure single exponential for the guide-style comparison, obtaining the OFF amplitude first and holding it for the ON fit over roughly the first microsecond.",
+          "pass": false,
+          "evidence": "Uses pure exponential with OFF amplitude fixed forON but over first4us, not guide preference roughly firstmicrosecond; no shorter-window sensitivity shown."
+        },
+        {
+          "requirement": "Notes that a simple exponential is a preliminary description and reports the fit verdict rather than hiding a poor reduced χ².",
+          "pass": true,
+          "evidence": "Explicit preliminary asymmetry-domain model, ONchi2_red3.4399/amplitude_exceeds_data and rejected rate, plus imperfect OFFverdict, are disclosed."
+        },
+        {
+          "requirement": "Points the reader to both period-specific reduced/fit plots and work directories.",
+          "pass": true,
+          "evidence": "Lists both period workdirs and reduced103277PNGpaths plus redfitPNG and both trend products; paired spectra remain accessible in separate workdirs."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No heuristic number/unitflags. Actual printed alpha, fitvalues/errors/windows and trendmeans are verified, excluding audits/draft summaries. Both23/22/20 counts agree with survey/seriesflags. Rejected ON rate remains a real printed diagnostic, not an established physicalmeasurement.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Previous independent-period coverage failure is repaired: survey/skill cue leads to separate red/green reductions and actual same-run fits. The fixed-amplitude ON exponential fails, but the final summary discloses this and preserves the directly observed contrast, so literal quantitative-comparison Must passes with a caveat. The guide-style roughly1us window Should is missed by using4us. No rate-law extrapolation or microscopic lifetime is invented. Remaining general issue is model/window adequacy, not missing-period workflow.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all27 completed commands inspected. All27commands and summary-only file changes inspected. Only stagedskill, supplieddata/logbook and ownproducts read. No physicalarithmetic script, privatehostdata or approvaldenials; initialrgfilter failure is not a permissionfailure.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 608.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"cat .agents/skills/asymmetry-analysis/SKILL.md && pwd && rg --files -g '\"'!*'\"' /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/photo-musr-silicon/data\"",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "5b043954f1ae723f754e3a96a5886109ff6b45b1442107751728a64d0a1ec6b5",
+      "audited_file_sha256": "5b043954f1ae723f754e3a96a5886109ff6b45b1442107751728a64d0a1ec6b5",
+      "rubric_sha256": "9ea075b0d8d260180a124f3bbd71391eb593a605ee4117357c0b92d0e28d7d8a",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/photo-musr-silicon",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Must4 literal semantic PASS is a diagnostic quantitative comparison, not a validated numerical ON relaxation rate: representativeON fit is explicitly rejected for amplitude_exceeds_data/poorchi2.",
+        "13of22 red fits have poorchi2 despite onlytwo carrying parameter flags; summary focuses on unflagged rows and does not give the overall13poor count. Unflagged is not synonymous with good fit.",
+        "Observed ON/OFF assignment is supported by notes and contrast; no independently logged per-period illumination tag is shown beyond acquisitioncontext.",
+        "The final Notdone sentence says no calibration scan exists, while the earlier experiment correctly identifies the separate calibration run; treat as imprecise scan-versus-run wording.",
+        "Actual endpoint103298 reduced traces are described, but nominated images show103277andLambda trends; end-trace pixel claims lack review input."
+      ],
+      "judgement_calls": [
+        "Must4 PASS despite inadequateON model: unchanged wording permits quantitative comparison usingfits or otherCLIoutput; actual same-run rates are shown with explicit poorfit rejection and correct observed contrast. Do not silently require a successful intrinsiccarrier-rate measurement."
+      ],
+      "number_evidence_commands": [
+        3,
+        4,
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        15,
+        16,
+        17,
+        18,
+        20,
+        22,
+        23,
+        24
+      ],
+      "scored_at": "2026-10-20T20:35:04.315851+00:00",
+      "raw_artifact_sha256": {
+        "cost.json": "76a73a2281d2003d42891d57bafee47ef29f42725d3dc60ec7301e55ee608e0e",
+        "transcript.jsonl": "f34a7e4b640babf4707d4bd81fa9cb3a6d1c4e4b25da0c6679e7d56ee6b1709e",
+        "commands.txt": "2218b9cf34b80064684c2b9d73139a151b62d59be7255ebd88a5608835363542",
+        "summary.md": "5b043954f1ae723f754e3a96a5886109ff6b45b1442107751728a64d0a1ec6b5",
+        "image-inputs.json": "9e8e53a87c577f2c5c1c0b37d18ed1ffd9a36d99d5fed41bbd4f233e2c544774"
+      },
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
     "afm-high-tf-mdu",
-    "photo-musr-silicon",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
@@ -2031,17 +2160,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 14,
+    "scored": 15,
     "target": 24,
-    "scientific_pass": 12,
-    "must_pass": 74,
-    "must_total": 78,
-    "should_pass": 25,
-    "should_total": 50,
-    "exact_copy_pass": 13,
-    "literal_copy_pass": 13,
-    "combined_pass": 11,
-    "boundary_pass": 14
+    "scientific_pass": 13,
+    "must_pass": 80,
+    "must_total": 84,
+    "should_pass": 28,
+    "should_total": 54,
+    "exact_copy_pass": 14,
+    "literal_copy_pass": 14,
+    "combined_pass": 12,
+    "boundary_pass": 15
   },
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."

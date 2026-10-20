@@ -1705,3 +1705,14 @@ molecular interpretation separate. All86 commands/file changes inspected and
 frozen source hashes verified. Totals74/78 Musts,12/14 scientific passes,
 13/14 audit-copy/literal-copy,11/14 combined,14/14 boundary,25/50 Shoulds.
 Continue all24 frozen, then commit complete record and pause.
+
+
+Confirmation3 now15/24 scored: silicon PASS6/6 Musts,3/4Shoulds,
+number/unit/audit-copy/literal-copy/boundary pass. Actual red/green reductions
+and same-run fits repair the previous missing-period comparison. Must4 passes
+on the explicit diagnostic quantitative contrast plus observed fasterON decay;
+the rejected poorON rate is not a validated intrinsiccarrier result. Retain
+13poor red fits despite onlytwo parameterflags,4us rather thanpreferred1us
+window, and missing endpointpixels. All27commands/filechanges inspected;
+frozen sources match. Totals80/84Musts,13/15science,14/15audit-copy/literal-copy,
+12/15combined,15/15boundary,28/54Shoulds. Continue all24frozen,thenpause.
