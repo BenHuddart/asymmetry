@@ -993,3 +993,18 @@ copy,boundary checks. If it passes,launch fresh full24 confirmation2 from same
 implementation;otherwise improve generally,test,commit before next wave.
 Standard remains four known GUI sizing failures. Resume heartbeat every10min
 with quiet unchanged-state behavior; objective still incomplete.
+
+User restarted computer and requested continuation. Original round9 was
+interrupted mid-analysis: no cost.json/final report or completed first turn,
+no live eval/tests after restart. Raw transcript,data/products survive disk
+cache and remain untouched; interruption.json records infrastructure loss.
+Fresh infrastructure retry LIVE at persistent cache round9-restart1,exec79726,console
+/home/ben/.cache/asymmetry-luna6-overnight-20261020/round9-restart1-wave.log.
+Same frozen implementation e2a0d81 and skill/rubric/runner hashes,launch HEAD
+7a26c2f. Metadata explicitly marks attempt2/infrastructure retry,not a fresh
+first attempt. Keep both attempts,score completed report transparently; do not
+hide interrupted attempt. All evals gpt-6-luna,two-turn images,BLAS1,max3.
+Freeze CLI/skill while running; no tests overlap. On targeted pass,still need
+fresh full24 confirmation2,never pooled historical scores. Host24 GiB RAM
+available,zero swap/PSI. Heartbeat should follow this new durable root and
+inspect actual processes before any launch.
