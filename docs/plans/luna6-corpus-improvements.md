@@ -1740,3 +1740,14 @@ after passing audit. Preserve the actual reply, not the saved report. All25
 commands/file changes inspected; source hashes match. Totals99/106 Musts,
 15/19 science,17/19 audit-copy/literal-copy,13/19 combined,19/19 boundary,
 34/73 Shoulds. Continue the remaining frozen cases, then score and pause.
+
+
+Confirmation3 now 20/24 scored: Re6Zr FAIL 6/7 Musts, 2/6 Shoulds,
+number/unit/boundary pass. Candidate TRSB, alpha-block calibration and static
+LF decoupling are retained. The required Gaussian-width SC gap law is missing:
+a fresh Gaussian recipe flags39/42 points and is abandoned without model
+recovery or SC_* fitting. The reply also deletes two endpoint FFT paths after
+passing audit, so audit-copy/literal-copy fail. All53 commands/file changes
+inspected; source hashes match. Totals105/113 Musts,15/20 science,
+17/20 audit-copy/literal-copy,13/20 combined,20/20 boundary,36/79 Shoulds.
+Finish remaining cases frozen, then commit complete results and pause.

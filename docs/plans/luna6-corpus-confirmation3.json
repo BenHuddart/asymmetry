@@ -130,7 +130,7 @@
     },
     "authorization": "User requested one repair round and rerun, plus investigation of increased concurrency. Finish and score this full fresh gate, then pause; no unrestricted improvement loop."
   },
-  "status": "running; 19/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 20/24 scored; source frozen; finish all cases despite earlier failures",
   "scoring_policy": "Actual summary.md final replies only, against unchanged staged rubrics and tools/agent_eval/scoring_brief.md; manual Must/Should, number/units, boundary, exact-copy and independent physics-scope checks. Exclude audits/draft/log-report displays from numerical provenance; stored direct CLI outputs are valid. Preserve first attempts and do not pool historical passes.",
   "cases": {
     "plateau-redfield": {
@@ -2654,27 +2654,188 @@
         "image-inputs.json": "680c551a37db71f0da349906793f978d19f39f4c8e88cbea41702d8b8001662d"
       },
       "reply_matches_saved_file": false
+    },
+    "trsb-re6zr": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Identifies the three science scans and their geometry from its own survey: the 400 G TF temperature scan (38178–38219), the ZF temperature scan (38223–38260) and the 100 G LF scan (38263–38273, 38275), and analyses them separately.",
+          "pass": true,
+          "evidence": "Separates400G TF38178–38219, laterZF38223–38260 and100G LF38263–38273/38275; explicitgeometry andmixedcross-section limits."
+        },
+        {
+          "requirement": "Reports the alpha step between the TF block and the ZF/LF block and calibrates each from a run inside it (38222 for ZF/LF; a TF run of 38176–38221 for TF), naming the runs.",
+          "pass": true,
+          "evidence": "Reports38221/38222alpha step, measuresTF38220raw0.5608/corrected0.5586 andZF/LF38222raw1.3187/corrected1.3232."
+        },
+        {
+          "requirement": "Treats the 50–200 G field runs as longitudinal, not transverse, and reports that the 100 G LF runs show little or no relaxation at any temperature: the ZF relaxation is decoupled, so its fields are static.",
+          "pass": true,
+          "evidence": "Treats50–200G controls asLF despite stamps; actualCLI5.3percentvs88.3percentloss showsnearlyflat100Gscan andstaticdecoupling."
+        },
+        {
+          "requirement": "Fits the ZF scan with a static Gaussian Kubo–Toyabe × exponential + constant (or an equivalent KT model) and says there is no spontaneous precession. It does not adopt a precession model (the wizard has ranked Bessel or Overhauser forms first on some runs) as the ZF physics.",
+          "pass": true,
+          "evidence": "Uses physicallyequivalentDynamicGaussianKT+Constant, explicitly rejectingBesselprecession despitewizardranking, no coherentZFline."
+        },
+        {
+          "requirement": "States the headline in words: the ZF KT rate (`Delta`, the paper's σ) rises on cooling below a temperature at or near the TF Tc (within a point spacing of the Tc this session's TF fit gives, or 6–7.5 K) while Λ (or, in a dynamic KT fit, the fluctuation rate ν) shows no such change; the extra relaxation is small against the nuclear rate and is read as spontaneous static fields appearing at Tc — broken time-reversal symmetry. Calling it a candidate pending a check passes; explaining it away (as nuclear, or as \"not TRSB because it is not in Λ\") does not.",
+          "pass": true,
+          "evidence": "SmallDelta coldincrease with4.40086–7.19962Kchange andnocorrespondingnuonset isexplicitcandidate spontaneousquasistaticfields/TRSB belowSCtransition, notexplainedaway."
+        },
+        {
+          "requirement": "Reports the TF Gaussian rate σ rising below a Tc between 6 and 7 K from a flat normal-state value, fits σ(T) with an `SC_*` gap law, quotes Tc and the gap parameter with uncertainties, χ²ᵣ and the temperature axis, and says whether a fully gapped (s-wave) law describes it.",
+          "pass": false,
+          "evidence": "No convergedGaussian sigma(T) law/SC_* fit, fittedTc/gap/errors/chi2 orfullygappedassessment. Gaussiantrial39/42flagged isabandoned; exponentialseriescannot satisfy thisMust."
+        },
+        {
+          "requirement": "Contains no Tc, gap, rate or alpha not produced by a tool call in this session (the paper's 6.75/6.78 K, 1.21 meV, 2Δ/k_BTc = 4.2 and Hc2 are background), and no gap converted to meV or 2Δ/k_BTc by hand.",
+          "pass": true,
+          "evidence": "Allrates/alpha/intervals andFFTparameters printed byactualcommands; no paperTc/gap orhandconversion reported."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Orders the TF scan by the logged sample temperature, noting 38180's 0.01 K setpoint is not the sample's temperature.",
+          "pass": true,
+          "evidence": "UsesloggedsampleT afterreordering, explicitly38180setpoint0.01K/logged0.30K and38179setpoint1.8/logged1.53K."
+        },
+        {
+          "requirement": "Models the silver-holder background (a second, weakly damped line at the applied field in TF; the constant in ZF), reports the diamagnetic shift of the sample line below Tc, and says how the non-superconducting fraction was handled.",
+          "pass": false,
+          "evidence": "No constrainedsilver weaklydampedTFline/samplediamagneticshift/fractionworkflow; constantoffset isexplicitlynot aphysicalfraction."
+        },
+        {
+          "requirement": "Compares the s-wave law with a nodal one (e.g. `SC_DWave`) and says which the data prefer and why.",
+          "pass": false,
+          "evidence": "NoSC_SWaveversusSC_DWave fittedcomparison orpreference."
+        },
+        {
+          "requirement": "Compares the ZF onset with the TF Tc in words, and gives the ZF Tc an honest uncertainty (see traps).",
+          "pass": false,
+          "evidence": "CandidateZF/TRSB wording ispresent,butno measuredTF_Tc comparator orZF_Tc uncertaintybeyondbroadchangeinterval."
+        },
+        {
+          "requirement": "Accounts for 38176–38177 and the 200 G pair 38220–38221: analysed, or said why not.",
+          "pass": true,
+          "evidence": "ExplicitlyaccountsforearlyZF38176–38177 and200Gpair; geometrymixedthird200Gpoint isidentifiedandtrialrejected."
+        },
+        {
+          "requirement": "Says only the `.nxs` files were analysed and what the other files are.",
+          "pass": false,
+          "evidence": "No explicitnxs-onlystatement orclassificationofemptyRAW,nxs_v2/ICPfiles."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No heuristicnumber/unitflags. ActualZFsharedvalues/uncertainties,TFcomponents andflagcounts verifiedagainst38/39/42/44, decouplingpercentages32/38/45 andFFT19/20. No significanceorconversionbyhand. Passing audit doesnotmakeeditedreplyexact.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "The TF wizard selects a complicated two-line exponential model. The agent then builds a Gaussian variant with a fresh generic recipe (command41), whose series flags39of42points; command44 shows a nuisance frequency near8.568MHz with a width pinned nearzero instead of a stable two-component field-line decomposition. It stops without seed/window/background recovery or any SC_* law. Candidate TRSB and LF control analysis remain valid bounded findings but cannot replace the mandatory TF gap result. Separately, actual final reply deletes two endpoint FFT paths after audit. General issues are stable model-comparison seeding/recovery and exact final emission.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all53 completed commands inspected. All53commands andsummary-onlyfilechanges inspected. Reads stagedskill/references,supplieddata andownsummary/products. No physicalarithmeticscripts,unrelatedhostreads orapprovaldenials.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1188.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 7,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "fe67c135dd3c3248e3a75a82474223326c5a7fd242b0ffbf6a06c98f7ec92364",
+      "audited_file_sha256": "25ccb2bf69324c051618626a51255b76ec695819b78ed8f2030d09200a04e191",
+      "rubric_sha256": "9b37cf0242fec13643391e4be4d75ce3791578ee9633fe4b675ce8fb1b19fdcc",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/trsb-re6zr",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -82,5 +82,3 @@\n asymmetry-work/plots/tf400/38178.png\n asymmetry-work/plots/tf400-trend-Lambda_2.png\n asymmetry-work/plots/zf-temperature-trend-Delta.png\n-asymmetry-work/plots/run-38180.png\n-asymmetry-work/plots/run-38178.png\n",
+      "physics_caveats": [
+        "CandidateTRSB wording isbounded; no fittedTF_Tc orvalidatedgapmodel connects the staticwidthstep to anindependentlymeasuredSCtransition.",
+        "DynamicKT isallowedasequivalentmodel, butno explicitstaticGKTtimesExponential sensitivitycheck isdone.",
+        "TFtwo-linecomponentfrequencies/amplitudes dependon aheavilyflaggedmodel; Gaussiantrialpoorlyseeded andnotuniquelyselected.",
+        "Some fieldcross-sections mixgeometry/alphablocks; finalrecognizes this, yet trialfits stilloccur andcannot establishhomogeneousphysicaltrends.",
+        "nu expressedus^-1 isdimensionallyequivalent toprintedMHz fluctuationrate; no derivedphysicalconversionnumeral introduced."
+      ],
+      "judgement_calls": [
+        "Must5 PASS on explicitcandidateTRSBinterpretation withDelta change spanning6–7.5K andnuwithoutonset, underfixedrubric alternative whennoTF_Tc fit; thisdoesnotrescueMust6."
+      ],
+      "number_evidence_commands": [
+        2,
+        5,
+        6,
+        7,
+        8,
+        9,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        19,
+        20,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        41,
+        42,
+        44,
+        45,
+        46,
+        47
+      ],
+      "scored_at": "2026-10-20T20:49:40.292213+00:00",
+      "raw_artifact_sha256": {
+        "cost.json": "9c227d70dba75640fc5093920d28906f41be914ff4c34ec126642d8dec32f4ed",
+        "transcript.jsonl": "08051509a73c256b8adeaff377673a76eeaf7063b1c9eaa97dc9f92ff5b695d1",
+        "commands.txt": "64b55955df3d7e5a1d0ee4e780a359b09711931d180ff38fef73775b76fac1dd",
+        "summary.md": "fe67c135dd3c3248e3a75a82474223326c5a7fd242b0ffbf6a06c98f7ec92364",
+        "image-inputs.json": "f617551b3a3d2a7edf6c13afa6c19f3db09151a4829e4c0361f7fe1900ced517"
+      },
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
     "lifeas-psi",
-    "trsb-re6zr",
     "basics",
     "corannulene-alc",
     "benzene-alc"
   ],
   "totals": {
-    "scored": 19,
+    "scored": 20,
     "target": 24,
     "scientific_pass": 15,
-    "must_pass": 99,
-    "must_total": 106,
-    "should_pass": 34,
-    "should_total": 73,
+    "must_pass": 105,
+    "must_total": 113,
+    "should_pass": 36,
+    "should_total": 79,
     "exact_copy_pass": 17,
     "literal_copy_pass": 17,
     "combined_pass": 13,
-    "boundary_pass": 19
+    "boundary_pass": 20
   },
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."
