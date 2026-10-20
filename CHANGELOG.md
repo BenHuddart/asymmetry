@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agent reports reconcile comparisons with their labelled fit rows.**
+  Qualitative mechanisms remain separate from quantitative model limitations,
+  and plain file paths simplify exact copying of the final audited report.
 - **Resonance width searches allow partial flank coverage.** The default upper
   width bound is half the fitted span; resolved-line requirements remain
   unchanged. Inadequate coverage prompts a wider local Cubic check independently

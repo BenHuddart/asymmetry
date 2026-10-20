@@ -1811,6 +1811,15 @@ parameter beside an unconstrained nuisance term. Final copy checks apply to
 all characters, including Markdown punctuation: any cleanup happens in the
 saved report before its final audit.
 
+Every comparative sentence is checked against its two labelled fit rows,
+including the direction of a centre shift and width change. Separate features
+can move in opposite directions; a correct table does not correct reversed
+prose. Supported qualitative mechanisms remain distinct from unavailable
+microscopic fits: narrowing can be consistent with reorientation averaging
+hyperfine anisotropy without measuring a coupling or motion rate. File lists
+use complete plain paths, one per line, and are finished before the final audit
+so their last line is copied as exactly as the scientific results.
+
 The packaged ``asymmetry-analysis`` skill tells an agent to work through
 seven steps: survey the folder; decide alpha (and never guess it); reduce the
 scan; confirm the geometry of every non-zero-field scan from the survey's

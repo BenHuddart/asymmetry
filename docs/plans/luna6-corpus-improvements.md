@@ -879,3 +879,27 @@ reconciliation and qualitative mechanism reporting, simplify exact-copy file
 formatting; validate and commit before fresh targeted wave,then full24 again.
 Keep all raw first attempts outside repo. Standard validation remains four
 known GUI failures,not green.
+
+## Round eight
+
+Documentation-only general repair after full24 gate failure: before finalising,
+check every comparative sentence against its two labelled fit rows in both
+Results and conclusion; different features may shift in opposite directions.
+Keep supported qualitative mechanisms distinct from unavailable quantitative
+microscopic fitting. File lists use complete plain paths,one per line,to reduce
+copying punctuation errors. No corpus names,run-specific advice or rubric
+changes introduced. CLI behavior and two-turn evaluation protocol unchanged.
+Skill quick validation passes; Sphinx docs build succeeds with the same85
+existing warnings. No tests repeated for this documentation-only change;
+standard remains recorded9910 passes/four known GUI sizing failures.
+Before launch, preserve older completed rounds1–7 on disk cache with SHA256
+verification and original-path symlinks to release RAM-backed scratch capacity.
+Keep current full24 raw evidence untouched. Commit this repair before fresh
+nickel/corannulene targeted wave on gpt-6-luna; full24 again only after both
+science/copy/boundary pass. No historical pooled gate.
+
+Storage move complete: all files in completed rounds1–7 SHA256-verified
+against copies under /home/ben/.cache/asymmetry-luna6-overnight-20261020;
+per-round hash manifests retained there, original /tmp round paths symlink to
+verified copies. No evidence discarded; confirmation1 stays in /tmp. This
+releases roughly9 GiB of tmpfs before new evaluations.

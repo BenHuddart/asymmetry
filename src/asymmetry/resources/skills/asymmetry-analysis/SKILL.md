@@ -93,7 +93,14 @@ these obligations through the final reply, including after image review:
 - The final report is the complete section 6 template, not a recap. Preserve
   folder count, per-scan run ranges, component meanings and every fit/FFT window.
   Before finalising, reconcile the report with the retained CLI estimates:
-  preserve sample/campaign names, logged-temperature offsets, each fit's own
+  check each sentence containing a comparison against the two named rows it
+  compares. Read their condition labels, centres and widths together, then
+  verify the words higher/lower, broader/narrower and appears/disappears in
+  both Results and the conclusion. An accurate table does not repair a
+  reversed sentence. Keep the physical interpretation specific to that
+  observed change; generic "dynamics" is not a substitute for the proposed
+  mechanism and what it would average or change.
+  Preserve sample/campaign names, logged-temperature offsets, each fit's own
   calibration, run subset, model, uncertainty and chi-squared. Different
   field references limit cross-campaign comparisons, not trends within a
   single unchanged reference. Keep the successful ordinary scan distinct
@@ -106,7 +113,8 @@ these obligations through the final reply, including after image review:
   Do not repair backticks, wording, table labels or repeated sentences while
   copying: fix the saved file first and run the audit again. Send the last
   audited text once, without merging it with an earlier draft or recap.
-  Complete file-list cleanup before that final audit too.
+  Complete file-list cleanup before that final audit too. Use plain paths,
+  one per line, in Files; decorative path formatting adds copying errors.
 
 ## 1. What this does, and what it does not
 
@@ -822,7 +830,11 @@ that anisotropy — say so in those terms. Two temperatures show the change;
 they support no activation law, and the summary says that too. Quote both
 fitted centres and widths side by side when you compare them, and state the
 direction from those printed numbers (which is at higher field, which is
-broader) — never from memory of the plot.
+broader) — never from memory of the plot. Verify each comparison separately:
+different lines can shift in opposite directions. The missing radical model
+limits coupling constants, site assignments and motion rates; it does not
+prevent a conditional explanation of narrowing by reorientation averaging
+hyperfine anisotropy when the measured comparison supports it.
 
 Report the quantities `integral-scan` actually emits — the resonance field,
 width, amplitude, uncertainties and fit quality. A field can *constrain* a
@@ -1183,7 +1195,7 @@ nothing you would defend as printed. Skipping the audit is not an option. Do not
 your draft, not a finding.
 
 **The user sees neither tool output nor files — only your final message.** So
-your final message must *be* the summary: its full text, as audited, typed out
+your final message must *be* the summary: its full text, as audited, copied
 in the reply. Reading `summary.md` with a tool, pointing to the file, or
 writing a shorter recap is not a reply — the first two show the user nothing,
 and a recap drops results and brings back numbers the audit removed. A clean audit means each number
@@ -1618,8 +1630,10 @@ field spectra, a radical ALC or hyperfine model, a multi-group analysis,
 count-domain fits), a fit that did not converge, a scan set aside and why.
 "Not analysed" without a reason is not an answer.
 
-**Files** — the work directory (`asymmetry-work/`), any stored `scans/` or
-`spectra/` products, and the paths of the PNGs worth looking at.
+**Files** — the work directory, stored scan/spectrum products, and PNGs worth
+looking at. Write complete plain paths, one per line, without inline backticks
+or abbreviated follow-on filenames. Finish this list before the last audit;
+the reply must retain its final line exactly as well as the scientific text.
 
 ## 7. Worked example
 
