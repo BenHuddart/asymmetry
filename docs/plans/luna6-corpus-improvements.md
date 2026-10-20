@@ -732,3 +732,13 @@ This is the first fresh full24 confirmation, not pooled previous passes. The
 objective is incomplete until the full gate passes; only then disable follow-up
 and report final commits/results. Standard test gate still has four known GUI
 sizing failures; do not report it green or expand into GUI redesign.
+
+First two fresh full24 reports scored: plateau-redfield and sn-critical-field
+both pass 5/5 Musts, exact-copy and boundary (10/10 Musts, 2/2 combined so far).
+Plateau retains fixed-m=2 Redfield parameters/range with mismatch and amplitude
+caveats; Sn retains the independent survey/FFT internal-line progression while
+withholding failed time-domain/law parameters. Neither pass implies every Should
+is complete. Twenty-two cases remain; EuO, maleic and nickel are live, one wave,
+three model processes, no tests. About 16 GiB available, no swap/PSI and 6 GiB
+scratch free. Keep CLI/skill frozen through all24, score completed final replies
+against fixed rubrics and record science limitations. No full gate verdict yet.
