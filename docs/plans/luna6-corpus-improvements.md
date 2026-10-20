@@ -2040,3 +2040,6 @@ Confirmation5 now13/24scored: EuO5/5Musts,2/3Shoulds andcopper6/6Musts,3/3Should
 
 
 Confirmation5 now16/24scored: maleic5/5Musts,4/4Shoulds andnickel7/7Musts,2/4Shoulds bothscience/exact-copyPASS; LFbenzene6/6Musts,2/5Shoulds sciencePASS/copyFAILoneLF. Totals89/89Musts,16/16science,8/16copy/combined,16/16boundary,39/59Shoulds. Maleic now reports conditional Mu concentration slope with error/units and properly declines bound Arrhenius Ea; nickel Redfield domains/recovery also work. Retain temperature-confounding, poor-law and degeneracy/raw-error caveats; source remains frozen.
+
+
+Confirmation5 now17/24scored: corannulene10/10Musts sciencePASS after hot7kG coverage and explicit cold-higher/broader15kG/reorientation repair;1/6Shoulds andcopyFAILaddedterminalblankline. Totals99/99Musts,17/17science,8/17copy/combined,17/17boundary,40/65Shoulds. Preserve block-mismatched118133calibration, coldpowder-shape/window limits and5100Gsetpoint/loggedlabel caveat. Frozen source unchanged; finish remaining seven.
