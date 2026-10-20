@@ -866,3 +866,16 @@ candidate: reconcile comparative prose with paired estimates and distinguish
 qualitative mechanisms from unavailable quantitative microscopic fitting,
 plus simpler final-copy formatting. Host14 GiB available,zero swap/PSI,
 3.7 GiB scratch free; one model and no tests. Full objective still incomplete.
+
+Fresh full24 confirmation one COMPLETE:145/147 Musts,23/24 scientific,
+23/24 exact-copy,22/24 combined,24/24 boundary. AFM magnetic scope passes.
+Benzene ALC final case passes7/7 Musts with conditional converged liquid/solid
+centres and all solution series; no hand couplings. Supervisor29211 exited0,
+all24 cost.json present. This is a fresh gate FAIL,not pooled passes.
+Failures: corannulene reversed cold/hot15-kG shift and omitted explicit
+reorientation averaging interpretation; nickel drops last closing backtick.
+CLI/skill freeze can now end. Next round should strengthen general comparison
+reconciliation and qualitative mechanism reporting, simplify exact-copy file
+formatting; validate and commit before fresh targeted wave,then full24 again.
+Keep all raw first attempts outside repo. Standard validation remains four
+known GUI failures,not green.
