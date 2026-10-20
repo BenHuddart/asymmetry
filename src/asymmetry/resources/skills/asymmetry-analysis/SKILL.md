@@ -42,8 +42,12 @@ these obligations through the final reply, including after image review:
   ordered-state temperature campaign. Fit the calibration precession with a
   damped cosine and treat unrelated sensor drift as calibration logging, not
   a sample-temperature scan. When material identity is uncertain, compare
-  plausible physical models conditionally; uncertainty is not a reason to
-  skip a Gaussian-width test of a cooling-broadened, down-shifted TF line.
+  plausible physical models conditionally. A Gaussian-width comparison is a
+  useful observation, but does not select superconducting physics: use
+  `--scope auto` or `tf-knight-precession` while the sample class is unknown.
+  In a magnetic experiment compare magnetic line shifts, splitting and
+  broadening; reserve `tf-superconductor` and SC gap laws for a motivated
+  superconducting hypothesis, rather than using TF geometry to choose it.
 - Keep the required observable separate from its controls. In a KT analysis,
   compare both the field width and the dynamic/exponential rate across the
   same temperature interval, explicitly reporting when a control has no onset.
@@ -424,7 +428,9 @@ that both periods load:
 
 1. Identify the weak-TF detector-calibration run separately from the science
    sequence. It is for alpha, not a science point.
-2. Reduce the same representative science run as red and green in **different
+2. Missing power or delay coordinates do not block a same-run comparison.
+   A green-minus-red integral can hide different relaxation shapes. Reduce
+   the same representative science run as red and green in **different
    work directories**. Confirm ON/OFF from the experiment metadata or logbook
    and from which trace gains the photo-induced relaxation; do not assume the
    colour convention alone.
@@ -585,6 +591,10 @@ Read from the output:
   found, and whether the best model actually beat the null baseline. If the
   recommended model is a `null_...` baseline or ties with one, there is no
   structure to fit — say so rather than trending a meaningless parameter.
+
+`--workers N` bounds simultaneous wizard fit workers; its default can be set
+with `ASYMMETRY_WIZARD_WORKERS` when several independent analyses share a host.
+It does not replace BLAS/OpenMP thread limits.
 
 `--scope <preset>` restricts the candidate families to the class you decided in
 Step 3b: `zf-static-magnetism`, `tf-knight-precession`, `tf-superconductor`,
@@ -1211,7 +1221,11 @@ your draft, not a finding.
 
 **The user sees neither tool output nor files — only your final message.** So
 your final message must *be* the summary: its full text, as audited, copied
-in the reply. Reading `summary.md` with a tool, pointing to the file, or
+in the reply, preserving whitespace and the complete tail. Marker lines around
+the audit output are not part of the report. Do not add Markdown hard-break
+spaces, deduplicate file paths, retype uncertainties or append marker fragments.
+After the passed audit, use `cat summary.md` to read the final text and copy it
+without another editing/formatting pass. Reading `summary.md` with a tool, pointing to the file, or
 writing a shorter recap is not a reply — the first two show the user nothing,
 and a recap drops results and brings back numbers the audit removed. A clean audit means each number
 appears in some output, not that it is the right one — still quote values from
@@ -1563,6 +1577,13 @@ complete report is easier to check and reproduce than a transcript recap.
 > session. Nor may a unit the data does not give be attached to a number: a
 > concentration written "0.25" or "quarter" in a title is not 0.25 M.
 
+For a supplied composition axis, explicitly attribute the values to titles,
+notes or another experimental record and state the normalization (for example,
+full solution = 1) and units. A table labelled relative concentration does not
+explain where its coordinates came from. Preserve each printed parameter
+with its unit and uncertainty as one quantity, including rejected-fit
+diagnostics; omit unusable parameter tables rather than relabelling them.
+
 This also excludes numbers you calculated in Python, PowerShell, a spreadsheet
 or by applying a literature conversion to a stored JSON value — and numbers you
 worked out in your head: a significance in σ, a percentage change, a ratio or a
@@ -1630,7 +1651,10 @@ the scan endpoints: state plainly whether the defining spectral feature is
 present, weakened, unresolved, heavily damped or absent at each end, using the
 survey and inspected reduced/fit PNGs as evidence. If the feature disappears
 and its fit becomes flagged, report that physical non-observation explicitly;
-do not leave it implicit in an excluded-run list.
+do not leave it implicit in an excluded-run list. The endpoints are the actual
+first and last temperatures, including failed fits: inspect their data plots
+and describe their shapes without quoting invalid parameters. A central-to-warm
+comparison does not answer what the coldest spectrum shows.
 
 For every spectrum you quote, say which dataset it transformed (one run, or
 the co-add of which runs), the transform (FFT, not MaxEnt), its window and the

@@ -1208,6 +1208,14 @@ List the numbers in a draft summary that no command printed.
 
    asymmetry audit [-h] [--workdir WORKDIR] [--json] draft
 
+Named parameter values with explicit units in printed tables are also checked
+for contradictory units in the draft, including rejected-fit diagnostics. This
+is a conservative check, not full dimensional validation of arbitrary prose.
+Illumination measurements with two periods require a common science run fitted
+in separate red and green workdirs; a differential integral cannot substitute
+for the two time spectra. Mixed-instrument surveys use each scan's instrument
+when matching completed fits in other workdirs.
+
 The audit also checks that the report gives the folder run count and explicit
 members for each longer scan. For repeated weak-field groups it checks for
 actual simultaneous fits with shared dynamic parameters and per-run fields;
@@ -1244,7 +1252,9 @@ A clean audit prints the passed draft between ``----- BEGIN -----`` and
 ``----- END -----`` lines for the reply to copy whole, since agents that retype
 it add unaudited text. A ``COPY CHECK`` after the markers gives the report's
 line count and final line, so copying can be checked through the last file-list
-entry. The cue is outside the report and must not be included in the reply.
+entry. The cue is outside the report and must not be included in the reply. Preserve
+whitespace and duplicate file entries as audited: final formatting, added
+Markdown line-break spaces or tail edits invalidate exact copying.
 A report listing only numbers ends by asking for
 another audit before replying. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions ("which
@@ -1906,3 +1916,22 @@ Limits and what is not there yet
   still print several identical multi-line warning blocks on stderr on
   platforms that spawn worker processes. They are benign noise from seeding
   trial models during the candidate search.
+
+Wizard worker budgets
+~~~~~~~~~~~~~~~~~~~~~
+
+``asymmetry wizard --workers N`` limits simultaneous fitting workers.
+``ASYMMETRY_WIZARD_WORKERS`` supplies its default when several independent
+analyses share a host; an explicit flag overrides it. Positive values are
+required. The default remains automatic when neither is set. BLAS/OpenMP
+thread limits are separate: a pool limit alone does not bound numerical
+library threads. ``screen_run(max_workers=N)`` exposes the same budget for
+scripted analyses.
+
+Temperature trend output identifies actual first/last scan members alongside
+reliable parameter endpoints. Inspect their reduced/fit plots even when their
+fits fail; the first valid middle point is not the coldest measured spectrum.
+Composition-axis summaries name the title/notes source, normalization and
+units of supplied values. TF broadening alone does not select a superconducting
+model: unknown samples retain an open physics scope and magnetic experiments
+need magnetic line-shift/splitting interpretations.

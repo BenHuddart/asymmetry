@@ -257,8 +257,9 @@ options:
 
 ```
 usage: asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope NAME]
-                        [--include C,D] [--exclude C,D] [--tmin TMIN] [--tmax TMAX]
-                        [--plot] [--json] [--workdir WORKDIR] [--instrument NAME]
+                        [--include C,D] [--exclude C,D] [--tmin TMIN]
+                        [--workers WORKERS] [--tmax TMAX] [--plot] [--json]
+                        [--workdir WORKDIR] [--instrument NAME]
                         folder
 
 positional arguments:
@@ -279,6 +280,8 @@ options:
   --exclude C,D         Components to drop from the scope, e.g.
                         'VortexLattice,VortexLatticePowder'
   --tmin TMIN           Screen only above this time / µs
+  --workers WORKERS     Maximum concurrent fit workers (default:
+                        $ASYMMETRY_WIZARD_WORKERS, else automatic)
   --tmax TMAX           Screen only below this time / µs (the recipe keeps the window)
   --plot                Write plots/wizard-<run>.png of data + recommendation
   --json                Emit the machine-readable payload

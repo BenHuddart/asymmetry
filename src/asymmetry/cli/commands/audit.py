@@ -9,7 +9,7 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from asymmetry.cli._numbers import unstated, unsupported_laws, unverified_numbers
+from asymmetry.cli._numbers import unstated, unsupported_laws, unverified_numbers, unverified_units
 from asymmetry.cli._output import UserError, emit_json, payload
 from asymmetry.cli._runs import range_text, run_spec
 from asymmetry.cli._workdir import OUTPUT_LOG, WORKDIR_NAME
@@ -57,6 +57,7 @@ def run(args: argparse.Namespace) -> None:
     log_text = "\n".join(log.read_text(encoding="utf-8") for log in logs)
     text = draft.read_text(encoding="utf-8")
     found = unverified_numbers(text, log_text)
+    found.extend(unverified_units(text, log_text))
     laws = unsupported_laws(text, log_text)
     relations = unstated(text, log_text)
     unpaired = _correlations_without_lines(roots)
@@ -161,7 +162,9 @@ def run(args: argparse.Namespace) -> None:
             f"No unprinted numbers found in {draft}. As the skill's Step 7 asks, your final "
             f"message is this summary itself: copy everything between the two marker lines "
             f"below exactly — no preface, no added lines (edit the file and audit again "
-            f"instead) — and say nothing about this check in it."
+            f"instead). The marker lines are not part of the report. Preserve whitespace; "
+            f"do not add Markdown line-break spaces, deduplicate paths or repair the tail. "
+            f"Say nothing about this check in it."
         )
         report = text.strip()
         print(f"{_REPLY_MARK} BEGIN {_REPLY_MARK}\n{report}\n{_REPLY_MARK} END {_REPLY_MARK}")
@@ -198,6 +201,7 @@ _SHORT_SCAN_RUNS = 3
 
 def report_obligations(roots: list[Path], text: str) -> list[str]:
     """Report missing survey provenance and repeated field groups fitted independently."""
+    from asymmetry.cli.commands.survey import condition_period_runs
     from asymmetry.core.workflow.survey import ScanGroup, coupled_field_groups
     from asymmetry.core.workflow.workdir import WorkDir
 
@@ -220,6 +224,25 @@ def report_obligations(roots: list[Path], text: str) -> list[str]:
         if workdir.survey_path.is_file()
     }
     for selection, survey in surveys.items():
+        condition_runs = {row["run_number"] for row in condition_period_runs(survey["runs"])}
+        if condition_runs:
+            fitted_periods = {"red": set(), "green": set()}
+            for workdir in workdirs:
+                if workdir.selection.folder != selection.folder:
+                    continue
+                if workdir.selection.instrument not in (None, selection.instrument):
+                    continue
+                for run in condition_runs & set(workdir.reduced_runs()) & workdir.fitted_runs():
+                    period = workdir.entry(run).settings.period
+                    if period in fitted_periods:
+                        fitted_periods[period].add(run)
+            if not fitted_periods["red"] & fitted_periods["green"]:
+                messages.append(
+                    "PERIOD COMPARISON: fit the same illumination science run as red and green "
+                    "in separate workdirs; report the condition labels, fitted rates, windows "
+                    "and quality. A differential integral or a missing scan coordinate does "
+                    "not replace independent ON/OFF time spectra."
+                )
         count = len(survey["runs"])
         if not re.search(rf"\b{count}\s+(?:[^\s.,;:]+\s+){{0,2}}runs?\b", text):
             messages.append(
@@ -276,19 +299,16 @@ def unfitted_scans(
     # and calibrators of every work directory bound to its selection (a work
     # directory without a survey of its own included).
     workdirs = [workdir for workdir in map(WorkDir, roots) if workdir.manifest_path.is_file()]
-    fitted: dict[RunSelection, set[int]] = {}
+    fitted_by_selection: dict[RunSelection, set[int]] = {}
     calibrators: dict[RunSelection, set[int]] = {}
     for workdir in workdirs:
-        fitted.setdefault(workdir.selection, set()).update(workdir.fitted_runs())
+        fitted_by_selection.setdefault(workdir.selection, set()).update(workdir.fitted_runs())
         calibrators.setdefault(workdir.selection, set()).update(workdir.alpha_calibration_runs())
     surveys = {
         workdir.selection: workdir.read_survey()
         for workdir in workdirs
         if workdir.survey_path.is_file()
     }
-    surveyed = [
-        (survey, fitted[selection], calibrators[selection]) for selection, survey in surveys.items()
-    ]
     unfitted = [
         _UnfittedScan(
             survey["folder"],
@@ -302,17 +322,36 @@ def unfitted_scans(
                 if run["precession"] in ("larmor", "other")
             ),
         )
-        for survey, fitted, calibration in surveyed
+        for selection, survey in surveys.items()
         for scan in (ScanGroup(**entry) for entry in survey["scans"])
+        for fitted, calibration in [
+            (
+                selection_runs(fitted_by_selection, selection, scan.instrument),
+                selection_runs(calibrators, selection, scan.instrument),
+            )
+        ]
         if set(scan.runs) - fitted
     ]
     unfitted_notes = [
         (survey["folder"], scan, sorted(set(scan["runs"]) - fitted))
-        for survey, fitted, _ in surveyed
+        for selection, survey in surveys.items()
         for scan in survey["notes_scans"]
+        for fitted in [selection_runs(fitted_by_selection, selection, scan["instrument"])]
         if set(scan["runs"]) - fitted
     ]
     return unfitted, unfitted_notes
+
+
+def selection_runs(coverage, selection, instrument: str) -> set[int]:
+    """A scan uses its own instrument's coverage, even in an earlier all-instrument survey."""
+    return set().union(
+        *(
+            runs
+            for owner, runs in coverage.items()
+            if owner.folder == selection.folder
+            and owner.instrument in (None, instrument or selection.instrument)
+        )
+    )
 
 
 def still_unfitted(root: Path) -> str | None:

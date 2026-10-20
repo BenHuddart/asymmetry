@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -85,6 +86,20 @@ def scan_label(scan: ScanGroup) -> str:
     )
 
 
+def condition_period_runs(runs: list[dict]) -> list[dict]:
+    """Multi-period illumination measurements need paired time spectra, not just an integral."""
+    return [
+        row
+        for row in runs
+        if row.get("n_periods", 1) == 2
+        and re.search(
+            r"laser|photo|illuminat|pump",
+            row.get("title", "") + " " + row.get("notes", ""),
+            re.IGNORECASE,
+        )
+    ]
+
+
 def _composition_lines(sets, rows, scan: ScanGroup, folder: str, options: str) -> list[str]:
     """The composition series a scan crossing samples holds, with the commands that fit one."""
     from asymmetry.core.workflow.survey import sample_name
@@ -118,6 +133,11 @@ def _composition_lines(sets, rows, scan: ScanGroup, folder: str, options: str) -
         f"{options} — a rate linear in concentration is a rate constant (its slope). Give "
         f"each <value> from the run's title and notes (a pure solvent is 0), and drop a run "
         f"neither gives one for."
+    )
+    lines.append(
+        "        COMPOSITION AXIS: in the summary attribute the concentration values to "
+        "the titles or notes, and state their units and normalization. Full/half/quarter "
+        "labels are relative amounts, not molarity; if full is set to 1, say so."
     )
     if others:
         lines.append(
@@ -438,6 +458,19 @@ def _render(survey, survey_path: Path) -> str:
     else:
         lines.append("Scans: none — no two runs share a geometry and a held quantity.")
     lines.append("")
+    periods = condition_period_runs([row.to_dict() for row in survey.runs])
+    if periods:
+        row = periods[0]
+        lines.append(
+            f"PERIOD COMPARISON: illumination is recorded in two-period run {row['run_number']}. "
+            "A missing power/delay coordinate does not prevent a same-run ON/OFF comparison. "
+            "Reduce that science run with --period red --workdir asymmetry-work-red and "
+            "--period green --workdir asymmetry-work-green. Establish ON/OFF from notes and "
+            "the spectra; fit the two traces separately and report their rates, windows and "
+            "quality. A green-red integral can cancel different decay shapes and cannot "
+            "replace these time spectra."
+        )
+        lines.append("")
 
     from asymmetry.core.workflow.survey import coupled_field_groups
 

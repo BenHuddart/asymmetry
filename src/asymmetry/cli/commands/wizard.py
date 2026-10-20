@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shlex
 from dataclasses import replace
 from pathlib import Path
@@ -73,6 +74,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument("--tmin", type=float, default=None, help="Screen only above this time / µs")
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=os.environ.get("ASYMMETRY_WIZARD_WORKERS"),
+        help="Maximum concurrent fit workers (default: $ASYMMETRY_WIZARD_WORKERS, else automatic)",
+    )
+    parser.add_argument(
         "--tmax",
         type=float,
         default=None,
@@ -95,6 +102,8 @@ def run(args: argparse.Namespace) -> None:
         raise UserError(
             f"Unknown scope {args.scope!r}; expected one of {', '.join(SCOPE_PRESETS)}."
         )
+    if args.workers is not None and args.workers < 1:
+        raise UserError("--workers must be positive.")
     if args.plot:
         plots.require_matplotlib()
 
@@ -113,6 +122,7 @@ def run(args: argparse.Namespace) -> None:
             include=_names(args.include),
             exclude=_names(args.exclude),
             run_number=args.run,
+            max_workers=args.workers,
         )
     except ValueError as exc:
         raise UserError(str(exc)) from None

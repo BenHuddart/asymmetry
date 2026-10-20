@@ -3753,6 +3753,10 @@ def test_temperature_edge_comparison_preserves_a_cold_upturn_and_kt_control() ->
     assert "0.100000 ± 0.001000 at temperature=5" in notes
     assert "0.020000 ± 0.001000 at temperature=40" in notes
     assert "9.990000" not in notes
+    assert "run 0 at temperature=1 (flags: failed)" in notes
+    assert "run 3 at temperature=100" in notes
+    assert "Lowest reliable minus next" in notes
+    assert "Coldest minus next" not in notes
     assert "KT CONTROL" in notes
     assert _edge_comparisons(TrendTable("field", [], rows), ["nu", "Delta"]) == []
 
@@ -3940,7 +3944,9 @@ def test_compatible_cold_rates_are_not_called_an_upturn() -> None:
         }
         for i, value in [(1, 0.040), (2, 0.037), (3, 0.038)]
     ]
-    (note,) = _edge_comparisons(TrendTable("temperature", ["Lambda"], rows), ["Lambda"])
+    notes = _edge_comparisons(TrendTable("temperature", ["Lambda"], rows), ["Lambda"])
+    note = notes[-1]
+    assert "SPECTRAL ENDPOINTS:" in notes[0]
     assert "Coldest minus next: 0.003000 ± 0.005657" in note
     assert "consistent within two combined errors" in note
 
@@ -3980,3 +3986,59 @@ def test_zero_header_line_retains_the_unrecorded_field_alternative(workflow_fold
     assert "ZERO-FIELD HEADER:" in text
     assert "unrecorded weak TF" in text
     assert "sensor drift is not a sample-temperature campaign" in text
+
+
+def test_wizard_worker_budget_has_explicit_override(monkeypatch):
+    monkeypatch.setenv("ASYMMETRY_WIZARD_WORKERS", "2")
+    parser = cli.build_parser()
+    assert parser.parse_args(["wizard", "data", "--run", "1"]).workers == 2
+    assert parser.parse_args(["wizard", "data", "--run", "1", "--workers", "3"]).workers == 3
+
+
+def test_wizard_rejects_nonpositive_worker_budget(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["wizard", str(tmp_path), "--run", "1", "--workers", "0"])
+    assert "--workers must be positive" in capsys.readouterr().err
+
+
+def test_photo_period_audit_requires_one_common_run_fitted_in_both_periods(
+    workflow_folder,
+    tmp_path,
+    monkeypatch,
+    capsys,
+):
+    from asymmetry.cli.commands.audit import report_obligations
+    from asymmetry.core import io
+
+    monkeypatch.chdir(tmp_path)
+    _two_identical_periods(monkeypatch)
+    period_load = io.load
+
+    def illuminated_load(path):
+        dataset = period_load(path)
+        dataset.run.metadata["notes"] = "Laser illumination ON/OFF"
+        return dataset
+
+    monkeypatch.setattr("asymmetry.core.io.load", illuminated_load)
+    monkeypatch.setattr("asymmetry.core.workflow.reduction.load", illuminated_load)
+    run = SCAN_RUNS[0]
+    roots = [tmp_path / "asymmetry-work-red", tmp_path / "asymmetry-work-green"]
+    cli.main(["survey", str(workflow_folder), "--workdir", str(roots[0])])
+    assert "PERIOD COMPARISON:" in capsys.readouterr().out
+    for root, period in zip(roots, ("red", "green"), strict=True):
+        cli.main(
+            [
+                "reduce",
+                str(workflow_folder),
+                "--runs",
+                str(run),
+                "--period",
+                period,
+                "--workdir",
+                str(root),
+            ]
+        )
+    assert any("PERIOD COMPARISON:" in m for m in report_obligations(roots, "A report."))
+    for root in roots:
+        (root / "fits" / f"relax-{run}.json").write_text(json.dumps({"run": run}))
+    assert not any("PERIOD COMPARISON:" in m for m in report_obligations(roots, "A report."))

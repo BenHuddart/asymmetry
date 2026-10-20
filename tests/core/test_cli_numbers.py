@@ -737,3 +737,61 @@ def test_review_edge_cases_of_the_audit(tmp_path: Path) -> None:
     }
     (root / "series" / "held.json").write_text(json.dumps(series))
     assert WorkDir(root).fitted_runs() == set()
+
+
+@pytest.mark.parametrize(
+    ("draft", "flagged"),
+    [
+        ("A_hf = 512.35 MHz", False),
+        ("The rejected A_hf values were 512.35 and 613.28 G.", True),
+        ("A_hf = 512.35 G", True),
+        ("B0 = 512.35 G", False),
+        ("An unrelated field is 512.35 G", False),
+        ("A_hf = 5.1235 × 10² G", True),
+        ("A_hf = 5.1235e2 MHz", False),
+    ],
+)
+def test_named_parameter_units_are_not_verified_by_a_bare_number(draft, flagged):
+    from asymmetry.cli._numbers import unverified_units
+
+    log = "parameter value unit error\nA_hf 512.3456 MHz 0.1\nA_hf 613.2781 MHz 0.2\nB0 512.3456 G 0.3\n"
+    assert bool(unverified_units(draft, log)) is flagged
+
+
+def test_all_instrument_survey_uses_each_instruments_fit_coverage(tmp_path):
+    from asymmetry.cli.commands.audit import unfitted_scans
+
+    roots = [tmp_path / "overview", tmp_path / "other"]
+    scan = {
+        "instrument": "MUSR",
+        "axis": "temperature",
+        "temperature": None,
+        "field": 0.0,
+        "geometry": "ZF",
+        "geometry_note": "",
+        "runs": [11, 12, 13, 14],
+        "values": [1.0, 2.0, 3.0, 4.0],
+        "notes": "",
+        "samples": [],
+    }
+    for root, instrument in zip(roots, ("EMU", "MUSR"), strict=True):
+        (root / "fits").mkdir(parents=True)
+        (root / "manifest.json").write_text(_manifest("same-data", instrument))
+    (roots[0] / "survey.json").write_text(
+        json.dumps({"folder": "same-data", "runs": [], "scans": [scan], "notes_scans": []})
+    )
+    assert unfitted_scans(roots)[0]
+    for run in scan["runs"]:
+        (roots[0] / "fits" / f"wrong-{run}.json").write_text(json.dumps({"run": run}))
+    assert unfitted_scans(roots)[0]  # Same-number fits in the other instrument do not count.
+    for run in scan["runs"]:
+        (roots[1] / "fits" / f"right-{run}.json").write_text(json.dumps({"run": run}))
+    assert unfitted_scans(roots) == ([], [])
+
+
+def test_composition_axis_requires_its_experimental_source():
+    from asymmetry.cli._numbers import unstated
+
+    log = "COMPOSITION AXIS: state concentration provenance and normalization."
+    assert unstated("The relative concentration is shown in a table.", log)
+    assert not unstated("Relative concentrations came from the run titles; full = 1.", log)

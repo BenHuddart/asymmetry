@@ -1,9 +1,11 @@
 # GPT-6 Luna corpus improvement loop
 
-Continue unattended on `codex/luna6-corpus-improvements` until a fresh full
-24-case gate passes on Codex / `gpt-6-luna`. Keep rubrics fixed and retain every
-first attempt. General skill guidance and reusable CLI behavior are the allowed
-improvements; no run-number, expected-answer or corpus-name dispatch rules.
+The current authorization is one repair round after confirmation2 and a fresh
+full 24-case rerun on `codex/luna6-corpus-improvements`, using Codex /
+`gpt-6-luna`, followed by scoring and a pause. The earlier unrestricted loop
+has ended. Keep rubrics fixed and retain every first attempt. General skill
+guidance and reusable CLI behavior are the allowed improvements; no run-number,
+expected-answer or corpus-name dispatch rules.
 
 The baseline expansion is committed as `95edcb9`. Its detailed record is
 [agent-cli-skill-luna6-expansion-2026-10-19.json](agent-cli-skill-luna6-expansion-2026-10-19.json):
@@ -21,12 +23,16 @@ that warning must be resolved as well as the literal rubric failures.
   skill and rubrics frozen while the wave runs. Score the completed reports
   before starting the next round, recording Must/Should evidence, number and
   boundary checks, model/host, commit, skill/rubric hashes, and first attempts.
-- Run up to three eval cases concurrently with all BLAS thread counts pinned
-  to one. Check available memory and memory PSI before launching; reduce load
+- For confirmation3, run up to six eval cases concurrently, with wizard fit
+  workers limited to two per case and all BLAS thread counts pinned to one.
+  Earlier waves used three cases. Check available memory and CPU/memory PSI
+  before launching and sample the process tree while running; reduce load
   if pressure rises. Never overlap broad tests with live evaluations. Cap
   pytest at two workers. Inspect live processes before resuming work to avoid
   launching duplicates after an interruption.
-- Keep corpus copies and raw results in `/tmp`, outside the repository. Obtain
+- Keep corpus copies and raw results in the persistent external cache
+  `/home/ben/.cache/asymmetry-luna6-overnight-20261020`, outside the repository.
+  `/tmp` was used historically and lost evidence across a restart. Obtain
   the original corpus only through `ASYMMETRY_CORPUS_ROOT`.
 - The baseline full validation has four GUI sizing failures in unchanged GUI
   code; record these honestly. Do not expand this task into GUI redesign.
@@ -1560,3 +1566,69 @@ four known GUI sizing failures and is not green. No new tests or source fixes.
 Automation gpt-6-luna-corpus-improvements is **PAUSED**,confirmed by app tool
 and saved configuration. User authorized this full wave only. Do not launch
 another wave or improvement round without further user instruction.
+
+## Round13: coverage, quantity provenance and bounded concurrency
+
+User authorized one improvement round after confirmation2, then a rerun, and
+asked whether concurrency could increase. This round repairs reusable workflow
+and audit behavior; fixed rubrics and the two-turn image protocol are unchanged.
+
+- Audit associates each scan with its actual instrument when combining fit
+  coverage across workdirs. Replaying the saved copper workdirs now gives no
+  uncovered scans; same-number fits in another instrument remain excluded.
+- Audit checks named parameter units against printed value/unit table rows,
+  including rejected diagnostics. Across the previous 24 actual replies this
+  flags corannulene's erroneous G suffix and no other reply. This is deliberately
+  conservative, not arbitrary-prose dimensional validation.
+- Survey/audit require an independently fitted common illumination run in red
+  and green workdirs; a differential integral or missing power/delay coordinate
+  cannot replace that comparison. The previous silicon workdirs trigger it.
+- Survey/audit require supplied composition coordinates to be attributed to
+  their experimental source. Trend output identifies the actual measured cold
+  and warm endpoints, including failed fits, separately from reliable fitted
+  endpoints. The skill explains normalization/units and endpoint image review.
+- Skill guidance separates unknown/magnetic TF scope from a motivated
+  superconducting hypothesis, preserves units on diagnostic quantities, and
+  preserves the complete audited reply including whitespace and repeated paths.
+  The audit's marker contract stays unchanged. These are expected repairs;
+  final-copy compliance and scientific correctness still need fresh scoring.
+- Wizard accepts positive `--workers N`, defaulting to
+  `ASYMMETRY_WIZARD_WORKERS`; scripted `screen_run(max_workers=N)` forwards the
+  same budget. Unset retains automatic selection. This bounds fits in flight,
+  independently of numerical-library threads.
+
+Concurrency investigation: quiet host has an i5-13600K, 14 physical/20 logical
+cores, about 22–23 GiB available RAM, zero swap use and zero memory PSI, with
+650 GiB persistent disk free. The old automatic wizard pool can use roughly
+18 workers per case, so increasing case count without bounding its fan-out
+would risk CPU contention despite ample memory. Confirmation3 will use six
+cases and two wizard workers per case, all BLAS/OpenMP/Numexpr threads one.
+An external supervisor will sample host CPU/memory PSI, available RAM, swap,
+process-tree summed RSS and active case counts every 30 seconds. Summed RSS
+counts shared pages repeatedly; observed host availability/pressure matters
+more than treating that sum as unique memory. Reduce future admission if
+sustained CPU or memory pressure appears; six is a trial, not a measured maximum.
+
+Validation: final focused 358 passed in 17.26 s; fast tier 5925 passed,
+10 skipped, 1 xfailed in 105.83 s. Ruff, structural and skill validation pass.
+Sphinx builds with the same 80 warnings. Standard validation used two pytest
+workers and BLAS1: 9865 passed, 34 failed, 86 errors, 25 skipped, 1 xfailed in
+587.19 s, with two Qt worker segfaults. This is not the historical four-failure
+baseline: the sandbox denied GUI autosave cleanup under the read-only home
+because XDG_DATA_HOME was not redirected. Read-only autosave errors precede
+cascading Qt override/lifetime errors. All failed/error nodes are in GUI or
+GUI-oriented token tests, outside the modified paths. The focused rerun of all
+118 unique failed/error nodes with XDG_DATA_HOME also under /tmp finished
+116 passed / 2 failed in 35.64 s, with no crashes or errors. The two remaining
+failures are the documented fit-parameter-table sizing tests; both grouping
+sizing tests passed in this isolated rerun. This does not replace the full
+standard attempt or establish a green standard gate; retain both logs. No GUI source is
+changed. Logs are `/tmp/luna6-round13-*.log` and will be copied into the
+persistent wave's validation directory. No eval overlaps these tests.
+
+Next: commit this improvement round after validation, then run a fresh full24
+confirmation3 at the above budget. Preserve every attempt outside the repo,
+freeze CLI/skill/runner/rubrics until all24 finish, and score actual final
+replies including AFM magnetic scope. Do not pool historical passes. Once this
+requested wave is completely scored, commit scores/plan and pause the monitor;
+no unrestricted loop or further improvement/gate is authorized.

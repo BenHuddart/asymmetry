@@ -276,6 +276,48 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
     return found
 
 
+def unverified_units(draft: str, log_text: str) -> list[Unverified]:
+    """Flag a named parameter restated with a unit incompatible with its printed table."""
+    unit = r"(?:MHz|kHz|Hz|kG|G|K|meV|ns|[µμ]s(?:⁻¹)?)\b"
+    printed = re.compile(
+        rf"^\s*(?P<name>[A-Za-z][A-Za-z_0-9]*)\s+"
+        rf"(?P<value>[-+−]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s+(?P<unit>{unit})",
+        re.MULTILINE,
+    )
+    parameters: dict[str, list[tuple[float, str]]] = {}
+    for match in printed.finditer(log_text):
+        parameters.setdefault(match["name"], []).append((_value(match["value"]), match["unit"]))
+    found = []
+    for line_number, line in enumerate(draft.splitlines(), 1):
+        for number in _DRAFT_NUMBER.finditer(line):
+            suffix = re.match(rf"\s*(?P<unit>{unit})", line[number.end() :])
+            if suffix is None:
+                continue
+            token = number["mantissa"].replace(",", "").replace("−", "-")
+            exponent = number["exponent"]
+            scale = 10.0 ** int(exponent.translate(_SUPERSCRIPT)) if exponent else 1.0
+            notation = re.search(r"[eE]([-+]?\d+)$", token)
+            tolerance = 10.0 ** (int(notation[1]) if notation else 0) * scale
+            tolerance *= 10.0 ** -_decimals(token)
+            for name, values in parameters.items():
+                if not re.search(rf"\b{re.escape(name)}\b", line[: number.start()]):
+                    continue
+                units = {
+                    u.replace("μ", "µ")
+                    for value, u in values
+                    if abs(value - _value(token) * scale) <= tolerance + 1e-12
+                }
+                if units and suffix["unit"].replace("μ", "µ") not in units:
+                    found.append(
+                        Unverified(
+                            f"{number.group()} {suffix['unit']} ({name} printed in {', '.join(sorted(units))})",
+                            line_number,
+                            line.strip(),
+                        )
+                    )
+    return found
+
+
 #: What a summary says when it leans on a trend law, by the law's component.
 LAW_VOCABULARY: dict[str, tuple[str, ...]] = {
     "CriticalDivergence": ("critical slowing", "critical divergence", "critical fluctuation"),
@@ -346,6 +388,15 @@ _DIRECTION = (
 #: patterns are deliberately lenient — a keyword in the draft is taken as the
 #: statement — so the check catches a reply that leaves the point out entirely.
 _SAY_SO: tuple[_SaySo, ...] = (
+    _SaySo(
+        _pattern(r"^\s*COMPOSITION AXIS:"),
+        _pattern(
+            r"(?:concentration|composition)[^.\n]{0,100}(?:titles?|notes)"
+            r"|(?:titles?|notes)[^.\n]{0,100}(?:concentration|composition)"
+        ),
+        "attribute the composition/concentration axis to its titles or notes and state "
+        "the normalization and units; a relative-axis table alone is not provenance",
+    ),
     _SaySo(
         _pattern(r"^COMPARE:.*\b(?:higher|lower) in field"),
         _pattern(
@@ -484,4 +535,5 @@ __all__ = [
     "unstated",
     "unsupported_laws",
     "unverified_numbers",
+    "unverified_units",
 ]

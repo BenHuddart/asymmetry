@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Wizard fitting can share a host with other analyses.** ``--workers N``
+  limits simultaneous fit workers; ``ASYMMETRY_WIZARD_WORKERS`` supplies its
+  default. Numerical library thread limits remain separate.
 - **Integral scans screen for local dip candidates independently of the chosen
   model.** Significant interior minima prompt local-window investigation even
   after a failed whole-scan recovery fit; candidates are not fitted resonances.
@@ -23,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Report checks preserve quantity units and measurement coverage.** Named
+  parameter units are checked against printed tables, illumination periods
+  require paired time-spectrum fits, and mixed-instrument scans match each
+  instrument's completed fits. Temperature trends retain failed endpoints for
+  spectral inspection; summaries explain supplied composition coordinates.
 - **Report audits check printed cross-condition comparisons.** Fitted-centre
   and width directions must appear in prose with their limitations; same-run
   stability notes do not imply a condition change. Passed reports include a

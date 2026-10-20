@@ -471,6 +471,19 @@ def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
         return []
     rates = [p for p in free_params if re.sub(r"_\d+$", "", p) in _RATE_BASES]
     notes = []
+    endpoints = sorted(trend.rows, key=lambda row: row["x"])
+    if len(endpoints) >= 2:
+        notes.append(
+            "SPECTRAL ENDPOINTS: "
+            + "; ".join(
+                f"run {row['key']} at {trend.order_key}={row['x']:g} "
+                f"(flags: {', '.join(row['flags']) or 'none'})"
+                for row in (endpoints[0], endpoints[-1])
+            )
+            + ". Inspect these actual endpoint reduced/fit plots and compare the "
+            "spectral shape in words. A failed endpoint fit still has observed data; "
+            "do not replace it with the first reliable middle point or only list its flags."
+        )
     for param in rates:
         rows = _measured(trend, param)
         if len(rows) < 2:
@@ -482,12 +495,13 @@ def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
         difference = first[param] - following[param]
         error = math.hypot(first[f"{param}_err"], following[f"{param}_err"])
         significance = abs(difference) / error
+        point = "coldest point" if first["key"] == endpoints[0]["key"] else "lowest reliable point"
         comparison = (
             "consistent within two combined errors"
             if significance < 2.0
-            else "higher at the coldest point"
+            else f"higher at the {point}"
             if difference > 0
-            else "lower at the coldest point"
+            else f"lower at the {point}"
         )
         shown = [first, following] + ([rows[-1]] if rows[-1] is not following else [])
         notes.append(
@@ -497,7 +511,8 @@ def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
                 f"at {trend.order_key}={row['x']:g} (run {row['key']})"
                 for row in shown
             )
-            + f". Coldest minus next: {format_number(difference, 6)} ± "
+            + f". {'Coldest' if point == 'coldest point' else 'Lowest reliable'} minus next: "
+            f"{format_number(difference, 6)} ± "
             f"{format_number(error, 6)} ({significance:.2f} combined errors): {comparison}. "
             "A whole-scan step note does not rule out an endpoint upturn; central values "
             "alone do not establish one."
