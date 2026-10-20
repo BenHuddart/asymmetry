@@ -402,16 +402,276 @@
       "boundary_pass": true,
       "boundary_check": "PASS: complete command inventory uses staged project skill/references, supplied data/logbook and installed CLI/products only; no personal skill/source/network or ad hoc numerical scripts.",
       "permission_denials": 0
+    },
+    "ferromagnetic-nickel": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Names the three field regimes (ZF, TF 100 G, LF) and their run-number ranges.",
+          "pass": true,
+          "evidence": "ZF 124218\u2013124248, 100 G TF 124249\u2013124269 and provisional LF field group 124220/124270\u2013124278 named separately; zero-field anchor excluded from LF dynamics."
+        },
+        {
+          "requirement": "Identifies the paramagnetic 100 G runs as measured calibration candidates (or states that none exist) and says which run alpha came from.",
+          "pass": true,
+          "evidence": "Paramagnetic 100 G run 124251 measured alpha candidate; corrected 1.9787 applied, raw 1.9723 distinguished."
+        },
+        {
+          "requirement": "Reports a damped/precessing oscillation present in the ZF spectra at the lower temperatures scanned.",
+          "pass": true,
+          "evidence": "ZF spontaneous oscillation/line and reduced cold trace support order at lower temperatures with unresolved fastest endpoint caveat."
+        },
+        {
+          "requirement": "Reports that the oscillation is lost or heavily damped at the highest temperatures in the scan.",
+          "pass": true,
+          "evidence": "Line absent at 356\u2013380 K, warm ZF relaxation-only/null baseline distinct from fast unresolvable cold endpoint."
+        },
+        {
+          "requirement": "Reports the oscillation frequency falling as temperature rises towards the top of the scanned range.",
+          "pass": true,
+          "evidence": "ZF frequency falls from survey 16.3 MHz at 150 K to 3.83 at 354 K; fitted 320\u2013354 K frequency decline quantified."
+        },
+        {
+          "requirement": "Contains no transition temperature, frequency, or rate number that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All rates/frequencies/conditional transition parameters from CLI, no manual values."
+        },
+        {
+          "requirement": "Does not present the worksheet's textbook Tc (~630 K) as an experimental finding of this dataset.",
+          "pass": true,
+          "evidence": "No worksheet bulk Tc presented as measured; actual crossover in mid-350 K region qualified."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Flags that the fine-step region clusters around a much lower apparent transition than bulk nickel's literature Tc, as something to check against the sample rather than reconcile silently.",
+          "pass": false,
+          "evidence": "No explicit bulk-nickel Tc discrepancy/sample-identity check; only instrument/thermal-history caution."
+        },
+        {
+          "requirement": "Treats the 200 K field-sweep LF runs as a separate exercise (e.g. decoupling / internal-field estimate) from the T-scans.",
+          "pass": true,
+          "evidence": "200 K field-decoupling exercise separate; field orientation and persistent internal line caveats retained."
+        },
+        {
+          "requirement": "Raises the critical-exponent framing (beta, gamma, w) as a possible follow-on without inventing exponent values.",
+          "pass": true,
+          "evidence": "Actual OrderParameter beta and one-sided CriticalDivergence exponent/range printed with large mismatch/extrapolation caveats."
+        },
+        {
+          "requirement": "Suggests an additional relaxation or background term for fitting the ordered-state spectra.",
+          "pass": true,
+          "evidence": "Ordered-state models explicitly include additional exponential/background terms, multi-component failures limited."
+        }
+      ],
+      "number_rule": "PASS: actual scientific CLI outputs support ZF conditional Tc 358.237918 \u00b1 0.160515 K/beta 0.396082 \u00b1 0.006035 and fixed-m Redfield D 2.210152 \u00b1 0.117733 MHz/nu 104.067517 \u00b1 15.399900 MHz. Numeric check excludes audits/draft displays. No textbook Tc invention.",
+      "root_cause": "Scientific Musts and boundary pass; exact-copy FAIL: final reply drops closing backtick on last fit-124276.png path. No science change in copy mismatch. Known scientific caveats include very high-chi2 order-parameter fits, ambiguous ordered-state LF geometry and unaddressed bulk-nickel transition discrepancy. Continue whole frozen gate before repairing copying.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1643.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 10,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/ferromagnetic-nickel/data --series zf-near-tc --model OrderParameter --param frequency --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/ferromagnetic-nickel/data --series zf-near-tc --model OrderParameter --param frequency --fix alpha=1.0 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/ferromagnetic-nickel/data --series lf-decoupling --model Redfield --param Lambda --workdir asymmetry-work-coadd --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/ferromagnetic-nickel/data --series lf-decoupling --model Redfield --param Lambda --fix m=2.0 --workdir asymmetry-work-coadd --plot && asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/ferromagnetic-nickel/data --series tf-paramag --plot && asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/ferromagnetic-nickel/data --series zf-paramag --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/ferromagnetic-nickel/data --series tf-paramag --model CriticalDivergence --param Lambda --plot && asymmetry wizard /tmp/asymmetry-luna6-improvements/confirmation1/ferromagnetic-nickel/data --run 124236 --geometry ZF --scope zf-static-magnetism --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/ferromagnetic-nickel/data --series tf-ord-single --model OrderParameter --param frequency --fix alpha=1.0 --plot'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "794cdfd45a8d7f116e4df015056b96acc13ffeeb8a73f89a394db583772f96dc",
+      "rubric_sha256": "8fdb04d7a4f7906dd74d19161f80e7983e02e98ef10344ae70273a54ba1dc0b9",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/ferromagnetic-nickel",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged project skill, supplied data and installed CLI/products only; no personal skill/source/network/ad hoc numerical scripts.",
+      "permission_denials": 0
+    },
+    "maleic-mu-kinetics": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Recognises the 2 G runs as muonium precession measurements and the 100 G runs as diamagnetic ones.",
+          "pass": true,
+          "evidence": "2 G weak-TF Muonium precession versus 100 G diamagnetic TF reference explicitly separated, no LF recovery misclassification."
+        },
+        {
+          "requirement": "Separates the samples by concentration, read from titles or notes, and says where the concentration values came from.",
+          "pass": true,
+          "evidence": "Relative concentrations 0/0.25/0.5/neat=1 from run titles/notes, deoxygenated blank distinct from straight water; no invented molarity."
+        },
+        {
+          "requirement": "Reports the Mu relaxation rate rising with maleic acid concentration at a fixed temperature (290 K, or matched setpoints), from fits of the 2 G runs.",
+          "pass": true,
+          "evidence": "290 K matched setpoint group fitted Mu rates 0.461003/1.58082/2.07482/2.79854 per microsecond rise with concentration."
+        },
+        {
+          "requirement": "Obtains a rate constant from the slope of \u03bb_Mu against concentration with a CLI fit (e.g. `fit-series`/`fit-global` with `--order concentration --x ...`, then `trend --model Linear`), reported with its uncertainty and in the concentration units it used. A fit-quality caveat is fine; withdrawing the converged slope is not.",
+          "pass": true,
+          "evidence": "CLI Linear slope 2.626276 \u00b1 0.507277 per microsecond per relative-concentration unit retained as apparent/condition-specific estimate despite reduced chi squared 22.040; not withdrawn."
+        },
+        {
+          "requirement": "Contains no rate constant, activation energy or fraction that was not produced by a tool call in this session (the worksheet's published values are background).",
+          "pass": true,
+          "evidence": "Rates, low-range conditional activation energy and amplitudes from own CLI outputs, no fractions or absolute concentration conversion invented."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares deoxygenated with untreated water (the untreated Mu signal relaxes faster, or leaves no resolvable line: dissolved O\u2082).",
+          "pass": true,
+          "evidence": "Deoxygenated Mu FFT line versus straight-water no resolved line/failed fit described; no oxygen-specific mechanism asserted."
+        },
+        {
+          "requirement": "Uses a calibration run appropriate to the sample being reduced rather than one alpha for the whole folder, or notes the alpha step.",
+          "pass": true,
+          "evidence": "Alpha step 78280/78281 and calibration 78278 before/78281 after, corrected values 1.0714/1.4032 retained."
+        },
+        {
+          "requirement": "Holds the Mu and diamagnetic frequencies or amplitudes common across the concentration set (shared in `fit-global`, or fixed) and says so.",
+          "pass": true,
+          "evidence": "Simultaneous concentration fits share amplitudes/phases and fix both Mu/diamagnetic frequencies, per-run rates fitted."
+        },
+        {
+          "requirement": "States that the Arrhenius step needs k_Mu at several temperatures, each from its own concentration fit, and either does it per temperature and fits the Arrhenius law through them with a command (`trend --from-fits \u2026 --model Arrhenius`) rather than by hand, or declines that step with the reason.",
+          "pass": true,
+          "evidence": "Per-temperature concentration slopes feed CLI --from-fits Arrhenius; full law fails and conditional low-range estimate explicitly limited by within-group temperature spreads."
+        }
+      ],
+      "number_rule": "PASS: actual scientific CLI output supports slope 2.626276 \u00b1 0.507277 and conditional low-three-group Ea 97.627476 \u00b1 89.030189 meV. Numeric check excludes audit/draft displays. No molarity, manually calculated fraction or hand activation energy.",
+      "root_cause": "Scientific, copy and boundary pass. Retains apparent slope without claiming intrinsic fixed-temperature kinetics. Full-range Arrhenius fails, low-range estimate weakly determined, high-temperature shared amplitudes unphysical, nuisance diamagnetic rate bounds separated from Mu rate reliability.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1728.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --series mu-290 --model Linear --param Lambda_2 --plot; asymmetry fit /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --run 78291 --recipe weak-mu'",
+        "/bin/bash -lc 'for temp in 278 288 298 308 318 328 338 348 358; do asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --series \"mu-$temp\" --model Linear --param Lambda_2; done'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --series tf-neat --plot; asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --series mu-278 --plot; asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --from-fits mu-278,mu-288,mu-308,mu-318,mu-328,mu-338,mu-348,mu-358 --series kmu-vs-T --param m --order temperature --model Arrhenius --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --from-fits mu-278,mu-288,mu-308,mu-318,mu-328,mu-338,mu-348,mu-358 --series kmu-vs-T-logged --param m --order sample_temperature_logged --model Arrhenius --plot'",
+        "/bin/bash -lc 'for temp in 278 288 290 298 308 318 328 338 348 358; do asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --series \"mu-$temp\" --model Linear --param Lambda_2 --plot; done'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --from-fits mu-278,mu-288,mu-298 --series kmu-vs-T-low --param m --order temperature --model Arrhenius --plot; asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --from-fits mu-278,mu-288,mu-290,mu-298 --series kmu-vs-T-low-incl290 --param m --order temperature --model Arrhenius --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --from-fits mu-278,mu-288,mu-298 --series kmu-vs-T-low-logged --param m --order sample_temperature_logged --model Arrhenius --plot; asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --from-fits mu-278,mu-288,mu-298,mu-308,mu-318,mu-328 --series kmu-vs-T-all-valid --param m --order sample_temperature_logged --model Arrhenius --plot'",
+        "/bin/bash -lc 'for temp in 278 288 290 298 308 318 328; do asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --series \"mu-$temp-v2\" --model Linear --param Lambda_2 --plot; done; asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --from-fits mu-278-v2,mu-288-v2,mu-298-v2 --series kmu-low-v2 --param m --order sample_temperature_logged --model Arrhenius --plot; asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics/data --from-fits mu-278-v2,mu-288-v2,mu-298-v2,mu-308-v2,mu-318-v2,mu-328-v2 --series kmu-full-v2 --param m --order sample_temperature_logged --model Arrhenius --plot'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "875d83babbc747ec94eba6b72f2e4daf3f69360864ff1b719fe652f3264464e3",
+      "rubric_sha256": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/maleic-mu-kinetics",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged project skill, supplied data and installed CLI/products only; no personal skill/source/network/ad hoc numerical scripts.",
+      "permission_denials": 0
+    },
+    "spin-glass-ymnal": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies 24563 as the TF calibration run, separate from the LF series.",
+          "pass": true,
+          "evidence": "24563 separate 20 G TF calibration, 24573\u201324590 working LF 110 G temperature scan, 24591 recorded 0 G reference separate."
+        },
+        {
+          "requirement": "States that alpha (and detector grouping) came from 24563.",
+          "pass": true,
+          "evidence": "Alpha 1.2373 corrected from calibration 24563 with forward/backward groups1/2; raw1.2320 distinguished."
+        },
+        {
+          "requirement": "Reports the LF series as fit with a relaxation function that combines a stretched-exponential (or comparable stretched decay) component with a flat/time-independent background.",
+          "pass": true,
+          "evidence": "Stretched Exponential + Constant LF-scoped series, geometry assumption explicitly conditional because no resolved applied-field line."
+        },
+        {
+          "requirement": "States that the relaxation rate rises as temperature is lowered towards the glass transition (or explicitly says it could not establish this trend, rather than staying silent on direction).",
+          "pass": true,
+          "evidence": "Explicit rate falls on warming/rises on cooling; change 90.7236\u2013111.092 K with flagged cold endpoint excluded."
+        },
+        {
+          "requirement": "Contains no rate, background, A(0), or transition-temperature number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Rates/background/conditional CriticalDivergence parameters from actual CLI; no invented transition or fraction."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the full LF run range on disk (24573-24591) is wider than the worksheet's quoted 24576-24590, and does not silently restrict itself to only the quoted subset without saying so.",
+          "pass": true,
+          "evidence": "Complete on-disk data inventory includes extra cold points and separate 24591, not restricted to worksheet subset; follows measured zero field for standalone run."
+        },
+        {
+          "requirement": "Follows the worksheet's fixing strategy in spirit \u2014 background fixed from a low/representative-temperature fit, full-asymmetry A(0) fixed from a high-temperature (beta = 1) fit \u2014 or explains a deliberate departure from it.",
+          "pass": false,
+          "evidence": "No reference-run fixing strategy for background/full asymmetry or explicit justification for leaving those free throughout; degenerate offsets held at zero only."
+        },
+        {
+          "requirement": "Mentions a glass-transition temperature Tg and critical exponent as a possible further fit (critically-divergent rate function) without inventing values for them.",
+          "pass": true,
+          "evidence": "Actual CriticalDivergence fit and exponent/range/logged axis reported as conditional, not established transition."
+        }
+      ],
+      "number_rule": "PASS: actual scientific CLI output supports rates 1.01131 \u00b1 0.0633817 at 88.712 K/0.146733 \u00b1 0.0151273 at99.8148 K and conditional Tc86.160717 \u00b12.329391 K/nu1.119671 \u00b10.961234. Numeric check excludes audits/draft displays.",
+      "root_cause": "All literal Musts/copy/boundary pass. Ambiguous applied geometry honestly retained as working LF assumption; many failed amplitudes and cold/warm endpoints limit transition interpretation. No unsupported spin-glass identification or precise critical exponent claimed.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 291.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/spin-glass-ymnal/data --series lf-temperature --model CriticalDivergence --param Lambda --xmin 88.712 --xmax 100 --exclude 24581 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'rg --files data'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /tmp/asymmetry-luna6-improvements/confirmation1/spin-glass-ymnal/data --runs 24573-24590 --recipe wizard-24580 --geometry LF --order sample_temperature_logged --start 24580 --name lf-temperature --plot'",
+          "exit_code": 2
+        }
+      ],
+      "summary_sha256": "8aca61f9d12464b31e0674edb53ab45073c0b18a58b2c68c60bd67441247013b",
+      "rubric_sha256": "c1fd733e78e7de397ebd0e533eaac4b698e4d47a33035f26348f9a8f9a7bdb6e",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/spin-glass-ymnal",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged project skill, supplied data and installed CLI/products only; no personal skill/source/network/ad hoc numerical scripts.",
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 4,
-    "scientific_pass": 4,
-    "must_pass": 21,
-    "must_total": 21,
-    "exact_copy_pass": 4,
-    "combined_pass": 4,
-    "boundary_pass": 4
+    "scored": 7,
+    "scientific_pass": 7,
+    "must_pass": 38,
+    "must_total": 38,
+    "exact_copy_pass": 6,
+    "combined_pass": 6,
+    "boundary_pass": 7
   },
-  "gate_caveat": "Fresh full24 gate in progress; only completed actual final replies scored, no historical pass pooling."
+  "gate_caveat": "Fresh full24 gate ongoing. First exact-copy failure on nickel prevents a full combined pass; complete/score remaining cases before changing frozen source."
 }

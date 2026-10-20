@@ -753,3 +753,17 @@ law claim. Literal pass is not complete model validation; Should gaps recorded.
 Twenty cases remain; source frozen, one wave/three model processes, no tests.
 Host 16 GiB available, no swap/PSI, 5.9 GiB scratch free. Continue scoring every
 new first attempt; no full-gate verdict until all24 are completed and scored.
+
+Nickel, maleic acid and YMnAl are scored: 7/7, 5/5 and 5/5 scientific Musts.
+Nickel final reply deletes the closing backtick on its last plot path: exact-copy
+FAIL, science/boundary pass. Maleic retains the apparent concentration slope
+and conditional low-range activation fit with honest temperature/fit caveats;
+YMnAl uses stretched relaxation/background with conditional LF geometry.
+Full24 partial totals: 38/38 Musts, 7/7 science/boundary, 6/7 exact-copy/combined.
+This first copy failure means the current gate cannot be a complete combined
+pass, but do not stop it or change source. Finish and score all24, then make
+and commit general improvements before another eval wave. Potential copying
+repair: simpler report/file-list formatting, rather than further scientific
+restrictions. Keep exact final reply as evidence, never replace with audited file.
+Seventeen cases remain; one wave/three models, no tests, 15 GiB available,
+zero swap/PSI and 5.8 GiB scratch free. CLI/skill remain frozen through wave end.
