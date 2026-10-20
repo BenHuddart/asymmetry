@@ -790,3 +790,15 @@ failed full-ZF fits do not establish microscopic dimerisation. Partial full24:
 60/60 Musts,11/11 science/boundary,10/11 exact-copy/combined. Thirteen remain;
 source frozen and gate continues despite nickel's copy failure. Host15 GiB
 available,zero swap/PSI,5.1 GiB scratch free. No broad tests or duplicate runs.
+
+AFM high-TF, TCNQ ALC, LLZ and photo-silicon scored:5/5,6/6,6/6,6/6 Musts,
+all exact-copy/boundary pass. AFM magnetic physics scope separately passes:
+no superconducting gap/volume conclusion, no single-line absence-of-order
+claim, no canting/moment inference. A superconductivity-scoped diagnostic
+screen was tried but not promoted to phase evidence. LLZ genuinely couples
+all13 triplets with Gaussian KT shared parameters; photo periods stay separate
+with correct ON/OFF contrast and missing-P limitation. TCNQ retains conditional
+high-mismatch dip estimates without hyperfine invention. Partial full24:
+83/83 Musts,15/15 science/boundary,14/15 exact-copy/combined. Nine remain; keep
+source frozen and finish whole gate despite nickel copy failure. Host14 GiB
+available,zero swap/PSI,4.8 GiB scratch free. No broad tests/duplicate eval runs.
