@@ -359,3 +359,18 @@ Scratch /tmp currently has about 12 GiB free; memory has no PSI/swap pressure.
 Commit the source now, then start the prepared six-case wave with three
 concurrent Luna cases and one BLAS thread. Source/skill must remain frozen
 until that wave finishes. Keep all first attempts and score each final reply.
+
+Round three is committed as `d70581e` and its six-case wave is now LIVE:
+`/tmp/asymmetry-luna6-improvements/round3`, supervising exec session `90769`,
+console `/tmp/asymmetry-luna6-round3-wave.log`. Basics, TRSB and corannulene
+started successfully and read the staged project skill. There is exactly one
+wave process and three model processes; no tests are running. Prelaunch memory
+was 21 GiB available with no swap/PSI pressure. The frozen skill hash is
+`584f7f167f99f5acf97434e2bf7c224226f3bd7adf3a1faf5171b549196de134`.
+Runner, rubrics, two-turn review protocol and host-skill isolation are unchanged;
+`wave-metadata.json` records all hashes and the committed source. All six are
+fresh first attempts, not retries of earlier output directories. Keep CLI and
+skill frozen until all finish; score completed final replies while others run.
+Next: score in docs/plans/luna6-corpus-round3.json, investigate failures, make
+and commit the next general improvement round before another wave. A fresh
+all-24 gate still follows only after targeted failures pass; do not pool passes.
