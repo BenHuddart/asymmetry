@@ -590,3 +590,18 @@ resonance model prints LOCAL DIP CANDIDATES and local-window commands; output
 not an eval score. No broad tests overlapped evals. Standard gate remains the
 recorded four existing GUI failures. Host is quiet, 18 GiB available, zero swap
 use/PSI and 8 GiB scratch free. Commit then run the two prepared targeted cases.
+
+Round six committed as `a24043a`, wave LIVE in
+`/tmp/asymmetry-luna6-improvements/round6`, exec session `63872`, console
+`/tmp/asymmetry-luna6-round6-wave.log`. Two cases: corannulene-alc and
+benzene-alc (science/copy regression). Both started successfully; host shows
+one wave/two model processes and no tests. Freeze CLI/skill until both finish
+and are scored. wave-metadata.json records commit, skill/runner/rubric hashes,
+model/host and unchanged two-turn protocol. Scores go in
+`docs/plans/luna6-corpus-round6.json`; `/tmp/score-luna6-round6.py` is a manual
+record helper. Inspect live processes and costs before any relaunch. If both
+pass science/copy/boundary, launch fresh full24 with `--set all` and the same
+source; include AFM magnetic scope and never pool historical passes. Otherwise
+make general improvements and commit before the next wave. Do not repeat broad
+tests while the eval wave runs. Standard validation still has four known GUI
+failures; the objective is not complete and no full24 gate has run yet.
