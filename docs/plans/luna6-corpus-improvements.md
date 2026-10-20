@@ -2022,3 +2022,6 @@ Confirmation5 now2/24 scored: molecular AFM5/5 and spin-Peierls6/6 Musts pass sc
 
 
 Confirmation5 now4/24 scored: plateau5/5 Musts repaired by converged fixed-m=2 Redfield D/nu estimates; science PASS, copy FAIL one terminalLF. YMnAl5/5 Musts and exact-copy PASS after --prepare-reply. Shoulds4/5 (explicit plateau-range acceptance caveat) and2/3. Totals21/21 Musts,4/4 science,1/4copy/combined,4/4boundary,10/14Shoulds. All command/evidence/image hashes recorded. Retain conditional per-run/Redfield diagnostics and actual24591ZF correction; CLI/skill/runner/rubrics remain frozen.
+
+
+Confirmation5 now5/24 scored: PTFE6/6 Musts repairs prior falsezero claim, science/number/unit/boundary PASS; copy FAIL one terminalLF from plain audit.1/3Shoulds, same uncertainty/entanglement gaps. Full F–mu–F poor-fit and repeat/axis-sensitivity caveats retained. Totals27/27Musts,5/5science,1/5copy/combined,5/5boundary,11/17Shoulds. Keep frozen source through remaining19cases.

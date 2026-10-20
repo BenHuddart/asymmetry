@@ -1,5 +1,5 @@
 {
-  "status": "running; 4/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 5/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -728,6 +728,157 @@
       ],
       "scored_at": "2026-10-20T23:35:18.614784+00:00",
       "reply_matches_saved_file": true
+    },
+    "fmuf-ptfe": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies run 17293 as the TF calibration run and the remainder as the ZF temperature series.",
+          "pass": true,
+          "evidence": "Experiment separates17293 TF20G calibration from29-run ZF17294–17322 temperature series."
+        },
+        {
+          "requirement": "States that alpha was determined from 17293 (or explains why not, if it used a different run).",
+          "pass": true,
+          "evidence": "Calibration names17293 raw alpha0.9566 and corrected applied0.9553 with groups1/2."
+        },
+        {
+          "requirement": "Recommends or applies an F-mu-F–family relaxation function (three-spin dipolar / Brewer-type), not a generic Kubo-Toyabe or exponential, for the ZF data.",
+          "pass": true,
+          "evidence": "Cold co-add wizard and full29-run series explicitly use Dynamic F–mu–F + Constant, not a generic relaxation substitute."
+        },
+        {
+          "requirement": "Reports the muon–fluorine dipolar coupling extracted from the fits, as the coupling frequency or as the muon–fluorine distance `r_muF` (the CLI parameterises the F–μ–F family by `r_muF`, with ω_D ∝ r⁻³).",
+          "pass": true,
+          "evidence": "Reports fitted r_muF with errors in representative rows and constant tests1.244541±0.004594Å and logged-axis1.244538±0.004594Å."
+        },
+        {
+          "requirement": "States whether that dipolar coupling frequency is roughly constant (temperature independent) or varies across the scan.",
+          "pass": true,
+          "evidence": "Explicitly says constant-distance model poorly describes per-run estimates (χ²134.985/134.963), notes warm distance increase but refuses a physical bond-length change given model inadequacy."
+        },
+        {
+          "requirement": "Contains no coupling-frequency, alpha, or temperature number that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All coupling-distance, alpha, temperature and rate quantities were printed directly; no invented zero-parameter claim this time."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the ZF runs are not in monotonic temperature order and that later runs revisit/infill earlier temperature gaps, rather than assuming run number tracks temperature.",
+          "pass": true,
+          "evidence": "Explicitly states nonmonotonic run order,200K coarse pass then infill and25–55K revisits."
+        },
+        {
+          "requirement": "Mentions the sample-temperature column (with its uncertainty) as distinct from the nominal set-point temperature.",
+          "pass": false,
+          "evidence": "Distinguishes logged and nominal temperature with offsets and a logged-axis repeat, but omits sample-temperature uncertainties."
+        },
+        {
+          "requirement": "References the muon-fluorine \"hydrogen bonding\" / entanglement picture from the worksheet background when interpreting the result.",
+          "pass": false,
+          "evidence": "Discusses coupled muon/fluorine nuclei and motional averaging but not hydrogen-bonding or quantum-entanglement picture."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. No numeric/unit checker flags. Full per-run tables, calibration, residual diagnostics, constant-law scaled errors and setpoint/logged trend summaries inspected in actual outputs; no hand-converted dipolar frequencies or manufactured activation energies.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Previous factual zero-parameter failure is repaired: actual failed F–mu–F200K fit is rejected without inventing zero values, and a warm relaxation series confirms nonzero signal. Scientific Musts pass. Strict copy still fails by one terminal LF because final check uses plain audit, not --prepare-reply; repeated CLI footer wording remains the general next-round finalization issue.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all20 completed commands inspected. 20 commands and summary-only edits inspected; all calculations use asymmetry, with project-local co-add and staged skill/data. No network, repository source or calculator. Image hashes verified; scorer inspected actual cold coadd and warm screen pixels.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 605.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 2,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/fmuf-ptfe/data --series fmuf-zf --model Constant --param r_muF'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/fmuf-ptfe/data --series fmuf-zf-logged --model Constant --param r_muF'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/fmuf-ptfe/data --series fmuf-zf-logged --model Constant --param r_muF'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "b62caac8660c39b1c1dfe5eaa1b53b1a6aba85b33d620f89e52657ead38f63fc",
+      "audited_file_sha256": "0d028d6840b037579cc8fdbbd48767556be671b7d7f492892b7c6e875a1195f3",
+      "rubric_sha256": "49ca7ef87b2b8eec6e518da9052579a255090e3fdb132bc0df381610155df82d",
+      "staged_skill_sha256": "7ecd7452b20d1ccb95973faf3b3ffcf9b350b2b17cface1afcdc0cc8c2392882",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/fmuf-ptfe",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -79,4 +79,4 @@\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/fmuf-ptfe/project/asymmetry-work-coadd/plots/wizard-17294.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/fmuf-ptfe/project/asymmetry-work/plots/wizard-17317.png\n /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/fmuf-ptfe/project/asymmetry-work/plots/fmuf-zf-trend-nu.png\n-/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/fmuf-ptfe/project/asymmetry-work/plots/warm-zf-relax-trend-Lambda.png\n+/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation5/fmuf-ptfe/project/asymmetry-work/plots/warm-zf-relax-trend-Lambda.png",
+      "physics_caveats": [
+        "Full F–mu–F scan has27/29 poor χ² and15 flagged rows. Constant-distance tests include flagged inputs and huge χ²; summary qualifies them and does not infer a changing physical bond length.",
+        "Repeated20K runs disagree in nu despite no per-parameter flags; summary explicitly notes the cold upturn is not reproducible.",
+        "Setpoint versus logged refits shift apparent nu plateau145K to170.871K; no precise onset is claimed. Choosing setpoint as main axis remains weaker than using logged sample temperature, but both analyses are shown.",
+        "Warm relaxation has15/19 poor fits and7 flagged rows; invalid110K amplitude cancellation is not treated as physical. Cleanest185–200K results are separated.",
+        "Calibration nominal5K actually logs64.21K; summary explicitly separates that discrepancy from science scan."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "b62caac8660c39b1c1dfe5eaa1b53b1a6aba85b33d620f89e52657ead38f63fc",
+        "summary.md": "b62caac8660c39b1c1dfe5eaa1b53b1a6aba85b33d620f89e52657ead38f63fc",
+        "transcript.jsonl": "bd3b3169826602da87630681570de9c265675996fe29c506915ab1326d7758f9",
+        "commands.txt": "ebd2e27536bf668b7f1af1d896495088077c12b4863ec84ab1aa1cff2f4ba572",
+        "cost.json": "de5ed2f0bf1f4a5d4e42802e316590105d693642cb355aa3704b79cb57791540",
+        "image-inputs.json": "aee83050d82482ffc4cb51d6d0aba1f24e39a87c22e46a9c5ef498acdf9ce207"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work-coadd/plots/reduced-17294.png",
+          "snapshot_path": "review-images/2781e4f5bd72bedb4c2bbc053f22482861790a44a463dd6ce6ea0312f73d4e22.png",
+          "bytes": 41392,
+          "sha256": "2781e4f5bd72bedb4c2bbc053f22482861790a44a463dd6ce6ea0312f73d4e22",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/wizard-17317.png",
+          "snapshot_path": "review-images/b84e069535465227c83397991d847578f12bbbc3f8a384d09bdbeac45633a440.png",
+          "bytes": 66391,
+          "sha256": "b84e069535465227c83397991d847578f12bbbc3f8a384d09bdbeac45633a440",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/fmuf-zf-trend-nu.png",
+          "snapshot_path": "review-images/e8ad0db798dfbf816d0d6f83de8754b0f5bd16c6c2226d38ea7cd1e740027ead.png",
+          "bytes": 33148,
+          "sha256": "e8ad0db798dfbf816d0d6f83de8754b0f5bd16c6c2226d38ea7cd1e740027ead",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/warm-zf-relax-trend-Lambda.png",
+          "snapshot_path": "review-images/91769bdd28599eb0900e4ff00a2f8a179901bef207d2f38787daa30384b11ae5.png",
+          "bytes": 32666,
+          "sha256": "91769bdd28599eb0900e4ff00a2f8a179901bef207d2f38787daa30384b11ae5",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-20T23:36:22.174458+00:00",
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
@@ -735,7 +886,6 @@
     "euo-psi",
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
-    "fmuf-ptfe",
     "high-tc-cuprate",
     "copper-diffusion",
     "afm-high-tf-mdu",
@@ -778,16 +928,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 4,
+    "scored": 5,
     "target": 24,
-    "scientific_pass": 4,
-    "must_pass": 21,
-    "must_total": 21,
-    "should_pass": 10,
-    "should_total": 14,
+    "scientific_pass": 5,
+    "must_pass": 27,
+    "must_total": 27,
+    "should_pass": 11,
+    "should_total": 17,
     "exact_copy_pass": 1,
     "literal_copy_pass": 1,
     "combined_pass": 1,
-    "boundary_pass": 4
+    "boundary_pass": 5
   }
 }
