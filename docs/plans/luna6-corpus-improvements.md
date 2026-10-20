@@ -802,3 +802,13 @@ high-mismatch dip estimates without hyperfine invention. Partial full24:
 83/83 Musts,15/15 science/boundary,14/15 exact-copy/combined. Nine remain; keep
 source frozen and finish whole gate despite nickel copy failure. Host14 GiB
 available,zero swap/PSI,4.8 GiB scratch free. No broad tests/duplicate eval runs.
+
+CdS Fourier scored:6/6 Musts, exact-copy/boundary pass. Matched unwindowed
+cold/warm FFTs retain0.0315976 MHz resolution; empty cold detection table stays
+separate from noisy visual candidates and conditional shallow-muonium triplet.
+No precision splitting/coupling inferred. Full temperature series has explicit
+poor-fit limitations. Expected-versus-measured central-frequency agreement is
+not resolved, recorded as a Should gap. Partial full24:89/89 Musts,16/16
+science/boundary,15/16 exact-copy/combined. Eight remain; source frozen, one
+wave/three models and no tests. Host14 GiB available,zero swap/PSI,4.7 GiB
+scratch free. Finish full gate despite nickel's existing copy failure.

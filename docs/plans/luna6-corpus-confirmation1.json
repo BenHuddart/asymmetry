@@ -1312,16 +1312,97 @@
       "boundary_pass": true,
       "boundary_check": "PASS: complete command inventory uses staged skill/references, supplied data/logbook and installed CLI/products only; no host skill/source/network/ad hoc numerical scripts. jq reads stored CLI fields where used.",
       "permission_denials": 0
+    },
+    "cds-fourier": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Surveys the folder and identifies a transverse-field temperature series in CdS, selecting the 100 G base-temperature/high-statistics run 20721 for the representative spectrum from current command output.",
+          "pass": true,
+          "evidence": "Survey identifies23-run100 G TF CdS temperature scan20711\u201320733;20721 selected as logged5.17541 K base/high-statistics representative."
+        },
+        {
+          "requirement": "Reduces run 20721 and actually runs `fourier` with a saved plot, using a defensible alpha calibration (run 20729 is the expected candidate) or explicitly stating the alternative used.",
+          "pass": true,
+          "evidence": "Actual reduction20711\u201320733 with alpha-from20729; multiple actual20721 fourier calls produce JSON/NPZ/PNG."
+        },
+        {
+          "requirement": "Calls the result an FFT, not a maximum-entropy reconstruction, and reports the command's frequency resolution/window alongside any quantitative peak.",
+          "pass": true,
+          "evidence": "Explicit FFT not MaxEnt; window none/full reduced record and0.0315976 MHz resolution reported alongside matched cold/warm peak structure."
+        },
+        {
+          "requirement": "Finds the principal structure near the 100 G muon Larmor line around 1.4 MHz. It uses the PNG as well as the conservative peak table and notes weaker shoulders/satellites near roughly 1.27 and 1.51 MHz when visible; it does not claim those were algorithmically detected if only one row was printed.",
+          "pass": true,
+          "evidence": "Cold principal1.3896 MHz and candidates1.2396/1.5001 MHz matched to inspected irregular side maxima. Empty cold peak table distinguished from visual candidates; no false detections."
+        },
+        {
+          "requirement": "Interprets a resolved central line with roughly symmetric satellites as consistent with a shallow-muonium hyperfine triplet, without presenting a visual shoulder or sub-resolution splitting as a precision measurement.",
+          "pass": true,
+          "evidence": "Central-plus-side structure conditionally consistent with shallow-muonium hyperfine triplet; no precision splitting or hyperfine coupling inferred from noisy candidates."
+        },
+        {
+          "requirement": "Heeds any early-signal apodisation warning: it retries with an unwindowed physical crop or an appropriate Lorentzian filter rather than treating a symmetric-window spectrum as automatically authoritative.",
+          "pass": true,
+          "evidence": "All actual Fourier calls use window none on full physical record; no symmetric-window artifact treated as authoritative, no early apodisation warning ignored."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares the central frequency with the applied-field Larmor expectation and states whether they agree within the reported resolution.",
+          "pass": false,
+          "evidence": "Both measured1.397 MHz and expected1.355 MHz printed, but explicit agreement/disagreement within resolution not stated."
+        },
+        {
+          "requirement": "Gives a cautious splitting estimate only when supported by the plotted or tabulated current-session output and labels how it was obtained.",
+          "pass": false,
+          "evidence": "No splitting estimate given; appropriately declines a precise splitting from noisy candidate maxima."
+        },
+        {
+          "requirement": "Points the reader to the stored spectrum JSON/NPZ and PNG.",
+          "pass": true,
+          "evidence": "Stored matched spectrum JSON/NPZ and PNG named."
+        },
+        {
+          "requirement": "Avoids turning one representative low-temperature FFT into an unsupported claim about the entire temperature dependence.",
+          "pass": true,
+          "evidence": "Whole23-run fit series and multiple warm/cold FFTs support limited temperature discussion; poor fits prevent a firm dynamics law."
+        }
+      ],
+      "number_rule": "PASS: scientific CLI outputs support cold candidates1.3896/1.5001/1.2396 MHz, warm detected1.391635 MHz, resolution0.0315976 MHz and quoted Gaussian widths/errors. Numeric check excluding audits/draft displays returns no unverified numbers; no coupling conversion.",
+      "root_cause": "All Musts/copy/boundary pass. Cold visual structure is noisy and has no algorithmic detections; the conditional triplet interpretation is not evidence of a resolved hyperfine model. Many poor time-domain fits and nonmonotonic envelope selection remain explicit limitations; expected-versus-measured frequency agreement not resolved.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 414.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 4,
+      "trend_laws": [],
+      "command_failures": [],
+      "summary_sha256": "f174d288d421dc25d0f0a619dfc90662e408cf3c752d40c739472711545f584a",
+      "rubric_sha256": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/cds-fourier",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged skill/references, supplied data and installed CLI/products only; no host skill/source/network/ad hoc numerical scripts.",
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 15,
-    "scientific_pass": 15,
-    "must_pass": 83,
-    "must_total": 83,
-    "exact_copy_pass": 14,
-    "combined_pass": 14,
-    "boundary_pass": 15
+    "scored": 16,
+    "scientific_pass": 16,
+    "must_pass": 89,
+    "must_total": 89,
+    "exact_copy_pass": 15,
+    "combined_pass": 15,
+    "boundary_pass": 16
   },
   "gate_caveat": "Fresh full24 gate ongoing. First exact-copy failure on nickel prevents a full combined pass; complete/score remaining cases before changing frozen source."
 }
