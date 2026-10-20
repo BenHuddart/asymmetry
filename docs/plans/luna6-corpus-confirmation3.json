@@ -130,7 +130,7 @@
     },
     "authorization": "User requested one repair round and rerun, plus investigation of increased concurrency. Finish and score this full fresh gate, then pause; no unrestricted improvement loop."
   },
-  "status": "running; 4/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 5/24 scored; source frozen; finish all cases despite earlier failures",
   "scoring_policy": "Actual summary.md final replies only, against unchanged staged rubrics and tools/agent_eval/scoring_brief.md; manual Must/Should, number/units, boundary, exact-copy and independent physics-scope checks. Exclude audits/draft/log-report displays from numerical provenance; stored direct CLI outputs are valid. Preserve first attempts and do not pool historical passes.",
   "cases": {
     "plateau-redfield": {
@@ -600,10 +600,158 @@
         "summary.md": "8ad93d6fce9d42e38ccf5e8c01de145c0ada6ab5afa64935cab59eb709b3e55e",
         "image-inputs.json": "8e21abf984e3f7eb47f00a4d3545f3a489243202ccbaf51dff12d9b67b8e69e5"
       }
+    },
+    "sn-critical-field": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the 40 G temperature scan 91516–91529 and treats it as the Hc(T) measurement.",
+          "pass": true,
+          "evidence": "Explicitly identifies \"40 G scan’s detailed infill runs91516–91529\" at logged2.25093–3.27553 K and treats the non-applied-field line as the type-I normal-domain critical-field observation, while withholding quantitative Hc(T)."
+        },
+        {
+          "requirement": "Reports that the logged sample temperature differs from the setpoint, and orders or reports the scan against the logged temperature.",
+          "pass": true,
+          "evidence": "Reports logged/setpoint offsets separately, including+0.38–+0.66 K for91516–91529; series and line tables use logged sample temperature."
+        },
+        {
+          "requirement": "Reports a precession signal from the sample away from the applied field's Larmor frequency, whose frequency falls on warming (the critical field decreasing towards Tc).",
+          "pass": true,
+          "evidence": "Reports sample/internal-field \"other@\" precession away from applied-field Larmor: survey line falls roughly1.95→0.958 MHz on warming and disappears by91526–91529. Matched FFT cold1.960796 MHz peak versus warm no thresholded peak supports the observation."
+        },
+        {
+          "requirement": "Does not treat 91501–91515 as sub-Tc data at their setpoints.",
+          "pass": true,
+          "evidence": "Explicitly states91501–91515 logged8.18443–8.40919 K are a separate high-temperature block, not near their1.95–2.35 K setpoints; they are controls, not sub-Tc points."
+        },
+        {
+          "requirement": "Contains no Hc, Tc or thermometer offset that was not produced by a tool call in this session (the worksheet's 3.7 K and textbook Hc(0) are background).",
+          "pass": true,
+          "evidence": "No invented Hc/Tc/thermometer offset. Numeric results come from actual survey, reductions, FFT and trend tables, including reported logged-setpoint offsets; no manual frequency-to-field conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits a critical-field law (e.g. `trend --model OrderParameter` with `alpha=2`, `beta=1`, i.e. Hc0[1 − (T/Tc)²]) to the frequency trend and reports Tc and the amplitude with uncertainties, with the fit range stated.",
+          "pass": false,
+          "evidence": "No usable critical-field law or Tc/amplitude/error. An OrderParameter request on survey_line_mhz failed because that column is not tabulated; time-domain frequencies remain unresolved."
+        },
+        {
+          "requirement": "Compares that Tc with tin's in words to discuss the thermometer error, without presenting a hand-computed offset as Asymmetry output.",
+          "pass": false,
+          "evidence": "No fitted Tc exists to compare with tin or infer thermometer error; logged/setpoint offsets alone are not that comparison."
+        },
+        {
+          "requirement": "Notes the sample signal is small against a large background and says which runs' fits are flagged or were excluded.",
+          "pass": true,
+          "evidence": "Explicit weak line against large non-precessing component and exhaustive run/series flags; flagged oscillatory frequencies/amplitudes are not physical estimates."
+        },
+        {
+          "requirement": "Mentions the other fields (20, 80, 160 G) and what they add, or why they were not analysed.",
+          "pass": true,
+          "evidence": "Lists20,80 and160 G in overlapping scan table, attempts the20–160 G field group and20/80 G temperature controls, and explains sparse/non-monotonic detections and failed line fits do not quantify field dependence."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Manually matched logged temperatures/offset blocks and survey lines, assumed alpha/corrections, FFT windows/bin counts/resolution/peak and candidate tables, all quoted relaxation parameter/error rows and flags. Command7 prints1.960796/16.89689/0.51167/5.25; commands27/36/37/42/51/52 print quoted rates/errors and windows. Source checks exclude all summary heredocs/readbacks/audits and find no numeric/unit flags. No Hc conversion or hand-computed thermometer error.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Musts pass using measured survey lines plus matched FFTs, rather than unreliable time-domain fit frequencies. Should-law gap: commands10/18 produce unresolved frequencies; command26 tries OrderParameter on survey_line_mhz but trend does not expose that observable as a column. It declines the law honestly. Separate report-provenance defect: final claims the first scoped wizard did not return, yet completed command12 reports gaussian_constant recommendation and writes its recipe; only command13 is cancelled (exit130). This stale execution narrative is not a fixed Must failure but must be retained. General future repair concerns reliable workflow-state/report reconciliation and fitting an independently measured spectral observable, not expected tin parameters.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all56 completed commands inspected. All56 completed commands, summary heredoc and file changes inspected; staged skill/help/data/logbook/project products only. No implementation/personal skill/corpus escape or physical arithmetic. Two-turn image review completed. Command13 cancellation and26 missing trend-column error are analytical workflow events, not approval denials; error items are feature warnings. Actual reply byte-identical to saved audited file.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1149.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/sn-critical-field/data --series sn-hc-40G-scan --model OrderParameter --param survey_line_mhz --fix alpha=2 --fix beta=1 --xmax 3.0 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/sn-critical-field/data --run 91520 --geometry LF --scope lf-dynamics --include Oscillatory --plot'",
+          "exit_code": 130
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/sn-critical-field/data --series sn-hc-40G-scan --model OrderParameter --param survey_line_mhz --fix alpha=2 --fix beta=1 --xmax 3.0 --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "4078005dc89a0fe540cf2173884054da6509f12d2c6c49d0296ad35514f3dfa7",
+      "audited_file_sha256": "4078005dc89a0fe540cf2173884054da6509f12d2c6c49d0296ad35514f3dfa7",
+      "rubric_sha256": "da9d2ae997537590c2ab33b031cfb6feb9f6394dcc5231e529b29eea9be97842",
+      "staged_skill_sha256": "5605374e9d57ddeafd323e6f5c2decfd20366e7cd8160202fd8e14148568f57a",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation3/sn-critical-field",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "All time-domain oscillatory frequency estimates are rejected; the result is qualitative Hc-line behavior, not a quantitative critical-field curve/Tc/thermometer calibration.",
+        "Final statement that no wizard recommendation returned contradicts completed command12 (gaussian_constant). Second call is actually cancelled. Do not classify this completed evaluation as an infrastructure void.",
+        "Assumed alpha1 without a measured calibration is explicit. Large non-precessing signal and poor/unresolved sample fits limit precision.",
+        "Single-pair/no multi-group, count-domain or MaxEnt/domain analysis; foil orientation is not established.",
+        "Exploratory40G-full series mixes fields; final explicitly rejects it as a physical scan and uses separate scan-specific products."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        2,
+        5,
+        7,
+        8,
+        10,
+        12,
+        14,
+        15,
+        16,
+        17,
+        18,
+        20,
+        21,
+        22,
+        23,
+        24,
+        26,
+        27,
+        28,
+        29,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        41,
+        42,
+        44,
+        45,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52
+      ],
+      "scored_at": "2026-10-20T20:12:35.549467+00:00",
+      "reply_matches_saved_file": true,
+      "raw_artifact_sha256": {
+        "cost.json": "4289c714932c9480aed0525ec6f0f6bc0abb5be06efaafcac9523efc7b516cc9",
+        "transcript.jsonl": "1e7530470c9c00d66ad715a12bb0970c3ed835c4355205ea3390d3fd9cba8237",
+        "commands.txt": "df877916cf43b9e2b4a0fddbad7b54472ada82bfdb0f5321c65519d4d4a7bd1a",
+        "summary.md": "4078005dc89a0fe540cf2173884054da6509f12d2c6c49d0296ad35514f3dfa7",
+        "image-inputs.json": "296c0d397d52da9ccb7555ad432a36e70ebfa5f946d51bc7b3ef2acca351b5b8"
+      }
     }
   },
   "pending_cases": [
-    "sn-critical-field",
     "euo-psi",
     "ferromagnetic-nickel",
     "high-tc-cuprate",
@@ -625,17 +773,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 4,
+    "scored": 5,
     "target": 24,
-    "scientific_pass": 2,
-    "must_pass": 17,
-    "must_total": 21,
-    "should_pass": 5,
-    "should_total": 15,
-    "exact_copy_pass": 4,
-    "literal_copy_pass": 4,
-    "combined_pass": 2,
-    "boundary_pass": 4
+    "scientific_pass": 3,
+    "must_pass": 22,
+    "must_total": 26,
+    "should_pass": 7,
+    "should_total": 19,
+    "exact_copy_pass": 5,
+    "literal_copy_pass": 5,
+    "combined_pass": 3,
+    "boundary_pass": 5
   },
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the unchanged runner final_report_audited guard. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."

@@ -1661,3 +1661,6 @@ Confirmation3 first3 cases scored:PTFE PASS6/6 Musts,plateau FAIL3/5 andmaleic F
 
 
 Confirmation3 now4/24 scored:spin-glass PASS5/5 Musts,2/3Shoulds,number/unit/copy/boundary pass. Uses stretched LF series, explicit warm/cold actual endpoints and qualified critical-law limits. Reference-run amplitude/background fixing remains a Should gap; geometry inference is caveated. Direct survey makes24591 a loneZF reference,despite rubric LF shorthand; full coverage retained and rubric unchanged. All17 commands inspected; frozen hashes match. Totals17/21Musts,2/4science/combined,4/4audit-copy/literal-copy/boundary,5/15Shoulds. Wave continues at six cases; no source changes or new runs.
+
+
+Confirmation3 now5/24 scored:Sn PASS5/5Musts,2/4Shoulds,number/unit/copy/boundary pass. Identifies40G Hc campaign and warming-downshifted measured survey/FFT line,keeps8K block separate. No quantitative OrderParameter/Tc/thermometer result. Important provenance caveat:final says first wizard did not return,but completed command12 prints gaussian_constant;only second call is cancelled. This is not a literal Must failure or infrastructure void. All56 commands inspected;frozen hashes match. Totals22/26Musts,3/5science/combined,5/5audit-copy/literal-copy/boundary,7/19Shoulds. Continue all24 frozen;no source changes or extra launches.
