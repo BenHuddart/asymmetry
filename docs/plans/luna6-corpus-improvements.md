@@ -742,3 +742,14 @@ is complete. Twenty-two cases remain; EuO, maleic and nickel are live, one wave,
 three model processes, no tests. About 16 GiB available, no swap/PSI and 6 GiB
 scratch free. Keep CLI/skill frozen through all24, score completed final replies
 against fixed rubrics and record science limitations. No full gate verdict yet.
+
+EuO and F-mu-F PTFE are scored: both pass every Must (5/5 and 6/6), exact-copy
+and boundary. Full24 partial totals: 21/21 Musts, 4/4 science/copy/combined and
+boundary. EuO retains actual paramagnetic rates with no unsupported divergence;
+its unreliable TF widths and extrapolated order parameter remain qualified.
+PTFE applies the proper F-mu-F family and reports nonconstant fitted distance,
+but extensive poor/reseeded fits prevent a microscopic distance-change or rate
+law claim. Literal pass is not complete model validation; Should gaps recorded.
+Twenty cases remain; source frozen, one wave/three model processes, no tests.
+Host 16 GiB available, no swap/PSI, 5.9 GiB scratch free. Continue scoring every
+new first attempt; no full-gate verdict until all24 are completed and scored.

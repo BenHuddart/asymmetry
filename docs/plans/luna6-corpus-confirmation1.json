@@ -243,16 +243,175 @@
       "boundary_pass": true,
       "boundary_check": "PASS: complete command inventory uses staged project skill, supplied data/logbook and installed CLI/products only; no host skill/source/network or ad hoc numerical scripting.",
       "permission_denials": 0
+    },
+    "euo-psi": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies this as PSI GPS data (the `.bin` format), not an ISIS NeXus dataset.",
+          "pass": true,
+          "evidence": "GPS/PSI instrument and continuous-source treatment explicitly identified; no ISIS NeXus assumption."
+        },
+        {
+          "requirement": "Separates the ZF block from the TF 60 G block as two distinct scans.",
+          "pass": true,
+          "evidence": "ZF 2923\u20132960 and 60 G TF 2961\u20132973 separate, pair-specific geometry checks and corrections."
+        },
+        {
+          "requirement": "Reports an internal field (from the TF block, or from ZF oscillations if present) that changes with temperature, growing as the sample is cooled below the ordering region.",
+          "pass": true,
+          "evidence": "ZF main internal frequency 29.9124 \u00b1 0.0426803 MHz at 10.0268 K falls to 7.67452 \u00b1 0.115808 MHz at 67.9019 K, then loses resolvability near ordering region."
+        },
+        {
+          "requirement": "Reports the relaxation rate above the ordering region as this session's fits give it, and does not claim a critical divergence (critical slowing down) that those fits do not show. The paper finds the paramagnetic relaxation rate roughly constant, near 2 MHz, rather than diverging at the transition.",
+          "pass": true,
+          "evidence": "Paramagnetic rate reported around 1.8\u20132.1 per microsecond through warm range, with near-line-loss high value qualified; CriticalDivergence explicitly LAW NOT ESTABLISHED, no critical slowing claim."
+        },
+        {
+          "requirement": "Contains no internal-field value, relaxation rate, or Curie temperature that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Own CLI frequencies, rates and conditional order-parameter values; no literature Curie value passed off as fitted result."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that both blocks revisit a narrow temperature window several times rather than assuming a single monotonic sweep.",
+          "pass": true,
+          "evidence": "Both acquisition blocks revisit transition region, run order not monotonic."
+        },
+        {
+          "requirement": "Treats run 2960 (1.5 K, out of sequence at the end of the ZF block) as a low-temperature reference point rather than ignoring it or assuming it belongs elsewhere in the sequence.",
+          "pass": true,
+          "evidence": "Explicitly identifies out-of-sequence 2960 as 1.5 K low endpoint rather than warm acquisition point; no detailed reference fit reported."
+        },
+        {
+          "requirement": "Frames the comparison to theory (e.g. mean-field/Heisenberg critical behaviour) as the paper's stated goal. A critical exponent, if quoted, comes from a `trend --model OrderParameter` fit in this session with its fit range stated, and is labelled with the temperature axis it was measured against (the PSI header's logged sensor reading, or the setpoint with a reason).",
+          "pass": false,
+          "evidence": "Fits and labels conditional order-parameter exponent/range/logged axis, but does not frame mean-field/Heisenberg comparison as paper goal."
+        }
+      ],
+      "number_rule": "PASS: final numbers checked against actual completed asymmetry scientific commands only (not audit/draft displays). Main-line frequency endpoints, conditional OrderParameter Tc 70.855781 \u00b1 0.462765 K/beta 0.485017 \u00b1 0.025419 and warm rate 1.81538 \u00b1 0.111885 match tool output. No field/time conversion.",
+      "root_cause": "All Musts/copy/boundary pass. Repairs original paramagnetic-rate gap and distinguishes ZF internal-line evidence from unreliable TF damping. High-chi2/range-sensitive order parameter and failed CriticalDivergence remain qualified; weak extra spectral candidates are not site assignments. TF frequency/window mismatch prevents a reliable width trend, honestly stated.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1694.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 9,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/euo-psi/data --series euo-zf-paramag-exp-early --model CriticalDivergence --param Lambda --xmin 69.0395 --xmax 95.3376 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/euo-psi/data --series euo-zf-mainline --model OrderParameter --param frequency --xmax 67.9019 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/euo-psi/data --series euo-zf-mainline --model OrderParameter --param frequency --xmax 68.7 --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/euo-psi/data --series euo-zf-mainline --model OrderParameter --param frequency --xmax 68.0 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /tmp/asymmetry-luna6-improvements/confirmation1/euo-psi/data --runs 2923-2924,2926 --recipe wizard-2923 --order sample_temperature_logged --start 2923 --name euo-zf-lowcount-check --tmax 2 --plot'",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "1f9ce99dc33b3adb9bca53df693964c40fdfefaab87416539548167958e7e483",
+      "rubric_sha256": "fe9da3aa512839d6107beebcf6bbb0c343d0d6f7fc668e02e8a3d7ce74096600",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/euo-psi",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged project skill/references, supplied data/logbook and installed CLI/products only; no personal skill/source/network or ad hoc numerical scripts.",
+      "permission_denials": 0
+    },
+    "fmuf-ptfe": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies run 17293 as the TF calibration run and the remainder as the ZF temperature series.",
+          "pass": true,
+          "evidence": "17293 separate 20 G TF calibration, 17294\u201317322 ZF temperature scan."
+        },
+        {
+          "requirement": "States that alpha was determined from 17293 (or explains why not, if it used a different run).",
+          "pass": true,
+          "evidence": "Measured alpha on 17293, applied deadtime-corrected 0.9553 explicitly."
+        },
+        {
+          "requirement": "Recommends or applies an F-mu-F\u2013family relaxation function (three-spin dipolar / Brewer-type), not a generic Kubo-Toyabe or exponential, for the ZF data.",
+          "pass": true,
+          "evidence": "Dynamic F-mu-F + Constant applied, wizard fluoride-fmuf scope and three-spin beat rationale, not generic KT/exponential."
+        },
+        {
+          "requirement": "Reports the muon\u2013fluorine dipolar coupling extracted from the fits, as the coupling frequency or as the muon\u2013fluorine distance `r_muF` (the CLI parameterises the F\u2013\u03bc\u2013F family by `r_muF`, with \u03c9_D \u221d r\u207b\u00b3).",
+          "pass": true,
+          "evidence": "Reports fitted r_muF, e.g. 1.22688 \u00b1 0.000693871 Angstrom at 20.0618 K, with full table and uncertainties."
+        },
+        {
+          "requirement": "States whether that dipolar coupling frequency is roughly constant (temperature independent) or varies across the scan.",
+          "pass": true,
+          "evidence": "Explicit nonconstant/nonmonotonic fitted distance; constant-law chi2_red 134.882 poor, with extensive fit-quality caveats rather than an established microscopic change."
+        },
+        {
+          "requirement": "Contains no coupling-frequency, alpha, or temperature number that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Coupling-distance, alpha and temperature numbers all trace to actual CLI output; no manual dipolar frequency conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the ZF runs are not in monotonic temperature order and that later runs revisit/infill earlier temperature gaps, rather than assuming run number tracks temperature.",
+          "pass": true,
+          "evidence": "Run order/infill and separate late colder points explicitly described."
+        },
+        {
+          "requirement": "Mentions the sample-temperature column (with its uncertainty) as distinct from the nominal set-point temperature.",
+          "pass": false,
+          "evidence": "Logged versus setpoint temperatures distinguished, but no sample-temperature uncertainty reported."
+        },
+        {
+          "requirement": "References the muon-fluorine \"hydrogen bonding\" / entanglement picture from the worksheet background when interpreting the result.",
+          "pass": false,
+          "evidence": "Nearby fluorine nuclei/three-spin ensemble identified, but no worksheet hydrogen-bond/entanglement discussion."
+        }
+      ],
+      "number_rule": "PASS: actual scientific CLI output supports alpha 0.9553, distance endpoints/table and Constant-law c=1.244541 \u00b1 0.004593 Angstrom, chi2_red 134.882. No hand omega_D calculation. Checked excluding all audits/draft displays.",
+      "root_cause": "All literal Musts/copy/boundary pass; scientifically limited by 27/29 poor fits and 17 reseeded branches. Report preserves fitted distance variation while explicitly declining a precise distance-change mechanism or nu(T) law. Algorithmic F-mu-F time-domain match is separated from absent spectral detections.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 322.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/fmuf-ptfe/data --series teflon-fmuf --model Constant --param r_muF'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "ee50d6b00a79343a7458446820a0166a8c4a3450ffa049677905125d1fdc0d5e",
+      "rubric_sha256": "49ca7ef87b2b8eec6e518da9052579a255090e3fdb132bc0df381610155df82d",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/fmuf-ptfe",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged project skill/references, supplied data/logbook and installed CLI/products only; no personal skill/source/network or ad hoc numerical scripts.",
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 2,
-    "scientific_pass": 2,
-    "must_pass": 10,
-    "must_total": 10,
-    "exact_copy_pass": 2,
-    "combined_pass": 2,
-    "boundary_pass": 2
+    "scored": 4,
+    "scientific_pass": 4,
+    "must_pass": 21,
+    "must_total": 21,
+    "exact_copy_pass": 4,
+    "combined_pass": 4,
+    "boundary_pass": 4
   },
   "gate_caveat": "Fresh full24 gate in progress; only completed actual final replies scored, no historical pass pooling."
 }
