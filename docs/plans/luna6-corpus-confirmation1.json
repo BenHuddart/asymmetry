@@ -1503,16 +1503,121 @@
       "boundary_pass": true,
       "boundary_check": "PASS: full command inventory uses staged skill/references, supplied files/logbook and installed CLI/products only; no host skill/source/network/ad hoc numerical scripts.",
       "permission_denials": 0
+    },
+    "trsb-re6zr": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the three science scans and their geometry from its own survey: the 400 G TF temperature scan (38178\u201338219), the ZF temperature scan (38223\u201338260) and the 100 G LF scan (38263\u201338273, 38275), and analyses them separately.",
+          "pass": true,
+          "evidence": "Three primary scans38178\u201338219 TF400 G,38223\u201338260 ZF,38263\u201338273/38275 LF100 G identified and separately fitted; mixed cross-sections not merged."
+        },
+        {
+          "requirement": "Reports the alpha step between the TF block and the ZF/LF block and calibrates each from a run inside it (38222 for ZF/LF; a TF run of 38176\u201338221 for TF), naming the runs.",
+          "pass": true,
+          "evidence": "Alpha step38221/38222 explicitly reported; first block from38220 corrected0.5586 and ZF/LF from38222 corrected1.3232."
+        },
+        {
+          "requirement": "Treats the 50\u2013200 G field runs as longitudinal, not transverse, and reports that the 100 G LF runs show little or no relaxation at any temperature: the ZF relaxation is decoupled, so its fields are static.",
+          "pass": true,
+          "evidence": "50\u2013200 G longitudinal orientation and absent line recognized. All12 LF100 G fits lose at most5.3% by8 microseconds versus ZF median88.3%; flat LF traces imply quasi-static decoupling."
+        },
+        {
+          "requirement": "Fits the ZF scan with a static Gaussian Kubo\u2013Toyabe \u00d7 exponential + constant (or an equivalent KT model) and says there is no spontaneous precession. It does not adopt a precession model (the wizard has ranked Bessel or Overhauser forms first on some runs) as the ZF physics.",
+          "pass": true,
+          "evidence": "DynamicGaussianKT+Constant main fit and explicit StaticGKT_ZF*Exponential+Constant control; Bessel ranking rejected as mimicking KT dip/recovery without spectral line, no spontaneous precession adopted."
+        },
+        {
+          "requirement": "States the headline in words: the ZF KT rate (`Delta`, the paper's \u03c3) rises on cooling below a temperature at or near the TF Tc (within a point spacing of the Tc this session's TF fit gives, or 6\u20137.5 K) while \u039b (or, in a dynamic KT fit, the fluctuation rate \u03bd) shows no such change; the extra relaxation is small against the nuclear rate and is read as spontaneous static fields appearing at Tc \u2014 broken time-reversal symmetry. Calling it a candidate pending a check passes; explaining it away (as nuclear, or as \"not TRSB because it is not in \u039b\") does not.",
+          "pass": true,
+          "evidence": "Small Delta increase on cooling across4.40086\u20137.19962 K overlaps TF Tc6.248921 K, while nu and static-control Lambda have no corresponding onset. Candidate spontaneous quasi-static fields/TRSB headline explicit, not explained away."
+        },
+        {
+          "requirement": "Reports the TF Gaussian rate \u03c3 rising below a Tc between 6 and 7 K from a flat normal-state value, fits \u03c3(T) with an `SC_*` gap law, quotes Tc and the gap parameter with uncertainties, \u03c7\u00b2\u1d63 and the temperature axis, and says whether a fully gapped (s-wave) law describes it.",
+          "pass": true,
+          "evidence": "TF Gaussian width rises from0.170107 warm to0.456381 cold; SC_SWave Tc6.248921 \u00b10.029522 K,gap_ratio2.196546 \u00b10.049319,chi2_red2.285 against logged temperature. Fully opened gap compatible, approximate fit."
+        },
+        {
+          "requirement": "Contains no Tc, gap, rate or alpha not produced by a tool call in this session (the paper's 6.75/6.78 K, 1.21 meV, 2\u0394/k_BTc = 4.2 and Hc2 are background), and no gap converted to meV or 2\u0394/k_BTc by hand.",
+          "pass": true,
+          "evidence": "Actual CLI supports all quoted alpha,rates,Tc/gap parameters; no paper gap/field constants or hand gap conversions."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Orders the TF scan by the logged sample temperature, noting 38180's 0.01 K setpoint is not the sample's temperature.",
+          "pass": true,
+          "evidence": "Logged sample ordering used,38180 setpoint0.01 K distinguished from actual0.30069 K."
+        },
+        {
+          "requirement": "Models the silver-holder background (a second, weakly damped line at the applied field in TF; the constant in ZF), reports the diamagnetic shift of the sample line below Tc, and says how the non-superconducting fraction was handled.",
+          "pass": true,
+          "evidence": "Two-line model attempted and failed across26/42; diamagnetic warming shift0.05823 \u00b10.00255 MHz, constant not a volume fraction, non-superconducting fraction explicitly unseparated."
+        },
+        {
+          "requirement": "Compares the s-wave law with a nodal one (e.g. `SC_DWave`) and says which the data prefer and why.",
+          "pass": true,
+          "evidence": "Same-data SC_DWave chi2_red6.431/unconstrained gap compared with S-wave2.285; approximate fully-gapped law preferred."
+        },
+        {
+          "requirement": "Compares the ZF onset with the TF Tc in words, and gives the ZF Tc an honest uncertainty (see traps).",
+          "pass": true,
+          "evidence": "ZF4.40086\u20137.19962 K broad bracket compared to TF Tc; no spurious precise ZF Tc claimed."
+        },
+        {
+          "requirement": "Accounts for 38176\u201338177 and the 200 G pair 38220\u201338221: analysed, or said why not.",
+          "pass": true,
+          "evidence": "Early38176\u201338177 poor negative-baseline control excluded explicitly;200 G pair38220\u201338221 fitted separately from LF38274."
+        },
+        {
+          "requirement": "Says only the `.nxs` files were analysed and what the other files are.",
+          "pass": false,
+          "evidence": "Does not state that only.nxs analyzed or classify auxiliary zero-byte RAW/nxs_v2/ICP files."
+        }
+      ],
+      "number_rule": "PASS: scientific CLI output supports TF Tc6.248921 \u00b10.029522 K/gap_ratio2.196546 \u00b10.049319, Delta cold0.276719 \u00b10.000939/warm0.269470 \u00b10.001291, flat dynamic controls, corrected alphas and printed decoupling comparison. Number check excludes audits/draft displays and returns no unverified numbers; no hand gap conversion.",
+      "root_cause": "All Musts/copy/boundary pass, including previously fragile candidate TRSB headline. Static and dynamic KT comparisons retain small width onset without falsely demanding electronic-rate onset. LF amplitude degeneracy and many poor/reseeded fits are qualified; no separate precise ZF transition or microscopic-origin proof. Auxiliary-file coverage explanation remains missing.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1507.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 9,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/trsb-re6zr/data --series tf400g1 --model SC_SWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/trsb-re6zr/data --series tf400g1 --model SC_DWave --param sigma --plot'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/trsb-re6zr/data --series tf400g1 --model SC_SWave --param sigma --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"rg --files /tmp/asymmetry-luna6-improvements/confirmation1/trsb-re6zr/data | rg -i '(readme|logbook|\\\\.pdf\"'$|'\"\\\\.rtf\"'$|notes)'\"'\"",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "7501a32a74e6f9b40442f9b958f649658c76d8843e3ffb957dd2fd22582a65b9",
+      "rubric_sha256": "9b37cf0242fec13643391e4be4d75ce3791578ee9633fe4b675ce8fb1b19fdcc",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/trsb-re6zr",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged skill/references, supplied files and installed CLI/products only; no host skill/source/network/ad hoc numerical scripts. Text reads of stored CLI logs/JSON retain provenance.",
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 17,
-    "scientific_pass": 17,
-    "must_pass": 97,
-    "must_total": 97,
-    "exact_copy_pass": 16,
-    "combined_pass": 16,
-    "boundary_pass": 17
+    "scored": 18,
+    "scientific_pass": 18,
+    "must_pass": 104,
+    "must_total": 104,
+    "exact_copy_pass": 17,
+    "combined_pass": 17,
+    "boundary_pass": 18
   },
   "gate_caveat": "Fresh full24 gate ongoing. First exact-copy failure on nickel prevents a full combined pass; complete/score remaining cases before changing frozen source."
 }

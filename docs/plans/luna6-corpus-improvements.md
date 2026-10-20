@@ -825,3 +825,14 @@ Partial full24:97/97 Musts,17/17 science/boundary,16/17 exact-copy/combined.
 Seven remain; keep whole wave frozen/running despite nickel copy failure.
 Host14 GiB available,zero swap/PSI,4.4 GiB scratch free; one wave/three models,
 no tests. No full-gate verdict yet.
+
+Re6Zr TRSB scored:7/7 Musts, exact-copy/boundary pass. Small cooling Delta
+increase overlaps the TF transition, nu/static-control Lambda stay level,
+LF100 G decouples; candidate spontaneous quasi-static fields/TRSB headline
+retained without microscopic proof. TF SC_SWave Tc6.248921 ±0.029522 K and
+gap_ratio2.196546 ±0.049319 compare with poorer D-wave. Static/dynamic KT
+and background checks preserve onset; no spuriously precise ZF Tc. Auxiliary
+file-type coverage is a Should gap. Partial full24:104/104 Musts,18/18
+science/boundary,17/18 exact-copy/combined. Six remain; CLI/skill stay frozen,
+whole gate continues despite nickel copy failure. Host14 GiB available,zero
+swap/PSI,4.3 GiB scratch free; one wave/three models,no tests.
