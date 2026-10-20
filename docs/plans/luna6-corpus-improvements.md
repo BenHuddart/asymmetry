@@ -1174,3 +1174,36 @@ skill until completion. Score actual final reply in
 rule (excluding audit/draft displays),copy,boundary and hashes. Monitor this
 requested rerun,then commit score/plan and pause automation;no automatic next
 wave,full24 or extra improvement round. Raw evidence persists outside repo.
+
+
+Round12 COMPLETE:10/10 Musts,science/number-rule/exact-copy/boundary PASS.
+Fresh first attempt of b06981a on Codex/gpt-6-luna;two image-review turns,
+exit0,1322.4 seconds. Actual final reply explicitly says cold15349.687 G dip
+is broader/higher than hot14828.051 G,with baseline-sensitive width caveats;
+hot7075.710 G narrow line and only broad conditional cold counterpart retained.
+Molecular reorientation averaging hyperfine anisotropy is explicit interpretation.
+All147 audited report lines,including ten final plot paths,are copied exactly;
+summary and audited file SHA256 both
+99c9369e2c12a0b593de364a45ad57313b7310235f19b7f96bfe0d5cfccbe263.
+Number check excludes audits/draft displays;scaled errors are actual CLI output,
+not agent arithmetic. All88 commands inspected;boundary passes. Six wizard
+calls and a Linear slit-rate trend;initial relative data listing failed without
+losing analysis. Supervisor92991 exited0;no eval/test processes remain.
+
+Should gaps remain:1/6 pass. Calibration incorrectly uses118133 rather than
+matched beam/configuration references;powder-shape explanation,explicit two-ALC-
+temperature activation-law limit,cold steeper/higher recovery wording and ZF
+integral-control comparison are missing. These are recorded honestly,not turned
+into new Musts. Literal scientific pass does not validate microscopic quantities.
+First draft already contained comparison directions,so this attempt does not
+prove the omission audit caused that repair. COPY CHECK printed and final copy
+matches byte-for-byte. Raw first attempt remains in persistent round12 cache;
+full record docs/plans/luna6-corpus-round12.json includes hashes/evidence.
+
+Requested repair+rerun is complete. Commit score/plan and PAUSE follow-up;
+no further improvement,targeted wave or full24 gate authorized. Full24 objective
+is still incomplete:confirmation1 remains145/147 Musts,23/24 science,23/24 copy,
+22/24 combined,24/24 boundary with AFM magnetic scope passed. No pooled or fresh
+all-pass gate claim. Latest implementation validation314focused/5912fast,
+lint/structural/skill pass,docs80 existing warnings;standard still has four known
+GUI sizing failures and is not green. Host22 GiB available,no swap/current PSI.
