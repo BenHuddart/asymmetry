@@ -377,6 +377,37 @@ _DIP_SIGNIFICANCE = 5.0
 _WINDOW_MIN_POINTS = 8
 
 
+def candidate_dip_windows(scan: FieldScan) -> list[dict[str, float]]:
+    """Windows around significant interior minima, independent of the fitted model.
+
+    Five combined point errors of prominence screen noise; they do not establish
+    a resonance. Quarter-prominence widths keep exploratory windows near the trough bottom;
+    they are not line widths or an independently measured baseline.
+    """
+    from scipy.signal import find_peaks
+
+    if scan.order_key != "field" or scan.n_points < _WINDOW_MIN_POINTS:
+        return []
+    peaks, properties = find_peaks(
+        -scan.value,
+        prominence=_DIP_SIGNIFICANCE * np.sqrt(2) * np.median(scan.error),
+        width=0,
+        rel_height=0.25,
+    )
+    indices = np.arange(scan.n_points)
+    windows = []
+    for peak, width in zip(peaks, properties["widths"], strict=True):
+        half_span = max(2 * width, _WINDOW_MIN_POINTS / 2)
+        windows.append(
+            {
+                "centre": float(scan.x[peak]),
+                "x_min": float(np.interp(peak - half_span, indices, scan.x)),
+                "x_max": float(np.interp(peak + half_span, indices, scan.x)),
+            }
+        )
+    return windows
+
+
 def _holds_a_line(scan: FieldScan, window: Mapping[str, Any]) -> bool:
     """Whether one line on a straight background fits inside *window* as a resonance.
 
@@ -455,6 +486,7 @@ def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
 
 __all__ = [
     "contradicted_tf_stamps",
+    "candidate_dip_windows",
     "DIP_FLANK_WIDTHS",
     "period_field_offset_gauss",
     "build_integral_scan",

@@ -558,3 +558,35 @@ lifted only after both first attempts scored. Next round should make local dip
 investigation available even when the initial whole-scan model is recovery;
 the current core only finds next-dip windows for existing LCR models. This is
 an observable/model-selection gap, not a reason for corpus-specific rules.
+
+## Round six
+
+Implementing a model-independent shape diagnostic in the pure core. Significant
+interior minima (five combined errors of prominence) produce exploratory local
+windows. These are measured minima, not fitted resonance fields or widths;
+quarter-prominence widths keep windows near trough bottoms. Monotonic recovery
+and sub-error excursions produce no candidates. The CLI prints LOCAL DIP
+CANDIDATES when no resonance model was selected, even if a recovery fit failed,
+and asks for nearby-window/Linear/Cubic baseline investigation before concluding
+no line is resolved. Existing resonance and RF-hyperfine models keep their own
+line diagnostics. No rubric/runner/protocol changes or corpus-name dispatch.
+
+Focused checks: 320 passed in 8.38 s; structural/lint/skill checks passed.
+Fast tier (two workers) and docs are running; no evaluation overlaps them.
+An exploratory development probe on stored scan points outside the repository
+confirmed that the new diagnostic exposes local structure in both extended
+scans while the short monotonic recovery produces none. This is development
+evidence, not a new eval score and not data supplied to a Luna agent. The task's
+standard gate remains 9910 passes with four known GUI sizing failures; do not
+call it green or repeat it as an inner-loop test. Commit round six before fresh
+corannulene plus benzene exact-copy regression cases, then full24 only if both
+pass all required dimensions. Raw evidence remains outside the repository.
+
+Round-six validation completed: 320 focused passes (8.38 s), 5905 fast passes,
+10 skipped/one xfailed (104.13 s), lint/structural/skill pass and docs built with
+85 existing warnings. CLI smoke on stored high-field data without a requested
+resonance model prints LOCAL DIP CANDIDATES and local-window commands; output
+/tmp/asymmetry-luna6-round6-shape-smoke.json. This is development validation,
+not an eval score. No broad tests overlapped evals. Standard gate remains the
+recorded four existing GUI failures. Host is quiet, 18 GiB available, zero swap
+use/PSI and 8 GiB scratch free. Commit then run the two prepared targeted cases.

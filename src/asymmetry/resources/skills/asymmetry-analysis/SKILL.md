@@ -27,6 +27,11 @@ these obligations through the final reply, including after image review:
   in a reference recipe cannot be carried unchanged through a field sweep.
   Free it or supply the appropriate per-run value before comparing amplitudes.
   A Redfield fit to a time-domain rate does not measure integral recovery.
+  LF geometry alone does not select a recovery model. Inspect non-monotonic
+  curves for local dips even when a first recovery fit fails: investigate the
+  CLI's `LOCAL DIP CANDIDATES` in nearby windows and compare local baselines.
+  Candidate coordinates are measured minima, not fitted resonance fields.
+  A failed global fit is not evidence that those local features are absent.
   RF-resonance context establishes the LF
   experiment even when the survey cannot resolve precession.
 - Establish the sample class from experimental context, not from broadening

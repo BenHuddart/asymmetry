@@ -1369,6 +1369,16 @@ fitted centre. Keep that estimate distinct from an established isolated line;
 a failed fit or a bound-pinned width remains unmeasured. Poor chi-squared
 requires a model-mismatch caveat and stability checks, rather than discarding
 every fitted parameter solely because the model is approximate.
+When no resonance model was selected, the CLI independently screens the field
+curve for significant interior minima and prints ``LOCAL DIP CANDIDATES``
+with exploratory windows. Five combined point errors of prominence reject
+small noise excursions; these coordinates are measured minima, not fitted
+resonance fields. Quarter-prominence widths keep the initial windows near the
+trough bottom without claiming measured line widths. Inspect each candidate,
+compare nearby windows and local Linear/Cubic baselines, and report a stable
+fitted estimate or the remaining limitation. A failed whole-scan recovery
+model does not establish that local resonances are absent. Monotonic recovery
+curves do not generate interior-dip candidates.
 A scan that measures one field (or other x) more than once is noted with the
 runs and whether each repeat came back within three errors — a return pass to
 report — and a dip another stored fit of the same scan holds (a line whose

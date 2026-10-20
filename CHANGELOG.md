@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Integral scans screen for local dip candidates independently of the chosen
+  model.** Significant interior minima prompt local-window investigation even
+  after a failed whole-scan recovery fit; candidates are not fitted resonances.
 - **Integral-scan fit intervals can be overridden** with repeatable
   ``--bound NAME=LO:HI`` options, recorded with the fit. Widths remain positive;
   bound-limited resonance fits explain how to revisit the window and baseline.

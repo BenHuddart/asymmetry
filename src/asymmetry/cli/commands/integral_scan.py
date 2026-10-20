@@ -276,9 +276,32 @@ def run(args: argparse.Namespace) -> None:
         for entry in payloads.values()
         if entry["runs"] == result_payload["runs"] and entry["fit"] is not None
     ]
+    from asymmetry.core.workflow.integral_scan import candidate_dip_windows
+
     notes = _notes(
         result_payload, free_offsets, summed, contradicted_tf_stamps(scan, stamped_tf), same_scan
     )
+    if model is None or not any(
+        "B0" in component.param_names or component.name == "RFResonanceMuP"
+        for component in model.components
+    ):
+        candidates = candidate_dip_windows(scan)
+        if candidates:
+            notes.append(
+                "LOCAL DIP CANDIDATES: the measured field curve has interior minima near "
+                + ", ".join(f"{window['centre']:g}" for window in candidates)
+                + ". These are shape candidates, not fitted resonance fields. A failed or "
+                "poor recovery fit does not establish their absence. Inspect the full scan "
+                "and investigate each on a local background before interpreting the curve: "
+                + "; ".join(
+                    f"--model 'LorentzianLCR + Linear' --xmin {window['x_min']:g} "
+                    f"--xmax {window['x_max']:g}"
+                    for window in candidates
+                )
+                + ". Compare nearby windows and a local Cubic baseline for broad curved "
+                "troughs; these exploratory windows are not validated fit intervals. "
+                "Report stable fitted centres with uncertainties, or why they remain unresolved."
+            )
     if fit_payload is not None:
         notes.extend(_line_comparisons(fit_payload, stored))
         notes.extend(_absent_lines(args.folder, fit_payload, result_payload["runs"], payloads))

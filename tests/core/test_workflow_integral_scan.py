@@ -32,6 +32,43 @@ def test_field_scan_payload_keeps_units_points_and_run_provenance() -> None:
     assert data["points"][-1]["x"] == pytest.approx(5000.0)
 
 
+def test_shape_candidates_recover_an_interior_dip_without_a_resonance_model() -> None:
+    from asymmetry.core.workflow.integral_scan import candidate_dip_windows
+
+    scan = _scan()
+    (window,) = candidate_dip_windows(scan)
+    assert window["centre"] == pytest.approx(3500)
+    assert window["x_min"] < 3500 - 180 < 3500 + 180 < window["x_max"]
+
+
+def test_shape_candidates_reject_monotonic_recovery_and_sub_error_structure() -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow.integral_scan import candidate_dip_windows
+
+    scan = _scan()
+    recovery = 0.2 - 0.1 * np.exp(-(scan.x - 2000) / 800)
+    assert candidate_dip_windows(replace(scan, value=recovery)) == []
+    assert candidate_dip_windows(replace(scan, value=0.2 + 1e-4 * np.sin(scan.x))) == []
+    assert candidate_dip_windows(replace(scan, order_key="temperature")) == []
+
+
+def test_shape_candidates_keep_separated_dips_on_a_sloping_background() -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow.integral_scan import candidate_dip_windows
+
+    scan = _scan()
+    values = (
+        0.18
+        + 1e-6 * scan.x
+        - 0.02 / (1 + ((scan.x - 2800) / 100) ** 2)
+        - 0.03 / (1 + ((scan.x - 4200) / 150) ** 2)
+    )
+    windows = candidate_dip_windows(replace(scan, value=values))
+    assert [w["centre"] for w in windows] == pytest.approx([2800, 4200], abs=50)
+
+
 def test_fit_integral_scan_seeds_an_off_zero_lorentzian_from_the_data() -> None:
     _fitted, result = fit_integral_scan(_scan(), "LorentzianLCR + Constant")
 
