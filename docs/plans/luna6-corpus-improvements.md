@@ -1008,3 +1008,16 @@ Freeze CLI/skill while running; no tests overlap. On targeted pass,still need
 fresh full24 confirmation2,never pooled historical scores. Host24 GiB RAM
 available,zero swap/PSI. Heartbeat should follow this new durable root and
 inspect actual processes before any launch.
+
+Round9 infrastructure retry COMPLETE:9/10 Musts,science FAIL,copy/boundary
+PASS. Original interrupted attempt remains void/infrastructure interruption,
+not silently discarded;retry is attempt2. Explicit cold-higher/broader direction
+now present. Generic motional averaging does not fully state reorientation
+averaging hyperfine anisotropy (semantic judgement-call failure recorded).
+Report also mistakes same-cold-scan Linear/Cubic stability comparison for
+cold/hot significance: last indistinguishable note is not a temperature result.
+CLI actually printed broader/higher for cold/hot. Next general repair should
+label window/baseline stability separately from different-run/condition changes,
+so molecular interpretation is not suppressed by an unrelated stability note.
+No eval/tests live;freeze ends. Commit scored record,then improve/test/commit
+before next targeted wave. No full24 launch yet. Standard GUI failures persist.
