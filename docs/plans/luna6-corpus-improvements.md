@@ -1109,3 +1109,19 @@ rubric into docs/plans/luna6-corpus-round11.json with all evidence/number/copy/
 boundary/physics checks. Follow-up resumes solely to monitor and score this
 requested round;after scoring pause it again and report. Do not automatically
 launch another targeted wave or full24 gate under this one-round request.
+
+Round11 COMPLETE:9/10 Musts,science FAIL,exact-copy FAIL,boundary PASS.
+Mechanism Must now passes:explicit molecular reorientation averaging hyperfine
+anisotropy retained as interpretation. Cold15330.502 G fitted estimate and
+broad/narrow contrast remain,but required cold-higher comparison is omitted:
+common narrow window15068.315 G shift drives withdrawal of stable comparison.
+Record failure,do not reinterpret a table as directional prose. Actual final
+reply additionally deletes four audited plot-file paths (alc-50K,alc-420K,
+alc420-dip7000,alc420-dip14800 PNGs);unified diff otherwise unchanged.
+Source numbers verified from CLI/stored products excluding audit/draft output;
+first-attempt hashes/model/host/commands retained in round11 score JSON.
+Raw evidence preserved in persistent cache. No new improvement/eval authorized:
+commit score/plan then PAUSE follow-up. No new targeted or full24 wave launched.
+Full24 objective remains incomplete;confirmation1 remains prior23/24 science,
+23/24copy,22/24combined,24/24boundary,not a fresh all-pass gate. Standard still
+has four known GUI sizing failures. User must explicitly authorize next work.
