@@ -28,7 +28,7 @@
       "lifeas-psi": "aec00fed822c67878ad9bf50a445b877c14e3eb85af4dfa06d6610dbacace608"
     }
   },
-  "status": "partial; remaining cases running or unscored",
+  "status": "complete; all six first attempts scored",
   "cases": {
     "corannulene-alc": {
       "verdict": "FAIL",
@@ -580,15 +580,133 @@
       "boundary_check": "PASS: completed commands use staged project skill and supplied data/CLI products only; no personal skill/source tree/network/ad hoc scientific scripting.",
       "boundary_pass": true,
       "permission_denials": 0
+    },
+    "lifeas-psi": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Reduces the data on the `Up/Down` pair (or names another pair transverse to the field) and says so. It does not conclude from the default pair that the runs are longitudinal or do not precess.",
+          "pass": true,
+          "evidence": "Default pair rejected, Up/Down established from measured Larmor signal and used for all reductions."
+        },
+        {
+          "requirement": "Treats `LFA` (3366\u20133387) and `LFA_2` (3662\u20133697) as two separate samples or campaigns, not one series.",
+          "pass": true,
+          "evidence": "LFA and LFA_2 explicitly distinct sample/campaign blocks with separate calibration and five scan series."
+        },
+        {
+          "requirement": "Identifies 3366\u20133373 as the 400 G temperature scan. Reports that the Gaussian TF width \u03c3 is roughly flat at the warm end and rises steeply on cooling (or, with a two-line fit, that the broad vortex component appears on cooling). The onset lies between 14 and 17 K.",
+          "pass": true,
+          "evidence": "Identifies 400 G 3366\u20133373; reports all Gaussian sigma values, warm floor 0.145143/0.146369 at logged 16.8973/19.0232 K, enhanced 0.185030 at 14.7565 K and steep cooling rise to 0.690537. Explicit warm level begins 16.8973 K, putting onset in required warm interval. Conditional interpretation does not erase measured width curve."
+        },
+        {
+          "requirement": "Reports that the line shifts to lower frequency below the transition (a diamagnetic shift), in words or from fitted frequencies.",
+          "pass": true,
+          "evidence": "Explicit lower line frequency cold: 5.38430 to 5.39774 MHz on warming, CLI shift 0.01344 \u00b1 0.00246; Gaussian fit gives same direction."
+        },
+        {
+          "requirement": "Describes the other runs as pairs above and below Tc at each field (a field dependence at base temperature) \u2014 two field scans, at ~20 K and at base, compared field by field, count \u2014 not as a temperature scan or an LF decoupling scan. Reports the paired widths for at least one campaign, or names the fields whose fits failed.",
+          "pass": true,
+          "evidence": "Warm/base TF field sweeps separately tabulated field-by-field, not LF recovery/temperature campaigns. Lists unresolved/failed LFA_2 fields 7/12.5/25 G and failed two-line sweep; retains appropriate caveats."
+        },
+        {
+          "requirement": "Does not present a penetration depth \u03bb, a superfluid density \u03c1_s, or an Uemura-plot position as Asymmetry output. It either omits them or says that converting \u03c3 to \u03bb is not something the tool does.",
+          "pass": true,
+          "evidence": "No penetration depth/superfluid density/Uemura result claimed."
+        },
+        {
+          "requirement": "Does not claim evidence for the paper's field-induced magnetism. The `LFA_2` runs in this folder stop at 200 G.",
+          "pass": true,
+          "evidence": "No paper field-induced-magnetism claim; cautious about microscopic material classification."
+        },
+        {
+          "requirement": "Contains no \u03c3, Tc, gap ratio, frequency shift, \u03bb or field value that was not produced by a tool call in this session. The paper's Tc values, \u03bb_ab values and exponent n are background.",
+          "pass": true,
+          "evidence": "Quoted sigma, shifts, frequencies and fields verified in actual CLI outputs; no hand conversions or paper gap/Tc values."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits an `SC_*` gap law (`trend --model SC_SWave`, `SC_DWave`, \u2026) to \u03c3 against the logged temperature. Reports Tc and \u03c3_0 with their errors and the fit range. States that \u03c3_bg holds the normal-state nuclear width and is added linearly, not in quadrature (a `SC_* + Constant` with the background held counts; freeing both \u03c3_bg and the constant is degenerate).",
+          "pass": false,
+          "evidence": "Gaussian width series measured but no SC gap law; explicitly declines conditional test due unknown material class and poor fits."
+        },
+        {
+          "requirement": "Does not claim a pairing symmetry that eight points cannot settle. If both s- and d-wave fit, it says so. It notes in words whether \u03c3 is still rising at the lowest temperature.",
+          "pass": true,
+          "evidence": "No pairing symmetry claimed; cold and next widths compared with combined error, no resolved extra endpoint upturn asserted."
+        },
+        {
+          "requirement": "Compares the two samples in words at their common fields (100 and 200 G).",
+          "pass": false,
+          "evidence": "Separates samples and tabulates scans but lacks explicit cross-sample comparison at shared 100/200 G."
+        },
+        {
+          "requirement": "Discusses the background or non-superconducting fraction of the signal, for example a second narrow line at the applied field. If a two-component fit was tried and became unstable near Tc, it says so.",
+          "pass": true,
+          "evidence": "Discusses two-component cold fit, amplitudes and nonprecessing offset; does not turn constant into sample fraction."
+        },
+        {
+          "requirement": "States the reduction provenance: `--background range` (continuous source), which run each campaign's alpha came from, and whether one alpha was carried across both campaigns.",
+          "pass": true,
+          "evidence": "Up/Down, background range and all five local alpha source runs/values explicitly stated; no cross-campaign alpha carried."
+        },
+        {
+          "requirement": "Orders the temperature scan by the logged temperature. Notes that the logged temperature sits above the setpoint (about 1 K higher on the 20 K runs).",
+          "pass": true,
+          "evidence": "Uses logged temperature ordering and explicitly gives setpoint/logged offsets in temperature scan; approximately 21 K warm-field context is less explicit but logged-versus-setpoint distinction retained."
+        }
+      ],
+      "number_rule": "PASS: actual corrected reduce alpha 0.9956 from 3366; trend prints Gaussian sigma 0.690537 \u00b1 0.012603 cold, 0.145143 \u00b1 0.00272492 at 16.8973 K and 0.146369 \u00b1 0.00267147 warm. Actual trend gives frequency shifts 0.01344 \u00b1 0.00246 and 0.02415 \u00b1 0.00306 MHz. Field and low-field conditional outputs are CLI values; no gap or penetration conversion.",
+      "root_cause": "Retains Gaussian-width Must and exact-copy/boundary passes. Per-parameter plots no longer lose the warm width points. Still declines conditional SC-law comparison, a Should gap, and overgeneralizes some side-scan uncertainty statements. No new literal Must failure.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 888.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 10,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /tmp/asymmetry-luna6-improvements/round3/lifeas-psi/data --run 3366 --pair Up/Down --geometry TF --plot'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fourier /tmp/asymmetry-luna6-improvements/round3/lifeas-psi/data --run 3366 --pair Up/Down --window none --fmax 10 --plot'",
+          "exit_code": 2
+        }
+      ],
+      "summary_sha256": "c4addcbad35e53ea55210d27c30167002e2b53dff29dbf0141c22a89849a3033",
+      "rubric_sha256": "aec00fed822c67878ad9bf50a445b877c14e3eb85af4dfa06d6610dbacace608",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/round3/lifeas-psi",
+      "staged_skill_sha256": "584f7f167f99f5acf97434e2bf7c224226f3bd7adf3a1faf5171b549196de134",
+      "boundary_check": "PASS: completed commands use staged project skill and supplied data/CLI outputs only; no personal skill/source tree/network/ad hoc scientific scripting.",
+      "boundary_pass": true,
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 5,
-    "scientific_pass": 3,
-    "must_pass": 35,
-    "must_total": 38,
-    "exact_copy_pass": 3,
-    "combined_pass": 2,
-    "boundary_pass": 5
-  }
+    "scored": 6,
+    "scientific_pass": 4,
+    "must_pass": 43,
+    "must_total": 46,
+    "exact_copy_pass": 4,
+    "combined_pass": 3,
+    "boundary_pass": 6
+  },
+  "same_case_round2": {
+    "scientific_pass": 1,
+    "must_pass": 33,
+    "must_total": 46,
+    "exact_copy_pass": 4,
+    "combined_pass": 1
+  },
+  "comparison": "Targeted same-case comparison only; a fresh full 24-case confirmation gate is still required, not a pool of latest passing reports."
 }

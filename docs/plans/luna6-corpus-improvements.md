@@ -417,3 +417,28 @@ LiFeAs is the only live case; no source changes until it finishes. Memory
 20 GiB available, no swap/PSI pressure. Preserve scientific pass versus
 exact-copy failure as separate dimensions; never substitute the audited file
 for the actual final reply to force a copy pass.
+
+Round three is complete; session 90769 exited 0 and host inspection shows no
+remaining eval/model/test processes. LiFeAs retains all eight Musts plus
+exact-copy/boundary, with a measured Gaussian-width curve whose warm level
+begins at logged 16.8973 K; it still declines an SC gap comparison (Should).
+Final six-case score: 43/46 Musts, 4/6 scientific passes, 4/6 exact-copy,
+3/6 combined and 6/6 boundary. Same six round-two cases: 33/46 Musts,
+1/6 scientific, 4/6 exact-copy and 1/6 combined. TRSB, maleic and benzene ALC
+science gaps are repaired. Remaining scientific gaps are report completeness
+in Basics (saturation coordinate) and corannulene (narrow-line comparison and
+whole-background explanation); Basics and benzene also fail literal copying.
+
+## Round four
+
+The CLI's measured outputs now contain the missing main estimates. Make a
+focused, general skill/documentation improvement: preserve numeric coordinates
+for reported plateaus/onsets in prose; distinguish no resolved narrow line
+from unconstrained broad curvature; explain local-baseline limitations; keep
+long reports concise enough to copy without duplicating or reformatting text.
+Reconcile remaining blanket flag wording in the summary template with the new
+per-parameter contract. This is documentation-only, so validate skill and
+Sphinx docs rather than rerunning the already completed standard/core gates
+(AGENTS.md explicitly exempts doc/comment-only follow-up edits). Commit before
+a fresh targeted wave covering Basics, corannulene and benzene exact-copy;
+then fresh all24 only if those pass. Keep rubrics/protocol unchanged.
