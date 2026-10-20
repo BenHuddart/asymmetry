@@ -821,16 +821,181 @@
       "boundary_pass": true,
       "boundary_check": "PASS: completed commands use staged skill/references, supplied datasets and installed CLI/products only; no host skill/source/network/ad hoc numerical scripting.",
       "permission_denials": 0
+    },
+    "copper-diffusion": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Splits the folder into its TF, ZF, and LF run groups rather than treating it as one undifferentiated series.",
+          "pass": true,
+          "evidence": "Each campaign split into ZF, measured weak-TF and fixed-temperature LF/QLCR groups; ambiguous duplicate scan membership resolved from spectra."
+        },
+        {
+          "requirement": "Separates the EMU (2010) and ARGUS (2024) runs as two distinct measurement campaigns on the same sample.",
+          "pass": true,
+          "evidence": "EMU20882\u201320917 and ARGUS76924\u201376961 separate instruments/campaigns, calibrations/windows/results."
+        },
+        {
+          "requirement": "Reports a change in TF line shape (Lorentzian-like to Gaussian-like) as temperature decreases, from at least one of the two TF series.",
+          "pass": true,
+          "evidence": "EMU cold99.272 K Gaussian envelope versus warmer252.784/287.587 K exponential explicitly interpreted as motional narrowing."
+        },
+        {
+          "requirement": "Reports the ZF spectra as showing Kubo-Toyabe-like behaviour and states whether the relaxation (e.g. the fluctuation rate \u03bd) at the lowest-temperature run differs from the next-lowest \u2014 the low-T upturn \u2014 whether or not it interprets it.",
+          "pass": true,
+          "evidence": "EMU DynamicGaussianKT and ARGUS StaticGaussianKT*Exponential; explicit cold nu0.101149 \u00b10.00432819 at5.79554 K versus0.0185896 \u00b10.00356751 at38.2575 K; Delta cold pair consistent."
+        },
+        {
+          "requirement": "Identifies the fixed-temperature, swept-field runs as the LF/QLCR data, distinct from the temperature scans.",
+          "pass": true,
+          "evidence": "Fixed40 K integral LF scans separate; empirical dip near79 G consistent with QLCR, no microscopic assignment."
+        },
+        {
+          "requirement": "Contains no hop rate, activation energy, or rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Own CLI hop rate/conditional Arrhenius Ea and damping values, no arithmetic or literature activation energy."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares a hop rate or dynamics trend derived from TF against one derived from ZF, as the worksheet asks.",
+          "pass": true,
+          "evidence": "Qualitatively compares ZF increasing dynamics/static-width control with TF Gaussian-to-exponential narrowing and warm damping decrease."
+        },
+        {
+          "requirement": "Keeps the EMU and ARGUS scans on separate axes and notes their different fields, step sizes and ranges, rather than merging both eras' runs into one T-axis.",
+          "pass": true,
+          "evidence": "Campaign fields/windows/logged temperature ranges remain separate."
+        },
+        {
+          "requirement": "Flags any run whose logged sample temperature deviates substantially from its nominal set-point.",
+          "pass": true,
+          "evidence": "EMU300.354 and ARGUS321 K versus setpoints explicitly flagged as plausible logs with failed-fit limitations; no silent replacement."
+        }
+      ],
+      "number_rule": "PASS: actual scientific CLI commands support cold nu0.101149/0.0185896, apparent Ea28.720260 \u00b16.258723 meV and local dip centres78.844835/79.517030 G. Numeric check excludes all audits/draft displays. No manual hop-rate or hyperfine conversion.",
+      "root_cause": "All Musts/copy/boundary pass. Cold upturn and envelope comparison retained; ARGUS TF now appropriate oscillatory recipe. Broad flagged high-temperature branches excluded; central Arrhenius law has high mismatch and remains apparent. Empirical QLCR centres not converted into microscopic couplings.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1238.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 7,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/copper-diffusion/data --series emu-zf --model Arrhenius --param nu --xmin 38.2575 --xmax 109.1 --plot --instrument EMU'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/copper-diffusion/data --series emu-zf --model Arrhenius --param nu --xmin 35 --xmax 110 --plot --instrument EMU'",
+        "/bin/bash -lc 'asymmetry trend /tmp/asymmetry-luna6-improvements/confirmation1/copper-diffusion/data --series emu-zf --model Arrhenius --param nu --xmin 35 --xmax 110 --plot --instrument EMU'"
+      ],
+      "command_failures": [],
+      "summary_sha256": "44ec4ad09aa4f568edaeb645b07d2ed2da11c9e25d2be3ca3967ca36c45bb206",
+      "rubric_sha256": "4a0d496f6e89d82feb628d6378c6019071fd8813790f1b6b70a83a6e1e4459c6",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/copper-diffusion",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged project skill/references, supplied data/logbook and installed CLI/products only; no host skill/source/network/ad hoc numerical scripts.",
+      "permission_denials": 0
+    },
+    "spin-peierls": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the TF 100 G runs from the ZF scan rather than fitting them as one series.",
+          "pass": true,
+          "evidence": "16 ZF runs separate from10 measured100 G TF runs, explicit membership."
+        },
+        {
+          "requirement": "States what was used for alpha (a TF 100 G run, named), rather than silently assuming 1.0.",
+          "pass": true,
+          "evidence": "Measured alpha0.9717 from TF29929, detector groups and no deadtime values explicit."
+        },
+        {
+          "requirement": "Reports on the full run range actually present (29919-29944), not only the subset the worksheet happens to tabulate.",
+          "pass": true,
+          "evidence": "All26 runs29919\u201329944 covered including cold/infill and interleaved TF."
+        },
+        {
+          "requirement": "Does not report findings for runs 29945-29951 as if they were analyzed \u2014 they are not present in this data folder.",
+          "pass": true,
+          "evidence": "No findings claimed for absent29945\u201329951."
+        },
+        {
+          "requirement": "Reports a change in ZF line shape between the highest- and lowest-temperature runs actually available.",
+          "pass": true,
+          "evidence": "ZF model section explicitly contrasts cold29923 two-exponential+Gaussian+Constant relaxation against warm29920 Gaussian+Constant; warm Gaussian-width change quantified and failed full-series parameters withheld. This reports endpoint shape/model change without claiming a unique spin-Peierls mechanism."
+        },
+        {
+          "requirement": "Contains no relaxation rate, frequency, or transition-temperature number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All rates/frequencies/empirical change coordinates from own CLI; no fitted transition temperature invented."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Accounts for every run in the block \u2014 the ZF runs below 130 K and the interleaved TF runs \u2014 rather than silently dropping any.",
+          "pass": true,
+          "evidence": "Complete ZF/TF membership and full dataset range, no silent subset omission."
+        },
+        {
+          "requirement": "Discusses candidate fit functions for above vs below the transition, without inventing fitted values.",
+          "pass": true,
+          "evidence": "Cold multirate relaxation versus warm Gaussian and fluoride alternatives discussed, poor MuF trial and flagged components limited."
+        },
+        {
+          "requirement": "Connects the observed line-shape change to the singlet-triplet / dimerisation physics described in the worksheet background.",
+          "pass": false,
+          "evidence": "No singlet-triplet/dimerisation explanation; explicitly declines a unique spin-Peierls identification."
+        }
+      ],
+      "number_rule": "PASS: actual scientific CLI output supports TF rate0.183170 at79.5941 K versus0.0267870 at298.964 K, warm ZF sigma0.189912/0.136938 and matched FFT1.390650/1.390087 MHz with0.126775 MHz resolution. Numeric check excludes audits/draft displays. No transition or physical-law fit invented.",
+      "root_cause": "All literal Musts/copy/boundary pass. Endpoint ZF shape contrast appears in screened-model discussion; the better constrained headline is TF damping/amplitude/envelope change. Most cold full-scan ZF model parameters fail and are not physical results. No microscopic dimerisation claim or F-mu-F structural measurement from a poor fit.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 660.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true
+      },
+      "wizard_calls": 5,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry components --help'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry recipe /tmp/asymmetry-luna6-improvements/confirmation1/spin-peierls/data --expression \"FMuF + Constant\" --name fmuf-zf --run 29923'",
+          "exit_code": 1
+        }
+      ],
+      "summary_sha256": "5030ceec8158e4c72f968d28a4728ca51edb9ab3dc794a7b91cf29d53b2adc2a",
+      "rubric_sha256": "45ec06c3c47445ea279531822116d0b68bbaaf3cb6a47c792093f64bc65b3bb6",
+      "evidence_root": "/tmp/asymmetry-luna6-improvements/confirmation1/spin-peierls",
+      "staged_skill_sha256": "11c6cf721abd7d2f6de1d4b2dbc64c143963f2e8ec6be025c0fe140523606463",
+      "boundary_pass": true,
+      "boundary_check": "PASS: complete command inventory uses staged project skill/references, supplied data/logbook and installed CLI/products only; no host skill/source/network/ad hoc numerical scripts.",
+      "permission_denials": 0
     }
   },
   "totals": {
-    "scored": 9,
-    "scientific_pass": 9,
-    "must_pass": 48,
-    "must_total": 48,
-    "exact_copy_pass": 8,
-    "combined_pass": 8,
-    "boundary_pass": 9
+    "scored": 11,
+    "scientific_pass": 11,
+    "must_pass": 60,
+    "must_total": 60,
+    "exact_copy_pass": 10,
+    "combined_pass": 10,
+    "boundary_pass": 11
   },
   "gate_caveat": "Fresh full24 gate ongoing. First exact-copy failure on nickel prevents a full combined pass; complete/score remaining cases before changing frozen source."
 }

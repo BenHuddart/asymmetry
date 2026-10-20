@@ -781,3 +781,12 @@ poor200 G/BISCO models; no normalized fraction or penetration-depth arithmetic.
 Partial full24:48/48 Musts,9/9 science/boundary,8/9 exact-copy/combined. Fifteen
 remain; source stays frozen, nickel copy failure still prevents full combined
 pass. Host14 GiB available,zero swap/PSI,5.3 GiB scratch free; max3 live cases.
+
+Copper and spin-Peierls scored: both6/6 Musts, exact-copy/boundary pass. Copper
+retains cold KT-dynamics upturn, Gaussian-to-exponential TF change and separate
+empirical QLCR scans. Spin-Peierls contrasts screened cold multirate/warm Gaussian
+ZF shapes, quantifies usable warm widths and TF envelope/amplitude changes;
+failed full-ZF fits do not establish microscopic dimerisation. Partial full24:
+60/60 Musts,11/11 science/boundary,10/11 exact-copy/combined. Thirteen remain;
+source frozen and gate continues despite nickel's copy failure. Host15 GiB
+available,zero swap/PSI,5.1 GiB scratch free. No broad tests or duplicate runs.
