@@ -903,3 +903,15 @@ against copies under /home/ben/.cache/asymmetry-luna6-overnight-20261020;
 per-round hash manifests retained there, original /tmp round paths symlink to
 verified copies. No evidence discarded; confirmation1 stays in /tmp. This
 releases roughly9 GiB of tmpfs before new evaluations.
+
+Round8 committed6e6ffb3; fresh nickel/corannulene wave LIVE at
+/tmp/asymmetry-luna6-improvements/round8,exec81306,console
+/tmp/asymmetry-luna6-round8-wave.log. Source/skill/runner/rubric hashes recorded,
+unchanged two-turn protocol,gpt-6-luna,BLAS1. Freeze CLI/skill until both finish.
+Scores docs/plans/luna6-corpus-round8.json; manual helper
+/tmp/score-luna6-round8.py is not a judge. Prelaunch no eval/tests; after storage
+move22–23 GiB RAM available,13 GiB scratch free,current PSI0,820 KiB swap used
+briefly during verified copy. Broad tests must not overlap wave. If both pass,
+run fresh full24 confirmation2 from same committed implementation; otherwise
+make general improvements and commit before next wave. Heartbeat updated to
+this state. Objective incomplete; full24 confirmation1 remains honest FAIL.
