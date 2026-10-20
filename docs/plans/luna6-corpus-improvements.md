@@ -1751,3 +1751,17 @@ passing audit, so audit-copy/literal-copy fail. All53 commands/file changes
 inspected; source hashes match. Totals105/113 Musts,15/20 science,
 17/20 audit-copy/literal-copy,13/20 combined,20/20 boundary,36/79 Shoulds.
 Finish remaining cases frozen, then commit complete results and pause.
+
+
+Confirmation3 now22/24 scored: LiFeAs PASS8/8 Musts,4/6 Shoulds and
+number/unit/copy/boundary. Conditional gap comparison and separate campaigns
+are retained; paired exponential damping counts as model-dependent broadening,
+not identical Gaussian vortex widths. D-wave rejection from very low chi2
+alone and overwritten plot provenance remain caveats. Benzene ALC PASS7/7,
+3/6 Shoulds andnumber/unit/boundary; converged broad solid local estimates
+satisfy the fixed Must without asserting narrow lines. Its actual reply removes
+one trailing blank line, so independent audit-copy/literal-copy fails despite
+runner guardtrue. Also retain the lower-ring comparison misreading against
+command89. All174 commands/file changes inspected; frozen source matches.
+Totals120/128 Musts,17/22 science,18/22 audit-copy/literal-copy,14/22combined,
+22/22 boundary,43/91 Shoulds. OnlyBasics/corannulene remain; finish thenpause.
