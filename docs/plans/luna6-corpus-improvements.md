@@ -1944,3 +1944,14 @@ Confirmation4 now5/24 scored: tin PASS5/5 Musts,1/4 Shoulds; LLZ PASS6/6 Musts,2
 
 
 Confirmation4 now6/24 scored: spin-Peierls PASS6/6 Musts with explicit borderline-Must5 caveat (actual ZF cold fast fall/tail versus weaker smooth warm decay; main family progression remains TF, heavily flagged ZF not quantitative).2/3 Shoulds, number/unit/boundary pass; copy fails by one terminal LF. No dimerisation/singlet-triplet explanation. All36 commands/four file edits checked; two-line seeds verified as CLI hints, four review snapshots verified. Totals31/33Musts,4/6science,0/6copy/combined,6/6boundary,11/22Shoulds. Source remains frozen; continue all24.
+
+Additional artifact-fidelity check: every completed raw final agent_message
+matches last-message.md and summary.md exactly. Newly completed EuO retains a
+terminal LF, so the CLI is not universally stripping that character; the six
+scored one-LF omissions are genuine exposed-message differences. Four more
+cases are now complete and pending score: CDS, silicon, molecular AFM and EuO.
+Read the score record's pending_cases against actual cost files before grading;
+do not duplicate a score or run. Resource pressure remains low. After all24,
+prioritize honest failed-law naming, physical parameter domains/fit recovery,
+co-add coverage, and a reliable finalization operation after every edit. No
+implementation has changed while this wave runs.

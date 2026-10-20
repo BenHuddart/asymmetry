@@ -1176,5 +1176,50 @@
     "literal_copy_pass": 0,
     "combined_pass": 0,
     "boundary_pass": 6
+  },
+  "artifact_fidelity_verification": {
+    "completed_message_checks": {
+      "euo-psi": {
+        "raw_final_event_matches_last_message_and_summary": true,
+        "terminal_LF": true
+      },
+      "cds-fourier": {
+        "raw_final_event_matches_last_message_and_summary": true,
+        "terminal_LF": false
+      },
+      "sn-critical-field": {
+        "raw_final_event_matches_last_message_and_summary": true,
+        "terminal_LF": false
+      },
+      "fmuf-ptfe": {
+        "raw_final_event_matches_last_message_and_summary": true,
+        "terminal_LF": false
+      },
+      "plateau-redfield": {
+        "raw_final_event_matches_last_message_and_summary": true,
+        "terminal_LF": false
+      },
+      "photo-musr-silicon": {
+        "raw_final_event_matches_last_message_and_summary": true,
+        "terminal_LF": false
+      },
+      "spin-glass-ymnal": {
+        "raw_final_event_matches_last_message_and_summary": true,
+        "terminal_LF": false
+      },
+      "ionic-motion-llz": {
+        "raw_final_event_matches_last_message_and_summary": true,
+        "terminal_LF": false
+      },
+      "spin-peierls": {
+        "raw_final_event_matches_last_message_and_summary": true,
+        "terminal_LF": false
+      },
+      "molecular-antiferromagnet": {
+        "raw_final_event_matches_last_message_and_summary": true,
+        "terminal_LF": false
+      }
+    },
+    "note": "Raw final agent_message text, explicit last-message.md and summary.md are exactly equal. EuO preserves a terminal LF, demonstrating the CLI does not universally strip it. Already-scored LF omissions are actual emitted-message differences, not runner normalization."
   }
 }
