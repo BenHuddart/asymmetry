@@ -1076,3 +1076,25 @@ Full raw evidence retained in persistent round10 root. Score record committed
 before general skill repair. User requested no next eval:make/validate/commit
 repair then remain paused. Latest full24 remains confirmation1 FAIL;no pooled
 or fresh all-pass gate claim. Memory22 GiB available,no swap/PSI,models stopped.
+
+## Round eleven — prepared, not evaluated; PAUSED
+
+After scoring round10 per user request, general skill-only repair separates
+observation,candidate physical mechanism and unavailable quantitative model
+parameters. Rejected fit quantities cannot justify interpretation,but a poor
+whole fit or absent microscopic model no longer suppresses an independently
+supported qualitative explanation. The conclusion must state the mechanism
+and what it changes/averages,with alternatives/limits rather than merely
+restating the measured distribution. No corpus/run-specific advice,rubric or
+CLI behavior changes. Owning docs and changelog updated.
+Skill validation passes,Sphinx docs build succeeds with80 existing warnings,
+git diff --check passes. Documentation-only:focused/fast tests not repeated;
+latest code validation remains197focused/5906fast passes,standard retainsfour
+known GUI sizing failures. No new eval launched,and no scientific success is
+claimed for this untested skill revision.
+USER REQUEST COMPLETE: score,repair,validate and commit,then PAUSE. Heartbeat
+confirmed PAUSED;no models/tests live. Do not run another targeted wave or
+full24 gate without explicit user resume. Next authorized-on-resume step would
+be fresh corannulene eval of this prepared revision,before any full24 gate.
+Full24 confirmation1 remains23/24 science,23/24 copy,22/24 combined,24/24
+boundary;round10 is9/10 Musts/copy+boundary pass,not overall science pass.

@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Agent summaries separate observations, candidate mechanisms and model
+  parameters.** Missing microscopic models limit quantification without
+  suppressing independently supported qualitative explanations; invalid fit
+  quantities remain excluded from physical inference.
 - **Integral-scan notes distinguish fit stability from condition changes.**
   Alternative windows of the same runs print ``STABILITY``; their agreement
   cannot be mistaken for agreement between separate temperature scans.

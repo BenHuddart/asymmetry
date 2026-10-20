@@ -1821,6 +1821,14 @@ parameter beside an unconstrained nuisance term. Final copy checks apply to
 all characters, including Markdown punctuation: any cleanup happens in the
 saved report before its final audit.
 
+Reports separate an observation, a supported candidate mechanism, and the
+quantities that have not been measured. A missing microscopic model limits
+parameter extraction and site assignment; it need not prevent a qualitative
+explanation supported by the observed change and experimental context. That
+explanation belongs in the conclusion with its alternatives and limitations.
+Rejected fitted quantities cannot supply such evidence, while poor whole-fit
+quality does not automatically erase an independently supported pattern.
+
 Every comparative sentence is checked against its two labelled fit rows,
 including the direction of a centre shift and width change. Separate features
 can move in opposite directions; a correct table does not correct reversed

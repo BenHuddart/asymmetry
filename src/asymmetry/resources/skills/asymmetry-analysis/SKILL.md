@@ -1561,12 +1561,24 @@ sum of two printed values. The evidence must be an `asymmetry` command's own
 output. If a useful derived quantity is not printed by the CLI, explain the
 qualitative relation and leave the number out.
 
-**Fits you flag do not carry physics.** A series whose runs are
-`frequency_unresolved` or `amplitude_exceeds_data`, or that you call unreliable
-yourself, supports no conclusion about the system — not even a qualitative
-one ("consistent with critical slowing"). Say what failed and why. Apply this
-to the failed observable: a nuisance term's bound or large error does not
-erase an independently measured amplitude, frequency or width in that fit.
+**Invalid fitted quantities do not carry physics.** Parameters flagged
+`frequency_unresolved` or `amplitude_exceeds_data`, or otherwise rejected as
+unreliable, cannot justify a physical explanation. Say what failed and why.
+Apply this to the affected quantity: a nuisance term's bound or large error
+does not erase an independently measured amplitude, frequency or width.
+Poor whole-fit quality requires a limitation; it does not automatically
+invalidate every fitted estimate or an independently observed pattern.
+
+**Keep observation, interpretation and quantification separate.** State the
+supported change, then the candidate physical mechanism from the experimental
+context and the relevant workflow section, then what remains unmeasured.
+Name what that mechanism would change or average; merely saying that the
+distribution or dynamics changes restates the observation. An unavailable
+microscopic model prevents extracting its parameters or assigning sites, but
+does not veto a supported qualitative explanation. Carry that explanation
+into "What this suggests" as "consistent with", with alternatives and limits;
+do not turn it into a fitted mechanism or replace it with a request for more
+analysis. If the observations themselves do not support it, say why instead.
 
 **A law that did not fit does not get to tell the story.** When `trend
 --model` prints `LAW NOT ESTABLISHED` — it did not converge, a parameter sits at
