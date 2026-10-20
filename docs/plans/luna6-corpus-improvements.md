@@ -1973,3 +1973,20 @@ Confirmation4 now18/24scored: highTFbenzenePASS6/6Musts,2/6Shoulds,number/unit/b
 
 
 Confirmation4 now21/24scored:LiFeAsPASS8/8Musts,4/6Shoulds,andfirstexactcopyPASS; copperPASS6/6,3/3Shoulds,copyfail;corannuleneFAIL6/10,1/6Shoulds,copyfail. Corannulenehotlocalwindowsprintedbutneverfitted;coverageauditdivertedtauxiliaryoverlappingtemperature/slitfits. Totals116/124Musts,17/21science,1/21copy/combined,21/21boundary,46/85Shoulds. IndependentAFMscopeFAILretained. Threecasesstilllive;sourcefrozen.
+
+
+Read-only repair investigation during freeze: audit._unfitted_dips iterates
+only payloads whose fit is non-null, so an integral-only scan can announce
+LOCAL DIP CANDIDATES yet never hold audit for those untested candidates.
+Corannulene hot scan is exactly this generic state (fit=None). Store or
+reconstruct candidate windows for every scan and audit untested candidates
+independently of whether a first resonance fit exists. Keep candidates
+exploratory and permit an explicit supported unresolved/declined result; do
+not turn every noisy minimum into mandatory resonance physics. WorkDir
+fitted_runs counts integral points as coverage, explaining why generic scan
+coverage passes despite missing local fits. Also propagate co-add membership
+when its representative has analytical coverage. Redfield nu/D already have
+nonnegative ParamInfo minima, while m lacks a physical positive domain and
+_redfield uses abs(m), creating a sign-degenerate objective. Investigate
+model-specific domain ownership rather than globally bounding Linear slopes.
+No frozen source was edited; these are next-round design findings only.
