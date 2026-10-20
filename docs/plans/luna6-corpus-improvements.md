@@ -617,3 +617,19 @@ ordinary lines. These are recorded science limitations, not number inventions;
 all numbers verify against actual non-audit CLI output. Corannulene is still
 live in review; do not change CLI/skill until it finishes and is scored. Host
 has 17 GiB available, zero swap use/PSI, 7.2 GiB scratch free. No full24 launch.
+
+Round six complete; no eval/model/test processes remain. Final 14/17 Musts,
+0/2 scientific/combined, 1/2 exact-copy and 2/2 boundary. Corannulene recovers
+8/10 Musts: the new shape diagnostic triggers local ALC fits and the whole-
+background explanation. But it reuses a narrow hot window for the broad cold
+feature, returning centres below the required range and unresolved widths;
+thermal anisotropy-averaging headline remains missing. Copy fails by changing
+14,828.1 G to 14.83 kG after audit. The actual reply is scored. Number checks
+now explicitly exclude draft displays as well as audit output. Frozen wave
+fully scored before edits. Next: distinguish fit-search width bounds from
+resolved-line flank coverage; offer concrete wider-window/Cubic investigation
+for truncated lines and independent windows for different conditions. The
+span/4 automatic width ceiling is a geometric resolution criterion currently
+used as a hard fitting prior, truncating broad but potentially fitted widths.
+Test any change on synthetic broad lines and keep resolved-line criteria fixed.
+No full24 launch until targeted scientific/copy/boundary failures pass.
