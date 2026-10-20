@@ -199,8 +199,9 @@ Musts, while exact-copy and boundary checks pass. Freeze CLI/skill until all
 nine finish; score each final report against the unchanged rubrics.
 
 Round-three candidate confirmed from Basics evidence: `_measured` censors
-entire trend rows when only a nuisance damping parameter has `bound_pinned`
-or `large_rel_err`. At 13–15 foils the amplitude errors are small, yet those
+entire trend rows when only a nuisance damping parameter has `bound_pinned`.
+(`large_rel_err` alone is already retained with its error bar.) At 13–15 foils
+the amplitude errors are small, yet those
 rows disappear from the step analysis and it incorrectly reports an
 intermediate 9–11-foil plateau. Preserve parameter-specific reliability while
 retaining whole-fit exclusions for actual failure/reseed/amplitude pathology.
