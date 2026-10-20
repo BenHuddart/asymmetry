@@ -1970,3 +1970,6 @@ Confirmation4 now17/24scored: highTc cupratePASS5/5Musts,1/3Shoulds,number/unit/
 
 
 Confirmation4 now18/24scored: highTFbenzenePASS6/6Musts,2/6Shoulds,number/unit/boundarypass,copyfailoneLF. CorrelationcueworksandprintsA_mu frequency-sumpeaks. MissingfullfieldFFTcorrelationcampaignandcyclotronartefactinterpretation;TF-integralALCdetourretainedasphysicscaveat. Totals96/100Musts,15/18science,0/18copy/combined,18/18boundary,38/70Shoulds. Remaining6stilllive;sourcefrozen.
+
+
+Confirmation4 now21/24scored:LiFeAsPASS8/8Musts,4/6Shoulds,andfirstexactcopyPASS; copperPASS6/6,3/3Shoulds,copyfail;corannuleneFAIL6/10,1/6Shoulds,copyfail. Corannulenehotlocalwindowsprintedbutneverfitted;coverageauditdivertedtauxiliaryoverlappingtemperature/slitfits. Totals116/124Musts,17/21science,1/21copy/combined,21/21boundary,46/85Shoulds. IndependentAFMscopeFAILretained. Threecasesstilllive;sourcefrozen.
