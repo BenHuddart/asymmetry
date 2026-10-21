@@ -286,7 +286,7 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
 
 def unverified_units(draft: str, log_text: str) -> list[Unverified]:
     """Flag a named parameter restated with a unit incompatible with its printed table."""
-    unit = r"(?:MHz|kHz|Hz|kG|G|K|meV|ns|[µμ]s(?:⁻¹)?)\b"
+    unit = r"(?:dimensionless|MHz|kHz|Hz|kG|G|K|meV|ns|[µμ]s(?:⁻¹)?)(?!\w)"
     printed = re.compile(
         rf"^\s*(?P<name>[A-Za-z][A-Za-z_0-9]*)\s+"
         rf"(?P<value>[-+−]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s+(?P<unit>{unit})",
@@ -295,7 +295,26 @@ def unverified_units(draft: str, log_text: str) -> list[Unverified]:
     parameters: dict[str, list[tuple[float, str]]] = {}
     for match in printed.finditer(log_text):
         parameters.setdefault(match["name"], []).append((_value(match["value"]), match["unit"]))
+    # Parameter tables put units either before or after the uncertainty columns.
+    in_table = False
+    for line in log_text.splitlines():
+        if re.match(r"^\s*parameter\s+value\b", line):
+            in_table = "unit" in line
+            continue
+        row = re.match(
+            r"^\s*([A-Za-z][A-Za-z_0-9]*)\s+([-+−]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s+(.*)$", line
+        )
+        if in_table and row is not None:
+            printed_unit = re.search(rf"(?<!\w)({unit})", row[3])
+            if printed_unit is not None:
+                quantities = [row[2]] + _NUMBER.findall(row[3])
+                parameters.setdefault(row[1], []).extend(
+                    (_value(value), printed_unit[1]) for value in quantities
+                )
+        elif not line.strip() or (line.strip() and not line.lstrip().startswith("-")):
+            in_table = False
     found = []
+    aliases = str.maketrans({"ν": "nu", "β": "beta", "α": "alpha", "Λ": "Lambda", "Δ": "Delta"})
     for line_number, line in enumerate(draft.splitlines(), 1):
         for number in _DRAFT_NUMBER.finditer(line):
             suffix = re.match(rf"\s*(?P<unit>{unit})", line[number.end() :])
@@ -308,7 +327,9 @@ def unverified_units(draft: str, log_text: str) -> list[Unverified]:
             tolerance = 10.0 ** (int(notation[1]) if notation else 0) * scale
             tolerance *= 10.0 ** -_decimals(token)
             for name, values in parameters.items():
-                if not re.search(rf"\b{re.escape(name)}\b", line[: number.start()]):
+                if not re.search(
+                    rf"\b{re.escape(name)}\b", line[: number.start()].translate(aliases)
+                ):
                     continue
                 units = {
                     u.replace("μ", "µ")
@@ -415,6 +436,14 @@ _SAY_SO: tuple[_SaySo, ...] = (
         ),
         "explain which logged-temperature readings or setpoints describe each block "
         "and whether a conflicting sensor value is faulty or irrelevant",
+    ),
+    _SaySo(
+        _pattern(r"^EXTREME TEMPERATURE OFFSET:"),
+        _pattern(
+            r"faulty|railed|irrelevant|unvalidated|not (?:a real|verified|validated)|independently validated"
+        ),
+        "state whether the extreme logger offset is faulty/irrelevant or independently "
+        "validated; an unvalidated logger is not a physical temperature confound",
     ),
     _SaySo(
         _pattern(r"^COLD-END EXCESS:"),
@@ -572,6 +601,17 @@ def unstated(draft: str, log_text: str) -> list[str]:
         if printed and owed and not say.stated.search(draft):
             quoted = "\n".join(f"    > {line[:240]}" for line in printed[:_QUOTED_LINES])
             messages.append(f"The draft does not {say.instruction}, as printed:\n{quoted}")
+    for name in dict.fromkeys(re.findall(r"^ADJACENT ENDPOINT: (\w+)", log_text, re.M)):
+        if not any(
+            re.search(rf"\b{re.escape(name)}\b", sentence)
+            and re.search(r"next|adjacent", sentence, re.I)
+            and re.search(r"bound|flag|fail|unreliable|unresolved|uncertain", sentence, re.I)
+            for sentence in re.split(r"[;\n]|(?<!\d)\.(?!\d)", draft)
+        ):
+            messages.append(
+                f"Compare {name} at the actual adjacent temperature with its flagged-fit "
+                "limitation; a different parameter or distant warm point is not that check."
+            )
     for name in dict.fromkeys(re.findall(r"^CONDITIONAL COUPLING: (\w+) =", log_text, re.M)):
         if not re.search(
             rf"\b{re.escape(name)}\b\s*(?:[|=:]|is|of)?\s*[-−+]?\d+(?:\.\d+)?"

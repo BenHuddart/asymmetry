@@ -5370,5 +5370,17 @@
       "evidence": "Cuprate400G andmaleiccomposition reviewed/currentPNGhashesmatch butapparentpointsdifferfromstoredseries/directCLI.",
       "scope": "Read saved data and regenerate controlled plots after freeze; retainoriginalreviewevidence."
     }
-  ]
+  ],
+  "post_wave_investigations": {
+    "trend_plot_reproduction": {
+      "method": "Regenerate each nominated trend from the frozen stored TrendTable rows with unchanged plot_trend and the original title, into /tmp only; compare complete PNG bytes.",
+      "script": "/tmp/reproduce-luna6-trend-images.py",
+      "results": {
+        "maleic-composition": "Byte-identical SHA2564ac9004c5eeefe2257a4d3f31e836f88f03239f7e21600cf54443d0c6105c709",
+        "cuprate400G": "Byte-identical SHA256ab884512ade8cdb7060ca4c395a8bca40b17b029a5226a1bd4bf43f1a2e68921",
+        "basics-foils": "Byte-identical SHA256fa44ce1ad1fbd69576409770788d41af50efe24c42940e94bde28656b0cd0f99"
+      },
+      "conclusion": "No plot/data divergence reproduced. Apparent visual point/axis differences are scorer visual-reading uncertainty, not a confirmed plotting bug. Original replies, images, recorded caveats and rubric judgements unchanged."
+    }
+  }
 }

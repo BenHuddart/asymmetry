@@ -4158,8 +4158,40 @@ def test_a_flagged_next_temperature_cannot_promote_a_distant_point_to_adjacent()
     notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu"]))
     assert "COLD-END EXCESS" not in notes
     assert "minus next" not in notes
+    assert "ADJACENT ENDPOINT: nu" in notes
+    assert "run 1 (temperature=10)" in notes
+    assert "failed" in notes
     assert "SPECTRAL ENDPOINTS" in notes
     rows[1]["flags"] = []
     notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu"]))
     assert "next measured temperature, run 1" in notes
     assert "0.080000" in notes
+
+
+def test_critical_divergence_exponent_is_explicitly_dimensionless():
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+
+    model = ParameterCompositeModel.from_expression("CriticalDivergence")
+    assert model.param_info["nu"].unit == "dimensionless"
+    assert ParameterCompositeModel.from_expression("Redfield").param_info["nu"].unit == "MHz"
+
+
+@pytest.mark.parametrize("offset, warned", [(10.0, False), (250.0, True), (-300.0, True)])
+def test_survey_extreme_logger_requires_context_not_automatic_temperature_inference(
+    workflow_folder: Path, tmp_path: Path, offset: float, warned: bool
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import survey_folder
+
+    survey = survey_folder(workflow_folder)
+    row = replace(survey.runs[0], temperature=290.0, sample_temperature_logged=290.0 + offset)
+    text = _render(
+        replace(survey, runs=[row], temperature_departures=[row.run_number]),
+        tmp_path / "survey.json",
+    )
+    assert ("EXTREME TEMPERATURE OFFSET:" in text) is warned
+    if warned:
+        assert "independently validated" in text
+        assert "not evidence for a thermal confound" in text

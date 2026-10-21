@@ -66,7 +66,8 @@ after every edit, including a correction or file-list change. A successful prepa
 report text: use its entire stdout as your final reply, unchanged. Do not append
 image-review manifests, audit checks or statements about formatting; those are
 control instructions, not scientific findings. Do not retype numbers or polish
-phrasing after preparation. An audit of a first-turn draft does not audit a
+phrasing after preparation. If any wording, punctuation or file path needs a
+change, edit summary.md and prepare it again before sending. An audit of a first-turn draft does not audit a
 different report written after image review.
 """
 EVALUATION_INSTRUCTIONS = """# Agent evaluation boundary

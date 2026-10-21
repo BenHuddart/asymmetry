@@ -971,3 +971,45 @@ def test_relative_percentages_need_a_printed_percentage_not_an_amplitude(draft):
 
 def test_absolute_percent_asymmetry_remains_a_printed_quantity():
     assert not unverified_numbers("A_bg is 8.2% and the amplitude is about 8%.", "A_bg 8.2 0.1\n")
+
+
+@pytest.mark.parametrize("name", ["nu", "ν"])
+@pytest.mark.parametrize("number", ["0.000000", "10.257125"])
+def test_dimensionless_exponent_value_and_error_cannot_acquire_rate_units(name, number):
+    from asymmetry.cli._numbers import unverified_units
+
+    log = (
+        "parameter  value  error  unscaled error  unit\n"
+        "---------  -----  -----  --------------  ----\n"
+        "nu  0.000000  10.257125 (at bound)  3.955147  dimensionless\n"
+    )
+    assert unverified_units(f"Rejected exponent {name} has error {number} μs⁻¹.", log)
+    assert not unverified_units(f"Exponent {name} = {number} dimensionless.", log)
+
+
+def test_parameter_uncertainty_uses_units_after_value_or_errors():
+    from asymmetry.cli._numbers import unverified_units
+
+    for row in ["A_hf  512.3456  MHz  0.123456", "A_hf  512.3456  0.123456  MHz"]:
+        log = "parameter  value  error  unit\n" + row + "\n"
+        assert unverified_units("A_hf uncertainty 0.123456 G", log)
+        assert not unverified_units("A_hf uncertainty 0.123456 MHz", log)
+
+
+def test_flagged_adjacent_parameter_is_not_replaced_by_an_unrelated_upturn():
+    from asymmetry.cli._numbers import unstated
+
+    log = "ADJACENT ENDPOINT: nu at run 1; next measured run 2 is bound-pinned."
+    assert unstated("TF sigma has a cold upturn; nu rises at high temperature.", log)
+    assert not unstated(
+        "The next adjacent nu fit is bound-pinned, so its upturn is uncertain.", log
+    )
+
+
+def test_extreme_logger_is_not_a_temperature_confound_without_validation():
+    from asymmetry.cli._numbers import unstated
+
+    log = "EXTREME TEMPERATURE OFFSET: run 17. Check its channel."
+    assert unstated("The high logger value confounds the foil curve.", log)
+    assert not unstated("The logger is railed and irrelevant to this calibration.", log)
+    assert not unstated("The sample temperature was independently validated.", log)

@@ -1244,6 +1244,10 @@ List the numbers in a draft summary that no command printed.
 Named parameter values with explicit units in printed tables are also checked
 for contradictory units in the draft, including rejected-fit diagnostics. This
 is a conservative check, not full dimensional validation of arbitrary prose.
+Both values and uncertainties retain their parameter units. In particular,
+``CriticalDivergence`` uses a dimensionless exponent ``nu``; it is not the
+fluctuation rate with the same name in a dynamic KT or Redfield model.
+Tables may place the unit before or after the error columns.
 Illumination measurements with two periods require a common science run fitted
 in separate red and green workdirs; a differential integral cannot substitute
 for the two time spectra. Mixed-instrument surveys use each scan's instrument
@@ -1257,6 +1261,12 @@ is uncertain. Successful command results remain evidence despite stderr
 warnings; a failed retry does not erase a completed recommendation.
 Determined conditional coupling estimates and significant coldest-versus-next
 excesses remain reportable with their model and fit-quality limitations.
+An ``ADJACENT ENDPOINT`` diagnostic also retains the actual next temperature
+when its fit is flagged. Describe that pair and its limitation; a bound-pinned
+point cannot establish a significant measured upturn and must not be replaced
+by a distant reliable point. Extreme logged/setpoint offsets require a channel,
+unit and experimental-context check: a railed logger is not a physical thermal
+confound in an instrument calibration.
 
 The audit also checks that the report gives the folder run count and explicit
 members for each longer scan. For repeated weak-field groups it checks for

@@ -295,6 +295,10 @@ temperature, or a sensor offset. It lists them in blocks with each block's
 offset (T log − T/K), and you decide which to trust, block by block, and say
 why. The logged sample temperature is the default — it is the measured one;
 the setpoint needs a reason (a logged value the sample could not have had).
+For a room-temperature calibration, railed or physically implausible logger
+values are faulty/irrelevant coordinates, not physical temperature confounds.
+Do not explain a foil/steering amplitude step using such readings. Keep plausible
+sample-temperature offsets distinct from impossible readings; state the reason.
 Whichever you decide for a block holds everywhere those runs are used: a
 sensor you judged faulty for one series cannot supply an argument against a
 comparison in another. A block sitting at a different temperature from its neighbours is a
@@ -1242,6 +1246,13 @@ footers to interpret. Use it again after every later edit; do not retype numbers
 polish a word, close punctuation, or add a formatting comment after preparation.
 Image-review manifests belong only to a requested image-selection turn. A plain
 audit remains read-only; failed preparation returns nonzero and prepares nothing.
+
+Keep the law and parameter meaning with each value and its uncertainty. A
+critical exponent named `nu` is dimensionless; a fluctuation rate with the same
+name has rate units. Rejected-law diagnostics still require correct units.
+For endpoint comparisons, retain the actual next measured temperature even if
+its fit is bound-pinned or failed. Report its limitation instead of replacing it
+with a distant reliable point or claiming a significant measured upturn.
 
 Every command's printed output is logged in the work directory, and `audit`
 lists each number in the draft that no command printed. It first lists every

@@ -367,13 +367,24 @@ def _render(survey, survey_path: Path) -> str:
             "different measurement — order it with --order sample_temperature_logged and never "
             "quote those runs at their setpoints; only a value no sample here could have had "
             "(hundreds of kelvin off, a liquid logged above its boiling point) points to the "
-            "sensor. The scans below are grouped by setpoint:"
+            "sensor. A railed or physically implausible logger value is not a real "
+            "temperature confound: do not use it to explain a range/steering calibration "
+            "or reject a relative-amplitude comparison. A plausible temperature offset "
+            "still needs its own experimental-context check. The scans below are grouped by setpoint:"
         )
         for instrument, runs, lo, hi in _departure_blocks(survey):
             span = f"{lo:+.2f} K" if abs(hi - lo) < 0.005 else f"{lo:+.2f} to {hi:+.2f} K"
             listed = run_spec(runs, separator=", ")
             shown = f"{instrument} {listed}" if clashes else listed
             lines.append(f"  {shown}: {span}")
+            if max(abs(lo), abs(hi)) >= 200:
+                lines.append(
+                    f"EXTREME TEMPERATURE OFFSET: {shown}. Check the logger channel, "
+                    "units and apparatus/sample context before treating this as a sample "
+                    "temperature. State whether it is faulty/irrelevant or independently "
+                    "validated. A steady railed reading is not evidence for a thermal "
+                    "confound in a calibration curve."
+                )
         lines.append("")
     for repeat in survey.repeats:
         condition = f"{repeat.field:g} G, {repeat.temperature:g} K" + (

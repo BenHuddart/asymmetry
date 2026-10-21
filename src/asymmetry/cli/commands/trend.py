@@ -490,7 +490,21 @@ def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
             continue
         first = rows[0]
         following = next((row for row in endpoints if row["x"] > first["x"]), None)
-        if following is None or following not in rows:
+        if following is None:
+            continue
+        if following not in rows:
+            notes.append(
+                f"ADJACENT ENDPOINT: {param} at run {first['key']} "
+                f"({trend.order_key}={first['x']:g}) is "
+                f"{format_number(first[param], 6)} ± {format_number(first[f'{param}_err'], 6)}; "
+                f"the next measured temperature is run {following['key']} "
+                f"({trend.order_key}={following['x']:g}), with fitted {param}="
+                f"{following[param]} and error={following[f'{param}_err']}, "
+                f"flags: {', '.join(sorted(parameter_quality_flags(following, param))) or 'none'}. "
+                "Compare this actual adjacent pair in words, including its fit limitations. "
+                "A bound or failed next point prevents a measured upturn/significance claim; "
+                "do not replace it with a distant reliable point or omit the comparison."
+            )
             continue
         difference = first[param] - following[param]
         error = math.hypot(first[f"{param}_err"], following[f"{param}_err"])

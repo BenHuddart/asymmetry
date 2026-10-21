@@ -674,7 +674,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_info={
             "a": get_param_info("a"),
             "Tc": get_param_info("Tc"),
-            "nu": ParamInfo("nu", "nu", "ν", r"$\nu$", r"\nu"),
+            "nu": ParamInfo("nu", "nu", "ν", r"$\nu$", r"\nu", unit="dimensionless"),
             "c": get_param_info("c"),
         },
         formula_template="{a}*|x-{Tc}|^(-{nu}) + {c}",

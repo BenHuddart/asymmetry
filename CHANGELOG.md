@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Report audits retain parameter units for uncertainties, including dimensionless
+  critical exponents. Trend diagnostics keep flagged adjacent temperatures visible,
+  and survey guidance requires validation of extreme logger offsets before a
+  calibration curve is interpreted thermally.
+
 - Report audits distinguish an amplitude in percent asymmetry from a derived
   percentage of a total. General analysis guidance preserves successful wizard
   results despite stream warnings and completed Gaussian-width comparisons;
