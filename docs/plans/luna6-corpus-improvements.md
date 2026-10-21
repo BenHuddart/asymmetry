@@ -2168,3 +2168,6 @@ Confirmation7 now6/24scored:CDS6/6Musts2/4Shoulds science/number/unit/copy/bound
 
 
 Confirmation7 now9/24scored:plateau5/5Musts3/5Shoulds,silicon6/6Musts3/4Shoulds,nickel7/7Musts2/4Shoulds allscience/number/unit/strictcopy/boundaryPASS. Totals48/51Musts,7/9science,9/9copy,7/9combined,9/9boundary,17/33Shoulds. Retainpoorlaw/ONrate/conditionalLF caveats;sourcefrozenthroughremaining15.
+
+
+Confirmation7 now11/24scored:TCNQ6/6Musts4/4Shoulds andcuprate5/5Musts2/3Shoulds science/number/unit/copy/boundaryPASS. Totals59/62Musts,9/11science,11/11copy,9/11combined,11/11boundary,23/40Shoulds. Newgeneralrepairfinding: COLD-ENDpromptfiltersflaggedrowsbeforechoosingnextmeasuredtemperature, falselycallingdistant1288adjacentinoriginalcupratemodel;preservecaveatandfixafterfreeze. Remaining13continue.
