@@ -2043,3 +2043,6 @@ Confirmation5 now16/24scored: maleic5/5Musts,4/4Shoulds andnickel7/7Musts,2/4Sho
 
 
 Confirmation5 now17/24scored: corannulene10/10Musts sciencePASS after hot7kG coverage and explicit cold-higher/broader15kG/reorientation repair;1/6Shoulds andcopyFAILaddedterminalblankline. Totals99/99Musts,17/17science,8/17copy/combined,17/17boundary,40/65Shoulds. Preserve block-mismatched118133calibration, coldpowder-shape/window limits and5100Gsetpoint/loggedlabel caveat. Frozen source unchanged; finish remaining seven.
+
+
+Confirmation5 now19/24scored:TCNQFAIL2/6Musts(exact-copyPASS),highTFbenzenePASS6/6Musts(copyFAILoneLF),Shoulds2/4and1/6. Totals107/111Musts,18/19science,9/19copy,8/19combined,19/19boundary,43/75Shoulds. TCNQregression:highfieldgeometry_source=file misread ascoils;genericTFobservablefooter preventsintegralALCtest. Afterfreeze strengthen evidence-source display/conditionalgeometrychecks,notdetector-orientation orsampledispatch. No source changes; finish remainingfive.
