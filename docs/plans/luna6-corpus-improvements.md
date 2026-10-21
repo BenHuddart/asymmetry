@@ -2165,3 +2165,6 @@ Confirmation7 now5/24scored:YMnAl5/5Musts2/3Shoulds science/copyPASS;spinPeierls
 
 
 Confirmation7 now6/24scored:CDS6/6Musts2/4Shoulds science/number/unit/copy/boundaryPASS,qualifiednoisyvisualtripletjudgementretained. Totals30/33Musts,4/6science,6/6copy,4/6combined,6/6boundary,9/20Shoulds. Allsourcefrozen;finishremaining18.
+
+
+Confirmation7 now9/24scored:plateau5/5Musts3/5Shoulds,silicon6/6Musts3/4Shoulds,nickel7/7Musts2/4Shoulds allscience/number/unit/strictcopy/boundaryPASS. Totals48/51Musts,7/9science,9/9copy,7/9combined,9/9boundary,17/33Shoulds. Retainpoorlaw/ONrate/conditionalLF caveats;sourcefrozenthroughremaining15.
