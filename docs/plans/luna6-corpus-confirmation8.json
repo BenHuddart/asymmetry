@@ -1,5 +1,5 @@
 {
-  "status": "running; 21/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 22/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -3868,25 +3868,264 @@
       ],
       "scored_at": "2026-10-21T04:02:57.107321+00:00",
       "reply_matches_saved_file": true
+    },
+    "basics": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Treats the folder as several separate calibration exercises. It names at least the Ag TF field scan, the quartz range curve, the quartz low-field muonium scan and the steering scan, and analyses them separately. It does not present the survey's 24-run 100 G \"temperature scan\" or its 2-run ZF one as a temperature dependence.",
+          "pass": true,
+          "evidence": "SeparateAgfield/quartzfoil/quartzMu/steeringexercises explicit; artificial24runtemperaturegrouprejected ashomogeneousscan."
+        },
+        {
+          "requirement": "Keeps the EMU and MUSR runs 44989–44997 apart and says which set is which (EMU: haematite on Ag at 100 G, the steering scan; MUSR: Ag calibration). It does not read the MUSR runs' ~0.29 MHz line as spontaneous order in Ag: the header says 0 G, but the line comes from an unrecorded weak transverse field.",
+          "pass": true,
+          "evidence": "EMUhaematite100Gsteering versusMUSRAgcandlestick calibrationseparated withinstrumentselectors;nonzero.285–.295MHzunrecordedweakTFnotAgmagnetism."
+        },
+        {
+          "requirement": "Quotes no logged 943 K, ~640 K or ~550 K reading as a sample temperature. It says these logged values are faulty or irrelevant to these room-temperature calibrations, and claims no temperature trend.",
+          "pass": true,
+          "evidence": "Largefaultyloggedreadings/offsetsidentifiedsensorproblemsnotactualsampletemperatures; nohomogeneousthermalcampaignclaim."
+        },
+        {
+          "requirement": "Steering: fits the Ag-mask asymmetry against the current taken from the run notes, and reports it smallest near zero current (between −0.25 and +0.25 A), rising on both sides.",
+          "pass": true,
+          "evidence": "Actualsteeringaxisfromnotes,minimum0A5.29286%risingto−1/+1A7.13319/8.09795%."
+        },
+        {
+          "requirement": "Range curve: reports the 100 G diamagnetic amplitude as small and roughly flat for thin stacks, then rising steeply and saturating for the thickest. It names, from its own fits, the foil count (as the run notes give it) where saturation begins — about 12–14 foils (a range such as \"13–15\" counts).",
+          "pass": true,
+          "evidence": "Actualfoilaxis0/4/6/8/9/9/10–15,lowflat0–6,riseto13andplateau13–15explicit."
+        },
+        {
+          "requirement": "Quartz scan: identifies the few-gauss lines as muonium (a line far faster per gauss than the bare muon's — the ratio itself need not be quoted). It reports the muonium amplitude falling as the frequency rises, and the line lost at the top fields, and presents the amplitude fall as the instrument's frequency-response limit (attributing the line's loss at the top fields to it too is a Should).",
+          "pass": true,
+          "evidence": "FewGlineexplicitmuoniumtriplet,amplitudefallwithincreasingfrequencyattributedpulsed-instrumentresponse,nonobservation8.5–9G."
+        },
+        {
+          "requirement": "Ag field scan: reports the fitted frequency tracking the applied field. It also reports the fitted phase against field. On the file's t0 the phase drifts steadily with field (a t0 offset), so calling it field-independent without a t0 test is a fail.",
+          "pass": true,
+          "evidence": "Agfrequencytracksfieldandlinearphasedrift−39.3nsattributedtimingoffset,notfieldindependentphase."
+        },
+        {
+          "requirement": "States which run supplied alpha for each exercise it fits. It does not carry one alpha across the survey's ALPHA STEPs.",
+          "pass": true,
+          "evidence": "Separatealphaslistedforeachfittedexerciseand18864newblock;MUSRexplicitassumed1."
+        },
+        {
+          "requirement": "Contains no t0 correction, stopping density (mg/cm²), steering centre, upper frequency, field offset or alpha that was not produced by a tool call in this session. The worksheet's Ti density and foil thickness are background.",
+          "pass": true,
+          "evidence": "Alloffsets/frequencies/alphas/parametersdirectCLI,nostopping-densityconversion ormanualphysicalarithmetic."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reads each exercise's pattern the right way round: the steering scan's silver signal is smallest where the beam is centred on the (depolarising) sample; the range curve's step is where the muons stop passing through the degraders into the sample. An inverted reading is a gap even when the Must's pattern is reported.",
+          "pass": false,
+          "evidence": "Patternsrightbutnosteeringminimumbeamcentredondepolarisingmaterialorfoil-saturationmuonsstoppingindegradersphysicalexplanation."
+        },
+        {
+          "requirement": "Does not dismiss a relative amplitude trend (the muonium frequency response) on the ground that alpha is uncertain: one alpha scales every amplitude alike.",
+          "pass": true,
+          "evidence": "Mu amplitudefallpreservedasfrequencyresponse despitealphauncertainty."
+        },
+        {
+          "requirement": "Deadtime: reduces ZF Ag 34998 with deadtime off and from the file, and describes the early-time sag in asymmetry that the correction removes, with both fits' χ²ᵣ. Says the 2010 files carry no deadtime values.",
+          "pass": false,
+          "evidence": "NoZF34998deadtimeoff/fromfilepairedfitcomparisonandnoexplicit2010nofiledeadtime."
+        },
+        {
+          "requirement": "Measures MUSR alpha on a MUSR Ag run and says why that is legitimate, since the survey lists no MUSR candidate because the header records 0 G. Alternatively, it says plainly that it assumed 1.0.",
+          "pass": true,
+          "evidence": "MUSRexplicitassumedalpha1.0."
+        },
+        {
+          "requirement": "t0: tests `--t0-offset` (or fits `Linear` to phase against field), reports the shift in bins that flattens the phase, and checks the fitted frequency against the nominal field.",
+          "pass": false,
+          "evidence": "Timingoffsetdiagnosticpresentbutnotapplied,nobinshift/flatterphaseverification."
+        },
+        {
+          "requirement": "Treats 18864 as its own alpha block, or excludes it and says why.",
+          "pass": true,
+          "evidence": "18864separatealphafromitselfandstep18863→18864explicit."
+        },
+        {
+          "requirement": "Says that turning the saturating foil count into mg/cm² needs the foil thickness and Ti density, which the files lack, and does not present that conversion as Asymmetry output.",
+          "pass": false,
+          "evidence": "Nofoilthickness/Tidensityrequirementformg/cm²conversionmentioned."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. DirectCLIphaseoffset,series/trend/survey/calibrationoutputs;nohandfieldconversion/bindivision.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science9/9 andcopyPASS. Calibrationexerciseidentities/MuweakTF/faultytemperaturesrepaired. Beam/degraderphysics,deadtime/t0reductionchecksremainShouldgaps.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all70 completed commands inspected. All70commandsinspected,CLIanalysisandmetadatareads,summary-onlywrites. Fourreviewhashesverified, Muoscillation/residualsandfoilamplitudepixelsinspected;no physicalarithmetic.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1388.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 12,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/basics/data --run 18888 --geometry TF --scope auto --plot --instrument EMU'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry info /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/basics/data --run 18852 --instrument EMU'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/basics/data --runs 62798 --alpha-from 62798 --deadtime from_file --plot --instrument HIFI'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/basics/data --runs 44989-44997 --alpha 1.0 --deadtime from_file --background range --plot --instrument MUSR --workdir asymmetry-work-musr'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "d3d26f611f20d49a683328e99c45d23b5356d31985f97d5512ecd228b0e0a8be",
+      "audited_file_sha256": "d3d26f611f20d49a683328e99c45d23b5356d31985f97d5512ecd228b0e0a8be",
+      "rubric_sha256": "9a7e1671e076193352ce4016016147c30a58b3f8098aef4a5b6383f19d34c8cc",
+      "staged_skill_sha256": "7aec2595cbec0f0a1bd10e4949822f76cfc94e35301159cc3f3285d84f2be9b4",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/basics",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "SummarycorrectlykeepsMUSRcalibrationnonmagnetic,butinvalidMuoniumZFfitonAg isstillunhelpfulscreening,notrealmuoniumevidence.",
+        "Two-pointAgsetpointcomparisonreportsconditionalshiftwhilelogs/calibrationsincoherent;notatemperaturetransition.",
+        "Manymuon-responsefitspoor/unresolved;lineabsencetopfieldobservedbutnotexplicitlyattributedtofrequencyresponseasstronglyasworksheetwants.",
+        "Commonfoilalphamakesabsolutefractionsconditional; relativeamplitudetrendnotdiscarded.",
+        "M3judgementacceptsidentifiedfaultytemperatureoffsets andexplicitnothermalcampaign despiteconditionaltwo-pointsetpointshiftparagraph."
+      ],
+      "judgement_calls": [
+        "M3PASS: faultyoffsets explicitlysensorproblems, conditionaltwo-pointcomparisondoesnotclaimcoherentthermalcampaign."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        33,
+        34,
+        38,
+        40,
+        41,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        60,
+        61,
+        62,
+        63,
+        64,
+        67
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "d3d26f611f20d49a683328e99c45d23b5356d31985f97d5512ecd228b0e0a8be",
+        "summary.md": "d3d26f611f20d49a683328e99c45d23b5356d31985f97d5512ecd228b0e0a8be",
+        "transcript.jsonl": "eed0ae3d2b26c809ab5f5000fb3be5386f83961d749da6927f9c18d093cf7841",
+        "commands.txt": "6ee1fbcc8964a16587b51a577f4777bfa3b23c7ab6c337a6d92d22cb53b99cf9",
+        "cost.json": "07fd2e7f49e570c61001c49a99c1ea27fc0b36dfe37b646f7c514132625f4138",
+        "image-inputs.json": "c1fd40fc6435be97d5cdcec8231dfffcd05e6a13fbc25329ea4883c101982fc6"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/series-mu-line/19629.png",
+          "snapshot_path": "review-images/2cfbb95b621d1c19fb0d3ec49d823ffc92ec460f5e6aff025d65124a1d7d91d1.png",
+          "bytes": 92927,
+          "sha256": "2cfbb95b621d1c19fb0d3ec49d823ffc92ec460f5e6aff025d65124a1d7d91d1",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-19643.png",
+          "snapshot_path": "review-images/a2d19db05461292c3dd08c6261769783b461a74ed2d5f22511fdc0535d01116e.png",
+          "bytes": 45509,
+          "sha256": "a2d19db05461292c3dd08c6261769783b461a74ed2d5f22511fdc0535d01116e",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/ag-field-350-trend-frequency.png",
+          "snapshot_path": "review-images/b8f8567f600b2d7a620cd1eea84614d8c744bf4a66b2062419ccb6578515e8e9.png",
+          "bytes": 32152,
+          "sha256": "b8f8567f600b2d7a620cd1eea84614d8c744bf4a66b2062419ccb6578515e8e9",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/series-wizard-18888-trend-A_1.png",
+          "snapshot_path": "review-images/fa44ce1ad1fbd69576409770788d41af50efe24c42940e94bde28656b0cd0f99.png",
+          "bytes": 23798,
+          "sha256": "fa44ce1ad1fbd69576409770788d41af50efe24c42940e94bde28656b0cd0f99",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T04:04:16.333242+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
     "trsb-re6zr",
-    "basics",
     "corannulene-alc"
   ],
   "totals": {
-    "scored": 21,
+    "scored": 22,
     "target": 24,
-    "scientific_pass": 19,
-    "must_pass": 118,
-    "must_total": 121,
-    "should_pass": 45,
-    "should_total": 85,
-    "exact_copy_pass": 18,
-    "literal_copy_pass": 18,
-    "combined_pass": 16,
-    "boundary_pass": 21
+    "scientific_pass": 20,
+    "must_pass": 127,
+    "must_total": 130,
+    "should_pass": 48,
+    "should_total": 92,
+    "exact_copy_pass": 19,
+    "literal_copy_pass": 19,
+    "combined_pass": 17,
+    "boundary_pass": 22
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round18 explicitly retires the first-turn image-manifest instruction after review; final turn returns the scientific report alone.",

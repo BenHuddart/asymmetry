@@ -2240,3 +2240,6 @@ Confirmation8 now20/24scored: LiFeAs7/8Musts3/6Shoulds scienceFAILomitsGaussianw
 
 
 Confirmation8 benzeneALC7/7Musts2/6Shoulds science/number/unit/strictcopy/boundaryPASS. Totals21/24scored,118/121Musts,19/21science,18/21copy,16/21combined,21/21boundary,45/85Shoulds; independentAFMscopePASS. OnlyRe6Zr/Basics/corannuleneremain; source remains frozen. Retainlocal-backgroundsolidwidth/temperature/solutionflank/error-conventioncaveats.
+
+
+Confirmation8 Basics9/9Musts3/7Shoulds science/number/unit/copy/boundaryPASS. Totals22/24scored,127/130Musts,20/22science,19/22copy,17/22combined,22/22boundary,48/92Shoulds; independentAFMscopePASS. OnlyRe6Zr/corannuleneremain;sourcefrozen. Preservefaulty-temperature/conditionaltwo-pointAgjudgementanddeadtime/t0/beamphysicsgaps.
