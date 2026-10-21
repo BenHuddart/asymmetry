@@ -2087,3 +2087,6 @@ Fresh full24 confirmation6 LIVE at /home/ben/.cache/asymmetry-luna6-overnight-20
 
 
 Confirmation6 now1/24 scored:spinPeierls6/6Musts,2/3Shoulds,science/number/unit/boundaryPASS,strictcopyFAILone-wordpost-preparationrewrite(the→its). ActualZFendpointshapesandall26runcoverageverified;dimerisation/singlet-tripletinterpretationstillmissing. Source remains frozen through all24;recorded snapshot/hash/caveats retained.
+
+
+Confirmation6 now2/24scored:PTFE6/6Musts,1/3Shoulds,science/number/unit/boundary/exactcopyPASS with --prepare-reply. Totals12/12Musts,2/2science,1/2copy/combined,2/2boundary,3/6Shoulds. Preservepoor/flaggedcouplingfitsandcontradictorycold-upturnprosecaveat;sourcefrozen,remainingcasescontinue.

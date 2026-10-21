@@ -1,5 +1,5 @@
 {
-  "status": "running; 1/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 2/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -276,6 +276,157 @@
       ],
       "scored_at": "2026-10-21T00:48:21.109694+00:00",
       "reply_matches_saved_file": false
+    },
+    "fmuf-ptfe": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies run 17293 as the TF calibration run and the remainder as the ZF temperature series.",
+          "pass": true,
+          "evidence": "Experiment identifies17293 as20GTF calibration and17294–17322 as29-run0G science series."
+        },
+        {
+          "requirement": "States that alpha was determined from 17293 (or explains why not, if it used a different run).",
+          "pass": true,
+          "evidence": "Calibration explicitly uses17293, distinguishing raw alpha0.9566 from deadtime-corrected applied0.9553."
+        },
+        {
+          "requirement": "Recommends or applies an F-mu-F–family relaxation function (three-spin dipolar / Brewer-type), not a generic Kubo-Toyabe or exponential, for the ZF data.",
+          "pass": true,
+          "evidence": "Model applies DynamicFmuF+Constant and compares collinearFmuF×Exponential alternative, with time-domain beat identification."
+        },
+        {
+          "requirement": "Reports the muon–fluorine dipolar coupling extracted from the fits, as the coupling frequency or as the muon–fluorine distance `r_muF` (the CLI parameterises the F–μ–F family by `r_muF`, with ω_D ∝ r⁻³).",
+          "pass": true,
+          "evidence": "Reports r_muF with errors for selected fits and Constant-law1.244541±0.004593Å, explicitly as dipolar-coupling distance parameter."
+        },
+        {
+          "requirement": "States whether that dipolar coupling frequency is roughly constant (temperature independent) or varies across the scan.",
+          "pass": true,
+          "evidence": "Reports poor constant chi2=134.882 and apparent varying r_muF trend; explicitly rejects firm temperature independence/structural-change conclusion because flagged fits."
+        },
+        {
+          "requirement": "Contains no coupling-frequency, alpha, or temperature number that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Coupling-distance, alpha, axes and rate quantities are directly printed in survey/reduce/wizard/fit-series/trend/info outputs; no number/unit checker flags."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the ZF runs are not in monotonic temperature order and that later runs revisit/infill earlier temperature gaps, rather than assuming run number tracks temperature.",
+          "pass": true,
+          "evidence": "Identifies late115–195K infill and25–55K points, repeat20K pair and logged-temperature sorting rather than run-order scan."
+        },
+        {
+          "requirement": "Mentions the sample-temperature column (with its uncertainty) as distinct from the nominal set-point temperature.",
+          "pass": false,
+          "evidence": "Distinguishes logged sample temperature from setpoint and calibration64.21K versus5K, but no sample-temperature uncertainty reported."
+        },
+        {
+          "requirement": "References the muon-fluorine \"hydrogen bonding\" / entanglement picture from the worksheet background when interpreting the result.",
+          "pass": false,
+          "evidence": "Says muon bonding between fluorine nuclei, but does not explain hydrogen-bond analogy or entanglement/three-spin picture from worksheet."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct survey, alpha/reduction, info, both scoped wizards, full per-run series/trends and Constant-law output confirm quantities/errors/axes. Exclude summary/audit outputs and saved drafts. Endpoint upturn wording is inconsistent but introduces no unprinted scalar. No physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "All scientific Musts and exact-copy pass; the finalization repair is used twice with --prepare-reply and actual reply matches prepared bytes. Remaining Should gaps are temperature uncertainty and microscopic bonding/entanglement explanation. A separate prose synthesis defect calls the rate a cold-end upturn in What this suggests despite the correctly quoted lower coldest nu and nonmonotonicity; preserve as scientific caveat, not an unprinted scalar or this rubric coupling Must failure.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all18 completed commands inspected. All18 completed commands and report-only file changes inspected. Initial rg data fails because relative data absent; subsequent analyses use authorized staged absolute data. No custom analysis or arithmetic. Under-development skill-discovery warnings are not infrastructure interruptions. Four review snapshots hash-verified, actual cold/warm images inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 434.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/fmuf-ptfe/data --series teflon-zf-dyn-logged --model Constant --param r_muF --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'cat .agents/skills/asymmetry-analysis/SKILL.md && rg --files data'",
+          "exit_code": 2
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "8563ec31080b7b8cdb9b301de687988f45dec2c5f863760654b48dee6af2161e",
+      "audited_file_sha256": "8563ec31080b7b8cdb9b301de687988f45dec2c5f863760654b48dee6af2161e",
+      "rubric_sha256": "49ca7ef87b2b8eec6e518da9052579a255090e3fdb132bc0df381610155df82d",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/fmuf-ptfe",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "27/29dynamicFmuF fits poor;17flagged, no failed runs in logged series. Warm r_muF/nu flagged and not physical estimates.",
+        "Repeated nominal20K runs have substantially different r_muF/nu despite close logged temperatures; constant-lawchi2=134.882 is a rough average, not evidence of one coupling or true structural change.",
+        "Final paragraph says cold-end upturn although direct endpoint output and earlier prose explicitly state lower coldest nu; contradicts its own rate comparison.",
+        "Warm loss of resolved beat supported by actual snapshot; no FFT line or microscopic site/entanglement measurement claimed."
+      ],
+      "judgement_calls": [
+        "M5 accepts qualified variation/poor constant test despite refusal to claim a true structural change, consistent with prior waves.",
+        "Should3 remains false for generic fluorine bonding without hydrogen-bond/entanglement account."
+      ],
+      "number_evidence_commands": [
+        2,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "8563ec31080b7b8cdb9b301de687988f45dec2c5f863760654b48dee6af2161e",
+        "summary.md": "8563ec31080b7b8cdb9b301de687988f45dec2c5f863760654b48dee6af2161e",
+        "transcript.jsonl": "ea28b26a19b874019c11580822fbed617d77708d28dc9c0208d9dd60394d1610",
+        "commands.txt": "5e512fd179a7135dfed56c6e8838e775eb19bf22c91a9709684867f3e89353c9",
+        "cost.json": "1fdeb1cd5d622d202db05ad2e9717fecd48ef704228285b944cd92b232f60e81",
+        "image-inputs.json": "5349a9e3a8b49502f644f6732c912f881e1ddb2c49e77acb2af0d31886cca391"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/teflon-zf-dyn-logged/17295.png",
+          "snapshot_path": "review-images/8399bd9d88eb33e85e763a31d4e8bc80a4c4da4f9942da5a64058b5ecf6463f8.png",
+          "bytes": 69774,
+          "sha256": "8399bd9d88eb33e85e763a31d4e8bc80a4c4da4f9942da5a64058b5ecf6463f8",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/teflon-zf-dyn-logged/17309.png",
+          "snapshot_path": "review-images/07023b30246dc81376f5d2fe27d634dd74a79ab31ef1e2327d9d4cefaa43699f.png",
+          "bytes": 66631,
+          "sha256": "07023b30246dc81376f5d2fe27d634dd74a79ab31ef1e2327d9d4cefaa43699f",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/teflon-zf-dyn-logged-trend-nu.png",
+          "snapshot_path": "review-images/120cd71468592653cd9469e5c9293dcf8415f23026ca15e4055a7fb49b01f82f.png",
+          "bytes": 38181,
+          "sha256": "120cd71468592653cd9469e5c9293dcf8415f23026ca15e4055a7fb49b01f82f",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/teflon-zf-dyn-logged-trend-r_muF.png",
+          "snapshot_path": "review-images/6a130663eb0a29ba1d6bcfecb07619631487dba66b2b422ab9a113f81793d564.png",
+          "bytes": 37932,
+          "sha256": "6a130663eb0a29ba1d6bcfecb07619631487dba66b2b422ab9a113f81793d564",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T00:49:31.986643+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -284,7 +435,6 @@
     "euo-psi",
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
-    "fmuf-ptfe",
     "spin-glass-ymnal",
     "high-tc-cuprate",
     "copper-diffusion",
@@ -334,16 +484,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 1,
+    "scored": 2,
     "target": 24,
-    "scientific_pass": 1,
-    "must_pass": 6,
-    "must_total": 6,
-    "should_pass": 2,
-    "should_total": 3,
-    "exact_copy_pass": 0,
-    "literal_copy_pass": 0,
-    "combined_pass": 0,
-    "boundary_pass": 1
+    "scientific_pass": 2,
+    "must_pass": 12,
+    "must_total": 12,
+    "should_pass": 3,
+    "should_total": 6,
+    "exact_copy_pass": 1,
+    "literal_copy_pass": 1,
+    "combined_pass": 1,
+    "boundary_pass": 2
   }
 }
