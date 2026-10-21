@@ -2126,3 +2126,6 @@ Confirmation6 now18/24 scored:maleic5/5Musts,3/4Shoulds science/number/unit/boun
 
 
 Confirmation6 now19/24 scored:highTFbenzene6/6Musts,2/6Shoulds science/number/unit/copy/boundaryPASS. Actualcoadd/correlationA_musumcorrect;instrumentalharmonics/crosscampaign/splitting/fourviewcaveatsretained. Totals103/106Musts,15/19science,14/19copy,12/19combined,19/19boundary,41/73Shoulds. Sourcefrozen.
+
+
+Confirmation6 now22/24scored:LiFeAs8/8Musts4/6Shoulds,corannulene10/10Musts1/6Shoulds science/copyPASS;benzeneALC6/7Musts2/6Shoulds scienceFAILunnamedsolutionidentitiesandcopyFAILappendedimage-reviewcontrolmarkers. Totals127/131Musts,17/22science,16/22copy,14/22combined,22/22boundary,48/91Shoulds. IndependentAFMscopeFAILretained;onlyBasics/Re6Zrremaining. Sourcefrozen.
