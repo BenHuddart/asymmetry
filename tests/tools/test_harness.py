@@ -35,6 +35,25 @@ def test_required_knowledge_files_exist() -> None:
     assert harness.find_knowledge_base_violations() == []
 
 
+def test_packaged_skill_is_within_its_frozen_line_count() -> None:
+    harness = _load_harness()
+
+    assert harness.find_skill_growth_violations() == []
+
+
+def test_skill_growth_check_reports_a_skill_above_its_baseline(tmp_path: Path) -> None:
+    skill_md = tmp_path / "SKILL.md"
+    skill_md.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    harness = _load_harness()
+
+    assert harness.find_skill_growth_violations(skill_md, max_lines=3) == []
+    failures = harness.find_skill_growth_violations(skill_md, max_lines=2)
+
+    assert len(failures) == 1
+    assert failures[0].path == skill_md
+    assert "3 lines, above the frozen baseline of 2" in failures[0].message
+
+
 def test_core_boundary_check_reports_gui_imports(tmp_path: Path) -> None:
     core_root = tmp_path / "core"
     core_root.mkdir()

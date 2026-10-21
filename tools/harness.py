@@ -229,6 +229,11 @@ REQUIRED_KNOWLEDGE_FILES = (
     "docs/QUALITY.md",
     "docs/PLANS.md",
 )
+# The packaged agent skill grows by accretion: each evaluation failure tempts a
+# new paragraph. Its line count is frozen here and may only fall, so a new rule
+# replaces or merges an old one. Lower the baseline whenever the file shrinks.
+SKILL_MD = SRC_ROOT / "resources" / "skills" / "asymmetry-analysis" / "SKILL.md"
+SKILL_MD_MAX_LINES = 1706
 LINT_TARGETS = ("src", "tests", "tools")
 PORTING_REQUIRED_STUDY_FILES = (
     "README.md",
@@ -876,6 +881,27 @@ def find_knowledge_base_violations(root: Path = ROOT) -> list[HarnessFailure]:
     return failures
 
 
+def find_skill_growth_violations(
+    skill_md: Path = SKILL_MD, max_lines: int = SKILL_MD_MAX_LINES
+) -> list[HarnessFailure]:
+    """Return a failure when the packaged skill outgrows its frozen line count."""
+
+    lines = len(skill_md.read_text(encoding="utf-8").splitlines())
+    if lines <= max_lines:
+        return []
+    return [
+        HarnessFailure(
+            skill_md,
+            0,
+            (
+                f"{lines} lines, above the frozen baseline of {max_lines} "
+                "(SKILL_MD_MAX_LINES in tools/harness.py). Merge the new guidance into "
+                "the rule it refines, or delete one it supersedes, instead of adding text."
+            ),
+        )
+    ]
+
+
 def find_porting_policy_violations(root: Path = ROOT) -> list[HarnessFailure]:
     """Return porting-study layout issues that break the study-first workflow."""
 
@@ -1165,6 +1191,7 @@ def run_structural_checks() -> int:
 
     failures = [
         *find_knowledge_base_violations(),
+        *find_skill_growth_violations(),
         *find_porting_policy_violations(),
         *find_dependency_boundary_violations(),
         *find_core_boundary_violations(),

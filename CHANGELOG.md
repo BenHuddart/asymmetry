@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The packaged `asymmetry-analysis` skill is consolidated** from 1,948 to
+  1,706 lines. It now gives one procedure for sending the final reply (copy
+  the output of `asymmetry audit summary.md --prepare-reply` unchanged), states
+  each caution once where it applies, and phrases rules drawn from single
+  evaluation cases as general physics. `tools/harness.py structural` freezes
+  its line count so later guidance replaces text rather than adding to it.
 - Report audits retain parameter units for uncertainties, including dimensionless
   critical exponents. Trend diagnostics keep flagged adjacent temperatures visible,
   and survey guidance requires validation of extreme logger offsets before a

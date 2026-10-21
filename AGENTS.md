@@ -107,6 +107,8 @@ repo-local docs and use this file as the map.
   PySide's binding ties the shared `QScreen` wrapper's lifetime to the
   caller; see `docs/investigations/tahoe-qscreen-uaf.md`), no `test_*.py`
   file outside a sanctioned `tests/<subpackage>/` (see `tests/README.md`),
+  no growth of the packaged agent skill's `SKILL.md` past its frozen line
+  count (`SKILL_MD_MAX_LINES`: merge or replace a rule rather than add one),
   and no docs screenshot drift (every image referenced from the .rst sources
   maps to a registered scenario and vice versa, within the per-image size
   budget).
