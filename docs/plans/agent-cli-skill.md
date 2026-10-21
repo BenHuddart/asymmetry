@@ -2812,6 +2812,13 @@ directory, scan) groups, two end states change, where `audit` would now hold the
 replies: Haiku main-arm corannulene (the 7 kG line, the rubric's miss) and Luna
 round 9 corannulene (the cold 15.5 kG line).
 
+Rejected after replay (review on #371): a χ²ᵣ cutoff on the local one-line
+fit. Every window the test accepts on the stored scans lies on a real line,
+at χ²ᵣ 1.3–43; TCNQ's 3.1 kG line fits at 15–43 (high statistics, not quite
+Lorentzian), and benzene's 29.5 kG and corannulene's cold 15.5 kG lines at
+10–18. The RESONANCE limit of 8 would drop all three; any cutoff above 43
+rejects nothing stored.
+
 ## Open questions for the maintainer
 
 From round 2 (2026-10-09), for Ben:
