@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Opening a project window is faster: the application stylesheet is applied
+  once the window is built rather than during construction, so the first
+  window builds about three times faster.
+
 - Report audits retain parameter units for uncertainties, including dimensionless
   critical exponents. Trend diagnostics keep flagged adjacent temperatures visible,
   and survey guidance requires validation of extreme logger offsets before a
