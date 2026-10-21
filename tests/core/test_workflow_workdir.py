@@ -24,6 +24,7 @@ from asymmetry.core.workflow.workdir import (
     WORKDIR_NAME,
     ReducedEntry,
     RunSelection,
+    StaleWorkDirError,
     WorkDir,
     WorkDirMismatchError,
     file_fingerprint,
@@ -477,8 +478,17 @@ def test_a_reduced_run_from_an_older_schema_is_refused_until_reduced_again(reduc
     workdir.write_reduced(dataset, entry)
     _restamp(workdir.reduced_dir / f"{entry.run_number}.json", SCHEMA - 1)
 
-    with pytest.raises(KeyError, match="reduced .* by an older asymmetry"):
+    with pytest.raises(StaleWorkDirError, match="reduced .* by an older asymmetry"):
         workdir.reduced(entry.run_number)
+
+
+def test_a_survey_from_an_older_schema_is_refused(reduced) -> None:
+    workdir, _dataset, _entry, _path, _grouping, _settings = reduced
+    workdir.write_survey({"runs": [], "scans": []})
+    _restamp(workdir.survey_path, SCHEMA - 1)
+
+    with pytest.raises(StaleWorkDirError, match="survey it again"):
+        workdir.read_survey()
 
 
 def test_the_digest_folds_in_the_schema(reduced, monkeypatch) -> None:
@@ -495,7 +505,7 @@ def test_a_series_from_an_older_schema_is_refused(reduced) -> None:
     workdir.write_series("scan", {"name": "scan", "kind": "series", "results": []})
     _restamp(workdir.series_path("scan"), SCHEMA - 1)
 
-    with pytest.raises(KeyError, match="Series 'scan' was written by an older asymmetry"):
+    with pytest.raises(StaleWorkDirError, match="Series 'scan' was written by an older asymmetry"):
         workdir.read_series("scan")
 
 

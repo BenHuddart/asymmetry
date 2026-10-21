@@ -146,12 +146,14 @@ def main(argv: list[str] | None = None) -> None:
         _collapse_repeated_warnings()
 
     # The CLI's error boundary: the two failure modes the command contract
-    # promises. A UserError is something the caller can fix, so it prints one
-    # line; anything else is a bug, so it prints the traceback and exits 2
-    # rather than pretending the run succeeded.
+    # promises. A UserError or a stale work-directory record is something the
+    # caller can fix, so it prints one line; anything else is a bug, so it
+    # prints the traceback and exits 2 rather than pretending the run succeeded.
+    from asymmetry.core.workflow.workdir import StaleWorkDirError
+
     try:
         _logged(args, argv)
-    except UserError as exc:
+    except (UserError, StaleWorkDirError) as exc:
         print(f"asymmetry: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
     except Exception:

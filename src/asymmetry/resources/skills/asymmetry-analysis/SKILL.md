@@ -1298,7 +1298,9 @@ fold a real line into a false low-frequency line or reverse an apparent shift.
 The CLI rejects rebinning that aliases a detected line in the original record.
 Use the printed safe factor or retain native bins and shorten the analysis
 window; a plot zoom alone does not change the stored spectrum. Lack of a line
-after averaging is not evidence it was absent at native resolution.
+after averaging is not evidence it was absent at native resolution. Pass
+`reduce --allow-aliasing` only to average away a line you have already measured
+at native resolution, and say so in the report.
 
 **Preserve context and calibration per measurement.** Read supplied experiment
 notes before choosing a mechanism. An established magnetic experiment calls for

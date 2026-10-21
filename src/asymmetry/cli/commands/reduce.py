@@ -52,6 +52,14 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     add_reduction_arguments(parser)
     parser.add_argument("--rebin", type=int, default=1, help="Merge this many bins (default: 1)")
     parser.add_argument(
+        "--allow-aliasing",
+        action="store_true",
+        help=(
+            "Rebin even when a detected line lies above the new Nyquist frequency, "
+            "deliberately averaging a known fast line away to study slower relaxation"
+        ),
+    )
+    parser.add_argument(
         "--tmin",
         type=float,
         default=None,
@@ -145,7 +153,7 @@ def run(args: argparse.Namespace) -> None:
             recomputed = False
         else:
             try:
-                dataset = reduce_run(dataset_in.run, settings)
+                dataset = reduce_run(dataset_in.run, settings, allow_aliasing=args.allow_aliasing)
             except ValueError as exc:
                 raise UserError(str(exc)) from None
             row = build_run_row(

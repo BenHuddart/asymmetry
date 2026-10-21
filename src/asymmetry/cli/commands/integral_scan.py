@@ -402,13 +402,18 @@ def _render(result: dict, settings, notes: list[str]) -> str:
             )
             for name, value in fit["parameters"].items()
         ]
-        for name in fit["parameters"]:
+        couplings = [
+            model.component_param_name(index, local)
+            for index, component in enumerate(model.components)
+            for local in component.param_info
+            if local in _HYPERFINE_COUPLINGS
+        ]
+        for name in couplings:
             if (
-                units.get(name) == "MHz"
-                and name not in fit["fixed"]
+                name not in fit["fixed"]
                 and name not in fit["params_at_bound"]
                 and fit["success"]
-                and 0 < fit["uncertainties"][name] < abs(fit["parameters"][name])
+                and 0 < _DETERMINED_ERRORS * _scaled(fit, name) < abs(fit["parameters"][name])
             ):
                 notes.append(
                     f"CONDITIONAL COUPLING: {name} = {fit['parameters'][name]:.6f} ± "
@@ -573,6 +578,12 @@ _RESOLVED_FIT = 8.0
 
 #: Centres or widths closer than this many combined errors are the same.
 _DISTINCT_ERRORS = 2.0
+
+#: Muon and proton hyperfine couplings (MHz) the field-scan models fit: a
+#: determined one — this many scaled errors from zero — is a reportable,
+#: model-conditioned estimate.
+_HYPERFINE_COUPLINGS = frozenset({"A_hf", "A_mu", "A_p", "A"})
+_DETERMINED_ERRORS = 2.0
 
 #: Half-widths of a window around a fitted line: room for both flanks and some
 #: background on each side.

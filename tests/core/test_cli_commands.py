@@ -3053,6 +3053,54 @@ def test_integral_fit_table_keeps_raw_and_scaled_uncertainties(chi2, expected_er
     assert "(at bound)" in next(line for line in text.splitlines() if line.startswith("f "))
 
 
+@pytest.mark.parametrize(
+    ("expression", "parameters", "uncertainties", "noted"),
+    [
+        ("MuRepolarisation", {"a_Mu": 10.0, "A_hf": 1516.0, "a_Dia": 5.0}, 80.0, "A_hf"),
+        ("MuRepolarisation", {"a_Mu": 10.0, "A_hf": 300.0, "a_Dia": 5.0}, 80.0, None),
+        ("Redfield", {"D": 20.0, "nu": 150.0, "m": 1.0}, 1.0, None),
+    ],
+)
+def test_conditional_coupling_notes_only_a_determined_hyperfine_coupling(
+    expression, parameters, uncertainties, noted
+) -> None:
+    from asymmetry.cli.commands.integral_scan import _render
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    result = {
+        "name": "scan",
+        "scan": {"points": [], "order_key": "field", "method": "integral"},
+        "period_field_offset": None,
+        "fit": {
+            "expression": expression,
+            "parameters": parameters,
+            "uncertainties": dict.fromkeys(parameters, uncertainties),
+            "fixed": [],
+            "params_at_bound": [],
+            "success": True,
+            "reduced_chi_squared": 4.0,
+        },
+        "scan_path": "scans/scan.json",
+        "plot": None,
+    }
+    notes = [
+        line
+        for line in _render(result, ReductionSettings(), []).splitlines()
+        if line.startswith("CONDITIONAL COUPLING:")
+    ]
+    # Errors are quoted scaled by sqrt(chi2_red): 80 -> 160 MHz.
+    assert notes == (
+        [
+            f"CONDITIONAL COUPLING: {noted} = 1516.000000 ± 160.000000 MHz, chi2_red 4.000."
+            " Report this model-conditioned estimate and error with its fit quality even when"
+            " the overall fit is poor; it does not establish a microscopic coupling or site"
+            " assignment."
+        ]
+        if noted
+        else []
+    )
+
+
 def _failed_resonance_fit(**changes) -> dict:
     return {
         "success": False,
@@ -4070,6 +4118,36 @@ def test_wizard_rejects_nonpositive_worker_budget(tmp_path, capsys):
     assert "--workers must be positive" in capsys.readouterr().err
 
 
+def test_audit_of_an_older_schema_workdir_is_a_user_error(
+    workflow_folder, fitting_workdir, tmp_path, capsys
+):
+    root, run = fitting_workdir, SCAN_RUNS[0]
+    cli.main(
+        [
+            "fit",
+            str(workflow_folder),
+            "--run",
+            str(run),
+            "--recipe",
+            "relax",
+            "--workdir",
+            str(root),
+        ]
+    )
+    sidecar = root / "reduced" / f"{run}.json"
+    sidecar.write_text(json.dumps(json.loads(sidecar.read_text()) | {"schema": 4}))
+    summary = tmp_path / "summary.md"
+    summary.write_text("A report.")
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as stop:
+        cli.main(["audit", str(summary), "--workdir", str(root)])
+    assert stop.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("asymmetry: Run ") and "reduce it again" in err
+    assert "Traceback" not in err
+
+
 @pytest.mark.parametrize(
     ("periods", "instrument"),
     [
@@ -4176,12 +4254,16 @@ def test_a_flagged_next_temperature_cannot_promote_a_distant_point_to_adjacent()
     assert "minus next" not in notes
     assert "ADJACENT ENDPOINT: nu" in notes
     assert "run 1 (temperature=10)" in notes
+    assert "with fitted nu = 0.080000 ± 0.001000" in notes
     assert "failed" in notes
     assert "SPECTRAL ENDPOINTS" in notes
     rows[1]["flags"] = []
     notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu"]))
     assert "next measured temperature, run 1" in notes
     assert "0.080000" in notes
+    rows[1] |= {"nu": None, "nu_err": None, "flags": ["failed"]}
+    notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu"]))
+    assert "with no fitted value" in notes
 
 
 def test_critical_divergence_exponent_is_explicitly_dimensionless():

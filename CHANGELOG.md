@@ -44,7 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limitations, and final image review retires the first-turn control manifest.
 
 - User-requested reduction binning rejects factors that would alias detected
-  native spectral lines. Reply preparation emits only the passed report body
+  native spectral lines unless ``reduce --allow-aliasing`` asks to average a
+  known fast line away. Reply preparation emits only the passed report body
   and fails with nonzero status when checks remain; the evaluation runner
   verifies these raw bytes without substituting a saved report. Acquisition
   identities, conditional coupling estimates and adjacent cold-end excesses
@@ -105,7 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   large errors no longer hide precise amplitudes or widths from summaries and
   plots. Cold endpoint differences include combined errors; fitted linear
   coefficients retain their units. Work-directory schema 5 requires older
-  reduced caches and series to be regenerated.
+  reduced caches, surveys and series to be regenerated; any command, the audit
+  included, says which to rerun instead of failing with a traceback.
 
 - **Preliminary fits distinguish estimates from interpretations.** The agent
   CLI reports inconclusive envelope comparisons, directs TF scans to their

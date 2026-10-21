@@ -607,7 +607,8 @@ directory.
                     [--background none|tail_fit|range[:FIRST:LAST]]
                     [--t0-offset BINS] [--t-good-offset BINS]
                     [--period RED|GREEN|N|green-red] [--rebin REBIN]
-                    [--tmin TMIN] [--tmax TMAX] [--plot-tmax PLOT_TMAX]
+                    [--allow-aliasing] [--tmin TMIN] [--tmax TMAX]
+                    [--plot-tmax PLOT_TMAX]
                     [--plot] [--json] [--workdir WORKDIR]
                     [--instrument NAME]
                     folder
@@ -1259,8 +1260,10 @@ A completed Gaussian-width comparison should retain its measured values and
 onset/plateau separately from exponential damping, even when material identity
 is uncertain. Successful command results remain evidence despite stderr
 warnings; a failed retry does not erase a completed recommendation.
-Determined conditional coupling estimates and significant coldest-versus-next
-excesses remain reportable with their model and fit-quality limitations.
+A muon or proton hyperfine coupling (``A_hf``, ``A_mu``, ``A_p``, or a
+diffusion model's ``A``) fitted at least two scaled errors from zero prints a
+``CONDITIONAL COUPLING`` note. That estimate, and significant coldest-versus-next
+excesses, remain reportable with their model and fit-quality limitations.
 An ``ADJACENT ENDPOINT`` diagnostic also retains the actual next temperature
 when its fit is flagged. Describe that pair and its limitation; a bound-pinned
 point cannot establish a significant measured upturn and must not be replaced
@@ -2038,3 +2041,7 @@ through the new Nyquist boundary and prints a safe maximum factor. Use a smaller
 factor, a shorter fit window, or ``--plot-tmax`` for display-only zoom. A high
 applied field alone does not forbid averaging a nonprecessing LF trace; the
 check protects measured lines, rather than assuming a Larmor line is present.
+To average a known fast line away on purpose, for example to study slower
+relaxation beneath a high-TF diamagnetic line, pass ``--allow-aliasing``:
+"Rebin even when a detected line lies above the new Nyquist frequency,
+deliberately averaging a known fast line away to study slower relaxation".

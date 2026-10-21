@@ -389,3 +389,6 @@ def test_reduction_rejects_aliasing_before_returning_a_cached_spectrum() -> None
     with pytest.raises(ValueError, match="would alias a detected"):
         reduce_run(run, ReductionSettings(rebin=10))
     assert reduce_run(run, ReductionSettings(rebin=2)).n_points > 0
+    # Averaging a known fast line away is a deliberate choice the caller can make.
+    allowed = reduce_run(run, ReductionSettings(rebin=10), allow_aliasing=True)
+    assert allowed.n_points == reduce_run(run, ReductionSettings()).n_points // 10

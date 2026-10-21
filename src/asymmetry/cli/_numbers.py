@@ -618,9 +618,11 @@ def unstated(draft: str, log_text: str) -> list[str]:
                 "limitation; a different parameter or distant warm point is not that check."
             )
     for name in dict.fromkeys(re.findall(r"^CONDITIONAL COUPLING: (\w+) =", log_text, re.M)):
+        # A_mu is also written A_μ or Aµ; the error as ± e, +/- e or 123.4(5).
+        spelled = re.escape(name).replace("mu", "(?:mu|μ|µ)").replace("_", "_?")
         if not re.search(
-            rf"\b{re.escape(name)}\b\s*(?:[|=:]|is|of)?\s*[-−+]?\d+(?:\.\d+)?"
-            rf"\s*(?:MHz)?\s*(?:±|\+/-)",
+            rf"\b{spelled}(?!\w)[^.;\n]{{0,40}}?[-−+]?\d+(?:\.\d+)?"
+            rf"\s*(?:\(\d+\)|(?:MHz)?\s*(?:±|\+/-))",
             draft,
             re.I,
         ):

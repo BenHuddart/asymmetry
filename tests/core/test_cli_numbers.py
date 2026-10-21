@@ -9,6 +9,7 @@ import pytest
 
 from asymmetry import cli
 from asymmetry.cli._numbers import unverified_numbers
+from asymmetry.core.workflow.workdir import SCHEMA
 from tests.core.conftest import ALL_RUNS, SCAN_RUNS, ZF_RUNS
 
 _LOG = """$ asymmetry fit-series runs --runs 102-106
@@ -541,7 +542,7 @@ def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch
         "runs": [11, 12, 13],
         "values": [-1.0, 0.0, 1.0],
     }
-    survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
+    survey = {"schema": SCHEMA, "folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (workdir / "manifest.json").write_text(_manifest("data"), encoding="utf-8")
     draft = tmp_path / "summary.md"
@@ -641,7 +642,7 @@ def test_a_hold_is_restated_when_unprinted_numbers_are_listed_too(
         "runs": [11, 12, 13],
         "values": [-1.0, 0.0, 1.0],
     }
-    survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
+    survey = {"schema": SCHEMA, "folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (workdir / "manifest.json").write_text(_manifest("data"), encoding="utf-8")
     draft = tmp_path / "summary.md"
@@ -673,7 +674,7 @@ def test_each_survey_is_held_against_its_own_work_directory(
         root = tmp_path / name
         (root / "fits").mkdir(parents=True)
         (root / "cli-output.log").write_text("$ asymmetry survey data\n", encoding="utf-8")
-        survey = {"folder": name, "runs": [], "scans": [], "notes_scans": notes}
+        survey = {"schema": SCHEMA, "folder": name, "runs": [], "scans": [], "notes_scans": notes}
         (root / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
         (root / "manifest.json").write_text(_manifest(name), encoding="utf-8")
     for run in (11, 12, 13):
@@ -730,7 +731,7 @@ def test_review_edge_cases_of_the_audit(tmp_path: Path) -> None:
     # A precession series with a held frequency does not fit a lineless run it failed on.
     root = tmp_path / "wd"
     (root / "series").mkdir(parents=True)
-    survey = {"runs": [{"run_number": 7, "precession": "none"}]}
+    survey = {"schema": SCHEMA, "runs": [{"run_number": 7, "precession": "none"}]}
     (root / "survey.json").write_text(json.dumps(survey))
     series = {
         "kind": "series",
@@ -781,7 +782,15 @@ def test_all_instrument_survey_uses_each_instruments_fit_coverage(tmp_path):
         (root / "fits").mkdir(parents=True)
         (root / "manifest.json").write_text(_manifest("same-data", instrument))
     (roots[0] / "survey.json").write_text(
-        json.dumps({"folder": "same-data", "runs": [], "scans": [scan], "notes_scans": []})
+        json.dumps(
+            {
+                "schema": SCHEMA,
+                "folder": "same-data",
+                "runs": [],
+                "scans": [scan],
+                "notes_scans": [],
+            }
+        )
     )
     assert unfitted_scans(roots)[0]
     for run in scan["runs"]:
@@ -896,6 +905,23 @@ def test_conditional_coupling_needs_its_estimate_and_error() -> None:
     assert not unstated(
         "A_hf = 1516.298738 ± 80.450183 MHz is model-conditioned; the fit is poor.", log
     )
+
+
+@pytest.mark.parametrize(
+    "draft",
+    [
+        "A_mu = 123.4(5) MHz, conditional on the poor fit.",
+        "A_μ = 123.4 ± 0.5 MHz, conditional on the poor fit.",
+        "Aµ was 123 ± 1 MHz in this model.",
+        "The fitted A_mu was 123.4 +/- 0.5 MHz.",
+    ],
+)
+def test_conditional_coupling_accepts_common_value_and_error_spellings(draft) -> None:
+    from asymmetry.cli._numbers import unstated
+
+    log = "CONDITIONAL COUPLING: A_mu = 123.412345 ± 0.512345 MHz, chi2_red 9.000."
+    assert not unstated(draft, log)
+    assert unstated("A_mu could not be interpreted.", log)
 
 
 def test_report_acquisition_and_sample_identities_are_not_reference_labels(

@@ -151,6 +151,18 @@ class RunSelection:
         return str(self.folder) if self.instrument is None else f"{self.folder} ({self.instrument})"
 
 
+class StaleWorkDirError(KeyError):
+    """A stored record was written under an older work-directory schema.
+
+    A :class:`KeyError`, so a caller asking whether a record is usable treats
+    it as absent; :func:`asymmetry.cli.main` reports it as a user error, since
+    the remedy is to rerun the command that wrote it.
+    """
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
 class WorkDirMismatchError(Exception):
     """A work directory was asked to serve runs that are not the ones it holds.
 
@@ -446,8 +458,18 @@ class WorkDir:
         return self.survey_path
 
     def read_survey(self) -> dict[str, Any]:
-        """The stored survey payload; :class:`FileNotFoundError` when none was written."""
-        return json.loads(self.survey_path.read_text(encoding="utf-8"))
+        """The stored survey payload.
+
+        :class:`FileNotFoundError` when none was written, and
+        :class:`StaleWorkDirError` when an older schema wrote it.
+        """
+        data = json.loads(self.survey_path.read_text(encoding="utf-8"))
+        if data["schema"] != SCHEMA:
+            raise StaleWorkDirError(
+                f"The survey in {self.root} was written by an older asymmetry "
+                f"(work-directory schema {data['schema']}, now {SCHEMA}); survey it again."
+            )
+        return data
 
     # -- manifest -----------------------------------------------------------
 
@@ -518,7 +540,7 @@ class WorkDir:
             raise KeyError(f"Run {run_number} has not been reduced into {self.root}")
         data = json.loads(json_path.read_text(encoding="utf-8"))
         if data["schema"] != SCHEMA:
-            raise KeyError(
+            raise StaleWorkDirError(
                 f"Run {run_number} was reduced into {self.root} by an older asymmetry "
                 f"(work-directory schema {data['schema']}, now {SCHEMA}); reduce it again."
             )
@@ -656,7 +678,7 @@ class WorkDir:
             raise KeyError(f"No series {name!r} in {self.series_dir}")
         data = json.loads(path.read_text(encoding="utf-8"))
         if data["schema"] != SCHEMA:
-            raise KeyError(
+            raise StaleWorkDirError(
                 f"Series {name!r} was written by an older asymmetry (work-directory schema "
                 f"{data['schema']}, now {SCHEMA}); fit it again."
             )
@@ -814,6 +836,7 @@ __all__ = [
     "WORKDIR_NAME",
     "ReducedEntry",
     "RunSelection",
+    "StaleWorkDirError",
     "WorkDir",
     "WorkDirMismatchError",
     "describe_instruments",
