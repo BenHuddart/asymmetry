@@ -2186,3 +2186,6 @@ Confirmation7 now17/24scored:LFbenzene6/6Musts1/5Shoulds science/number/unit/cop
 
 
 Confirmation7 now19/24scored:AFM5/5literalMusts2/3Shoulds science/copyPASSbutindependentmagneticscopeFAIL(fourSCgaplaws/phaseagnosticcontext,no8Talias);LiFeAs8/8Musts4/6Shoulds science/copyPASSwithpreservedonsetjudgement. Totals104/109Musts,16/19science,18/19copy,15/19combined,19/19boundary,39/76Shoulds. Sourcefrozenremaining5.
+
+
+Confirmation7 now20/24scored:copper6/6Musts2/3Shoulds science/number/unit/copy/boundaryPASS,actualEMUcold-nextZFupturnrestored. Totals110/115Musts,17/20science,19/20copy,16/20combined,20/20boundary,41/79Shoulds;independentAFMscopeFAIL. Remaining4sourcefrozen.

@@ -1,5 +1,5 @@
 {
-  "status": "running; 19/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 20/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -3393,27 +3393,228 @@
       ],
       "scored_at": "2026-10-21T02:33:16.687460+00:00",
       "reply_matches_saved_file": true
+    },
+    "copper-diffusion": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Splits the folder into its TF, ZF, and LF run groups rather than treating it as one undifferentiated series.",
+          "pass": true,
+          "evidence": "TF/ZF/LFgroupsseparate, overlapsharedrunsnotdoublecounted, measuredTFexcludedfromLFscans."
+        },
+        {
+          "requirement": "Separates the EMU (2010) and ARGUS (2024) runs as two distinct measurement campaigns on the same sample.",
+          "pass": true,
+          "evidence": "EMU20882–20917 andARGUS76924–76961 separatecampaigncalibrations/axes."
+        },
+        {
+          "requirement": "Reports a change in TF line shape (Lorentzian-like to Gaussian-like) as temperature decreases, from at least one of the two TF series.",
+          "pass": true,
+          "evidence": "EMU100Gcold99KGaussian,warm253–288Kexponential; ARGUS20Gcoldstrongerdamping/conditionalGaussian vswarmexponential reported."
+        },
+        {
+          "requirement": "Reports the ZF spectra as showing Kubo-Toyabe-like behaviour and states whether the relaxation (e.g. the fluctuation rate ν) at the lowest-temperature run differs from the next-lowest — the low-T upturn — whether or not it interprets it.",
+          "pass": true,
+          "evidence": "KTdip/recovery, explicitactualEMUcold20887nu.101149 versusnext20886nu.0185896, cold-endupturnnamedseparatewarmingrise."
+        },
+        {
+          "requirement": "Identifies the fixed-temperature, swept-field runs as the LF/QLCR data, distinct from the temperature scans.",
+          "pass": true,
+          "evidence": "Fixed40KfieldscansQLCR/empirical79GdipanalysedseparatelyfromTseries."
+        },
+        {
+          "requirement": "Contains no hop rate, activation energy, or rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Allrates/conditionalArrheniusEavalues/currentCLI only, no diffusioncoefficient/microscopiccoupling invented."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares a hop rate or dynamics trend derived from TF against one derived from ZF, as the worksheet asks.",
+          "pass": false,
+          "evidence": "TFandZFmotionsdescribedqualitatively butno actualTFhoprateestimatecomparedtoZFdynamicrate asrequested."
+        },
+        {
+          "requirement": "Keeps the EMU and ARGUS scans on separate axes and notes their different fields, step sizes and ranges, rather than merging both eras' runs into one T-axis.",
+          "pass": true,
+          "evidence": "Instrumentaxes,fields20/100Gandtemperature/ranges separate, noeramerging."
+        },
+        {
+          "requirement": "Flags any run whose logged sample temperature deviates substantially from its nominal set-point.",
+          "pass": true,
+          "evidence": "Explicitlarge logged/setpointoffsets andtimingprovenancelimitations."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. DirectCLIandscanJSONvalues/ranges/errorschecked. No audit/draft/reportdisplayprovenance, no handenergy/ratecalculation.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "6/6 science andcopyPASS; coldest-nextprompt restorespreviousmissedEMUupturn. DenseGaussianKTchosenphysically andQLCRlocalfitsdone. No validatedquantitativeTF/ZFhopratecomparison.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all67 completed commands inspected. All67commands andsummary-onlyeditsinspected,4reviewhashesverified; actualEMUdynamicnuplot coldexcess/failedflatArrheniuscurve inspected. No physicalarithmetic.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 2101.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 10,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/copper-diffusion/data --series argus-zf-dynamic --model Arrhenius --param nu --exclude 76936,76937,76958-76960,76925 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/copper-diffusion/data --series emu-zf-dynamic --model Arrhenius --param nu --exclude 20909-20917,20882 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/copper-diffusion/data --series emu-zf-dynamic --model Arrhenius --param nu --xmin 38.2575 --xmax 109.1004 --exclude 20909-20917,20882,20887 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/copper-diffusion/data --series argus-zf-dynamic --model Arrhenius --param nu --xmin 44.4468 --xmax 147.1415 --exclude 76936,76937,76958-76960,76925 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/copper-diffusion/data --runs 20887,20886,20917 --alpha-from 20883 --background range --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/copper-diffusion/data --run 76955 --geometry LF --scope lf-dynamics --plot'",
+          "exit_code": 130
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry integral-scan /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/copper-diffusion/data --runs 76939,76941-76955 --name argus-dip-60-100 --alpha-from 76928 --order field --model \"LorentzianLCR + Linear\" --xmin 60 --xmax 100 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "16fa8dee322ce0889b4e340df59bd6422f2c460823fc78d8839a5cf858002768",
+      "audited_file_sha256": "16fa8dee322ce0889b4e340df59bd6422f2c460823fc78d8839a5cf858002768",
+      "rubric_sha256": "4a0d496f6e89d82feb628d6378c6019071fd8813790f1b6b70a83a6e1e4459c6",
+      "staged_skill_sha256": "166e50451f0545f41f184dca6279df8306d5585ddfb2cbd0216011a3712e0f96",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/copper-diffusion",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "ARGUSactualnextcold22.9047K fitflagged/skipped, cannotinterpret11.67→44Ktableasadjacent; nofalseexplicitadjacencyclaimmadeforthatcampaign.",
+        "EMUrestrictedArrheniuschi6.897/ARGUSchi8.465 conditional, fullspanboundfitfailed; noabsolutediffusionbarrierestablished.",
+        "ARGUSamplitudesfixedfromstaticwizard, dynamicfitspuriousreseedingandtimezeroattributeconflict limitprecision.",
+        "MainEMUcoldfitgoodtextdespitechi1.109poorverdictinconsistencyrecorded; scalarquantity/sourceunchanged."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        2,
+        4,
+        5,
+        6,
+        8,
+        9,
+        12,
+        13,
+        14,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        30,
+        31,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        47,
+        48,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        58,
+        60
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "16fa8dee322ce0889b4e340df59bd6422f2c460823fc78d8839a5cf858002768",
+        "summary.md": "16fa8dee322ce0889b4e340df59bd6422f2c460823fc78d8839a5cf858002768",
+        "transcript.jsonl": "f050535c379164f8e30801143f561aa1483a8bbcf3e3d2c0bb9fc0684b34d80e",
+        "commands.txt": "5ba85111d515d887258900afc4669e4f83eba33ed34f128556deb0d3dc5a6dce",
+        "cost.json": "e80ed773d89835446959fa05ababa3066eff56f1fde18851281b94f2455353ba",
+        "image-inputs.json": "ffca90d8293898004e2d8c11d32b6e89649e1691724b07d801d346f626ab52e8"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/emu-zf-dynamic-trend-nu.png",
+          "snapshot_path": "review-images/638cbd878e3876af9207094cc676164a3dec983f3b69ebcd2a4a12a6add306f7.png",
+          "bytes": 36839,
+          "sha256": "638cbd878e3876af9207094cc676164a3dec983f3b69ebcd2a4a12a6add306f7",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/emu-tf-line-trend-sigma.png",
+          "snapshot_path": "review-images/12891073f6922e4847bf4a6b97ba47abd146922da7e17364c8cd58a483e7500d.png",
+          "bytes": 27725,
+          "sha256": "12891073f6922e4847bf4a6b97ba47abd146922da7e17364c8cd58a483e7500d",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/emu-dip-cubic.png",
+          "snapshot_path": "review-images/99863e3d79fedda76e09b4abee987dbb4c611af4ee43ae3be6da40dab0fc147f.png",
+          "bytes": 44229,
+          "sha256": "99863e3d79fedda76e09b4abee987dbb4c611af4ee43ae3be6da40dab0fc147f",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/argus-dip-cubic.png",
+          "snapshot_path": "review-images/77bfb6ea72480fe0bcd306d9187bbfd9cdbf7169457b9b296c49f807d37daf4b.png",
+          "bytes": 43927,
+          "sha256": "77bfb6ea72480fe0bcd306d9187bbfd9cdbf7169457b9b296c49f807d37daf4b",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T02:34:05.833756+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
-    "copper-diffusion",
     "basics",
     "corannulene-alc",
     "benzene-high-tf",
     "benzene-alc"
   ],
   "totals": {
-    "scored": 19,
+    "scored": 20,
     "target": 24,
-    "scientific_pass": 16,
-    "must_pass": 104,
-    "must_total": 109,
-    "should_pass": 39,
-    "should_total": 76,
-    "exact_copy_pass": 18,
-    "literal_copy_pass": 18,
-    "combined_pass": 15,
-    "boundary_pass": 19
+    "scientific_pass": 17,
+    "must_pass": 110,
+    "must_total": 115,
+    "should_pass": 41,
+    "should_total": 79,
+    "exact_copy_pass": 19,
+    "literal_copy_pass": 19,
+    "combined_pass": 16,
+    "boundary_pass": 20
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics unchanged. Round17 makes successful --prepare-reply stdout report-only and nonzero on failure; runner verifies exit status and exact raw stdout without normalization or saved-file substitution.",
