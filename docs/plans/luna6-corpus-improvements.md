@@ -2084,3 +2084,6 @@ Round16 validation COMPLETE:438 focused and5940 fast passed (fast10skip/1xfail);
 
 
 Fresh full24 confirmation6 LIVE at /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6; implementation5fb689af19ae652deceb4f7a45d1aec5ceaa246c, exec87556, wavePID639182, supervisor639173. Parent console confirmation6-wave.log. All24 fresh first attempts Codex/gpt-6-luna, unchanged scientific rubrics and two_turn_image_review_v2 semantics, strict raw-byte actual replies. Max12 cases, wizard environment default1 (not ceiling), numericalthreads1,30s resource samples;05:59:50UTC supervisor termination/interruption evidence retained. Freeze CLI/skill/runner/rubrics through ALL24 despite early failures. Source403entries and skill/runner/rubric hashes stored in manifest/metadata. Round16 validation logs copied persistently. Score actual replies into luna6-corpus-confirmation6.json; helper records manual judgements, not automatic grades. No broad tests alongside evals. Deadline/cutoff unchanged.
+
+
+Confirmation6 now1/24 scored:spinPeierls6/6Musts,2/3Shoulds,science/number/unit/boundaryPASS,strictcopyFAILone-wordpost-preparationrewrite(the→its). ActualZFendpointshapesandall26runcoverageverified;dimerisation/singlet-tripletinterpretationstillmissing. Source remains frozen through all24;recorded snapshot/hash/caveats retained.

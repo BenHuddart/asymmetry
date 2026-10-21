@@ -1,5 +1,5 @@
 {
-  "status": "running; 0/24 scored; source frozen; finish all cases despite failures",
+  "status": "running; 1/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -132,7 +132,152 @@
     "authorization": "User resumed improvement/evaluation loop until 07:00 BST 21 October (06:00 UTC); trial twelve cases with one wizard worker; score fixed rubrics and commit each repair before evaluating.",
     "deadline_utc": "2026-10-21T06:00:00Z"
   },
-  "cases": {},
+  "cases": {
+    "spin-peierls": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the TF 100 G runs from the ZF scan rather than fitting them as one series.",
+          "pass": true,
+          "evidence": "Experiment separately enumerates the16ZF and10 measured100GTF runs; separate ZF/TF models and results."
+        },
+        {
+          "requirement": "States what was used for alpha (a TF 100 G run, named), rather than silently assuming 1.0.",
+          "pass": true,
+          "evidence": "Calibration names run29929 and measured alpha0.9717 from its100G precession, applied to all26."
+        },
+        {
+          "requirement": "Reports on the full run range actually present (29919-29944), not only the subset the worksheet happens to tabulate.",
+          "pass": true,
+          "evidence": "Both explicit run lists cover29919–29944, including low-temperature undocumented runs; none dropped."
+        },
+        {
+          "requirement": "Does not report findings for runs 29945-29951 as if they were analyzed — they are not present in this data folder.",
+          "pass": true,
+          "evidence": "Only the26 surveyed runs are claimed; no results for nonexistent29945–29951."
+        },
+        {
+          "requirement": "Reports a change in ZF line shape between the highest- and lowest-temperature runs actually available.",
+          "pass": true,
+          "evidence": "ZF endpoint comparison explicitly describes cold29923 steep early decay then slower tail versus warm29920 gradual decay, with both fit flags retained."
+        },
+        {
+          "requirement": "Contains no relaxation rate, frequency, or transition-temperature number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All rates/frequencies/temperatures and reported error/component fractions are printed by direct CLI survey, fits/trends/alpha; no unverified numeric/unit flags."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Accounts for every run in the block — the ZF runs below 130 K and the interleaved TF runs — rather than silently dropping any.",
+          "pass": true,
+          "evidence": "Every run is enumerated in separate scan lists and fitted; omitted worksheet entries are included, logged rather than setpoint temperatures used."
+        },
+        {
+          "requirement": "Discusses candidate fit functions for above vs below the transition, without inventing fitted values.",
+          "pass": true,
+          "evidence": "Describes cold empirical multi-exponential/Gaussian ZF form, changing component balance and exponential versus Gaussian TF envelopes with limitations."
+        },
+        {
+          "requirement": "Connects the observed line-shape change to the singlet-triplet / dimerisation physics described in the worksheet background.",
+          "pass": false,
+          "evidence": "Mentions no established spin-Peierls gap/site but does not connect the shape change to dimerisation and singlet–triplet physics."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Survey, reduction, both wizard/fit-series/trend outputs and alpha confirm run inventory, axes, rates/error precisions and component percentages. Command7 explicitly prints15of16 flagged; no derived physical arithmetic. Raw summary, saved file and audit-display excluded as numerical evidence.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science Musts pass. Exact copying fails after command17 successfully prepares reply: actual final changes “I use the logged temperature” to “I use its logged temperature”. The central CLI and final-review prompt both request unchanged preparation; remaining failure is a post-preparation prose rewrite. No source repair during frozen wave. Should gap: empirical shape guidance is used, but sample-appropriate dimerisation/singlet-triplet interpretation is absent.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all18 completed commands inspected. All18 completed commands and summary-only file changes reviewed: installed skill/references, CLI analyses, supplied recipe seeds, audit and report writing; no custom data analysis, external dataset access or physical arithmetic. Four supplied review snapshots hash-verified; actual cold/warm ZF images inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 380.0,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "5c537b145ef02c2e99d854cccc344b55e15fd0183011dceb5fb06beba78b4d2f",
+      "audited_file_sha256": "552e37102e26ac44aa675c551e85f427847e388a0f939478906d2fc753878726",
+      "rubric_sha256": "45ec06c3c47445ea279531822116d0b68bbaaf3cb6a47c792093f64bc65b3bb6",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/spin-peierls",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -5,7 +5,7 @@\n The staged folder contains 26 EMU runs. All have one acquisition period, 96 histograms and 1979 time points. They form two separate temperature scans, both titled KTCNQF4, and there are no runs outside those scans. Run order is not temperature order: the survey grouped the runs by their recorded setpoints, while the logged sample temperatures determine the fit order below.\n \n - **ZF temperature scan:** runs 29920, 29921, 29923, 29924, 29931, 29932, 29933, 29934, 29936, 29937, 29938, 29939, 29940, 29941, 29943 and 29944 (16 runs). The survey lists these as EMU temperature scan, runs 29920-29921,29923-29924,29931-29934,29936-29941,29943-29944. The titles and recorded fields give 0 G; the survey reports ZF geometry from the field on all 16. The setpoint span is 30–300 K. Logged sample temperatures span 59.419–297.874 K. Run 29921 is titled 30 K but logged at 107 K; I use its logged temperature, not its setpoint.\n-- **100 G TF temperature scan:** runs 29919, 29922, 29925, 29926, 29927, 29928, 29929, 29930, 29935 and 29942 (10 runs). The survey lists these as EMU temperature scan, runs 29919,29922,29925-29930,29935,29942. The survey measured TF geometry from precession at the applied-field Larmor frequency in all 10 runs. The setpoint span is 30–300 K; logged temperatures span 79.5941–298.964 K. Run 29922 is titled 30 K but logged at 79.5941 K; I use the logged temperature. The run at 125 K is duplicated (29929 and 29930).\n+- **100 G TF temperature scan:** runs 29919, 29922, 29925, 29926, 29927, 29928, 29929, 29930, 29935 and 29942 (10 runs). The survey lists these as EMU temperature scan, runs 29919,29922,29925-29930,29935,29942. The survey measured TF geometry from precession at the applied-field Larmor frequency in all 10 runs. The setpoint span is 30–300 K; logged temperatures span 79.5941–298.964 K. Run 29922 is titled 30 K but logged at 79.5941 K; I use its logged temperature. The run at 125 K is duplicated (29929 and 29930).\n \n The ZF survey reports no spontaneous spectral line. The TF scan retains a line at the applied field. This supports the geometry assignments and does not establish or exclude magnetic order by itself.\n \n",
+      "physics_caveats": [
+        "15/16ZF fits flagged; most Gaussian widths/multi-component amplitudes are model-dependent, no transition law/gap measured.",
+        "Actual cold/warm ZF snapshots support nonoscillating composite-shape comparison; no spontaneous line is neither necessary evidence against a spin-Peierls transition nor its gap measurement.",
+        "No FFT and no resolved two-line splitting; limited broad-field-distribution interpretation. Gaussian width examples omit explicit units in prose."
+      ],
+      "judgement_calls": [
+        "M5 accepts explicitly observed actual endpoint composite ZF shapes with severe parameter flags, consistent with earlier waves; it does not require reliable microscopic decomposition.",
+        "Should2 accepts discussed changing empirical components and envelope alternatives despite no microscopic spin-Peierls fit."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "5c537b145ef02c2e99d854cccc344b55e15fd0183011dceb5fb06beba78b4d2f",
+        "summary.md": "5c537b145ef02c2e99d854cccc344b55e15fd0183011dceb5fb06beba78b4d2f",
+        "transcript.jsonl": "7ddb3d8780cd91724340c357c522250e7882294a928b0c616a49acd2d4cb2e1f",
+        "commands.txt": "7de3699acf06daa66b31384ade4a906e32221bcefaae2b1b37f8ed2be02d5b6f",
+        "cost.json": "2f2507ad2d3a8dea4e5715cb0e986dbe5238d5ddabb93481e2e1ab63d26a0327",
+        "image-inputs.json": "46d18b98aa88de5284321d9d8d005cc0280f0b85d3e9a44560596dec20a3b15d"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-29922.png",
+          "snapshot_path": "review-images/f5559b011ca7ded65567111a0c095610c3609b269671621f4b3872ea98c10ec1.png",
+          "bytes": 40159,
+          "sha256": "f5559b011ca7ded65567111a0c095610c3609b269671621f4b3872ea98c10ec1",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-29919.png",
+          "snapshot_path": "review-images/4359b654f82fce198a65564c60460eb3e6edd85b37827ab7d6b6a6ab1c2828fd.png",
+          "bytes": 39806,
+          "sha256": "4359b654f82fce198a65564c60460eb3e6edd85b37827ab7d6b6a6ab1c2828fd",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/zf/29923.png",
+          "snapshot_path": "review-images/5c0647a839148f8a5a81421332f15b38358e89d6441821104f1081bbba312dd8.png",
+          "bytes": 70552,
+          "sha256": "5c0647a839148f8a5a81421332f15b38358e89d6441821104f1081bbba312dd8",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/zf/29920.png",
+          "snapshot_path": "review-images/a85b93a8bd940f34302a8299719089b6cb1057811eb1447dad579e0d29636d7f.png",
+          "bytes": 69054,
+          "sha256": "a85b93a8bd940f34302a8299719089b6cb1057811eb1447dad579e0d29636d7f",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T00:48:21.109694+00:00",
+      "reply_matches_saved_file": false
+    }
+  },
   "pending_cases": [
     "plateau-redfield",
     "sn-critical-field",
@@ -144,7 +289,6 @@
     "high-tc-cuprate",
     "copper-diffusion",
     "molecular-antiferromagnet",
-    "spin-peierls",
     "afm-high-tf-mdu",
     "alc-tcnq",
     "ionic-motion-llz",
@@ -190,20 +334,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 0,
+    "scored": 1,
     "target": 24,
-    "scientific_pass": 0,
-    "must_pass": 0,
-    "must_total": 0,
-    "should_pass": 0,
-    "should_total": 0,
+    "scientific_pass": 1,
+    "must_pass": 6,
+    "must_total": 6,
+    "should_pass": 2,
+    "should_total": 3,
     "exact_copy_pass": 0,
     "literal_copy_pass": 0,
     "combined_pass": 0,
-    "boundary_pass": 0,
-    "number_rule_pass": 0,
-    "unit_checker_flags": 0,
-    "wizard_calls": 0,
-    "commands_inspected": 0
+    "boundary_pass": 1
   }
 }
