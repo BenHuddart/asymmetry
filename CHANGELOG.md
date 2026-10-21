@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Report audits distinguish an amplitude in percent asymmetry from a derived
+  percentage of a total. General analysis guidance preserves successful wizard
+  results despite stream warnings and completed Gaussian-width comparisons;
+  final-review wording requires reply preparation after every edit.
+
 - Trend endpoint comparisons retain the actual adjacent measurement before
   applying quality gates. Survey guidance distinguishes same-field muonium
   kinetics from field response and extracts sample labels from acquisition

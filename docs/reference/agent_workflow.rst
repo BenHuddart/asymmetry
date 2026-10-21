@@ -1251,6 +1251,10 @@ when matching completed fits in other workdirs.
 
 The audit also requires the acquisition instrument/file suffix and the distinct
 recorded sample names; magnet-reference groups do not replace sample identity.
+A completed Gaussian-width comparison should retain its measured values and
+onset/plateau separately from exponential damping, even when material identity
+is uncertain. Successful command results remain evidence despite stderr
+warnings; a failed retry does not erase a completed recommendation.
 Determined conditional coupling estimates and significant coldest-versus-next
 excesses remain reportable with their model and fit-quality limitations.
 
@@ -1265,7 +1269,10 @@ the default one when it exists). ``audit`` extracts each number from the draft
 and reports the ones that appear in none of those logs, with the line they sit
 on. A number written with *d* decimals matches any printed value it rounds
 from, so a clean audit means every number appears in *some* output, not that it
-is the right one; a multiple, a significance, a whole-number percentage or a
+is the right one. A percentage of a total or relative fraction requires its
+printed percentage token, even when it follows ``A_bg`` or contains decimals;
+an absolute amplitude in percent asymmetry is a different quantity. A multiple,
+a significance, a whole-number percentage or a
 Δ-quantity (``10×``, ``4.3σ``, ``32 %``, ``ΔAICc 11``) matches only when a
 command printed that exact token (``×``, ``x`` and "times" alike). A number its
 context makes arithmetic — after "a factor of" or a difference phrase ("within

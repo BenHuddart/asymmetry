@@ -313,3 +313,9 @@ def test_final_review_retires_the_first_turn_control_manifest():
         in runner.FINAL_REVIEW_PROMPT
     )
     assert "second turn ends with the scientific report alone" in runner.FINAL_REVIEW_PROMPT
+
+
+def test_final_review_reprepares_after_corrections():
+    prompt = _load_runner().FINAL_REVIEW_PROMPT
+    assert "Plain audit is a diagnostic" in prompt
+    assert "after every edit, including a correction or file-list change" in prompt

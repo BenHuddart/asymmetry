@@ -952,3 +952,22 @@ def test_same_field_muonium_does_not_owe_a_frequency_response_claim():
         "Muonium envelope rates are compared across composition at the same field.",
         "MUONIUM KINETICS: runs 10-12 precess at one field.",
     )
+
+
+@pytest.mark.parametrize(
+    "draft",
+    [
+        "A_bg is about 8% of the fitted relaxing-plus-constant signal.",
+        "The amplitude is 8.2% of the total.",
+        "The fitted fraction is 8.2%.",
+        "A relative error of 8.2%.",
+    ],
+)
+def test_relative_percentages_need_a_printed_percentage_not_an_amplitude(draft):
+    log = "A_bg 8.2 0.1\nA_1 94.0 0.2\n8 runs\n"
+    assert unverified_numbers(draft, log)
+    assert not unverified_numbers(draft, log + "relative fraction 8.2%\n8% of total\n")
+
+
+def test_absolute_percent_asymmetry_remains_a_printed_quantity():
+    assert not unverified_numbers("A_bg is 8.2% and the amplitude is about 8%.", "A_bg 8.2 0.1\n")

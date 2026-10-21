@@ -1433,6 +1433,9 @@ data cannot answer at all. For a determined slope under imperfect conditions,
 report an **apparent fitted rate coefficient**, its uncertainty and the
 conditions; separate that empirical result from a validated intrinsic kinetic
 constant. A failed or undetermined fit still supplies no such result.
+Judge command success from its exit status and actual result, not stderr alone.
+A completed wizard recommendation remains evidence when a stream warning is
+also printed; a later interrupted retry does not erase the successful result.
 Before stopping at an unsuccessful screen, recover the model for the requested
 observable: inspect residuals, seed resolved frequencies from the FFT, simplify
 the components and retry on a justified window. For concentration kinetics,
@@ -1493,7 +1496,11 @@ If the wizard supplies only an exponential, make and compare an explicit
 `Lambda(T)` for `sigma(T)` in a superconducting gap law. These instructions
 require a usable Gaussian fit first: transfer the measured frequency, phase
 and amplitudes from the successful oscillatory fit when changing its envelope,
-then adjust the Gaussian width against the observed damping. A fresh generic
+then adjust the Gaussian width against the observed damping. Report a completed
+Gaussian comparison's width values and measured onset/plateau even if an
+exponential fits better; keep the model preference and physical interpretation
+separate. Unknown composition limits an identity claim, not reporting the
+measured width comparison. A fresh generic
 frequency seed can miss a rapid oscillation entirely. If two components fail,
 try one Gaussian line plus background before abandoning the width trend.
 Report a failed conditional gap-law test as failed, rather than skipping the
@@ -1808,6 +1815,9 @@ as the exact-diagonalisation RF resonance model.
 looking at. Write complete plain paths, one per line, without inline backticks
 or abbreviated follow-on filenames. Finish this list before the last audit;
 the reply must retain its final line exactly as well as the scientific text.
+Do not turn fitted amplitudes into a percent-of-total or sample fraction unless
+that quantity is printed by a CLI command. An amplitude in percent asymmetry
+and its fraction of a fitted sum are different quantities.
 Finish the file list, then run `asymmetry audit summary.md --prepare-reply`.
 It removes terminal line endings only when the checks pass. Copy that printed
 body without further edits, retaining the last path's final character. Numeric

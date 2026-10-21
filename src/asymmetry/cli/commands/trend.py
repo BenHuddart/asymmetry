@@ -971,7 +971,11 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
                         "context supports that hypothesis; its wizard prints the gap-law "
                         "workflow. For an exponential envelope, first compare an "
                         "Oscillatory * Gaussian + Constant recipe rather than calling "
-                        "Lambda a Gaussian sigma."
+                        "Lambda a Gaussian sigma. If you performed that comparison, "
+                        "report the Gaussian width's measured values, temperature span "
+                        "and onset or plateau separately from the exponential rate. "
+                        "An unknown composition does not erase that empirical result; "
+                        "qualify the mechanism instead of omitting the width trend."
                     )
             if shift is not None:
                 hints.append(

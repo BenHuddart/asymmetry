@@ -60,7 +60,9 @@ List product directories or decisive files once; a complete report need not
 repeat every exploratory output path or duplicate every diagnostic table.
 After inspecting these images, write the complete final report to summary.md
 and resolve asymmetry audit summary.md findings. After the last edit, run
-asymmetry audit summary.md --prepare-reply. A successful preparation emits only
+asymmetry audit summary.md --prepare-reply. Plain audit is a diagnostic, not the
+final send: its framed draft may retain a terminal newline. Use --prepare-reply
+after every edit, including a correction or file-list change. A successful preparation emits only
 report text: use its entire stdout as your final reply, unchanged. Do not append
 image-review manifests, audit checks or statements about formatting; those are
 control instructions, not scientific findings. Do not retype numbers or polish

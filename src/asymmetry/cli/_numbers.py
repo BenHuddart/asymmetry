@@ -118,9 +118,15 @@ _COMPARISON_SUFFIX = re.compile(
 
 #: Words that make a percentage an asymmetry in its unit, not a ratio ("A_1 is about 33 %").
 _ASYMMETRY_CONTEXT = re.compile(
-    r"(?:(?-i:\bA_\w+\b|\bA\(0\)|\bA[₀-₉]+)|\b(?:amplitudes?|asymmetry|fractions?)\b)"
+    r"(?:(?-i:\bA_\w+\b|\bA\(0\)|\bA[₀-₉]+)|\b(?:amplitudes?|asymmetry)\b)"
     r"[^.;\n]{0,25}$",
     re.IGNORECASE,
+)
+
+#: A percentage of a total is a ratio, even beside a named asymmetry.
+_PERCENT_RATIO = re.compile(r"\s+(?:of|relative to|compared (?:with|to))\b", re.IGNORECASE)
+_FRACTION_CONTEXT = re.compile(
+    r"\b(?:fraction|share|proportion|relative error)\b[^.;\n]{0,60}$", re.IGNORECASE
 )
 
 #: A comparison sign before a significance makes it a threshold ("> 3σ"), not a result.
@@ -240,6 +246,8 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             if (
                 suffix is not None
                 and "%" in suffix.group()
+                and not _PERCENT_RATIO.match(line, suffix.end())
+                and not _FRACTION_CONTEXT.search(before)
                 and ("." in token or _ASYMMETRY_CONTEXT.search(before))
             ):
                 suffix = None

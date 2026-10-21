@@ -64,6 +64,8 @@ violations separately, even if a personal symlink has identical skill bytes.
 
 Protocol `two_turn_image_review_v2` requires the second turn to save and audit
 the complete final report after image inspection, then return it verbatim.
+The final-review prompt distinguishes plain diagnostic audit from the final
+send and uses `audit --prepare-reply` after every edit, including corrections.
 The final-review prompt uses `audit --prepare-reply` after resolving findings
 and making the last edit. Preparation removes terminal line endings only on
 a pass; the model must still emit the prepared body without reformatting its
