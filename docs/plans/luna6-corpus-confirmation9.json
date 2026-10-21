@@ -1,5 +1,5 @@
 {
-  "status": "running; 24/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "complete; fresh full24 gate FAIL; authorized improvement loop continues before deadline",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -234,7 +234,8 @@
         "Constantlawincludesflagged/failedrows,chi135.955doesnotestablishactualstructuraldistancechange; conditionalmodelvariationonly.",
         "Arrheniuschi258.357afterexcluding13suspectrowsnotanactivationenergy;nonmonotoniccoldratesandwarmfailedendpointretained.",
         "Only2goodtimefitsversus26poor; no resolvedFFTlineclaim.",
-        "Calibration17293logged64.21Kversus5Ksetpoint,properlynotusedassciencetemperature."
+        "Calibration17293logged64.21Kversus5Ksetpoint,properlynotusedassciencetemperature.",
+        "A nominated image path was overwritten after image review; supplied snapshot and final path hashes are retained separately. Actual review pixels, not later saved pixels, are evidence; rubric judgement is unchanged."
       ],
       "judgement_calls": [],
       "number_evidence_commands": [
@@ -292,7 +293,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:37:00.671502+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work-ptfe/plots/ptfe-zf-logged/17294.png",
+          "supplied_sha256": "ae03c0178e31c6b6acdd149b873fec985e874e80ebddf76b5f7926a84e05d0ec",
+          "current_sha256": "ae03c0178e31c6b6acdd149b873fec985e874e80ebddf76b5f7926a84e05d0ec",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-ptfe/plots/ptfe-zf-logged/17309.png",
+          "supplied_sha256": "521d1b1efa0d660f034455f43b8144a3d073b96af981ac29e8b72f18e180ec1d",
+          "current_sha256": "521d1b1efa0d660f034455f43b8144a3d073b96af981ac29e8b72f18e180ec1d",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-ptfe/plots/ptfe-zf-logged-trend-nu.png",
+          "supplied_sha256": "a499ca1e3cf83ffe1c605eeebde06501b63250025526289163b7079e421f707a",
+          "current_sha256": "7bc35bcbd1c1433c17dd6504aba537317a23ef6b9150e1547a84b67e1f3ea4f8",
+          "matches_current_file": false
+        },
+        {
+          "relative_path": "asymmetry-work-ptfe/plots/ptfe-zf-logged-trend-r_muF.png",
+          "supplied_sha256": "86c3c23ba6acabfd9b553093ed5fcf2ac9cc616e072ec771155c24f80369912b",
+          "current_sha256": "86c3c23ba6acabfd9b553093ed5fcf2ac9cc616e072ec771155c24f80369912b",
+          "matches_current_file": true
+        }
+      ]
     },
     "spin-glass-ymnal": {
       "verdict": "PASS",
@@ -435,7 +462,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:37:00.690948+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-24573.png",
+          "supplied_sha256": "cb5fcd8776519ed52fafe1aa56bfc6318c6ae6a26c412203760f873101111e5c",
+          "current_sha256": "cb5fcd8776519ed52fafe1aa56bfc6318c6ae6a26c412203760f873101111e5c",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-24590.png",
+          "supplied_sha256": "5d5edf8f72cb33d5c34ad39028699ccf268f90654d708e4c645aac9b5f413a32",
+          "current_sha256": "5d5edf8f72cb33d5c34ad39028699ccf268f90654d708e4c645aac9b5f413a32",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lf-exp-trend-Lambda.png",
+          "supplied_sha256": "0dfe20b62560374f58c2b6c15d95427bb7762e8b052cb031f418aaea5b2c830c",
+          "current_sha256": "0dfe20b62560374f58c2b6c15d95427bb7762e8b052cb031f418aaea5b2c830c",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-24591.png",
+          "supplied_sha256": "cb1de5cec05640074ce4af6e294657382bdd67a5440c87dc5f43a7083f9de7ce",
+          "current_sha256": "cb1de5cec05640074ce4af6e294657382bdd67a5440c87dc5f43a7083f9de7ce",
+          "matches_current_file": true
+        }
+      ]
     },
     "plateau-redfield": {
       "verdict": "PASS",
@@ -590,7 +643,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:42:48.888611+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/lf-field-exp-trend-Lambda.png",
+          "supplied_sha256": "26301616abb9f99d861e35ad15728f591a6de03061286cd3caf1d7f430c414fb",
+          "current_sha256": "26301616abb9f99d861e35ad15728f591a6de03061286cd3caf1d7f430c414fb",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lf-field-exp/9035.png",
+          "supplied_sha256": "68c2f26abca2a24045155f4a4ab10f7f19427279ceb76111318caafc3305a254",
+          "current_sha256": "68c2f26abca2a24045155f4a4ab10f7f19427279ceb76111318caafc3305a254",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lf-field-exp/9051.png",
+          "supplied_sha256": "4134cc3b6932b567f65b1b0c135491ad85c7dfab933ecd47c31e5944ea1db2f2",
+          "current_sha256": "4134cc3b6932b567f65b1b0c135491ad85c7dfab933ecd47c31e5944ea1db2f2",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/zf-cooling-exp-trend-Lambda.png",
+          "supplied_sha256": "49eeb1158ab60a45ffe1de4069bd508136c8b3f3c06e64978f440ed30ee2d18d",
+          "current_sha256": "49eeb1158ab60a45ffe1de4069bd508136c8b3f3c06e64978f440ed30ee2d18d",
+          "matches_current_file": true
+        }
+      ]
     },
     "sn-critical-field": {
       "verdict": "PASS",
@@ -750,7 +829,27 @@
         }
       ],
       "scored_at": "2026-10-21T04:42:48.939797+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-91523.png",
+          "supplied_sha256": "c1853402caede3377e11839e2dc4c054d5e49f5bc2827f6dd4a7cf47cd7f986f",
+          "current_sha256": "c1853402caede3377e11839e2dc4c054d5e49f5bc2827f6dd4a7cf47cd7f986f",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-91489.png",
+          "supplied_sha256": "f5010424cdd3d71bf7f33f5031c8993622e7b93719a3e6219ab90405eb79171c",
+          "current_sha256": "f5010424cdd3d71bf7f33f5031c8993622e7b93719a3e6219ab90405eb79171c",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-91524.png",
+          "supplied_sha256": "2cc276399561fd1589f277450bd44fb0253cf31bc027156f4132293817e38048",
+          "current_sha256": "2cc276399561fd1589f277450bd44fb0253cf31bc027156f4132293817e38048",
+          "matches_current_file": true
+        }
+      ]
     },
     "spin-peierls": {
       "verdict": "PASS",
@@ -928,7 +1027,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:42:48.959520+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/zf-gkt-trend-Lambda.png",
+          "supplied_sha256": "773a2a9071d476dd4773aafa9accd4ea4434e745e4921578a79bf22296613d6e",
+          "current_sha256": "773a2a9071d476dd4773aafa9accd4ea4434e745e4921578a79bf22296613d6e",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-exp-trend-Lambda.png",
+          "supplied_sha256": "d44de3b50e7fccab3bf6639ffc9f90df05c4d3fcf8458381ee4162894ca6f2aa",
+          "current_sha256": "d44de3b50e7fccab3bf6639ffc9f90df05c4d3fcf8458381ee4162894ca6f2aa",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/fft-cold-29922.png",
+          "supplied_sha256": "e1a60503efcb3870f650c5183809fdd6cdd401cb5405446009b1d01b3a4f9b0a",
+          "current_sha256": "e1a60503efcb3870f650c5183809fdd6cdd401cb5405446009b1d01b3a4f9b0a",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/fft-warm-29919.png",
+          "supplied_sha256": "6414e353db274f963b98e7279c281297c38f1f8e427c6bb19ba2f07dc95003bd",
+          "current_sha256": "6414e353db274f963b98e7279c281297c38f1f8e427c6bb19ba2f07dc95003bd",
+          "matches_current_file": true
+        }
+      ]
     },
     "high-tc-cuprate": {
       "verdict": "PASS",
@@ -1104,7 +1229,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:44:48.975958+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work-bisco/plots/bisco150-gaussian-trend-sigma.png",
+          "supplied_sha256": "2c7d340b655e60b841238a2273e84b407b444b0b656d16d6f1e62c4be83f7256",
+          "current_sha256": "2c7d340b655e60b841238a2273e84b407b444b0b656d16d6f1e62c4be83f7256",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-bisco/plots/fit-76993.png",
+          "supplied_sha256": "b89b0297b3e8b0f5fd7798c5db618a920d9645b078dda9ad69aac804a0b179ed",
+          "current_sha256": "b89b0297b3e8b0f5fd7798c5db618a920d9645b078dda9ad69aac804a0b179ed",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-htc/plots/htc400-temp-alt-trend-sigma.png",
+          "supplied_sha256": "ab884512ade8cdb7060ca4c395a8bca40b17b029a5226a1bd4bf43f1a2e68921",
+          "current_sha256": "ab884512ade8cdb7060ca4c395a8bca40b17b029a5226a1bd4bf43f1a2e68921",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-htc/plots/htc200-single-trend-sigma.png",
+          "supplied_sha256": "6fcf47af73b2002f9a19bbf024cc70580bfd6ff500d25ba61644fa2eeff9c7fa",
+          "current_sha256": "6fcf47af73b2002f9a19bbf024cc70580bfd6ff500d25ba61644fa2eeff9c7fa",
+          "matches_current_file": true
+        }
+      ]
     },
     "ionic-motion-llz": {
       "verdict": "PASS",
@@ -1260,7 +1411,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:44:49.002642+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-1/51341.png",
+          "supplied_sha256": "e0ddcfb7e52f7715328a30de2fc716f44fa8cb02e29da4018b8560c3f6c188b0",
+          "current_sha256": "e0ddcfb7e52f7715328a30de2fc716f44fa8cb02e29da4018b8560c3f6c188b0",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-13/51379.png",
+          "supplied_sha256": "93f3ac7e6adaab89f64ea67158ebf0df1f54fae23e70932319009bb0ce60d919",
+          "current_sha256": "93f3ac7e6adaab89f64ea67158ebf0df1f54fae23e70932319009bb0ce60d919",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-trend-Delta.png",
+          "supplied_sha256": "e12f5c2c3a011e5e18a96cda1dae23774f8abbe0c1ff4a4bef12e02e10923dc6",
+          "current_sha256": "e12f5c2c3a011e5e18a96cda1dae23774f8abbe0c1ff4a4bef12e02e10923dc6",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-trend-nu.png",
+          "supplied_sha256": "c5a7ab35019ed7f836ccffd13e43fc0d890e62c11a153adeac44d3f8b0872fe0",
+          "current_sha256": "c5a7ab35019ed7f836ccffd13e43fc0d890e62c11a153adeac44d3f8b0872fe0",
+          "matches_current_file": true
+        }
+      ]
     },
     "molecular-antiferromagnet": {
       "verdict": "PASS",
@@ -1430,7 +1607,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:46:27.309323+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/run-17094.png",
+          "supplied_sha256": "64329ab605d04c2a957e8a594b1a20ea79b892e7c5494b53760e0be84cfa61f7",
+          "current_sha256": "64329ab605d04c2a957e8a594b1a20ea79b892e7c5494b53760e0be84cfa61f7",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-17098.png",
+          "supplied_sha256": "c74073cd313722b7d04f158b03c2af5bb149fab4bf4c74b5f917931ebce98d21",
+          "current_sha256": "c74073cd313722b7d04f158b03c2af5bb149fab4bf4c74b5f917931ebce98d21",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/fit-17099.png",
+          "supplied_sha256": "c0806911f7d3f49930239418fe6614c98444024f16d90f55f55ec194a636c18c",
+          "current_sha256": "c0806911f7d3f49930239418fe6614c98444024f16d90f55f55ec194a636c18c",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-17103.png",
+          "supplied_sha256": "9d6614b0373889ade865d727bd113f4491be37e974f6586dc181157fb354c67f",
+          "current_sha256": "9d6614b0373889ade865d727bd113f4491be37e974f6586dc181157fb354c67f",
+          "matches_current_file": true
+        }
+      ]
     },
     "alc-tcnq": {
       "verdict": "PASS",
@@ -1609,7 +1812,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:46:27.349111+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-350K-local.png",
+          "supplied_sha256": "b3b7698885befee897cff55b089a711b5898874087c4aef7856c4ba4ab148242",
+          "current_sha256": "b3b7698885befee897cff55b089a711b5898874087c4aef7856c4ba4ab148242",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-100K-local.png",
+          "supplied_sha256": "6a1f54cab5b5fdee19be87996db37264497f2d12717434cf045218e4863abcba",
+          "current_sha256": "6a1f54cab5b5fdee19be87996db37264497f2d12717434cf045218e4863abcba",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-50K-local.png",
+          "supplied_sha256": "8473f8b360a1d5c8d4c3afff6471dd9b6a8493cba7696ae8b3628bcb131e80e4",
+          "current_sha256": "8473f8b360a1d5c8d4c3afff6471dd9b6a8493cba7696ae8b3628bcb131e80e4",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-10K-local.png",
+          "supplied_sha256": "7d30af9ef02e01c2eaea0fd0bd7705b070fd509b8e63ef6102dad75dffe702c6",
+          "current_sha256": "7d30af9ef02e01c2eaea0fd0bd7705b070fd509b8e63ef6102dad75dffe702c6",
+          "matches_current_file": true
+        }
+      ]
     },
     "euo-psi": {
       "verdict": "FAIL",
@@ -1786,7 +2015,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:50:28.984474+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/euo-zf-ordered-trend-frequency.png",
+          "supplied_sha256": "55b79f40cf37742d4940d0ef1bb4a3e75d4c40bddb3b9778e30271034df1d502",
+          "current_sha256": "55b79f40cf37742d4940d0ef1bb4a3e75d4c40bddb3b9778e30271034df1d502",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-2937.png",
+          "supplied_sha256": "a0faf2b5ae0e0e098a9ebbf7864c8e6fd304d966a6bf3f777d5ae3d06ef539ff",
+          "current_sha256": "a0faf2b5ae0e0e098a9ebbf7864c8e6fd304d966a6bf3f777d5ae3d06ef539ff",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/euo-zf-paramag/2959.png",
+          "supplied_sha256": "862c50b2073b2ef1062cc6f83966c409009f1b936ab2c2c6c849cb74c33748e7",
+          "current_sha256": "862c50b2073b2ef1062cc6f83966c409009f1b936ab2c2c6c849cb74c33748e7",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/euo-60g-one-line-series-trend-frequency.png",
+          "supplied_sha256": "3e8c939cd200e6657d64686f75935ed2c01ddebaf1106d092868635d543f15fe",
+          "current_sha256": "3e8c939cd200e6657d64686f75935ed2c01ddebaf1106d092868635d543f15fe",
+          "matches_current_file": true
+        }
+      ]
     },
     "cds-fourier": {
       "verdict": "PASS",
@@ -1943,7 +2198,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:50:29.034404+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/cds-cold-20721.png",
+          "supplied_sha256": "78e345b0bd2a6c6dcfc63be852653e9fbf11715b4036b1a3d77a4d9947ca380b",
+          "current_sha256": "78e345b0bd2a6c6dcfc63be852653e9fbf11715b4036b1a3d77a4d9947ca380b",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/cds-warm-20729.png",
+          "supplied_sha256": "9cf8397142139dadbb66eb3983a6c238aa0e1748556cd8ff378813bf2fc1580a",
+          "current_sha256": "9cf8397142139dadbb66eb3983a6c238aa0e1748556cd8ff378813bf2fc1580a",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-20721.png",
+          "supplied_sha256": "b5ad18f8e6f76b33e38a123240596ce1d7764e1c3827e2d6b233374a937cd457",
+          "current_sha256": "b5ad18f8e6f76b33e38a123240596ce1d7764e1c3827e2d6b233374a937cd457",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-20729.png",
+          "supplied_sha256": "6b14d0efee3eb2be38812007aa462556b58e479bb93977487b33d89d1b07f0c1",
+          "current_sha256": "6b14d0efee3eb2be38812007aa462556b58e479bb93977487b33d89d1b07f0c1",
+          "matches_current_file": true
+        }
+      ]
     },
     "afm-high-tf-mdu": {
       "verdict": "PASS",
@@ -2093,7 +2374,33 @@
         "evidence": "Final interprets inequivalent local magnetic environments/sites/sublattices, retains magnetic broadening/cooling response and avoids superconducting law fitting or vortex inference. Native1085MHz FFT retained.",
         "limitations": "Phase and magnetic order not independently established; poor fits/negative baselines/resolution preclude microscopic assignment."
       },
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/run-686.png",
+          "supplied_sha256": "7ac54e7933883a21bb1982f29aab6286187846b13685baade961107e8a0e8233",
+          "current_sha256": "7ac54e7933883a21bb1982f29aab6286187846b13685baade961107e8a0e8233",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-693.png",
+          "supplied_sha256": "c881abed92e7df74df8f8fb8da7a6c108e1a740268a32b5259d3b9c463c6a1fd",
+          "current_sha256": "c881abed92e7df74df8f8fb8da7a6c108e1a740268a32b5259d3b9c463c6a1fd",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-730.png",
+          "supplied_sha256": "5c70e8e53436c27d1d70936d1930024eb13d5b93194f762c6040f9619fff7ce8",
+          "current_sha256": "5c70e8e53436c27d1d70936d1930024eb13d5b93194f762c6040f9619fff7ce8",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-739.png",
+          "supplied_sha256": "836545ee08f36ae6855afc1051ec011a601eb0e13026e70c0a474294940f1471",
+          "current_sha256": "836545ee08f36ae6855afc1051ec011a601eb0e13026e70c0a474294940f1471",
+          "matches_current_file": true
+        }
+      ]
     },
     "photo-musr-silicon": {
       "verdict": "PASS",
@@ -2256,7 +2563,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:51:29.624694+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work-red/plots/reduced-103277.png",
+          "supplied_sha256": "3be510f9022a1411cf7761021a879aea78bf5375624ca9a0cd9946182a4badee",
+          "current_sha256": "3be510f9022a1411cf7761021a879aea78bf5375624ca9a0cd9946182a4badee",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-green/plots/reduced-103277.png",
+          "supplied_sha256": "670c3d16809d725577726d6e25cdbfa027fc2eb134ef5600e8c0eabc936516f9",
+          "current_sha256": "670c3d16809d725577726d6e25cdbfa027fc2eb134ef5600e8c0eabc936516f9",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-red/plots/wizard-103277.png",
+          "supplied_sha256": "ea6be7fdb5ae0c9dc0946adf5e29a01a728cd2ed30800646713fb953a7d9277e",
+          "current_sha256": "ea6be7fdb5ae0c9dc0946adf5e29a01a728cd2ed30800646713fb953a7d9277e",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-green/plots/wizard-103277.png",
+          "supplied_sha256": "c87aeea204764de1f36148926e8305508a06bfcc975f0082e89099672bbdb36c",
+          "current_sha256": "c87aeea204764de1f36148926e8305508a06bfcc975f0082e89099672bbdb36c",
+          "matches_current_file": true
+        }
+      ]
     },
     "copper-diffusion": {
       "verdict": "FAIL",
@@ -2464,7 +2797,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:52:48.538910+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/argus-tf20-trend-sigma.png",
+          "supplied_sha256": "df3f22e0f4a24a826f8cc99f35778f98e3ad2fc89b3eed86c4e421b1352b6ee2",
+          "current_sha256": "df3f22e0f4a24a826f8cc99f35778f98e3ad2fc89b3eed86c4e421b1352b6ee2",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/argus-20G-56K.png",
+          "supplied_sha256": "0f40bc5fe2f227b4f53da02a3a2abdfdc2dd2db6dbceab96e785ee01d7f42636",
+          "current_sha256": "0f40bc5fe2f227b4f53da02a3a2abdfdc2dd2db6dbceab96e785ee01d7f42636",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/argus-20G-323K.png",
+          "supplied_sha256": "3ce81e612fc0fd7a742ccf1a402106ff30185452b1c090826179d3cdb3699baa",
+          "current_sha256": "3ce81e612fc0fd7a742ccf1a402106ff30185452b1c090826179d3cdb3699baa",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/emu-dip-local.png",
+          "supplied_sha256": "1c65eabe7e792c005abf2ae4c178644dd1fff1c7c3d7e8a8635e1e5c2f509008",
+          "current_sha256": "1c65eabe7e792c005abf2ae4c178644dd1fff1c7c3d7e8a8635e1e5c2f509008",
+          "matches_current_file": true
+        }
+      ]
     },
     "benzene-rf": {
       "verdict": "PASS",
@@ -2606,7 +2965,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:52:48.547714+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/rf-resonance.png",
+          "supplied_sha256": "9a09539ac87c5c9e4929db919b4f82115d3133063cef67d4e5f510929fd4fed4",
+          "current_sha256": "9a09539ac87c5c9e4929db919b4f82115d3133063cef67d4e5f510929fd4fed4",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/rf-contrast.png",
+          "supplied_sha256": "bded37f2a2a52ba17323367bc58854509e3a29d4a70f04ac8ad6437cdfe082b7",
+          "current_sha256": "bded37f2a2a52ba17323367bc58854509e3a29d4a70f04ac8ad6437cdfe082b7",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/rf-local-candidate-linear.png",
+          "supplied_sha256": "104f85fde0d0051a5d6bd21bfb255ac2a4a04c9ba0d70d39aca204c5f0984c38",
+          "current_sha256": "104f85fde0d0051a5d6bd21bfb255ac2a4a04c9ba0d70d39aca204c5f0984c38",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/rf-local-candidate-cubic.png",
+          "supplied_sha256": "2f0fc279b34ac9dde88a4c84fb86ad4272c44ac008b931deb66928df3a6389ef",
+          "current_sha256": "2f0fc279b34ac9dde88a4c84fb86ad4272c44ac008b931deb66928df3a6389ef",
+          "matches_current_file": true
+        }
+      ]
     },
     "benzene-repolarisation": {
       "verdict": "PASS",
@@ -2712,7 +3097,8 @@
         "MuRepolarisation chi449.861,negative a_Dia and incomplete saturation prevent microscopic radical coupling assignment.",
         "Free exponent Redfieldchi4.089 is approximate; fixedm2chi22.026 worse, not single-process dynamics established.",
         "Requested FFT0.105–7.88us is an input restatement rather than exact retained-bin endpoint; actualCLIresolution/candidates reported.",
-        "Wizard MuoniumLFRelax B_L fixed at seed175G not transferable unchanged across sweep; exponential model chosen explicitly."
+        "Wizard MuoniumLFRelax B_L fixed at seed175G not transferable unchanged across sweep; exponential model chosen explicitly.",
+        "A nominated image path was overwritten after image review; supplied snapshot and final path hashes are retained separately. Actual review pixels, not later saved pixels, are evidence; rubric judgement is unchanged."
       ],
       "judgement_calls": [],
       "number_evidence_commands": [
@@ -2768,7 +3154,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:54:53.657409+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/benzene-recovery.png",
+          "supplied_sha256": "27e01bb7c8338329f40964cb784b22b8d613930fa2a76f2ba2811408a4445859",
+          "current_sha256": "51d6949c4be2e36ceb7e90a9a30ec1b704700c8474b417cf4af1ad761b965486",
+          "matches_current_file": false
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lf-field-trend-Lambda.png",
+          "supplied_sha256": "2d9257d8184f00ceb813463a4a77ca9fc65fce105ebfdf4eed1a5fbe00a6db19",
+          "current_sha256": "2d9257d8184f00ceb813463a4a77ca9fc65fce105ebfdf4eed1a5fbe00a6db19",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-15959.png",
+          "supplied_sha256": "b5ca4e9d77d8961581c2110acea6cb99253093074e34d6e189af7fbe1a83091b",
+          "current_sha256": "b5ca4e9d77d8961581c2110acea6cb99253093074e34d6e189af7fbe1a83091b",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-15993.png",
+          "supplied_sha256": "8ca4496f56c906cad1a2ef4d7f4bcc910f483ef5e99074e887105d0e7d6b30d9",
+          "current_sha256": "8ca4496f56c906cad1a2ef4d7f4bcc910f483ef5e99074e887105d0e7d6b30d9",
+          "matches_current_file": true
+        }
+      ]
     },
     "ferromagnetic-nickel": {
       "verdict": "PASS",
@@ -2972,7 +3384,33 @@
         }
       ],
       "scored_at": "2026-10-21T04:59:52.670987+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/zf-ordered-trend-frequency.png",
+          "supplied_sha256": "b2d1f0148e0b3d0048c86b4ab90287caf8dbd2284e9db03cff7c99a1868ea16e",
+          "current_sha256": "b2d1f0148e0b3d0048c86b4ab90287caf8dbd2284e9db03cff7c99a1868ea16e",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lf-recovery-200K.png",
+          "supplied_sha256": "4057efa3d4b2d9d7c68b40d14b4a3bae1cda48ad0e19a70096b8489b90cd7929",
+          "current_sha256": "4057efa3d4b2d9d7c68b40d14b4a3bae1cda48ad0e19a70096b8489b90cd7929",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/wizard-124234.png",
+          "supplied_sha256": "f15b9579a8e657b1258bcac291da4207ebf89539e3d1c8adcb407019382c1c2d",
+          "current_sha256": "f15b9579a8e657b1258bcac291da4207ebf89539e3d1c8adcb407019382c1c2d",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/wizard-124259.png",
+          "supplied_sha256": "dbaf1f0dc185355ce600ab9639cb7fba31edd5da142f6bcd2dcf10c2df3c2450",
+          "current_sha256": "dbaf1f0dc185355ce600ab9639cb7fba31edd5da142f6bcd2dcf10c2df3c2450",
+          "matches_current_file": true
+        }
+      ]
     },
     "benzene-high-tf": {
       "verdict": "PASS",
@@ -3143,7 +3581,33 @@
         }
       ],
       "scored_at": "2026-10-21T05:00:43.941049+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/benzene-field-t0fix-trend-frequency.png",
+          "supplied_sha256": "515b7c354fc23cfd9a88d51e58831afb8da4d2af39d6cfb2c8c34b2cf1c90052",
+          "current_sha256": "515b7c354fc23cfd9a88d51e58831afb8da4d2af39d6cfb2c8c34b2cf1c90052",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-1813.png",
+          "supplied_sha256": "733d27418cf734af4a0972ed76968e734c174e18e439e9387225bfcc54a9ed37",
+          "current_sha256": "733d27418cf734af4a0972ed76968e734c174e18e439e9387225bfcc54a9ed37",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-300K/plots/run-3678.png",
+          "supplied_sha256": "49a386dc16902cffef9e94f0619ca41fb54160e78aa99342f3791ea74508dfa8",
+          "current_sha256": "49a386dc16902cffef9e94f0619ca41fb54160e78aa99342f3791ea74508dfa8",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-300K/plots/run-3678-correlation.png",
+          "supplied_sha256": "436a9592173d3dbccd7922189d26a4087356eb52c1d2b4e636bd53b3400e8d61",
+          "current_sha256": "436a9592173d3dbccd7922189d26a4087356eb52c1d2b4e636bd53b3400e8d61",
+          "matches_current_file": true
+        }
+      ]
     },
     "maleic-mu-kinetics": {
       "verdict": "PASS",
@@ -3400,7 +3864,33 @@
         }
       ],
       "scored_at": "2026-10-21T05:01:58.004541+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/composition-290-freephase-trend-Lambda.png",
+          "supplied_sha256": "4ac9004c5eeefe2257a4d3f31e836f88f03239f7e21600cf54443d0c6105c709",
+          "current_sha256": "4ac9004c5eeefe2257a4d3f31e836f88f03239f7e21600cf54443d0c6105c709",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/quarter-temperature-trend-Lambda.png",
+          "supplied_sha256": "d702801abf6d42763258b2934c163f79dd870a5ff60c0f8ecea76ea934b1d00d",
+          "current_sha256": "d702801abf6d42763258b2934c163f79dd870a5ff60c0f8ecea76ea934b1d00d",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/half-temperature-trend-Lambda.png",
+          "supplied_sha256": "3f509eb36f1467800433c29ad030bf0c4c17b917caac918d9efb68ec318b2fe1",
+          "current_sha256": "3f509eb36f1467800433c29ad030bf0c4c17b917caac918d9efb68ec318b2fe1",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-78291.png",
+          "supplied_sha256": "97253cf38b4e38c88e3ed2c33eeb011fa2cd6b0543f916c755cb3ee0557b4427",
+          "current_sha256": "97253cf38b4e38c88e3ed2c33eeb011fa2cd6b0543f916c755cb3ee0557b4427",
+          "matches_current_file": true
+        }
+      ]
     },
     "lifeas-psi": {
       "verdict": "PASS",
@@ -3614,7 +4104,33 @@
         }
       ],
       "scored_at": "2026-10-21T05:10:47.720896+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/lfa-tf-temp-gaussian-trend-sigma.png",
+          "supplied_sha256": "5ee5ce9db91454e9da20e10ec93072b825b5e2283e0c9caf2be59cc5893efc7b",
+          "current_sha256": "5ee5ce9db91454e9da20e10ec93072b825b5e2283e0c9caf2be59cc5893efc7b",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lfa-cold-zoom.png",
+          "supplied_sha256": "040fdca72a42291f8d74c875087a10dca887791fcb38edb60acc218f57b6b521",
+          "current_sha256": "040fdca72a42291f8d74c875087a10dca887791fcb38edb60acc218f57b6b521",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lfa-warm-zoom.png",
+          "supplied_sha256": "72f4914af034a4187d0b7164d885d5586ffe4e28a3e5e46bb7719d37d3fcaf05",
+          "current_sha256": "72f4914af034a4187d0b7164d885d5586ffe4e28a3e5e46bb7719d37d3fcaf05",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/vetaon-tf-field-20k-trend-sigma.png",
+          "supplied_sha256": "f6f90a5ed90f359d89b7b8f538c745811150d3729fbeaf25e4aff1af43153d62",
+          "current_sha256": "f6f90a5ed90f359d89b7b8f538c745811150d3729fbeaf25e4aff1af43153d62",
+          "matches_current_file": true
+        }
+      ]
     },
     "trsb-re6zr": {
       "verdict": "PASS",
@@ -3833,7 +4349,33 @@
         }
       ],
       "scored_at": "2026-10-21T05:10:47.768448+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/tf-width-trend-sigma.png",
+          "supplied_sha256": "b3a7d30d17e2e618c22b0401ba67f3c51f86dfa9eec3760ede5b4e4a16aa4ded",
+          "current_sha256": "b3a7d30d17e2e618c22b0401ba67f3c51f86dfa9eec3760ede5b4e4a16aa4ded",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/zf-kt-tfcheck-trend-Delta.png",
+          "supplied_sha256": "f804142251eb55d994bac4804203e6dfd27960d4493e10f76189c95a15959942",
+          "current_sha256": "f804142251eb55d994bac4804203e6dfd27960d4493e10f76189c95a15959942",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/zf-kt-tfcheck-trend-Lambda.png",
+          "supplied_sha256": "5d04415c52f5495d9dba2540ec01ed389b72e2597ff9355d794c0e4924e3eede",
+          "current_sha256": "5d04415c52f5495d9dba2540ec01ed389b72e2597ff9355d794c0e4924e3eede",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-38262.png",
+          "supplied_sha256": "61e751a1b89eb6e137a62a879c1de381299ba3f11a9174576a5fc5c583dcaa7e",
+          "current_sha256": "61e751a1b89eb6e137a62a879c1de381299ba3f11a9174576a5fc5c583dcaa7e",
+          "matches_current_file": true
+        }
+      ]
     },
     "corannulene-alc": {
       "verdict": "PASS",
@@ -4079,7 +4621,33 @@
         }
       ],
       "scored_at": "2026-10-21T05:12:39.299506+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/alc-50K.png",
+          "supplied_sha256": "b574ba7b7227762b6b661b9093d5926db9b2d8b6332b0408d6ad28a89bc7356a",
+          "current_sha256": "b574ba7b7227762b6b661b9093d5926db9b2d8b6332b0408d6ad28a89bc7356a",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/alc-420K.png",
+          "supplied_sha256": "942a096b2f0bfe6317b69382603947facc5c4ac15d771063b147c4df70f2bfa4",
+          "current_sha256": "942a096b2f0bfe6317b69382603947facc5c4ac15d771063b147c4df70f2bfa4",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/low-field-440K.png",
+          "supplied_sha256": "82119ab1b59a9ffa1b6d2e2075f5c347083c23ff5ae30dae9be80c2630295401",
+          "current_sha256": "82119ab1b59a9ffa1b6d2e2075f5c347083c23ff5ae30dae9be80c2630295401",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/alc-420K-dip148.png",
+          "supplied_sha256": "0c6f9c25c535376e97faade87f3fe0ac0bac3069a1895a00bd1bd1d0e8c11c97",
+          "current_sha256": "0c6f9c25c535376e97faade87f3fe0ac0bac3069a1895a00bd1bd1d0e8c11c97",
+          "matches_current_file": true
+        }
+      ]
     },
     "benzene-alc": {
       "verdict": "PASS",
@@ -4298,7 +4866,33 @@
         }
       ],
       "scored_at": "2026-10-21T05:12:39.372380+00:00",
-      "reply_matches_saved_file": false
+      "reply_matches_saved_file": false,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work/plots/solid_local_linear.png",
+          "supplied_sha256": "bd3984582fdfbc6f1b56bc3a270d022c09f32962bedbaf052e50a33adc50bfa4",
+          "current_sha256": "bd3984582fdfbc6f1b56bc3a270d022c09f32962bedbaf052e50a33adc50bfa4",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-liquid/plots/liquid_op.png",
+          "supplied_sha256": "e2322199a0650c50638502c308498983376c3c41c0a1f17d57167ce43a7b5195",
+          "current_sha256": "e2322199a0650c50638502c308498983376c3c41c0a1f17d57167ce43a7b5195",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-liquid/plots/liquid_op_rg.png",
+          "supplied_sha256": "7846fda64f0b28ae2ed8572c79779c944489d7d1c5a93c16510485b3e8a54ecf",
+          "current_sha256": "7846fda64f0b28ae2ed8572c79779c944489d7d1c5a93c16510485b3e8a54ecf",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-solution/plots/mix_335K.png",
+          "supplied_sha256": "2ddbf474e31330f3d1b66ee5d0d03569496b35ab5c0c05bb6956e70126feeb1b",
+          "current_sha256": "2ddbf474e31330f3d1b66ee5d0d03569496b35ab5c0c05bb6956e70126feeb1b",
+          "matches_current_file": true
+        }
+      ]
     },
     "basics": {
       "verdict": "FAIL",
@@ -4623,7 +5217,33 @@
         }
       ],
       "scored_at": "2026-10-21T05:15:19.994321+00:00",
-      "reply_matches_saved_file": true
+      "reply_matches_saved_file": true,
+      "image_input_artifacts": [
+        {
+          "relative_path": "asymmetry-work-quartz/plots/quartz-field.png",
+          "supplied_sha256": "51c5b648afcb5d5f66798dcc0540bce7563daa56df7cd24bb2d256520486a3d3",
+          "current_sha256": "51c5b648afcb5d5f66798dcc0540bce7563daa56df7cd24bb2d256520486a3d3",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-quartz/plots/series-quartz-mu-line-trend-A_1.png",
+          "supplied_sha256": "d5237c749fa531532b6f5ab12909de3d3951c5c3a4c5c3dd48ca05ff50d01dbd",
+          "current_sha256": "d5237c749fa531532b6f5ab12909de3d3951c5c3a4c5c3dd48ca05ff50d01dbd",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-foils/plots/series-wizard-18888-trend-A_1.png",
+          "supplied_sha256": "fa44ce1ad1fbd69576409770788d41af50efe24c42940e94bde28656b0cd0f99",
+          "current_sha256": "fa44ce1ad1fbd69576409770788d41af50efe24c42940e94bde28656b0cd0f99",
+          "matches_current_file": true
+        },
+        {
+          "relative_path": "asymmetry-work-steering/plots/series-wizard-44989-trend-A_1.png",
+          "supplied_sha256": "6cb522f63b910ce4b19b832540e27299c08a6d920683dc19cc61a1e7463e078f",
+          "current_sha256": "6cb522f63b910ce4b19b832540e27299c08a6d920683dc19cc61a1e7463e078f",
+          "matches_current_file": true
+        }
+      ]
     }
   },
   "pending_cases": [],
@@ -4638,7 +5258,11 @@
     "exact_copy_pass": 23,
     "literal_copy_pass": 23,
     "combined_pass": 20,
-    "boundary_pass": 24
+    "boundary_pass": 24,
+    "number_rule_pass": 23,
+    "unit_checker_flags": 0,
+    "wizard_calls": 106,
+    "commands_inspected": 1201
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round19 explicitly distinguishes diagnostic plain audit from final preparation after every edit; final report/capture semantics stay fixed.",
@@ -4646,5 +5270,105 @@
   "objective_achieved": false,
   "followup_status": "ACTIVE",
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
-  "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."
+  "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
+  "completed_at": "2026-10-21T05:15:48.325598+00:00",
+  "failed_scientific_cases": [
+    "euo-psi",
+    "copper-diffusion",
+    "basics"
+  ],
+  "failed_audit_copy_cases": [
+    "benzene-alc"
+  ],
+  "afm_magnetic_scope_pass": true,
+  "verification": {
+    "source_entries": 403,
+    "frozen_source_matches": true,
+    "all_24_actual_reply_skill_rubric_and_raw_hashes_verified": true,
+    "all_24_raw_final_agent_messages_match_last_message_and_summary_bytes": true,
+    "all_24_exit_zero_two_turn_first_attempts": true,
+    "voids": 0,
+    "retries": 0,
+    "pooled_historical_results": false,
+    "live_eval_processes_at_finalization": 0,
+    "image_paths_overwritten_after_review": [
+      {
+        "case": "fmuf-ptfe",
+        "relative_path": "asymmetry-work-ptfe/plots/ptfe-zf-logged-trend-nu.png",
+        "supplied_sha256": "a499ca1e3cf83ffe1c605eeebde06501b63250025526289163b7079e421f707a",
+        "current_sha256": "7bc35bcbd1c1433c17dd6504aba537317a23ef6b9150e1547a84b67e1f3ea4f8",
+        "matches_current_file": false
+      },
+      {
+        "case": "benzene-repolarisation",
+        "relative_path": "asymmetry-work/plots/benzene-recovery.png",
+        "supplied_sha256": "27e01bb7c8338329f40964cb784b22b8d613930fa2a76f2ba2811408a4445859",
+        "current_sha256": "51d6949c4be2e36ceb7e90a9a30ec1b704700c8474b417cf4af1ad761b965486",
+        "matches_current_file": false
+      }
+    ],
+    "all_review_snapshots_verified": true
+  },
+  "resources": {
+    "finished_at": "2026-10-21T05:13:24.050390+00:00",
+    "wave_returncode": 0,
+    "samples": 100,
+    "minimum_available_bytes": 21656883200,
+    "peak_sum_RSS_bytes": 8186265600,
+    "peak_swap_used_bytes": 18706432,
+    "peak_memory_PSI_avg10": 0.0,
+    "peak_cpu_PSI_avg10": 0.37,
+    "note": "Summed RSS double-counts shared pages; this is a conservative process-tree total.",
+    "started_at": "2026-10-21T04:23:51.698027+00:00",
+    "elapsed_seconds": 2972.352363,
+    "parallel_limit": 12,
+    "wizard_environment_default": 1,
+    "wizard_worker_default_is_enforced_ceiling": false,
+    "observed_max_active_cases": 12,
+    "observed_worker_openblas_omp_mkl_envs": [
+      [
+        "1",
+        "1",
+        "1",
+        "1"
+      ]
+    ],
+    "median_case_wall_seconds": 991.25,
+    "maximum_case_wall_seconds": 2181.4,
+    "resource_summary_sha256": "569a07de5e9d2bf7ba1b78d14168ab24cc3caa1909791eae118e76a52d9b4abf",
+    "resource_samples_sha256": "5e3a775a81cb53d2d058b025ad2d1d40a302b6f8cdf46a7f5bfb0d48ebef5d84",
+    "assessment": "Twelve cases remained comfortably within host memory and CPU pressure limits. Keep twelve; no evidence that higher case count would improve the long-case/service-latency tail. This is not a controlled speed comparison across implementations."
+  },
+  "ranked_general_findings": [
+    {
+      "rank": 1,
+      "finding": "Preserve dimensionless-versus-rate parameter context, including uncertainty prose for failed laws.",
+      "evidence": "EuO labels CriticalDivergence dimensionless exponent nu error10.257125 as us^-1; scalar/unit checker misses it.",
+      "scope": "General quantity-context audit plus CLI named-law units; never excuse rejected diagnostics."
+    },
+    {
+      "rank": 2,
+      "finding": "Compare actual adjacent ZF endpoints for the relevant relaxation parameter before interpreting a whole scan.",
+      "evidence": "Copper reports TFupturns/lowDelta similarity but omits actualcold-next ZFnu. Current quality filtering omits bound-adjacent nu diagnostics.",
+      "scope": "Print actual adjacent diagnostic with flags even if significance is not interpretable; no physical arithmetic in report."
+    },
+    {
+      "rank": 3,
+      "finding": "Do not interpret implausible or railed logger coordinates as physical calibration temperatures.",
+      "evidence": "Basics uses943Kfoilblock as causaltemperatureconfound despite room-temperature calibration context.",
+      "scope": "General boundary/context warning, not material-name dispatch or automatic deletion of plausible coordinates."
+    },
+    {
+      "rank": 4,
+      "finding": "Treat prepared report body as immutable until re-prepared.",
+      "evidence": "BenzeneALC final rewrites phrase/punctuation after exact preparation.",
+      "scope": "Preserve strictbytecapture; no normalization/substitution."
+    },
+    {
+      "rank": 5,
+      "finding": "Reproduce apparent trend PNG/table mismatches before claiming cause.",
+      "evidence": "Cuprate400G andmaleiccomposition reviewed/currentPNGhashesmatch butapparentpointsdifferfromstoredseries/directCLI.",
+      "scope": "Read saved data and regenerate controlled plots after freeze; retainoriginalreviewevidence."
+    }
+  ]
 }
