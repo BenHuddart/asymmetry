@@ -2195,3 +2195,9 @@ Confirmation7 now21/24scored:highTFbenzene6/6Musts2/6Shoulds science/number/unit
 
 
 Confirmation7 now23/24scored:Basics9/9Musts4/7Shoulds science/copyPASS;benzeneALC7/7Musts3/6Shoulds sciencePASS/copyFAILtwofilelistentriesreordered. Bothnumber/unit/boundaryPASS. Totals132/137Musts,20/23science,21/23copy,18/23combined,23/23boundary,50/98Shoulds;independentAFMscopeFAIL. Onlycorannulene running;sourcefrozenuntilcompletion. PreserveBasicsfaulty-temperaturejudgementandALCconditionalwidth/referencecaveats.
+
+
+Confirmation7 COMPLETE24/24scored:corannulene8/10Musts2/6Shoulds scienceFAILmissingreorientationaveraginghyperfineanisotropyandexplicitCLIradicalALCunavailability(judgementcall);copy/number/unit/boundaryPASS. Totals140/147Musts,20/24science,22/24copy,18/24combined,24/24boundary,52/104Shoulds;independentAFMscopeFAIL. Verifyallhashes/rawreplies/resourcesbeforeendingfreezeandround18repairs.
+
+
+Confirmation7 final verification: all24 raw final agent_messages equal last-message.md and actual summary.md bytes; 403 frozen source entries, skill/rubric/raw artifacts and supplied review-image hashes verified. 2 nominated paths changed after review; supplied/current hashes retained. Fresh gate FAIL:140/147Musts,20/24science,22/24strictcopy,18/24combined,24/24boundary,52/104Shoulds; independent AFM scope FAIL. Twelve-case wall61.04min,minavailable19.40GiB,peak summedRSS9.90GiB(shared double count),memoryPSIpeak0.72,CPUavg10peak13.79. No eval live; freeze ends. Round18 prioritizes actual-adjacent endpoint invariant, constant-field Mu kinetics versus frequency response, bounded magnetic context and final report/control separation. Fixed scientific rubrics/two-turn semantics/strict raw bytes remain. Keep12; no controlled speedup claim. Deadline06:00UTC/fullgatecutoff04:30UTC.
