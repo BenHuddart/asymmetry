@@ -204,7 +204,8 @@ Run repeats as separate output roots — single runs are noisy, and a claim that
 a change fixed a case needs two or three passing repeats. Score a wave with
 [`scoring_brief.md`](scoring_brief.md). Completion and final-report audit
 status alone do not establish a scientific pass. Keep corpus copies and raw
-transcripts outside the repository; commit only coverage and scoring records.
+transcripts outside the repository, and commit score records only as
+[Score records](#score-records) describes.
 
 Delete the dataset copies of old waves: a few passes fill a disk, and on macOS
 iCloud then offloads the corpus, whose "dataless" files read as empty.
@@ -230,6 +231,27 @@ Everything lands under `--out`, and nothing outside it is touched:
 
 Eval outputs are **never committed**: they carry copies of the corpus. Write
 them to a scratch directory outside the repository.
+
+## Score records
+
+A scored wave produces a per-case record: Must/Should decisions with evidence,
+number and boundary checks, and hashes. Over an improvement loop these grow
+to hundreds of kilobytes per wave, and they mean nothing without the raw
+attempts they cite. So the repository keeps only a small amount of it:
+
+- **One summary entry per wave**, in the campaign's `docs/plans/*-waves.json`.
+  The entry records the commit, host, model, concurrency, Must/Should and
+  science/copy/combined/boundary totals, and the cases that failed science or
+  exact copying.
+- **The latest full per-case record** of each campaign, beside that summary.
+  When a newer wave lands, move the older record out.
+- **Every other full record**, plus any long execution log, goes to the
+  private corpus repository under `eval-records/<campaign>/`, with a README
+  that names the branch and PR, so each record sits beside the corpus it
+  scores.
+
+The plan page links the summary, the latest record and the archive, and
+states its conclusions. It is not a running log of each wave.
 
 ## Ticking the rubric
 

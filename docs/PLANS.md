@@ -232,11 +232,12 @@ four Tier A rubrics pass with Sonnet. Full plan:
 Codex corpus scope expanded on 2026-10-19: all 24 shared cases now have a
 GPT-6 Luna evaluation record (previous eight-case gate plus sixteen new
 baselines). The expansion scores 7/16 scientific passes; per-case failures,
-audit-copy checks and evidence are recorded in the plan and its expansion JSON.
-The CLI, analysis skill and rubrics were unchanged during this baseline.
-The active [Luna improvement loop](plans/luna6-corpus-improvements.md) now
-iterates general skill and CLI changes on `codex/luna6-corpus-improvements`,
-committing each round before its wave and targeting a fresh 24-case pass.
+audit-copy checks are summarised in the plan; the full record is archived in
+the private corpus repository. The CLI, analysis skill and rubrics were
+unchanged during this baseline. The [Luna improvement loop](plans/luna6-corpus-improvements.md)
+then iterated general skill and CLI changes on `codex/luna6-corpus-improvements`
+over twelve rounds and nine fresh 24-case gates. It is paused short of an
+all-24 pass; the latest gate passes 20/24 combined.
 
 ### Parameters panel: parameter cards, chip rail, pop-out table
 

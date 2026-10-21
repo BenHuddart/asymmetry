@@ -2743,7 +2743,8 @@ The failures fall into three groups:
 
 Every case has individual Must/Should decisions, numerical evidence, root
 causes, usage, image inputs, hashes and command failures in
-[`agent-cli-skill-luna6-expansion-2026-10-19.json`](agent-cli-skill-luna6-expansion-2026-10-19.json).
+`agent-cli-skill-luna6-expansion-2026-10-19.json`, archived in the private corpus
+repository under [`eval-records/luna6-2026-10/`](https://github.com/BenHuddart/wimda-muon-school-corpus/tree/main/eval-records/luna6-2026-10).
 Completed commands were checked for boundary violations and permission denials;
 no explicit network, delegation or external-calculator calls were found.
 Skill and rubric hashes match across all cases. Raw evidence remains outside
