@@ -2046,3 +2046,6 @@ Confirmation5 now17/24scored: corannulene10/10Musts sciencePASS after hot7kG cov
 
 
 Confirmation5 now19/24scored:TCNQFAIL2/6Musts(exact-copyPASS),highTFbenzenePASS6/6Musts(copyFAILoneLF),Shoulds2/4and1/6. Totals107/111Musts,18/19science,9/19copy,8/19combined,19/19boundary,43/75Shoulds. TCNQregression:highfieldgeometry_source=file misread ascoils;genericTFobservablefooter preventsintegralALCtest. Afterfreeze strengthen evidence-source display/conditionalgeometrychecks,notdetector-orientation orsampledispatch. No source changes; finish remainingfive.
+
+
+Confirmation5 now21/24scored:tin5/5Musts,3/4Shoulds,exact-copyPASS;LiFeAs8/8literalMusts,4/6Shoulds,copyFAILoneLF. Totals120/124Musts,20/21science,10/21copy,9/21combined,21/21boundary,50/85Shoulds. PreserveLiFeAsonset/one-lineshiftjudgementsconsistentwithpriorwaves;class/gaplawdeclinedandfailedtwo-lineoppositedirectionrecordedascaveats. OnlyRe6Zr,Basics,benzeneALCpending. Sourcefrozen.
