@@ -941,7 +941,7 @@
         {
           "requirement": "Names both applied fields present on MUSR (400 G and 200 G) as separate field groups, not a single 400 G scan.",
           "pass": true,
-          "evidence": "MUSR1276–128940G400Gand1290–1303200Gseparatescans;actualtableclearly400G/200G."
+          "evidence": "MUSR 1276–1289 at 400 G and 1290–1303 at 200 G are separate scans; the actual report labels both field groups explicitly."
         },
         {
           "requirement": "Reports a Gaussian (or Gaussian-like) TF relaxation rate that rises as temperature drops below the transition, for at least one of the field/instrument combinations.",
