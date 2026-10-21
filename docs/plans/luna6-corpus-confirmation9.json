@@ -1,5 +1,5 @@
 {
-  "status": "running; 13/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 15/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -2257,33 +2257,381 @@
       ],
       "scored_at": "2026-10-21T04:51:29.624694+00:00",
       "reply_matches_saved_file": true
+    },
+    "copper-diffusion": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Splits the folder into its TF, ZF, and LF run groups rather than treating it as one undifferentiated series.",
+          "pass": true,
+          "evidence": "Separate TF/ZF/fixed-temperature LF field groups with overlapping membership explained."
+        },
+        {
+          "requirement": "Separates the EMU (2010) and ARGUS (2024) runs as two distinct measurement campaigns on the same sample.",
+          "pass": true,
+          "evidence": "EMU/ARGUS separately calibrated, reduced and fitted; formats/run ranges retained."
+        },
+        {
+          "requirement": "Reports a change in TF line shape (Lorentzian-like to Gaussian-like) as temperature decreases, from at least one of the two TF series.",
+          "pass": true,
+          "evidence": "ARGUS warm exponential versus cold Gaussian envelope and actual sigma narrowing reported."
+        },
+        {
+          "requirement": "Reports the ZF spectra as showing Kubo-Toyabe-like behaviour and states whether the relaxation (e.g. the fluctuation rate ν) at the lowest-temperature run differs from the next-lowest — the low-T upturn — whether or not it interprets it.",
+          "pass": false,
+          "evidence": "KT spectra and cold anchors are reported, but actual cold-next ZF fluctuation-rate comparison is absent. ARGUS next point is only compared in Delta; TF upturns and alternate warm-screen upturn do not answer ZF nu upturn."
+        },
+        {
+          "requirement": "Identifies the fixed-temperature, swept-field runs as the LF/QLCR data, distinct from the temperature scans.",
+          "pass": true,
+          "evidence": "Actual swept-field integral dips near80G identified as LF decoupling/local level-crossing-like resonance, separate from T scans."
+        },
+        {
+          "requirement": "Contains no hop rate, activation energy, or rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All reported rates/law estimates have direct CLI provenance, with no derived background fraction."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares a hop rate or dynamics trend derived from TF against one derived from ZF, as the worksheet asks.",
+          "pass": false,
+          "evidence": "No explicit TF-derived hopping/dynamics comparison against ZF rate trend; TF widths correctly not called diffusion rate."
+        },
+        {
+          "requirement": "Keeps the EMU and ARGUS scans on separate axes and notes their different fields, step sizes and ranges, rather than merging both eras' runs into one T-axis.",
+          "pass": true,
+          "evidence": "Separate axes/fields/ranges/instrument campaigns explicit."
+        },
+        {
+          "requirement": "Flags any run whose logged sample temperature deviates substantially from its nominal set-point.",
+          "pass": true,
+          "evidence": "Large logged/setpoint offsets and faulty logbook identifiers flagged."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct CLI fit, trend, integral and FFT outputs; no physical arithmetic or percentage-of-total estimate.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science5/6 and exact copy pass. KT/QLCR workflows recovered, but actual cold-next ZF nu comparison remains omitted despite printed endpoint/table evidence.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all88 completed commands inspected. All88 commands inspected. CLI/report edits only. Four review image hashes verified; local LF dip pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1646.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 9,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/copper-diffusion/data --series emu-zf-dgkt --model Arrhenius --param nu --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/copper-diffusion/data --series emu-zf-dgkt --model Arrhenius --param nu --xmin 89.193 --xmax 149.299 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/copper-diffusion/data --series emu-zf-dgkt --model Arrhenius --param nu --xmin 89.193 --xmax 149.299 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/copper-diffusion/data --series argus-zf-dgkt --model Arrhenius --param nu --xmin 95.491 --xmax 138.516 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/copper-diffusion/data --series emu-zf --model OrderParameter --param frequency --workdir asymmetry-work --instrument EMU'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "fc5046cb5de3f7729eb5d95c43c2ac7d11c03098802e057cc5b855db73e61537",
+      "audited_file_sha256": "fc5046cb5de3f7729eb5d95c43c2ac7d11c03098802e057cc5b855db73e61537",
+      "rubric_sha256": "4a0d496f6e89d82feb628d6378c6019071fd8813790f1b6b70a83a6e1e4459c6",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/copper-diffusion",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Command49 EMU nu .0774657 at5.79554K versus near-bound8.06562e-9 at38.2575K is not compared in final. Command54 ARGUS nu .128286 versus .0999725 is consistent within two combined errors, also not stated.",
+        "Cold ARGUS rate changes .128286 to .495093 MHz on early-window refit; no robust hopping law. Both Arrhenius screens include flagged rows.",
+        "Different wizard windows explain EMU DynamicKT versus Bessel recommendation; final calls saved recipe inconsistent without explicitly noting the6us versus full-record screening difference.",
+        "Local LF dips survive but backgrounds/windows change widths and many global fits fail; no microscopic site/coupling or diffusion coefficient established.",
+        "ARGUS dynamic recommendation is not minimum displayed AICc; residual/model uncertainty retained."
+      ],
+      "judgement_calls": [
+        "M4 FAIL: similar low-T Delta widths do not state whether actual lowest-next ZF fluctuation relaxation rate differs; TF sigma upturn and unrelated warm branch upturn are not substitutes.",
+        "M5 PASS: explicit conditional LF decoupling/local level-crossing integral resonance identifies the QLCR data even without expanding quadrupolar terminology."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        6,
+        8,
+        9,
+        10,
+        12,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        22,
+        23,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        80,
+        81,
+        82
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "fc5046cb5de3f7729eb5d95c43c2ac7d11c03098802e057cc5b855db73e61537",
+        "summary.md": "fc5046cb5de3f7729eb5d95c43c2ac7d11c03098802e057cc5b855db73e61537",
+        "transcript.jsonl": "bcdf9b25e10dd3321e0f84ca25dd9f16e265e9c870b09955e9d4caa80d84f59c",
+        "commands.txt": "480c39c69863adda0d5daf659d941740686d88470c79b41b5f827048f011df0f",
+        "cost.json": "ecd6ff151c294f8e0472a70ea112c6f27246c85e68bd2597865bdf14b392a8a4",
+        "image-inputs.json": "f052eb3055bd4bbe89c31b1845281fd1ff826eef4a57289891823a53ebd3d75d"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/argus-tf20-trend-sigma.png",
+          "snapshot_path": "review-images/df3f22e0f4a24a826f8cc99f35778f98e3ad2fc89b3eed86c4e421b1352b6ee2.png",
+          "bytes": 30916,
+          "sha256": "df3f22e0f4a24a826f8cc99f35778f98e3ad2fc89b3eed86c4e421b1352b6ee2",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/argus-20G-56K.png",
+          "snapshot_path": "review-images/0f40bc5fe2f227b4f53da02a3a2abdfdc2dd2db6dbceab96e785ee01d7f42636.png",
+          "bytes": 46434,
+          "sha256": "0f40bc5fe2f227b4f53da02a3a2abdfdc2dd2db6dbceab96e785ee01d7f42636",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/argus-20G-323K.png",
+          "snapshot_path": "review-images/3ce81e612fc0fd7a742ccf1a402106ff30185452b1c090826179d3cdb3699baa.png",
+          "bytes": 49333,
+          "sha256": "3ce81e612fc0fd7a742ccf1a402106ff30185452b1c090826179d3cdb3699baa",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/emu-dip-local.png",
+          "snapshot_path": "review-images/1c65eabe7e792c005abf2ae4c178644dd1fff1c7c3d7e8a8635e1e5c2f509008.png",
+          "bytes": 39824,
+          "sha256": "1c65eabe7e792c005abf2ae4c178644dd1fff1c7c3d7e8a8635e1e5c2f509008",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T04:52:48.538910+00:00",
+      "reply_matches_saved_file": true
+    },
+    "benzene-rf": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies one longitudinal-field RF-resonance field scan of 37 runs at 293 K, two periods per run, with the 218 MHz RF from the notes, and says that run order is not field order.",
+          "pass": true,
+          "evidence": "37 two-period MUT field runs293K,218MHzRF,nonmonotonic infill order and LF context explicit."
+        },
+        {
+          "requirement": "States that no run in the folder can calibrate alpha and that alpha was assumed to be 1.0; states the deadtime treatment.",
+          "pass": true,
+          "evidence": "No alpha calibrant,alpha1 and file deadtimes stated."
+        },
+        {
+          "requirement": "Runs `integral-scan` with `--period green-red` and describes two resonance peaks in the difference, both between about 0.74 and 0.90 kG, on a flat baseline outside them.",
+          "pass": true,
+          "evidence": "Actual green-red count-integral estimator and positive two-peak contrast on near-flat outer baseline."
+        },
+        {
+          "requirement": "Fits `RFResonanceMuP` with `nu_RF` held at 218 MHz and reports A_μ between 510 and 520 MHz and A_p between 115 and 135 MHz, each with its uncertainty, and the fit's χ²ᵣ.",
+          "pass": true,
+          "evidence": "RFResonanceMuP nuRF218fixed,A_mu514.774997±.040021MHz,A_p124.437272±1.604900MHz,chi1.408."
+        },
+        {
+          "requirement": "Contains no A_μ, A_p or resonance field that was not produced by a tool call in this session: no couplings from the mean and difference of two fields by a formula, and the published couplings are background.",
+          "pass": true,
+          "evidence": "Couplings and derived transition fields come from CLI exact model output, no manual field conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Also fits the worksheet's model, two Lorentzians on a constant, seeded near the two peaks, and reports the two fitted centres; notes the fit agrees in quality with `RFResonanceMuP`.",
+          "pass": false,
+          "evidence": "No two-positive-Lorentzian constant model comparison."
+        },
+        {
+          "requirement": "Says `RFResonanceMuP` is the exact-diagonalisation model and that the analytic high-field approximation the worksheet compares against is not available in the CLI (or was not run).",
+          "pass": false,
+          "evidence": "Exact diagonalisation stated, but analytic high-field approximation unavailable/not-run distinction absent."
+        },
+        {
+          "requirement": "Says which period is RF-on and on what evidence (the sign of the green − red peaks, or an assumption stated as such).",
+          "pass": true,
+          "evidence": "Positive contrast identifies greenOFF/redON with evidence."
+        },
+        {
+          "requirement": "Compares A_μ and A_p with the published or worksheet values in words, attributing them.",
+          "pass": false,
+          "evidence": "No attributed comparison to published/worksheet couplings."
+        },
+        {
+          "requirement": "Points to the stored scan JSON and PNG.",
+          "pass": true,
+          "evidence": "Stored scanJSON/PNG named."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct integral fit parameters and CLI resonance fields, no physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science5/5, strict copy pass. Correct RF integral estimator/exact model retained; analytic-approximation and worksheet empirical comparison Shoulds absent.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all20 completed commands inspected. All20 commands inspected. CLI/report edits only. Four review hashes verified; two-positive-peak model pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 330.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "1510bc8634b85015dddf718c55e1cd3268ce299bf3f2a1baa5bc81128ee8f408",
+      "audited_file_sha256": "1510bc8634b85015dddf718c55e1cd3268ce299bf3f2a1baa5bc81128ee8f408",
+      "rubric_sha256": "29bc5fab99a3ca1088aaea71742bda2503e7ad7b974b2d66a2342c99e8c26ce2",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/benzene-rf",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Interpeak valley is not independent resonance; unnecessary local dip fits poor/flank-limited and rejected.",
+        "Alpha assumed1; exact RF model does not establish molecular site or unique microscopic structure.",
+        "Reported coupling errors are scaled as printed; no manual formula applied."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "1510bc8634b85015dddf718c55e1cd3268ce299bf3f2a1baa5bc81128ee8f408",
+        "summary.md": "1510bc8634b85015dddf718c55e1cd3268ce299bf3f2a1baa5bc81128ee8f408",
+        "transcript.jsonl": "8bb1210abe897f4879e58f96e3c49a5232a040d5ab5fa871054e639a5d431427",
+        "commands.txt": "62d76a5a551bb3f78cfaeefe491ef0aca848f0a501067f6735e28af8ce5692ea",
+        "cost.json": "75ced399541de337b537e238cf76ac0d6947a121a89cbf17f5441b7169cb82ff",
+        "image-inputs.json": "de75c17839f36d8bd12088198db73ab0789ae13a5d4b0aca18d18dac1a5e7d13"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/rf-resonance.png",
+          "snapshot_path": "review-images/9a09539ac87c5c9e4929db919b4f82115d3133063cef67d4e5f510929fd4fed4.png",
+          "bytes": 50377,
+          "sha256": "9a09539ac87c5c9e4929db919b4f82115d3133063cef67d4e5f510929fd4fed4",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/rf-contrast.png",
+          "snapshot_path": "review-images/bded37f2a2a52ba17323367bc58854509e3a29d4a70f04ac8ad6437cdfe082b7.png",
+          "bytes": 33030,
+          "sha256": "bded37f2a2a52ba17323367bc58854509e3a29d4a70f04ac8ad6437cdfe082b7",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/rf-local-candidate-linear.png",
+          "snapshot_path": "review-images/104f85fde0d0051a5d6bd21bfb255ac2a4a04c9ba0d70d39aca204c5f0984c38.png",
+          "bytes": 43853,
+          "sha256": "104f85fde0d0051a5d6bd21bfb255ac2a4a04c9ba0d70d39aca204c5f0984c38",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/rf-local-candidate-cubic.png",
+          "snapshot_path": "review-images/2f0fc279b34ac9dde88a4c84fb86ad4272c44ac008b931deb66928df3a6389ef.png",
+          "bytes": 49532,
+          "sha256": "2f0fc279b34ac9dde88a4c84fb86ad4272c44ac008b931deb66928df3a6389ef",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T04:52:48.547714+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
-    "copper-diffusion",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
     "corannulene-alc",
     "benzene-high-tf",
-    "benzene-rf",
     "benzene-repolarisation",
     "benzene-alc"
   ],
   "totals": {
-    "scored": 13,
+    "scored": 15,
     "target": 24,
-    "scientific_pass": 12,
-    "must_pass": 71,
-    "must_total": 71,
-    "should_pass": 26,
-    "should_total": 46,
-    "exact_copy_pass": 13,
-    "literal_copy_pass": 13,
-    "combined_pass": 12,
-    "boundary_pass": 13
+    "scientific_pass": 13,
+    "must_pass": 81,
+    "must_total": 82,
+    "should_pass": 30,
+    "should_total": 54,
+    "exact_copy_pass": 15,
+    "literal_copy_pass": 15,
+    "combined_pass": 13,
+    "boundary_pass": 15
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round19 explicitly distinguishes diagnostic plain audit from final preparation after every edit; final report/capture semantics stay fixed.",

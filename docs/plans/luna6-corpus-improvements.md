@@ -2279,3 +2279,6 @@ Confirmation9 now11/24scored:CdS6/6Musts2/4Shoulds science/copyPASS;EuO5/5litera
 
 
 Confirmation9 now13/24scored:AFM5/5Musts1/3Shoulds science/copyPASS and independentmagneticscopePASS;silicon6/6Musts4/4Shoulds science/copyPASS with rejectedONrate and early1.5usretry judgement. Totals71/71Musts,12/13science,13/13copy,12/13combined,13/13boundary,26/46Shoulds. EuOglobalunitfailure remains;sourcefrozenuntilALL24.
+
+
+Confirmation9 now15/24scored:Cu5/6Musts2/3Shoulds scienceFAILactualcold-nextZFnucomparisonmissing;RFbenzene5/5Musts2/5Shoulds sciencePASS. Bothcopy/number/unit/boundaryPASS. Totals81/82Musts,13/15science,15/15copy,13/15combined,15/15boundary,30/54Shoulds;AFMscopePASS. CuKT/QLCRrecoveredwithwindow/wizard/lawcaveats;allsourcefrozen.
