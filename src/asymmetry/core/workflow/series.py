@@ -228,13 +228,28 @@ def envelope_preference(
     return {"preferred": preferred, "delta_chi2": delta}
 
 
-def envelope_change(trend: TrendTable) -> str | None:
-    """A note naming where the preferred envelope changes along the scan, or ``None``."""
+def envelope_summary(trend: TrendTable) -> str | None:
+    """Describe measured envelope preferences, including an inconclusive comparison."""
     if "envelope" not in trend.columns:
         return None
     decided = [row for row in trend.rows if row["envelope"] in RIVAL_ENVELOPES]
     if len({row["envelope"] for row in decided}) < 2:
-        return None
+        groups = [
+            (shape, [row for row in trend.rows if row["envelope"] == shape])
+            for shape in (*sorted(RIVAL_ENVELOPES), "either")
+        ]
+        described = "; ".join(
+            f"{shape} on {', '.join(row['key'] for row in rows)} ({trend.order_key} {_span(rows)})"
+            for shape, rows in groups
+            if rows
+        )
+        return (
+            f"NOTE: envelope comparison — {described or 'no reliable comparison'}. "
+            "Rows marked 'either' cannot distinguish Gaussian from exponential; this "
+            "does not establish a shape change. Report the comparison as well as the "
+            "rate. If slow warm envelopes are indistinguishable in a short fit window, "
+            "check background and window stability before interpreting the scan."
+        )
     blocks: list[tuple[str, list[dict[str, Any]]]] = []
     for row in decided:
         if blocks and blocks[-1][0] == row["envelope"]:
@@ -912,6 +927,18 @@ def survey_line(dataset: MuonDataset) -> float | None:
     return float(dataset.metadata["precession_frequency_mhz"])
 
 
+def parameter_quality_flags(row: Mapping[str, Any], param: str) -> set[str]:
+    """Diagnostics for one observable, retaining whole-fit failures."""
+    from asymmetry.core.fitting.member_quality import large_relative_error
+
+    flags = set(row["flags"]) - {"bound_pinned", "large_rel_err"}
+    if param in row["params_at_bound"]:
+        flags.add("bound_pinned")
+    if large_relative_error(row[param], row[f"{param}_err"]):
+        flags.add("large_rel_err")
+    return flags
+
+
 def build_trend_table(
     entries: Mapping[str, Mapping[str, Any]],
     free_params: Sequence[str],
@@ -921,7 +948,7 @@ def build_trend_table(
     """The trend table: member key, scan coordinate, each free parameter, flags.
 
     *entries* maps each row's key, in scan order, to a fit summary carrying
-    ``x``, ``parameters``, ``uncertainties`` and ``quality_flags``. Every member
+    ``x``, ``parameters``, ``uncertainties``, ``params_at_bound`` and ``quality_flags``. Every member
     that was fitted has a row, flagged or not — see the module docstring. With
     *survey_lines*, a ``survey_line_mhz`` column sets each run's surveyed line
     beside its fitted frequencies, so a fit that has drifted off the measured
@@ -948,6 +975,7 @@ def build_trend_table(
         if compared:
             row["envelope"] = entry["envelope"]["preferred"]
             row["envelope_dchi2"] = entry["envelope"]["delta_chi2"]
+        row["params_at_bound"] = list(entry["params_at_bound"])
         row["flags"] = list(entry["quality_flags"])
         rows.append(row)
     return TrendTable(order_key=order_key, columns=columns, rows=rows)
@@ -968,7 +996,8 @@ __all__ = [
     "TrendTable",
     "amplitude_exceeds_data",
     "build_trend_table",
-    "envelope_change",
+    "parameter_quality_flags",
+    "envelope_summary",
     "envelope_preference",
     "fit_one",
     "fit_series",

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Wizard fitting can share a host with other analyses.** ``--workers N``
+  limits simultaneous fit workers; ``ASYMMETRY_WIZARD_WORKERS`` supplies its
+  default. Numerical library thread limits remain separate.
+- **Integral scans screen for local dip candidates independently of the chosen
+  model.** Significant interior minima prompt local-window investigation even
+  after a failed whole-scan recovery fit; candidates are not fitted resonances.
+- **Integral-scan fit intervals can be overridden** with repeatable
+  ``--bound NAME=LO:HI`` options, recorded with the fit. Widths remain positive;
+  bound-limited resonance fits explain how to revisit the window and baseline.
 - **``survey`` finds scans written only in the run notes or title.** A
   steering current or a degrader foil count stepped in each run's notes prints
   under ``NOTES SCANS:`` with the ``fit-series --order <name> --x RUN=V,…``
@@ -17,6 +26,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Report audits retain parameter units for uncertainties, including dimensionless
+  critical exponents. Trend diagnostics keep flagged adjacent temperatures visible,
+  and survey guidance requires validation of extreme logger offsets before a
+  calibration curve is interpreted thermally.
+
+- Report audits distinguish an amplitude in percent asymmetry from a derived
+  percentage of a total. General analysis guidance preserves successful wizard
+  results despite stream warnings and completed Gaussian-width comparisons;
+  final-review wording requires reply preparation after every edit.
+
+- Trend endpoint comparisons retain the actual adjacent measurement before
+  applying quality gates. Survey guidance distinguishes same-field muonium
+  kinetics from field response and extracts sample labels from acquisition
+  descriptions. Magnetic-response hints and explicitly selected superconducting
+  workflows remain separate; report audits require explicit model-capability
+  limitations, and final image review retires the first-turn control manifest.
+
+- User-requested reduction binning rejects factors that would alias detected
+  native spectral lines unless ``reduce --allow-aliasing`` asks to average a
+  known fast line away. Reply preparation emits only the passed report body
+  and fails with nonzero status when checks remain; the evaluation runner
+  verifies these raw bytes without substituting a saved report. Acquisition
+  identities, conditional coupling estimates and adjacent cold-end excesses
+  receive explicit report checks and general skill guidance.
+
+- Survey output names geometry evidence per scan and per run, distinguishing
+  file stamps from measured precession and coil readbacks. General LF
+  diagnostic guidance preserves observed decoupling when alignment metadata
+  are incomplete. Integral-fit tables show scaled and raw errors together;
+  CLI, skill and evaluation prompts share the final reply preparation step.
+
+- Agent reports can use `audit --prepare-reply` to finalize terminal whitespace
+  after checks pass; local scan candidates and co-added fit coverage are audited
+  without suppressing honest failed-law descriptions. Generalized Redfield
+  trends start on a physical positive-exponent domain with field-to-frequency
+  seeds; evaluation plots share a writable project-local Matplotlib cache.
+
+- **Integral scans identify their estimator.** The default count integral and
+  the per-bin asymmetry mean are distinguished from green-minus-red period
+  subtraction. Fourier output suggests a conditional radical correlation
+  test when several lines lie above the applied-field Larmor frequency.
+- **Agent evaluation artifacts retain their exact content.** Final replies
+  and passed audit bodies preserve whitespace; review-image snapshots survive
+  later replots at the original path. General skill guidance covers recovery
+  of failed fits, completion of rate-law workflows and explicit CLI limits.
+
+- **Report checks preserve quantity units and measurement coverage.** Named
+  parameter units are checked against printed tables, illumination periods
+  require paired time-spectrum fits, and mixed-instrument scans match each
+  instrument's completed fits. Temperature trends retain failed endpoints for
+  spectral inspection; summaries explain supplied composition coordinates.
+- **Report audits check printed cross-condition comparisons.** Fitted-centre
+  and width directions must appear in prose with their limitations; same-run
+  stability notes do not imply a condition change. Passed reports include a
+  final-line copy cue to help preserve the complete file list.
+- **Agent summaries separate observations, candidate mechanisms and model
+  parameters.** Missing microscopic models limit quantification without
+  suppressing independently supported qualitative explanations; invalid fit
+  quantities remain excluded from physical inference.
+- **Integral-scan notes distinguish fit stability from condition changes.**
+  Alternative windows of the same runs print ``STABILITY``; their agreement
+  cannot be mistaken for agreement between separate temperature scans.
+- **Integral-scan comparisons retain qualified fitted estimates.** Significant
+  non-bound local fits print field/width directions even with incomplete
+  flanks, explicitly distinguished from resolved lines; resolution gates stay
+  unchanged.
+- **Agent reports reconcile comparisons with their labelled fit rows.**
+  Qualitative mechanisms remain separate from quantitative model limitations,
+  and plain file paths simplify exact copying of the final audited report.
+- **Resonance width searches allow partial flank coverage.** The default upper
+  width bound is half the fitted span; resolved-line requirements remain
+  unchanged. Inadequate coverage prompts a wider local Cubic check independently
+  for each condition.
+- **Bound-pinned resonance centres prompt window recovery** even when the fit
+  has modest chi-squared. The report audit distinguishes a whole-background
+  limitation from a definition of a local polynomial.
+- **Trend diagnostics follow the measured parameter.** Nuisance bounds and
+  large errors no longer hide precise amplitudes or widths from summaries and
+  plots. Cold endpoint differences include combined errors; fitted linear
+  coefficients retain their units. Work-directory schema 5 requires older
+  reduced caches, surveys and series to be regenerated; any command, the audit
+  included, says which to rerun instead of failing with a traceback.
+
+- **Preliminary fits distinguish estimates from interpretations.** The agent
+  CLI reports inconclusive envelope comparisons, directs TF scans to their
+  frequency/phase observables, and explains how to qualify stable line centres
+  and apparent rate coefficients without claiming a validated physical model.
+- **Agent guidance distinguishes physical observables and controls.** Field
+  scans distinguish integral polarisation recovery from rate decoupling;
+  temperature trends keep reliable cold/next-temperature endpoints visible
+  and name the KT width/dynamics comparison. Superconducting gap guidance
+  requires a Gaussian-width series rather than relabelling an exponential rate.
 - **Agent analysis preserves geometry, coupled-fit and report provenance.**
   An unresolved survey no longer revives a file's TF stamp in the wizard;
   high-field sweep points remain members, with a warning when internal-field

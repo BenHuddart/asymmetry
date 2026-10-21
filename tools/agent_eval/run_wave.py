@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Run a wave of agent evaluations in parallel, one ``run_eval.py`` per dataset.
+"""Run a wave of Claude Code or Codex evaluations in parallel.
 
 A pass of the evaluation loop is a named set of (dataset, rubric) cases run
 side by side into one output root, ``<out>/<case>/``. Each case is an ordinary
-:mod:`run_eval` run; this script only fans them out, waits, prints each case's
-exit code, wall time and cost, and then deletes the per-run dataset copies
-(``data/``, ``workdir/``) — scoring reads the summaries and transcripts, and the
+single-dataset runner invocation; this script fans them out, waits, prints
+each case's exit code, wall time and cost, and deletes the per-run dataset
+copies (``data/``, ``workdir/``) — scoring reads the summaries and transcripts, and the
 copies of a few passes are enough to fill a disk (on macOS, iCloud then
 offloads the corpus itself, which then reads as empty).
 
@@ -80,20 +80,24 @@ SETS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+SETS["all"] = tuple(CASES)
+SETS["codex-gate"] = (*SETS["tier-a"], *SETS["workflow"])
+SETS["codex-expansion"] = tuple(case for case in CASES if case not in SETS["codex-gate"])
+RUNNERS = {"claude": "run_eval.py", "codex": "run_codex_eval.py"}
 
-def run_case(case: str, corpus: Path, out: Path, model: str) -> tuple[str, int]:
-    """One ``run_eval.py`` for *case*, its console output kept in ``<out>/<case>.log``."""
+
+def run_case(case: str, corpus: Path, out: Path, model: str | None, agent: str) -> tuple[str, int]:
+    """Run *case* on the selected host, keeping its console output beside the results."""
     with (out / f"{case}.log").open("w", encoding="utf-8") as log:
         completed = subprocess.run(
             [
                 sys.executable,
-                str(HERE / "run_eval.py"),
+                str(HERE / RUNNERS[agent]),
                 "--data",
                 str(corpus / CASES[case]),
                 "--rubric",
                 case,
-                "--model",
-                model,
+                *(["--model", model] if model is not None else []),
                 "--out",
                 str(out / case),
             ],
@@ -110,7 +114,10 @@ def report(case: str, returncode: int, out: Path) -> str:
     if not cost_path.is_file():
         return f"{case}: exit {returncode}, no cost.json (see {out / f'{case}.log'})"
     cost = json.loads(cost_path.read_text(encoding="utf-8"))
-    return f"{case}: exit {returncode}, {cost['wall_seconds']:.0f} s, ${cost['total_cost_usd']:.2f}"
+    label = f"{cost['agent']}/{cost['model']}"
+    price = cost.get("total_cost_usd")
+    billing = f", ${price:.2f}" if price is not None else ""
+    return f"{case}: {label}, exit {returncode}, {cost['wall_seconds']:.0f} s{billing}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -131,10 +138,15 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("ASYMMETRY_CORPUS_ROOT"),
         help="The corpus root (default: $ASYMMETRY_CORPUS_ROOT)",
     )
-    parser.add_argument("--model", default="sonnet", help="Model alias for the agent")
-    parser.add_argument("--parallel", type=int, default=4, help="Cases run at once")
+    parser.add_argument(
+        "--agent", choices=sorted(RUNNERS), default="claude", help="Evaluation host"
+    )
+    parser.add_argument("--model", help="Model (default: sonnet for Claude, gpt-6-luna for Codex)")
+    parser.add_argument("--parallel", type=int, default=1, help="Cases run at once (default: 1)")
     parser.add_argument("--keep-data", action="store_true", help="Keep the per-run dataset copies")
     args = parser.parse_args(argv)
+    if args.parallel < 1:
+        parser.error("--parallel must be positive")
 
     cases = list(dict.fromkeys([*(case for name in args.set for case in SETS[name]), *args.case]))
     if not cases:
@@ -146,7 +158,9 @@ def main(argv: list[str] | None = None) -> int:
     corpus = Path(args.corpus).expanduser()
 
     with ThreadPoolExecutor(max_workers=args.parallel) as pool:
-        results = list(pool.map(lambda case: run_case(case, corpus, out, args.model), cases))
+        results = list(
+            pool.map(lambda case: run_case(case, corpus, out, args.model, args.agent), cases)
+        )
     for case, returncode in results:
         print(report(case, returncode, out))
         if not args.keep_data:

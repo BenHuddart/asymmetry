@@ -274,7 +274,11 @@ rest stands out as its own measurement.
 Runs whose line sits within 15 % of muonium's weak-field triplet frequency for
 their field (about 1.394 MHz per gauss) are named on a ``MUONIUM:`` line, with
 the ``recipe`` (one damped line started at a low-field run's own line) and the
-``fit-series`` that chains it up the field scan.
+``fit-series`` that chains it up a field scan. Same-field detections instead
+print ``MUONIUM KINETICS:``: compare temperature or composition using the
+muonium oscillation's envelope rate, with frequency and phase constrained by
+a reference and an early window that retains the oscillation. A high-field
+diamagnetic control or slow late-time baseline is not that reaction rate.
 Each alpha-calibration candidate is listed with its own
 measured alpha, and where alpha moves by more than 10 % between consecutive
 candidates in run order — a sample change, a moved detector, a second
@@ -345,8 +349,8 @@ dominant line is compared with the Larmor frequency of the recorded field,
        the file's ``TF`` stamp is **refuted** and ``geom`` reads ``-``
        (``geometry_source`` ``"refuted"``): the run is either a longitudinal
        measurement or a transverse one with no resolvable line, and the file's
-       claim is evidence for neither. A fixed-temperature field scan of such
-       runs is longitudinal decoupling.
+       claim is evidence for neither. Compare the scan response and context
+       before choosing a physical geometry.
    * - ``-``
      - Not measured: no field is recorded, or its Larmor frequency is above
        the record's Nyquist frequency. ``precession_note`` in the JSON says
@@ -360,6 +364,18 @@ spectrum is silent or the file stamps it ``TF``. Where this decides, ``geom``
 carries a ``+`` (``TF+``, ``LF+``; ``geometry_source`` ``"coils"``) instead of
 the ``*`` a measured precession earns, and ranks below a measured line but
 above the file's own stamp; see :doc:`loading_data` for the readback rule.
+
+The plain-text table includes a ``source`` column, and every scan lists
+``geometry sources`` before the long run table. ``file`` is a header claim,
+not a measured line or a coil readback. In particular, an above-Nyquist
+``prec -`` cannot verify a TF stamp. Detector-bank ``orient`` is not the
+applied-field direction. For an ALC or recovery hypothesis, the reduced
+spectra and a consistent-block integral scan can test whether a substantial
+nonoscillating signal contradicts TF cancellation. For matched ZF/applied-field
+measurements, strong suppression of a ZF KT relaxation supports longitudinal
+static-field decoupling; missing orientation metadata remains a caveat, not a
+reason to discard that measured contrast. These tests do not classify every
+unresolved precession as LF.
 
 **Zero-field runs are searched for a spontaneous line** by the same reading —
 the resolved dominant line, else the damped-line scan's. There is no Larmor
@@ -591,7 +607,8 @@ directory.
                     [--background none|tail_fit|range[:FIRST:LAST]]
                     [--t0-offset BINS] [--t-good-offset BINS]
                     [--period RED|GREEN|N|green-red] [--rebin REBIN]
-                    [--tmin TMIN] [--tmax TMAX] [--plot-tmax PLOT_TMAX]
+                    [--allow-aliasing] [--tmin TMIN] [--tmax TMAX]
+                    [--plot-tmax PLOT_TMAX]
                     [--plot] [--json] [--workdir WORKDIR]
                     [--instrument NAME]
                     folder
@@ -1075,7 +1092,30 @@ a field scan it names a phase that runs linearly with field as a t0 offset
 amplitude that falls as its frequency rises as the instrument's frequency
 response; a line held near a high field, or with an exponential envelope on
 its cold side, is offered a ready two-line ``recipe``, since an unresolved
-pair fits as one line. A series fitted in a field the survey found no Larmor
+pair fits as one line. A superconducting gap-law suggestion uses Gaussian
+``sigma``; an exponential ``Lambda`` instead calls for an explicit Gaussian
+recipe comparison before a gap law is fitted. Broadening alone does not
+identify the sample as superconducting.
+
+Envelope comparisons are reported even when only one shape is preferred and
+the remaining points are marked ``either``. Such a comparison does not
+establish a shape change; short-window results should be checked against
+background and window choices before interpreting slow warm envelopes.
+For a cold-broadened, downward-shifted TF line, the CLI suggests comparing a
+Gaussian-width series and a conditional gap model while keeping the material
+classification separate. A determined concentration slope can be reported as
+an apparent fitted rate coefficient, with fit-quality and temperature caveats,
+without claiming a validated intrinsic constant.
+
+Temperature trends also print ``ENDPOINTS:`` values and errors for the first
+two distinct reliable temperatures and the warm end. Compare these individual
+rows before treating a weighted cold block as a plateau: a cold-end upturn can
+coexist with a change farther along the scan. Dynamic Gaussian KT trends print
+``KT CONTROL:`` to compare both ``Delta`` and ``nu``, including a control with
+no corresponding onset. These notes omit unreliable fit rows and do not turn
+poorly constrained parameters into measurements.
+
+A series fitted in a field the survey found no Larmor
 line at (longitudinal, whatever the file's stamp), whose fitted curves lose
 less than a tenth of what a zero-field series' curves lose by 8 µs — on most
 runs, against the zero-field runs within its own temperature span — is read
@@ -1099,10 +1139,27 @@ its parameters have no physical meaning there. A law not established ends with
 the next step: for ``OrderParameter``
 with ``alpha`` free, refit with ``--fix alpha=1`` (points near T\ :sub:`c` fix
 only a power of T\ :sub:`c` − T, so α trades off against ``y0``); for
-``Redfield`` with ``m`` free, ``--fix m=2`` (a free ``m`` that is not positive
-is itself a reason the law is not established); otherwise,
+``Redfield`` with ``m`` free, ``--fix m=2``; otherwise,
 when some physical parameters are determined and others are not, hold the
 undetermined ones at a textbook value and report the rest with it stated.
+Trend hints defer mechanism selection to the supplied experiment context.
+Cooling-induced broadening and a line shift alone do not identify a
+superconducting phase; established magnetic systems require a magnetic
+interpretation rather than an automatic gap-law fit. Generic trend hints
+therefore offer bounded local-susceptibility, internal-field and inequivalent-site
+hypotheses without printing gap-law commands. An explicitly selected
+``tf-superconductor`` wizard scope prints the Gaussian-width/gap-law workflow
+and the matching ZF/LF tests for a small static-field onset. A cold-end excess
+compares the actual next measured temperature only when both estimates pass
+the parameter-quality gates; a failed intervening point cannot be skipped and
+a distant point called adjacent.
+
+Generalized Redfield exponents have a model-specific positive lower bound;
+this does not constrain Linear slopes. Initial Redfield fluctuation frequencies
+use the field scale converted to frequency, and the zero-field rate sets the
+initial field-distribution scale. These are optimizer seeds, not measured
+parameters or evidence that the law is established.
+
 Excluding a row is the analyst's call: every row with a
 value enters unless ``--exclude KEYS`` names it (a run number for an ordinary
 series, a member series name for one built with ``--from-fits``), and the
@@ -1183,7 +1240,36 @@ List the numbers in a draft summary that no command printed.
 
 .. code-block:: text
 
-   asymmetry audit [-h] [--workdir WORKDIR] [--json] draft
+   asymmetry audit [-h] [--workdir WORKDIR] [--json | --prepare-reply] draft
+
+Named parameter values with explicit units in printed tables are also checked
+for contradictory units in the draft, including rejected-fit diagnostics. This
+is a conservative check, not full dimensional validation of arbitrary prose.
+Both values and uncertainties retain their parameter units. In particular,
+``CriticalDivergence`` uses a dimensionless exponent ``nu``; it is not the
+fluctuation rate with the same name in a dynamic KT or Redfield model.
+Tables may place the unit before or after the error columns.
+Illumination measurements with two periods require a common science run fitted
+in separate red and green workdirs; a differential integral cannot substitute
+for the two time spectra. Mixed-instrument surveys use each scan's instrument
+when matching completed fits in other workdirs.
+
+The audit also requires the acquisition instrument/file suffix and the distinct
+recorded sample names; magnet-reference groups do not replace sample identity.
+A completed Gaussian-width comparison should retain its measured values and
+onset/plateau separately from exponential damping, even when material identity
+is uncertain. Successful command results remain evidence despite stderr
+warnings; a failed retry does not erase a completed recommendation.
+A muon or proton hyperfine coupling (``A_hf``, ``A_mu``, ``A_p``, or a
+diffusion model's ``A``) fitted at least two scaled errors from zero prints a
+``CONDITIONAL COUPLING`` note. That estimate, and significant coldest-versus-next
+excesses, remain reportable with their model and fit-quality limitations.
+An ``ADJACENT ENDPOINT`` diagnostic also retains the actual next temperature
+when its fit is flagged. Describe that pair and its limitation; a bound-pinned
+point cannot establish a significant measured upturn and must not be replaced
+by a distant reliable point. Extreme logged/setpoint offsets require a channel,
+unit and experimental-context check: a railed logger is not a physical thermal
+confound in an instrument calibration.
 
 The audit also checks that the report gives the folder run count and explicit
 members for each longer scan. For repeated weak-field groups it checks for
@@ -1196,7 +1282,10 @@ the default one when it exists). ``audit`` extracts each number from the draft
 and reports the ones that appear in none of those logs, with the line they sit
 on. A number written with *d* decimals matches any printed value it rounds
 from, so a clean audit means every number appears in *some* output, not that it
-is the right one; a multiple, a significance, a whole-number percentage or a
+is the right one. A percentage of a total or relative fraction requires its
+printed percentage token, even when it follows ``A_bg`` or contains decimals;
+an absolute amplitude in percent asymmetry is a different quantity. A multiple,
+a significance, a whole-number percentage or a
 Δ-quantity (``10×``, ``4.3σ``, ``32 %``, ``ΔAICc 11``) matches only when a
 command printed that exact token (``×``, ``x`` and "times" alike). A number its
 context makes arithmetic — after "a factor of" or a difference phrase ("within
@@ -1217,18 +1306,47 @@ that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
 ``integral-scan``, ``fourier``) ends its text output with the step: write
 ``summary.md`` and run ``asymmetry audit summary.md`` before replying, preceded
 by a "Still unfitted:" line naming the surveyed measurements no fit holds yet.
-A clean audit prints the passed draft between ``----- BEGIN -----`` and
+For the final send, run ``asymmetry audit summary.md --prepare-reply``.
+The repeated result-command footer and the evaluation image-review prompt use
+this same preparation step after the last edit. Copy its passed body without
+reformatting numeric precision or adding a final newline.
+After all checks pass, this opt-in operation removes terminal line endings
+from the saved draft and emits only that exact body on stdout, without markers,
+status lines or a copy-check footer. Copy the entire stdout unchanged. Failed
+preparation returns a nonzero status and leaves the draft unchanged. Repeat it
+after every edit; editors may restore a newline. Without the option, audit leaves
+the file unchanged. It cannot be combined with ``--json``.
+
+A clean audit **without** ``--prepare-reply`` prints the passed draft between ``----- BEGIN -----`` and
 ``----- END -----`` lines for the reply to copy whole, since agents that retype
-it add unaudited text; a report listing only numbers ends by asking for
+it add unaudited text. A ``COPY CHECK`` after the markers gives the report's
+line count and final line, so copying can be checked through the last file-list
+entry. The cue is outside the report and must not be included in the reply. Preserve
+whitespace and duplicate file entries as audited: final formatting, added
+Markdown line-break spaces or tail edits invalidate exact copying.
+A report listing only numbers ends by asking for
 another audit before replying. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions ("which
 would be a field of about 21 G", "corresponds to roughly 16 G"),
 differences between printed columns — which the agent skill's number rule
 forbids. It also lists a law's vocabulary ("critical slowing",
 "activation energy", "correlation time") when every fit of that law in the
-logged session printed ``LAW NOT ESTABLISHED``, and a run with a correlation
+logged session printed ``LAW NOT ESTABLISHED``; explicit failed or rejected
+attempts remain valid descriptions. Integral scans with significant local
+minima are checked even before the first resonance fit. Testing a local window
+can end in an unresolved result; a candidate is not automatically a resonance.
+A fit of a co-added representative covers its recorded member runs, without
+requiring redundant repeat fits. The audit also lists a run with a correlation
 spectrum but no plain
 transform in the same work directory, whose two lines the summary needs.
+
+Printed cross-condition ``COMPARE`` notes also require field-centre and
+width directions in prose. Conditional estimates retain their window and
+background limitations; listing numbers or describing a wider fit window
+does not state which feature is broader. ``STABILITY`` notes for alternative
+fits of the same runs do not impose a cross-condition claim. These are
+omission checks; the analyst still checks each direction against the two
+labelled estimates.
 
 It holds the reply, quoting the printed line back, when a command asked the
 summary to say something the draft leaves out: that ``A_bg`` was held at 0
@@ -1295,7 +1413,8 @@ optionally fit a field-scan expression. This is the ALC/QLCR path:
                            [--method {integral,differential}]
                            [--order {field,temperature,run}]
                            [--model MODEL] [--initial NAME=VALUE]
-                           [--fix NAME=VALUE] [--xmin XMIN] [--xmax XMAX]
+                           [--fix NAME=VALUE] [--bound NAME=LO:HI]
+                           [--xmin XMIN] [--xmax XMAX]
                            [--baseline MODEL]
                            [--baseline-regions LO:HI,...] [--plot]
                            [--json] [--workdir WORKDIR]
@@ -1308,8 +1427,15 @@ Cubic"`` two resonances: each LCR component starts on its own resonance, found
 in turn as the largest excursion from a straight baseline that falls to half
 height on both sides inside the scan, so a background curving away at one end
 of the scan is not taken for one. Each resonance is held inside the scan, with
-a width between a thousandth and a quarter of it — a wider one is
-indistinguishable from the polynomial background. Alternatively, ``--baseline
+a width between a thousandth and a quarter of it by default, to discourage a
+line from absorbing a poorly constrained polynomial background. A broad line
+can require a different interval: ``--bound Bwid=10:2000`` replaces that
+parameter's automatic bounds. Bounds must be finite and ordered, and widths
+and differential field steps must stay positive. Indexed component names work
+the same way. The selected intervals are stored in the fit's ``bounds`` field.
+Include baseline data on both flanks and check nearby windows before accepting
+a width recovered this way; relaxing a bound does not resolve a background
+degeneracy. Alternatively, ``--baseline
 Cubic --baseline-regions 2000:2600,4500:5000 --model LorentzianLCR``
 determines the background only from non-resonant regions before fitting the
 corrected scan, and ``--xmin``/``--xmax`` fit only the points inside a window
@@ -1330,14 +1456,49 @@ errors, that window is named with the command that fits it. A line fitted
 inside an ``--xmin``/``--xmax`` window with data on both flanks, an amplitude
 five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 8 is
 called a resolved ``RESONANCE`` to report, with its errors qualified when
-χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse. A scan that measures one field (or other x) more than once is noted with the
+χ²\ :sub:`r` is above 2; a background step read as a dip fits far worse.
+The two-width coverage test checks the outer baseline. A shorter window can
+still constrain a centre: compare nearby windows and baseline models and
+report a stable, non-bound estimate with a determined error as a conditional
+fitted centre. Keep that estimate distinct from an established isolated line;
+a failed fit or a bound-pinned width remains unmeasured. Poor chi-squared
+requires a model-mismatch caveat and stability checks, rather than discarding
+every fitted parameter solely because the model is approximate.
+The automatic width search extends to half the fitted field span. This allows
+a partially covered line to be investigated without falsely pinning it at the
+stricter two-width-flank resolution limit. Such a fit still needs coverage and
+stability qualifications. For inadequate flanks the CLI prints a wider-window
+Cubic command: compare it with nearby windows, independently for each condition,
+because a sharp line's window can truncate its broader partner. Explicit
+``--bound`` values still override the search interval.
+When no resonance model was selected, the CLI independently screens the field
+curve for significant interior minima and prints ``LOCAL DIP CANDIDATES``
+with exploratory windows. Five combined point errors of prominence reject
+small noise excursions; these coordinates are measured minima, not fitted
+resonance fields. Quarter-prominence widths keep the initial windows near the
+trough bottom without claiming measured line widths. Inspect each candidate,
+compare nearby windows and local Linear/Cubic baselines, and report a stable
+fitted estimate or the remaining limitation. A failed whole-scan recovery
+model does not establish that local resonances are absent. Monotonic recovery
+curves do not generate interior-dip candidates.
+A scan that measures one field (or other x) more than once is noted with the
 runs and whether each repeat came back within three errors — a return pass to
 report — and a dip another stored fit of the same scan holds (a line whose
 centre ± width lies inside the dip's window) is not announced again. When a windowed line (both flanks in range, five errors deep) matches one
 another scan in the work directory fitted near the same field, a ``COMPARE``
 line prints both centres and widths, with errors scaled by
 √χ²\ :sub:`r`, and says which is broader and which higher in field — the
-direction a summary of two conditions must state. A resolved line that
+direction a summary of two conditions must state. A feature that
+has incomplete flanks can still be compared as a
+significant, non-bound fitted estimate. Such ``COMPARE`` notes explicitly say
+``conditional fitted estimates`` and ``not two resolved lines``; scaled errors
+and window/background sensitivity qualify the direction. Failed, bound-pinned
+or insignificant fits are excluded. This does not relax the resolved-line gate.
+Fits with identical run membership instead print ``STABILITY``: these test
+window/background sensitivity of the same measurement. Agreement there does
+not imply agreement between different temperatures. Only comparisons of
+different run sets carry the cross-condition interpretation guidance.
+A resolved line that
 another analysed scan covers, with no fitted line within five widths of it
 there, gets a NOTE with the command that fits that scan on the same window: a
 line one scan shows and another lacks is a finding to report either way. A run stamped TF at a kilogauss or more whose integral
@@ -1356,11 +1517,25 @@ usually converges without ``--initial``; ``--initial``/``--fix`` values are
 folded into that seeding, not applied afterwards, so a fixed value is never
 overridden by a seed near it.
 The scan points, excluded runs, reduction settings, fit parameters and
-uncertainties are stored in ``scans/<name>.json``. Each run's counts are
+uncertainties are stored in ``scans/<name>.json``. The human-readable fit
+table puts uncertainties scaled by sqrt(chi2_red) first when reduced chi-squared
+exceeds one, with ``unscaled error`` alongside. Fixed parameters remain
+``fixed``, bound flags remain visible, and a failed fit prints no usable error.
+Stored JSON uncertainties remain the raw fit errors. Scaling does not make a
+poor model physically adequate; retain window and baseline limitations.
+Each run's counts are
 grouped and corrected under the `Reduction options`_ — ``--deadtime
 from_file`` on an ISIS repolarisation or ALC scan, as in ``reduce``, and
 ``--background`` the same way (see `Reduction options`_ for how its error
 propagates into the integral).
+
+``--method integral`` (the default) sums corrected counts before forming each
+asymmetry. ``--method differential`` instead takes an equal-weight mean of
+per-bin asymmetries; late low-count bins can make it much noisier. This
+estimator choice is independent of period subtraction. An integrated RF
+contrast normally uses ``--method integral --period green-red``. The printed
+scan identifies the estimator so a failed resonance fit can be revisited
+without confusing the two operations.
 
 ``--period green-red`` builds the RF-resonance or differential-ALC scan: each
 point is the green period's integral asymmetry less the red period's, each
@@ -1586,11 +1761,11 @@ already belongs to another folder or instrument is refused:
 
 ``survey`` and ``reduce`` write the manifest, so the first of them run against
 a fresh directory claims it; a directory with no manifest yet is unclaimed. A
-manifest written by an older ``asymmetry`` (a lower schema version — the
-current one added the bound instrument) is read as the whole folder, with no
-instrument bound, and upgraded the next time ``survey`` or ``reduce`` writes
-it; every reduced run and series under the old schema is recomputed rather
-than trusted, the same as any other stale digest. The same folder named
+manifest written before instrument selection was recorded (schema below 4)
+is read as the whole folder, with no instrument bound. An older manifest is
+upgraded the next time ``survey`` or ``reduce`` writes it; its recorded
+instrument is preserved when present. Reduced runs and series under an older
+schema must be regenerated rather than trusted. The same folder named
 relatively, absolutely, or through a symlink is one
 folder — both paths are resolved before they are compared.
 
@@ -1688,9 +1863,21 @@ Every per-run result carries quality flags, read from ``fit_result_summary``:
 
 **Nothing is dropped.** A flagged run still appears in ``series/<name>.json``
 and in the ``trend`` table, with its flags attached, so the full scan is
-always visible; a flagged run's value is simply not a result to quote, which
-is a judgement made when writing up the summary, not something the tool
-does for you by omitting the row.
+always visible. Bounds and large errors are assessed per parameter: an
+unconstrained nuisance damping term does not invalidate a precise amplitude,
+frequency or Gaussian width. Trend rows retain ``params_at_bound`` in JSON;
+whole-fit failures, unresolved frequencies, spurious reseeds and unphysical
+amplitudes still qualify the entire fit. The stored work-directory schema is
+now 5; older reduced caches and series must be regenerated rather than read
+without this diagnostic metadata.
+
+Temperature endpoints print the coldest-minus-next difference and its combined
+error. Values within two combined errors are described as consistent; a
+whole-scan step does not prove an endpoint upturn. Linear rate fits against a
+supplied axis print ``APPARENT FITTED COEFFICIENT:`` with the fitted uncertainty
+and units per unit of that axis. This preserves an empirical estimate while
+leaving intrinsic kinetic interpretation conditional on the experimental
+conditions and model adequacy.
 
 Plots
 -----
@@ -1707,14 +1894,58 @@ Each PNG framed by ``--plot`` follows the same two rules:
   bunched to about 400 points for display only; the underlying fit or reduced
   record is untouched.
 
-``trend`` plots frame the y-axis on the **clean** (unflagged) points, so one
+``trend`` plots frame the y-axis on points unflagged **for the plotted
+parameter**, so a nuisance offset's large error cannot clip a measured width.
+One
 wildly flagged run cannot squash every other point onto the axis edge; a
 flagged point outside that range is still drawn, clamped to it, with a
 distinct marker, and counted in the frame note, rather than silently moved or
 dropped.
 
+A zero recorded field plus a detected line is ambiguous without sample context.
+``survey`` prints ``ZERO-FIELD HEADER:`` for these runs: a nonmagnetic reference
+may carry an unrecorded weak TF, while a magnetic sample may precess in an
+internal field. Calibration sensor drift is not automatically a sample scan.
+Broad local ALC troughs also require baseline checks: compare local Linear and
+Cubic backgrounds, bounds and adjacent windows before abandoning a bound-pinned
+width. A polynomial need not describe a whole scan containing a baseline step.
+A centre at a search bound prompts the same investigation even with modest
+chi-squared: inspect the full scan, widen or shift the window to include both
+flanks, and compare seeds and local backgrounds before concluding no line is
+resolved. The CLI prints ``BOUND-LIMITED CENTRE`` for this case. The summary
+audit requires an explanation of a reported whole-range background limitation;
+merely defining a local polynomial does not explain that limitation.
+
+
 The skill
 ---------
+
+Reports retain the printed coordinates and ranges of onsets, extrema and
+plateaus explicitly in prose. For long scans the decisive points belong in
+the report and full tables remain in the named CLI products. Local resonance
+comparisons distinguish a resolved narrow component from broad curvature
+with an unconstrained width; they also explain why one whole-scan polynomial
+baseline was inadequate. A failed observable is kept separate from a precise
+parameter beside an unconstrained nuisance term. Final copy checks apply to
+all characters, including Markdown punctuation: any cleanup happens in the
+saved report before its final audit.
+
+Reports separate an observation, a supported candidate mechanism, and the
+quantities that have not been measured. A missing microscopic model limits
+parameter extraction and site assignment; it need not prevent a qualitative
+explanation supported by the observed change and experimental context. That
+explanation belongs in the conclusion with its alternatives and limitations.
+Rejected fitted quantities cannot supply such evidence, while poor whole-fit
+quality does not automatically erase an independently supported pattern.
+
+Every comparative sentence is checked against its two labelled fit rows,
+including the direction of a centre shift and width change. Separate features
+can move in opposite directions; a correct table does not correct reversed
+prose. Supported qualitative mechanisms remain distinct from unavailable
+microscopic fits: narrowing can be consistent with reorientation averaging
+hyperfine anisotropy without measuring a coupling or motion rate. File lists
+use complete plain paths, one per line, and are finished before the final audit
+so their last line is copied as exactly as the scientific results.
 
 The packaged ``asymmetry-analysis`` skill tells an agent to work through
 seven steps: survey the folder; decide alpha (and never guess it); reduce the
@@ -1749,7 +1980,13 @@ result so the two evaluation tracks remain comparable without being conflated.
 The Codex runner's image-review turn writes and audits the complete final
 report after inspecting the attached plots. ``cost.json`` records
 ``final_report_audited`` by comparing the reply with the last passed audit;
-an audited earlier draft does not verify a rewritten final reply.
+an audited earlier draft does not verify a rewritten final reply. The runner
+preserves the final message's whitespace without trimming or adding a newline,
+and its audit comparison is exact. Passed audits likewise print the saved
+report unchanged between their markers. Nominated review images are copied
+into ``review-images/`` outside the agent project before the second turn;
+``image-inputs.json`` records their snapshot paths and hashes. Later replots
+cannot replace the pixels supplied for review.
 Both turns explicitly request the workspace-write approval mode; the resume
 invocation must not fall back to a read-only sandbox.
 
@@ -1773,3 +2010,38 @@ Limits and what is not there yet
   still print several identical multi-line warning blocks on stderr on
   platforms that spawn worker processes. They are benign noise from seeding
   trial models during the candidate search.
+
+Wizard worker budgets
+~~~~~~~~~~~~~~~~~~~~~
+
+``asymmetry wizard --workers N`` limits simultaneous fitting workers.
+``ASYMMETRY_WIZARD_WORKERS`` supplies its default when several independent
+analyses share a host; an explicit flag overrides it. Positive values are
+required. The default remains automatic when neither is set. BLAS/OpenMP
+thread limits are separate: a pool limit alone does not bound numerical
+library threads. ``screen_run(max_workers=N)`` exposes the same budget for
+scripted analyses.
+
+Temperature trend output identifies actual first/last scan members alongside
+reliable parameter endpoints. Inspect their reduced/fit plots even when their
+fits fail; the first valid middle point is not the coldest measured spectrum.
+Composition-axis summaries name the title/notes source, normalization and
+units of supplied values. TF broadening alone does not select a superconducting
+model: unknown samples retain an open physics scope and magnetic experiments
+need magnetic line-shift/splitting interpretations.
+
+
+Sampling bandwidth in stored reductions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``reduce --rebin`` averages bins and lowers the Nyquist frequency used by later
+fits and transforms. Before averaging, the workflow checks detected spectral
+lines on the native record. It rejects a factor that would fold a detected line
+through the new Nyquist boundary and prints a safe maximum factor. Use a smaller
+factor, a shorter fit window, or ``--plot-tmax`` for display-only zoom. A high
+applied field alone does not forbid averaging a nonprecessing LF trace; the
+check protects measured lines, rather than assuming a Larmor line is present.
+To average a known fast line away on purpose, for example to study slower
+relaxation beneath a high-TF diamagnetic line, pass ``--allow-aliasing``:
+"Rebin even when a detected line lies above the new Nyquist frequency,
+deliberately averaging a known fast line away to study slower relaxation".

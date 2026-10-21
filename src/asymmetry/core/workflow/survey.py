@@ -135,7 +135,8 @@ class PrecessionEvidence:
 
     ``state`` is ``"larmor"`` (a strong line at the Larmor frequency of the
     recorded field — the run really is transverse), ``"other"`` (a strong line
-    somewhere else, which is a magnet precessing in its own internal field),
+    somewhere else: an internal field, a different species, or an unrecorded
+    applied field; sample context distinguishes these),
     ``"none"`` (no line worth the name), or ``None`` when no measurement was
     possible — then ``note`` says why.
     """
@@ -1002,7 +1003,11 @@ def build_run_row(
 
 def sample_name(row: RunRow) -> str:
     """The run's sample: the file's own name for it, else its title before any ``T=``/``F=``."""
-    return row.sample or re.split(r"[\s_,]+[TFB]\s*=", row.title, maxsplit=1)[0].strip()
+    name = row.sample or row.title
+    labelled = re.search(r"\bSample\s*=\s*([^,;]+)", name, re.IGNORECASE)
+    if labelled:
+        name = labelled.group(1)
+    return re.split(r"[\s_,]+[TFB]\s*=", name, maxsplit=1)[0].strip()
 
 
 #: A sample named by a leading number over a name ("0.25 M salt/water"):

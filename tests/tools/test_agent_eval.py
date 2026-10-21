@@ -271,7 +271,7 @@ def test_a_wave_runs_every_named_set_once(tmp_path: Path, monkeypatch) -> None:
 
     ran: list[str] = []
     monkeypatch.setattr(
-        module, "run_case", lambda case, corpus, out, model: ran.append(case) or (case, 0)
+        module, "run_case", lambda case, corpus, out, model, agent: ran.append(case) or (case, 0)
     )
     argv = ["--set", "trend-fit", "--set", "hold-out", "--case", "euo-psi"]
     assert module.main([*argv, "--corpus", str(tmp_path), "--out", str(tmp_path)]) == 0
@@ -284,7 +284,9 @@ def test_a_wave_reads_the_corpus_root_from_the_environment(tmp_path: Path, monke
 
     corpora: list[Path] = []
     monkeypatch.setattr(
-        module, "run_case", lambda case, corpus, out, model: corpora.append(corpus) or (case, 0)
+        module,
+        "run_case",
+        lambda case, corpus, out, model, agent: corpora.append(corpus) or (case, 0),
     )
     assert module.main(["--case", "euo-psi", "--out", str(tmp_path)]) == 0
     assert corpora == [tmp_path / "corpus"]
@@ -297,3 +299,75 @@ def test_a_wave_without_a_corpus_root_stops_before_running(tmp_path: Path, monke
     monkeypatch.setattr(module, "run_case", lambda *_: pytest.fail("ran without a corpus"))
     with pytest.raises(SystemExit):
         module.main(["--case", "euo-psi", "--out", str(tmp_path)])
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+@pytest.mark.parametrize("model", [None, "explicit-model"])
+def test_wave_preserves_the_runner_default_or_explicit_model(
+    tmp_path: Path, monkeypatch, agent, model
+) -> None:
+    module = _load_runner("run_wave")
+    calls = []
+    monkeypatch.setattr(
+        module,
+        "run_case",
+        lambda case, corpus, out, selected_model, selected_agent: (
+            calls.append((selected_agent, selected_model)) or (case, 0)
+        ),
+    )
+    assert (
+        module.main(
+            [
+                "--case",
+                "euo-psi",
+                "--agent",
+                agent,
+                "--corpus",
+                str(tmp_path),
+                "--out",
+                str(tmp_path),
+                *(["--model", model] if model is not None else []),
+            ]
+        )
+        == 0
+    )
+    assert calls == [(agent, model)]
+
+
+def test_codex_expansion_completes_the_existing_gate() -> None:
+    module = _load_runner("run_wave")
+    gate, expansion = map(set, (module.SETS["codex-gate"], module.SETS["codex-expansion"]))
+    assert len(gate) == 8
+    assert len(expansion) == 16
+    assert gate.isdisjoint(expansion)
+    assert gate | expansion == set(module.SETS["all"]) == set(module.CASES)
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+def test_wave_dispatches_to_the_selected_runner(tmp_path: Path, monkeypatch, agent) -> None:
+    module = _load_runner("run_wave")
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return argparse.Namespace(returncode=0)
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    assert module.run_case("euo-psi", tmp_path, tmp_path, "explicit-model", agent) == ("euo-psi", 0)
+    assert calls[0][1] == str(module.HERE / module.RUNNERS[agent])
+    assert calls[0][calls[0].index("--model") + 1] == "explicit-model"
+
+
+def test_wave_reports_codex_usage_without_inventing_a_dollar_cost(tmp_path: Path) -> None:
+    module = _load_runner("run_wave")
+    (tmp_path / "euo-psi").mkdir()
+    (tmp_path / "euo-psi" / "cost.json").write_text(
+        json.dumps(
+            {
+                "agent": "Codex",
+                "model": "gpt-6-luna",
+                "wall_seconds": 12.3,
+            }
+        )
+    )
+    assert module.report("euo-psi", 0, tmp_path) == "euo-psi: Codex/gpt-6-luna, exit 0, 12 s"

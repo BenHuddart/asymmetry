@@ -26,6 +26,7 @@ from asymmetry.cli._output import (
 from asymmetry.cli._recipes import parse_fix
 from asymmetry.cli._runs import parse_run_spec, reduced_datasets
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+from asymmetry.core.workflow.series import parameter_quality_flags
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -182,6 +183,12 @@ def run(args: argparse.Namespace) -> None:
             ).to_dict()
         except ValueError as exc:
             raise UserError(str(exc)) from None
+        if (
+            args.model.strip() == "Linear"
+            and re.sub(r"_\d+$", "", args.param) in _RATE_BASES
+            and trend.order_key not in _FILE_AXES
+        ):
+            fit["units"].update({"m": f"µs⁻¹ per unit {trend.order_key}", "b": "µs⁻¹"})
         series["trend_fits"][trend_fit_key(args.param, args.model)] = fit
     if args.from_fits is not None or fit is not None:
         workdir.write_series(name, series)
@@ -347,14 +354,15 @@ def _render(
         "",
         render_trend(trend),
     ]
-    from asymmetry.core.workflow.series import envelope_change
+    from asymmetry.core.workflow.series import envelope_summary
 
     # What the trend itself shows is printed whether or not a law is fitted
     # to it: a law answers one question, these name the others.
-    change = envelope_change(trend)
+    change = envelope_summary(trend)
     readings = [
         *([change] if change is not None else []),
         *_rate_steps(trend, series["free_params"]),
+        *_edge_comparisons(trend, series["free_params"]),
         *_phase_drift(trend, series["free_params"]),
         *_frequency_response(series, trend),
         *([decoupling] if decoupling is not None else []),
@@ -424,7 +432,7 @@ _STEP_SIGNIFICANCE = 5.0
 _LEVEL_DEPARTURE = 3.0
 
 
-#: Flags that say a row's values are not a measurement (``large_rel_err`` is
+#: Flags that say the requested parameter is not a measurement (``large_rel_err`` is
 #: carried by its own error bar and stays).
 _UNRELIABLE = frozenset(
     {
@@ -444,7 +452,7 @@ def _measured(trend, *params: str) -> list[dict[str, Any]]:
             row
             for row in trend.rows
             if all(row[param] is not None and row[f"{param}_err"] for param in params)
-            and not _UNRELIABLE & set(row["flags"])
+            and all(not _UNRELIABLE & parameter_quality_flags(row, param) for param in params)
         ),
         key=lambda row: row["x"],
     )
@@ -455,6 +463,93 @@ def _weighted_mean(rows, param: str) -> tuple[float, float]:
     weights = [1.0 / row[f"{param}_err"] ** 2 for row in rows]
     mean = sum(w * row[param] for w, row in zip(weights, rows)) / sum(weights)
     return mean, 1.0 / math.sqrt(sum(weights))
+
+
+def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
+    """Keep individual reliable temperature endpoints visible beside whole-scan step notes."""
+    if trend.order_key not in {"temperature", "sample_temperature_logged"}:
+        return []
+    rates = [p for p in free_params if re.sub(r"_\d+$", "", p) in _RATE_BASES]
+    notes = []
+    endpoints = sorted(trend.rows, key=lambda row: row["x"])
+    if len(endpoints) >= 2:
+        notes.append(
+            "SPECTRAL ENDPOINTS: "
+            + "; ".join(
+                f"run {row['key']} at {trend.order_key}={row['x']:g} "
+                f"(flags: {', '.join(row['flags']) or 'none'})"
+                for row in (endpoints[0], endpoints[-1])
+            )
+            + ". Inspect these actual endpoint reduced/fit plots and compare the "
+            "spectral shape in words. A failed endpoint fit still has observed data; "
+            "do not replace it with the first reliable middle point or only list its flags."
+        )
+    for param in rates:
+        rows = _measured(trend, param)
+        if len(rows) < 2:
+            continue
+        first = rows[0]
+        following = next((row for row in endpoints if row["x"] > first["x"]), None)
+        if following is None:
+            continue
+        if following not in rows:
+            fitted = (
+                "no fitted value"
+                if following[param] is None
+                else f"fitted {param} = {format_number(following[param], 6)} ± "
+                f"{format_number(following[f'{param}_err'], 6)}"
+            )
+            notes.append(
+                f"ADJACENT ENDPOINT: {param} at run {first['key']} "
+                f"({trend.order_key}={first['x']:g}) is "
+                f"{format_number(first[param], 6)} ± {format_number(first[f'{param}_err'], 6)}; "
+                f"the next measured temperature is run {following['key']} "
+                f"({trend.order_key}={following['x']:g}), with {fitted}, "
+                f"flags: {', '.join(sorted(parameter_quality_flags(following, param))) or 'none'}. "
+                "Compare this actual adjacent pair in words, including its fit limitations. "
+                "A bound or failed next point prevents a measured upturn/significance claim; "
+                "do not replace it with a distant reliable point or omit the comparison."
+            )
+            continue
+        difference = first[param] - following[param]
+        error = math.hypot(first[f"{param}_err"], following[f"{param}_err"])
+        significance = abs(difference) / error
+        point = "coldest point" if first["key"] == endpoints[0]["key"] else "lowest reliable point"
+        comparison = (
+            "consistent within two combined errors"
+            if significance < 2.0
+            else f"higher at the {point}"
+            if difference > 0
+            else f"lower at the {point}"
+        )
+        shown = [first, following] + ([rows[-1]] if rows[-1] is not following else [])
+        if difference > 0 and significance >= 3 and first["key"] == endpoints[0]["key"]:
+            notes.append(
+                f"COLD-END EXCESS: {param} is higher at the coldest run {first['key']} "
+                f"than at the next measured temperature, run {following['key']}. "
+                "Report this adjacent-point upturn separately from the wider temperature trend."
+            )
+        notes.append(
+            f"ENDPOINTS: {param}: "
+            + "; ".join(
+                f"{format_number(row[param], 6)} ± {format_number(row[f'{param}_err'], 6)} "
+                f"at {trend.order_key}={row['x']:g} (run {row['key']})"
+                for row in shown
+            )
+            + f". {'Coldest' if point == 'coldest point' else 'Lowest reliable'} minus next: "
+            f"{format_number(difference, 6)} ± "
+            f"{format_number(error, 6)} ({significance:.2f} combined errors): {comparison}. "
+            "A whole-scan step note does not rule out an endpoint upturn; central values "
+            "alone do not establish one."
+        )
+    if {"Delta", "nu"}.issubset({re.sub(r"_\d+$", "", p) for p in rates}):
+        notes.append(
+            "KT CONTROL: describe the temperature dependence of both Delta (field width) "
+            "and nu (dynamics), including any rate with no corresponding onset. A change "
+            "of static width alone is different from a change of fluctuation rate; "
+            "compare their trends rather than assigning the same mechanism to both."
+        )
+    return notes
 
 
 def _held_level(block: list[dict[str, Any]], param: str) -> tuple[float, list[dict[str, Any]]]:
@@ -877,18 +972,29 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
         else:
             shift = _frequency_shift(trend, frequencies[0])
             widths = [p for p in rates if re.sub(r"_\d+$", "", p) == "sigma"] or rates
-            # A line pulled below its normal-state frequency on cooling while its
-            # width grows is the vortex lattice's diamagnetic shift and field
-            # distribution: the width is a superfluid-density measure.
+            # Width growth and a line shift alone do not identify the phase.
             if shift is not None and shift[0] < shift[1] and widths:
                 cold = _measured(trend, widths[0])
                 if len(cold) >= 2 and cold[0][widths[0]] > cold[-1][widths[0]]:
                     hints.append(
                         f"{frequencies[0]} falls below its warm value on cooling while "
-                        f"{widths[0]} grows: if the sample is a superconductor, that is its "
-                        f"diamagnetic shift and vortex lattice — fit the width with a gap law and "
-                        f"say whether it describes it: {command} SC_SWave --param {widths[0]}, "
-                        f"then SC_DWave."
+                        f"{widths[0]} grows: compare a Gaussian-width temperature series "
+                        "before deciding the mechanism. A magnetic-response hypothesis "
+                        "is a temperature-dependent local susceptibility or a distribution "
+                        "of internal fields; close lines can represent inequivalent sites "
+                        "or magnetic sublattices, and field-induced canting is a possible "
+                        "mechanism to test, not a measured angle. State this bounded "
+                        "magnetic interpretation even when the phase identity is unknown. "
+                        "A generic shift/width cue does not justify superconducting gap "
+                        "laws. Select tf-superconductor only when supplied experiment "
+                        "context supports that hypothesis; its wizard prints the gap-law "
+                        "workflow. For an exponential envelope, first compare an "
+                        "Oscillatory * Gaussian + Constant recipe rather than calling "
+                        "Lambda a Gaussian sigma. If you performed that comparison, "
+                        "report the Gaussian width's measured values, temperature span "
+                        "and onset or plateau separately from the exponential rate. "
+                        "An unknown composition does not erase that empirical result; "
+                        "qualify the mechanism instead of omitting the width trend."
                     )
             if shift is not None:
                 hints.append(
@@ -1071,11 +1177,15 @@ def _render_fit(
         )
         lines.extend(law_steps)
         if fit["expression"].strip() == "Linear" and fit["order_key"] not in _FILE_AXES:
+            slope = fit["parameters"]["m"]
+            unit = fit["units"].get("m") or f"{fit['param']} per unit {fit['order_key']}"
             lines.append(
-                f"The slope m is the change in {fit['param']} per unit {fit['order_key']}: for a "
-                f"rate against a concentration it is the rate constant. Report m with its "
-                f"error, in {fit['param']}'s unit per unit {fit['order_key']}."
+                f"APPARENT FITTED COEFFICIENT: {format_number(slope, 6)} ± {error('m', scale)} "
+                f"{unit}. This is the empirical slope under the fitted conditions; model "
+                "mismatch or temperature spread limits an intrinsic interpretation, not "
+                "the existence of this estimate."
             )
+
     for law in misplaced:
         lines.append(
             f"NOTE: {law} is a law in {' or '.join(sorted(_LAW_AXES[law]))}, and this trend is "

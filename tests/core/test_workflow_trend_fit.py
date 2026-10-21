@@ -26,6 +26,7 @@ def _trend() -> TrendTable:
             "x": float(temperature),
             "frequency": _frequency(temperature),
             "frequency_err": 0.05,
+            "params_at_bound": [],
             "flags": [],
         }
         for index, temperature in enumerate(_TEMPERATURES)
@@ -36,6 +37,7 @@ def _trend() -> TrendTable:
             "x": 68.0,
             "frequency": 25.0,
             "frequency_err": 0.05,
+            "params_at_bound": [],
             "flags": ["spurious_reseeded"],
         }
     )
@@ -175,3 +177,39 @@ def test_a_fit_trend_of_a_parameter_the_law_lacks_is_refused() -> None:
 
     with pytest.raises(ValueError, match="The trend fit of a has no parameter 'Ea'"):
         fit_trend_table({"a": _stored_fit()}, "Ea", ScanAxis("temperature", {"a": 1.0}))
+
+
+@pytest.mark.parametrize("fixed", [{}, {"m": 2.0}])
+def test_generalized_redfield_fit_recovers_positive_physical_parameters(fixed) -> None:
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+    from asymmetry.core.fitting.seeding import seed_trend_parameters
+
+    model = ParameterCompositeModel.from_expression("Redfield")
+    x = np.linspace(0, 12000, 41)
+    y = model.function(x, D=28.0, nu=140.0, m=2.0)
+    rows = [
+        {
+            "key": str(i),
+            "x": float(b),
+            "Lambda": float(rate),
+            "Lambda_err": 0.02,
+            "params_at_bound": [],
+            "flags": [],
+        }
+        for i, (b, rate) in enumerate(zip(x, y, strict=True))
+    ]
+    trend = TrendTable(
+        order_key="field", columns=["key", "x", "Lambda", "Lambda_err", "flags"], rows=rows
+    )
+    seeds = seed_trend_parameters(model, x, y)
+    assert seeds["m"].min > 0
+    assert seeds["m"].value == 2.0
+    assert (
+        seed_trend_parameters(ParameterCompositeModel.from_expression("Linear"), x, y)["m"].min
+        == -np.inf
+    )
+    fit = fit_trend(trend, "Lambda", "Redfield", fixed=fixed)
+    assert fit.success
+    assert fit.parameters["D"] == pytest.approx(28.0, rel=0.01)
+    assert fit.parameters["nu"] == pytest.approx(140.0, rel=0.01)
+    assert fit.parameters["m"] == pytest.approx(2.0, rel=0.01)

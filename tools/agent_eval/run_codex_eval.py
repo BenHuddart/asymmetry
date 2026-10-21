@@ -54,15 +54,29 @@ folder coverage, each scan's run members and geometry evidence, calibration,
 the physical meaning of every model component, and the fit/FFT windows and
 resolution alongside the values they qualify. Explain any uncompleted work.
 
+The first-turn instruction to end with an image manifest is now satisfied and
+no longer applies. This second turn ends with the scientific report alone.
+List product directories or decisive files once; a complete report need not
+repeat every exploratory output path or duplicate every diagnostic table.
 After inspecting these images, write the complete final report to summary.md
-and run asymmetry audit summary.md. Resolve its findings, then copy that final
-audited file verbatim into your reply. An audit of a first-turn draft does not
-audit a different report written after image review.
+and resolve asymmetry audit summary.md findings. After the last edit, run
+asymmetry audit summary.md --prepare-reply. Plain audit is a diagnostic, not the
+final send: its framed draft may retain a terminal newline. Use --prepare-reply
+after every edit, including a correction or file-list change. A successful preparation emits only
+report text: use its entire stdout as your final reply, unchanged. Do not append
+image-review manifests, audit checks or statements about formatting; those are
+control instructions, not scientific findings. Do not retype numbers or polish
+phrasing after preparation. If any wording, punctuation or file path needs a
+change, edit summary.md and prepare it again before sending. An audit of a first-turn draft does not audit a
+different report written after image review.
 """
 EVALUATION_INSTRUCTIONS = """# Agent evaluation boundary
 
 Analyse only the staged data named in the user's prompt, using the installed
 `asymmetry-analysis` skill and the `asymmetry` CLI.
+
+Read `.agents/skills/asymmetry-analysis/SKILL.md` under this project. Use this
+project copy even when another skill with the same name is advertised.
 
 - Read only the staged data directory and files under this project directory.
   Do not inspect the Asymmetry source repository, documentation checkout,
@@ -174,6 +188,9 @@ def agent_env(args: argparse.Namespace) -> dict[str, str]:
     env = dict(os.environ)
     env["PATH"] = f"{cli_bin_dir()}{os.pathsep}{env.get('PATH', '')}"
     env.setdefault("PYTHONUTF8", "1")
+    plot_cache = args.out / "project" / ".cache" / "matplotlib"
+    plot_cache.mkdir(parents=True, exist_ok=True)
+    env["MPLCONFIGDIR"] = str(plot_cache.resolve())
     if args.hdf4_dll_dir:
         env["ASYMMETRY_HDF4_DLL_DIR"] = str(args.hdf4_dll_dir)
     return env
@@ -203,6 +220,21 @@ asymmetry-work/plots/example.png
 """
 
 
+def skill_source_options() -> list[str]:
+    """Disable the evaluated skill's personal copies while leaving the staged copy enabled."""
+    roots = [
+        Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")),
+        Path.home() / ".agents",
+    ]
+    entries = ",".join(
+        "{path="
+        + json.dumps(str(root / "skills" / "asymmetry-analysis" / "SKILL.md"))
+        + ",enabled=false}"
+        for root in roots
+    )
+    return ["--config", f"skills.config=[{entries}]"]
+
+
 def build_command(args: argparse.Namespace, data: Path, project: Path) -> list[str]:
     """Build the controlled non-interactive Codex invocation.
 
@@ -222,6 +254,7 @@ def build_command(args: argparse.Namespace, data: Path, project: Path) -> list[s
         "view_image",
         "--enable",
         "skip_host_skill_discovery",
+        *skill_source_options(),
         "--model",
         args.model,
         "--cd",
@@ -254,7 +287,7 @@ def _review_manifest_text(events: list[dict]) -> str:
 
 
 def review_images(events: list[dict], project: Path) -> list[dict[str, object]]:
-    """Validate the nominated project-local images and record their hashes."""
+    """Snapshot nominated project-local images before the agent can replace them."""
     images: list[dict[str, object]] = []
     project_root = project.resolve()
     for raw_line in _review_manifest_text(events).splitlines():
@@ -278,12 +311,18 @@ def review_images(events: list[dict], project: Path) -> list[dict[str, object]]:
         relative_text = safe_relative.as_posix()
         if any(item["relative_path"] == relative_text for item in images):
             continue
+        pixels = resolved.read_bytes()
+        digest = hashlib.sha256(pixels).hexdigest()
+        snapshot = project.parent / "review-images" / f"{digest}{resolved.suffix.lower()}"
+        snapshot.parent.mkdir(exist_ok=True)
+        snapshot.write_bytes(pixels)
         images.append(
             {
                 "relative_path": relative_text,
-                "path": resolved,
-                "bytes": resolved.stat().st_size,
-                "sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+                "path": snapshot,
+                "snapshot_path": snapshot.relative_to(project.parent).as_posix(),
+                "bytes": len(pixels),
+                "sha256": digest,
             }
         )
         if len(images) == MAX_REVIEW_IMAGES:
@@ -310,6 +349,7 @@ def build_resume_command(
         "view_image",
         "--enable",
         "skip_host_skill_discovery",
+        *skill_source_options(),
         "--model",
         args.model,
     ]
@@ -439,9 +479,9 @@ def extract_summary(args: argparse.Namespace, events: list[dict]) -> str:
     """Read Codex's explicit last-message file, with an event fallback."""
     last = args.out / "last-message.md"
     if last.is_file():
-        return last.read_text(encoding="utf-8", errors="replace").strip()
+        return last.read_text(encoding="utf-8", errors="replace")
     texts = assistant_texts(events)
-    return texts[-1].strip() if texts else ""
+    return texts[-1] if texts else ""
 
 
 def usage(events: list[dict]) -> dict | None:
@@ -480,9 +520,12 @@ def final_report_audited(summary: str, events: list[dict]) -> bool:
             and item.get("type") == "command_execution"
             and "asymmetry audit " in item.get("command", "")
         ):
-            _, begin, body = item.get("aggregated_output", "").partition("----- BEGIN -----\n")
+            output = item.get("aggregated_output", "")
+            if "--prepare-reply" in item["command"]:
+                return bool(summary and item["exit_code"] == 0 and output == summary)
+            _, begin, body = output.partition("----- BEGIN -----\n")
             report, end, _ = body.partition("\n----- END -----")
-            return bool(begin and end and report.strip() == summary.strip())
+            return bool(begin and end and report == summary)
     return False
 
 
@@ -497,7 +540,7 @@ def write_outputs(
 ) -> None:
     """Persist the report, evidence, metadata, produced work and rubric."""
     summary = extract_summary(args, events)
-    (args.out / "summary.md").write_text(summary + "\n", encoding="utf-8")
+    (args.out / "summary.md").write_text(summary, encoding="utf-8")
     (args.out / "assistant-text.md").write_text(
         "\n\n---\n\n".join(assistant_texts(events)) + "\n", encoding="utf-8"
     )
@@ -579,7 +622,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return returncode
-    if completed_turns(events) < 2 or not extract_summary(args, events):
+    if completed_turns(events) < 2 or not extract_summary(args, events).strip():
         print(
             "Codex did not complete both evaluation turns or produced no final report; "
             "nothing here is scoreable.",

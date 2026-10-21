@@ -1,0 +1,699 @@
+{
+ "description": "Per-wave summary of the GPT-6 Luna corpus improvement loop (BenHuddart/asymmetry#368). Full per-case records: BenHuddart/wimda-muon-school-corpus, eval-records/luna6-2026-10/. The latest full record, luna6-corpus-confirmation9.json, is kept beside this file.",
+ "archive": "https://github.com/BenHuddart/wimda-muon-school-corpus/tree/main/eval-records/luna6-2026-10",
+ "waves": [
+  {
+   "record": "agent-cli-skill-luna6-expansion-2026-10-19.json",
+   "kind": "baseline",
+   "recorded_at": "2026-10-19",
+   "commit": "9f9dcd69850b",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 1,
+   "cases": 16,
+   "scientific_pass": 7,
+   "must_pass": 86,
+   "must_total": 100,
+   "exact_copy_pass": 11,
+   "combined_pass": 3,
+   "scientific_failures": [
+    "basics",
+    "benzene-alc",
+    "benzene-repolarisation",
+    "benzene-rf",
+    "copper-diffusion",
+    "corannulene-alc",
+    "euo-psi",
+    "lifeas-psi",
+    "trsb-re6zr"
+   ],
+   "exact_copy_failures": [
+    "afm-high-tf-mdu",
+    "copper-diffusion",
+    "maleic-mu-kinetics",
+    "plateau-redfield",
+    "sn-critical-field"
+   ],
+   "status": "7/16 scientific rubric PASS; 86/100 Musts. Exact-copy audit passes 11/16; combined scientific-plus-exact-copy gate passes 3/16.",
+   "case_names": [
+    "afm-high-tf-mdu",
+    "basics",
+    "benzene-alc",
+    "benzene-high-tf",
+    "benzene-repolarisation",
+    "benzene-rf",
+    "copper-diffusion",
+    "corannulene-alc",
+    "euo-psi",
+    "lifeas-psi",
+    "maleic-mu-kinetics",
+    "molecular-antiferromagnet",
+    "plateau-redfield",
+    "sn-critical-field",
+    "spin-peierls",
+    "trsb-re6zr"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round1.json",
+   "kind": "round",
+   "recorded_at": "2026-10-19T22:30:58.458337+00:00",
+   "commit": "ea920f979130",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 13,
+   "scientific_pass": 6,
+   "must_pass": 73,
+   "must_total": 83,
+   "exact_copy_pass": 12,
+   "combined_pass": 5,
+   "boundary_pass": 12,
+   "scientific_failures": [
+    "basics",
+    "benzene-alc",
+    "copper-diffusion",
+    "corannulene-alc",
+    "lifeas-psi",
+    "maleic-mu-kinetics",
+    "trsb-re6zr"
+   ],
+   "exact_copy_failures": [
+    "sn-critical-field"
+   ],
+   "status": "complete",
+   "case_names": [
+    "afm-high-tf-mdu",
+    "basics",
+    "benzene-alc",
+    "benzene-repolarisation",
+    "benzene-rf",
+    "copper-diffusion",
+    "corannulene-alc",
+    "euo-psi",
+    "lifeas-psi",
+    "maleic-mu-kinetics",
+    "plateau-redfield",
+    "sn-critical-field",
+    "trsb-re6zr"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round2.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T00:12:50.963281+00:00",
+   "commit": "a5047aeca77c",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 9,
+   "scientific_pass": 4,
+   "must_pass": 49,
+   "must_total": 62,
+   "exact_copy_pass": 7,
+   "combined_pass": 4,
+   "boundary_pass": 9,
+   "scientific_failures": [
+    "basics",
+    "benzene-alc",
+    "corannulene-alc",
+    "maleic-mu-kinetics",
+    "trsb-re6zr"
+   ],
+   "exact_copy_failures": [
+    "maleic-mu-kinetics",
+    "trsb-re6zr"
+   ],
+   "status": "complete; all nine first attempts scored",
+   "case_names": [
+    "afm-high-tf-mdu",
+    "basics",
+    "benzene-alc",
+    "copper-diffusion",
+    "corannulene-alc",
+    "lifeas-psi",
+    "maleic-mu-kinetics",
+    "sn-critical-field",
+    "trsb-re6zr"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round3.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T01:43:36.912062+00:00",
+   "commit": "d70581e75c3e",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 6,
+   "scientific_pass": 4,
+   "must_pass": 43,
+   "must_total": 46,
+   "exact_copy_pass": 4,
+   "combined_pass": 3,
+   "boundary_pass": 6,
+   "scientific_failures": [
+    "basics",
+    "corannulene-alc"
+   ],
+   "exact_copy_failures": [
+    "basics",
+    "benzene-alc"
+   ],
+   "status": "complete; all six first attempts scored",
+   "case_names": [
+    "basics",
+    "benzene-alc",
+    "corannulene-alc",
+    "lifeas-psi",
+    "maleic-mu-kinetics",
+    "trsb-re6zr"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round4.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T02:32:15.140948+00:00",
+   "commit": "2741b453c0a2",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 3,
+   "scientific_pass": 1,
+   "must_pass": 24,
+   "must_total": 26,
+   "exact_copy_pass": 3,
+   "combined_pass": 1,
+   "boundary_pass": 3,
+   "scientific_failures": [
+    "benzene-alc",
+    "corannulene-alc"
+   ],
+   "exact_copy_failures": [],
+   "status": "complete; all three first attempts scored",
+   "case_names": [
+    "basics",
+    "benzene-alc",
+    "corannulene-alc"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round5.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T03:05:40.378257+00:00",
+   "commit": "31bff2a371c7",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 2,
+   "scientific_pass": 1,
+   "must_pass": 11,
+   "must_total": 17,
+   "exact_copy_pass": 1,
+   "combined_pass": 0,
+   "boundary_pass": 2,
+   "scientific_failures": [
+    "corannulene-alc"
+   ],
+   "exact_copy_failures": [
+    "benzene-alc"
+   ],
+   "status": "complete; both first attempts scored",
+   "case_names": [
+    "benzene-alc",
+    "corannulene-alc"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round6.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T03:33:11.846879+00:00",
+   "commit": "a24043a8605d",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 2,
+   "scientific_pass": 0,
+   "must_pass": 14,
+   "must_total": 17,
+   "exact_copy_pass": 1,
+   "combined_pass": 0,
+   "boundary_pass": 2,
+   "scientific_failures": [
+    "benzene-alc",
+    "corannulene-alc"
+   ],
+   "exact_copy_failures": [
+    "corannulene-alc"
+   ],
+   "status": "complete; both first attempts scored",
+   "case_names": [
+    "benzene-alc",
+    "corannulene-alc"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round7.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T04:11:57.475994+00:00",
+   "commit": "dcac0437a14a",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 2,
+   "scientific_pass": 2,
+   "must_pass": 17,
+   "must_total": 17,
+   "exact_copy_pass": 2,
+   "combined_pass": 2,
+   "boundary_pass": 2,
+   "scientific_failures": [],
+   "exact_copy_failures": [],
+   "status": "complete; both first attempts scored",
+   "case_names": [
+    "benzene-alc",
+    "corannulene-alc"
+   ]
+  },
+  {
+   "record": "luna6-corpus-confirmation1.json",
+   "kind": "confirmation",
+   "recorded_at": "2026-10-20T04:49:05.317848+00:00",
+   "commit": "edd2aa351444",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 24,
+   "scientific_pass": 23,
+   "must_pass": 145,
+   "must_total": 147,
+   "exact_copy_pass": 23,
+   "combined_pass": 22,
+   "boundary_pass": 24,
+   "scientific_failures": [
+    "corannulene-alc"
+   ],
+   "exact_copy_failures": [
+    "ferromagnetic-nickel"
+   ],
+   "status": "complete; full24 fresh confirmation FAIL"
+  },
+  {
+   "record": "luna6-corpus-round8.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T07:01:24.548834+00:00",
+   "commit": "6e6ffb3e9544",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 2,
+   "scientific_pass": 1,
+   "must_pass": 16,
+   "must_total": 17,
+   "exact_copy_pass": 2,
+   "combined_pass": 1,
+   "boundary_pass": 2,
+   "scientific_failures": [
+    "corannulene-alc"
+   ],
+   "exact_copy_failures": [],
+   "status": "complete; targeted wave FAIL",
+   "case_names": [
+    "corannulene-alc",
+    "ferromagnetic-nickel"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round9.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T11:21:59.473461+00:00",
+   "commit": "e2a0d81ea216",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 1,
+   "scientific_pass": 0,
+   "must_pass": 9,
+   "must_total": 10,
+   "exact_copy_pass": 1,
+   "combined_pass": 0,
+   "boundary_pass": 1,
+   "scientific_failures": [
+    "corannulene-alc"
+   ],
+   "exact_copy_failures": [],
+   "status": "complete; targeted retry FAIL",
+   "case_names": [
+    "corannulene-alc"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round10.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T11:58:57.719261+00:00",
+   "commit": "d6984fc066cc",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 1,
+   "scientific_pass": 0,
+   "must_pass": 9,
+   "must_total": 10,
+   "exact_copy_pass": 1,
+   "combined_pass": 0,
+   "boundary_pass": 1,
+   "scientific_failures": [
+    "corannulene-alc"
+   ],
+   "exact_copy_failures": [],
+   "status": "complete; targeted wave FAIL; user requested repair then pause",
+   "case_names": [
+    "corannulene-alc"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round11.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T14:14:48.618854+00:00",
+   "commit": "96f16244ee1b",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 1,
+   "scientific_pass": 0,
+   "must_pass": 9,
+   "must_total": 10,
+   "exact_copy_pass": 0,
+   "combined_pass": 0,
+   "boundary_pass": 1,
+   "scientific_failures": [
+    "corannulene-alc"
+   ],
+   "exact_copy_failures": [
+    "corannulene-alc"
+   ],
+   "status": "complete; one requested round FAIL; pause after scoring",
+   "case_names": [
+    "corannulene-alc"
+   ]
+  },
+  {
+   "record": "luna6-corpus-round12.json",
+   "kind": "round",
+   "recorded_at": "2026-10-20T15:11:04.635007+00:00",
+   "commit": "b06981a1d28a",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 1,
+   "scientific_pass": 1,
+   "must_pass": 10,
+   "must_total": 10,
+   "should_pass": 1,
+   "should_total": 6,
+   "exact_copy_pass": 1,
+   "combined_pass": 1,
+   "boundary_pass": 1,
+   "scientific_failures": [],
+   "exact_copy_failures": [],
+   "status": "complete; one requested round PASS; pause after scoring; full24 objective remains unconfirmed",
+   "case_names": [
+    "corannulene-alc"
+   ]
+  },
+  {
+   "record": "luna6-corpus-confirmation2.json",
+   "kind": "confirmation",
+   "recorded_at": "2026-10-20T16:37:07.531634+00:00",
+   "commit": "2d06bcf8eb26",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 3,
+   "cases": 24,
+   "scientific_pass": 19,
+   "must_pass": 140,
+   "must_total": 147,
+   "should_pass": 51,
+   "should_total": 104,
+   "exact_copy_pass": 18,
+   "combined_pass": 14,
+   "boundary_pass": 24,
+   "scientific_failures": [
+    "corannulene-alc",
+    "ionic-motion-llz",
+    "maleic-mu-kinetics",
+    "photo-musr-silicon",
+    "spin-peierls"
+   ],
+   "exact_copy_failures": [
+    "afm-high-tf-mdu",
+    "alc-tcnq",
+    "copper-diffusion",
+    "ferromagnetic-nickel",
+    "fmuf-ptfe",
+    "ionic-motion-llz"
+   ],
+   "status": "complete; fresh full24 gate FAIL; follow-up PAUSED at user-authorized stopping point"
+  },
+  {
+   "record": "luna6-corpus-confirmation3.json",
+   "kind": "confirmation",
+   "recorded_at": "2026-10-20T19:49:25.159452+00:00",
+   "commit": "0b6e207ecf32",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 6,
+   "cases": 24,
+   "scientific_pass": 18,
+   "must_pass": 138,
+   "must_total": 147,
+   "should_pass": 48,
+   "should_total": 104,
+   "exact_copy_pass": 19,
+   "combined_pass": 15,
+   "boundary_pass": 24,
+   "scientific_failures": [
+    "benzene-high-tf",
+    "benzene-rf",
+    "corannulene-alc",
+    "maleic-mu-kinetics",
+    "plateau-redfield",
+    "trsb-re6zr"
+   ],
+   "exact_copy_failures": [
+    "benzene-alc",
+    "benzene-repolarisation",
+    "cds-fourier",
+    "corannulene-alc",
+    "trsb-re6zr"
+   ],
+   "status": "complete; fresh full24 gate FAIL; follow-up PAUSED after the one authorized repair and rerun"
+  },
+  {
+   "record": "luna6-corpus-confirmation4.json",
+   "kind": "confirmation",
+   "recorded_at": "2026-10-20T22:02:25.225579+00:00",
+   "commit": "242938ea3dd0",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 12,
+   "cases": 24,
+   "scientific_pass": 19,
+   "must_pass": 138,
+   "must_total": 147,
+   "should_pass": 56,
+   "should_total": 104,
+   "exact_copy_pass": 3,
+   "combined_pass": 2,
+   "boundary_pass": 24,
+   "scientific_failures": [
+    "basics",
+    "corannulene-alc",
+    "fmuf-ptfe",
+    "maleic-mu-kinetics",
+    "plateau-redfield"
+   ],
+   "exact_copy_failures": [
+    "afm-high-tf-mdu",
+    "alc-tcnq",
+    "benzene-alc",
+    "benzene-high-tf",
+    "benzene-repolarisation",
+    "benzene-rf",
+    "cds-fourier",
+    "copper-diffusion",
+    "corannulene-alc",
+    "euo-psi",
+    "ferromagnetic-nickel",
+    "fmuf-ptfe",
+    "high-tc-cuprate",
+    "ionic-motion-llz",
+    "maleic-mu-kinetics",
+    "molecular-antiferromagnet",
+    "photo-musr-silicon",
+    "plateau-redfield",
+    "sn-critical-field",
+    "spin-glass-ymnal",
+    "spin-peierls"
+   ],
+   "status": "complete; fresh full24 gate FAIL; all24 manually scored; implementation frozen through evidence verification"
+  },
+  {
+   "record": "luna6-corpus-confirmation5.json",
+   "kind": "confirmation",
+   "recorded_at": "2026-10-20T23:24:10.236539+00:00",
+   "commit": "4c7c1fb08dca",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 12,
+   "cases": 24,
+   "scientific_pass": 22,
+   "must_pass": 141,
+   "must_total": 147,
+   "should_pass": 58,
+   "should_total": 104,
+   "exact_copy_pass": 13,
+   "combined_pass": 11,
+   "boundary_pass": 24,
+   "scientific_failures": [
+    "alc-tcnq",
+    "trsb-re6zr"
+   ],
+   "exact_copy_failures": [
+    "afm-high-tf-mdu",
+    "benzene-high-tf",
+    "benzene-repolarisation",
+    "benzene-rf",
+    "corannulene-alc",
+    "fmuf-ptfe",
+    "lifeas-psi",
+    "molecular-antiferromagnet",
+    "photo-musr-silicon",
+    "plateau-redfield",
+    "spin-peierls"
+   ],
+   "status": "complete; fresh full24 gate FAIL; authorized improvement loop continues before deadline"
+  },
+  {
+   "record": "luna6-corpus-confirmation6.json",
+   "kind": "confirmation",
+   "recorded_at": "2026-10-21T00:40:23.908672+00:00",
+   "commit": "5fb689af19ae",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 12,
+   "cases": 24,
+   "scientific_pass": 18,
+   "must_pass": 140,
+   "must_total": 147,
+   "should_pass": 56,
+   "should_total": 104,
+   "exact_copy_pass": 16,
+   "combined_pass": 14,
+   "boundary_pass": 24,
+   "scientific_failures": [
+    "basics",
+    "benzene-alc",
+    "benzene-repolarisation",
+    "copper-diffusion",
+    "euo-psi",
+    "ionic-motion-llz"
+   ],
+   "exact_copy_failures": [
+    "basics",
+    "benzene-alc",
+    "copper-diffusion",
+    "ferromagnetic-nickel",
+    "ionic-motion-llz",
+    "maleic-mu-kinetics",
+    "spin-peierls",
+    "trsb-re6zr"
+   ],
+   "status": "complete; fresh full24 gate FAIL; authorized improvement loop continues before deadline"
+  },
+  {
+   "record": "luna6-corpus-confirmation7.json",
+   "kind": "confirmation",
+   "recorded_at": "2026-10-21T01:57:10.317764+00:00",
+   "commit": "c7aa99bd685f",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 12,
+   "cases": 24,
+   "scientific_pass": 20,
+   "must_pass": 140,
+   "must_total": 147,
+   "should_pass": 52,
+   "should_total": 104,
+   "exact_copy_pass": 22,
+   "combined_pass": 18,
+   "boundary_pass": 24,
+   "scientific_failures": [
+    "corannulene-alc",
+    "maleic-mu-kinetics",
+    "spin-peierls",
+    "trsb-re6zr"
+   ],
+   "exact_copy_failures": [
+    "benzene-alc",
+    "euo-psi"
+   ],
+   "status": "complete; fresh full24 gate FAIL; authorized improvement loop continues before deadline"
+  },
+  {
+   "record": "luna6-corpus-confirmation8.json",
+   "kind": "confirmation",
+   "recorded_at": "2026-10-21T03:20:03.683744+00:00",
+   "commit": "eaf0befc23a5",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 12,
+   "cases": 24,
+   "scientific_pass": 22,
+   "must_pass": 144,
+   "must_total": 147,
+   "should_pass": 55,
+   "should_total": 104,
+   "exact_copy_pass": 21,
+   "combined_pass": 19,
+   "boundary_pass": 24,
+   "scientific_failures": [
+    "copper-diffusion",
+    "lifeas-psi"
+   ],
+   "exact_copy_failures": [
+    "benzene-high-tf",
+    "maleic-mu-kinetics",
+    "molecular-antiferromagnet"
+   ],
+   "status": "complete; fresh full24 gate FAIL; authorized improvement loop continues before deadline"
+  },
+  {
+   "record": "luna6-corpus-confirmation9.json",
+   "kind": "confirmation",
+   "recorded_at": "2026-10-21T04:23:51.673461+00:00",
+   "commit": "3558f5205b24",
+   "model": "gpt-6-luna",
+   "host": "Codex CLI / Linux",
+   "parallel": 12,
+   "cases": 24,
+   "scientific_pass": 21,
+   "must_pass": 145,
+   "must_total": 147,
+   "should_pass": 54,
+   "should_total": 104,
+   "exact_copy_pass": 23,
+   "combined_pass": 20,
+   "boundary_pass": 24,
+   "scientific_failures": [
+    "basics",
+    "copper-diffusion",
+    "euo-psi"
+   ],
+   "exact_copy_failures": [
+    "benzene-alc"
+   ],
+   "status": "complete; fresh full24 gate FAIL; overnight follow-up paused at deadline"
+  }
+ ]
+}

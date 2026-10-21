@@ -146,12 +146,14 @@ def main(argv: list[str] | None = None) -> None:
         _collapse_repeated_warnings()
 
     # The CLI's error boundary: the two failure modes the command contract
-    # promises. A UserError is something the caller can fix, so it prints one
-    # line; anything else is a bug, so it prints the traceback and exits 2
-    # rather than pretending the run succeeded.
+    # promises. A UserError or a stale work-directory record is something the
+    # caller can fix, so it prints one line; anything else is a bug, so it
+    # prints the traceback and exits 2 rather than pretending the run succeeded.
+    from asymmetry.core.workflow.workdir import StaleWorkDirError
+
     try:
         _logged(args, argv)
-    except UserError as exc:
+    except (UserError, StaleWorkDirError) as exc:
         print(f"asymmetry: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
     except Exception:
@@ -171,9 +173,10 @@ _RESULT_COMMANDS = frozenset(
 #: The closing step a result command names, so an agent that stops after one still audits.
 AUDIT_STEP = (
     "Before you reply — however the summary was asked for, and even to stop early: write "
-    "the summary to summary.md and run `asymmetry audit summary.md`, whatever it may list — "
-    "it names the numbers no command printed and the scans no fit covers; the reply is that "
-    "file's text."
+    "the complete summary to summary.md and resolve `asymmetry audit summary.md` findings. "
+    "After the last edit run `asymmetry audit summary.md --prepare-reply`; only a passing "
+    "audit prepares the exact reply body. Copy that body unchanged, including its last "
+    "character: no rewritten numbers, file-list edits or added terminal newline."
 )
 
 

@@ -118,9 +118,15 @@ _COMPARISON_SUFFIX = re.compile(
 
 #: Words that make a percentage an asymmetry in its unit, not a ratio ("A_1 is about 33 %").
 _ASYMMETRY_CONTEXT = re.compile(
-    r"(?:(?-i:\bA_\w+\b|\bA\(0\)|\bA[₀-₉]+)|\b(?:amplitudes?|asymmetry|fractions?)\b)"
+    r"(?:(?-i:\bA_\w+\b|\bA\(0\)|\bA[₀-₉]+)|\b(?:amplitudes?|asymmetry)\b)"
     r"[^.;\n]{0,25}$",
     re.IGNORECASE,
+)
+
+#: A percentage of a total is a ratio, even beside a named asymmetry.
+_PERCENT_RATIO = re.compile(r"\s+(?:of|relative to|compared (?:with|to))\b", re.IGNORECASE)
+_FRACTION_CONTEXT = re.compile(
+    r"\b(?:fraction|share|proportion|relative error)\b[^.;\n]{0,60}$", re.IGNORECASE
 )
 
 #: A comparison sign before a significance makes it a threshold ("> 3σ"), not a result.
@@ -240,6 +246,8 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             if (
                 suffix is not None
                 and "%" in suffix.group()
+                and not _PERCENT_RATIO.match(line, suffix.end())
+                and not _FRACTION_CONTEXT.search(before)
                 and ("." in token or _ASYMMETRY_CONTEXT.search(before))
             ):
                 suffix = None
@@ -276,6 +284,74 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
     return found
 
 
+def unverified_units(draft: str, log_text: str) -> list[Unverified]:
+    """Flag a named parameter restated with a unit incompatible with its printed table."""
+    unit = r"(?:dimensionless|MHz|kHz|Hz|kG|G|K|meV|ns|[µμ]s(?:⁻¹)?)(?!\w)"
+    printed = re.compile(
+        rf"^\s*(?P<name>[A-Za-z][A-Za-z_0-9]*)\s+"
+        rf"(?P<value>[-+−]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s+(?P<unit>{unit})",
+        re.MULTILINE,
+    )
+    parameters: dict[str, list[tuple[float, str]]] = {}
+    for match in printed.finditer(log_text):
+        parameters.setdefault(match["name"], []).append((_value(match["value"]), match["unit"]))
+    # Parameter tables put units either before or after the uncertainty columns.
+    in_table = False
+    for line in log_text.splitlines():
+        if re.match(r"^\s*parameter\s+value\b", line):
+            in_table = "unit" in line
+            continue
+        row = re.match(
+            r"^\s*([A-Za-z][A-Za-z_0-9]*)\s+([-+−]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s+(.*)$", line
+        )
+        if in_table and row is not None:
+            printed_unit = re.search(rf"(?<!\w)({unit})", row[3])
+            if printed_unit is not None:
+                quantities = [row[2]] + _NUMBER.findall(row[3])
+                parameters.setdefault(row[1], []).extend(
+                    (_value(value), printed_unit[1]) for value in quantities
+                )
+        elif not line.lstrip().startswith("-"):
+            in_table = False
+    found = []
+    aliases = str.maketrans({"ν": "nu", "β": "beta", "α": "alpha", "Λ": "Lambda", "Δ": "Delta"})
+    for line_number, line in enumerate(draft.splitlines(), 1):
+        for number in _DRAFT_NUMBER.finditer(line):
+            suffix = re.match(rf"\s*(?P<unit>{unit})", line[number.end() :])
+            if suffix is None:
+                continue
+            token = number["mantissa"].replace(",", "").replace("−", "-")
+            exponent = number["exponent"]
+            scale = 10.0 ** int(exponent.translate(_SUPERSCRIPT)) if exponent else 1.0
+            notation = re.search(r"[eE]([-+]?\d+)$", token)
+            tolerance = 10.0 ** (int(notation[1]) if notation else 0) * scale
+            tolerance *= 10.0 ** -_decimals(token)
+            # The number belongs to the parameter named closest before it on the line.
+            before = line[: number.start()].translate(aliases)
+            named = [
+                (mention.end(), name)
+                for name in parameters
+                for mention in re.finditer(rf"\b{re.escape(name)}\b", before)
+            ]
+            if not named:
+                continue
+            name = max(named)[1]
+            units = {
+                u.replace("μ", "µ")
+                for value, u in parameters[name]
+                if abs(value - _value(token) * scale) <= tolerance + 1e-12
+            }
+            if units and suffix["unit"].replace("μ", "µ") not in units:
+                found.append(
+                    Unverified(
+                        f"{number.group()} {suffix['unit']} ({name} printed in {', '.join(sorted(units))})",
+                        line_number,
+                        line.strip(),
+                    )
+                )
+    return found
+
+
 #: What a summary says when it leans on a trend law, by the law's component.
 LAW_VOCABULARY: dict[str, tuple[str, ...]] = {
     "CriticalDivergence": ("critical slowing", "critical divergence", "critical fluctuation"),
@@ -285,7 +361,9 @@ LAW_VOCABULARY: dict[str, tuple[str, ...]] = {
 }
 
 #: Words that make a sentence deny, rather than claim, what it names.
-_NEGATION = re.compile(r"\b(?:not|no|never|without|cannot)\b|n't")
+_NEGATION = re.compile(
+    r"\b(?:not|no|never|without|cannot|failed|rejected|unsuccessful|unestablished|unresolved)\b|n't"
+)
 
 _FIT_HEADER = re.compile(r"^Fit of (?P<expression>.+?) to ", re.MULTILINE)
 
@@ -347,6 +425,72 @@ _DIRECTION = (
 #: statement — so the check catches a reply that leaves the point out entirely.
 _SAY_SO: tuple[_SaySo, ...] = (
     _SaySo(
+        _pattern(r"^MUONIUM:"),
+        _pattern(
+            r"muonium(?:[^.\n]|\.(?=\d)){0,180}(?:response|pulse|binning)"
+            r"|(?:response|pulse|binning)(?:[^.\n]|\.(?=\d)){0,180}muonium"
+        ),
+        "identify the measured weak-field muonium line and link its amplitude trend "
+        "to the instrument response; an unrelated rejected species fit is not that result",
+    ),
+    _SaySo(
+        _pattern(r"^TEMPERATURE: the logged sample temperature"),
+        _pattern(
+            r"(?:logged|sensor|T log)[^.\n]{0,120}(?:setpoint|fault|irrelevant|offset|nominal)"
+            r"|(?:setpoint|fault|irrelevant|offset|nominal)[^.\n]{0,120}(?:logged|sensor|T log)"
+        ),
+        "explain which logged-temperature readings or setpoints describe each block "
+        "and whether a conflicting sensor value is faulty or irrelevant",
+    ),
+    _SaySo(
+        _pattern(r"^EXTREME TEMPERATURE OFFSET:"),
+        _pattern(
+            r"faulty|railed|irrelevant|unvalidated|not (?:a real|verified|validated)|independently validated"
+        ),
+        "state whether the extreme logger offset is faulty/irrelevant or independently "
+        "validated; an unvalidated logger is not a physical temperature confound",
+    ),
+    _SaySo(
+        _pattern(r"^COLD-END EXCESS:"),
+        _pattern(
+            r"(?:coldest|cold.end|lowest)(?:[^.\n]|\.(?=\d)){0,160}"
+            r"(?:next|adjacent)(?:[^.\n]|\.(?=\d)){0,100}(?:higher|upturn|excess)"
+            r"|(?:higher|upturn|excess)(?:[^.\n]|\.(?=\d)){0,160}"
+            r"(?:coldest|cold.end|lowest)(?:[^.\n]|\.(?=\d)){0,100}(?:next|adjacent)"
+            r"|(?:coldest|cold.end|lowest)(?:[^.\n]|\.(?=\d)){0,100}"
+            r"(?:higher|upturn|excess)(?:[^.\n]|\.(?=\d)){0,100}(?:next|adjacent)"
+        ),
+        "state the coldest-versus-next-temperature excess in words; a comparison with a "
+        "distant warm point does not account for the adjacent endpoint",
+    ),
+    _SaySo(
+        _pattern(r"^\s*COMPOSITION AXIS:"),
+        _pattern(
+            r"(?:concentration|composition)[^.\n]{0,100}(?:titles?|notes)"
+            r"|(?:titles?|notes)[^.\n]{0,100}(?:concentration|composition)"
+        ),
+        "attribute the composition/concentration axis to its titles or notes and state "
+        "the normalization and units; a relative-axis table alone is not provenance",
+    ),
+    _SaySo(
+        _pattern(r"^COMPARE:.*\b(?:higher|lower) in field"),
+        _pattern(
+            r"\b(?:higher|lower)(?:[^.\n]|\.(?=\d)){0,80}"
+            r"\b(?:cent(?:er|re)s?|positions?|lines?|features?|resonances?|estimates?)\b"
+            r"|\b(?:cent(?:er|re)s?|positions?|lines?|features?|resonances?|estimates?)\b"
+            r"(?:[^.\n]|\.(?=\d)){0,80}\b(?:higher|lower)"
+        ),
+        "state which condition's fitted centre is higher or lower in field; retain the "
+        "ordering of conditional estimates with its window/background caveat, without "
+        "claiming a precise physical shift",
+    ),
+    _SaySo(
+        _pattern(r"^COMPARE:.*this one is (?:broader|narrower)"),
+        _pattern(r"\b(?:broader|narrower)\b(?![- ]window)"),
+        "state which condition's fitted feature is broader or narrower, with its "
+        "window/background limitation; a fit table alone does not state the comparison",
+    ),
+    _SaySo(
         _pattern(r"A_mu = nu_1 \+ nu_2"),
         _pattern(r"\bsum\b|(?:ν|nu)_?₁?1?\s*\+\s*(?:ν|nu)_?₂?2?"),
         "say that A_μ is the sum of the radical's two precession lines, A_μ = ν₁ + ν₂",
@@ -368,9 +512,13 @@ _SAY_SO: tuple[_SaySo, ...] = (
         _pattern(r"where no polynomial can follow"),
         # The reason, not just the failure: the background is what no polynomial follows.
         _pattern(
-            r"(?:polynomial|cubic|quadratic|linear|background|baseline)[^.\n]{0,80}"
-            r"(?:follow|describ|rises|rising|steps|stepp|curv)"
-            r"|(?:follow|describ)[^.\n]{0,40}(?:background|baseline)"
+            r"(?:polynomial|cubic|quadratic|linear|background|baseline)[^.\n]{0,100}"
+            r"(?:cannot|can't|could not|does not|doesn't|fails? to|unable to)"
+            r"[^.\n]{0,40}(?:follow|describ|fit|capture|represent)"
+            r"|(?:background|baseline)[^.\n]{0,100}no polynomial can follow"
+            r"|(?:background|baseline)[^.\n]{0,60}(?:not|poorly|inadequately)"
+            r"[^.\n]{0,30}(?:described|fitted|represented|captured)"
+            r"[^.\n]{0,40}(?:polynomial|cubic|quadratic|linear)"
         ),
         "say why the long-range fit is not a result: the background rises or steps where "
         "no polynomial can follow",
@@ -382,7 +530,13 @@ _SAY_SO: tuple[_SaySo, ...] = (
     ),
     _SaySo(
         _pattern(r"no radical ALC or hyperfine model is available"),
-        _pattern(r"model[^.\n]{0,60}(?:available|exist)|not (?:been )?converted|site assignment"),
+        _pattern(
+            r"no (?:radical ALC|hyperfine)[^.\n]{0,60}(?:available|implemented|provided|supported)"
+            r"|(?:radical ALC|hyperfine (?:model|Hamiltonian))[^.\n]{0,80}"
+            r"(?:unavailable|not (?:available|implemented|provided|supported))"
+            r"|(?:CLI|tool|Asymmetry)[^.\n]{0,50}(?:lacks?|does not (?:implement|provide|support))"
+            r"[^.\n]{0,50}(?:radical ALC|hyperfine)"
+        ),
         "say that no radical ALC or hyperfine model is available, so the resonance fields are "
         "not converted into couplings or sites",
     ),
@@ -452,6 +606,30 @@ def unstated(draft: str, log_text: str) -> list[str]:
         if printed and owed and not say.stated.search(draft):
             quoted = "\n".join(f"    > {line[:240]}" for line in printed[:_QUOTED_LINES])
             messages.append(f"The draft does not {say.instruction}, as printed:\n{quoted}")
+    for name in dict.fromkeys(re.findall(r"^ADJACENT ENDPOINT: (\w+)", log_text, re.M)):
+        if not any(
+            re.search(rf"\b{re.escape(name)}\b", sentence)
+            and re.search(r"next|adjacent", sentence, re.I)
+            and re.search(r"bound|flag|fail|unreliable|unresolved|uncertain", sentence, re.I)
+            for sentence in re.split(r"[;\n]|(?<!\d)\.(?!\d)", draft)
+        ):
+            messages.append(
+                f"Compare {name} at the actual adjacent temperature with its flagged-fit "
+                "limitation; a different parameter or distant warm point is not that check."
+            )
+    for name in dict.fromkeys(re.findall(r"^CONDITIONAL COUPLING: (\w+) =", log_text, re.M)):
+        # A_mu is also written A_μ or Aµ; the error as ± e, +/- e or 123.4(5).
+        spelled = re.escape(name).replace("mu", "(?:mu|μ|µ)").replace("_", "_?")
+        if not re.search(
+            rf"\b{spelled}(?!\w)[^.;\n]{{0,40}}?[-−+]?\d+(?:\.\d+)?"
+            rf"\s*(?:\(\d+\)|(?:MHz)?\s*(?:±|\+/-))",
+            draft,
+            re.I,
+        ):
+            messages.append(
+                f"Report the conditional {name} estimate with its uncertainty and model/chi2 "
+                "limitation; rejecting a microscopic interpretation does not erase a determined fit parameter."
+            )
     return messages
 
 
@@ -462,4 +640,5 @@ __all__ = [
     "unstated",
     "unsupported_laws",
     "unverified_numbers",
+    "unverified_units",
 ]

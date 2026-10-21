@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shlex
 from dataclasses import replace
 from pathlib import Path
@@ -73,6 +74,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument("--tmin", type=float, default=None, help="Screen only above this time / µs")
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=os.environ.get("ASYMMETRY_WIZARD_WORKERS"),
+        help="Maximum concurrent fit workers (default: $ASYMMETRY_WIZARD_WORKERS, else automatic)",
+    )
+    parser.add_argument(
         "--tmax",
         type=float,
         default=None,
@@ -95,6 +102,8 @@ def run(args: argparse.Namespace) -> None:
         raise UserError(
             f"Unknown scope {args.scope!r}; expected one of {', '.join(SCOPE_PRESETS)}."
         )
+    if args.workers is not None and args.workers < 1:
+        raise UserError("--workers must be positive.")
     if args.plot:
         plots.require_matplotlib()
 
@@ -113,6 +122,7 @@ def run(args: argparse.Namespace) -> None:
             include=_names(args.include),
             exclude=_names(args.exclude),
             run_number=args.run,
+            max_workers=args.workers,
         )
     except ValueError as exc:
         raise UserError(str(exc)) from None
@@ -185,6 +195,17 @@ def run(args: argparse.Namespace) -> None:
             "describe a time-independent contribution or offset; it alone does not "
             "measure a non-superconducting volume fraction. Do not turn sigma_bg, a "
             "width-law floor, into a signal fraction."
+            "\nSUPERCONDUCTING WORKFLOW: the selected tf-superconductor scope supplies "
+            "the hypothesis; test it with a Gaussian-width temperature series ordered "
+            "by logged sample temperature. If secondary amplitudes/harmonics are "
+            "unstable, compare a simpler Oscillatory * Gaussian + Constant recipe "
+            "without discarding the primary width. Run trend --model SC_SWave --param "
+            "<sigma-column> and SC_DWave on that series, report Tc/gap parameter/errors "
+            "and chi2, and judge the curves. In a matching ZF KT scan compare the full "
+            "width step with that TF Tc and with the electronic rate, then use LF "
+            "decoupling to test whether extra fields are static. A small static width "
+            "onset without an electronic-rate step can be a spontaneous-field/TRSB "
+            "candidate; absence of a step in the electronic rate does not refute it."
         )
     note = window_note(workdir, [args.run])
     if note is not None:

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import re
 import shlex
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -85,6 +87,24 @@ def scan_label(scan: ScanGroup) -> str:
     )
 
 
+#: Words naming a light stimulus. Bare "pump" and "photo" are not among them:
+#: a helium pump or a sample photograph is not illumination.
+_ILLUMINATION = re.compile(
+    r"\b(?:lasers?|illuminat\w*|photo-?excit\w*|optical(?:ly)?\s+pump\w*|"
+    r"pump[- ](?:probe|beam|pulse|laser)s?)\b",
+    re.IGNORECASE,
+)
+
+
+def condition_period_runs(runs: list[dict]) -> list[dict]:
+    """Multi-period illumination measurements need paired time spectra, not just an integral."""
+    return [
+        row
+        for row in runs
+        if row["n_periods"] == 2 and _ILLUMINATION.search(f"{row['title']} {row['notes']}")
+    ]
+
+
 def _composition_lines(sets, rows, scan: ScanGroup, folder: str, options: str) -> list[str]:
     """The composition series a scan crossing samples holds, with the commands that fit one."""
     from asymmetry.core.workflow.survey import sample_name
@@ -118,6 +138,11 @@ def _composition_lines(sets, rows, scan: ScanGroup, folder: str, options: str) -
         f"{options} — a rate linear in concentration is a rate constant (its slope). Give "
         f"each <value> from the run's title and notes (a pure solvent is 0), and drop a run "
         f"neither gives one for."
+    )
+    lines.append(
+        "        COMPOSITION AXIS: in the summary attribute the concentration values to "
+        "the titles or notes, and state their units and normalization. Full/half/quarter "
+        "labels are relative amounts, not molarity; if full is set to 1, say so."
     )
     if others:
         lines.append(
@@ -197,6 +222,7 @@ def _render(survey, survey_path: Path) -> str:
         "T log/K",
         "B/G",
         "geom",
+        "source",
         "prec",
         "orient",
         "hist",
@@ -214,6 +240,7 @@ def _render(survey, survey_path: Path) -> str:
             format_number(row.sample_temperature_logged, 2),
             format_number(row.field, 2),
             (row.geometry or "-") + _GEOMETRY_MARKS.get(row.geometry_source, ""),
+            row.geometry_source,
             # An `other` line's frequency is itself evidence: an internal
             # field, a muonium line, or a sub-cycle artefact near 0.1 MHz.
             (row.precession.state or "-")
@@ -245,7 +272,9 @@ def _render(survey, survey_path: Path) -> str:
             "(not measurable). "
             "geom*: geometry measured from that precession rather than read from the file; "
             "geom+: geometry read from the run's logged field-coil readbacks (axial against "
-            "transverse), not its field-state stamp."
+            "transverse), not its field-state stamp. source=file is only a header claim, "
+            "not measured precession or coil evidence; orient names the detector bank, "
+            "not the applied field."
         )
         if any(
             row.sample_temperature_log_source == PSI_HEADER_SAMPLE_SENSOR for row in survey.runs
@@ -291,19 +320,46 @@ def _render(survey, survey_path: Path) -> str:
         middle = sorted(muonium, key=lambda row: row.field)[len(muonium) // 4]
         listed = run_spec(sorted(row.run_number for row in muonium), separator=", ")
         folder = shlex.quote(survey.folder)
+        varied_field = len({row.field for row in muonium}) > 1
         lines.append(
-            f"MUONIUM: runs {listed} precess near {MUONIUM_MHZ_PER_G:.4g} MHz per gauss of their "
+            f"{'MUONIUM' if varied_field else 'MUONIUM KINETICS'}: runs {listed} precess near {MUONIUM_MHZ_PER_G:.4g} MHz per gauss of their "
             f"field (the other@ line), muonium's triplet precession in a weak transverse field, "
             f"not the bare muon's {field_gauss_to_frequency_mhz(1.0):.4g} MHz/G. Fit them as one "
             f"precessing line, not with the wizard:\n"
             f"  asymmetry recipe {folder} --expression 'Oscillatory * Exponential + Constant' "
             f"--run {middle.run_number} --initial "
             f"frequency={middle.precession.frequency_mhz:.4g} --name mu-line\n"
-            f"  asymmetry fit-series {folder} --runs "
-            f"{run_spec(sorted(row.run_number for row in muonium))} --recipe mu-line --order "
-            f"field --start {middle.run_number}\n"
-            f"Report the line's amplitude against field (falling as its frequency rises: the "
-            f"instrument's frequency response) and the field where it is lost."
+            + (
+                f"  asymmetry fit-series {folder} --runs "
+                f"{run_spec(sorted(row.run_number for row in muonium))} --recipe mu-line "
+                f"--order field --start {middle.run_number}\n"
+                "Report the line's amplitude against field (falling as its frequency "
+                "rises: the instrument's frequency response) and the field where it is lost."
+                if varied_field
+                else "These detected lines are at one field, not a field/frequency-response "
+                "scan. Compare their temperatures and compositions. For reaction kinetics, "
+                "the rate belongs to this muonium oscillation, not the high-field "
+                "diamagnetic control or a slow late-time baseline. Reduce the least-reactive "
+                "reference with its block's alpha, inspect an early window containing the "
+                "oscillation, and fix/share its frequency and phase across the same-field "
+                "composition set. A second slow diamagnetic term or constant may be needed. "
+                "Use --order concentration --x from the titles/notes and fit Linear to "
+                "the muonium envelope rate. A missing rapidly damped line calls for this "
+                "constrained early-window test, not a new microscopic Hamiltonian."
+            )
+        )
+        lines.append("")
+    unrecorded = [
+        row.run_number for row in survey.runs if row.field == 0 and row.precession.state == "other"
+    ]
+    if unrecorded:
+        lines.append(
+            f"ZERO-FIELD HEADER: runs {run_spec(unrecorded)} have a measured line but "
+            "a zero recorded field. Establish sample context before calling it spontaneous "
+            "magnetism: a nonmagnetic calibration/reference sample can carry an unrecorded "
+            "weak TF. Fit its precession and check the experimental notes; an unrelated "
+            "sensor drift is not a sample-temperature campaign. For a magnetic sample, "
+            "compare the internal line across the actual temperature scan."
         )
         lines.append("")
     if survey.temperature_departures:
@@ -315,13 +371,24 @@ def _render(survey, survey_path: Path) -> str:
             "different measurement — order it with --order sample_temperature_logged and never "
             "quote those runs at their setpoints; only a value no sample here could have had "
             "(hundreds of kelvin off, a liquid logged above its boiling point) points to the "
-            "sensor. The scans below are grouped by setpoint:"
+            "sensor. A railed or physically implausible logger value is not a real "
+            "temperature confound: do not use it to explain a range/steering calibration "
+            "or reject a relative-amplitude comparison. A plausible temperature offset "
+            "still needs its own experimental-context check. The scans below are grouped by setpoint:"
         )
         for instrument, runs, lo, hi in _departure_blocks(survey):
             span = f"{lo:+.2f} K" if abs(hi - lo) < 0.005 else f"{lo:+.2f} to {hi:+.2f} K"
             listed = run_spec(runs, separator=", ")
             shown = f"{instrument} {listed}" if clashes else listed
             lines.append(f"  {shown}: {span}")
+            if max(abs(lo), abs(hi)) >= 200:
+                lines.append(
+                    f"EXTREME TEMPERATURE OFFSET: {shown}. Check the logger channel, "
+                    "units and apparatus/sample context before treating this as a sample "
+                    "temperature. State whether it is faulty/irrelevant or independently "
+                    "validated. A steady railed reading is not evidence for a thermal "
+                    "confound in a calibration curve."
+                )
         lines.append("")
     for repeat in survey.repeats:
         condition = f"{repeat.field:g} G, {repeat.temperature:g} K" + (
@@ -382,6 +449,26 @@ def _render(survey, survey_path: Path) -> str:
             lines.append(f"  {scan_label(scan)}")
             if scan.geometry_note:
                 lines.append(f"      geometry: {scan.geometry_note}")
+            sources = Counter(
+                row.geometry_source
+                for row in survey.runs
+                if row.instrument == scan.instrument and row.run_number in scan.runs
+            )
+            lines.append(
+                "      geometry sources: "
+                + "; ".join(
+                    f"{source} on {count} run(s)" for source, count in sorted(sources.items())
+                )
+            )
+            if sources["file"]:
+                lines.append(
+                    "      FILE GEOMETRY: a header stamp is not a coil measurement. "
+                    "Above Nyquist, prec '-' cannot test that stamp. For an ALC/recovery "
+                    "hypothesis, inspect the reduced traces and test integral-scan on this "
+                    "consistent run block: a substantial nonoscillating high-field signal "
+                    "can contradict TF cancellation. Explain the evidence and remaining "
+                    "ambiguity; do not infer applied-field direction from detector orient."
+                )
             if len(scan.samples) > 1:
                 rows = {
                     row.run_number: row for row in survey.runs if row.instrument == scan.instrument
@@ -410,9 +497,42 @@ def _render(survey, survey_path: Path) -> str:
                 f"  ({survey.cross_sections} temperature scan(s) through the field scans' points "
                 "not listed: each is a cross-section of the field scans above)"
             )
+        if any(scan.axis == "field" and scan.geometry != "TF" for scan in survey.scans):
+            lines.append(
+                "FIELD OBSERVABLE: establish geometry before choosing the quantity. A TF "
+                "field scan measures precession frequency, phase or amplitude; its full-time "
+                "integral can cancel and is not an LF recovery curve. A file-only TF stamp "
+                "or unresolved precession does not settle the direction. Use scan context "
+                "and the observed response: suppression of matched ZF relaxation by a weak "
+                "applied field supports LF static-field decoupling, even without a coil "
+                "orientation log. State that supported interpretation and its limits rather "
+                "than withholding the observed decoupling. For an LF muonium/radical repolarisation "
+                "experiment, measure integral asymmetry versus field with "
+                "integral-scan --model MuRepolarisation and report recovery at the highest "
+                "field, including a poor-fit caveat if needed. Redfield on a time-domain "
+                "rate answers a different dynamics question and cannot replace that curve. "
+                "For an LF dynamics experiment instead fit one exponential relaxation "
+                "rate per run with fit-series --order field, then test trend --model "
+                "Redfield over the physically relevant field range. Integral trough fits "
+                "cannot replace this rate-law workflow. "
+                "Use local resonance models for dips and RFResonanceMuP for an RF contrast."
+            )
     else:
         lines.append("Scans: none — no two runs share a geometry and a held quantity.")
     lines.append("")
+    periods = condition_period_runs([row.to_dict() for row in survey.runs])
+    if periods:
+        row = periods[0]
+        lines.append(
+            f"PERIOD COMPARISON: illumination is recorded in two-period run {row['run_number']}. "
+            "A missing power/delay coordinate does not prevent a same-run ON/OFF comparison. "
+            "Reduce that science run with --period red --workdir asymmetry-work-red and "
+            "--period green --workdir asymmetry-work-green. Establish ON/OFF from notes and "
+            "the spectra; fit the two traces separately and report their rates, windows and "
+            "quality. A green-red integral can cancel different decay shapes and cannot "
+            "replace these time spectra."
+        )
+        lines.append("")
 
     from asymmetry.core.workflow.survey import coupled_field_groups
 

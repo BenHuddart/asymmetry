@@ -674,7 +674,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_info={
             "a": get_param_info("a"),
             "Tc": get_param_info("Tc"),
-            "nu": ParamInfo("nu", "nu", "ν", r"$\nu$", r"\nu"),
+            "nu": ParamInfo("nu", "nu", "ν", r"$\nu$", r"\nu", unit="dimensionless"),
             "c": get_param_info("c"),
         },
         formula_template="{a}*|x-{Tc}|^(-{nu}) + {c}",
@@ -722,7 +722,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_info={
             "D": get_param_info("D"),
             "nu": get_param_info("nu"),
-            "m": get_param_info("m"),
+            "m": replace(get_param_info("m"), default_min=1e-12),
         },
         formula_template="(({D}^2)/4)*(2/{nu})/(1 + ((gamma_mu*x)/{nu})^{m})",
         latex_equation=(

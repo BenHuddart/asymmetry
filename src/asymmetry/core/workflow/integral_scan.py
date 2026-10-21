@@ -197,12 +197,32 @@ def field_scan_payload(scan: FieldScan) -> dict[str, Any]:
     }
 
 
+def field_scan_from_payload(data: Mapping[str, Any]) -> FieldScan:
+    """Restore the stored scan's points and provenance for model-free checks."""
+    from asymmetry.core.transform.units import AsymmetryUnit
+
+    points = data["points"]
+    return FieldScan(
+        x=np.asarray([point["x"] for point in points], dtype=float),
+        value=np.asarray([point["value"] for point in points], dtype=float),
+        error=np.asarray([point["error"] for point in points], dtype=float),
+        run_numbers=[int(point["run"]) for point in points],
+        order_key=data["order_key"],
+        method=data["method"],
+        x_label=data["x_label"],
+        y_label=data["y_label"],
+        units=AsymmetryUnit(data["units"]),
+        excluded=[(entry["run"], entry["reason"]) for entry in data["excluded"]],
+    )
+
+
 def _parameters(
     scan: FieldScan,
     expression: str,
     *,
     initial: Mapping[str, float] | None,
     fixed: Mapping[str, float] | None,
+    bounds: Mapping[str, tuple[float, float]] | None = None,
 ) -> tuple[Any, ParameterSet]:
     model = as_composite_model(expression)
     fixed = {str(name): float(value) for name, value in (fixed or {}).items()}
@@ -215,12 +235,8 @@ def _parameters(
     parameters = parameter_set_for_model(
         model, suggest_model_seeds(model, scan.x, scan.value, scan.error, known=known)
     )
-    # Every resonance sits inside the scan with a width between a thousandth and
-    # a quarter of it: two LCR components otherwise trade places, one running
-    # off the axis with a negative width, and a resonance wider than a quarter
-    # of the scan is indistinguishable from the polynomial background it then
-    # impersonates. A differential pair's copy sits a positive dB above its line,
-    # inside the scan.
+    # Search bounds allow partial flanks; resolved-line checks separately
+    # require two widths on each side. A search bound is not that criterion.
     x_lo = float(np.min(scan.x))
     x_hi = float(np.max(scan.x))
     span = x_hi - x_lo
@@ -230,13 +246,25 @@ def _parameters(
             width = parameters[model.component_param_name(index, "Bwid")]
             centre.min, centre.max = x_lo, x_hi
             width.min = max(span / 1000.0, np.finfo(float).eps)
-            width.max = max(span / 4.0, width.min)
+            width.max = max(span / 2.0, width.min)
         if "dB" in component.param_names:
             offset = parameters[model.component_param_name(index, "dB")]
             offset.min = max(span / 1000.0, np.finfo(float).eps)
             offset.max = max(span, offset.min)
     for name in fixed:
         parameters[name].fixed = True
+    for name, (lower, upper) in (bounds or {}).items():
+        if name not in model.param_names:
+            raise ValueError(f"Unknown bounded parameter {name!r}; expected {model.param_names}.")
+        if not np.isfinite([lower, upper]).all() or lower >= upper:
+            raise ValueError(f"Bounds for {name} must be finite with LO < HI.")
+        if name.split("_")[0] in {"Bwid", "dB"} and lower <= 0:
+            raise ValueError(f"Bounds for {name} must keep the width or step positive.")
+        parameter = parameters[name]
+        if name in known and not lower <= known[name] <= upper:
+            raise ValueError(f"Start or fixed value for {name} is outside its bounds.")
+        parameter.min, parameter.max = float(lower), float(upper)
+        parameter.value = float(np.clip(parameter.value, lower, upper))
     return model, parameters
 
 
@@ -246,6 +274,7 @@ def fit_integral_scan(
     *,
     initial: Mapping[str, float] | None = None,
     fixed: Mapping[str, float] | None = None,
+    bounds: Mapping[str, tuple[float, float]] | None = None,
     baseline_model: str | None = None,
     baseline_regions: list[tuple[float, float]] | None = None,
     x_min: float | None = None,
@@ -290,6 +319,7 @@ def fit_integral_scan(
         expression,
         initial=initial,
         fixed=fixed,
+        bounds=bounds,
     )
     free = sum(1 for parameter in parameters if not parameter.fixed)
     if fitted_scan.n_points <= free:
@@ -312,6 +342,7 @@ def fit_integral_scan(
         "params_at_bound": list(result.params_at_bound),
         "initial": {str(name): float(value) for name, value in (initial or {}).items()},
         "fixed": [parameter.name for parameter in parameters if parameter.fixed],
+        "bounds": {name: [float(lo), float(hi)] for name, (lo, hi) in (bounds or {}).items()},
         "baseline": baseline_payload,
         "x_min": x_min,
         "x_max": x_max,
@@ -362,6 +393,37 @@ _DIP_SIGNIFICANCE = 5.0
 
 #: A window must hold this many points to be tried with one line on a slope.
 _WINDOW_MIN_POINTS = 8
+
+
+def candidate_dip_windows(scan: FieldScan) -> list[dict[str, float]]:
+    """Windows around significant interior minima, independent of the fitted model.
+
+    Five combined point errors of prominence screen noise; they do not establish
+    a resonance. Quarter-prominence widths keep exploratory windows near the trough bottom;
+    they are not line widths or an independently measured baseline.
+    """
+    from scipy.signal import find_peaks
+
+    if scan.order_key != "field" or scan.n_points < _WINDOW_MIN_POINTS:
+        return []
+    peaks, properties = find_peaks(
+        -scan.value,
+        prominence=_DIP_SIGNIFICANCE * np.sqrt(2) * np.median(scan.error),
+        width=0,
+        rel_height=0.25,
+    )
+    indices = np.arange(scan.n_points)
+    windows = []
+    for peak, width in zip(peaks, properties["widths"], strict=True):
+        half_span = max(2 * width, _WINDOW_MIN_POINTS / 2)
+        windows.append(
+            {
+                "centre": float(scan.x[peak]),
+                "x_min": float(np.interp(peak - half_span, indices, scan.x)),
+                "x_max": float(np.interp(peak + half_span, indices, scan.x)),
+            }
+        )
+    return windows
 
 
 def _holds_a_line(scan: FieldScan, window: Mapping[str, Any]) -> bool:
@@ -442,10 +504,12 @@ def _parameter_values(parameters: ParameterSet) -> dict[str, float]:
 
 __all__ = [
     "contradicted_tf_stamps",
+    "candidate_dip_windows",
     "DIP_FLANK_WIDTHS",
     "period_field_offset_gauss",
     "build_integral_scan",
     "field_scan_payload",
+    "field_scan_from_payload",
     "fit_integral_scan",
     "resonance_windows",
 ]

@@ -2682,6 +2682,96 @@ Per-case decisions, hashes, usage, image inputs and evidence paths are in
 [`agent-cli-skill-luna6-post-review-2026-10-19.json`](agent-cli-skill-luna6-post-review-2026-10-19.json).
 Raw evidence remains under `/tmp/asymmetry-luna6-review-3c4e6fd-2026-10-19/`.
 
+## GPT-6 Luna corpus-scope expansion — 2026-10-19
+
+Host: **Codex CLI 0.163.0 / Linux**. Model: **`gpt-6-luna`**.
+Analysis checkout: `9f9dcd69850b3277eeec132d8f9786f622147955` on `main`.
+The CLI, packaged analysis skill and all rubrics remained unchanged. The wave
+runner now supports either host and shares all 24 cases with the Claude suite:
+`--agent codex --set all`, or `--set codex-expansion` for these 16 cases.
+The previous eight-case gate remains the separate historical post-review
+record; this is not a fresh 24-case wave or a repeatability estimate.
+
+All **16 added cases completed**, each with two evaluation turns and exit 0.
+Manual supervising-Codex scoring gives **7/16 scientific rubric passes,
+86/100 Musts**. The exact-copy final-report check passes **11/16**; requiring
+both the scientific rubric and the exact-copy check gives **3/16**. A successful
+process or a passed numerical audit is not a scientific pass.
+
+| Case | Scientific rubric | Musts | Exact-copy audit |
+|---|---|---|---|
+| Plateau dynamics | PASS | 5/5 | FAIL |
+| Sn critical field | PASS | 5/5 | FAIL |
+| EuO (PSI) | FAIL | 4/5 | PASS |
+| Maleic-acid Mu kinetics | PASS | 5/5 | FAIL |
+| Copper diffusion/QLCR | FAIL | 5/6 | FAIL |
+| Molecular antiferromagnet | PASS | 5/5 | PASS |
+| Spin-Peierls | PASS | 6/6 | PASS |
+| AFM high-TF MDU | PASS | 5/5 | FAIL |
+| LiFeAs (PSI) | FAIL | 7/8 | PASS |
+| TRSB Re6Zr | FAIL | 6/7 | PASS |
+| Basics | FAIL | 6/9 | PASS |
+| Corannulene ALC | FAIL | 8/10 | PASS |
+| Benzene high TF | PASS | 6/6 | PASS |
+| Benzene RF | FAIL | 4/5 | PASS |
+| Benzene repolarisation | FAIL | 4/6 | PASS |
+| Benzene ALC | FAIL | 5/7 | PASS |
+
+The AFM high-TF result is a **literal rubric pass with a serious physics
+warning**: it reports multiple lines and cooling broadening but interprets
+the campaign as superconducting and fits gap laws. The existing Musts do not
+require identifying AFM order. This blind spot is recorded without silently
+changing the rubric or treating the interpretation as established science.
+
+The failures fall into three groups:
+
+- Workflow/context: Basics reads a silver calibration line as spontaneous
+  magnetism; benzene repolarisation follows a generic Redfield rate workflow
+  instead of integral-asymmetry `MuRepolarisation`; LiFeAs never obtains the
+  required Gaussian/vortex width; benzene RF leaves LF geometry unresolved.
+- Required findings: EuO produces no defensible paramagnetic rate; copper
+  misses the low-temperature upturn visible in its own table; TRSB does not
+  state/test an unchanged dynamic-rate control; corannulene does not recover
+  the cold-line comparison; benzene ALC withholds its second liquid line and
+  every solution centre after poor/bound-limited fits.
+- Delivery/provenance: five final replies differ from the last passed audit.
+  Three changes are prose-only; AFM copies a last-digit background error from
+  another model; copper changes a background error from its correctly rounded
+  audited value to an incorrect value. Copper independently fails its missing
+  low-temperature-upturn Must. The copied-error issue cannot be fixed by
+  pretending the final reply was the audited file.
+
+Every case has individual Must/Should decisions, numerical evidence, root
+causes, usage, image inputs, hashes and command failures in
+`agent-cli-skill-luna6-expansion-2026-10-19.json`, archived in the private corpus
+repository under [`eval-records/luna6-2026-10/`](https://github.com/BenHuddart/wimda-muon-school-corpus/tree/main/eval-records/luna6-2026-10).
+Completed commands were checked for boundary violations and permission denials;
+no explicit network, delegation or external-calculator calls were found.
+Skill and rubric hashes match across all cases. Raw evidence remains outside
+the repository under `/tmp/asymmetry-luna6-expansion-2026-10-19-serial/`
+(first five cases) and `/tmp/asymmetry-luna6-expansion-2026-10-19-parallel2/`
+(remaining eleven).
+
+The first sandboxed launch could not initialise Codex state and made no model
+calls. The following four-case launch was interrupted by excessive memory
+pressure while automatically parallelised test suites also ran. Those attempts
+are retained as infrastructure voids. Orphaned processes were stopped, and the
+scientific baseline restarted serially with BLAS threads pinned to one. At the
+user's request, the remaining eleven cases ran two at a time after copper
+finished. No broad tests ran alongside those recovered evaluations. The wave
+runner now defaults to one case; higher concurrency is an explicit option.
+
+Validation: the 36 focused runner tests pass with two workers; structural and
+Ruff checks pass. The fast suite passed 5881 tests. Documentation built with
+85 existing warnings. The initial standard run failed under read-only GUI
+settings/autosave paths and included four stale runner-test signatures while
+source files were being edited; those runner tests subsequently pass. A
+separate standard run with two workers and scratch XDG directories completed:
+9894 passed, 25 skipped, 1 xfailed and four GUI layout assertions failed
+(column widths and grouping-dialog scrollbars). The affected GUI code is
+unchanged by this task. Exact tests and diagnostics are recorded in the JSON;
+the full validation gate is not passing.
+
 ## Open questions for the maintainer
 
 From round 2 (2026-10-09), for Ben:
