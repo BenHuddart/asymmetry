@@ -1,5 +1,5 @@
 {
-  "status": "running;0/24 scored;source frozen until ALL24 finish",
+  "status": "running; 1/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -132,14 +132,163 @@
     "authorization": "User resumed improvement/evaluation loop until 07:00 BST 21 October (06:00 UTC); trial twelve cases with one wizard worker; score fixed rubrics and commit each repair before evaluating.",
     "deadline_utc": "2026-10-21T06:00:00Z"
   },
-  "cases": {},
+  "cases": {
+    "fmuf-ptfe": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies run 17293 as the TF calibration run and the remainder as the ZF temperature series.",
+          "pass": true,
+          "evidence": "17293separate20GTFcalibrationand29-member17294–17322ZFtemperatureinexperiment."
+        },
+        {
+          "requirement": "States that alpha was determined from 17293 (or explains why not, if it used a different run).",
+          "pass": true,
+          "evidence": "17293rawalpha.9566andcorrectedapplied.9553explicitwithdeadtimeprovenance."
+        },
+        {
+          "requirement": "Recommends or applies an F-mu-F–family relaxation function (three-spin dipolar / Brewer-type), not a generic Kubo-Toyabe or exponential, for the ZF data.",
+          "pass": true,
+          "evidence": "DynamicF–mu–F+ConstantacrossZFseries,3spindipolarphysicalmeaningnotgenericKT/exponential."
+        },
+        {
+          "requirement": "Reports the muon–fluorine dipolar coupling extracted from the fits, as the coupling frequency or as the muon–fluorine distance `r_muF` (the CLI parameterises the F–μ–F family by `r_muF`, with ω_D ∝ r⁻³).",
+          "pass": true,
+          "evidence": "r_muFper-run1.22688/1.2454etcandconstantlaw1.244541±.004593Angstromwithchi134.882."
+        },
+        {
+          "requirement": "States whether that dipolar coupling frequency is roughly constant (temperature independent) or varies across the scan.",
+          "pass": true,
+          "evidence": "Explicitpoorconstantlawdoesnotestablishtemperatureindependence;apparentr_muFcurvatureandflagsqualified."
+        },
+        {
+          "requirement": "Contains no coupling-frequency, alpha, or temperature number that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Allcoupling/alpha/temperaturevaluesfromCLI,nohandr^-3conversionorborrowedworksheetnumbers."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the ZF runs are not in monotonic temperature order and that later runs revisit/infill earlier temperature gaps, rather than assuming run number tracks temperature.",
+          "pass": true,
+          "evidence": "Coarseandinterleavedinfill/notrunordertemperatureexplicit."
+        },
+        {
+          "requirement": "Mentions the sample-temperature column (with its uncertainty) as distinct from the nominal set-point temperature.",
+          "pass": false,
+          "evidence": "Loggedsampleversussetpointsandmismatchesdiscussedbutnosampletemperatureuncertainties."
+        },
+        {
+          "requirement": "References the muon-fluorine \"hydrogen bonding\" / entanglement picture from the worksheet background when interpreting the result.",
+          "pass": false,
+          "evidence": "DipolarFmuFpictureyes,nospecifichydrogen-bonding/entanglementinterpretation."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Directsurvey/alpha/reduction/wizard/trendtablesverifyallquotedscalars/units;noaudit/draft/log-reportreadprovenance. Misassociated17316rowretainedasexplicitcontextcaveat,notinventedscalar.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Core6/6scienceandstrictcopypasswithreport-onlypreparation. Remaininggapsaretemperatureuncertainty/backgroundinterpretationandonewrongrunkeyinthecopiedparametertable;scalarprovenancecannotvalidatepointidentity.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all21 completed commands inspected. All21completedcommandsinspected;CLI/skillreadsandreporteditsonly,noarithmetic. Fourreviewsnapshothashesverified;actualcoldbeat/warmrelaxationpixelsinspected. Rawreplymatchespreparedbodyexactly.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 331.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/fmuf-ptfe/data --series teflon-zf --model Constant --param r_muF'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/fmuf-ptfe/data --series teflon-zf-logged --model Constant --param r_muF'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/fmuf-ptfe/data --series teflon-zf-logged --model Constant --param r_muF'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "7018c1ce7c72de069fb3c38e519c79a9139a97347bab65fc44939ee12c77fd17",
+      "audited_file_sha256": "7018c1ce7c72de069fb3c38e519c79a9139a97347bab65fc44939ee12c77fd17",
+      "rubric_sha256": "49ca7ef87b2b8eec6e518da9052579a255090e3fdb132bc0df381610155df82d",
+      "staged_skill_sha256": "166e50451f0545f41f184dca6279df8306d5585ddfb2cbd0216011a3712e0f96",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/fmuf-ptfe",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Selectedtablelabels17316with17306valuesat170.871K;actual17316is175.826Kwithr1.35506andnu1.28139. SummarysubsequentA_bgrowcorrectlynames17306,inconsistencyretainednotrepaired.",
+        "Mostfitspoorand17/29logged-seriesflagged;constantlawchi134.882notfixedcouplingproof.",
+        "20Knominalduplicateshavelargefittednucontrastdespitesmallloggedtemperaturedifference,model/calibrationlimitationsprecludeactivationspecificclaim.",
+        "Couplingdistanceisprintedphenomenology,notestablishedmicroscopicsitechange;nuinterpretationconditional."
+      ],
+      "judgement_calls": [
+        "LiteralnumberMustchecksproducedvalues;the17316/17306rowidentityerrorisrecordedindependentlyandnotexcusedasacorrectrow."
+      ],
+      "number_evidence_commands": [
+        2,
+        4,
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        13,
+        14,
+        15,
+        16
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "7018c1ce7c72de069fb3c38e519c79a9139a97347bab65fc44939ee12c77fd17",
+        "summary.md": "7018c1ce7c72de069fb3c38e519c79a9139a97347bab65fc44939ee12c77fd17",
+        "transcript.jsonl": "8d37d1bd9ff6043ec5a0f9f029824089dff956191f12726ffe9cf0df6be99bfc",
+        "commands.txt": "8b998da32523260dd426ba26c18592cdfde7332d5b601f598466e31fc292981d",
+        "cost.json": "9aa92b6341efd4a42d2576e5f01fadb45372e5e00c7ac60dad360b80a734cb94",
+        "image-inputs.json": "c6bb1db98573c56e2a32b164c465cb334b35f61b4c06a9f2095cb3033e323dff"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-17294.png",
+          "snapshot_path": "review-images/91b450f6f9bc16dac916a48d511d8e40577afca4f634c58fb06a56f1c568f718.png",
+          "bytes": 42093,
+          "sha256": "91b450f6f9bc16dac916a48d511d8e40577afca4f634c58fb06a56f1c568f718",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-17309.png",
+          "snapshot_path": "review-images/5b7c2ab15b9e4a462081ae31482849d16dca56f8ffb0831680cb69089b36ea44.png",
+          "bytes": 43064,
+          "sha256": "5b7c2ab15b9e4a462081ae31482849d16dca56f8ffb0831680cb69089b36ea44",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/wizard-17294.png",
+          "snapshot_path": "review-images/0ab425ab04d03e9e12d4ad7c3f34833e3e3d4431f1bdc6d6288b6fcdeebb98a8.png",
+          "bytes": 65153,
+          "sha256": "0ab425ab04d03e9e12d4ad7c3f34833e3e3d4431f1bdc6d6288b6fcdeebb98a8",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/teflon-zf-trend-nu.png",
+          "snapshot_path": "review-images/42ca9b3528931ea0fe5a1493acbe72e469a0acdc470cd41a6affd544918a14da.png",
+          "bytes": 31481,
+          "sha256": "42ca9b3528931ea0fe5a1493acbe72e469a0acdc470cd41a6affd544918a14da",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T02:06:37.229256+00:00",
+      "reply_matches_saved_file": true
+    }
+  },
   "pending_cases": [
     "plateau-redfield",
     "sn-critical-field",
     "euo-psi",
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
-    "fmuf-ptfe",
     "spin-glass-ymnal",
     "high-tc-cuprate",
     "copper-diffusion",
@@ -160,18 +309,20 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 0,
+    "scored": 1,
     "target": 24,
-    "scientific_pass": 0,
-    "must_pass": 0,
-    "must_total": 0,
-    "should_pass": 0,
-    "should_total": 0,
-    "exact_copy_pass": 0,
-    "literal_copy_pass": 0,
-    "combined_pass": 0,
-    "boundary_pass": 0
+    "scientific_pass": 1,
+    "must_pass": 6,
+    "must_total": 6,
+    "should_pass": 1,
+    "should_total": 3,
+    "exact_copy_pass": 1,
+    "literal_copy_pass": 1,
+    "combined_pass": 1,
+    "boundary_pass": 1
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
-  "protocol_note": "two_turn_image_review_v2 semantics unchanged. Round17 makes successful --prepare-reply stdout report-only and nonzero on failure; runner verifies exit status and exact raw stdout without normalization or saved-file substitution."
+  "protocol_note": "two_turn_image_review_v2 semantics unchanged. Round17 makes successful --prepare-reply stdout report-only and nonzero on failure; runner verifies exit status and exact raw stdout without normalization or saved-file substitution.",
+  "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
+  "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass."
 }
