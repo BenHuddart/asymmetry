@@ -1,5 +1,5 @@
 {
-  "status": "running; 21/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 23/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -3786,25 +3786,631 @@
       ],
       "scored_at": "2026-10-21T02:43:02.681966+00:00",
       "reply_matches_saved_file": true
+    },
+    "basics": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Treats the folder as several separate calibration exercises. It names at least the Ag TF field scan, the quartz range curve, the quartz low-field muonium scan and the steering scan, and analyses them separately. It does not present the survey's 24-run 100 G \"temperature scan\" or its 2-run ZF one as a temperature dependence.",
+          "pass": true,
+          "evidence": "All68files/Agfield/quartzrange/quartzMu/steering separate;24runmixedtemperaturegroup rejectedasonephysicalcampaign."
+        },
+        {
+          "requirement": "Keeps the EMU and MUSR runs 44989–44997 apart and says which set is which (EMU: haematite on Ag at 100 G, the steering scan; MUSR: Ag calibration). It does not read the MUSR runs' ~0.29 MHz line as spontaneous order in Ag: the header says 0 G, but the line comes from an unrecorded weak transverse field.",
+          "pass": true,
+          "evidence": "EMUhaematite100GandMUSRAg44989–997 keptseparateworkdirs;MUSR.29MHznotspontaneousmagnetism, unrecordedweakTFexplanation."
+        },
+        {
+          "requirement": "Quotes no logged 943 K, ~640 K or ~550 K reading as a sample temperature. It says these logged values are faulty or irrelevant to these room-temperature calibrations, and claims no temperature trend.",
+          "pass": true,
+          "evidence": "Implausible550/645K explicitlysensorerrors;railedquartztmpoffset653Kretainedonlyprovenanceirrelevanttocalibrationaxes;noactualsample943Ktemperaturetrend."
+        },
+        {
+          "requirement": "Steering: fits the Ag-mask asymmetry against the current taken from the run notes, and reports it smallest near zero current (between −0.25 and +0.25 A), rising on both sides.",
+          "pass": true,
+          "evidence": "Actualfit-serieswithnote-derivedsteeringAaxis,amplitudeminimum5.29286 at0Aversus7.133/8.099at±1A."
+        },
+        {
+          "requirement": "Range curve: reports the 100 G diamagnetic amplitude as small and roughly flat for thin stacks, then rising steeply and saturating for the thickest. It names, from its own fits, the foil count (as the run notes give it) where saturation begins — about 12–14 foils (a range such as \"13–15\" counts).",
+          "pass": true,
+          "evidence": "ActualfoilA1lowflat0–6foils,risesstrongly,reaches14–15foillevel;correctnoteaxisnotworksheet."
+        },
+        {
+          "requirement": "Quartz scan: identifies the few-gauss lines as muonium (a line far faster per gauss than the bare muon's — the ratio itself need not be quoted). It reports the muonium amplitude falling as the frequency rises, and the line lost at the top fields, and presents the amplitude fall as the instrument's frequency-response limit (attributing the line's loss at the top fields to it too is a Should).",
+          "pass": true,
+          "evidence": "Fewgaussmuoniumline andamplitudefallwithfrequencyattributedinstrumentresponse;lost8.5/9Gtracesnot rescuedaslines."
+        },
+        {
+          "requirement": "Ag field scan: reports the fitted frequency tracking the applied field. It also reports the fitted phase against field. On the file's t0 the phase drifts steadily with field (a t0 offset), so calling it field-independent without a t0 test is a fail.",
+          "pass": true,
+          "evidence": "Agfollowsfieldandphaseinitialtimingtrend−39.3ns, actual−2bint0testleaves−7.01nsresidual."
+        },
+        {
+          "requirement": "States which run supplied alpha for each exercise it fits. It does not carry one alpha across the survey's ALPHA STEPs.",
+          "pass": true,
+          "evidence": "Namedalpha-per-exercise/per-runchoice,18864ownblock,MUSRassumed1,notonealphaoversteps."
+        },
+        {
+          "requirement": "Contains no t0 correction, stopping density (mg/cm²), steering centre, upper frequency, field offset or alpha that was not produced by a tool call in this session. The worksheet's Ti density and foil thickness are background.",
+          "pass": true,
+          "evidence": "Allt0/fieldfreq/steering/foil/alpha directCLIvalues, nounprintedmgcm2conversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reads each exercise's pattern the right way round: the steering scan's silver signal is smallest where the beam is centred on the (depolarising) sample; the range curve's step is where the muons stop passing through the degraders into the sample. An inverted reading is a gap even when the Must's pattern is reported.",
+          "pass": false,
+          "evidence": "Doesnotclearlyexplainmaskcenterdepolarizationorfoilsstopmuonsbeforequartz;finalsaysmechanismundetermined."
+        },
+        {
+          "requirement": "Does not dismiss a relative amplitude trend (the muonium frequency response) on the ground that alpha is uncertain: one alpha scales every amplitude alike.",
+          "pass": true,
+          "evidence": "RelativeMuamplitudeinterpreteddespitealphalimitation."
+        },
+        {
+          "requirement": "Deadtime: reduces ZF Ag 34998 with deadtime off and from the file, and describes the early-time sag in asymmetry that the correction removes, with both fits' χ²ᵣ. Says the 2010 files carry no deadtime values.",
+          "pass": false,
+          "evidence": "No34998deadtimeoffvsfilepairedtest/sag/chi comparison, earlierfilesnodtstated."
+        },
+        {
+          "requirement": "Measures MUSR alpha on a MUSR Ag run and says why that is legitimate, since the survey lists no MUSR candidate because the header records 0 G. Alternatively, it says plainly that it assumed 1.0.",
+          "pass": true,
+          "evidence": "MUSRalpha1assumptionexplicitbecauseheader0Gnocandidate."
+        },
+        {
+          "requirement": "t0: tests `--t0-offset` (or fits `Linear` to phase against field), reports the shift in bins that flattens the phase, and checks the fitted frequency against the nominal field.",
+          "pass": true,
+          "evidence": "Actual−2bint0tested,nearlyflattensphaseandfrequencychecked;residualbinlimitedretained."
+        },
+        {
+          "requirement": "Treats 18864 as its own alpha block, or excludes it and says why.",
+          "pass": true,
+          "evidence": "18864ownalphaandseparatepoint explicit."
+        },
+        {
+          "requirement": "Says that turning the saturating foil count into mg/cm² needs the foil thickness and Ti density, which the files lack, and does not present that conversion as Asymmetry output.",
+          "pass": false,
+          "evidence": "No explicitmgcm2needTi density/thicknessdiscussion,noinventedconversion."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Manuallyreviewedall145commands;number/unitchecks empty using directCLIandmetadata sources only,noaudit/draft/log-reportreads. Printed30umfoilnotesbackgroundnotconverted.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "All9Musts science/copyPASS, recoveredMuidentity/response,MUSRweakTFandfaulty-temperatureinterpretation. Genericsecondaryline/correlationhintsstilloveranalysequartzcalibrationwithradicalsitequestions.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all145 completed commands inspected. All145commands andsummary-onlyeditsinspected,4reviewhashesverified. ActualMuAfallandfoilplateauPNGsinspected. OnlyCLI/notes/reportwriting, nophysicalarithmetic.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 2136.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 8,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics/data --series quartz-foil-scan --model Linear --param sigma --exclude 18888,18889 --plot --instrument EMU --workdir asymmetry-work-foil'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics/data --series hematite-steering --model Linear --param Lambda --plot --instrument EMU --workdir asymmetry-work-steering'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics/data --series quartz-mu-field --model Linear --param frequency --exclude 19626,19640,19641 --plot --instrument EMU --workdir asymmetry-work-mu'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics/data --series ag-field-scan-t0 --model Linear --param frequency --exclude 18860,18855,18861 --plot --instrument EMU --workdir asymmetry-work-Ag-field-t0'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics/data --series quartz-mu-field --model Linear --param frequency --exclude 19626,19640,19641 --instrument EMU --workdir asymmetry-work-mu'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics/data --series ag-field-scan-t0 --model Linear --param frequency --exclude 18860,18855,18861 --instrument EMU --workdir asymmetry-work-Ag-field-t0'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics/data --runs 19625-19643 --alpha-from 19637 --deadtime from_file --instrument EMU --plot --plot-tmax 2'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics/data --runs 62798 --alpha-from 62798 --deadtime from_file --instrument EMU --plot --plot-tmax 2'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics/data --runs 18850 --alpha-from 18850 --deadtime from_file --t0-offset -2.5 --instrument EMU --workdir asymmetry-work-Ag-field-t0 --plot --plot-tmax 2'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics/data --runs 34998,44999 --recipe wizard-34998 --order temperature --x 34998=294.94,44999=295 --start 34998 --name ag-zf-logged-axis --plot --instrument EMU --workdir asymmetry-work-ag-zf'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "4bab5a664f30f132cd7afbd2234ab7ddcd1c718b4f7820038a882d2c50c386d5",
+      "audited_file_sha256": "4bab5a664f30f132cd7afbd2234ab7ddcd1c718b4f7820038a882d2c50c386d5",
+      "rubric_sha256": "9a7e1671e076193352ce4016016147c30a58b3f8098aef4a5b6383f19d34c8cc",
+      "staged_skill_sha256": "166e50451f0545f41f184dca6279df8306d5585ddfb2cbd0216011a3712e0f96",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/basics",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Must3borderlineacceptedbecauseimplausible550/645Kcalledsensorerrorsandquartzalarmoffsetirrelevanttofoilaxis;943Knotpresentedasactualsamplemeasurement.",
+        "Reportcontradicts34999temperaturevalidity:earlier294.52Kplausible/latercalledimplausiblewhileusingit;axisnumbersdirectCLI,butprovenanceproseconfused.",
+        "Calibrationalphaper-run maypartlyrenormalizegenuinefoil/steeringamplitudes;patternsurvivesbutnotuniquelysamplevolume.",
+        "CorrelationFFTonsilver/quartzcalibrationfailedtwo-linecandidate doesnotmotivatephysicalradicalassignment.",
+        "Poorwholefitsretainedwithquantityspecificflags; no deadtime-demonumericalconclusion."
+      ],
+      "judgement_calls": [
+        "Must3acceptsexplicitfaulty550/645KsensorvaluesandstatementalloffsetsdoNOTcreatecalibrationtemperaturetrends;railedquartz943Konlyanoffsetprovenanceentry,notactualsampleT."
+      ],
+      "number_evidence_commands": [
+        2,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        91,
+        92,
+        93,
+        94,
+        95,
+        98,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        120,
+        121,
+        122,
+        123,
+        124,
+        127,
+        128,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135,
+        136,
+        137,
+        138
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "4bab5a664f30f132cd7afbd2234ab7ddcd1c718b4f7820038a882d2c50c386d5",
+        "summary.md": "4bab5a664f30f132cd7afbd2234ab7ddcd1c718b4f7820038a882d2c50c386d5",
+        "transcript.jsonl": "5a7be20ce939297ee99dea81b31bb9a389284f508e5769c06194a54e92b87293",
+        "commands.txt": "34654a318fea95e055f1df18f505677a866528ca222c3055c74e179da16834da",
+        "cost.json": "335649f04af2439c130e169b779a783483ad08bc337065e619935f6fdfc809ad",
+        "image-inputs.json": "6c0798d0ea68e46368465e1e8db7af99fef6bdb7604d61576b0424313ca900d4"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work-mu/plots/quartz-mu-field-trend-A_1.png",
+          "snapshot_path": "review-images/6b4824a7263f1b9c26021afe17df00c9fccbd7288cb0e7d49bc1ec25dd9240f2.png",
+          "bytes": 27465,
+          "sha256": "6b4824a7263f1b9c26021afe17df00c9fccbd7288cb0e7d49bc1ec25dd9240f2",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-foil/plots/quartz-foil-scan-trend-A_1.png",
+          "snapshot_path": "review-images/3bb32b22168b29c380d4d317f8556cd913ffe54048f9861fed79d92e3e780ca8.png",
+          "bytes": 21573,
+          "sha256": "3bb32b22168b29c380d4d317f8556cd913ffe54048f9861fed79d92e3e780ca8",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-foil/plots/quartz-foil-15.png",
+          "snapshot_path": "review-images/6ae12a4005fb320ce97c15aad38f7f62f82cc0c305d7665b0f5699a5da79e856.png",
+          "bytes": 69499,
+          "sha256": "6ae12a4005fb320ce97c15aad38f7f62f82cc0c305d7665b0f5699a5da79e856",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-steering/plots/hematite-steering-trend-A_1.png",
+          "snapshot_path": "review-images/d377194c0521b9bc2c303e4e7947b4c20e667d8876d97c623fba157c04a01e78.png",
+          "bytes": 29052,
+          "sha256": "d377194c0521b9bc2c303e4e7947b4c20e667d8876d97c623fba157c04a01e78",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T02:54:10.965750+00:00",
+      "reply_matches_saved_file": true
+    },
+    "benzene-alc": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Recognises the three sub-folders and analyses each separately, with its own work directory, never mixing runs between them.",
+          "pass": true,
+          "evidence": "liquid263/solid123/solution360threefolderssurveyed/reducedseparateworkdirs."
+        },
+        {
+          "requirement": "Treats every folder as longitudinal-field ALC scans fitted with `integral-scan`, uses the 20 G TF runs only for alpha (naming, for each sub-folder it reduced with a measured alpha, a run and its value — one of the liquid's two calibration runs is enough), and says alpha was assumed 1.0 for `solution`.",
+          "pass": true,
+          "evidence": "AllLFcount-integrals,20Gcalonly liquid29799alpha1.1916corrected/solid59731alpha1.2809;solutionalpha1assumed."
+        },
+        {
+          "requirement": "Liquid: reports from `integral-scan` fits one resonance in the CHMu(0) scan between 20.7 and 20.9 kG and two in the 28.5–30 kG scan, one between 28.9 and 29.0 kG and one between 29.5 and 29.6 kG, with uncertainties or fit quality.",
+          "pass": true,
+          "evidence": "ActualCHMu0centre20797.73±1.09 ando-p28944.55±1.06/29538.05±1.74Gwithpoor/conditionalfitqualities."
+        },
+        {
+          "requirement": "Does not integrate the red/green repeat 29800–29854 as an ordinary scan: either fits it as `--period green-red` with a pair model and the red–green field step held from the command's printed offset, or sets it aside and says why.",
+          "pass": true,
+          "evidence": "RG29800–854count-integralgreen-redproperpairdB+44.06Gfromprintedred-green−44.06;badperbindifferentialdiscarded."
+        },
+        {
+          "requirement": "Solid: reports two resonances from converged fits (a joint fit, or one windowed fit per resonance), one between 19.3 and 19.7 kG and one between 21.3 and 21.6 kG. A failed fit's position is not a fitted resonance.",
+          "pass": true,
+          "evidence": "Convergedseparatewindowssolid19471.93±3.62Gand21469.73±6.19G,notfailedpositions."
+        },
+        {
+          "requirement": "Solution: names the three samples and fits at least one scan, stating sample and temperature, with a resonance between 20.4 and 21.2 kG.",
+          "pass": true,
+          "evidence": "Benzene(aq),C6H6/C6H14,C6H6/H2O20mMallnamed,17scansfittedwithtempand20.4–21.2kGcentres."
+        },
+        {
+          "requirement": "Contains no A_μ, A_p, D_μ or resonance field that was not produced by a tool call in this session: no couplings from resonance fields by the worksheet's formulas.",
+          "pass": true,
+          "evidence": "DirectCLIcentres/widths/errors/failedcouplingquotedexplicitunusable;nohandhyperfineconversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Solid: from a converged joint fit of both resonances, notes that the lower one is the broader (separately windowed fits with their own backgrounds can hide the difference).",
+          "pass": false,
+          "evidence": "No convergedjointsolidfit,windowedfitsmakelowerline narrower;cannotclaimexpectedlowerbroader."
+        },
+        {
+          "requirement": "Assigns in words: liquid lines are Δ0 (the 20.8 kG one the methylene CHMu proton, the pair near 29 kG ring protons); the solid's broad lower line is the Δ1 muon resonance and the narrower upper one a Δ0 line.",
+          "pass": false,
+          "evidence": "NoDelta0/Delta1proton/muonspecificassignments."
+        },
+        {
+          "requirement": "Solution: fits several temperatures of one sample and reports the resonance field rising with temperature, as a list of fitted fields.",
+          "pass": true,
+          "evidence": "Allaqueous4tempsandotherslistscentresrisingwithT,conditionalcaveats."
+        },
+        {
+          "requirement": "Solid: uses the logged sample temperature and notes the calibration run was taken colder than the scan.",
+          "pass": false,
+          "evidence": "LoggedscanTvariationusedbut59731colder157Kreference notexplicit."
+        },
+        {
+          "requirement": "Says the worksheet's time-domain questions (relaxation vs field, on-resonance oscillations) were or were not examined.",
+          "pass": true,
+          "evidence": "Time-domainrate/oscillationchecksnotattemptedexplicit,representativereductiongeometrychecksdistinguished."
+        },
+        {
+          "requirement": "Names the stored scan JSON and PNG for each fitted scan.",
+          "pass": true,
+          "evidence": "JSON/PNG foreachfittedscan listedexhaustively."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Alldirectintegral-scan/metadata/jqscanJSONvaluesreviewed; no audit/draft/log-report-display sources, no physicalarithmetic on dB (CLIprintsrequiredsign).",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "7/7scienceandstrictcopyPASS; generalsampleidentitycheckrecoverspreviousmissingthreesolutionsamples. Fullall17solutionworkflowplusunneededcandidatechecks/failedglobalMu-likefitmakeverylongreport. Solidjointwidthphysicsstillmissing.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all137 completed commands inspected. All137commands/summary-onlyeditsinspected,4reviewhashesverified; actualsolidfullcurvehasdipandbroadkinkonrisingbaseline. StoredCLIJSON/jqreadsvalidprovenance,nohandphysicscalculation.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1539.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry survey /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/benzene-alc/data'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry info /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/benzene-alc/data/liquid/HIFI00029799.nxs'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry info /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/benzene-alc/data/solid/HIFI00059731.nxs'",
+          "exit_code": 2
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "e9de58f0befea6e1ad7efbc90909e5caa19305591a0d0a2c3b60d3d658f8108a",
+      "audited_file_sha256": "39cbea794119f406635528f0d7c87efc307c9996d99e127cfefa32f1b4d8e956",
+      "rubric_sha256": "d3e42e432eaab414ff0b75ac3b81cc915980e08f5d9320109c241410cdfd1e46",
+      "staged_skill_sha256": "166e50451f0545f41f184dca6279df8306d5585ddfb2cbd0216011a3712e0f96",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/benzene-alc",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -207,8 +207,8 @@\n asymmetry-work-solution/scans/aq20mM300_cubic.json\n asymmetry-work-solution/scans/aq20mM320.json\n asymmetry-work-solution/scans/aq20mM320_fit.json\n+asymmetry-work-solution/scans/aq20mM360.json\n asymmetry-work-solution/scans/aq20mM320_cubic.json\n-asymmetry-work-solution/scans/aq20mM360.json\n asymmetry-work-solution/scans/aq20mM360_fit.json\n asymmetry-work-solution/scans/aq20mM360_cubic.json\n asymmetry-work-solution/plots/aq350.png\n",
+      "physics_caveats": [
+        "Solidlower19472Gwindowedwidth76Gvsupper21470width155G oppositeexpectedjointdecomposition; separatecurvedbackgroundsnotphysicalDelta1widthproof.",
+        "Solidwarming/stabilizationloggedtemperaturefallswhilefieldrises;cannotuniquelyattributebroadfeaturetoT/field.",
+        "Solutionnarrowwindowslackflanks,raw/scalederrorcolumnsnotconsistentlyidentifiedandwidthsconditional;no preciseprotoncouplings.",
+        "Aqueouspersistent20900Gversushexane20800Gcontextpartlywrongfor20mMJuneaqueous20800G; crosscampaignabsolutecomparisonsneedcare.",
+        "Liquid29799calibrationgeometry/periodprovenanceheld;RGbaselineestimatorrepairedwithretainedfailedfirstattempt."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        2,
+        3,
+        4,
+        6,
+        7,
+        8,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        111,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        120,
+        121,
+        125,
+        127,
+        129,
+        131
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "e9de58f0befea6e1ad7efbc90909e5caa19305591a0d0a2c3b60d3d658f8108a",
+        "summary.md": "e9de58f0befea6e1ad7efbc90909e5caa19305591a0d0a2c3b60d3d658f8108a",
+        "transcript.jsonl": "9182ad1f5a220bc47c51af4f3e983ebcb97996ecb87d02410606ec90d54152ed",
+        "commands.txt": "b081d42f37835d93bcccc6fcad799a9d2c04c5d85a04a3f059d76c7ac2fec8ce",
+        "cost.json": "a5af6b5ba512b4a1df8810db4f89ec5c654bc03a14f67469e1d94f6522605249",
+        "image-inputs.json": "4ad3b5ee5714414c775dd1a22494474da3c16f6f780b6f212b96882e9fd1e7b5"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work-liquid/plots/liquid_chmu0.png",
+          "snapshot_path": "review-images/04239966f258131b9031328c4b7e7330709a75645aa5c88c7e9da27d2170e246.png",
+          "bytes": 31110,
+          "sha256": "04239966f258131b9031328c4b7e7330709a75645aa5c88c7e9da27d2170e246",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-liquid/plots/liquid_op.png",
+          "snapshot_path": "review-images/230783227731e7ad76cf6ace01492295a5550cff7d7748d716e101cb8b2fbe5c.png",
+          "bytes": 26913,
+          "sha256": "230783227731e7ad76cf6ace01492295a5550cff7d7748d716e101cb8b2fbe5c",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-solid/plots/solid_benzene_warming.png",
+          "snapshot_path": "review-images/4d0e1e26846796eab75c54dd816dd921b7549a98680c2803a454492e256464d5.png",
+          "bytes": 30177,
+          "sha256": "4d0e1e26846796eab75c54dd816dd921b7549a98680c2803a454492e256464d5",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-solution/plots/aq350.png",
+          "snapshot_path": "review-images/b8a2ded32751a6fe413462bdf49e4c6c5f646facdcd9837e90241b94722f0306.png",
+          "bytes": 30581,
+          "sha256": "b8a2ded32751a6fe413462bdf49e4c6c5f646facdcd9837e90241b94722f0306",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T02:54:11.050574+00:00",
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
-    "basics",
-    "corannulene-alc",
-    "benzene-alc"
+    "corannulene-alc"
   ],
   "totals": {
-    "scored": 21,
+    "scored": 23,
     "target": 24,
-    "scientific_pass": 18,
-    "must_pass": 116,
-    "must_total": 121,
-    "should_pass": 43,
-    "should_total": 85,
-    "exact_copy_pass": 20,
-    "literal_copy_pass": 20,
-    "combined_pass": 17,
-    "boundary_pass": 21
+    "scientific_pass": 20,
+    "must_pass": 132,
+    "must_total": 137,
+    "should_pass": 50,
+    "should_total": 98,
+    "exact_copy_pass": 21,
+    "literal_copy_pass": 21,
+    "combined_pass": 18,
+    "boundary_pass": 23
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics unchanged. Round17 makes successful --prepare-reply stdout report-only and nonzero on failure; runner verifies exit status and exact raw stdout without normalization or saved-file substitution.",
