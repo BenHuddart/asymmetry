@@ -2210,3 +2210,6 @@ Round18 validation complete: **452 focused and 5,958 fast tests passed** (fast: 
 
 
 Fresh full24 confirmation8 LIVE at /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8; implementationeaf0befc23a51386268415510efadc157966001f,wavePID771722,supervisor771712;parentconsoleconfirmation8-wave.log. AllfreshfirstattemptsCodex/gpt-6-luna,fixedrubrics,two_turn_image_review_v2semantics,strictactualbytes. Max12,wizardenvdefault1notceiling,numericalthreads1,30sresourcesand05:59:50UTCtermination/interruptions. FreezeCLI/skill/runner/rubricsuntilALL24finishincludingearlyfailures. ManualscoreACTUALsummary.mdwithallMust/Should,evidence,quantity/unitexcludingaudit/draft/logreportreads,copy,boundary,host/model/attempt/hashes/images/AFMscope. Rawattemptspersistentoutside repo;corpusonlyASYMMETRY_CORPUS_ROOT. No broadtestswithliveevals. Deadline06UTC/fullgatecutoff04:30UTC.
+
+
+Confirmation8 first four cases scored: molecular antiferromagnet5/5 Musts (copy fails one terminal LF), PTFE6/6, plateau5/5 and YMnAl5/5 (science and copy pass). All number/unit and boundary checks pass with the molecular FFT requested-window input exception recorded. Shoulds:1/3,1/3,3/5,1/3 respectively. Source remains frozen through all24; calibration, fit-quality and physical-scope caveats retained.
