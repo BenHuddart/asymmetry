@@ -2772,6 +2772,262 @@ separate standard run with two workers and scratch XDG directories completed:
 unchanged by this task. Exact tests and diagnostics are recorded in the JSON;
 the full validation gate is not passing.
 
+## Skill consolidation (PR #369) — Haiku 5.5 paired waves, 2026-10-21
+
+Host **Claude Code 2.1.303 / Linux**, model **`claude-haiku-5-5`**, all 24
+cases once per arm, `--parallel 3`, both arms concurrently from snapshot
+worktrees. Branch arm: `f9e3b3c` (SKILL.md consolidated to 1,706 lines, one
+reply procedure). Control arm: `ca1426c`, main after #368 (the 1,948-line
+skill), same CLI. The control was needed because #364–#368 changed the CLI
+since round 2's waves. The branch arm predates `31069fd`, which restored the
+conditional wording of two Step 3a geometry tests after review.
+
+Scored by three Sonnet scorers with `scoring_brief.md`, blind to the arm (A/B
+labels per case; the work-directory paths in Files lists leak the arm name,
+which the scorers report ignoring).
+
+| arm | strict | judgement fails relaxed | reply = an audited body | via `--prepare-reply` | no audit | cost |
+|---|---|---|---|---|---|---|
+| branch | 21/24 | 22/24 | 21/24 | 20 | 2 | $9.38 |
+| main | 20/24 | 22/24 | 20/24 | 9 | 2 | $8.88 |
+
+The consolidation did what it set out to do on delivery: agents now take the
+one documented route, `--prepare-reply`, instead of copying the plain audit's
+marker body. Copy fidelity did not change, because Haiku copied the marker
+body exactly too; the remaining differences are cosmetic (dropped bold, a
+dropped heading). The scientific scores are within wave-to-wave noise, so the
+shorter skill shows no regression on Haiku.
+
+Fails, by arm — none traced to the skill text:
+- branch: cds-fourier (kept the wizard's two-line fit; never tested a central
+  line between them), corannulene (no ~7 kG window; fitted across the 20 kG
+  step), TRSB (judgement: "about 0.007 μs⁻¹", a difference of two printed
+  levels the audit let through). Photo-silicon passed but never audited: it
+  read the CLI's closing audit step as a prompt injection.
+- main: corannulene (stopped early, 420 K scan unfitted), LiFeAs (stopped
+  after one scan, no audit), AFM high-TF (judgement: one line reported, the
+  printed two-line test not run), benzene ALC (judgement: a wide window left
+  the solid's first line unclaimed).
+
+Stopping early without an audit (two runs per arm) and the prompt-injection
+reading of the CLI's imperative tail are unchanged by the skill text; both are
+CLI- or harness-side questions (see "Open questions"). Rubric wording the
+scorers flagged: spin-glass "detector grouping", nickel's LF run range
+(124220), photo-silicon "23 runs", ALC-TCNQ's repeated 2000 G point,
+corannulene's ~7 kG window (no CLI line points to it), LiFeAs onset and σ
+versus Λ, TRSB's 200 G runs.
+
+## Skill consolidation (PR #369) — GPT-6 Luna paired waves, 2026-10-21
+
+Host **ben-MS-7D91, Linux 7.0.0-38-generic x86_64**, **Codex CLI
+0.163.0**, model **`gpt-6-luna`**. All 24 cases ran once per arm with the
+unchanged `two_turn_image_review_v2` protocol. This is a separate track from
+the Haiku results above; the scores must not be pooled or compared as one
+model's progression.
+
+- Branch: `503200f13c3db1cd2b58a5c0d2b2d1f28f6b6187`, including the
+  `31069fd` geometry review fix; 1,706-line skill.
+- Main control: `ca1426c9b89c0512f7198c89226150f4dac67a02`; 1,948-line skill.
+
+Both were detached snapshots outside the repository, made after fetching
+origin. Imports were checked with the main checkout's `.venv/bin/python` and
+each snapshot's `src` on `PYTHONPATH`; `skill_source_dir()` pointed inside the
+correct snapshot. CLI sources, runners and scoring inputs were identical
+between arms. The corpus came from the extracted `wimda-corpus` through
+`ASYMMETRY_CORPUS_ROOT`. Both arms ran concurrently on this host, with
+`OMP_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1`, `MKL_NUM_THREADS=1` and
+`ASYMMETRY_WIZARD_WORKERS=3`. The first three cases per arm ran at parallel 1;
+after checking memory headroom, the unchanged wave runner dispatched the
+remaining 21 at parallel 2. Only the scheduler parents were stopped to change
+dispatch; their active cases finished untouched. No case was retried, and no
+test suite ran alongside the waves.
+
+Three independent scorers used `scoring_brief.md` and `rubrics/README.md`.
+Each case's completed pair was independently randomised as A/B, paths were
+masked, and installed skill reads were excluded from the evidence packets.
+Scorers did not open `project/.agents/skills/` or see the arm key. Only final
+replies were graded; numerical provenance was checked against actual CLI
+stdout/JSON, excluding draft-writing commands and audit echoes. The 24
+scorecards were locked before unblinding. Cross-checks resolved the photo
+period-mapping and LiFeAs onset judgements while still blind.
+
+| arm | strict | judgement fails relaxed | exact copy | `--prepare-reply` | no audit | input tokens / output tokens |
+|---|---|---|---|---|---|---|
+| branch | 16/24 | 23/24 | 24/24 | 24/24 | 0/24 | 164,025,601 / 1,151,214 |
+| main | 21/24 | 23/24 | 24/24 | 24/24 | 0/24 | 183,039,566 / 1,283,244 |
+
+Tokens sum `cost.json` usage across both turns, including repeated context.
+Cached input is included in input, not added to it: branch 158,242,816;
+main 176,741,120. Reasoning output is a subset of output: branch 578,102;
+main 711,265. Exact copy is the requested `cost.json final_report_audited`
+measure, independently checked against the last successful audit stdout.
+Plain audit marker-body delivery was **0/24 in each arm**. All 48 runs
+completed both turns with exit status 0: no infrastructure void, early stop,
+missing audit, permission denial or audit-as-prompt-injection refusal was found.
+
+**Step 7 and delivery.** Luna used the same preparation route and copied it
+exactly in both arms. The shared runner's review prompt already explicitly
+requires `--prepare-reply` and unchanged stdout, so this protocol cannot
+isolate a further delivery benefit from the consolidated Step 7. All numerical
+failures below were already in the audited draft, rather than introduced when
+sending it. Branch maleic exposes a shared CLI defect: successful preparation
+prints an informational unfitted-scan preamble before the report. Luna copied
+that entire stdout, correctly earning the fidelity flag, but the reply was
+not just the saved report. `audit.py` prints this note before its hold/pass
+decision; this is CLI output behaviour, unchanged between arms.
+
+**Strict failures — branch.** Seven of eight relax to passes:
+
+- **plateau-redfield (judgement):** uncertainty `0.028198` replaces printed
+  `0.0281989`; nearest rounding would be `0.028199`. Report transcription and
+  the audit matcher's tolerance, not a different rate or a sending failure.
+- **cds-fourier (judgement):** rate uncertainty `0.0106878` replaces printed
+  `0.0106877`. Same transcription/matcher cause; every spectral Must passes.
+- **spin-peierls (judgement):** uncertainty `0.001523` truncates printed
+  `0.00152392`, instead of rounding to `0.001524`. Same matcher/report cause.
+- **benzene-alc (judgement):** repeat-pair errors `1.301`, `1.319`, `1.554`
+  and `1.396` are unsupported by the printed `1.297056`, `1.316325`,
+  `1.554614` and `1.395017`. Nearby uncertainty substitutions/truncation
+  precede the exact copy; manual rescaling is possible but not established.
+  The three sample-group interpretations satisfy the scientific Musts.
+- **photo-musr-silicon (judgement):** separate red/green analyses are present,
+  but the final reply omits an explicit two-period count and declines the
+  required ON/OFF assignment. Generic "Laser on" notes do not independently
+  label the periods, making that caution defensible. It also computes correct
+  flag-count subtotals that no command printed. Causes: rubric/metadata
+  availability and the audit's permissive count matching; not a demonstrated
+  consequence of consolidation.
+- **lifeas-psi (judgement):** calls the full 4–16.9 K evolution span the
+  "onset", although its table and warm plateau put the cooling departure
+  near 14–17 K. CLI wording describes warming away from a low-temperature
+  level and encourages this confusion. CLI framing plus an ambiguous rubric;
+  the underlying cold broadening and lower frequency are correctly reported.
+- **trsb-re6zr (judgement):** reports the small static-width change, LF
+  decoupling and TF coincidence, but withholds even a spontaneous-field/TRSB
+  *candidate* reading. The CLI explicitly supplied that bounded interpretation.
+  This is an interpretation/reporting omission against a wording-sensitive
+  Must, not evidence that the rewritten skill instructed the wrong physics.
+- **corannulene-alc (substantive):** unstable cold-window fits lead it to
+  withhold narrowing/reorientation and omit the cold ~7 kG absence test.
+  It does not recover independent flanks/baseline constraints. One CLI
+  comparison says "broader and higher in field", but window sensitivity
+  displaces the cross-temperature interpretation. Causes: fit-window recovery
+  and interpretation, with a possible loss of emphasis in skill prose; the
+  matcher does not enforce these scientific omissions. This remains a fail
+  when judgement calls are relaxed.
+
+**Strict failures — main.** Two of three relax to passes:
+
+- **spin-glass-ymnal (judgement):** uncertainty `0.0102994` replaces printed
+  `0.0102995`. Same last-digit transcription/audit-matcher issue as above.
+- **corannulene-alc (judgement):** converts printed fitted centres in G to
+  "near 7.08 kG and 14.83 kG" without a command printing those results.
+  Scientific interpretation passes, including conditional cold broadening,
+  reorientation and no cold narrow ~7 kG line. This is the strict rubric's
+  unit-conversion rule, rather than a physical or delivery failure.
+- **basics (substantive):** reduces 34998 and later-block 44999 together
+  using 34999's alpha (`0.8871`), across the recorded alpha step. Later
+  calibration fixes do not re-reduce 44999; rejecting its fitted parameters
+  does not satisfy the fixed no-cross-step Must. Cause: calibration-block
+  selection, which both skills prohibit and the CLI does not mechanically
+  prevent. It also truncates `9.45616e-05` to `0.000094561`. Relaxing that
+  numerical judgement does not repair the calibration failure.
+
+The audit number matcher explicitly tolerates one unit in the last written
+digit, whereas strict scoring here accepts nearest rounding but not a changed
+last digit or truncation. It also recognises G/kG conversions. These explain
+the last-digit and conversion passes; numeric presence does not validate
+parameter/error attribution. The relaxed column exposes the scoring brief's
+borderline-rounding/wording alternative; no scientific conclusion turns on
+these tiny precision differences. The branch's lower strict score must still
+be reported: equal relaxed totals do not establish equivalence or eliminate
+its interpretation failures.
+
+**Did removing scenario paragraphs cost cases?**
+
+- **CdS windows:** both recover the central-plus-satellites shallow-muonium
+  pattern and satisfy all six spectral Musts. Branch's strict miss is a rate
+  error's final digit, not loss of the deleted numerical FFT window.
+- **Foil/steering:** both find the amplitude trends and reject impossible
+  temperature readings, but neither explains the steering minimum as beam
+  centring. Branch reverses the foil explanation, attributing increasing
+  counts to quartz rather than muons stopping in the degrader. These are
+  Should gaps; main additionally has the independent alpha-block failure.
+  The old explicit exercise paragraph is reduced to general physical-reading
+  guidance, so the branch error is a plausible warning about lost emphasis,
+  not a demonstrated causal effect from one paired trial.
+- **Canting:** both AFM high-TF reports retain multiple lines and bounded
+  local-field interpretations, but omit AFM/canting context. Both pass the
+  literal Musts. The branch still mentions a staggered/canted moment in
+  Step 3b; this shared omission does not identify a consolidation effect.
+- **Reorientation:** this is the clearest differential scientific concern:
+  branch corannulene fails while main gives the intended conditional reading.
+  The branch still explicitly requires anisotropic-coupling motional averaging
+  and distinguishes `STABILITY` from cross-condition `COMPARE`. Its weaker
+  interpretation therefore cannot be assigned solely to deletion of the
+  longer paragraph, but warrants follow-up rather than a no-regression claim.
+- **Muonium kinetics:** both pass the literal maleic Musts, but branch fits
+  Arrhenius to `Lambda_2(T)` at fixed concentration and calls the activation
+  energies reaction-related, without first obtaining `k(T)` from concentration
+  slopes and separating `lambda0(T)`. Main correctly declines that inference.
+  This material error is only a Should/known trap in the fixed rubric.
+  Both skills still give `lambda_Mu = lambda0 + k[x]` and `trend --model
+  Linear`; the branch retains the kinetic-component rule. The generic CLI
+  invitation to fit an activation law does not identify the right observable.
+
+Another material literal-pass warning: branch cuprate copies the unscaled
+uncertainty column into its fitted transition results despite the CLI's
+explicit instruction to use the first, scaled error column. Numeric presence
+alone passes the matcher; the rubric lacks a correct-error-column Must.
+
+**Rubric wording problems flagged by the scorers** (recorded, not changed):
+
+- The brief's rounding exception versus strict exact-number wording leaves
+  truncation, last-digit substitutions, correct computed counts and in-passing
+  converted fitted results judgement-sensitive. Photo also bundles explicit
+  period count with workflow provenance and assumes an unavailable timing
+  legend; inferring the laser label from relaxation is not independent proof.
+- LiFeAs should distinguish cooling onset from a full warming change span,
+  and permit paired damping evidence without calling every rate Gaussian
+  sigma. Re6Zr should distinguish "not established" from omission of a bounded
+  candidate, and reconcile its static-KT wording with permitted dynamic KT.
+- Corannulene should explicitly permit conditional broad counterparts and
+  setpoint/logged-temperature pairs; benzene ALC likewise permits a converged
+  broad solid counterpart. Repolarisation's stated-range Must does not demand
+  all 38 points: main's disclosed 3–500 G fit passes, though neither arm tests
+  coupling sensitivity to range or adequately explains negative amplitudes
+  and the two-spin model's missing proton coupling.
+- Maleic puts the wrong-observable Arrhenius trap only in Should and ambiguously
+  specifies which species' nuisance parameters must be shared. Cuprate lacks
+  error-column attribution; AFM high-TF lacks a positive bounded AFM/canting
+  context requirement. LLZ's Keren caveat should be conditional on choosing
+  Keren, and its Delta units should be printed by the CLI.
+- Run-description corrections: YMnAl 24591 is actually a 0 G reference, with
+  LF science 24573–24590; cuprate 76993 has 85 K setpoint and invalid 411.19 K
+  logger, while 1274–1275 are detector tests. TCNQ's first block includes
+  extra ZF/repeated-field records beyond the shorthand "four 31-point scans".
+- Other clarifications: copper campaign years are context rather than a
+  required date recital; molecular-AFM worksheet temperature columns differ
+  from setpoint/logged temperature; spin-Peierls mixture/width evolution can
+  satisfy the lineshape-change Must; nickel need not resolve the exact
+  coldest point; PTFE may report qualified variation rather than force
+  constancy. EuO's internal field can be evidenced by frequency, and its
+  multi-part Should should be split. Tin/nickel literature comparisons should
+  permit qualitative source attribution without importing measured-looking
+  numbers. RF baseline and high-TF radical sum-relation Musts permit clear
+  equivalent prose; conditional CdS apodisation checks apply only if warned.
+  Basics' no-cross-step Must applies to rejected diagnostic reductions too.
+
+All raw runs remain in `/tmp/asymmetry-paired-20261021/wave-x/` (branch) and
+`wave-y/` (main); the mapping was kept separately in `arm-key.json` during
+evaluation. The same root retains detached snapshots, masked A/B packets,
+`blind-key.json`, independent scorecards, their SHA-256 lock, delivery metrics,
+paired totals, command transcripts and frozen review images. No skill, CLI,
+rubric or runner was changed for this evaluation. Documentation validation:
+`tools/harness.py docs` succeeded with 136 Sphinx warnings, including
+unreachable external inventories;
+none referenced this results record. `git diff --check` passed.
+
 ## Open questions for the maintainer
 
 From round 2 (2026-10-09), for Ben:
