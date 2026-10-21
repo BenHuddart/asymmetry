@@ -2294,3 +2294,6 @@ Confirmation9 now18/24scored:highTFbenzene6/6Musts2/6Shoulds science/number/unit
 
 
 Confirmation9 now19/24scored:maleic5/5Musts4/4Shoulds science/number/unit/strictcopy/boundaryPASS. Totals105/106Musts,17/19science,19/19copy,17/19combined,19/19boundary,39/73Shoulds;AFMscopePASS. PrimaryMuconcentrationslopeandfrom-fitsArrheniusworkflowretainedwithpoorfit/loggedT/unresolvedwarmcaveats. ApparentcompositionPNG/tablepointdifferencehash4ac900...requirescontrolledpostfreezereproduction,notconfirmedbug. Sourcefrozenremaining5.
+
+
+Confirmation9 now21/24scored:LiFeAs8/8Musts4/6Shoulds andRe6Zr7/7Musts4/6Shoulds science/number/unit/strictcopy/boundaryPASS. Totals120/121Musts,19/21science,21/21copy,19/21combined,21/21boundary,47/85Shoulds;AFMscopePASS. PreserveLiFeAsliteralGaussian/crossoverandRe6Zrpointspacingjudgements,poorfit/background/capabilitycaveats. OnlyBasics/corannulene/benzeneALCremain;sourcefrozen.
