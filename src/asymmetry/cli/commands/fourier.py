@@ -13,6 +13,7 @@ from asymmetry.cli._output import (
     payload,
     render_table,
 )
+from asymmetry.cli._recipes import LINE_SEEDS
 from asymmetry.cli._runs import reduced_datasets, resolve_run
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 from asymmetry.cli.commands.trend import HIGH_FIELD_LINE_MHZ
@@ -309,7 +310,7 @@ def _render(result: dict) -> str:
             f"<folder> --run {result['run']} --name two-line --expression 'Oscillatory * "
             "Exponential + Oscillatory * Exponential + Constant' --initial "
             f"frequency_1={pairs[0][1]:.6g} --initial frequency_3={pairs[0][0]:.6g}, then "
-            f"asymmetry fit <folder> --run {result['run']} --recipe two-line."
+            f"asymmetry fit <folder> --run {result['run']} --recipe two-line ({LINE_SEEDS})."
         )
     paired = {frequency for pair in pairs for frequency in pair}
     high = [peak for peak in tesla_field_lines(result) if peak["frequency_mhz"] not in paired]
@@ -326,7 +327,8 @@ def _render(result: dict) -> str:
             f"<folder> --run {result['run']} --name two-line --expression 'Oscillatory * "
             f"Exponential + Oscillatory * Exponential + Constant' --initial "
             f"frequency_1={centre + width / 2:.6g} --initial frequency_3={centre - width / 2:.6g}"
-            f", then asymmetry fit <folder> --run {result['run']} --recipe two-line."
+            f", then asymmetry fit <folder> --run {result['run']} --recipe two-line "
+            f"({LINE_SEEDS})."
         )
     if not coupling:
         from asymmetry.core.fitting.knight_shift import larmor_frequency_mhz

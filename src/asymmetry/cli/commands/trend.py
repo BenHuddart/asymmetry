@@ -23,7 +23,7 @@ from asymmetry.cli._output import (
     render_table,
     render_trend,
 )
-from asymmetry.cli._recipes import parse_fix
+from asymmetry.cli._recipes import LINE_SEEDS, parse_fix
 from asymmetry.cli._runs import parse_run_spec, reduced_datasets
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 from asymmetry.core.workflow.series import parameter_quality_flags
@@ -863,7 +863,7 @@ def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
         f"story — or the sample as unordered — fit the coldest run with two lines and "
         f"compare chi2_red: asymmetry recipe <folder> --run {coldest['key']} --name two-line "
         f"--expression '{two_line}'{initial}, then asymmetry fit <folder> --run "
-        f"{coldest['key']} --recipe two-line. A field distribution beyond two lines needs "
+        f"{coldest['key']} --recipe two-line ({LINE_SEEDS}). A field distribution beyond two lines needs "
         f"MaxEnt or a multi-group analysis, which this CLI does not do: say so under Not done."
     ]
 
