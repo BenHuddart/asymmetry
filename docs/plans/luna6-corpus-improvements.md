@@ -2267,3 +2267,6 @@ Confirmation9 first2/24scored: PTFE6/6Musts1/3Shoulds andYMnAl5/5Musts2/3Shoulds
 
 
 Confirmation9 now5/24scored: plateau5/5Musts2/5Shoulds,tin5/5Musts2/4Shoulds,spinPeierls6/6Musts2/3Shoulds allscience/number/unit/strictcopy/boundaryPASS. Totals27/27Musts,5/5science/copy/combined/boundary,9/18Shoulds. Tinquantitativecritical-line/OrderParameterfitfailed despitevalidsurveyprogression;plateaufullrange/freemlimitsandspinPeierlsdimerisationgapretained. SourcesfrozenuntilALL24.
+
+
+Confirmation9 now7/24scored:cuprate5/5Musts2/3Shoulds andLLZ6/6Musts2/4Shoulds science/number/unit/copy/boundaryPASS. Totals38/38Musts,7/7science/copy/combined/boundary,13/25Shoulds. Apparent400GcupratePNGwarmwidthnear.16versusdirectCLI/stored.0657648retainedwithmatchingcurrent/snapshothash;notconfirmedplotbug,controlledreproduceafterfreeze. SourcesfrozenuntilALL24.
