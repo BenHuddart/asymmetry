@@ -2237,3 +2237,6 @@ Confirmation8 now18/24scored: maleic5/5Musts4/4Shoulds sciencePASS/copyFAIL afte
 
 
 Confirmation8 now20/24scored: LiFeAs7/8Musts3/6Shoulds scienceFAILomitsGaussianwidth/onsetdespitecompletedcomparison,copyPASS; highTFbenzene6/6Musts2/6Shoulds sciencePASS/copyFAILterminalLF. Totals111/114Musts,18/20science,17/20copy,15/20combined,20/20boundary,43/79Shoulds. IndependentAFMscopePASS. Preserve explicitLiFeAsM3judgementandallscientificcaveats; source remains frozen through all24.
+
+
+Confirmation8 benzeneALC7/7Musts2/6Shoulds science/number/unit/strictcopy/boundaryPASS. Totals21/24scored,118/121Musts,19/21science,18/21copy,16/21combined,21/21boundary,45/85Shoulds; independentAFMscopePASS. OnlyRe6Zr/Basics/corannuleneremain; source remains frozen. Retainlocal-backgroundsolidwidth/temperature/solutionflank/error-conventioncaveats.
