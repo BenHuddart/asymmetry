@@ -14,118 +14,35 @@ Full flag reference: `references/commands.md` beside this file. Every command
 also has `--help`.
 
 **Workflow contract.** Read the relevant steps below before fitting, and keep
-these obligations through the final reply, including after image review:
+these obligations through the final reply:
 
-- Identify the experiment's question before selecting a model. An integrated
-  polarisation-recovery curve, a relaxation rate versus field, and a resonance
-  scan are different observables. First establish LF geometry and a
-  muonium/radical recovery question before using
-  `integral-scan --model MuRepolarisation`. A TF field scan instead needs
-  precession frequency/phase or amplitude: integrating its oscillations can
-  cancel the signal. Two-field TF/calibration pairs are not LF recovery scans.
-  Seed precession from each run's own measured line or field: a frequency fixed
-  in a reference recipe cannot be carried unchanged through a field sweep.
-  Free it or supply the appropriate per-run value before comparing amplitudes.
-  A Redfield fit to a time-domain rate does not measure integral recovery;
-  integral recovery does not measure a relaxation-rate law either. If the
-  question asks for field-dependent dynamics, fit the time spectra, extract
-  rates and try the appropriate rate law even when an integral scan also has
-  structure. One observable cannot close the other observable's workflow.
-  LF geometry alone does not select a recovery model. Inspect non-monotonic
-  curves for local dips even when a first recovery fit fails: investigate the
-  CLI's `LOCAL DIP CANDIDATES` in nearby windows and compare local baselines.
-  Candidate coordinates are measured minima, not fitted resonance fields.
-  A failed global fit is not evidence that those local features are absent.
-  RF-resonance context establishes the LF
-  experiment even when the survey cannot resolve precession.
-- Establish the sample class from experimental context, not from broadening
-  alone or a familiar material abbreviation. A high-TF magnet can broaden or
-  split at magnetic order; this is not by itself evidence for a vortex lattice.
-  A nonmagnetic calibration sample with a nominal zero-field header can carry
-  an unrecorded weak TF. Do not turn its line or sensor readings into an
-  ordered-state temperature campaign. Fit the calibration precession with a
-  damped cosine and treat unrelated sensor drift as calibration logging, not
-  a sample-temperature scan. When material identity is uncertain, compare
-  plausible physical models conditionally. A Gaussian-width comparison is a
-  useful observation, but does not select superconducting physics: use
-  `--scope auto` or `tf-knight-precession` while the sample class is unknown.
-  In a magnetic experiment compare magnetic line shifts, splitting and
-  broadening; reserve `tf-superconductor` and SC gap laws for a motivated
-  superconducting hypothesis, rather than using TF geometry to choose it.
-- Keep the required observable separate from its controls. In a KT analysis,
-  compare both the field width and the dynamic/exponential rate across the
-  same temperature interval, explicitly reporting when a control has no onset.
-  Compare the coldest run with the next temperature before averaging a cold
-  block: an endpoint upturn can coexist with a warmer activated trend.
-  If a small width onset reverses under global nuisance sharing, compare
-  `StaticGKT_ZF * Exponential + Constant` with dynamic Gaussian KT using the
-  same window and plausible background constraints. Report sensitivity to
-  sharing rather than treating one coupled fit as proof of absence.
-- Continuous-source reductions need the pre-t0 background check (`--background
-  range`). A systematically rising late-time baseline is a reduction/model
-  problem to resolve before accepting a static KT or a paramagnetic rate.
-  Above magnetic order, test a relaxing paramagnetic model even if a static
-  KT screen ranks first; a poor dip-shaped fit does not measure that rate.
-  Resolve baseline effects separately for each geometry. Report the TF
-  Gaussian/exponential envelope comparison, including indeterminate warm
-  points, and test window stability before discarding the late-time data
-  needed to distinguish slow envelopes.
-- Decide geometry from the scan, notes and reduced plots; an unresolved survey
-  does not restore a refuted TF stamp. Pass the geometry and physics scope to
-  every wizard call (Steps 3a–3b).
-- Repeated ZF/weak-field triplets require a shared dynamic `fit-global`, not
-  independent fits followed by a trend. Follow `COUPLED FIELD GROUPS` and Step 5a.
-  Dense nuclear moments need Gaussian KT; Lorentzian KT describes dilute
-  moments. Ionic motion changes `nu`, not that distribution. Report the shared
-  values and uncertainties for viable competing coupled models; choose from
-  sample physics and joint diagnostics, not one run's statistical ranking.
-- A disordered/glassy magnet needs a distributed-rate (stretched) decay check.
-  Test the comparable stretched alternative across the scan and report `beta`;
-  a middle-temperature single-exponential recommendation cannot settle this.
-- In TF superconductors, use `--scope tf-superconductor`; report both the
-  broadening and the non-superconducting signal fraction (Step 3b and section 3).
-- A Fourier interpretation needs matched cold/warm spectra and their pixels,
-  window and resolution. Report supported visual side structure separately
-  from detected lines, with its physical interpretation (Step 5c). In a
-  semiconductor, a central applied-field line with roughly symmetric cold
-  satellites that disappear in the warm reference is consistent with a
-  shallow-muonium hyperfine triplet; say that cautiously, without turning
-  visual shoulders into precise hyperfine constants.
-- Complete the comparisons, not only the fit tables. State the printed
-  coordinate/range of an onset, minimum or saturation plateau in prose. For
-  resonances, say whether a narrow line is resolved under each condition;
-  broad curvature with an unconstrained width is not a resolved narrow line.
-  Explain when a whole-scan baseline needs local windows because one
-  polynomial cannot describe it. Keep full tables in the named CLI products
-  and use decisive points in the report, retaining windows and provenance.
-- The final report is the complete section 6 template, not a recap. Preserve
-  folder count, per-scan run ranges, component meanings and every fit/FFT window.
-  Before finalising, reconcile the report with the retained CLI estimates:
-  check each sentence containing a comparison against the two named rows it
-  compares. Read their condition labels, centres and widths together, then
-  verify the words higher/lower, broader/narrower and appears/disappears in
-  both Results and the conclusion. An accurate table does not repair a
-  reversed sentence. Keep the physical interpretation specific to that
-  observed change; generic "dynamics" is not a substitute for the proposed
-  mechanism and what it would average or change.
-  Preserve sample/campaign names, logged-temperature offsets, each fit's own
-  calibration, run subset, model, uncertainty and chi-squared. Different
-  field references limit cross-campaign comparisons, not trends within a
-  single unchanged reference. Keep the successful ordinary scan distinct
-  from an unsuccessful differential/control fit. A conditional estimate in
-  Results must remain a conditional estimate in the conclusion, with its
-  quantity and units. After image-review changes, audit the final file and
-  send the exact text returned by that last audit; do not recompose it.
-  Once that audit passes, preserve every character, including rounded errors
-  and punctuation; do not regenerate the reply from memory or make final edits.
-  Do not repair backticks, wording, table labels or repeated sentences while
-  copying: fix the saved file first and run the audit again. Send the last
-  audited text once, without merging it with an earlier draft or recap.
-  Complete file-list cleanup before that final audit too. Use plain paths,
-  one per line, in Files; decorative path formatting adds copying errors.
-  Before sending, use the audit's COPY CHECK to verify the report's final line
-  is still present. Copy the file list through that line, then stop; the copy
-  cue itself is outside the report and is not part of the reply.
+- Identify the experiment's question, and the observable that answers it,
+  before selecting a model. An integrated polarisation-recovery curve, a
+  relaxation rate against field and a resonance scan are different
+  observables, and one cannot close another's workflow: a Redfield fit to
+  time-domain rates does not measure integral recovery, and an integral scan
+  does not measure a rate law. `integral-scan --model MuRepolarisation` needs
+  an established LF geometry and a muonium or radical recovery question; a TF
+  field scan needs precession frequency, phase or amplitude, which integrating
+  its oscillations cancels. Seed precession from each run's own line or field:
+  a frequency fixed in one recipe cannot be carried through a field sweep.
+- Decide the geometry (Step 3a) and the sample class (Step 3b) from the scan,
+  notes and reduced plots, and pass both to every wizard call.
+- Fit what the physics requires, not what one run's ranking prefers: a shared
+  dynamic `fit-global` for repeated ZF/weak-field groups (Step 5a), a
+  stretched exponential for a disordered magnet and the right Kubo–Toyabe
+  distribution (section 3). Compare the requested observable with its
+  controls over the same interval — in a KT analysis both the width and the
+  rate — and say explicitly when a control shows no onset.
+- Continuous-source (PSI) reductions need the pre-t0 background check
+  (`--background range`). A late-time baseline that rises systematically is a
+  reduction or model problem to resolve, separately for each geometry, before
+  accepting a static KT or a paramagnetic rate.
+- Finish every specialised workflow you start (Step 5d) and every comparison
+  the question implies: state the printed coordinate of an onset, minimum or
+  plateau in prose, not only in a table.
+- The final reply is the complete section 6 summary, audited and sent exactly
+  as Step 7 describes — not a recap.
 
 ## 1. What this does, and what it does not
 
@@ -283,6 +200,12 @@ below.
   like any other: fit it with `--order <name> --x <run>=<value>,…`. The survey
   lists each such scan it finds under `NOTES SCANS:` with its `fit-series`
   command; fit every one, even when its runs also appear in a scan above.
+  An instrumental exercise is finished only with its physical reading: what
+  the varied quantity does to the muons (where they stop, how much of the beam
+  reaches the sample, which species forms) and what the fitted trend tells the
+  experimenter. Name the calibrant and alpha for every exercise, and do not
+  promote a wizard's species model on a reference sample whose amplitude or
+  calibration is invalid.
 
 For a folder of more than a hundred runs the survey prints its findings first
 and the run table last. If any command's output is cut off, read what it
@@ -295,17 +218,14 @@ temperature, or a sensor offset. It lists them in blocks with each block's
 offset (T log − T/K), and you decide which to trust, block by block, and say
 why. The logged sample temperature is the default — it is the measured one;
 the setpoint needs a reason (a logged value the sample could not have had).
-For a room-temperature calibration, railed or physically implausible logger
-values are faulty/irrelevant coordinates, not physical temperature confounds.
-Do not explain a foil/steering amplitude step using such readings. Keep plausible
-sample-temperature offsets distinct from impossible readings; state the reason.
 Whichever you decide for a block holds everywhere those runs are used: a
 sensor you judged faulty for one series cannot supply an argument against a
 comparison in another. A block sitting at a different temperature from its neighbours is a
-different measurement, not a faulty thermometer to ignore. A steady offset the
-sample could not have had — a liquid logged above its boiling point, a
-cryostat base temperature below what the setpoint allows — points to the
-sensor, and then the setpoint is the better axis. The data can settle it: a
+different measurement, not a faulty thermometer to ignore. A reading the
+sample could not have had — a railed sensor, a liquid logged above its boiling
+point, a cryostat base temperature below what the setpoint allows — points to
+the sensor: it is not a temperature confound, cannot explain a change in the
+signal, and the setpoint is then the better axis. The data can settle it: a
 signal missing where the setpoint predicts one (a line that should be there
 below a transition) is evidence that the logged temperature is the real one. The `scans` block still groups them by
 setpoint, so take its temperature scans as provisional: order those series by
@@ -341,7 +261,8 @@ also state which forward/backward detector grouping or instrument profile was
 used, and whether the same calibration run established or validated it. If the
 loader supplied a fixed instrument grouping rather than fitting groups from the
 run, say that instead; do not silently make the grouping source disappear from
-the report.
+the report. Quote the alpha the final stored reduction used: after timing or
+background corrections it can differ from the survey's.
 
 ```bash
 asymmetry alpha <folder> --run <calibration run>
@@ -474,15 +395,13 @@ evidence, not a stamp:
   coil measurement. `prec -` above Nyquist cannot verify it; an unobserved
   fast transverse line and a longitudinal signal are different possibilities.
 - `geom -` with `prec none` at nonzero field refutes the header's resolved-TF
-  interpretation but does not alone prove LF. Compare the scan response:
-  weak applied fields that suppress a matched ZF KT relaxation to a nearly
-  flat trace support longitudinal decoupling of static fields. State that
-  evidence and the supported LF interpretation, with any alignment caveat;
-  missing coil metadata does not erase the observed decoupling. For a
-  high-field ALC/recovery hypothesis, inspect a count-integral scan of one
-  consistent block. A substantial slowly relaxing integral can contradict
-  TF cancellation and motivate LF local-dip fits. These are evidence tests,
-  not permission to relabel every unresolved TF run as LF.
+  interpretation but does not alone prove LF. Test it on the scan's response:
+  weak fields that suppress a matched ZF Kubo–Toyabe relaxation to a nearly
+  flat trace are longitudinal decoupling; at high field, a substantial slowly
+  relaxing count integral contradicts TF cancellation. State that evidence
+  and the LF reading it supports, with any alignment caveat — missing coil
+  metadata does not erase an observed decoupling — rather than relabelling
+  every unresolved run as LF.
 - `prec other@<MHz>` → the muon precesses in a field that is not the applied
   one (see the table above for what the frequency can mean). That says nothing
   about the applied field's direction, so `geom` falls back to the file; judge
@@ -526,14 +445,26 @@ re-screens — and it will happily offer a vortex lattice to a ferromagnet.
 | Muonium chemistry in a weak TF | water, solutions, gases, a few gauss TF paired with ~100 G diamagnetic runs; samples differing by concentration in the titles | not the wizard — see "Weak-TF muonium" in section 5 and write the recipe with `asymmetry recipe` | `Linear` on λ_Mu against the concentration you supply with `--order concentration --x …` |
 | Radicals at high field, level crossings | kilogauss TF lines at hundreds of MHz; ALC field scans | `--scope muonium-radical`; `fourier`; `integral-scan` | the scan's own resonance fit |
 
-Say in the summary which class you decided and on what evidence. When identity
-is uncertain, a distinct observed combination can motivate a bounded hypothesis
-test: for example, a lower line frequency and extra Gaussian width on cooling
-can be tested against a vortex-width law without claiming material identity or
-pairing symmetry. Compare competing explanations and retain the observed trend
-if the microscopic interpretation remains uncertain. Established magnetic or
-calibration context takes precedence over a generic superconducting suggestion.
-If the spectra contradict the proposed class, change it and explain why.
+Say in the summary which class you decided and on what evidence. If the
+spectra contradict it, change it and explain why.
+
+**Superconducting or magnetic: the context decides, not the broadening.** A TF
+line that broadens, shifts or splits on cooling is what a vortex lattice does,
+and also what a magnet does at its order, at inequivalent sites or under a
+staggered or canted moment. Neither TF geometry, a Gaussian width nor a
+familiar material abbreviation selects superconducting physics. Read the notes
+first: in an established magnetic or calibration experiment, interpret shifts,
+splittings and widths as bounded magnetic-response hypotheses (local
+susceptibility, an internal-field distribution, inequivalent environments)
+without assigning a phase, site or angle, and do not run gap laws because a
+trend hint names them. Reserve `tf-superconductor` and the `SC_*` laws for a
+motivated superconducting hypothesis; while the class is unknown, screen with
+`--scope auto` or `tf-knight-precession`. When identity is uncertain, a
+distinct combination — a lower line frequency with extra Gaussian width on
+cooling — can still be tested against a vortex-width law as a conditional
+model: report the measured widths and the test, say what evidence would
+distinguish the explanations, and claim no material identity or pairing
+symmetry from it.
 
 ### Step 4 — screen one run with the wizard
 
@@ -747,7 +678,12 @@ Each group is stored as `<name>-<i>` (from 1) and `<name>` holds the groups'
 shared parameters as a trend along `--group-order` (each group's mean
 temperature by default; `sample_temperature_logged`, `field`, or any name with
 `--group-x 1=…,2=…`). If the default `--strategy joint` fails on some groups,
-rerun with `--strategy least_squares` and say so.
+rerun with `--strategy least_squares` and say so. Report the shared values
+and errors of every viable competing coupled model, and choose between them
+from the sample's physics and the joint diagnostics. A small onset that
+reverses when nuisance parameters are shared is a sensitivity to report —
+compare the coupled models over the same window and background constraints —
+not proof that the onset is absent.
 
 **A law through laws.** When each group gives a quantity only through its own
 trend fit — a rate constant k_Mu from `trend --model Linear` along
@@ -783,46 +719,31 @@ only away from the resonance, use, for example,
 Only call a feature an ALC resonance when the fitted peak, its uncertainty and
 the plotted field dependence support that interpretation.
 
-A width at its search bound is a reason to revisit the window and background,
-not to repeat the same failed fit on every scan. Include data on both flanks,
-compare local Linear, local Cubic and independently constrained backgrounds, and try a
-joint multi-line model when neighboring resonances share a baseline. The CLI's
-automatic width interval permits widths up to half the fitted field span;
-this is a search limit, not proof of enough baseline coverage.
-`--bound Bwid=LO:HI` can replace it
-when the data and baseline constrain a broader or narrower line. Refit nearby
-windows to test stability, and report unresolved values honestly if these
-checks still fail. A curved powder-like trough can pin a width under a Linear
-baseline; widening a still-linear window alone does not test that problem.
-Compare both bounds and baseline shape before abandoning a broad feature.
-Choose windows independently across conditions: a sharp line's window may
-truncate its broadened partner. When coverage fails, use the CLI's wider-window
-Cubic check before transferring an unresolved verdict to that partner or to
-every scan in a sample family. A fitted width with partial flanks can remain
-conditional; it does not satisfy the stricter isolated-resonance criterion.
-A centre at a search bound also requires recovery, even with modest chi-squared:
-inspect the full scan, widen or shift the window around the observed feature
-to include both flanks, and revisit seeds and local baselines. A fit to an edge
-does not establish absence of a line. Retain only stable, non-bound centres.
+A non-monotonic curve needs its local features tested, even when a first
+whole-scan fit fails: follow the CLI's `LOCAL DIP CANDIDATES` (measured
+minima, not fitted resonance fields) with fits in nearby windows and local
+baselines. A failed global fit is not evidence that those features are absent.
 
-Two-width flank coverage checks the outer baseline; failing it does not prove
-that a fitted centre is unconstrained. Compare nearby windows and backgrounds.
-A converged, non-bound centre with a determined error that remains stable may
-be reported as a conditional fitted centre with the mismatch and coverage
-limits. Keep that estimate distinct from an established isolated resonance;
-neither a bound-pinned width nor a failed fit becomes a measurement.
+A width or centre at its search bound is a reason to revisit the window and
+background, not to repeat the same fit on every scan. The automatic width
+interval (up to half the fitted field span) is a search limit, not proof of
+baseline coverage; `--bound Bwid=LO:HI` replaces it when the data constrain
+the line. Include both flanks of each feature — a sharp line's window can
+truncate its broadened partner, so choose windows per condition — compare
+local Linear, local Cubic and independently constrained backgrounds (a curved
+powder-like trough can pin a width under a Linear baseline), and try a joint
+multi-line model when neighbouring resonances share a baseline. A converged,
+non-bound centre whose error and value stay stable across nearby windows can
+be reported as a conditional fitted centre with its coverage limits; keep it
+distinct from an established isolated resonance. Neither a bound-pinned width
+nor a failed fit becomes a measurement, and a fit to the window's edge does
+not establish that a line is absent.
 
-A broad trough and a narrow resonance are distinct observations. When one
-condition has a resolved narrow line but another shows only broad curvature
-with an undetermined width, state whether a narrow line is resolved in each
-condition. Do not imply that the broad fit establishes that narrow component;
-"no resolved narrow line" does not assert the absence of every broad feature.
-Compare field and width where both are determined, and presence/absence of the
-narrow component where they are not. Explain why local fits were necessary:
-a whole scan can contain a rising or stepped baseline that one polynomial
-cannot describe, even when a local Linear or Cubic background is adequate.
-Defining the local polynomial is not this explanation: state the limitation
-of the whole-range background when the CLI identifies it.
+A broad trough and a narrow resonance are distinct observations. State for
+each condition whether a narrow line is resolved: broad curvature with an
+undetermined width is not one, and "no resolved narrow line" does not deny a
+broad feature. When local fits were needed, say why — the whole scan's
+baseline rises or steps in a way one polynomial cannot describe.
 
 - **Several resonances**: sum the components (`LorentzianLCR + LorentzianLCR +
   Cubic`); each is seeded on its own dip. `--xmin`/`--xmax` fit a window of a
@@ -840,10 +761,9 @@ of the whole-range background when the CLI identifies it.
   mean RF-on minus RF-off. If that estimator gives a noisy scan and unusable
   couplings, retry the count integral with the same contrast and a justified
   time window before declaring the resonance undetermined. A valid fit
-  gives the muon and proton hyperfine couplings `A_mu`, `A_p` using its built-in
-  exact spin-Hamiltonian diagonalisation. That supported RF model is distinct
-  from an unavailable radical ALC/site Hamiltonian or DFT site assignment;
-  do not describe all Hamiltonian calculations as unavailable. Which period
+  gives the muon and proton hyperfine couplings `A_mu`, `A_p` from an exact
+  spin-Hamiltonian diagonalisation (see "Not done, and why" for what this
+  does not extend to). Which period
   had the RF on is read from the sign, not a colour convention: the RF
   depolarises at resonance, so green − red peaking positive means green kept
   its polarisation — green was RF-off. State the LF RF-resonance geometry from
@@ -866,35 +786,22 @@ in growing steps — are a separate decoupling (repolarisation) measurement,
 even when the survey lists them in the same field scan: integrate and report
 them apart, and give the ALC scan's run range from where the even steps start.
 
-**The same sample at two temperatures.** Compare each resonance's centre and
-width between the scans. A Δ₁ resonance exists only through the anisotropic
-part of the hyperfine coupling, so one that narrows, shifts or appears on
-warming while another fades is molecular motion (reorientation) averaging
-that anisotropy — say so in those terms. Two temperatures show the change;
-they support no activation law, and the summary says that too. Quote both
-fitted centres and widths side by side when you compare them, and state the
-direction from those printed numbers (which is at higher field, which is
-broader) — never from memory of the plot. Verify each comparison separately:
-different lines can shift in opposite directions. The missing radical model
-limits coupling constants, site assignments and motion rates; it does not
-prevent a conditional explanation of narrowing by reorientation averaging
-hyperfine anisotropy when the measured comparison supports it.
-`STABILITY` compares windows/backgrounds for the same runs; agreement there
-cannot erase a `COMPARE` difference between separate conditions. Keep each
-comparison's two scan names beside its conclusion. Keep the physical explanation
-in the final report: a width/field table and a statement that no coupling was
-extracted do not explain reorientation averaging hyperfine anisotropy. Separately
-state whether the CLI lacks the radical ALC model; "not attempted" or "no site
-assignment" does not describe that capability limit.
-`COMPARE` also labels conditional fitted estimates when flanks are incomplete:
-retain the direction of those estimates with their window/background caveat,
-without calling either feature a resolved line or a measured physical shift.
-Different widths need windows that cover each feature's flanks, rather than
-identical absolute field limits. A window-sensitive magnitude and the ordering
-of conditional central estimates are separate statements: report both when
-the tested estimates keep the same ordering. The audit asks for printed
-cross-condition directions explicitly; a table or a stability caveat alone
-does not supply them.
+**The same sample under two conditions.** Compare each resonance's centre and
+width between the scans, quoting both fitted values side by side, and state
+each direction (which is at higher field, which is broader) from the printed
+numbers or the CLI's `COMPARE` lines — never from memory of the plot, and
+separately for each line, since lines can move in opposite directions. Keep
+the two scan names beside each conclusion. `STABILITY` compares windows and
+backgrounds for the same runs; agreement there cannot erase a `COMPARE`
+difference between conditions. When `COMPARE` labels the estimates
+conditional (incomplete flanks), keep their ordering with its caveat, without
+calling either a resolved line or a measured shift; a window-sensitive
+magnitude and a stable ordering are separate statements. Then give the
+physical reading: a resonance that exists only through an anisotropic
+coupling (a Δ₁ ALC line) narrows, shifts or fades as motion averages that
+anisotropy, so such a change is consistent with motional averaging. Two
+conditions show a change; they support no activation law, and the summary
+says that too.
 
 Report the quantities `integral-scan` actually emits — the resonance field,
 width, amplitude, uncertainties and fit quality. A field can *constrain* a
@@ -973,162 +880,79 @@ so a second transform of the same run replaces the first PNG. Read each plot
 before re-running, and say in the summary which window the spectrum you are
 describing actually used.
 
-Always compare like with like: the science and reference spectra need the same
-reduction, transform window, time range and displayed frequency range. Features
-that change with sample condition while the matched reference remains a simple
-line are more informative than small lobes common to both plots. Conversely,
-do not promote arbitrary noise or shared window sidelobes into components. A
-useful report can therefore say both “the detector found no side peaks” and
-“the image has candidate shoulders near ...”; those statements are not in
-conflict.
+**Choose the spectrum to show.** Use a **science run**, never the weak-TF
+alpha-calibration run. For a temperature series, start with the coldest
+high-statistics science run, where splitting or broadening should be
+clearest. When several runs share that coldest setpoint, it may be the
+cooldown itself: check the logged sample temperature of the first, last and
+highest-statistics members (`info --json`), and rank the plausible cold-end
+runs by physical temperature, then by event count (the survey's `events`
+column, `total_events` in JSON; acquisition time if neither command gives
+one) — never by precession SNR, which favours a calibration run or a warmer,
+narrower line.
 
-Keep **detection** and **visual separation** distinct. The peak threshold asks
-whether the automated detector accepts a component; the quoted FFT resolution
-asks whether two plotted features can be separated at all. On the magnitude
-trace, local maxima with an intervening minimum and spacing of several
-resolution elements are visually distinct candidates even when the peak table
-is empty. If they are absent from the identically processed reference, list
-their approximate axis coordinates and call them visual-only. Do not collapse
-such a spectrum to “broadening” solely because no row passed the detector. By
-contrast, maxima less than about one resolution element apart are unresolved
-and must not be counted as separate components.
+**Compare like with like.** The science and reference spectra need the same
+reduction, transform window, time range and displayed frequency range;
+features that change with sample condition while the matched reference stays
+a simple line are the informative ones, and lobes common to both are not.
+Keep the full usable record for the first comparison: the transform duration,
+not zero padding, sets the resolution (about 0.125 MHz for 8 μs, 0.032 MHz for
+31 μs), so cropping to the first microseconds cannot resolve lines a tenth of
+a MHz apart. Crop only when late-time data are unusable, and let the coarser
+resolution limit what you call resolved. If a symmetric window warns that it
+removed early-time power, use `none` with a physical `--tmax` crop or a
+`lorentzian` window with `--filter-tau` matched to the damping rate. A full
+0–5 MHz view compresses a sub-MHz multiplet into apparent broadening: make a
+second plot over a tight window a few linewidths either side of the expected
+line (`--fmin`/`--fmax`) with the same settings, for both runs.
 
-Before finalising a Fourier-led summary, make a compact spectral inventory:
+**Detection and visual separation are different questions.** The peak table
+says whether the conservative detector accepted a component; the quoted
+resolution says whether two features can be separated at all. Maxima with an
+intervening minimum several resolution elements apart are distinct visual
+candidates even when the table is empty, and if the matched reference lacks
+them, list their approximate axis coordinates as visual-only; maxima less
+than one resolution element apart are unresolved and are not separate
+components. "The detector found no side peaks" and "the image has candidate
+shoulders near …" are not in conflict.
 
-- identify the central or reference line and compare it with the expected
-  frequency and the reported resolution; say when the mismatch is comparable
-  to, smaller than, or larger than one resolution element;
-- trace the magnitude curve across the displayed band and give an individual
-  approximate x-coordinate for each prominent visual candidate relevant to the
-  interpretation — a broad frequency range is not a substitute for listing the
-  maxima or shoulders inside it;
-- mark every listed feature as **table-detected** or **visual-only**, then say
-  whether the candidate offsets are roughly symmetric at the available
-  resolution;
-- name the physical line pattern that those observations support, using
-  “consistent with” when the evidence is qualitative rather than withholding
-  the pattern name altogether;
-- name the concrete spectrum JSON, NPZ and PNG products that support the
-  report.
+Before finalising a Fourier-led summary, make a compact spectral inventory —
+a final-report gate:
 
-This inventory is a final-report gate: a statement such as “structured across
-the band” or “shoulders are present” is incomplete when the axis permits
-approximate coordinates to be read. Approximate visual coordinates are not
-precision measurements; reporting them is what lets the reader distinguish a
-candidate line pattern from generic noise. Likewise, give the exact artifact
-basenames or paths rather than only naming their parent directory.
+- the central or reference line against its expected frequency, with the
+  mismatch stated relative to one resolution element (the warm reference line
+  can anchor it when the cold table is empty);
+- one approximate coordinate per prominent visual candidate — a broad
+  frequency range does not substitute for listing the maxima inside it, and a
+  coordinate you cannot read responsibly is a stated limitation, not an
+  absence;
+- each feature marked **table-detected** or **visual-only**, and whether the
+  offsets from the anchor are roughly symmetric at the resolution;
+- the physical pattern those observations support, named with "consistent
+  with" rather than withheld: in a semiconductor, a central diamagnetic line
+  with roughly symmetric cold satellites absent from the warm reference is
+  consistent with a shallow-muonium hyperfine triplet — not merely
+  "muonium-related structure", "damping" or "broadening";
+- the exact spectrum JSON, NPZ and PNG paths behind it.
 
-For a suspected central-plus-satellites pattern, do not replace the side
-features with two broad frequency ranges. Anchor the central line, choose the
-most defensible local maximum or shoulder on each side, report one approximate
-coordinate per candidate, and compare their offsets from the anchor. If the
-offsets agree to about the FFT resolution and the matched reference lacks the
-side features, call it a visual three-feature or triplet-like pattern. When the
-sample context supplies a standard physical name for that pattern, use the
-name explicitly with “consistent with” (for example, a central diamagnetic
-line with two roughly symmetric shallow-muonium satellites is “consistent with
-a shallow-muonium hyperfine triplet”). Do not dilute that supported qualitative
-assignment to only “muonium-related structure”; retain the visual-only and
-non-precision caveats alongside the name.
+Such a pattern-level assignment is reconnaissance, not a precision hyperfine
+measurement. A quantitative splitting needs a raw-count MaxEnt reconstruction
+or a time-domain model whose side frequencies are tied to `f_centre ± delta`;
+neither may be imitated with shell arithmetic or an unconstrained
+multi-component fit. When a multi-line fit's separation collapses or is
+unresolved, its component amplitudes stop being physical fractions —
+coincident components exchange amplitude without changing the curve — so mark
+the point unresolved rather than carrying those amplitudes into an Arrhenius
+or population trend.
 
-If the plotted range is too broad to read those coordinates, regenerate a
-tighter view with the same transform settings. If a coordinate still cannot be
-read responsibly, state that limitation; do not turn it into a claim that the
-feature is absent.
-
-If a symmetric window warns that it removed early-time power, use `none` with
-a physical `--tmax` crop or a `lorentzian` window with `--filter-tau` matched to
-the damping rate.
-
-Choose a **science run**, never the weak-TF alpha-calibration run, for the
-representative spectrum. For a temperature series, start with the coldest
-high-statistics science run where splitting or broadening should be clearest;
-use the calibration run only to obtain alpha. When several runs share that
-coldest temperature, inspect their event counts (from the survey record or
-the human table's `events` column) and choose the highest-statistics one rather
-than the first run number. The JSON field is `total_events`; it is the gross
-count across the default period's raw detector histograms.
-If neither command exposes an event count, use acquisition duration as the
-statistics proxy within otherwise comparable runs. Do not substitute the
-largest precession SNR: that can favour a calibration run or a warmer,
-narrower line over the cold science spectrum the experiment calls for.
-
-Treat that choice as a provenance gate, not a quick guess. If the nominal
-temperature repeats across a chronological block, do **not** discard the
-whole block or jump to the first later run with a different setpoint. Such a
-block may be the cooldown itself. Inspect `info --json` for at least the first
-and last members and for the highest-statistics member, record the logged
-sample temperature when present, and rank the plausible cold-end runs by
-physical temperature and then statistics. The representative FFT is not
-chosen until that short candidate table is resolved. This rule applies to any
-scan whose setpoint and logged sample condition can differ, not only to
-temperature scans.
-For a semiconductor/shallow-donor or muonium dataset, inspect the spectrum
-around the Larmor line for a central line and symmetric satellites. A full
-0–5 MHz plot can compress a sub-MHz multiplet until it looks like generic
-broadening. Make a second plot over a tight, physically motivated window around
-the Larmor frequency (for a 100 G CdS-like scan, approximately
-`--fmin 1.15 --fmax 1.65`) and compare the cold high-statistics run with a warm
-single-line run using the same reduction and FFT settings. If the conservative
-peak table remains empty but the zoomed cold PNG shows a central maximum with
-roughly symmetric side maxima or shoulders that are absent in the warm PNG,
-report their approximate plotted frequencies and describe the three-feature
-pattern as consistent with a shallow-muonium hyperfine triplet. This is a
-pattern-level assignment, not a claim that every component was algorithmically
-detected or sufficiently resolved for a precision splitting. Do not erase the
-observed candidates by replacing the multiplet with only a generic “damping”
-or “broadening” explanation; report the observation and its limitation
-together. The warm line may supply the central-frequency anchor when the cold
-peak table is empty: one cold visual candidate on each side of that anchor is
-still a triplet-like pattern to report, provided the matched plots support it.
-
-Keep the full usable time record for this first unwindowed comparison: the
-transform duration, not zero padding, sets the physical frequency resolution.
-Do not crop to the visually interesting first few microseconds when the aim is
-to resolve lines separated by only about 0.1 MHz. An 8 μs transform has roughly
-0.125 MHz resolution and cannot establish such a multiplet; a roughly 31 μs
-record gives about 0.032 MHz. For the 100 G CdS case, the useful reconnaissance
-command shape is therefore `--window none --fmin 1.15 --fmax 1.65 --plot` with
-the default full time range, followed by the same view on a warm reference. A
-short physical crop is appropriate only when late-time data are unusable, and
-then the coarser reported resolution limits what may be called resolved.
-
-In a CdS-like shallow-donor scan, the FFT is reconnaissance rather than a
-precision hyperfine measurement. The physical pattern is a warm diamagnetic
-line near the applied-field Larmor frequency and cold neutral-muonium side
-structure growing around it. Frequency differences read from shoulders are
-only estimates at the quoted FFT resolution. A defensible quantitative result
-requires a raw-count MaxEnt reconstruction or a time-domain model whose side
-frequencies are tied to `f_centre ± delta`; neither may be imitated with
-shell arithmetic or an unconstrained multi-component fit when the CLI does not
-provide it.
-
-For a temperature-dependent multi-line fit, component amplitudes cease to be
-physical fractions when the fitted separation collapses or is unresolved. Do
-not carry those amplitudes into an Arrhenius or population trend merely because
-the overall chi-squared is acceptable: coincident components can exchange
-amplitude without changing the curve. Mark the point unresolved and require an
-identifiability check before deriving a neutral fraction or activation energy.
-
-If the folder's scientific aim is frequency-domain structure, the FFT is the
-primary result: the final summary must call it an **FFT, not MaxEnt**, and
-report its window, resolution, detected peaks and **visual inspection of the
-PNG**. Use the available image-viewing tool; the conservative peak table alone
-cannot establish that weak shoulders are absent. When choosing or attaching a
-small set of plots for review, nominate the primary science spectrum first and
-its identically processed reference second; secondary runs, fit diagnostics
-and trend plots come later. Include the exact science run used for the headline
-conclusion even when its peak table is empty. A generic time-domain series may
-complement the FFT, but must not displace it.
-
-Reconcile the image list **after** the provenance and run-selection gates. If
-metadata changes the representative run, replace every stale preliminary plot
-in the review list. Keep explicit track of the final science run and its FFT
-PNG; before emitting an image manifest, verify that its first entry is that
-exact PNG and its second is the matched reference FFT. With a four-image
-budget, use the remaining slots for the corresponding science/reference
-time-domain plots. Never spend those slots on an exploratory run while omitting
-the spectrum that supports the headline conclusion.
+If the folder's aim is frequency-domain structure, the FFT is the primary
+result: call it an **FFT, not MaxEnt**, report its window, resolution and
+detected peaks, and look at the PNG with your image-viewing tool. A
+time-domain series may complement it, but must not displace it. When you
+choose plots to show or attach, put the final science spectrum first and its
+identically processed reference second — replacing any preliminary plot of a
+run the provenance check later superseded — and the matching time-domain
+plots after them.
 
 ### Step 5d — finish every specialised workflow you start
 
@@ -1156,7 +980,9 @@ artefact — trust the survey's line and say which runs disagree.
 
 When the model has one Gaussian or exponential envelope, the `envelope` column
 says which shape each run prefers (`either` when they fit alike). A change of
-shape along the scan is a result: report it with the runs on each side.
+shape along the scan is a result: report it with the runs on each side,
+including the indeterminate ones. A slow envelope's shape lives in the late
+times, so test window stability before cropping them away.
 
 **Every NOTE a command prints about a scan is a finding to report or refute**
 — a step and where it happens, a shift, an envelope change, a phase that runs
@@ -1230,56 +1056,69 @@ it as Asymmetry output.
 
 ### Step 7 — write the summary, audit its numbers, then send it
 
-Template in section 6. Write the full draft to `summary.md` in the project
-directory with your file-writing tool (not a shell heredoc, `sed` or `echo`),
-then run, from the project directory and without `--workdir` (it reads every
-`asymmetry-work*` directory there, so numbers from each work directory count)
+This is the one procedure for the final reply. **The user sees neither tool
+output nor files — only your final message**, so that message must *be* the
+audited summary.
+
+**1. Write.** Write the full draft, to the section 6 template, to `summary.md`
+in the project directory with your file-writing tool (not a shell heredoc,
+`sed` or `echo`). Before auditing, reconcile it with the command output:
+
+- check every comparison sentence against the two rows it compares — their
+  condition labels, centres and widths — and the words higher/lower,
+  broader/narrower, appears/disappears, in Results and in the conclusion; an
+  accurate table does not repair a reversed sentence, and a nearby value from
+  another sample is not this one's result;
+- keep each value with its law, parameter meaning and units (a critical
+  exponent named `nu` is dimensionless; a fluctuation rate of the same name
+  is not), and a conditional estimate conditional in the conclusion too;
+- compare an endpoint with the actual next measured point, even when that
+  fit is flagged — report its limitation rather than substituting a distant
+  reliable point;
+- keep sample and campaign names, logged-temperature offsets and each fit's
+  own calibration, run subset, model, uncertainty and χ²;
+- finish the Files list: complete plain paths, one per line.
+
+**2. Audit.** From the project directory, without `--workdir` (it reads every
+`asymmetry-work*` directory there), run
 
 ```bash
 asymmetry audit summary.md --prepare-reply
 ```
 
-`--prepare-reply` changes the draft only after every audit check passes: it
-removes terminal line endings and emits only the exact remaining report body.
-Its entire stdout is the final reply. There are no marker lines or copy-check
-footers to interpret. Use it again after every later edit; do not retype numbers,
-polish a word, close punctuation, or add a formatting comment after preparation.
-Image-review manifests belong only to a requested image-selection turn. A plain
-audit remains read-only; failed preparation returns nonzero and prepares nothing.
+Every command's printed output is logged in the work directory. The audit
+first lists each survey scan whose runs no `fit-series`, `fit-global`,
+`integral-scan` or `fit` covered — a TF scan used only for alpha, the far side
+of a transition. Fit those runs: a run counts once a fit was tried on it, so
+a run you believe unusable is fitted and its failed fit reported. It then
+lists each number in the draft that no command printed — almost always
+arithmetic on printed values or a value from memory (section 6). Remove it,
+quote the printed value instead, or say the relation in words, and act on any
+other item it lists. While anything is listed, the command exits nonzero and
+prepares nothing: correct `summary.md` with your file-editing tool and run it
+again. A plain `asymmetry audit summary.md` runs the same checks without
+preparing anything; its pass message frames the draft between marker lines
+with a `COPY CHECK` line, but the reply still comes from `--prepare-reply`.
+Skipping the audit is not an option. A clean audit means each number appears
+in some output, not that it is the right one.
 
-Keep the law and parameter meaning with each value and its uncertainty. A
-critical exponent named `nu` is dimensionless; a fluctuation rate with the same
-name has rate units. Rejected-law diagnostics still require correct units.
-For endpoint comparisons, retain the actual next measured temperature even if
-its fit is bound-pinned or failed. Report its limitation instead of replacing it
-with a distant reliable point or claiming a significant measured upturn.
+**3. Send.** Once every check passes, `--prepare-reply` removes the draft's
+terminal line ending and prints only the report body. That stdout is your
+whole final message. Copy it unchanged:
 
-Every command's printed output is logged in the work directory, and `audit`
-lists each number in the draft that no command printed. It first lists every
-scan the survey found whose runs no `fit-series`, `fit-global` or
-`integral-scan` (or single `fit`) covered — a TF scan used only for alpha, the far side of a
-transition. Fit those runs: a run counts once a fit was tried on it, so a
-run you believe unusable is fitted and its failed fit reported. Each number it lists is
-almost always arithmetic on printed values — a percentage change, a ratio, a
-difference of two columns, a unit conversion (MHz to gauss, relative to molar),
-a significance in σ — or a value from memory. Remove it, quote the printed
-value instead, or say the relation in words ("rises by several percent", "an
-order of magnitude faster"). Make every correction in `summary.md` itself with
-your file-editing tool and re-run `audit` after each round, until it lists
-nothing you would defend as printed. Skipping the audit is not an option. Do not mention the audit in the reply; it is a check on
-your draft, not a finding.
+- nothing before or after it, and no mention of the audit;
+- every character as printed — numbers and their rounding, backticks,
+  wording, table labels, whitespace, even a sentence you would now phrase
+  differently; no added Markdown line-break spaces or terminal newline;
+- through its last line, the Files list included, without shortening or
+  deduplicating paths.
 
-**The user sees neither tool output nor files — only your final message.** So
-your final message must *be* the summary: its full text, as audited, copied
-in the reply, preserving whitespace and the complete tail. Marker lines around
-the audit output are not part of the report. Do not add Markdown hard-break
-spaces, deduplicate file paths, retype uncertainties or append marker fragments.
-After the passed audit, use `cat summary.md` to read the final text and copy it
-without another editing/formatting pass. Reading `summary.md` with a tool, pointing to the file, or
-writing a shorter recap is not a reply — the first two show the user nothing,
-and a recap drops results and brings back numbers the audit removed. A clean audit means each number
-appears in some output, not that it is the right one — still quote values from
-the command that produced them.
+Any change at all — a correction, a better word, an edit after looking at
+plots — goes into `summary.md`, followed by `--prepare-reply` again; then send
+that new output once, not merged with an earlier draft. Reading `summary.md`
+back, pointing to the file or writing a shorter recap is not a reply: the first
+two show the user nothing, and a recap drops results and brings back numbers
+the audit removed.
 
 ## 3. Decision rules
 
@@ -1287,11 +1126,10 @@ the command that produced them.
 groups can overlap: temperature slices through field scans and calibration or
 beam-setting tests are not independent experiments. Map every group, but first
 complete the field or time-spectrum workflow that measures the experiment's
-question. For an integral field scan with local minima, inspect and test those
-minima at every condition before concluding only recovery was measured. A
-failed first fit calls for a local window/background comparison, not abandoning
-other conditions. Explain overlapping or confounded groups rather than deriving
-an extra temperature law from them.
+question, at every condition — a failed first fit at one calls for a local
+window and background comparison (Step 5b), not abandoning the others.
+Explain overlapping or confounded groups rather than deriving an extra
+temperature law from them.
 
 **Preserve bandwidth before reducing fit cost.** Rebinning lowers Nyquist and can
 fold a real line into a false low-frequency line or reverse an apparent shift.
@@ -1302,48 +1140,14 @@ after averaging is not evidence it was absent at native resolution. Pass
 `reduce --allow-aliasing` only to average away a line you have already measured
 at native resolution, and say so in the report.
 
-**Preserve context and calibration per measurement.** Read supplied experiment
-notes before choosing a mechanism. An established magnetic experiment calls for
-magnetic interpretations; a generic TF broadening cue does not make it a
-superconducting experiment. If phase information is missing, still interpret
-measured shifts and field distributions as bounded magnetic-response hypotheses
-(local susceptibility, internal-field distributions or inequivalent environments).
-For closely split high-field crystal lines, include a bounded staggered-field
-or field-induced canting hypothesis when appropriate, without assigning a phase,
-site or angle. Do not run gap laws merely because a generic trend hint names them.
-A selected superconducting experimental scope instead calls for a conditional
-Gaussian-width/gap-law test and comparison with ZF/LF evidence.
-State what evidence could distinguish them. A lack of a phase label is not a
-reason to omit the magnetic interpretation, and does not by itself justify a
-vortex-lattice or superconducting gap claim. Name the actual calibrant and applied
-alpha for every fitted exercise/period/block, including beam and detector changes.
-Keep sample identities distinct from magnet references and conditions, and name
-the instrument and file format rather than only its facility. Check the final
-stored reduction after timing or background corrections; an earlier survey alpha
-can differ. Zero parameter errors do not mean zero fitted values:
-quote the actual failed diagnostic or omit invalid parameters, never replace
-failed rows with a blanket numerical claim.
-
-**Calibration patterns still need their physical interpretation.** An instrumental
-exercise is not complete with a fit table: explain what centres the beam or
-stops muons in a degrader, identify weak-field muonium when the measured
-frequency/field relation supports it, and distinguish an unrecorded weak TF on
-a nonmagnetic reference from spontaneous order. State which temperature logs
-are faulty or irrelevant to the exercise. Do not promote a wizard's species
-model on a reference sample when its amplitude or calibration is invalid.
-
-**A kinetic rate needs the signal component that carries it.** In weak-field
-muonium/reaction experiments, generic smooth relaxation can describe the
-background while missing the rapidly damped precession. Recover an oscillatory
-component using the measured line, suitable early-time window and calibration;
-compare a constrained/shared-frequency or amplitude model across the reaction
-coordinate. Report kinetic slopes only from that component's measured rates,
-with a stated concentration scale and temperature matching. Merely fitting all
-runs with a generic decay does not complete the kinetic workflow. A set of Mu
-lines all measured at one field is not an instrument frequency-response scan:
-keep the composition/temperature variable and the muonium envelope rate. Fit a
-short early window before the late diamagnetic/background tail can dominate.
-
+**Keep provenance per measurement.** Name the calibrant and applied alpha for
+every fitted exercise, period and block, including beam and detector changes;
+keep sample identities distinct from magnet references and conditions; name
+the instrument and file format, not only the facility. A weak line on a
+nonmagnetic reference whose header says zero field is an unrecorded weak TF —
+fit it as a damped precession — not spontaneous order. Zero parameter errors
+do not mean zero fitted values: quote the failed diagnostic or omit the
+invalid parameters, never a blanket numerical claim in place of failed rows.
 
 **AICc ranks the candidates; the physics picks the model.** The wizard's
 recommendation is the best *statistical* fit to one run. When two candidates
@@ -1442,20 +1246,16 @@ for a quantity — a rate constant, a transition temperature, a correlation
 time — and the data allow a fit, do the fit and report it with its caveat (a
 temperature offset between samples, a poor χ²ᵣ, a short range), rather than
 declining because the comparison is imperfect. Declining is for a question the
-data cannot answer at all. For a determined slope under imperfect conditions,
-report an **apparent fitted rate coefficient**, its uncertainty and the
-conditions; separate that empirical result from a validated intrinsic kinetic
-constant. A failed or undetermined fit still supplies no such result.
-Judge command success from its exit status and actual result, not stderr alone.
-A completed wizard recommendation remains evidence when a stream warning is
-also printed; a later interrupted retry does not erase the successful result.
-Before stopping at an unsuccessful screen, recover the model for the requested
-observable: inspect residuals, seed resolved frequencies from the FFT, simplify
-the components and retry on a justified window. For concentration kinetics,
-use the supplied concentration axis and fit `Linear` to the resulting muonium
-rates; state the slope's conditional status if the individual spectra fit
-poorly. Do not replace the rate-law attempt with a different observable or
-with a generic statement that the first fit was poor.
+data cannot answer at all. A slope determined under imperfect conditions is
+an **apparent fitted coefficient**, reported with its uncertainty and
+conditions and kept apart from a validated intrinsic constant; a failed or
+undetermined fit supplies no such result. Before stopping at an unsuccessful
+screen, recover the model for the requested observable — inspect residuals,
+seed resolved frequencies from the FFT, simplify the components, retry on a
+justified window — rather than replacing it with a different observable or a
+note that the first fit was poor. Judge a command's success from its exit
+status and result, not from warnings on stderr; a later interrupted retry
+does not erase an earlier successful result.
 When the question is a comparison with an accepted
 value — a transition temperature checked against the literature to judge a
 thermometer, a rate against a published one — make it in words: name the
@@ -1492,38 +1292,26 @@ A `poor` chi-squared verdict is model mismatch, not failed minimisation;
 near-unity chi-squared can be formally poor for a high-statistics record.
 Keep determined estimates with their errors and mismatch caveats.
 
-**TF superconductors.** The physically meaningful quantity is the Gaussian
-width σ of the vortex-lattice field distribution, so prefer a Gaussian-envelope
-template when the ranked table offers one, even if AICc prefers the exponential
-— and say which scored better. Report σ(T) rising below Tc, the diamagnetic
+**TF superconductors** (once Step 3b has motivated that class). The physically
+meaningful quantity is the Gaussian width σ of the vortex-lattice field
+distribution, so prefer a Gaussian-envelope template when the ranked table
+offers one, even if AICc prefers the exponential — and say which scored
+better. If the wizard supplies only an exponential, write an explicit
+`Oscillatory * Gaussian + Constant` recipe, carrying over the frequency, phase
+and amplitudes of the successful oscillatory fit (a fresh generic frequency
+seed can miss a rapid line), and compare. Never put an exponential `Lambda(T)`
+into a gap law in place of σ(T). Report σ(T) rising below Tc, the diamagnetic
 shift of the precession frequency, **and** the non-superconducting fraction
 (the `Constant` amplitude, and any second, weakly relaxing oscillating term the
 ranked table offers): a σ(T) reported without saying what happened to the rest
 of the asymmetry is an incomplete answer for a superconductor. When you fit two
 lines (the vortex line and a narrow background line), fit the gap law to the
 broad line's σ with the narrow line's width held from the normal state; if the
-two lines trade amplitude near Tc, fit the scan with one Gaussian and give the
-law on that σ — a gap-law fit is the expected result, not an optional extra.
-If the wizard supplies only an exponential, make and compare an explicit
-`Oscillatory * Gaussian + Constant` recipe. Do not substitute exponential
-`Lambda(T)` for `sigma(T)` in a superconducting gap law. These instructions
-require a usable Gaussian fit first: transfer the measured frequency, phase
-and amplitudes from the successful oscillatory fit when changing its envelope,
-then adjust the Gaussian width against the observed damping. Report a completed
-Gaussian comparison's width values and measured onset/plateau even if an
-exponential fits better; keep the model preference and physical interpretation
-separate. Unknown composition limits an identity claim, not reporting the
-measured width comparison. A fresh generic
-frequency seed can miss a rapid oscillation entirely. If two components fail,
-try one Gaussian line plus background before abandoning the width trend.
-Report a failed conditional gap-law test as failed, rather than skipping the
-test solely because the first multi-line Gaussian recipe failed. Use the
-experimental context to interpret the comparison. If classification
-is uncertain, compare the Gaussian-width trend and a conditional gap model,
-saying which evidence would distinguish a vortex lattice from magnetic or
-multi-site broadening. Keep established sample physics in the wizard scope.
-A model test is not a materials identification; broadening alone does not
-classify a sample as superconducting.
+two lines trade amplitude near Tc, or two components fail, fit the scan with
+one Gaussian line plus background and give the law on that σ — a gap-law fit
+is the expected result, not an optional extra, and a failed one is reported
+as failed. Report the Gaussian widths and their onset or plateau even when an
+exponential fits better, keeping model preference and interpretation apart.
 
 **Zero field in a superconductor** tests time-reversal symmetry breaking: a
 spontaneous field appears below Tc as extra relaxation — in the Kubo–Toyabe
@@ -1536,14 +1324,12 @@ below Tc while Λ stays flat, and that a small longitudinal field decouples, is
 a *static* spontaneous field — the time-reversal-symmetry-breaking result
 itself, not a lesser candidate for being in Δ rather than Λ. Place its onset
 where Δ leaves its normal-state level (the `trend` note brackets it), and set
-it beside the TF Tc. Name the candidate interpretation explicitly: extra
-quasi-static fields appearing near the superconducting transition are a
-candidate for broken time-reversal symmetry. Background/systematic checks
-still limit proof of microscopic origin; they do not erase that candidate.
-For a dynamic-KT model, make the corresponding comparison with `nu`: state
-whether it has an onset at the width change, stays roughly level, or is too
-uncertain to decide. A table of endpoint values without this comparison does
-not establish a static-versus-dynamic interpretation.
+it beside the TF Tc, naming broken time-reversal symmetry as the candidate
+interpretation; background and systematic checks limit proof of its origin,
+they do not erase the candidate. With a dynamic-KT model, say whether `nu`
+has an onset at the width change, stays level or is too uncertain to decide —
+that comparison, not a table of endpoints, is what separates static from
+dynamic.
 
 ## 4. What things cost
 
@@ -1641,14 +1427,12 @@ than a cycle in the record. The 100 G runs beside them are for the diamagnetic
 fraction and for alpha. The survey reports the 2 G runs as `prec other` or
 `none` (the Mu line is not the applied field's Larmor line), and a full-record
 Fourier transform may show nothing because Mu relaxes quickly; look with
-`fourier --tmax 4`. **Look first in the sample with the least scavenger** — the
-run the notes call **deoxygenated** — where the Mu line lives longest; the
-survey shows it as `other@` near 1.394 MHz/G × B. Untreated water is **not** a
-blank: its dissolved O₂ is a scavenger. Untreated water
-carries dissolved O₂, which relaxes Mu too fast to see; a concentrated solution
-likewise. Absence of a line there says nothing about the blank. Reduce that
-blank with the right alpha for its block (Step 2) before concluding anything. The wizard has no dependable template for this; write the
-recipe:
+`fourier --tmax 4`. Anything Mu reacts with — a solute, dissolved O₂ in
+untreated water — speeds its relaxation, so **look first in the least-reactive
+sample** (the blank the notes call deoxygenated), where the line lives
+longest, reduced with the right alpha for its block (Step 2). A line missing
+from a reactive sample says nothing about the blank. The wizard has no
+dependable template for this; write the recipe:
 
 ```bash
 asymmetry recipe <folder> --name mu --run <2 G run> \
@@ -1658,18 +1442,23 @@ asymmetry recipe <folder> --name mu --run <2 G run> \
 
 (frequency_1 = 1.394 MHz/G × B for Mu and frequency_3 = 0.01355 MHz/G × B for
 the diamagnetic muon, at the run's recorded field B — here 2 G.) `Lambda_2` is the Mu
-relaxation rate λ_Mu. In a reaction-kinetics experiment λ_Mu = λ₀ + k_Mu[x],
-so fit λ_Mu for each sample at one temperature — `fit-global` with the Mu and
-diamagnetic amplitudes and phases shared, ordered by
-`--order concentration --x <run>=<value>,…` with the concentrations read from
-the titles or notes — and take k_Mu from `trend --model Linear`. Concentrations
-given as "quarter", "half", "full" or "0.25" are **relative**: keep k_Mu per
-unit of that relative concentration, write the values as the titles do (no "M"
-after them), and never invent a molarity. An undiluted sample ("neat", "full",
-"stock") is 1 on that scale and the deoxygenated pure-water blank is 0, so both
-belong in the concentration set of the temperature they were measured at — a
-set of two points cannot fit a line with an intercept. Faster Mu relaxation in untreated
-than in deoxygenated water is dissolved O₂.
+relaxation rate λ_Mu. A generic smooth decay can describe the background
+while missing the rapidly damped Mu precession, so the kinetics come only
+from this component's rates, fitted over a short early window before the
+diamagnetic tail dominates. In a reaction-kinetics experiment
+λ_Mu = λ₀ + k_Mu[x], so fit λ_Mu for each sample at one temperature —
+`fit-global` with the Mu and diamagnetic amplitudes and phases shared, ordered
+by `--order concentration --x <run>=<value>,…` with the concentrations read
+from the titles or notes — and take k_Mu from `trend --model Linear`, stating
+it as conditional if the individual spectra fit poorly. Mu lines measured
+along such a series all sit at one field: it is not an instrument
+frequency-response scan. Concentrations given as "quarter", "half", "full" or
+"0.25" are **relative**: keep k_Mu per unit of that relative concentration,
+say where the values came from and what is 1 on the scale, and never invent a
+molarity. An undiluted sample ("neat", "full", "stock") is 1 and the
+deoxygenated blank is 0, so both belong in the concentration set of the
+temperature they were measured at — a set of two points cannot fit a line with
+an intercept.
 
 **Transverse field.** The precession frequency gives the local field at the
 muon: a shift relative to the applied field is a Knight shift. The relaxation
@@ -1693,36 +1482,24 @@ order, seen through a field much larger than it.
 
 ## 6. The summary template
 
-Use these headings. Fill only from command output.
-
-Keep the report focused on the measurements and comparisons that answer the
-experiment's question. Put full per-run tables and exploratory fit details in
-the named CLI products; retain the decisive values, uncertainties, windows,
-geometry, calibration and limitations in the report. Do not repeat a result
-in several large tables or copy the same exclusion sentence twice. A concise
-complete report is easier to check and reproduce than a transcript recap.
+Use these headings. Fill only from command output. Keep the report on the
+measurements and comparisons that answer the experiment's question: put full
+per-run tables and exploratory fits in the named CLI products, keep the
+decisive values, uncertainties, windows, geometry, calibration and
+limitations in the report, and do not repeat a result in several tables.
 
 > **Every number in the summary must appear in a command's output.** A
 > temperature, field, frequency, rate, exponent, run number, alpha, χ² or count
-> that no command printed does not go in. Textbook or literature values may be
-> *discussed* — clearly attributed as such ("the textbook value for bulk nickel
-> is far above the range scanned here") — never presented as a result of this
-> session. Nor may a unit the data does not give be attached to a number: a
-> concentration written "0.25" or "quarter" in a title is not 0.25 M.
-
-For a supplied composition axis, explicitly attribute the values to titles,
-notes or another experimental record and state the normalization (for example,
-full solution = 1) and units. A table labelled relative concentration does not
-explain where its coordinates came from. Preserve each printed parameter
-with its unit and uncertainty as one quantity, including rejected-fit
-diagnostics; omit unusable parameter tables rather than relabelling them.
-
-This also excludes numbers you calculated in Python, PowerShell, a spreadsheet
-or by applying a literature conversion to a stored JSON value — and numbers you
-worked out in your head: a significance in σ, a percentage change, a ratio or a
-sum of two printed values. The evidence must be an `asymmetry` command's own
-output. If a useful derived quantity is not printed by the CLI, explain the
-qualitative relation and leave the number out.
+> that no command printed does not go in. That excludes numbers you calculated
+> in a shell, a spreadsheet or your head — a significance in σ, a percentage
+> change, a ratio, a sum, a unit conversion, a literature formula applied to a
+> stored value. If a useful derived quantity is not printed, state the
+> relation in words. Textbook or literature values may be *discussed* —
+> clearly attributed as such ("the textbook value for bulk nickel is far above
+> the range scanned here") — never presented as a result of this session. Nor
+> may a unit the data does not give be attached to a number: a concentration
+> written "0.25" or "quarter" in a title is not 0.25 M. Keep each printed
+> parameter with its unit and uncertainty as one quantity.
 
 **Invalid fitted quantities do not carry physics.** Parameters flagged
 `frequency_unresolved` or `amplitude_exceeds_data`, or otherwise rejected as
@@ -1772,25 +1549,21 @@ what each term of the model represents physically, the `Constant` included.
 
 **Results** — a table from `trend`: the scan variable and, per key parameter,
 value ± error. Include the amplitudes, not only the rate or frequency, and say
-what fraction of the asymmetry is *not* in the component you are interpreting.
-Quote a primary model's determined conditional parameters and errors even when
-its overall fit is poor, then explain why they are not established microscopic
-quantities. Omitting the requested coupling or rate is not a fit-quality caveat.
-Only rows and values the tool produced. For a long scan, show the decisive
-endpoints and points defining a change, then name the stored full table; do
-not reproduce every parameter of every exploratory model. Preserve the
-coordinate of any onset, minimum or saturation level explicitly in prose,
-including its printed range. "At the high end" or "at low temperature" does
-not substitute for the measured coordinate, even if the reader could infer
-it from a table. Also close the qualitative loop across
-the scan endpoints: state plainly whether the defining spectral feature is
-present, weakened, unresolved, heavily damped or absent at each end, using the
-survey and inspected reduced/fit PNGs as evidence. If the feature disappears
-and its fit becomes flagged, report that physical non-observation explicitly;
-do not leave it implicit in an excluded-run list. The endpoints are the actual
-first and last temperatures, including failed fits: inspect their data plots
-and describe their shapes without quoting invalid parameters. A central-to-warm
-comparison does not answer what the coldest spectrum shows.
+what fraction of the asymmetry is *not* in the component you are interpreting
+— in words, unless a command printed that fraction: an amplitude in percent
+asymmetry and its share of a fitted sum are different quantities. Quote a
+primary model's determined parameters and errors even when its overall fit is
+poor, then explain why they are not established microscopic quantities;
+omitting the requested coupling or rate is not a fit-quality caveat. For a
+long scan, show the decisive endpoints and the points defining a change, then
+name the stored full table. State the coordinate of any onset, minimum or
+saturation level in prose, with its printed range — "at low temperature" is
+not a coordinate. Close the loop at both ends of the scan: say whether the
+defining feature is present, weakened, unresolved, heavily damped or absent
+at the actual first and last points, failed fits included, from the survey
+and the reduced or fit PNGs (describe a failed fit's shape without quoting
+its invalid parameters). A feature that disappears is a non-observation to
+report, not a gap left in an excluded-run list.
 
 For every spectrum you quote, say which dataset it transformed (one run, or
 the co-add of which runs), the transform (FFT, not MaxEnt), its window and the
@@ -1804,40 +1577,25 @@ flags compactly instead of repeating unusable parameter tables.
 
 **What this suggests** — the physics, in words: what the trend means, what it is
 consistent with, what would need checking. Interpretation belongs here, and
-here it may be qualitative. Name the steps a full analysis of this experiment
-would take that this tool cannot (the out-of-scope table in section 1:
-MaxEnt field spectra, a multi-group field-distribution analysis, count-domain
-fits, a hyperfine or site model), so the reader sees where this preliminary
-analysis stops — and never let what the tool could not resolve stand as a
-finding (an unresolved splitting is not the absence of order).
+here it may be qualitative. Never let what the tool could not resolve stand as
+a finding (an unresolved splitting is not the absence of order).
 
 **Not done, and why** — each part of the experiment's question this analysis
-did not answer, with the reason: the model or method the tool lacks (MaxEnt
-field spectra, a radical ALC or hyperfine model, a multi-group analysis,
-count-domain fits), a fit that did not converge, a scan set aside and why.
-"Not analysed" without a reason is not an answer.
-Distinguish **not attempted**, **fit failed**, and **not implemented in this
-CLI** explicitly. If a microscopic radical/site Hamiltonian is unavailable,
-say that the CLI lacks it and therefore cannot extract those microscopic
-couplings or sites; "outside this analysis" alone does not explain whether
-the limitation is the software, the data, or a choice made in this session.
-Name the specific missing model, preserving capabilities actually used such
-as the exact-diagonalisation RF resonance model.
+did not answer, with the reason, distinguishing **not attempted**, **fit
+failed** and **not implemented in this CLI**: a scan set aside and why, a fit
+that did not converge, or the step a full analysis would take that this tool
+cannot (section 1's out-of-scope table: MaxEnt field spectra, a multi-group
+field-distribution analysis, count-domain fits; also a radical ALC or site
+Hamiltonian) and the couplings or sites it therefore cannot extract, so the
+reader sees where this preliminary analysis stops.
+"Not analysed" or "outside this analysis" without a reason is not an answer.
+Keep capabilities you did use distinct from those missing — the RF-resonance
+model's exact diagonalisation is not an unavailable Hamiltonian.
 
 **Files** — the work directory, stored scan/spectrum products, and PNGs worth
-looking at. Write complete plain paths, one per line, without inline backticks
-or abbreviated follow-on filenames. Finish this list before the last audit;
-the reply must retain its final line exactly as well as the scientific text.
-Do not turn fitted amplitudes into a percent-of-total or sample fraction unless
-that quantity is printed by a CLI command. An amplitude in percent asymmetry
-and its fraction of a fitted sum are different quantities.
-Finish the file list, then run `asymmetry audit summary.md --prepare-reply`.
-It removes terminal line endings only when the checks pass. Copy that printed
-body without further edits, retaining the last path's final character. Numeric
-precision is part of the audited text: do not expand or round an uncertainty
-while copying. Check each comparison against its own labelled scan rows before
-preparation; a nearby value from another sample is not its result. Repeat
-the preparation after any edit; ordinary editors may restore a terminal newline.
+looking at: complete plain paths, one per line, without inline backticks or
+abbreviated follow-on filenames. This is the report's last section; Step 7
+says how to send it.
 
 ## 7. Worked example
 
