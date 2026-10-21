@@ -2090,3 +2090,6 @@ Confirmation6 now1/24 scored:spinPeierls6/6Musts,2/3Shoulds,science/number/unit/
 
 
 Confirmation6 now2/24scored:PTFE6/6Musts,1/3Shoulds,science/number/unit/boundary/exactcopyPASS with --prepare-reply. Totals12/12Musts,2/2science,1/2copy/combined,2/2boundary,3/6Shoulds. Preservepoor/flaggedcouplingfitsandcontradictorycold-upturnprosecaveat;sourcefrozen,remainingcasescontinue.
+
+
+Confirmation6 now4/24scored:YMnAl5/5Musts,1/3Shoulds andmolecularAFM5/5Musts,2/3Shoulds bothscience/number/unit/boundary/exactcopyPASS. Totals22/22Musts,4/4science,3/4copy/combined,4/4boundary,6/12Shoulds. PreserveconditionalLF/24591ZF,failedmolecularOrderParameter/noTc,temperatureandcritical-lawgaps. Frozenremainingcasescontinue.
