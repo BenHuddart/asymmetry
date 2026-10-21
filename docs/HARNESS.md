@@ -72,14 +72,19 @@ pytest markers and node-id hashes, not by directory, so this layout is
 transparent to `--tier`/`--subset`/`--shard` and to CI's path filters (which
 match `tests/**` recursively).
 
-CI shards the standard tier across four runners: the fast non-GUI tests run as a
-single shard (`--subset non-gui`), and the much heavier GUI tests — which carry
-the per-test `MainWindow` cost and dominate wall-clock on a 2-core runner — are
-split three ways with `--subset gui --shard {1,2,3}/3`. `--shard K/N` (a
+CI splits the standard tier across six runners with `--shard {1..6}/6`, each
+running `-n auto --dist worksteal` on its 4 vCPUs. `--shard K/N` (a
 `conftest.py` option) keeps a stable 1-of-N slice partitioned by a hash of each
 test's node id, so the independent shard processes cover every test exactly once
-with no overlap, regardless of `pytest-randomly` ordering. The four shards
-together cover exactly the standard tier.
+with no overlap, regardless of `pytest-randomly` ordering, and together cover
+exactly the standard tier. Each shard mixes GUI and non-GUI tests; the hash
+keeps per-shard test time within about 25% of even, which is less than the
+runner-to-runner variation, so the split needs no recorded durations. Every
+shard pays a fixed cost of roughly 1.5 min (checkout, uv install, and test
+collection, most of which is pytest rewriting asserts in ~430 test modules on
+each xdist worker), so adding shards stops paying off as that fixed cost
+dominates. `--subset gui`/`--subset non-gui` still select by marker for local
+runs.
 
 The harness sets `QT_QPA_PLATFORM=offscreen` by default for command runs so GUI
 tests and smoke checks can execute in CI and local agent sessions. The current
