@@ -2159,3 +2159,6 @@ Confirmation7 now1/24scored:PTFE6/6Musts1/3Shoulds science/number/unit/strictcop
 
 
 Confirmation7 now2/24scored:molecularAFM5/5Musts1/3Shoulds science/number/unit/copy/boundaryPASS. Totals11/11Musts,2/2science/copy/combined/boundary,2/6Shoulds. OrderParameteronsurvey_line_mhzunsupportedandpoororderedtimefitsleaveTNunestablished;fit-direction/worksheettemperaturegapsretained. Sourcefrozen.
+
+
+Confirmation7 now5/24scored:YMnAl5/5Musts2/3Shoulds science/copyPASS;spinPeierls5/6Musts2/3ShouldsFAILjudgementZFendpointshapeomission;maleic3/5Musts1/4ShouldsFAILwrong100Gconcentrationslope/noMu kinetics. Allthreecopy/number/unit/boundaryPASS. Totals24/27Musts,3/5science,5/5copy,3/5combined,5/5boundary,7/13Shoulds. Sourcefrozen;finishall24beforerepair.
