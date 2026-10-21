@@ -2183,3 +2183,6 @@ Confirmation7 now16/24scored:RFbenzene5/5Musts2/5Shoulds science/number/unit/cop
 
 
 Confirmation7 now17/24scored:LFbenzene6/6Musts1/5Shoulds science/number/unit/copy/boundaryPASS;explicit7.897inputexceptionandactualendpointcaveatretained. Totals91/96Musts,14/17science,16/17copy,13/17combined,17/17boundary,33/67Shoulds. Sourcefrozenremaining7.
+
+
+Confirmation7 now19/24scored:AFM5/5literalMusts2/3Shoulds science/copyPASSbutindependentmagneticscopeFAIL(fourSCgaplaws/phaseagnosticcontext,no8Talias);LiFeAs8/8Musts4/6Shoulds science/copyPASSwithpreservedonsetjudgement. Totals104/109Musts,16/19science,18/19copy,15/19combined,19/19boundary,39/76Shoulds. Sourcefrozenremaining5.
