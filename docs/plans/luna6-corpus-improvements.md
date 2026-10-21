@@ -2273,3 +2273,6 @@ Confirmation9 now7/24scored:cuprate5/5Musts2/3Shoulds andLLZ6/6Musts2/4Shoulds s
 
 
 Confirmation9 now9/24 scored: molecularAFM5/5Musts1/3Shoulds andTCNQ6/6Musts4/4Shoulds science/number/unit/strictcopy/boundaryPASS. Totals49/49Musts,9/9science/copy/combined/boundary,18/32Shoulds. Molecular fixed-shape TN remains conditional/poor and TCNQ local fits remain poor despite correct integral workflows; all caveats retained. Sources remain frozen until ALL24 finish.
+
+
+Confirmation9 now11/24scored:CdS6/6Musts2/4Shoulds science/copyPASS;EuO5/5literalMusts1/3Shoulds copyPASS butGLOBALunitruleFAIL(dimensionlessCriticalDivergencenuerror10.257125labelledus^-1). Totals60/60Musts,10/11science,11/11copy,10/11combined,11/11boundary,21/39Shoulds. Scalarcheckerflagsnone;manualunit-contextfailurepreserved. SourcesfrozenuntilALL24.

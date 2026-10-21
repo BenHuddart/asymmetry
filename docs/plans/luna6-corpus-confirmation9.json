@@ -1,5 +1,5 @@
 {
-  "status": "running; 9/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 11/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -1610,16 +1610,348 @@
       ],
       "scored_at": "2026-10-21T04:46:27.349111+00:00",
       "reply_matches_saved_file": true
+    },
+    "euo-psi": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Identifies this as PSI GPS data (the `.bin` format), not an ISIS NeXus dataset.",
+          "pass": true,
+          "evidence": "Explicitly identifies 51 PSI GPS .bin runs."
+        },
+        {
+          "requirement": "Separates the ZF block from the TF 60 G block as two distinct scans.",
+          "pass": true,
+          "evidence": "ZF 2923–2960 and 60 G TF 2961–2973 are separate scans."
+        },
+        {
+          "requirement": "Reports an internal field (from the TF block, or from ZF oscillations if present) that changes with temperature, growing as the sample is cooled below the ordering region.",
+          "pass": true,
+          "evidence": "Cold spontaneous internal frequency grows on cooling; actual survey/FFT and conditional ordered-series results distinguish failed branches."
+        },
+        {
+          "requirement": "Reports the relaxation rate above the ordering region as this session's fits give it, and does not claim a critical divergence (critical slowing down) that those fits do not show. The paper finds the paramagnetic relaxation rate roughly constant, near 2 MHz, rather than diverging at the transition.",
+          "pass": true,
+          "evidence": "Warm relaxation remains near 2–2.7 us^-1, with failed CriticalDivergence explicitly rejected."
+        },
+        {
+          "requirement": "Contains no internal-field value, relaxation rate, or Curie temperature that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All quoted internal frequencies, rates and conditional Tc values have direct command provenance; the separate global unit failure concerns the dimensionless exponent uncertainty."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that both blocks revisit a narrow temperature window several times rather than assuming a single monotonic sweep.",
+          "pass": false,
+          "evidence": "ZF infill is noted, but both blocks narrow revisits are not explicitly characterized."
+        },
+        {
+          "requirement": "Treats run 2960 (1.5 K, out of sequence at the end of the ZF block) as a low-temperature reference point rather than ignoring it or assuming it belongs elsewhere in the sequence.",
+          "pass": true,
+          "evidence": "Out-of-sequence 2960 at 1.5 K is a low-temperature reference, independently FFT checked."
+        },
+        {
+          "requirement": "Frames the comparison to theory (e.g. mean-field/Heisenberg critical behaviour) as the paper's stated goal. A critical exponent, if quoted, comes from a `trend --model OrderParameter` fit in this session with its fit range stated, and is labelled with the temperature axis it was measured against (the PSI header's logged sensor reading, or the setpoint with a reason).",
+          "pass": false,
+          "evidence": "Conditional OrderParameter fit has axis/range/errors, but the paper theory-comparison goal is not stated."
+        }
+      ],
+      "number_rule": "FAIL: All scalar tokens printed, but command42 CriticalDivergence nu is dimensionless. Final line72 assigns 10.257125 us^-1 to its uncertainty. No physical arithmetic; rejected diagnostics are still subject to unit provenance.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "All five literal Musts and exact copy pass; GLOBAL quantity/unit rule fails because CriticalDivergence exponent nu uncertainty 10.257125 is given us^-1 although it is dimensionless. Scalar/unit checker reports no flags; manual context check overrides it.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all54 completed commands inspected. All54 completed commands inspected. CLI analysis and report edits only. Four review snapshot hashes verified; conditional midrange law pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1276.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 9,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/euo-psi/data --series euo-zf-ordered --model OrderParameter --param frequency --xmin 30 --xmax 61 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/euo-psi/data --series euo-zf-paramag --model CriticalDivergence --param Lambda --xmin 69.278 --xmax 71.399 --exclude 2950,2951 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/euo-psi/data --runs 2923-2943 --recipe wizard-2937 --order sample_temperature_logged --start 2937 --name euo-zf-ordered --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "7b00c99ba32884883166e84b78ff052ea7163a1730e97417d97434c751305484",
+      "audited_file_sha256": "7b00c99ba32884883166e84b78ff052ea7163a1730e97417d97434c751305484",
+      "rubric_sha256": "fe9da3aa512839d6107beebcf6bbb0c343d0d6f7fc668e02e8a3d7ce74096600",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/euo-psi",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "CriticalDivergence nu is dimensionless; its error is printed without a unit in command42. Actual reply incorrectly attaches us^-1 even though the failed law is rejected.",
+        "Midrange OrderParameter fit uses setpoint 30–61 K, eight points and chi2 1.570, not the whole transition; missing logged temperature at run2923 explains the axis choice.",
+        "Most ordered and 60 G fits remain poor/flagged; 244 MHz survey-only feature is not corroborated by fitted cold branch.",
+        "Warm pre-t0 subtraction leaves a drifting baseline; failed two-line TF results do not establish a second physical line."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        5,
+        6,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        46,
+        48,
+        50
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "7b00c99ba32884883166e84b78ff052ea7163a1730e97417d97434c751305484",
+        "summary.md": "7b00c99ba32884883166e84b78ff052ea7163a1730e97417d97434c751305484",
+        "transcript.jsonl": "08f08d73ec6dffbb241354cc70431629e167823ec0e96db4cf8641d9eeb44a90",
+        "commands.txt": "73645fdbf1c85342b227e7c52918c0261899bc45ca193ab3a1287bd4cf1af96c",
+        "cost.json": "708c7d010ee2f9b4d191a0cda64d3d26fd4614cc28c19683aa58cd4d13b40157",
+        "image-inputs.json": "db4e6063f5aef40970d3d25a10458780aef6c8957d4f026daad53ef00807892b"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/euo-zf-ordered-trend-frequency.png",
+          "snapshot_path": "review-images/55b79f40cf37742d4940d0ef1bb4a3e75d4c40bddb3b9778e30271034df1d502.png",
+          "bytes": 35128,
+          "sha256": "55b79f40cf37742d4940d0ef1bb4a3e75d4c40bddb3b9778e30271034df1d502",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-2937.png",
+          "snapshot_path": "review-images/a0faf2b5ae0e0e098a9ebbf7864c8e6fd304d966a6bf3f777d5ae3d06ef539ff.png",
+          "bytes": 107137,
+          "sha256": "a0faf2b5ae0e0e098a9ebbf7864c8e6fd304d966a6bf3f777d5ae3d06ef539ff",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/euo-zf-paramag/2959.png",
+          "snapshot_path": "review-images/862c50b2073b2ef1062cc6f83966c409009f1b936ab2c2c6c849cb74c33748e7.png",
+          "bytes": 75806,
+          "sha256": "862c50b2073b2ef1062cc6f83966c409009f1b936ab2c2c6c849cb74c33748e7",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/euo-60g-one-line-series-trend-frequency.png",
+          "snapshot_path": "review-images/3e8c939cd200e6657d64686f75935ed2c01ddebaf1106d092868635d543f15fe.png",
+          "bytes": 33412,
+          "sha256": "3e8c939cd200e6657d64686f75935ed2c01ddebaf1106d092868635d543f15fe",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T04:50:28.984474+00:00",
+      "reply_matches_saved_file": true
+    },
+    "cds-fourier": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Surveys the folder and identifies a transverse-field temperature series in CdS, selecting the 100 G base-temperature/high-statistics run 20721 for the representative spectrum from current command output.",
+          "pass": true,
+          "evidence": "23-run CdS 100 G TF temperature series and actual cold high-statistics 20721 identified."
+        },
+        {
+          "requirement": "Reduces run 20721 and actually runs `fourier` with a saved plot, using a defensible alpha calibration (run 20729 is the expected candidate) or explicitly stating the alternative used.",
+          "pass": true,
+          "evidence": "20721 reduced with 20729 alpha0.9499 and actual saved Fourier plot."
+        },
+        {
+          "requirement": "Calls the result an FFT, not a maximum-entropy reconstruction, and reports the command's frequency resolution/window alongside any quantitative peak.",
+          "pass": true,
+          "evidence": "Explicit FFT, unwindowed full record,63 bins,resolution0.0315976 MHz and band/window are supplied."
+        },
+        {
+          "requirement": "Finds the principal structure near the 100 G muon Larmor line around 1.4 MHz. It uses the PNG as well as the conservative peak table and notes weaker shoulders/satellites near roughly 1.27 and 1.51 MHz when visible; it does not claim those were algorithmically detected if only one row was printed.",
+          "pass": true,
+          "evidence": "Central near1.39 MHz feature and weaker visual shoulders near1.24/1.50 distinguished from zero detected cold peaks."
+        },
+        {
+          "requirement": "Interprets a resolved central line with roughly symmetric satellites as consistent with a shallow-muonium hyperfine triplet, without presenting a visual shoulder or sub-resolution splitting as a precision measurement.",
+          "pass": true,
+          "evidence": "Qualified roughly symmetric shallow-muonium hyperfine-triplet interpretation is visual only and not precision splitting."
+        },
+        {
+          "requirement": "Heeds any early-signal apodisation warning: it retries with an unwindowed physical crop or an appropriate Lorentzian filter rather than treating a symmetric-window spectrum as automatically authoritative.",
+          "pass": true,
+          "evidence": "Uses unwindowed physical record, no authoritative symmetric-apodisation claim."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares the central frequency with the applied-field Larmor expectation and states whether they agree within the reported resolution.",
+          "pass": false,
+          "evidence": "No explicit applied-field Larmor agreement within resolution."
+        },
+        {
+          "requirement": "Gives a cautious splitting estimate only when supported by the plotted or tabulated current-session output and labels how it was obtained.",
+          "pass": false,
+          "evidence": "No quantitative splitting estimate is supplied."
+        },
+        {
+          "requirement": "Points the reader to the stored spectrum JSON/NPZ and PNG.",
+          "pass": true,
+          "evidence": "Stored FFT JSON/NPZ and PNG named."
+        },
+        {
+          "requirement": "Avoids turning one representative low-temperature FFT into an unsupported claim about the entire temperature dependence.",
+          "pass": true,
+          "evidence": "Cold/warm comparison is actually run; final qualifications avoid claiming the entire temperature dependence from one spectrum."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct CLI spectra, fits, survey and alpha outputs; no arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science6/6 and strict copy pass; noisy visual triplet retains the earlier explicit borderline judgement, with no algorithmic detection claim.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all25 completed commands inspected. All25 completed commands inspected. CLI/report edits only. Four snapshot hashes verified; cold FFT pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 365.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry info /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/cds-fourier/data/EMU020711.nxs --json'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/cds-fourier/data --series cds-tf-single-gaussian --plot --csv'",
+          "exit_code": 2
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "362e335da421b63582f731d3148427725a48f9f3e43f5ea82d8428b2c7f53c29",
+      "audited_file_sha256": "362e335da421b63582f731d3148427725a48f9f3e43f5ea82d8428b2c7f53c29",
+      "rubric_sha256": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/cds-fourier",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Cold detector reports no peaks; candidates and reviewed noisy shoulders are not detected precision frequencies.",
+        "17/23 single Gaussian fits poor, run20712 unresolved; width trend is qualitative.",
+        "Untested high-frequency wizard candidates are not promoted as components."
+      ],
+      "judgement_calls": [
+        "Accept qualified central/roughly symmetric shoulders as a noisy visual triplet consistent with earlier CDS scoring; this is not three detected lines."
+      ],
+      "number_evidence_commands": [
+        1,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        17,
+        18
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "362e335da421b63582f731d3148427725a48f9f3e43f5ea82d8428b2c7f53c29",
+        "summary.md": "362e335da421b63582f731d3148427725a48f9f3e43f5ea82d8428b2c7f53c29",
+        "transcript.jsonl": "18f69e53f5aecf86731d834a4fea349b2c5879b4f759161e6aaa5adc8a559e0e",
+        "commands.txt": "8db0b5ce7cc34f0deebc5e206272bf459b7254f4a4c08592fb0b542f8e6d85f0",
+        "cost.json": "81a33c81a30e2d81facf617e45372c5e4045eda014da6578e70d31d70143a423",
+        "image-inputs.json": "2eaf08e1e0f477d25722a3ac70e9dcfcb04c478b872b602d1170cdf2e1b16fc2"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/cds-cold-20721.png",
+          "snapshot_path": "review-images/78e345b0bd2a6c6dcfc63be852653e9fbf11715b4036b1a3d77a4d9947ca380b.png",
+          "bytes": 69716,
+          "sha256": "78e345b0bd2a6c6dcfc63be852653e9fbf11715b4036b1a3d77a4d9947ca380b",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/cds-warm-20729.png",
+          "snapshot_path": "review-images/9cf8397142139dadbb66eb3983a6c238aa0e1748556cd8ff378813bf2fc1580a.png",
+          "bytes": 50093,
+          "sha256": "9cf8397142139dadbb66eb3983a6c238aa0e1748556cd8ff378813bf2fc1580a",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-20721.png",
+          "snapshot_path": "review-images/b5ad18f8e6f76b33e38a123240596ce1d7764e1c3827e2d6b233374a937cd457.png",
+          "bytes": 39623,
+          "sha256": "b5ad18f8e6f76b33e38a123240596ce1d7764e1c3827e2d6b233374a937cd457",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-20729.png",
+          "snapshot_path": "review-images/6b14d0efee3eb2be38812007aa462556b58e479bb93977487b33d89d1b07f0c1.png",
+          "bytes": 39390,
+          "sha256": "6b14d0efee3eb2be38812007aa462556b58e479bb93977487b33d89d1b07f0c1",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T04:50:29.034404+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
-    "euo-psi",
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
     "copper-diffusion",
     "afm-high-tf-mdu",
     "photo-musr-silicon",
-    "cds-fourier",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
@@ -1630,17 +1962,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 9,
+    "scored": 11,
     "target": 24,
-    "scientific_pass": 9,
-    "must_pass": 49,
-    "must_total": 49,
-    "should_pass": 18,
-    "should_total": 32,
-    "exact_copy_pass": 9,
-    "literal_copy_pass": 9,
-    "combined_pass": 9,
-    "boundary_pass": 9
+    "scientific_pass": 10,
+    "must_pass": 60,
+    "must_total": 60,
+    "should_pass": 21,
+    "should_total": 39,
+    "exact_copy_pass": 11,
+    "literal_copy_pass": 11,
+    "combined_pass": 10,
+    "boundary_pass": 11
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round19 explicitly distinguishes diagnostic plain audit from final preparation after every edit; final report/capture semantics stay fixed.",
