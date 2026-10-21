@@ -1,5 +1,5 @@
 {
-  "status": "running; 12/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 13/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -2083,10 +2083,205 @@
       ],
       "scored_at": "2026-10-21T03:48:31.541128+00:00",
       "reply_matches_saved_file": true
+    },
+    "sn-critical-field": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the 40 G temperature scan 91516–91529 and treats it as the Hc(T) measurement.",
+          "pass": true,
+          "evidence": "91516–91529 later/finer40G series identified as primary internal critical-field line measurement."
+        },
+        {
+          "requirement": "Reports that the logged sample temperature differs from the setpoint, and orders or reports the scan against the logged temperature.",
+          "pass": true,
+          "evidence": "Logged/setpoint offsets and all40G fits ordered by loggedT; warm8K block retained as warm."
+        },
+        {
+          "requirement": "Reports a precession signal from the sample away from the applied field's Larmor frequency, whose frequency falls on warming (the critical field decreasing towards Tc).",
+          "pass": true,
+          "evidence": "Internal non-applied-field line falls from1.94529MHz at2.25093K toward.960551MHz at2.9353K, normal-domain critical-field interpretation."
+        },
+        {
+          "requirement": "Does not treat 91501–91515 as sub-Tc data at their setpoints.",
+          "pass": true,
+          "evidence": "91501–91515 explicitly8.18–8.41K despite1.95–2.35K setpoints, not subTc data."
+        },
+        {
+          "requirement": "Contains no Hc, Tc or thermometer offset that was not produced by a tool call in this session (the worksheet's 3.7 K and textbook Hc(0) are background).",
+          "pass": true,
+          "evidence": "Tc3.483489±.020838K and y0/errors direct fixed-shape CLI law, no hand thermometer correction."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits a critical-field law (e.g. `trend --model OrderParameter` with `alpha=2`, `beta=1`, i.e. Hc0[1 − (T/Tc)²]) to the frequency trend and reports Tc and the amplitude with uncertainties, with the fit range stated.",
+          "pass": true,
+          "evidence": "OrderParameter alpha2/beta1,logged2.2509–2.9353K,11points,y03.261830±.049357,Tc3.483489±.020838,chi7.134."
+        },
+        {
+          "requirement": "Compares that Tc with tin's in words to discuss the thermometer error, without presenting a hand-computed offset as Asymmetry output.",
+          "pass": false,
+          "evidence": "No attributed accepted tinTc/thermometer-error comparison; logged offsets alone are not that comparison."
+        },
+        {
+          "requirement": "Notes the sample signal is small against a large background and says which runs' fits are flagged or were excluded.",
+          "pass": true,
+          "evidence": "Small.27–.32% precession beside~17–19%constant,flags/nuisance errors/no-line exclusions explicit."
+        },
+        {
+          "requirement": "Mentions the other fields (20, 80, 160 G) and what they add, or why they were not analysed.",
+          "pass": true,
+          "evidence": "20/80/160G field groups integrated and line limits explained."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. All rates/line frequencies/Tc/errors and sampled windows printed directly or storedCLIprovenance read; no physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science5/5,copyPASS; explicit TypeI internal-line workflow and fixed critical-field law completed. Accepted-Tc thermometer comparison remains omitted.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all70 completed commands inspected. All70 commands inspected, summary-only edits; no physical arithmetic. Four supplied image hashes verified, minority-line trace and reviewed trend pixels inspected; earlier trend versus final fixed-shape law distinction retained.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1686.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 4,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/sn-critical-field/data --series sn-40g-line-only --model OrderParameter --param frequency --xmax 2.9353 --exclude 91489,91493,91496,91518 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/sn-critical-field/data --series sn-40g-line-only --model OrderParameter --param frequency --xmax 2.9353 --exclude 91489,91493,91496 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/sn-critical-field/data --series sn-40g-line --model OrderParameter --param frequency --xmax 2.95 --exclude 91489,91493,91496 --fix alpha=2 --fix beta=1 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/sn-critical-field/data --runs 91488-91529 --alpha 1 --deadtime from_file --background range --plot --plot-tmax 2'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/sn-critical-field/data --series sn-40g-line-only --order sample_temperature_logged --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/sn-critical-field/data --run 91502 --geometry LF --scope lf-dynamics --workers 1'",
+          "exit_code": 130
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "93721563b8925b3de781cb83bddcb274eb63efeaea88d370a16660d3e9458396",
+      "audited_file_sha256": "93721563b8925b3de781cb83bddcb274eb63efeaea88d370a16660d3e9458396",
+      "rubric_sha256": "da9d2ae997537590c2ab33b031cfb6feb9f6394dcc5231e529b29eea9be97842",
+      "staged_skill_sha256": "7aec2595cbec0f0a1bd10e4949822f76cfc94e35301159cc3f3285d84f2be9b4",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/sn-critical-field",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Alpha assumed1 with no calibrant; tail-fit background and small line amplitudes limit fractions and critical-law precision.",
+        "Lawchi7.134 with limited resolved interval; line becomes unresolved before fittedzero, no precise thermometry.",
+        "Nominated trend image is earlier sn-40g-line-only OrderParameter plot; final fixed-alpha/beta law uses sn-40g-line, so do not equate the reviewed curve with that final fit. Snapshot/current hashes retained.",
+        "One wizard retry interrupted130; later successful screens and actual first-attempt case preserved, no infrastructure void."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        7,
+        9,
+        10,
+        12,
+        13,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        23,
+        24,
+        27,
+        28,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "93721563b8925b3de781cb83bddcb274eb63efeaea88d370a16660d3e9458396",
+        "summary.md": "93721563b8925b3de781cb83bddcb274eb63efeaea88d370a16660d3e9458396",
+        "transcript.jsonl": "a4e28e1a3b81ffc56a0088520775b6bf10cd3882f00991013bff1f4f265ba9cb",
+        "commands.txt": "6a983e24a7c2641371a026e1543efcf3bd8ca624b5898c8c9c3cca4dcc835a24",
+        "cost.json": "f6fe68c646af561e604c83ee437198a433612d4ffe8fae1f78758dc3ce4c9bc7",
+        "image-inputs.json": "c718175620a30a3f06a037eaa32e8ed8e4ac2271015738fa6c0320f5fefe8cc9"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/sn-40g-line-only-trend-frequency.png",
+          "snapshot_path": "review-images/7c4aac7c42938d8c82867f1fb7d0255d287d0f7a6ad108ae468b03d92e86e3fd.png",
+          "bytes": 37186,
+          "sha256": "7c4aac7c42938d8c82867f1fb7d0255d287d0f7a6ad108ae468b03d92e86e3fd",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/sn-40g-line-only/91517.png",
+          "snapshot_path": "review-images/95885add4cace31311672a21b87257cb71726b43f2ba861789fed0672b288731.png",
+          "bytes": 73908,
+          "sha256": "95885add4cace31311672a21b87257cb71726b43f2ba861789fed0672b288731",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-91490.png",
+          "snapshot_path": "review-images/d4df5414720ead7c316d5202211e80537c48e7a6108e5c2c02f66d0ed65c363f.png",
+          "bytes": 62077,
+          "sha256": "d4df5414720ead7c316d5202211e80537c48e7a6108e5c2c02f66d0ed65c363f",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-91514.png",
+          "snapshot_path": "review-images/e29a140ecf1e495985d2ba0c09e2d2fce444fdfe5262c56e62a78691acef7455.png",
+          "bytes": 31292,
+          "sha256": "e29a140ecf1e495985d2ba0c09e2d2fce444fdfe5262c56e62a78691acef7455",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T03:49:36.149948+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
-    "sn-critical-field",
     "euo-psi",
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
@@ -2100,17 +2295,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 12,
+    "scored": 13,
     "target": 24,
-    "scientific_pass": 11,
-    "must_pass": 65,
-    "must_total": 67,
-    "should_pass": 25,
-    "should_total": 44,
-    "exact_copy_pass": 11,
-    "literal_copy_pass": 11,
-    "combined_pass": 10,
-    "boundary_pass": 12
+    "scientific_pass": 12,
+    "must_pass": 70,
+    "must_total": 72,
+    "should_pass": 28,
+    "should_total": 48,
+    "exact_copy_pass": 12,
+    "literal_copy_pass": 12,
+    "combined_pass": 11,
+    "boundary_pass": 13
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round18 explicitly retires the first-turn image-manifest instruction after review; final turn returns the scientific report alone.",

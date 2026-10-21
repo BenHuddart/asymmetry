@@ -2222,3 +2222,6 @@ Confirmation8 now10/24 scored: LLZ6/6 Musts2/4 Shoulds,TCNQ6/6 and4/4,silicon6/6
 
 
 Confirmation8 now12/24 scored: copper4/6 literalMusts,2/3Shoulds and GLOBAL number-ruleFAIL(unprinted derived8% fraction), strictcopy/boundaryPASS; RFbenzene5/5Musts2/5Shoulds science/copyPASS. Totals65/67Musts,11/12science,11/12copy,10/12combined,12/12boundary,25/44Shoulds. Copper omits KT/QLCR and falsely says wizard never returned despite completed recommendation; retain runtime retry/stream warnings. Freeze remains through all24; repair only afterward.
+
+
+Confirmation8 tin5/5Musts,3/4Shoulds; science/number/unit/strictcopy/boundaryPASS. Fixed TypeI critical-field law reports conditional Tc with poorchi; no accepted-Tc thermometry comparison. Totals13/24scored,70/72Musts,12/13science,12/13copy,11/13combined,13/13boundary,28/48Shoulds. Source remains frozen; preserve earlier reviewed trend versus final law caveat.
