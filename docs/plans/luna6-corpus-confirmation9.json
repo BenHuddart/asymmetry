@@ -1,5 +1,5 @@
 {
-  "status": "running; 7/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 9/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -1261,6 +1261,355 @@
       ],
       "scored_at": "2026-10-21T04:44:49.002642+00:00",
       "reply_matches_saved_file": true
+    },
+    "molecular-antiferromagnet": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies 17104 as the TF 20 G calibration run and states alpha was determined from it.",
+          "pass": true,
+          "evidence": "Run 17104 is the separate 20 G TF calibration; raw alpha 1.2584 and applied corrected alpha 1.2594 are explicit."
+        },
+        {
+          "requirement": "Treats 17094-17103 as the ZF temperature sweep used for the ordering analysis, separate from the calibration run.",
+          "pass": true,
+          "evidence": "Runs 17094–17103 form the ZF ordering scan, separate from calibration."
+        },
+        {
+          "requirement": "Reports oscillation(s) present in the low-temperature ZF spectra that become more relaxed/damped as temperature rises through the sweep.",
+          "pass": true,
+          "evidence": "Cold spontaneous oscillations weaken and damp toward the warm relaxation regime; the 5.88 K component and smooth 10 K endpoint are explicitly distinguished."
+        },
+        {
+          "requirement": "Comments on whether more than one oscillation frequency is present (the worksheet flags this as something to check for), rather than assuming a single frequency without looking.",
+          "pass": true,
+          "evidence": "Multiple detected FFT/wizard lines and two damped time components are tested; failed extra-line fit is not promoted as a measured component."
+        },
+        {
+          "requirement": "Contains no frequency, TN, or relaxation-rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All frequencies, rates and conditional Tc values come from direct CLI outputs, without physical arithmetic."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes the \"Cryostat Temperature\" vs \"Sample Temperature\" columns logged for these runs are identical in the worksheet table, and does not imply a discrepancy that isn't there.",
+          "pass": false,
+          "evidence": "No worksheet cryostat/sample identical-column observation."
+        },
+        {
+          "requirement": "Discusses whether it fit from low to high temperature or vice versa, and why (the worksheet explicitly raises this as a design choice).",
+          "pass": false,
+          "evidence": "No explicit fit direction and reason in the final report."
+        },
+        {
+          "requirement": "Chooses a relaxing-oscillation function appropriate to magnetic order (e.g. damped cosine terms) rather than a generic unstructured relaxation function.",
+          "pass": true,
+          "evidence": "Ordered-side damped cosine models and transition-region powder cutoff are used, with warm dynamic KT relaxation separately."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct CLI spectra, series, fit and fixed-shape law outputs; no physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science 5/5 and strict copy pass. Primary internal-line tracking and actual transition-region oscillation recovery are retained; worksheet column and direction-design Shoulds remain absent.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all46 completed commands inspected. All 46 commands inspected. Only CLI analysis and report edits; no scripted physical calculations. Four review snapshot hashes verified; cold FFT and 17099 oscillating trace pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1151.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 5,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/molecular-antiferromagnet/data --series ordered-line --model OrderParameter --param frequency --exclude 17098 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/molecular-antiferromagnet/data --series ordered-line --model OrderParameter --param frequency --fix alpha=1 --exclude 17098 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/molecular-antiferromagnet/data --series ordered-line --model OrderParameter --param frequency --exclude 17098 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'cat asymmetry-work/wizard/17099.json'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "ed775856f530e66e49e05b8fca6d161cc7423b5c7fc3b347112515ca2a65a55c",
+      "audited_file_sha256": "ed775856f530e66e49e05b8fca6d161cc7423b5c7fc3b347112515ca2a65a55c",
+      "rubric_sha256": "a6dcbd9c0ae82a5ff22433c944584a709ccf430256a594c0acee0073d8b540b7",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/molecular-antiferromagnet",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "OrderParameter alpha fixed at 1 gives conditional Tc 4.527154±0.292933 K with chi2 38.962, inconsistent with lines remaining at 4.895/5.88 K; correctly not an established TN.",
+        "Ordered single-line fits have chi2 5–8; multiple components and strong residual structure prevent unique site/internal-field assignments.",
+        "Low-frequency FFT maximum is a baseline/relaxation component; wizard and FFT detected-line sets differ and are labelled separately.",
+        "Warm statistics and model uncertainty limit a precise transition estimate; no hidden pooling of historical TN results."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        16,
+        17,
+        18,
+        20,
+        21,
+        22,
+        24,
+        25,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        41,
+        43
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "ed775856f530e66e49e05b8fca6d161cc7423b5c7fc3b347112515ca2a65a55c",
+        "summary.md": "ed775856f530e66e49e05b8fca6d161cc7423b5c7fc3b347112515ca2a65a55c",
+        "transcript.jsonl": "629fed5d04b1aa2c3139f51dfc614c6d4ae30a7eb28959b7ac7b8d859e2758e4",
+        "commands.txt": "a5d72dc3d5d3efbe778346a5b27ff89429d0d9cff823cfbf6f3260353d221ee8",
+        "cost.json": "064cb8fdb5754bbd45bba21f5aff376769528012c6f4333d0a0f85f532d39736",
+        "image-inputs.json": "1b7b3a5359b9f8a19db1cea8dc242a5c4bcb0b60104e1f900f4fe4bc9c24b143"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-17094.png",
+          "snapshot_path": "review-images/64329ab605d04c2a957e8a594b1a20ea79b892e7c5494b53760e0be84cfa61f7.png",
+          "bytes": 62787,
+          "sha256": "64329ab605d04c2a957e8a594b1a20ea79b892e7c5494b53760e0be84cfa61f7",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-17098.png",
+          "snapshot_path": "review-images/c74073cd313722b7d04f158b03c2af5bb149fab4bf4c74b5f917931ebce98d21.png",
+          "bytes": 63929,
+          "sha256": "c74073cd313722b7d04f158b03c2af5bb149fab4bf4c74b5f917931ebce98d21",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/fit-17099.png",
+          "snapshot_path": "review-images/c0806911f7d3f49930239418fe6614c98444024f16d90f55f55ec194a636c18c.png",
+          "bytes": 69392,
+          "sha256": "c0806911f7d3f49930239418fe6614c98444024f16d90f55f55ec194a636c18c",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-17103.png",
+          "snapshot_path": "review-images/9d6614b0373889ade865d727bd113f4491be37e974f6586dc181157fb354c67f.png",
+          "bytes": 45129,
+          "sha256": "9d6614b0373889ade865d727bd113f4491be37e974f6586dc181157fb354c67f",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T04:46:27.309323+00:00",
+      "reply_matches_saved_file": true
+    },
+    "alc-tcnq": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies this as a longitudinal-field avoided-level-crossing (ALC or µLCR) experiment in which each run contributes one time-integral asymmetry point versus applied field.",
+          "pass": true,
+          "evidence": "LF ALC interpretation uses persistent nonoscillating high-field asymmetry and integral response, explicitly not a coil readback."
+        },
+        {
+          "requirement": "Reports the folder structure from its own survey: 128 EMU runs comprising four 31-point scans over 2000–5000 G, plus the non-scan/calibration runs, without claiming the absent run 19618 was loaded.",
+          "pass": true,
+          "evidence": "All 128 EMU runs mapped into four complete high-field scans, two low-field points and TF calibrants; no absent 19618 claim."
+        },
+        {
+          "requirement": "Actually runs `integral-scan` on at least one complete 31-run temperature block and states which block it analysed. It does not substitute `wizard`, `fit-series`, or individual time-domain fits for the ALC scan.",
+          "pass": true,
+          "evidence": "All four complete 31-run blocks actually integrated separately, with calibration scan kept distinct."
+        },
+        {
+          "requirement": "Fits the field scan with a resonance-plus-smooth-background model. A single `LorentzianLCR` with a cubic background is acceptable; it does not add a second line merely because the teaching worksheet used a two-Lorentzian template.",
+          "pass": true,
+          "evidence": "Local LorentzianLCR + Linear fits follow failed/poor whole Cubic screens; no arbitrary second resonance."
+        },
+        {
+          "requirement": "Reports an observed negative resonance feature close to 3.1 kG, together with the fitted centre, width and uncertainty/quality information from this run's command output. A centre far outside 2.9–3.2 kG (the resonance moves a few tens of gauss between the four temperature blocks) without an explicit failed-fit warning is a fail.",
+          "pass": true,
+          "evidence": "Negative dips near 3 kG, B0 3102.834214/3014.851902/2983.699187/2995.945359 G, widths and scaled errors/chi2 reported."
+        },
+        {
+          "requirement": "Separates measured/fitted output from physical interpretation and does not invent hyperfine constants that the CLI did not calculate.",
+          "pass": true,
+          "evidence": "Measured conditional line estimates separated from reorientation interpretation and unavailable radical Hamiltonian/coupling extraction."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Uses run 19485 as the detector-balance candidate, or explicitly states and justifies the alpha treatment it actually used.",
+          "pass": true,
+          "evidence": "Run 19485 alpha 1.0323, grouping and deadtime-off provenance explicit."
+        },
+        {
+          "requirement": "Uses non-resonant baseline regions on both sides of the dip and names the integration window and count-integral method.",
+          "pass": true,
+          "evidence": "Count-sum integral over 0.105–4us and local windows with baseline on both sides are named."
+        },
+        {
+          "requirement": "Analyses or at least maps all four temperature blocks, and describes any temperature-dependent width/amplitude claim only for blocks it actually fitted.",
+          "pass": true,
+          "evidence": "All four blocks fitted, logged-temperature drift retained, hot narrower/higher and cold comparisons use actual fit errors."
+        },
+        {
+          "requirement": "Points the reader to the stored scan JSON and spectrum/fit PNG.",
+          "pass": true,
+          "evidence": "Stored scan directory and decisive local-fit/FFT PNG/JSON products named."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct CLI integral, fit, comparison and FFT candidate outputs; no physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science 6/6, all four Shoulds and strict copy pass. File-stamp versus measured field-response distinction and actual separate integral workflows are retained.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all40 completed commands inspected. All 40 commands inspected. CLI data analysis and report edits only, no scripted physical arithmetic. Four snapshot hashes verified; hot and cold local dip/fit pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 631.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry fourier /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/alc-tcnq/data --run 19499 --name tcnq-350K-3000G-correlation --correlation --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fourier /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/alc-tcnq/data --run 19561 --name tcnq-10K-3000G-correlation --correlation --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "116a3468ec79982e26b448a69825a95ac16541c6922a6743ed674d526e1f27e4",
+      "audited_file_sha256": "116a3468ec79982e26b448a69825a95ac16541c6922a6743ed674d526e1f27e4",
+      "rubric_sha256": "a2a38dc913e30cfad99eecaac81cac05cccad4b2b7d7afb893390314e39d251b",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/alc-tcnq",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Local fit chi2 19–41 remains poor despite scaled errors; empirical centres/widths do not establish microscopic couplings or sites.",
+        "Nominal 350 K scan is near 339 K with drift; comparisons remain conditional on this coordinate and local baseline choices.",
+        "Attempted radical correlations fail because the high field leaves no frequency axis; standard FFTs detect no lines, not evidence of absent ALC response.",
+        "TF calibrant warm relaxation rate is pinned and not a measured rate."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        24,
+        25,
+        26,
+        27,
+        29,
+        34,
+        35
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "116a3468ec79982e26b448a69825a95ac16541c6922a6743ed674d526e1f27e4",
+        "summary.md": "116a3468ec79982e26b448a69825a95ac16541c6922a6743ed674d526e1f27e4",
+        "transcript.jsonl": "c51efa21ac2d0fadbe8e076df719d24078d7684fda63c8494ddc42a59c3ede4c",
+        "commands.txt": "2eae1d161e841727b09c98284e8e3c7037ec4039bf68cb73d5d145cb044a0dfa",
+        "cost.json": "0f61daa7cbaa18e27a1ff1011e9e23de7fd9ea1b9784e3891437c0f984e094bd",
+        "image-inputs.json": "d61de501750762cfcd4bd5c8c222cd1f1511762d1ccc87ddebb38901ca8ddb8d"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-350K-local.png",
+          "snapshot_path": "review-images/b3b7698885befee897cff55b089a711b5898874087c4aef7856c4ba4ab148242.png",
+          "bytes": 41300,
+          "sha256": "b3b7698885befee897cff55b089a711b5898874087c4aef7856c4ba4ab148242",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-100K-local.png",
+          "snapshot_path": "review-images/6a1f54cab5b5fdee19be87996db37264497f2d12717434cf045218e4863abcba.png",
+          "bytes": 44469,
+          "sha256": "6a1f54cab5b5fdee19be87996db37264497f2d12717434cf045218e4863abcba",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-50K-local.png",
+          "snapshot_path": "review-images/8473f8b360a1d5c8d4c3afff6471dd9b6a8493cba7696ae8b3628bcb131e80e4.png",
+          "bytes": 42841,
+          "sha256": "8473f8b360a1d5c8d4c3afff6471dd9b6a8493cba7696ae8b3628bcb131e80e4",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tcnq-10K-local.png",
+          "snapshot_path": "review-images/7d30af9ef02e01c2eaea0fd0bd7705b070fd509b8e63ef6102dad75dffe702c6.png",
+          "bytes": 41447,
+          "sha256": "7d30af9ef02e01c2eaea0fd0bd7705b070fd509b8e63ef6102dad75dffe702c6",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T04:46:27.349111+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -1268,9 +1617,7 @@
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
     "copper-diffusion",
-    "molecular-antiferromagnet",
     "afm-high-tf-mdu",
-    "alc-tcnq",
     "photo-musr-silicon",
     "cds-fourier",
     "lifeas-psi",
@@ -1283,17 +1630,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 7,
+    "scored": 9,
     "target": 24,
-    "scientific_pass": 7,
-    "must_pass": 38,
-    "must_total": 38,
-    "should_pass": 13,
-    "should_total": 25,
-    "exact_copy_pass": 7,
-    "literal_copy_pass": 7,
-    "combined_pass": 7,
-    "boundary_pass": 7
+    "scientific_pass": 9,
+    "must_pass": 49,
+    "must_total": 49,
+    "should_pass": 18,
+    "should_total": 32,
+    "exact_copy_pass": 9,
+    "literal_copy_pass": 9,
+    "combined_pass": 9,
+    "boundary_pass": 9
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round19 explicitly distinguishes diagnostic plain audit from final preparation after every edit; final report/capture semantics stay fixed.",

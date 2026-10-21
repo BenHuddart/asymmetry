@@ -2270,3 +2270,6 @@ Confirmation9 now5/24scored: plateau5/5Musts2/5Shoulds,tin5/5Musts2/4Shoulds,spi
 
 
 Confirmation9 now7/24scored:cuprate5/5Musts2/3Shoulds andLLZ6/6Musts2/4Shoulds science/number/unit/copy/boundaryPASS. Totals38/38Musts,7/7science/copy/combined/boundary,13/25Shoulds. Apparent400GcupratePNGwarmwidthnear.16versusdirectCLI/stored.0657648retainedwithmatchingcurrent/snapshothash;notconfirmedplotbug,controlledreproduceafterfreeze. SourcesfrozenuntilALL24.
+
+
+Confirmation9 now9/24 scored: molecularAFM5/5Musts1/3Shoulds andTCNQ6/6Musts4/4Shoulds science/number/unit/strictcopy/boundaryPASS. Totals49/49Musts,9/9science/copy/combined/boundary,18/32Shoulds. Molecular fixed-shape TN remains conditional/poor and TCNQ local fits remain poor despite correct integral workflows; all caveats retained. Sources remain frozen until ALL24 finish.
