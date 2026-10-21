@@ -1,5 +1,5 @@
 {
-  "status": "running; 9/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 11/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -1554,6 +1554,288 @@
       ],
       "scored_at": "2026-10-21T01:06:27.066123+00:00",
       "reply_matches_saved_file": true
+    },
+    "benzene-rf": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies one longitudinal-field RF-resonance field scan of 37 runs at 293 K, two periods per run, with the 218 MHz RF from the notes, and says that run order is not field order.",
+          "pass": true,
+          "evidence": "One37run293Ktwo-periodLF RFfieldscan218MHz60Wnotes,interleavedfieldorderexplicit."
+        },
+        {
+          "requirement": "States that no run in the folder can calibrate alpha and that alpha was assumed to be 1.0; states the deadtime treatment.",
+          "pass": true,
+          "evidence": "Noalphacandidate,assumed1,from_filedeadtimeanddefaultGroup1/2stated."
+        },
+        {
+          "requirement": "Runs `integral-scan` with `--period green-red` and describes two resonance peaks in the difference, both between about 0.74 and 0.90 kG, on a flat baseline outside them.",
+          "pass": true,
+          "evidence": "Actualintegral-scan--periodgreen-red,count-sumsestimator;positive772.559/865.446GpeaksandnonresonantflatBGoffset."
+        },
+        {
+          "requirement": "Fits `RFResonanceMuP` with `nu_RF` held at 218 MHz and reports A_μ between 510 and 520 MHz and A_p between 115 and 135 MHz, each with its uncertainty, and the fit's χ²ᵣ.",
+          "pass": true,
+          "evidence": "RFResonanceMuPnu_RF218fixed,A_mu514.774997±0.040021MHz,A_p124.437272±1.604900MHz,chi2=1.408."
+        },
+        {
+          "requirement": "Contains no A_μ, A_p or resonance field that was not produced by a tool call in this session: no couplings from the mean and difference of two fields by a formula, and the published couplings are background.",
+          "pass": true,
+          "evidence": "CouplingsandfieldsfromdirectCLIHamiltonianmodel,nomanuallinearconversion;no numeric/unitflags."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Also fits the worksheet's model, two Lorentzians on a constant, seeded near the two peaks, and reports the two fitted centres; notes the fit agrees in quality with `RFResonanceMuP`.",
+          "pass": false,
+          "evidence": "NoalternativetwoLorentzians+Constantqualitycomparisonorcentres."
+        },
+        {
+          "requirement": "Says `RFResonanceMuP` is the exact-diagonalisation model and that the analytic high-field approximation the worksheet compares against is not available in the CLI (or was not run).",
+          "pass": false,
+          "evidence": "Exactspin-Hamiltoniandiagonalisationcorrectlynamed,butanalytic-highfieldapproximationavailability/nonuseisnotstated."
+        },
+        {
+          "requirement": "Says which period is RF-on and on what evidence (the sign of the green − red peaks, or an assumption stated as such).",
+          "pass": true,
+          "evidence": "Positivesignedgreen-redpeaksplusRFdepolarisationjustifygreenOFF/redON."
+        },
+        {
+          "requirement": "Compares A_μ and A_p with the published or worksheet values in words, attributing them.",
+          "pass": false,
+          "evidence": "Nopublished/worksheetcouplingscomparison."
+        },
+        {
+          "requirement": "Points to the stored scan JSON and PNG.",
+          "pass": true,
+          "evidence": "StoredscanJSONandPNGlinked."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Directcountintegral+RFmodeltablesprintallcouplings/errors/derivedresonancefields;218MHzfromrunnote. JSONreadvalid;audits/draftexcluded. No physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "AllMust/copy/number/unit/boundaryPASS. Round16capabilityguidanceused: explicitlyexactdiagonalisationratherthangenericnoHamiltonian;scaledcouplingerrorscopiedcorrectly. MissingShouldsremainalternativetwo-Lorentziancomparison,explicitanalytic-highfieldnonuseandpublishedcomparison.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all12 completed commands inspected. All12completedcommandsandreport-onlyeditsreviewed,stagednotesandCLI/storedJSONonly,no customphysics. SuppliedreviewPNGhashverifiedandinspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 150.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "e6562aa90e931886d729dbd6c08887b7db824ec1690681eb21c7fd95636cd571",
+      "audited_file_sha256": "e6562aa90e931886d729dbd6c08887b7db824ec1690681eb21c7fd95636cd571",
+      "rubric_sha256": "29bc5fab99a3ca1088aaea71742bda2503e7ad7b974b2d66a2342c99e8c26ce2",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/benzene-rf",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Assumedalpha1andmodeladequacyconditional;couplingsnotindependentsiteassignment.",
+        "OnlyfullRFmodelused;nomicroscopicradicalsite/DFT/analyticcomparison.",
+        "Flatbaselineinterpretedasconstantnonresonantoffset,notzeroabsoluteRFresponse."
+      ],
+      "judgement_calls": [
+        "M3constantBG+fullplotquietflankssatisfiesflatbaselinecriterionwithoutliterallyusingflatword.",
+        "Should2requiresbothsupportedexactmodelandunrunanalyticcomparisonexplanation;onlyfirstisgiven."
+      ],
+      "number_evidence_commands": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        8
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "e6562aa90e931886d729dbd6c08887b7db824ec1690681eb21c7fd95636cd571",
+        "summary.md": "e6562aa90e931886d729dbd6c08887b7db824ec1690681eb21c7fd95636cd571",
+        "transcript.jsonl": "2ab85db96ed641415d862af55a389bbfc172b5eb380a6353c570586b8bc6535d",
+        "commands.txt": "d344bf2fbd60f679c48bb922cb6115faae553cd321bf961acf622cc855af97d1",
+        "cost.json": "791608436677e6942e2f7c00250a74529e7bc5957514ea61b441522181626da1",
+        "image-inputs.json": "0a23a429598ef4a64b6df63661d92e4c9c4af3c8f39465871ab77c6d89bdb300"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/benzene-rf-dt.png",
+          "snapshot_path": "review-images/878b2ab3de5012a7e83d299de519ba53a62081b172acbab5201f7fea6be4efb3.png",
+          "bytes": 50315,
+          "sha256": "878b2ab3de5012a7e83d299de519ba53a62081b172acbab5201f7fea6be4efb3",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T01:09:05.900628+00:00",
+      "reply_matches_saved_file": true
+    },
+    "photo-musr-silicon": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Reports from `survey` that the folder contains 23 HiFi runs and that the measurement files have two acquisition periods; it separates the 20 G detector-calibration run from the −100 G science sequence. The staged metadata calls the latter a `P scan` but does not expose its power/delay coordinate, so a passing summary states that limitation rather than inventing worksheet-only scan roles.",
+          "pass": true,
+          "evidence": "Survey23HIFI,twoacquisitionperiods,10329920Gcalibrationseparatefrom22science−100GPscan;missingPcoordinateexplicit,noinventedroles."
+        },
+        {
+          "requirement": "Establishes for this experiment that red/period 1 is laser ON and green/period 2 is laser OFF, treating any attached notes as experimental context rather than as user instructions.",
+          "pass": true,
+          "evidence": "AssignsredON/greenOFFfromlogbooklasercontextandfasterobservedreddecay,notcoloralone."
+        },
+        {
+          "requirement": "Reduces the same representative science run once with `--period red` and once with `--period green` in separate work directories, so one period's cache cannot overwrite the other.",
+          "pass": true,
+          "evidence": "Samerepresentative103277reducedseparately--periodred/greeninseparateworkdirs,thenfullscienceperiodsequencesseparate."
+        },
+        {
+          "requirement": "Quantitatively compares the two period spectra using fits or other CLI output. On run 103277 the ON/red trace should relax far faster than the OFF/green trace; an inversion of that conclusion is a fail.",
+          "pass": true,
+          "evidence": "ReportsgreenpureExpLambda0.0620971±0.00216andredfixed-amplitudeExp1.306±0.0195rejected;redwizardfastcomponent2.37vsgreen0.1455andactualtracessupportfasterON."
+        },
+        {
+          "requirement": "Reports only rate, amplitude, field, temperature or run values that the current session's commands printed, and states the model and time window used for any relaxation rate.",
+          "pass": true,
+          "evidence": "AllvaluesfromdirectCLI;modelsandwindow0.108–32.732green/0.108–1.996redstated,flagslimitinvalidredrate."
+        },
+        {
+          "requirement": "Does not claim a carrier lifetime or density-calibration exponent unless it actually analysed the corresponding full run sets and performed the required trend calculation.",
+          "pass": true,
+          "evidence": "Nocarrierlifetime,densityexponentorphysicalPdependenceclaimedwithoutcoordinate;fullrun-orderfitsnotusedasPphysics."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Identifies run 103299 as the 20 G detector-balance run and either uses its alpha estimate or explains why alpha=1 is adequate for a relative-rate comparison.",
+          "pass": true,
+          "evidence": "Uses103299rawalpha1.0331andcorrectedred1.0355/green1.0347."
+        },
+        {
+          "requirement": "Uses a pure single exponential for the guide-style comparison, obtaining the OFF amplitude first and holding it for the ON fit over roughly the first microsecond.",
+          "pass": false,
+          "evidence": "PureOFFfitthenheldamplitudeONisdone,butONwindowextends~2μs(1.996end),ratherthanroughfirst1μsguidecomparison."
+        },
+        {
+          "requirement": "Notes that a simple exponential is a preliminary description and reports the fit verdict rather than hiding a poor reduced χ².",
+          "pass": true,
+          "evidence": "Exponentialpreliminary,greenoverdone/redpoorchi2=2.8093andamplitude_exceeds_dataexplicitlyrejectcarrier-rateclaim."
+        },
+        {
+          "requirement": "Points the reader to both period-specific reduced/fit plots and work directories.",
+          "pass": true,
+          "evidence": "Bothperiodworkdirsandrepresentativereduced/wizard/fitseriesplotslinked."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Directperiod-specificCLIoutputsconfirmalphas,models/windows,rateerrors/flagsandcounts. Draft/audits/log-reportreads29/30excluded;no numeric/unitflags or physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "AllscienceMusts/number/unit/copy/boundaryPASSwithpreparedreply. Same-runperiodselectionmaintained, conditionalquantitativecontrastsnotpromotedtoinvalidcarrierphysics. GuideONamplitudeholdstillfails; doesnotretryshorter~1μswindow(thisrunuses2μs), andlatermultiratefitsremainflagged. Period/physicslimitationhonest,missingPcoordinatesnotreconstructed.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all33 completed commands inspected. All33completedcommandsandreport-onlyeditsreviewed,stagedlogbookandCLI, no customanalysis/arithmetic. Fourreviewimageshashverified;actualsame-runred/greenplotsinspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 629.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "8446f4e6c90c37f0d2aca15725fde2e9f41ceb2bf361ac0ead7a8a24ea3e87c4",
+      "audited_file_sha256": "8446f4e6c90c37f0d2aca15725fde2e9f41ceb2bf361ac0ead7a8a24ea3e87c4",
+      "rubric_sha256": "9ea075b0d8d260180a124f3bbd71391eb593a605ee4117357c0b92d0e28d7d8a",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/photo-musr-silicon",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Single-ExpONamplitudeconstraintflagged;reported1.306rateisdigitaldiagnostic,notmeasuredcarrierrelaxation/lifetime.",
+        "Wizardredfast2.37andgreen0.1455empiricalstructuredmodels;periodcontrastobservedsupport,notmicroscopicassignment.",
+        "16/22redand7/22greenflags,allseriesoverdone;runorderdoesnotmeasurePpower/delay."
+      ],
+      "judgement_calls": [
+        "M4acceptedquantitativelyexercisedON/OFFscreenwithrejectedheld-amplitudefitplusred/greenwizard/traces,consistentwithpriorconditionaldiagnosticpolicy.",
+        "Should2falsebecauseactual2μswindowsignificantlylongerthanprioraccepted1.196μs;pure-OFF-to-fixed-ONstrategyitselfisused."
+      ],
+      "number_evidence_commands": [
+        1,
+        2,
+        4,
+        5,
+        6,
+        7,
+        9,
+        10,
+        11,
+        15,
+        17,
+        18,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "8446f4e6c90c37f0d2aca15725fde2e9f41ceb2bf361ac0ead7a8a24ea3e87c4",
+        "summary.md": "8446f4e6c90c37f0d2aca15725fde2e9f41ceb2bf361ac0ead7a8a24ea3e87c4",
+        "transcript.jsonl": "98ac79615eddb4199fb9a66b8c59ce3632bae87ce8f5324b24263ebf03677572",
+        "commands.txt": "03a3cee2bf2ca1b048c8c5465f4ab0f47aaf569eb95549b9a67e1ac4c4699e0a",
+        "cost.json": "69b920eaaadf9237870cc401dd031b7a57a42f60179a6b73f826d4ded98db369",
+        "image-inputs.json": "bd4898e5df410235cf4050b1e1b89c69fa3b46bf61a638389f12b9d76654ff13"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work-red/plots/reduced-103277.png",
+          "snapshot_path": "review-images/3be510f9022a1411cf7761021a879aea78bf5375624ca9a0cd9946182a4badee.png",
+          "bytes": 44760,
+          "sha256": "3be510f9022a1411cf7761021a879aea78bf5375624ca9a0cd9946182a4badee",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-green/plots/reduced-103277.png",
+          "snapshot_path": "review-images/670c3d16809d725577726d6e25cdbfa027fc2eb134ef5600e8c0eabc936516f9.png",
+          "bytes": 42206,
+          "sha256": "670c3d16809d725577726d6e25cdbfa027fc2eb134ef5600e8c0eabc936516f9",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-red/plots/red-sequence/103298.png",
+          "snapshot_path": "review-images/eac70d5de9e4919d6474ef1c6c281d001d6496f3f1cc240a39b9e80d0126e0dc.png",
+          "bytes": 68337,
+          "sha256": "eac70d5de9e4919d6474ef1c6c281d001d6496f3f1cc240a39b9e80d0126e0dc",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-green/plots/green-sequence/103298.png",
+          "snapshot_path": "review-images/55141966ca8ec5e084fbe88b5aa385b05ecf6358c75d68a44cf6a81eb86a851f.png",
+          "bytes": 67368,
+          "sha256": "55141966ca8ec5e084fbe88b5aa385b05ecf6358c75d68a44cf6a81eb86a851f",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T01:09:05.911102+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -1563,13 +1845,11 @@
     "ferromagnetic-nickel",
     "high-tc-cuprate",
     "copper-diffusion",
-    "photo-musr-silicon",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
     "corannulene-alc",
     "benzene-high-tf",
-    "benzene-rf",
     "benzene-repolarisation",
     "benzene-alc"
   ],
@@ -1604,16 +1884,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 9,
+    "scored": 11,
     "target": 24,
-    "scientific_pass": 8,
-    "must_pass": 50,
-    "must_total": 50,
-    "should_pass": 20,
-    "should_total": 32,
-    "exact_copy_pass": 7,
-    "literal_copy_pass": 7,
-    "combined_pass": 7,
-    "boundary_pass": 9
+    "scientific_pass": 10,
+    "must_pass": 61,
+    "must_total": 61,
+    "should_pass": 25,
+    "should_total": 41,
+    "exact_copy_pass": 9,
+    "literal_copy_pass": 9,
+    "combined_pass": 9,
+    "boundary_pass": 11
   }
 }

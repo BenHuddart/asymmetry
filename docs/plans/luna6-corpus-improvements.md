@@ -2105,3 +2105,6 @@ Confirmation6 now8/24scored:CDS6/6Musts,2/4Shoulds,science/number/unit/copy/boun
 
 
 Confirmation6 now9/24scored:plateau5/5Musts,4/5Shoulds,science/number/unit/copy/boundaryPASS. Redfieldm2fixedrestricted5000–38000GconvergeswithscaledD/nuerrors;approximateplateau-windowjudgementretained,edgeinterpretationmissing. Totals50/50literalMusts,8/9science,7/9copy/combined,9/9boundary,20/32Shoulds. IndependentAFMscopeFAILremains;sourcefrozen.
+
+
+Confirmation6 now11/24 scored:RFbenzene5/5Musts,2/5Shoulds andsilicon6/6Musts,3/4Shoulds bothscience/number/unit/copy/boundaryPASS. RFexact-diagonalisation/scalederrorrepairused;siliconONfixed-amplituderatecorrectlyrejected,2μsguidewindowdeviationrecorded. Totals61/61literalMusts,10/11science,9/11copy/combined,11/11boundary,25/41Shoulds;independentAFMscopeFAILretained. Frozenwavecontinues.
