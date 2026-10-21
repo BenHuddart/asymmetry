@@ -98,7 +98,7 @@ def test_explicit_width_bounds_recover_a_broad_line_and_keep_the_interval() -> N
 def test_width_search_does_not_truncate_a_partially_covered_line() -> None:
     from dataclasses import replace
 
-    from asymmetry.core.workflow.integral_scan import _holds_a_line
+    from asymmetry.core.workflow.integral_scan import _held_line
 
     scan = _scan()
     scan = replace(scan, value=0.18 - 0.04 / (1 + ((scan.x - 3500) / 1000) ** 2))
@@ -107,7 +107,7 @@ def test_width_search_does_not_truncate_a_partially_covered_line() -> None:
     assert fit["parameters"]["Bwid"] == pytest.approx(1000, rel=0.01)
     assert "Bwid" not in fit["params_at_bound"]
     # A fitted width with partial flanks still does not establish an isolated line.
-    assert not _holds_a_line(scan, {"x_min": 2000, "x_max": 5000})
+    assert _held_line(scan, {"x_min": 2000, "x_max": 5000}) is None
 
 
 @pytest.mark.parametrize(
@@ -428,7 +428,7 @@ def test_a_successful_fit_has_no_resonance_windows() -> None:
 
 def test_only_a_window_holding_a_line_is_named_as_another_dip() -> None:
     from asymmetry.core.transform.integral import FieldScan
-    from asymmetry.core.workflow.integral_scan import _holds_a_line
+    from asymmetry.core.workflow.integral_scan import _held_line
 
     x = np.linspace(1000.0, 3000.0, 81)
     error = np.full_like(x, 0.0005)
@@ -440,8 +440,47 @@ def test_only_a_window_holding_a_line_is_named_as_another_dip() -> None:
         return FieldScan(x, value, error, list(range(x.size)), "field", "integral")
 
     window = {"x_min": 1900.0, "x_max": 2500.0}
-    assert _holds_a_line(scan(dip), window)
-    assert not _holds_a_line(scan(step), window)
+    assert _held_line(scan(dip), window) == pytest.approx(2200.0, abs=10.0)
+    assert _held_line(scan(step), window) is None
+
+
+def test_every_dip_beyond_the_fitted_line_gets_its_own_window() -> None:
+    from asymmetry.core.transform.integral import FieldScan
+
+    # A hot ALC scan: a deep line, a smaller resolved one well below it and a
+    # third above, on a falling background (corannulene at 420 K, Haiku 2026-10-21).
+    x = np.arange(5000.0, 24601.0, 200.0)
+    error = np.full_like(x, 0.0004)
+    value = 0.2 - 2e-6 * (x - 5000.0)
+    for centre, depth in ((7000.0, 0.015), (14800.0, 0.03), (20000.0, 0.012)):
+        value = value - depth / (1.0 + ((x - centre) / 400.0) ** 2)
+    scan = FieldScan(x, value, error, list(range(x.size)), "field", "integral")
+
+    _, fit = fit_integral_scan(scan, "LorentzianLCR + Linear", x_min=13000.0, x_max=17000.0)
+    assert fit["success"]
+    dips = [
+        centre
+        for centre in (7000.0, 14800.0, 20000.0)
+        if any(w["x_min"] <= centre <= w["x_max"] for w in fit["next_dip_windows"])
+    ]
+    assert dips == [7000.0, 14800.0, 20000.0]
+
+
+def test_a_wide_minimum_reaching_a_deeper_dip_is_not_named_twice(monkeypatch) -> None:
+    from asymmetry.core.transform.integral import FieldScan
+    from asymmetry.core.workflow import integral_scan
+
+    x = np.arange(5000.0, 30001.0, 200.0)
+    error = np.full_like(x, 0.0004)
+    value = 0.2 - 0.03 / (1.0 + ((x - 15500.0) / 600.0) ** 2)
+    scan = FieldScan(x, value, error, list(range(x.size)), "field", "integral")
+    # The cold corannulene scan's two minima: a shallow wide one whose window
+    # reaches the deep line and fits it, and the deep line's own.
+    wide = {"centre": 10500.0, "x_min": 6600.0, "x_max": 17400.0, "prominence": 0.002}
+    deep = {"centre": 15400.0, "x_min": 13900.0, "x_max": 16900.0, "prominence": 0.03}
+    monkeypatch.setattr(integral_scan, "candidate_dip_windows", lambda _scan: [wide, deep])
+    assert integral_scan._held_line(scan, wide) == pytest.approx(15500.0, abs=10.0)
+    assert integral_scan._further_dips(scan, []) == [deep]
 
 
 def test_a_tf_stamp_on_a_kilogauss_run_that_keeps_its_integral_is_contradicted() -> None:

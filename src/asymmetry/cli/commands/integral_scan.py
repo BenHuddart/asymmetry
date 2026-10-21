@@ -494,6 +494,7 @@ def _notes(
         )
     if fit is not None and fit["resonance_windows"]:
         lines.append(_failed_fit_next(fit))
+        lines.extend(_unfitted_dips(fit, same_scan))
     elif fit is not None:
         lines.extend(_poor_fit_note(fit, same_scan))
     if fit is not None and any(name.split("_")[0] == "Bwid" for name in fit["params_at_bound"]):
@@ -870,20 +871,7 @@ def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
                     else "."
                 )
             )
-    unfitted = [
-        window for window in fit["next_dip_windows"] if not holds_dip([fit, *same_scan], window)
-    ]
-    if unfitted:
-        notes.append(
-            "NOTE: the scan holds another dip this fit does not include, in "
-            + "; ".join(f"{w['x_min']:g}–{w['x_max']:g}" for w in unfitted)
-            + ": fit it on its own local background — "
-            + "; ".join(
-                f"--model 'LorentzianLCR + Linear' --xmin {w['x_min']:g} --xmax {w['x_max']:g}"
-                for w in unfitted
-            )
-            + " — and report every dip the scan shows."
-        )
+    notes.extend(_unfitted_dips(fit, same_scan))
     if fit["reduced_chi_squared"] > _POOR_SCAN_FIT and len(resolved) < len(lines):
         notes.append(
             f"NOTE: the fit converged at chi2_red {format_number(fit['reduced_chi_squared'], 3)}: "
@@ -910,6 +898,28 @@ def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
             )
         )
     return notes
+
+
+def _unfitted_dips(fit: dict, same_scan: Sequence[dict]) -> list[str]:
+    """A note naming each dip of the scan that neither *fit* nor *same_scan* holds, with its window."""
+    unfitted = [
+        window for window in fit["next_dip_windows"] if not holds_dip([fit, *same_scan], window)
+    ]
+    if not unfitted:
+        return []
+    return [
+        "NOTE: the scan holds "
+        + ("another dip" if len(unfitted) == 1 else f"{len(unfitted)} more dips")
+        + " this fit does not include, in "
+        + "; ".join(f"{w['x_min']:g}–{w['x_max']:g}" for w in unfitted)
+        + (": fit it" if len(unfitted) == 1 else ": fit each")
+        + " on its own local background — "
+        + "; ".join(
+            f"--model 'LorentzianLCR + Linear' --xmin {w['x_min']:g} --xmax {w['x_max']:g}"
+            for w in unfitted
+        )
+        + " — and report every dip the scan shows."
+    ]
 
 
 def _failed_fit_next(fit: dict) -> str:

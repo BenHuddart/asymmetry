@@ -1290,7 +1290,7 @@ a significance, a whole-number percentage or a
 command printed that exact token (``×``, ``x`` and "times" alike). A number its
 context makes arithmetic — after "a factor of" or a difference phrase ("within
 about 2 G", "differ by 0.6", "falls by about 0.03 MHz", "agree with the survey
-to about 0.02 MHz", "a margin of 3.6"), named as a comparison ("4 points
+to about 0.02 MHz", "a margin of 3.6", "the step is about 0.007"), named as a comparison ("4 points
 better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` (``±0.2 MHz``) —
 is listed unless a command printed it verbatim to three or more significant
 digits, as a run number or a field on the scan's grid is; a ratio in words
@@ -1450,9 +1450,15 @@ that failed; a failed fit names the minimiser's reasons and any parameter at a
 bound, and suggests fitting one resonance per ``--xmin``/``--xmax`` window
 around the scan's own dips. A fit that converges with a χ²\ :sub:`r` above 2
 is told why that may be — a background no polynomial can follow across a long
-scan, or a dip the model leaves out — and, when a single line fitted inside the
-seeder's window for one more resonance falls below its background by five
-errors, that window is named with the command that fits it. A line fitted
+scan, or a dip the model leaves out. After any resonance fit, converged or
+failed, every dip the fitted lines leave out is named with its own window and
+the command that fits it ("the scan holds another dip", or "N more dips"): the
+seeder's window for one more resonance, and the window of each other significant
+interior minimum (the ``LOCAL DIP CANDIDATES`` screen below), taken deepest
+first. A window is named when a single line fitted inside it falls below its
+background by five errors and lands outside every window already named, so a
+wide shallow minimum whose window reaches a deeper neighbour's line is not named
+twice. A line fitted
 inside an ``--xmin``/``--xmax`` window with data on both flanks, an amplitude
 five errors from zero, nothing at a bound and a χ²\ :sub:`r` of at most 8 is
 called a resolved ``RESONANCE`` to report, with its errors qualified when

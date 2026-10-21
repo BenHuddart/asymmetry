@@ -3028,6 +3028,53 @@ rubric or runner was changed for this evaluation. Documentation validation:
 unreachable external inventories;
 none referenced this results record. `git diff --check` passed.
 
+## Two CLI gaps from the PR #369 Haiku waves — 2026-10-21
+
+The paired Haiku 5.5 waves for the skill consolidation (PR #369) traced two
+failures to CLI output rather than the skill text. Both fixes are in the CLI;
+`SKILL.md` is unchanged.
+
+**Audit: a hedged step between two printed levels.** TRSB wrote "Δ is 0.2604
+… and 0.2530 …. The step is about 0.007 μs⁻¹" and `audit` passed it: "step"
+was missing from the difference nouns ("the shift is about …", "a margin of
+…"), so 0.007 was matched loosely and found within one unit of the last digit
+of an unrelated printed error (0.0072087). "step" and "jump" now join the
+nouns, so the number counts as derived unless printed verbatim to three
+significant digits. Replay against each run's logs: 277 stored final replies
+(both Haiku arms plus the Luna overnight rounds 1–20 and confirmations 2–9 of
+2026-10-20) and the 49 full drafts the Haiku agents wrote — **one flag added**
+(TRSB's "0.007"), **none removed**.
+
+**`integral-scan`: only the largest dip was named.** A converged fit's
+`next_dip_windows` came from seeding one more line, so the 420 K corannulene
+scan named only its 14.8 kG dip (window 9800–18000) and its resolved 7 kG
+line was never windowed by either arm (the branch arm never ran the hot ALC
+scan at all). `next_dip_windows` now adds the window of every significant
+interior minimum (`candidate_dip_windows`, the `LOCAL DIP CANDIDATES` screen),
+deepest first, when a one-line fit inside it is a resonance (`_held_line`) and
+lands outside every window already named. A wide shallow minimum whose window
+reaches a deeper neighbour fits that neighbour's line, so it is dropped
+instead of named twice (the cold scan's 10.5 kG trough). A failed fit now also
+gets the note for dips beyond the windows of its own lines. Replay: 701 unique
+stored fits from 1,357 scan payloads (corannulene, benzene, TCNQ), refitted
+with old and new code. At CLI level (the windows the note prints after
+filtering out dips the fit itself holds), new windows appear only on real
+lines: corannulene hot 7 kG (58 fits) and 14.8 kG (48), corannulene cold
+15.5 kG (54), benzene liquid 28.9 and 29.5 kG (13 each, on failed fits that
+had no note before). TCNQ's 3.1 kG line is always held by the fit itself. The
+shallow minima are rejected: hot 9.2/10 kG, cold 10.5/10.8 kG, and the noise
+minima of benzene's o-p scan and the narrow scans. Of 522 stored (work
+directory, scan) groups, two end states change, where `audit` would now hold the
+replies: Haiku main-arm corannulene (the 7 kG line, the rubric's miss) and Luna
+round 9 corannulene (the cold 15.5 kG line).
+
+Rejected after replay (review on #371): a χ²ᵣ cutoff on the local one-line
+fit. Every window the test accepts on the stored scans lies on a real line,
+at χ²ᵣ 1.3–43; TCNQ's 3.1 kG line fits at 15–43 (high statistics, not quite
+Lorentzian), and benzene's 29.5 kG and corannulene's cold 15.5 kG lines at
+10–18. The RESONANCE limit of 8 would drop all three; any cutoff above 43
+rejects nothing stored.
+
 ## Open questions for the maintainer
 
 From round 2 (2026-10-09), for Ben:
