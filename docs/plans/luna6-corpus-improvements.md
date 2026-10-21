@@ -2300,3 +2300,6 @@ Confirmation9 now21/24scored:LiFeAs8/8Musts4/6Shoulds andRe6Zr7/7Musts4/6Shoulds
 
 
 Confirmation9 now23/24scored:corannulene10/10Musts2/6Shoulds science/copyPASS;benzeneALC7/7Musts2/6Shoulds sciencePASS/copyFAILpostpreparationphrase/punctuationrewrite. Totals137/138Musts,21/23science,22/23copy,20/23combined,23/23boundary,51/97Shoulds;AFMscopePASS. Corannulene12500inputexception andALCconditionalconvergedupperfeaturejudgementretained. OnlyBasicsrunning;sourcefrozenuntilfinish.
+
+
+Confirmation9 ALL24scored:Basics8/9Musts3/7Shoulds scienceFAILphysicaluseofrailed943/640/550Klogsasconfounds;copyPASS. Totals145/147Musts,21/24science,23/24copy,20/24combined,24/24boundary,54/104Shoulds;AFMscopePASS. SciencefailsEuOunitcontext/Cuactualcold-nextnu/Basicsfaultylogger;ALCcopyrewrite. Verifyallsource/raw/images/resourcesbeforeendingfreeze/generalrepairs. No morefullgatesaftercutoff.

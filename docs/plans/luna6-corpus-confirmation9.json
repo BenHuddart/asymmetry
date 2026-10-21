@@ -1,5 +1,5 @@
 {
-  "status": "running; 23/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 24/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -4299,23 +4299,346 @@
       ],
       "scored_at": "2026-10-21T05:12:39.372380+00:00",
       "reply_matches_saved_file": false
+    },
+    "basics": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Treats the folder as several separate calibration exercises. It names at least the Ag TF field scan, the quartz range curve, the quartz low-field muonium scan and the steering scan, and analyses them separately. It does not present the survey's 24-run 100 G \"temperature scan\" or its 2-run ZF one as a temperature dependence.",
+          "pass": true,
+          "evidence": "SeparateAgfield/quartzfoil/quartzMu/steeringexercises; mergednominaltemperaturegrouprejected."
+        },
+        {
+          "requirement": "Keeps the EMU and MUSR runs 44989–44997 apart and says which set is which (EMU: haematite on Ag at 100 G, the steering scan; MUSR: Ag calibration). It does not read the MUSR runs' ~0.29 MHz line as spontaneous order in Ag: the header says 0 G, but the line comes from an unrecorded weak transverse field.",
+          "pass": true,
+          "evidence": "EMUHema versusMUSRAgcandlestickdistinct;~.28MHzMUSRlineunrecordedweakTFnotspontaneousorder."
+        },
+        {
+          "requirement": "Quotes no logged 943 K, ~640 K or ~550 K reading as a sample temperature. It says these logged values are faulty or irrelevant to these room-temperature calibrations, and claims no temperature trend.",
+          "pass": false,
+          "evidence": "Reports943Kfoilblock as a real temperature/sequence confound andusesdifferent311Kendpointtoarguetemperatureisnotsoledriver. Doesnotstatefaulty/irrelevantroomTlogger; similar640/550Kvaluesusedformatchingstatements."
+        },
+        {
+          "requirement": "Steering: fits the Ag-mask asymmetry against the current taken from the run notes, and reports it smallest near zero current (between −0.25 and +0.25 A), rising on both sides.",
+          "pass": true,
+          "evidence": "Notes-axissteeringfitminimum0A5.29286%,rises7.133/-1A and8.098/+1A."
+        },
+        {
+          "requirement": "Range curve: reports the 100 G diamagnetic amplitude as small and roughly flat for thin stacks, then rising steeply and saturating for the thickest. It names, from its own fits, the foil count (as the run notes give it) where saturation begins — about 12–14 foils (a range such as \"13–15\" counts).",
+          "pass": true,
+          "evidence": "Actualfoilcountstep/saturation13foils, thin0/4flat andrisingthickerstack."
+        },
+        {
+          "requirement": "Quartz scan: identifies the few-gauss lines as muonium (a line far faster per gauss than the bare muon's — the ratio itself need not be quoted). It reports the muonium amplitude falling as the frequency rises, and the line lost at the top fields, and presents the amplitude fall as the instrument's frequency-response limit (attributing the line's loss at the top fields to it too is a Should).",
+          "pass": true,
+          "evidence": "QuartzMu linefastperG,amplitudefades/risingfrequency andlosthighfield, instrumentresponseexplicit."
+        },
+        {
+          "requirement": "Ag field scan: reports the fitted frequency tracking the applied field. It also reports the fitted phase against field. On the file's t0 the phase drifts steadily with field (a t0 offset), so calling it field-independent without a t0 test is a fail.",
+          "pass": true,
+          "evidence": "AgfrequencyfieldLinearandphase residualsystematictrendafter-2bintestreports."
+        },
+        {
+          "requirement": "States which run supplied alpha for each exercise it fits. It does not carry one alpha across the survey's ALPHA STEPs.",
+          "pass": true,
+          "evidence": "Exercise-specificalpharuns/values,18864separatestep."
+        },
+        {
+          "requirement": "Contains no t0 correction, stopping density (mg/cm²), steering centre, upper frequency, field offset or alpha that was not produced by a tool call in this session. The worksheet's Ti density and foil thickness are background.",
+          "pass": true,
+          "evidence": "No manualt0/density/fieldconversion;CLIprintedderivedHIFIfield19.29G."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reads each exercise's pattern the right way round: the steering scan's silver signal is smallest where the beam is centred on the (depolarising) sample; the range curve's step is where the muons stop passing through the degraders into the sample. An inverted reading is a gap even when the Must's pattern is reported.",
+          "pass": false,
+          "evidence": "No explicitbeamcenterondepolarisingmask ormuonsstoppingindegraderexplanation."
+        },
+        {
+          "requirement": "Does not dismiss a relative amplitude trend (the muonium frequency response) on the ground that alpha is uncertain: one alpha scales every amplitude alike.",
+          "pass": true,
+          "evidence": "RelativeMuamplitudefallpreservedasinstrumentresponse,notdismissedforalpha."
+        },
+        {
+          "requirement": "Deadtime: reduces ZF Ag 34998 with deadtime off and from the file, and describes the early-time sag in asymmetry that the correction removes, with both fits' χ²ᵣ. Says the 2010 files carry no deadtime values.",
+          "pass": false,
+          "evidence": "No paireddeadtimeoff/fromfileearly-sagfitcomparison."
+        },
+        {
+          "requirement": "Measures MUSR alpha on a MUSR Ag run and says why that is legitimate, since the survey lists no MUSR candidate because the header records 0 G. Alternatively, it says plainly that it assumed 1.0.",
+          "pass": true,
+          "evidence": "MUSR44989alpha1.2333measured,weakTFunrecordedfield/headerreason explicit."
+        },
+        {
+          "requirement": "t0: tests `--t0-offset` (or fits `Linear` to phase against field), reports the shift in bins that flattens the phase, and checks the fitted frequency against the nominal field.",
+          "pass": false,
+          "evidence": "-2bintestreportsresidualsystematicphase,notflattenedphaseverification."
+        },
+        {
+          "requirement": "Treats 18864 as its own alpha block, or excludes it and says why.",
+          "pass": true,
+          "evidence": "18864ownalpha1.0632/excludedcommontrend."
+        },
+        {
+          "requirement": "Says that turning the saturating foil count into mg/cm² needs the foil thickness and Ti density, which the files lack, and does not present that conversion as Asymmetry output.",
+          "pass": false,
+          "evidence": "Nofoilthickness/Tidensityrequirementformg/cm2conversion."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. DirectCLI/scalarprovenanceverified,includingHIFIderivedfield; no physical arithmetic. DynamicKTnuMHz expressed as inverse-microsecondrate withsame numericalscale, not independentlyconvertedphysicalquantity.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science8/9 FAIL: faulty room-temperature logger values are interpreted as a physical temperature confound rather than faulty/irrelevant calibration metadata. Exactcopy passes.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all114 completed commands inspected. All114completedcommandsinspected. CLI/reportedit commands only, no scriptedphysicalarithmetic. Fourreviewhashesverified; quartzMu/foiltrend pixelsinspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1834.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 18,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --series series-ag350-line-t0m2 --model Linear --param frequency --xmin 20 --xmax 100 --plot --workdir asymmetry-work-ag350-t0m2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --series series-quartz-mu-line --model Linear --param frequency --xmin 0.5 --xmax 7.0 --plot --workdir asymmetry-work-quartz'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --run 18888 --instrument EMU --workdir asymmetry-work-foils'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --run 44989 --instrument EMU --workdir asymmetry-work-steering'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --runs 18888-18899 --recipe wizard-18888 --order foils --x 18888=0,18889=4,18890=6,18891=8,18892=9,18893=9,18894=10,18895=11,18896=12,18897=13,18898=14,18899=15 --start 18888 --plot --instrument EMU --workdir asymmetry-work-foils'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --runs 44989-44997 --recipe wizard-44989 --order steering --x 44989=0,44990=0.25,44991=0.5,44992=0.75,44993=1,44994=-0.25,44995=-0.5,44996=-0.75,44997=-1 --start 44989 --plot --instrument EMU --workdir asymmetry-work-steering'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --runs 34998 --instrument EMU --alpha-from 34999 --deadtime from_file --background range --plot --workdir asymmetry-work-ag280'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --runs 34999 --instrument EMU --alpha-from 34999 --deadtime from_file --background range --plot --workdir asymmetry-work-ag280'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --runs 44998 --instrument EMU --alpha-from 44998 --deadtime from_file --background range --plot --workdir asymmetry-work-ag295'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --runs 44999 --instrument EMU --alpha-from 44998 --deadtime from_file --background range --plot --workdir asymmetry-work-ag295'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --runs 44989-44997 --instrument MUSR --alpha-from 44989 --deadtime from_file --background range --plot --workdir asymmetry-work-musr-cal'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --runs 18850,18852-18863 --recipe wizard-18854 --order field --start 18854 --plot --instrument EMU --workdir asymmetry-work-ag350'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --series series-wizard-18854 --plot --workdir asymmetry-work-ag350'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --run 62798 --instrument HIFI --plot --workdir asymmetry-work-hifi'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry wizard /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --run 19643 --plot --instrument EMU --workdir asymmetry-work-quartz-high'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fourier /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data --run 19643 --window none --tmin 0.1 --tmax 8 --fmin 0.1 --fmax 15 --plot --instrument EMU --workdir asymmetry-work-quartz-high'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"cat > summary.md <<'EOF'\n# μSR data summary\n\n## Experiment\n\nThe staged folder contains 68 run files: 58 EMU, 9 MUSR and 1 HIFI. The survey separates several campaigns rather than one continuous scan. Geometry below is assigned from the measured time traces and resolved precession frequencies in the reduced spectra/FFT, together with the scan records; file-header field labels alone were not treated as proof. Resolved transverse oscillations establish TF for the listed field scans. The zero-field controls show no comparable resolved oscillation and are treated as ZF. There is no independently verified LF geometry in this dataset.\n\n- **Ag field scan, EMU 18850, 18852–18864:** TF, 5–100 G, nominal 350 K. The 13 common-calibration points are 18850 and 18852–18863; 18864 is a separate 45 G alpha-step run. Run order generally tracks field. Its oscillatory signal is seen throughout the common scan; the amplitude changes with frequency/instrument response, not as a sample transition.\n- **Quartz foil scan, EMU 18888–18899:** TF, 100 G, nominal 290 K, foil coordinate 0–15. The measured sequence is 0, 4, 6, 8, 9, 9, 10, 11, 12, 13, 14, 15 foils. The oscillatory line is resolved at both endpoints. Logged temperatures are 294.74–295.03 K for 18888–18889, 943.48 K for 18890–18898, and 311.39 K for 18899. These logs show a strong temperature/sequence confound over the middle of this scan; the final high-foil point has a different logged temperature from that middle block.\n- **Quartz field scan, EMU 19625–19643:** near-room-temperature TF scan, 0.5–9 G, nominal 300 K; the logged span is approximately 298.02–296.06 K. The scan members are 19625–19636 and 19638–19643; 19625 and 19629 repeat 2 G, while 19637 is a 6 G calibration run excluded from the trends. Ordered scan points approximately track field. A muonium line is resolved at low field, weakens with field, and is unresolved at 8.5–9 G. A second 8 G fit is flagged and does not establish a line there.\n- **Ag controls, EMU 34998–34999:** ZF run 34998 and TF run 34999 at 100 G, nominal 280 K; logs are 294.94 and 294.52 K. Traces support the ZF/TF assignments. These are calibration/control measurements, not a temperature scan.\n- **Haematite-on-Ag steering scan, EMU 44989–44997:** TF at 100 G, nominal 295 K; steering coordinate −1 to +1 A. Run order follows steering. Logged temperatures are approximately 643.79–645.21 K, far from the nominal setpoint but close within this block. Resolved oscillation remains across the scan. The matched Ag TF reference is EMU 44998 at 100 G; its logged temperature is 641.38 K. The separate Ag ZF run EMU 44999 has a 0 G setting and logged temperature 550.60 K, so it is not a matched-temperature ZF/TF pair.\n- **Ag-on-candlestick calibration, MUSR 44989–44997:** zero-field headers, nominal 290 K, with logged temperatures 141.97–98.87 K. The traces and FFTs show a weak, reproducible transverse oscillation near 0.28 MHz, so the measured signal is consistent with an unrecorded weak transverse field. This is a calibration campaign, not evidence for spontaneous magnetism or a sample temperature dependence. These MUSR runs are distinct from the EMU runs bearing the same numbers.\n- **Ag calibration, HIFI 62798:** one 20 G, 300 K TF run. Its measured oscillation confirms the transverse geometry; there is no scan.\n- **Additional Ag ZF/TF runs:** EMU 44998 is the TF reference above, and EMU 44999 is ZF. HIFI 62798 is a single TF calibration point. None supplies a matched field/temperature series beyond those described.\n\n## Calibration\n\nAlpha was calibrated independently for each campaign; it was not assumed to be one common value. The Ag 350 K series used EMU 18862 (α = 0.9055); Quartz field used EMU 19637 (α = 1.0650); foil scan used EMU 18888 (α = 0.8951); Haematite steering used EMU 44989 (α = 1.1036); Ag 280 K controls used EMU 34999 (α = 0.8871); the later Ag pair used EMU 44998 (α = 0.9345); MUSR candlestick calibration used MUSR 44989 (α = 1.2333); HIFI 62798 calibrated itself (α = 0.9537). Deadtime was taken from the files. The reductions used the instrument detector grouping/profile supplied by the CLI for each instrument. Background was not subtracted where no pre-t0 region was available; the pulsed-source MUSR and later Ag reductions used the CLI tail-fit treatment where recorded. The Ag 18864 alpha-step is distinct (its own α = 1.0632), so its amplitude is not merged into the 18850–18863 common-calibration trend.\n\n## Model\n\nThe screened Ag 350 K TF run EMU 18854 had a Fourier peak at 1.404216 MHz. Its single-line wizard recommendation was an oscillatory Gaussian envelope plus constant. The Quartz foil scan was screened on EMU 18888; the wizard recommended an oscillatory exponential envelope plus constant, with its 1.395 MHz line. The Quartz field scan used the corresponding single muonium line model, seeded from run 19629. The steering scan was screened on EMU 44989; the wizard recommended oscillatory times exponential plus constant, with medium confidence and a negative runs-test residual diagnostic. These recommendations were used for the respective series, except that the Ag 350 K field series used its Gaussian envelope as selected by per-run comparisons; the Quartz field scan used the exponential model where it was resolved. No parameter was fixed to force a trend.\n\nIn \"'`(Oscillatory × Exponential) + Constant`, the oscillatory term is the coherent precessing asymmetry, its amplitude A₁ is the measured line amplitude, its frequency is the precession frequency, phase is the time-zero phase, and exponential Λ is the damping/relaxation rate of that coherent component. In `(Oscillatory × Gaussian) + Constant`, the Gaussian width σ describes inhomogeneous dephasing of the line. The additive Constant represents non-oscillating/background asymmetry over the fit window; it is not an extra precession line. In the Quartz integral-asymmetry analysis there is no fitted spectral component: it is an integrated estimator over the retained time spectrum. A₁ values below are in percent asymmetry; no CLI output gives a fraction of total asymmetry for these components, so no such fraction is inferred.\n\n## Results\n\n### Ag TF field response\n\nFor EMU 18850, 18852–18863, the `(Oscillatory × Gaussian) + Constant` series fits used the full retained time window, 0.10500006–31.753005 μs, with frequency free per run. The frequency trend over 20–100 G is linear: slope 0.013912 ± 0.000002 MHz/G and intercept 0.013132 ± 0.000093 MHz (χ²red = 1.946). At 20 G, A₁ = 22.0277 ± 0.0290% and frequency = 0.29123 ± 0.000094 MHz; at 100 G, A₁ = 20.6202 ± 0.0288% and frequency = 1.40413 ± 0.000093 MHz. The frequency tracks applied field while the amplitude declines modestly, consistent with frequency-dependent instrument response. The full per-run fits are poor (χ²red approximately 1.25–1.46), and phase has a residual systematic trend after a −2-bin retiming. These fit values are conditional line parameters, not microscopic relaxation or site quantities.\n\nThe Fourier spectrum is an FFT of EMU 18854, Hann window, 0.1–20 μs, 0–31.25 MHz, 2489 bins, resolution 0.0502816 MHz. Its peak table detects 1.404216 MHz (SNR 101.13), consistent with the resolved time-domain line. The separate EMU 18864 fit used 0.10500006–31.753005 μs and gives A₁ = 13.0152 ± 0.0235%, frequency = 0.639684 ± 0.000119 MHz, phase = 0.04878 ± 0.00234, σ = 0.02063 ± 0.00163, and constant = 0.4937 ± 0.0153, with χ²red = 1.5768. Its structured residuals and separate alpha step make it unsuitable for the common trend.\n\n### Quartz field response\n\nThe integral-asymmetry series uses the full retained spectra for 18 scan members (19625–19636 and 19638–19643), with α from 19637. The plotted estimator decreases overall from positive at 0.5 G to negative at 9 G; it does not recover at the high-field end. At the repeated 2 G coordinate, run 19625 gives 0.007380 ± 0.000399 and run 19629 gives 0.009117 ± 0.000206. The plotted separation makes clear that this repeat does not reproduce closely. The local dip is not a resolved resonance: the candidate center and width depend strongly on the baseline/window, widths hit bounds in the narrow-window Lorentzian/cubic fits, and fit quality remains poor. In the wider 0.5–6.5 G cubic fit, center = 2.963 ± 0.352 G and width = 1.897 ± 1.261 G (χ²red = 4.159), with insufficient flanking coverage to establish a line. No ALC or hyperfine conversion is justified.\n\nFor the resolved muonium line, the `(Oscillatory × Exponential) + Constant` series fit used 0.10099563–31.756588 μs for runs 19625–19636 and 19638–19641 (the calibration run 19637 and non-line runs 19642–19643 were excluded). The frequency trend from 0.5–7 G is linear, with slope 1.392218 ± 0.001513 MHz/G, intercept −0.094690 ± 0.004111 MHz and χ²red = 4.629. A₁ decreases from 4.44561 ± 0.08737% at 1 G and 3.98671 ± 0.07289% for repeat 19629 at 2 G to 2.05682 ± 0.07557% at 4.5 G, 1.71372 ± 0.07371% at 5 G, 0.69227 ± 0.06511% at 6.5 G and 0.58604 ± 0.06665% at 7 G. At 8 G, A₁ = 0.6744 ± 0.1749% is flagged `spurious_reseeded`; the 7.5 G fit fails, and no resolved line is established at 8.5–9 G. Thus the actual endpoint spectra show a low-field line and no resolved high-field line. The declining A₁ principally follows the rising line frequency and instrument response; the exponential envelope is preferred at 0.5–5 G, while Gaussian/exponential comparisons are indeterminate at higher field and fit quality degrades. Do not interpret high-field nuisance parameters as a reliable rate trend.\n\nThe line spectrum is an FFT of run 19629 (2 G), no window, 0.1–8 μs, 0.12652–14.9926 MHz, 471 bins, resolution 0.126648 MHz. Its peak table detects 2.694350 MHz (SNR 8.74). At 9 G, the corresponding FFT has a low-frequency first-bin/DC transient, not a resolved oscillatory line; the apparent 0.129923 MHz entry is not a physical precession peak. The inspected time trace is non-oscillatory at that end.\n\n### Quartz foil response\n\nThe foil series fit for runs 18888–18899 used `(Oscillatory × Exponential) + Constant` over 0.10500006–31.753005 μs. A₁ is 3.528 ± 0.107% at zero foils and 3.514 ± 0.078% at four; it then rises to 3.805 ± 0.119% at six, 3.985 ± 0.109% at eight, about 9.44% at ten, 15.07% at eleven, and a high level of approximately 21.5–22.1% at thirteen to fifteen foils. The rise begins between six and ten foils and the high level is reached at thirteen foils. The line is resolved at both zero and fifteen foils. The 9-foil repeats differ modestly. Exponential and Gaussian envelopes could not be distinguished across the scan; several fits are flagged for overdoing or large relative errors, so no foil-dependent relaxation mechanism is established. The logged 943.48 K block coincides with much of the rise, so foil count alone cannot explain it; the 15-foil point is also high at a logged 311.39 K, which argues against temperature being the sole driver.\n\nThe FFT is of the co-add of runs 18892–18893 (9 foils), no window, 0.1–12 μs, 0.105–2.98219 MHz, 138 bins, resolution 0.0841184 MHz. Its peak table detects 1.389188 MHz (SNR 16.65). The individual run 18888 FFT detects 1.387619 MHz (SNR 11.83) with the same window and resolution. These are algorithmically detected lines; the plotted step/shoulder in A₁ is a visual scan feature, not an independently fitted transition coordinate.\n\n### Haematite-on-Ag steering response\n\nThe steering series fit used runs 44989–44997, `(Oscillatory × Exponential) + Constant`, 0.19300006–32.593005 μs. A₁ has a minimum at 0 A: 5.29286 ± 0.14936%. It rises to 7.133 ± 0.152% at −1 A and 8.098 ± 0.139% at +1 A, with intermediate values shown in the stored trend table. The attached plot confirms a U-shaped but asymmetric scan. Frequency remains near 1.385–1.390 MHz. All fits are flagged `overdone`, and the envelope comparison is indeterminate, so the damping terms do not establish a physical rate variation. The line is present across the scan endpoints. This is consistent with steering-dependent beam/sample overlap or acceptance changing the coherent amplitude; it is not evidence of a thermal transition or a change of magnetic phase.\n\nThe steering wizard screened EMU 44989 and found a 1.384 MHz line (SNR 17.6), medium confidence with a runs-test residual caveat. The matched Ag reference EMU 44998 fit over 0.19300006–32.593005 μs gives A₁ = 22.0687 ± 0.0308%, frequency = 1.39201 ± 0.0000696 MHz, phase = −0.09372, Λ = 0.0039597 ± 0.000436 μs⁻¹, constant = 1.0355 and χ²red = 1.035. Hema amplitude is lower than this Ag reference at similar logged temperature, but alpha calibration changes at the campaign boundary, so the quantitative cross-campaign amplitude comparison is conditional. The fitted line remains at the expected muon-precession scale; no site assignment follows from it.\n\n### Other calibration and control observations\n\nThe MUSR 44989–44997 calibration reductions used `(Oscillatory × Exponential) + Constant` over 0.094000086–32.286005 μs, with tail-fit background. Frequencies lie from 0.278155 to 0.281976 MHz; A₁ runs from 14.38 to 16.46% across the listed calibration series. The line is reproducible, while the anomalously low logged temperatures and zero-field headers identify this as a calibration/field-offset issue rather than a sample transition. FFTs use no window and 0.1–12 μs: run 44989 (0.105007–0.987063 MHz, 43 bins, resolution 0.0841184 MHz) detects 0.281784 MHz (SNR 11.29); the co-add 44993–44995 detects 0.279283 MHz (SNR 29.62), and co-add 44996–44997 detects 0.280828 MHz (SNR 12.25). The narrow FFT band and finite resolution qualify these peak values.\n\nFor Ag controls, EMU 34999 at 100 G has a resolved 1.39 MHz FFT line (SNR 148); its wizard fit gives A₁ = 20.96%, with structured residuals and Λ at its lower bound. EMU 34998 is ZF: its trace has only small curvature and the wizard’s MuoniumZF fit returns pathological parameters, so those parameters do not support a Kubo–Toyabe or hyperfine conclusion. HIFI 62798 at 20 G has a detected 0.2614 MHz line (SNR 14.8); its fit gives 0.2622 MHz and A₁ = 21.47%, but Λ is at its lower bound and residuals are structured. Its single-run derived field is 19.29 G. EMU 44999 is ZF Ag with a broad, weakly sloped trace; the dynamic-GKT fit is pathological, so no meaningful ZF relaxation result follows. It is not temperature matched to EMU 44998.\n\n## Excluded or flagged runs\n\n- EMU 18864 has a separate alpha step; its fit is retained only as a separate observation, not pooled in the Ag 350 K common-alpha trend.\n- Quartz 19637 is calibration, not a scan point. Runs 19642–19643 have no resolved muonium line; the 9 G low-frequency FFT entry is a baseline transient. The 7.5 G fit fails, and 8 G is `spurious_reseeded`; their line parameters are not results.\n- Foil fits include `overdone` and `large_rel_err` flags; the affected envelope/rate parameters are not established, though the amplitude trend remains visible and is reported with its qualifications.\n- Every steering fit is `overdone`; the coherent amplitude and near-constant fitted frequency remain visible, but steering-dependent damping is not a result.\n- Ag ZF fits (34998 and 44999) return pathological model parameters; they do not establish a relaxation law. Ag TF control/reference and HIFI fits have lower-bound damping and structured residuals, so their damping values are not physical rate determinations.\n- Ag 350 K common-series fits are poor overall; quoted conditional frequencies and amplitudes are supported by the clear oscillation and peak spectrum, but phase/relaxation interpretation is limited.\n\n## What this suggests\n\nThe clearest quantitative result is a coherent muonium precession line in Quartz at low transverse field whose frequency rises approximately linearly with applied field while its measured amplitude fades and the line becomes unresolved at high field. The line scale is consistent with muonium precession; an increase in frequency-dependent detector response, changing relaxation, or both can reduce the measured coherent amplitude. The evidence does not isolate those mechanisms. The Quartz integral estimator has a broad curved field dependence and a poorly reproduced 2 G point, but no stable narrow LCR/ALC resonance has been resolved. The visible shoulder/dip is therefore a qualitative feature, not a measured resonance center.\n\nThe foil scan shows a large increase in coherent asymmetry with foil coordinate, but foil count is confounded with the recorded high-temperature block. Its persistence at the final foil point at a different logged temperature suggests temperature alone is insufficient; the present fits do not determine whether the cause is stopping/overlap, sample response, or another setup change. The steering scan supports a geometrical acceptance/overlap effect on amplitude, with no resolved frequency shift. Ag runs primarily provide calibration and background controls. The weak MUSR line in the zero-field-header calibration is consistent with an unrecorded field offset and should not be called spontaneous magnetism. No evidence here establishes superconductivity, magnetic ordering, or a microscopic muonium site.\n\n## Not done, and why\n\nNo MaxEnt field spectra or multi-group field-distribution analysis was run; this workflow used FFT peak detection and time-domain fits, so no static-field distribution was extracted. The CLI does not provide the needed microscopic radical ALC/hyperfine or site Hamiltonian for Quartz, so coupling constants and stopping-site assignments cannot be obtained from the dip-like integral curve. Count-domain fits were not attempted; the reported reductions and fits are asymmetry-domain products. No joint global model links foil, temperature, steering and field effects, and the logged temperatures/alpha boundaries make such pooling unjustified here. High-field Quartz line fits fail or are unresolved, so no high-field relaxation rate is established. The pure-Ag ZF fits are pathological, leaving no reliable ZF relaxation comparison. No independently verified LF scan or external field/orientation record was available, so LF dynamics and a Redfield correlation time were not assessed. The HIFI and standalone Ag points are calibrations, not scan coverage.\n\n## Files\n\nasymmetry-work-ag350\nasymmetry-work-quartz\nasymmetry-work-foils\nasymmetry-work-steering\nasymmetry-work-ag280\nasymmetry-work-musr\nasymmetry-work-hifi\nasymmetry-work-ag-hot\nasymmetry-work-quartz/plots/quartz-field.png\nasymmetry-work-quartz/plots/series-quartz-mu-line-trend-A_1.png\nasymmetry-work-foils/plots/series-wizard-18888-trend-A_1.png\nasymmetry-work-steering/plots/series-wizard-44989-trend-A_1.png\nEOF\nasymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"rg --files asymmetry-work-ag280/recipes asymmetry-work-ag-hot/recipes && rg -n 'recipe|fit --run|wizard' asymmetry-work-ag280/cli-output.log asymmetry-work-ag-hot/cli-output.log | tail -25\"",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry fit '/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data' --instrument EMU --run 34998 --recipe wizard-34998.json --workdir '/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/project/asymmetry-work-ag280' --plot\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry fit '/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data' --instrument EMU --run 34999 --recipe wizard-34999.json --workdir '/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/project/asymmetry-work-ag280' --plot\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry fit '/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/data' --instrument EMU --run 44999 --recipe wizard-44999.json --workdir '/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics/project/asymmetry-work-ag295' --plot\"",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "528e812677825ee30a3ccbb32262bc35d15d2e78ef5c39b73ab60b30fbbbb299",
+      "audited_file_sha256": "528e812677825ee30a3ccbb32262bc35d15d2e78ef5c39b73ab60b30fbbbb299",
+      "rubric_sha256": "9a7e1671e076193352ce4016016147c30a58b3f8098aef4a5b6383f19d34c8cc",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/basics",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Actual final explicitly says943.48Kblockconfoundsfoilcountanduses311.39Kendpointtoarguetemperaturealoneinsufficient; this differs from prior wave explicitfaultysensorjudgement andisnot silentlyregraded.",
+        "MUSR99–142Kplausiblebutirrelevantcalibration readings distinguishedfromrailed943/644/550Kroom-temperaturelogs.",
+        "Agphaseafter-2binsstillsystematic; no validatedt0flattening.",
+        "QuartzupperlineunresolvedandpathologicalAgZFfitnotrescued; nohyperfine/siteclaim.",
+        "ApparentreviewfoilPNGaxis/pointpatternversusnotes-suppliedfoilcoordinatesneedscontrolledpostfreezereproduction; snapshothashfa44ce... retained,notconfirmedbug."
+      ],
+      "judgement_calls": [
+        "M3FAIL rests on explicit causal use of943K as temperatureconfound inExperiment/Results/Whatthissuggests, notmerelyquotingthefaultylog. Previouswaveidentifiedsensorproblemsandthereforepassed;historicalscoreunchanged."
+      ],
+      "number_evidence_commands": [
+        2,
+        6,
+        7,
+        8,
+        9,
+        10,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        46,
+        47,
+        48,
+        49,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        88,
+        89,
+        93,
+        106,
+        107,
+        108,
+        109
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "528e812677825ee30a3ccbb32262bc35d15d2e78ef5c39b73ab60b30fbbbb299",
+        "summary.md": "528e812677825ee30a3ccbb32262bc35d15d2e78ef5c39b73ab60b30fbbbb299",
+        "transcript.jsonl": "49d9cc66d6173ae29e58b8994f52d0a6a5e580ae030930dee9f1ebd4c2a3f174",
+        "commands.txt": "7c848ac3db3af2ae06e943f79cf705ae6995e4bd56f48d92836487152c0dfe75",
+        "cost.json": "e301a29d0b0f234763ee3b0edaa9fbcda062d246f6738f315a0a5e7c4741cbef",
+        "image-inputs.json": "90d75565a10b55a35f6fc89a7a644eb5914465d148179aff798539c1bde5baa8"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work-quartz/plots/quartz-field.png",
+          "snapshot_path": "review-images/51c5b648afcb5d5f66798dcc0540bce7563daa56df7cd24bb2d256520486a3d3.png",
+          "bytes": 26879,
+          "sha256": "51c5b648afcb5d5f66798dcc0540bce7563daa56df7cd24bb2d256520486a3d3",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-quartz/plots/series-quartz-mu-line-trend-A_1.png",
+          "snapshot_path": "review-images/d5237c749fa531532b6f5ab12909de3d3951c5c3a4c5c3dd48ca05ff50d01dbd.png",
+          "bytes": 28638,
+          "sha256": "d5237c749fa531532b6f5ab12909de3d3951c5c3a4c5c3dd48ca05ff50d01dbd",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-foils/plots/series-wizard-18888-trend-A_1.png",
+          "snapshot_path": "review-images/fa44ce1ad1fbd69576409770788d41af50efe24c42940e94bde28656b0cd0f99.png",
+          "bytes": 23798,
+          "sha256": "fa44ce1ad1fbd69576409770788d41af50efe24c42940e94bde28656b0cd0f99",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-steering/plots/series-wizard-44989-trend-A_1.png",
+          "snapshot_path": "review-images/6cb522f63b910ce4b19b832540e27299c08a6d920683dc19cc61a1e7463e078f.png",
+          "bytes": 30306,
+          "sha256": "6cb522f63b910ce4b19b832540e27299c08a6d920683dc19cc61a1e7463e078f",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T05:15:19.994321+00:00",
+      "reply_matches_saved_file": true
     }
   },
-  "pending_cases": [
-    "basics"
-  ],
+  "pending_cases": [],
   "totals": {
-    "scored": 23,
+    "scored": 24,
     "target": 24,
     "scientific_pass": 21,
-    "must_pass": 137,
-    "must_total": 138,
-    "should_pass": 51,
-    "should_total": 97,
-    "exact_copy_pass": 22,
-    "literal_copy_pass": 22,
+    "must_pass": 145,
+    "must_total": 147,
+    "should_pass": 54,
+    "should_total": 104,
+    "exact_copy_pass": 23,
+    "literal_copy_pass": 23,
     "combined_pass": 20,
-    "boundary_pass": 23
+    "boundary_pass": 24
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round19 explicitly distinguishes diagnostic plain audit from final preparation after every edit; final report/capture semantics stay fixed.",
