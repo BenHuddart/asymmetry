@@ -1,5 +1,5 @@
 {
-  "status": "running; 7/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 8/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -1240,6 +1240,153 @@
         "required_scope": "MagneticAFMboundedinterpretationandnoSCgaplaw,independentofliteralMusts."
       },
       "reply_matches_saved_file": true
+    },
+    "cds-fourier": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Surveys the folder and identifies a transverse-field temperature series in CdS, selecting the 100 G base-temperature/high-statistics run 20721 for the representative spectrum from current command output.",
+          "pass": true,
+          "evidence": "Survey23CdS100GTF20711–20733;selects20721coldestlogged/highstatisticsFFT."
+        },
+        {
+          "requirement": "Reduces run 20721 and actually runs `fourier` with a saved plot, using a defensible alpha calibration (run 20729 is the expected candidate) or explicitly stating the alternative used.",
+          "pass": true,
+          "evidence": "Reducesallincluding20721withalpha-from20729=0.9499andfourier--ploton20721;legitimatecandidate."
+        },
+        {
+          "requirement": "Calls the result an FFT, not a maximum-entropy reconstruction, and reports the command's frequency resolution/window alongside any quantitative peak.",
+          "pass": true,
+          "evidence": "ExplicitordinaryFFT/notMaxEnt,nonewindow0.10500006–31.753005μs,resolution0.0315976MHzandbandstated."
+        },
+        {
+          "requirement": "Finds the principal structure near the 100 G muon Larmor line around 1.4 MHz. It uses the PNG as well as the conservative peak table and notes weaker shoulders/satellites near roughly 1.27 and 1.51 MHz when visible; it does not claim those were algorithmically detected if only one row was printed.",
+          "pass": true,
+          "evidence": "Principalcentral1.3896MHzandcoldsidefeatures1.2396/1.5001fromcandidateoutput/PNG;explicitnopeaksdetected,twopoorfitcomponents1.25171/1.5269separately."
+        },
+        {
+          "requirement": "Interprets a resolved central line with roughly symmetric satellites as consistent with a shallow-muonium hyperfine triplet, without presenting a visual shoulder or sub-resolution splitting as a precision measurement.",
+          "pass": true,
+          "evidence": "Qualifiescoldsidefeaturesarounddiamagneticlineasconsistentwithshallow-muoniumhyperfinetriplet;nohyperfinecoupling/population/siteprecisioninvented."
+        },
+        {
+          "requirement": "Heeds any early-signal apodisation warning: it retries with an unwindowed physical crop or an appropriate Lorentzian filter rather than treating a symmetric-window spectrum as automatically authoritative.",
+          "pass": true,
+          "evidence": "UsesunwindowedFFTfromstart,notunsupportedapodisedearlysignal;doesnotpromotevisualfeaturesintothresholddetections."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares the central frequency with the applied-field Larmor expectation and states whether they agree within the reported resolution.",
+          "pass": false,
+          "evidence": "Calibrationsayssurvey1.397againstLarmor1.355,butdoesnotcomparecentralfrequencydifferenceagainstreported0.0315976MHzresolution."
+        },
+        {
+          "requirement": "Gives a cautious splitting estimate only when supported by the plotted or tabulated current-session output and labels how it was obtained.",
+          "pass": false,
+          "evidence": "Nocautiousnumericalsplittingestimateisreported;onlyindividualcandidate/fittedfrequencieswithpoorfitcaveats."
+        },
+        {
+          "requirement": "Points the reader to the stored spectrum JSON/NPZ and PNG.",
+          "pass": true,
+          "evidence": "LinkspectrumJSON/NPZ/PNGforbothcoldandwarm."
+        },
+        {
+          "requirement": "Avoids turning one representative low-temperature FFT into an unsupported claim about the entire temperature dependence.",
+          "pass": true,
+          "evidence": "Actuallyfitsall23runsandmatchedwarmFFT,qualifiespoor/flaggedtrendsratherthaninferringwholetemperaturedependencefromsingleFFT."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Directsurvey/reduction/alpha,wizard/series/trendandmatchedFFToutputsconfirmallquotedquantities;no number/unitflags. Draft/audit/readsummaryexcluded. Nophysicalarithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Literalscience/number/unit/copy/boundaryPASSwithfinal--prepare-reply. No newCLIfailure: conservativecoldFFTthresholdrespectedandwarmspectrumactuallycomputed. RemainingShouldgapscentralLarmor-resolutioncomparisonandsplittingestimate. Importantborderline: noisyvisualtripletacceptedconditionally,consistentwithearlierwaves,notclaimedalgorithmicdetection.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all18 completed commands inspected. All18completedcommandsandsummary-onlyfilechangesreviewed,onlyCLI/installedskill/stageddata. Nophysicalarithmetic/customanalysis. Fourreviewimageshashverified;actualcold/warmFFTpixelsinspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 568.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "7d531e0c9d2de24c8d26255bc92c73be4d641da923df0c21cb6827c95cf712b1",
+      "audited_file_sha256": "7d531e0c9d2de24c8d26255bc92c73be4d641da923df0c21cb6827c95cf712b1",
+      "rubric_sha256": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/cds-fourier",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "ColdFFTnopeaksdetected,maximaonly~3.1–3.3noisefloor;visualcandidateassignmentnotprecisiontripletmeasurement.",
+        "Coldtimefitschi2=6.333structuredresiduals,11/23flags;componentcoalescenceandrelaxationtrendphenomenological.",
+        "Loggedcoolingcampaign285.51→5.18Kversus1Ksetpointusedexplicitly;temperaturecampaignnotrestrictedtothenominal1–50K.",
+        "Noquantitativehyperfine/site/donorpopulationorsplittinglaw;genericmicroscopiclimitationsstated."
+      ],
+      "judgement_calls": [
+        "M4/M5acceptconditionalnoisyvisualcentral-plus-satellitesandtime-fitcrosscheckdespiteemptycoldpeakdetector,consistentwithpriorwaves. Explicitnoalgorithmicdetectionsavoidsfalseprecision."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "7d531e0c9d2de24c8d26255bc92c73be4d641da923df0c21cb6827c95cf712b1",
+        "summary.md": "7d531e0c9d2de24c8d26255bc92c73be4d641da923df0c21cb6827c95cf712b1",
+        "transcript.jsonl": "1f76f15d603baecbf378045f0e718a155824c215d486468dc9787213ed915829",
+        "commands.txt": "88cfa393fadc731bf7ba28e01f2fd7b752ea961deeb2a9cab184f2cfb561df81",
+        "cost.json": "9b9d500e7bc01dde2d8cb44c0f64d2e63d87018e4a2916f82ab2e314679f7393",
+        "image-inputs.json": "6cc4cdda04661ce149983edb909c5fc68171ad9075f35dedf9d2e4841c2da804"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/cold-20721.png",
+          "snapshot_path": "review-images/8c98e8cc61ac14328a385933f192b4a9d3ba0f6966667922e25439a9f6753bc2.png",
+          "bytes": 90681,
+          "sha256": "8c98e8cc61ac14328a385933f192b4a9d3ba0f6966667922e25439a9f6753bc2",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/warm-20729.png",
+          "snapshot_path": "review-images/62647c07279d32efd94e8dee0f8dc1f912d739678b65f7b5336e94eab7f2b5b5.png",
+          "bytes": 56597,
+          "sha256": "62647c07279d32efd94e8dee0f8dc1f912d739678b65f7b5336e94eab7f2b5b5",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/wizard-20721.png",
+          "snapshot_path": "review-images/83acbcf000b7498e99c58b7a9b09e76cbd45a10b03ead12a95d560888189e0a6.png",
+          "bytes": 79167,
+          "sha256": "83acbcf000b7498e99c58b7a9b09e76cbd45a10b03ead12a95d560888189e0a6",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-20729.png",
+          "snapshot_path": "review-images/6b14d0efee3eb2be38812007aa462556b58e479bb93977487b33d89d1b07f0c1.png",
+          "bytes": 39390,
+          "sha256": "6b14d0efee3eb2be38812007aa462556b58e479bb93977487b33d89d1b07f0c1",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T01:05:28.481644+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -1251,7 +1398,6 @@
     "high-tc-cuprate",
     "copper-diffusion",
     "photo-musr-silicon",
-    "cds-fourier",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
@@ -1292,16 +1438,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 7,
+    "scored": 8,
     "target": 24,
-    "scientific_pass": 6,
-    "must_pass": 39,
-    "must_total": 39,
-    "should_pass": 14,
-    "should_total": 23,
-    "exact_copy_pass": 5,
-    "literal_copy_pass": 5,
-    "combined_pass": 5,
-    "boundary_pass": 7
+    "scientific_pass": 7,
+    "must_pass": 45,
+    "must_total": 45,
+    "should_pass": 16,
+    "should_total": 27,
+    "exact_copy_pass": 6,
+    "literal_copy_pass": 6,
+    "combined_pass": 6,
+    "boundary_pass": 8
   }
 }

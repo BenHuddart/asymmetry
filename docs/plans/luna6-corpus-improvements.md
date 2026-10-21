@@ -2099,3 +2099,6 @@ Confirmation6 now5/24scored:LLZ6/6literalMusts,2/4Shoulds butscienceFAILglobalnu
 
 
 Confirmation6 now7/24 scored:TCNQ repaired6/6Musts,4/4Shoulds andscience/copy/number/boundaryPASS. HighTF-AFM5/5literalMusts,2/3Shoulds,copy/number/boundaryPASS butindependentmagneticscopeFAIL. NewmaterialAFM8Talias:rebin20lowersFFTNyquistto1024MHz,originalsurveyline1084.788MHzbecomes963MHz;agentcallsitapplied-fieldline. Investigategeneralanti-aliasbinningguardafterfreeze. Totals39/39literalMusts,6/7science,5/7copy/combined,7/7boundary,14/23Shoulds. Combined here is the literal science/number/copy metric; independent AFM scope remains a separate failed objective gate. Source frozen.
+
+
+Confirmation6 now8/24scored:CDS6/6Musts,2/4Shoulds,science/number/unit/copy/boundaryPASS. Noisycoldvisualtripletjudgementretained;noalgorithmiccoldpeaksandpoorfitprecisionexplicit. Totals45/45literalMusts,7/8science,6/8copy/combined,8/8boundary,16/27Shoulds;independentAFMscopeFAILstillseparate. Sourcefrozen.
