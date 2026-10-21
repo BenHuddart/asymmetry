@@ -405,7 +405,7 @@ def test_wave_derived_numbers_are_flagged(draft: str, flagged: list[str]) -> Non
 
 
 _WAVE2_LOG = """rate 3.2e-08  candidate 3.3x the noise floor  2.9x
-field 5000 G  run 91500  A_bg 3.56102  dchi2 274.851 480.2
+field 5000 G  step 200 G  run 91500  A_bg 3.56102  dchi2 274.851 480.2
 Delta 0.3505 0.2706 0.08  frequency 0.0326399  AICc 4241.2 8423.2
 """
 
@@ -440,6 +440,11 @@ Delta 0.3505 0.2706 0.08  frequency 0.0326399  AICc 4241.2 8423.2
         ("the scan drifted by about 3 K", ["3"]),
         ("amplitudes add up to several times the asymmetry", []),
         ("lines 2.5 resolution elements apart", ["2.5 resolution elements"]),
+        # A hedged round spread is one digit, whatever grid value it repeats (Sonnet, 2026-10-21).
+        ("the centre moves by about 200 G with window", ["200"]),
+        ("the centre is stable to about 200 G across windows", ["200"]),
+        ("the field steps by 200 G", []),
+        ("the whole change is about three percent of Delta", ["three percent"]),
     ],
 )
 def test_wave2_notation_and_contexts(draft: str, flagged: list[str]) -> None:

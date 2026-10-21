@@ -13,11 +13,11 @@ significance or a whole-number percentage (``10×``, ``4.3σ``, ``32 %``), or na
 as a difference (``ΔAICc 11``), match only when a command printed that exact
 token (``×``, ``x`` and "times" alike). A number whose context makes it
 arithmetic — after "a factor of", a difference phrase ("agree to about 0.02
-MHz", "falls by 0.03 MHz", "a margin of 3.6", "the step is about 0.007") or a conversion ("corresponds to
-about 21 G"), named as a comparison ("4 points
+MHz", "falls by 0.03 MHz", "a margin of 3.6", "the step is about 0.007", "stable to about
+200 G") or a conversion ("corresponds to about 21 G"), named as a comparison ("4 points
 better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` — is listed unless
 a command printed it verbatim to three or more significant digits (a run number,
-a field on the scan's grid). A range ``a–b`` shares its context between both
+a field on the scan's grid; a hedged round number's trailing zeros do not count). A range ``a–b`` shares its context between both
 ends, and ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
 ("about 12340 G") may round away its trailing zeros, a field in kG restates
 one printed in G, and "1σ errors", "> 3σ" and "2× LorentzianLCR" are
@@ -76,6 +76,7 @@ _CLAUSE = r"(?:(?!\b(?:and|to)\b)(?:[^.,;:]|\.(?=\d)))*?"
 _DERIVED_PREFIX = re.compile(
     rf"(?:factor of|times|fold|within|\b{_CHANGE_VERB}\w*\b{_CLAUSE},?\s*\bby"
     rf"|agree\w*\b{_CLAUSE}\bto"
+    rf"|\b(?:stable|steady|constant|reproducible|repeatable)\s+to"
     rf"|\b(?:correspond\w*\s+to|equivalent\s+(?:to|of)|amounts?\s+to|converts?\s+to"
     rf"|translat\w*\s+(?:in)?to|would\s+be){_CLAUSE}"
     rf"|\b(?:margin|difference|gap|shift|step|jump|drop|rise|increase|decrease|change|offset"
@@ -93,6 +94,7 @@ _NUMBER_WORD = (
 #: times its error", "four to six times").
 _RATIO_WORD = re.compile(
     rf"\bfactor of\s*{_HEDGE}\s*{_NUMBER_WORD}\b"
+    rf"|\b{_NUMBER_WORD}\s+(?:per\s?cent|percent)\b"
     rf"|\b{_NUMBER_WORD}(?:\s+to\s+{_NUMBER_WORD})?(?:-?fold\b|\s+times(?=\s+(?:its|their|the"
     r"|as|larger|smaller|faster|slower|higher|lower|broader|narrower|wider|greater|bigger"
     r"|stronger|weaker|longer|shorter|more|less)\b)"
@@ -226,7 +228,11 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             )
             if derived:
                 shared_until = after
-                significant = len(re.sub(r"\D", "", token).lstrip("0"))
+                digits = re.sub(r"\D", "", token).lstrip("0")
+                # "about 200 G" rounds to one digit: its trailing zeros are not significant.
+                if "." not in token and "," not in match.group() and _ROUNDED_HEDGE.search(before):
+                    digits = digits.rstrip("0")
+                significant = len(digits)
                 printed = _printed_verbatim(token, log_text) or _printed_verbatim(
                     match.group("mantissa"), log_text
                 )

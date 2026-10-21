@@ -4116,6 +4116,24 @@ def test_zero_header_line_retains_the_unrecorded_field_alternative(workflow_fold
     assert "ZERO-FIELD HEADER:" in text
     assert "unrecorded weak TF" in text
     assert "sensor drift is not a sample-temperature campaign" in text
+    # The field the line implies is printed, so a summary quotes it instead of converting.
+    assert f"{row.precession.frequency_mhz:.4g} MHz = " in text
+
+
+def test_reduce_names_runs_across_an_alpha_step_from_one_calibration(tmp_path):
+    from asymmetry.cli._reduction import alpha_step_note
+    from asymmetry.core.workflow.workdir import SCHEMA, WorkDir
+
+    root = tmp_path / "asymmetry-work"
+    root.mkdir()
+    step = {"before_run": 103, "after_run": 104, "alpha_before": 0.89, "alpha_after": 1.06}
+    (root / "survey.json").write_text(json.dumps({"schema": SCHEMA, "alpha_steps": [step]}))
+    workdir = WorkDir(root)
+
+    (note,) = alpha_step_note(workdir, 101, [101, 102, 103, 104, 105])
+    assert "runs 104-105 lie on the other side" in note
+    assert alpha_step_note(workdir, 105, [104, 105]) == []
+    assert alpha_step_note(workdir, None, [101, 105]) == []
 
 
 def test_wizard_worker_budget_has_explicit_override(monkeypatch):

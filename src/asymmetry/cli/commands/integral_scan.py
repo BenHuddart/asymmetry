@@ -20,6 +20,7 @@ from asymmetry.cli._output import (
 from asymmetry.cli._recipes import parse_bounds, parse_fix
 from asymmetry.cli._reduction import (
     add_reduction_arguments,
+    alpha_step_note,
     deadtime_note,
     describe,
     reduction_settings,
@@ -316,6 +317,7 @@ def run(args: argparse.Namespace) -> None:
     notes.extend(
         deadtime_note(settings, any(has_file_deadtime(dataset.run) for dataset in datasets))
     )
+    notes.extend(alpha_step_note(workdir, args.alpha_from, [run for run, _p, _path in targets]))
     if args.json:
         emit_json(payload(**result_payload, notes=notes))
         return

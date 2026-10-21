@@ -16,11 +16,11 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from asymmetry.cli._output import UserError
-from asymmetry.cli._runs import resolve_run
+from asymmetry.cli._runs import resolve_run, run_spec
 
 if TYPE_CHECKING:
     from asymmetry.core.workflow.reduction import ReductionSettings
-    from asymmetry.core.workflow.workdir import RunSelection
+    from asymmetry.core.workflow.workdir import RunSelection, WorkDir
 
 #: The command-line spelling of the green − red period difference.
 GREEN_RED = "green-red"
@@ -187,6 +187,30 @@ def deadtime_note(settings: ReductionSettings, carries_deadtime: bool) -> list[s
         "off. Pass --deadtime from_file before fitting further — it matters most at a pulsed "
         "source's high early count rates — and say in the summary which you used."
     ]
+
+
+def alpha_step_note(workdir: WorkDir, alpha_from: int | None, runs: list[int]) -> list[str]:
+    """The NOTE for one ``--alpha-from`` applied across an ALPHA STEP the survey printed."""
+    if alpha_from is None or not workdir.survey_path.is_file():
+        return []
+    notes = []
+    for step in workdir.read_survey()["alpha_steps"]:
+        before, after = step["before_run"], step["after_run"]
+        across = [
+            run
+            for run in runs
+            if (alpha_from <= before and run >= after) or (alpha_from >= after and run <= before)
+        ]
+        if across:
+            notes.append(
+                f"NOTE: --alpha-from {alpha_from} calibrates one side of the survey's ALPHA STEP "
+                f"between runs {before} and {after} ({step['alpha_before']:.4f} -> "
+                f"{step['alpha_after']:.4f}), but {'runs' if len(across) > 1 else 'run'} "
+                f"{run_spec(across)} {'lie' if len(across) > 1 else 'lies'} on the other side. "
+                f"Reduce them again with --alpha-from a calibration run from their own block; "
+                f"their amplitudes under this alpha are not results."
+            )
+    return notes
 
 
 def describe(settings: ReductionSettings) -> str:
