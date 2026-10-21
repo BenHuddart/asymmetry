@@ -200,7 +200,7 @@ once-per-task gate, never an iteration loop.
    (~25s, non-GUI).
 3. **After a GUI change**: additionally run the affected GUI test files
    focused. Do not run the whole GUI subset locally while iterating — it is
-   most of the suite's wall-clock, and CI shards it across three runners.
+   most of the suite's wall-clock, and CI splits the tier across six runners.
 4. **Once, before committing / handing back**: `python tools/harness.py
    validate`. Do not re-run it for doc- or comment-only follow-up edits, and
    do not run `--tier full` locally unless you changed a `slow`/`integration`
