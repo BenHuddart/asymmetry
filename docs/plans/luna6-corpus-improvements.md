@@ -2108,3 +2108,6 @@ Confirmation6 now9/24scored:plateau5/5Musts,4/5Shoulds,science/number/unit/copy/
 
 
 Confirmation6 now11/24 scored:RFbenzene5/5Musts,2/5Shoulds andsilicon6/6Musts,3/4Shoulds bothscience/number/unit/copy/boundaryPASS. RFexact-diagonalisation/scalederrorrepairused;siliconONfixed-amplituderatecorrectlyrejected,2μsguidewindowdeviationrecorded. Totals61/61literalMusts,10/11science,9/11copy/combined,11/11boundary,25/41Shoulds;independentAFMscopeFAILretained. Frozenwavecontinues.
+
+
+Confirmation6 now13/24 scored:Ni7/7Musts,2/4Shoulds sciencePASS/copyFAILterminalLFafterplainaudit;cuprate5/5Musts,2/3Shoulds science/copyPASS. Bothnumber/unit/boundaryPASS. Totals73/73literalMusts,12/13science,10/13copy/combined,13/13boundary,29/48Shoulds. Retainpoorcriticallaws,conditionalSCgap/DwaveoverlayandAFMindependentscopeFAIL. Sourcefrozen.
