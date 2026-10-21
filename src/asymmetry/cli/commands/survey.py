@@ -87,17 +87,21 @@ def scan_label(scan: ScanGroup) -> str:
     )
 
 
+#: Words naming a light stimulus. Bare "pump" and "photo" are not among them:
+#: a helium pump or a sample photograph is not illumination.
+_ILLUMINATION = re.compile(
+    r"\b(?:lasers?|illuminat\w*|photo-?excit\w*|optical(?:ly)?\s+pump\w*|"
+    r"pump[- ](?:probe|beam|pulse|laser)s?)\b",
+    re.IGNORECASE,
+)
+
+
 def condition_period_runs(runs: list[dict]) -> list[dict]:
     """Multi-period illumination measurements need paired time spectra, not just an integral."""
     return [
         row
         for row in runs
-        if row.get("n_periods", 1) == 2
-        and re.search(
-            r"laser|photo|illuminat|pump",
-            row.get("title", "") + " " + row.get("notes", ""),
-            re.IGNORECASE,
-        )
+        if row["n_periods"] == 2 and _ILLUMINATION.search(f"{row['title']} {row['notes']}")
     ]
 
 

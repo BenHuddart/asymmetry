@@ -311,7 +311,7 @@ def unverified_units(draft: str, log_text: str) -> list[Unverified]:
                 parameters.setdefault(row[1], []).extend(
                     (_value(value), printed_unit[1]) for value in quantities
                 )
-        elif not line.strip() or (line.strip() and not line.lstrip().startswith("-")):
+        elif not line.lstrip().startswith("-"):
             in_table = False
     found = []
     aliases = str.maketrans({"ν": "nu", "β": "beta", "α": "alpha", "Λ": "Lambda", "Δ": "Delta"})

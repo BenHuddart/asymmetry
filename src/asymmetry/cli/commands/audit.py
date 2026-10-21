@@ -17,6 +17,7 @@ from asymmetry.cli._workdir import OUTPUT_LOG, WORKDIR_NAME
 
 if TYPE_CHECKING:
     from asymmetry.core.workflow.survey import ScanGroup
+    from asymmetry.core.workflow.workdir import RunSelection
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -334,7 +335,7 @@ def unfitted_scans(
 ) -> tuple[list[_UnfittedScan], list[tuple[str, dict, list[int]]]]:
     """The surveyed scans, and the scans the run notes define, with runs no fit holds."""
     from asymmetry.core.workflow.survey import ScanGroup
-    from asymmetry.core.workflow.workdir import RunSelection, WorkDir
+    from asymmetry.core.workflow.workdir import WorkDir
 
     # Run numbers identify runs only within one run selection (a folder, and an
     # instrument where two reuse numbers), so each survey is held against the fits
@@ -384,7 +385,9 @@ def unfitted_scans(
     return unfitted, unfitted_notes
 
 
-def selection_runs(coverage, selection, instrument: str) -> set[int]:
+def selection_runs(
+    coverage: dict[RunSelection, set[int]], selection: RunSelection, instrument: str
+) -> set[int]:
     """A scan uses its own instrument's coverage, even in an earlier all-instrument survey."""
     return set().union(
         *(

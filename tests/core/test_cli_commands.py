@@ -4118,6 +4118,26 @@ def test_wizard_rejects_nonpositive_worker_budget(tmp_path, capsys):
     assert "--workers must be positive" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("title", "notes", "illuminated"),
+    [
+        ("Si T=291", "Laser on, hwp1=50", True),
+        ("Si T=291", "photoexcitation at 532 nm", True),
+        ("Si optically pumped", "", True),
+        ("GaAs", "pump-probe delay 100 ns", True),
+        ("Si T=291", "He pump on", False),
+        ("Si T=291", "pumped cryostat", False),
+        ("Si photograph", "", False),
+    ],
+)
+def test_illumination_periods_need_a_light_stimulus(title, notes, illuminated) -> None:
+    from asymmetry.cli.commands.survey import condition_period_runs
+
+    row = {"run_number": 1, "n_periods": 2, "title": title, "notes": notes}
+    assert condition_period_runs([row]) == ([row] if illuminated else [])
+    assert condition_period_runs([row | {"n_periods": 1}]) == []
+
+
 def test_audit_of_an_older_schema_workdir_is_a_user_error(
     workflow_folder, fitting_workdir, tmp_path, capsys
 ):

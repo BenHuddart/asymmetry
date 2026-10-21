@@ -679,16 +679,18 @@ def _line_comparisons(
                 c2, c2_err, w2, w2_err = described(other_fit, other_line)
                 if abs(centre - c2) > width + w2:
                     continue
+                stability = other_fit in same_scan
                 resolved = line in _resolved_lines(fit, math.inf) and other_line in _resolved_lines(
                     other_fit, math.inf
                 )
                 qualification = (
-                    "are one line in two scans"
+                    "are alternative fits of the same measurement"
+                    if stability
+                    else "are one line in two scans"
                     if resolved
                     else "are conditional fitted estimates of possible counterparts, not two "
                     "resolved lines; window/background sensitivity still limits the comparison"
                 )
-                stability = other_fit in same_scan
                 prefix = "STABILITY" if stability else "COMPARE"
                 purpose = (
                     "These are alternative windows/backgrounds of the same runs, not "
@@ -700,8 +702,6 @@ def _line_comparisons(
                     "reorientation averaging hyperfine anisotropy. State that as a possible "
                     "interpretation, not a fitted motion rate or site assignment."
                 )
-                if stability:
-                    qualification = "are alternative fits of the same measurement"
                 notes.append(
                     f"{prefix}: this line at {centre:g} ± {centre_err:.3g} (width {width:g} ± "
                     f"{width_err:.3g}) and scan {other}'s at {c2:g} ± {c2_err:.3g} (width {w2:g} ± "
