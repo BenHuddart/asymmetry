@@ -2231,3 +2231,6 @@ Confirmation8 LFbenzene6/6Musts,2/5Shoulds; science/number/unit/copy/boundaryPAS
 
 
 Confirmation8 AFM5/5Musts1/3Shoulds science/copyPASS and independent magnetic physics scope nowPASS: native1085MHz retained, bounded magnetic interpretation, noSCgaplaws. Nickel7/7Musts2/4Shoulds science/copyPASS. Totals16/24scored,88/90Musts,15/16science,15/16copy,14/16combined,16/16boundary,33/60Shoulds. Preserve AFMnegative-baseline/poor-fit caveats and nickel failedcritical-law/sample caveats; freeze continues through all24.
+
+
+Confirmation8 now18/24scored: maleic5/5Musts4/4Shoulds sciencePASS/copyFAIL after post-preparationFFTwidth correction; EuO5/5Musts1/3Shoulds science/copyPASS. Totals98/100Musts,17/18science,16/18copy,15/18combined,18/18boundary,38/67Shoulds. Mu-envelope kinetics/concentration/Arrhenius workflow repaired with logged-temperature/poor-fit caveats; source remains frozen through all24.

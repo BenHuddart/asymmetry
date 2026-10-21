@@ -1,5 +1,5 @@
 {
-  "status": "running; 16/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 18/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -2788,11 +2788,432 @@
       ],
       "scored_at": "2026-10-21T03:53:17.284295+00:00",
       "reply_matches_saved_file": true
+    },
+    "maleic-mu-kinetics": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Recognises the 2 G runs as muonium precession measurements and the 100 G runs as diamagnetic ones.",
+          "pass": true,
+          "evidence": "Actual deoxygenated blank78251 and four nominal concentrations mapped across temperature blocks; untreated78291 distinguished."
+        },
+        {
+          "requirement": "Separates the samples by concentration, read from titles or notes, and says where the concentration values came from.",
+          "pass": true,
+          "evidence": "Three calibration eras78252/78278/78281 with correctedalpha1.0265/1.0714/1.4032 and step78280→78281 explicit."
+        },
+        {
+          "requirement": "Reports the Mu relaxation rate rising with maleic acid concentration at a fixed temperature (290 K, or matched setpoints), from fits of the 2 G runs.",
+          "pass": true,
+          "evidence": "Oscillatory*Exponential Mu Lambda_2 separated from slow diamagnetic Lambda_4, shared amplitudes/phases and fixed common frequencies in early .25100006–2.4910004us global fits."
+        },
+        {
+          "requirement": "Obtains a rate constant from the slope of λ_Mu against concentration with a CLI fit (e.g. `fit-series`/`fit-global` with `--order concentration --x ...`, then `trend --model Linear`), reported with its uncertainty and in the concentration units it used. A fit-quality caveat is fine; withdrawing the converged slope is not.",
+          "pass": true,
+          "evidence": "Actual290K concentration Linear slope2.932021±.497115us^-1 perrelativeconcentration, intercept.537043±.160485 andpoorchi14.561; perTslopes and conditional Arrhenius Ea92.149149±24.175830meV from CLI."
+        },
+        {
+          "requirement": "Contains no rate constant, activation energy or fraction that was not produced by a tool call in this session (the worksheet's published values are background).",
+          "pass": true,
+          "evidence": "All rates, slopes, uncertainties and apparent barrier directCLI; conditional relative concentration units and temperature mismatches explicitly limit physical interpretation."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares deoxygenated with untreated water (the untreated Mu signal relaxes faster, or leaves no resolvable line: dissolved O₂).",
+          "pass": true,
+          "evidence": "Untreated water failed/no observableMu oscillation contrasted with strong deoxygenated2.774628MHz signal; oxygen scavenging conditional, oxygen unmeasured."
+        },
+        {
+          "requirement": "Uses a calibration run appropriate to the sample being reduced rather than one alpha for the whole folder, or notes the alpha step.",
+          "pass": true,
+          "evidence": "Alpha step and pre/post calibration eras explicitly compared, malformed post-step amplitudes/rates rejected."
+        },
+        {
+          "requirement": "Holds the Mu and diamagnetic frequencies or amplitudes common across the concentration set (shared in `fit-global`, or fixed) and says so.",
+          "pass": true,
+          "evidence": "Common Mu frequency2.79MHz, shared amplitudes/phases and early-window envelope analysis explicitly separate Mu kinetics from slow background."
+        },
+        {
+          "requirement": "States that the Arrhenius step needs k_Mu at several temperatures, each from its own concentration fit, and either does it per temperature and fits the Arrhenius law through them with a command (`trend --from-fits … --model Arrhenius`) rather than by hand, or declines that step with the reason.",
+          "pass": true,
+          "evidence": "Actual multi-temperature concentration slopes and Arrhenius workflow performed, negative348K slope and failed358K excluded/rejected with fit-quality caveats."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct staged metadata and CLI global/Linear/Arrhenius outputs; both FFT widths in explicit self-correction printed. No physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science5/5 and all4Shoulds repaired by primary Mu-envelope kinetics and actual concentration/temperature law workflows. StrictcopyFAIL: actual reply inserts an FFT-width self-correction after preparation.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all94 completed commands inspected. All94 commands inspected, CLI fits/trends and summary edits only, no scripted physical arithmetic. Four snapshot hashes checked; MuFFT and actual concentration-slope pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1919.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series mu-kinetics-290 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series comp-278 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series comp-288 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series comp-298 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series comp-308 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series comp-318 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series comp-328 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series comp-338 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series comp-348 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series comp-358 --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --from-fits comp-278,comp-288,comp-298,comp-308,comp-318,comp-328,comp-338 --fit m --series kmu-vs-loggedT --order sample_temperature_logged --model Arrhenius --param m --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --from-fits comp-278,comp-288,comp-298,comp-308,comp-318,comp-328,comp-338 --fit Lambda_2:Linear --series kmu-vs-loggedT --order sample_temperature_logged --model Arrhenius --param m --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --from-fits mu-kinetics-290,comp-278,comp-288,comp-298,comp-308,comp-318,comp-328,comp-338 --fit Lambda_2:Linear --series kmu-vs-loggedT --order sample_temperature_logged --model Arrhenius --param m --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"cat .agents/skills/asymmetry-analysis/SKILL.md && rg --files -g 'AGENTS.md' -g '*' data\"",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --series comp-358 --model Linear --param Lambda_2 --plot'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics/data --from-fits comp-278,comp-288,comp-298,comp-308,comp-318,comp-328,comp-338 --fit m --series kmu-vs-loggedT --order sample_temperature_logged --model Arrhenius --param m --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "06d5ffe21ed53739c16837f306b41217b26f51d446da94fa5df94d0c997aceba",
+      "audited_file_sha256": "f7e86074fad0bf2c35d21af91dbc08a5a0235dac9493c168719c3dafc40e8807",
+      "rubric_sha256": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "staged_skill_sha256": "7aec2595cbec0f0a1bd10e4949822f76cfc94e35301159cc3f3285d84f2be9b4",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/maleic-mu-kinetics",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -52,7 +52,7 @@\n \n ## Results\n \n-**Fourier and time-domain evidence.** Run 78251 (one 2 G deoxygenated-water run, not a co-add) was transformed by FFT with no window, default start time, and a 4.0 μs end time. The final plotted/search band was 0–4.98949 MHz, with resolution 0.263713 MHz. The peak table detects a line at 2.774628 MHz, width 0.378159 MHz, SNR 4.99, consistent with the survey’s 2.81 MHz line and the expected weak-field Mu frequency. The same table detects a low-frequency feature at 0.174780 MHz, width 0.20933 MHz, SNR 4.03. These are table-detected peaks, not visual-only shoulders. The attached spectrum’s prominent maximum near 2.8 MHz is the detected Mu line.\n+**Fourier and time-domain evidence.** Run 78251 (one 2 G deoxygenated-water run, not a co-add) was transformed by FFT with no window, default start time, and a 4.0 μs end time. The final plotted/search band was 0–4.98949 MHz, with resolution 0.263713 MHz. The peak table detects a line at 2.774628 MHz, width 0.378159 MHz, SNR 4.99, consistent with the survey’s 2.81 MHz line and the expected weak-field Mu frequency. The same table detects a low-frequency feature at 0.174780 MHz, width 0.378159 MHz? No: the CLI reports width 0.20933 MHz, SNR 4.03. These are table-detected peaks, not visual-only shoulders. The attached spectrum’s prominent maximum near 2.8 MHz is the detected Mu line.\n \n Matched FFTs of runs 78257, 78282 and 78290 used the same no-window transform, default start, 4.0 μs end, 1.05042–4.98949 MHz band and 0.263713 MHz resolution. None has a peak-table detection in that band. Run 78257’s strongest maxima are 1.3130, 1.5756 and 2.6917 MHz; run 78282’s are 2.6917, 2.9543 and 1.3130 MHz; run 78290’s are 1.3130, 2.1665 and 1.8382 MHz. These are candidates only, not detected lines. In run 78282 the maxima at 2.6917 and 2.9543 MHz are separated by about one printed resolution element, so they do not establish two components. Each transform also reports a low-frequency feature near 0.1757 MHz outside its displayed band. The FFTs are not MaxEnt reconstructions.\n \n",
+      "physics_caveats": [
+        "Nominal290K concentrations have logged temperatures291.574–315.48K, so slope is conditional, not an intrinsic matched-temperature reaction constant.",
+        "Primary concentration fits are poor and Arrhenius uses conditional slopes; precise microscopic barrier/molar rate constant not established.",
+        "Post-step half-concentration globalMu amplitude4023% is unphysical and rejected; nuisance Lambda_4 flags must not be read as the Mu Lambda_2 rate.",
+        "Actual reply first mentions width.378159MHz then explicitly corrects to.20933MHz. Both values are printed CLI outputs, but post-preparation editing violates exact copy."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        3,
+        7,
+        8,
+        9,
+        14,
+        15,
+        16,
+        17,
+        18,
+        21,
+        22,
+        23,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        71,
+        72,
+        73,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        85
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "06d5ffe21ed53739c16837f306b41217b26f51d446da94fa5df94d0c997aceba",
+        "summary.md": "06d5ffe21ed53739c16837f306b41217b26f51d446da94fa5df94d0c997aceba",
+        "transcript.jsonl": "9b88fd4e6b529705d3a54f7cb12c35ac6ccb9c9b0d0f225dcbf3303c77a1cc47",
+        "commands.txt": "d938210b5cfe4a6d2d32a0e207bdc972c460de34bd72c53717c76dd8e2fca596",
+        "cost.json": "7a9bc25b0b234b274fd62df4c88dc572846f60bfa35bcdaaceaa6f47fafc97e9",
+        "image-inputs.json": "43d4dee403a39eda6e2ae391585a7b5aa54f7d7141efb86329ec12dcebfee52d"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-78251.png",
+          "snapshot_path": "review-images/9c7bb01e65a0df0601f159aeb3da56084055138d230f84e46daba5e5364781ae.png",
+          "bytes": 59430,
+          "sha256": "9c7bb01e65a0df0601f159aeb3da56084055138d230f84e46daba5e5364781ae",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/mu-kinetics-290-trend-Lambda_2.png",
+          "snapshot_path": "review-images/026c6c321ed05ffa2f5d877aa5b5e19cdf254d83cfba5e625ea9dafad5b24f8f.png",
+          "bytes": 31291,
+          "sha256": "026c6c321ed05ffa2f5d877aa5b5e19cdf254d83cfba5e625ea9dafad5b24f8f",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/quarter-mu-postalpha-trend-Lambda_2.png",
+          "snapshot_path": "review-images/af5ca2dfc6ba8cd33edd7cc0ec8954c519b0499142e7cfc50673baf552bee6e4.png",
+          "bytes": 32545,
+          "sha256": "af5ca2dfc6ba8cd33edd7cc0ec8954c519b0499142e7cfc50673baf552bee6e4",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/half-mu-postalpha/78302.png",
+          "snapshot_path": "review-images/caab4c10b652cfa4edb625305456f8c96f7e0675fe81dc21f701e48da3225d6f.png",
+          "bytes": 64935,
+          "sha256": "caab4c10b652cfa4edb625305456f8c96f7e0675fe81dc21f701e48da3225d6f",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T03:58:57.393578+00:00",
+      "reply_matches_saved_file": false
+    },
+    "euo-psi": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies this as PSI GPS data (the `.bin` format), not an ISIS NeXus dataset.",
+          "pass": true,
+          "evidence": "Final identifies51 PSI GPS .bin runs2923–2973 with ZF2923–2960 and60GTF2961–2973 blocks."
+        },
+        {
+          "requirement": "Separates the ZF block from the TF 60 G block as two distinct scans.",
+          "pass": true,
+          "evidence": "2969 warm TF calibrant,rawalpha1.5148/corrected1.4865 and pre-t0 background handling explicit."
+        },
+        {
+          "requirement": "Reports an internal field (from the TF block, or from ZF oscillations if present) that changes with temperature, growing as the sample is cooled below the ordering region.",
+          "pass": true,
+          "evidence": "Ordered ZF Overhauser/powder-cutoff frequency decreases toward transition; actual OrderParameter y032.215140±.857216MHz,Tc68.869632±.787596K,beta.402484±.041422,alpha1.151765±.214447,chi1.217."
+        },
+        {
+          "requirement": "Reports the relaxation rate above the ordering region as this session's fits give it, and does not claim a critical divergence (critical slowing down) that those fits do not show. The paper finds the paramagnetic relaxation rate roughly constant, near 2 MHz, rather than diverging at the transition.",
+          "pass": true,
+          "evidence": "Above-transition smooth ZF relaxation and weakTF damping/FFT compared; failedCriticalDivergence and failed two-line claims rejected."
+        },
+        {
+          "requirement": "Contains no internal-field value, relaxation rate, or Curie temperature that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All law/fit/FFT quantities direct CLI outputs, recorded temperature axis, no fabricated physical calculation."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that both blocks revisit a narrow temperature window several times rather than assuming a single monotonic sweep.",
+          "pass": false,
+          "evidence": "ZF transition infill noted, but no explicit combined comment that both ZF andTF blocks deliberately revisit the narrow transition window."
+        },
+        {
+          "requirement": "Treats run 2960 (1.5 K, out of sequence at the end of the ZF block) as a low-temperature reference point rather than ignoring it or assuming it belongs elsewhere in the sequence.",
+          "pass": true,
+          "evidence": "Out-of-sequence2960 actual1.5K endpoint reference explicitly identified and independently fitted."
+        },
+        {
+          "requirement": "Frames the comparison to theory (e.g. mean-field/Heisenberg critical behaviour) as the paper's stated goal. A critical exponent, if quoted, comes from a `trend --model OrderParameter` fit in this session with its fit range stated, and is labelled with the temperature axis it was measured against (the PSI header's logged sensor reading, or the setpoint with a reason).",
+          "pass": false,
+          "evidence": "Actualbeta law fitted and sensible window/axis discussed, but paper mean-field versus Heisenberg/theory goal not framed."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct CLI survey/calibration, ordered/paramagnetic/TF fits and law/FFT outputs; no physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science5/5 and exactcopyPASS; instrument/format identity and ordered frequency law retained. Broader experimental/theory goals omitted.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all70 completed commands inspected. All70 commands inspected; directCLI and staged logbook only, summary-only edits, no physical arithmetic. Four snapshot hashes checked, order andTF-rate pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1898.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 11,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/euo-psi/data --series zf-ordered --model OrderParameter --param frequency --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/euo-psi/data --series zf-paramagnetic --model CriticalDivergence --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/euo-psi/data --series zf-order-core --model OrderParameter --param frequency --plot --csv asymmetry-work/tables/zf-order-core.csv'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/euo-psi/data --series tf60-early --model OrderParameter --param frequency --xmin 69.538 --xmax 74.383 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/euo-psi/data --series zf-paramagnetic --model CriticalDivergence --param Lambda --exclude 2960,2943,2950 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/euo-psi/data --series tf60-cosine --model CriticalDivergence --param Lambda --xmin 69.538 --xmax 80.388 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'cat data/logbook.rtf'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/euo-psi/data --series zf-paramagnetic --plot --csv'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "ec338b7f49075ff77e741bdc7e4eefd80839c77339b30da12ebaff35695f76c2",
+      "audited_file_sha256": "ec338b7f49075ff77e741bdc7e4eefd80839c77339b30da12ebaff35695f76c2",
+      "rubric_sha256": "fe9da3aa512839d6107beebcf6bbb0c343d0d6f7fc668e02e8a3d7ce74096600",
+      "staged_skill_sha256": "7aec2595cbec0f0a1bd10e4949822f76cfc94e35301159cc3f3285d84f2be9b4",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/euo-psi",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "LowT/highT tail rises; early4us fitting limits background artifacts but is not detector-response correction.",
+        "2960 whole fit poor/nuisance flagged despite useful30.1875MHz line reference; 244MHz5K low-stat feature not promoted as physics.",
+        "Paramagnetic CriticalDivergence failed, TF rates mostlypoorchi; no reliable critical dynamic exponent or two-line detection.",
+        "Review order-core andTF-rate snapshots verified; final conditional law distinguished from unreliable full-range fits."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        6,
+        7,
+        8,
+        9,
+        10,
+        12,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        51,
+        52,
+        53,
+        54,
+        55,
+        58,
+        59,
+        61,
+        62,
+        63
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "ec338b7f49075ff77e741bdc7e4eefd80839c77339b30da12ebaff35695f76c2",
+        "summary.md": "ec338b7f49075ff77e741bdc7e4eefd80839c77339b30da12ebaff35695f76c2",
+        "transcript.jsonl": "7c1f9c2b12bfbc5f704709d8625d9ad8c7874fea731718b01f5fb872e050d574",
+        "commands.txt": "3b6851a99e5207a1db99448b44090e94867e6cbfa38572f8a99c316c181ee0f4",
+        "cost.json": "a4a99a5f2a9fbe807e246da618e225951fc4baacf6d8ae65d9324f2e19c78c24",
+        "image-inputs.json": "f6b2d8625785bdd7d3dd0f2e16076d3e6346656546ede81f9e9667cbb526e8ec"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/zf-order-core-trend-frequency.png",
+          "snapshot_path": "review-images/c2024ed5ec2acd6a4d7888927a04a4a0c5f383f1aa891347cc11f62894947347.png",
+          "bytes": 33686,
+          "sha256": "c2024ed5ec2acd6a4d7888927a04a4a0c5f383f1aa891347cc11f62894947347",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf60-cosine-trend-Lambda.png",
+          "snapshot_path": "review-images/961e8e19aaf5bcb136dc77424e5b27214e1212d79b8bc91eeafb1be5c0044cd2.png",
+          "bytes": 31181,
+          "sha256": "961e8e19aaf5bcb136dc77424e5b27214e1212d79b8bc91eeafb1be5c0044cd2",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-2964.png",
+          "snapshot_path": "review-images/7a28e700e958ad17e0bbd40f3a83d8f984ab9f8ccc5396724f00d37eb9e39e5d.png",
+          "bytes": 57311,
+          "sha256": "7a28e700e958ad17e0bbd40f3a83d8f984ab9f8ccc5396724f00d37eb9e39e5d",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-2961.png",
+          "snapshot_path": "review-images/4fbe41c43095a2c2e669a829ef3ec6c3df094fbac0ff78033f9f24d606c8d2e4.png",
+          "bytes": 54365,
+          "sha256": "4fbe41c43095a2c2e669a829ef3ec6c3df094fbac0ff78033f9f24d606c8d2e4",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T03:58:57.435245+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
-    "euo-psi",
-    "maleic-mu-kinetics",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
@@ -2801,17 +3222,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 16,
+    "scored": 18,
     "target": 24,
-    "scientific_pass": 15,
-    "must_pass": 88,
-    "must_total": 90,
-    "should_pass": 33,
-    "should_total": 60,
-    "exact_copy_pass": 15,
-    "literal_copy_pass": 15,
-    "combined_pass": 14,
-    "boundary_pass": 16
+    "scientific_pass": 17,
+    "must_pass": 98,
+    "must_total": 100,
+    "should_pass": 38,
+    "should_total": 67,
+    "exact_copy_pass": 16,
+    "literal_copy_pass": 16,
+    "combined_pass": 15,
+    "boundary_pass": 18
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round18 explicitly retires the first-turn image-manifest instruction after review; final turn returns the scientific report alone.",
