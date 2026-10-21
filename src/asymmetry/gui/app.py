@@ -289,13 +289,14 @@ def main() -> None:
     app.setOrganizationName("Asymmetry")
 
     from asymmetry.gui.styles.fonts import configure_plot_fonts, register_bundled_fonts
+    from asymmetry.gui.ui_manager import set_base_stylesheet
 
     register_bundled_fonts()
     configure_plot_fonts()
 
-    bench_css = _load_bench_stylesheet()
-    if bench_css and hasattr(app, "setStyleSheet"):
-        app.setStyleSheet(bench_css)
+    # Registered as the base, not set: the first MainWindow composes it with
+    # the scale block and applies the sheet once its widget tree is built.
+    set_base_stylesheet(app, _load_bench_stylesheet())
 
     if icon is None:
         icon = _load_app_icon()

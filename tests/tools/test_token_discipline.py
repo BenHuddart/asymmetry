@@ -407,6 +407,44 @@ def test_repeated_mainwindow_construction_does_not_compound_app_styles(qapp) -> 
         second.deleteLater()
 
 
+@pytest.mark.gui
+def test_mainwindow_builds_at_scale_before_applying_app_stylesheet(qapp) -> None:
+    """The widget tree is born at the scaled font but styled only once it is built.
+
+    Building under a live application sheet re-polishes every reparented subtree
+    (~0.1 s per window); the fonts must still be published first so widgets are
+    born at scale.
+    """
+    from unittest.mock import patch
+
+    from PySide6.QtCore import QSettings
+
+    from asymmetry.gui.mainwindow import MainWindow
+    from asymmetry.gui.styles.fonts import ui_font_scale
+    from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
+
+    QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.2)
+    qapp.setStyleSheet("")
+    seen: dict[str, object] = {}
+    create_docks = MainWindow._create_docks
+
+    def _spy(self: MainWindow) -> None:
+        seen["sheet"] = qapp.styleSheet()
+        seen["scale"] = ui_font_scale()
+        seen["font"] = qapp.font().pointSizeF()
+        create_docks(self)
+
+    with patch.object(MainWindow, "_create_docks", _spy):
+        window = MainWindow()
+    try:
+        assert seen["sheet"] == ""
+        assert seen["scale"] == pytest.approx(1.2)
+        assert seen["font"] == pytest.approx(qapp.font().pointSizeF())
+        assert window._ui_manager.build_stylesheet(1.2) in qapp.styleSheet()
+    finally:
+        window.close()
+
+
 # ── Plot-trace palette centralisation (P2-6) ─────────────────────────────────
 
 

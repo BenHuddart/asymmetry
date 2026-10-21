@@ -28,8 +28,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QFontMetrics
+from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -52,6 +52,11 @@ UI_SCALE_OPTIONS: tuple[float, ...] = (0.8, 0.9, 1.0, 1.1, 1.2)
 #: multiplied the app font by the scale factor again each time.
 _APP_BASE_STYLESHEET_PROP = "_asymmetry_base_stylesheet"
 _APP_BASE_FONT_PROP = "_asymmetry_base_font"
+
+
+def set_base_stylesheet(app: QApplication, stylesheet: str) -> None:
+    """Register the pre-scale base sheet that every UIManager composes its scale block onto."""
+    app.setProperty(_APP_BASE_STYLESHEET_PROP, stylesheet)
 
 
 class _UIScaleBroadcast(QObject):
@@ -79,21 +84,10 @@ class UIManager(QObject):
     def __init__(self, main_window: QMainWindow):
         super().__init__(main_window)
         self._window = main_window
-        self._settings = getattr(main_window, "_settings", QSettings())
+        self._settings = main_window._settings
         self._app = QApplication.instance()
 
         self.ui_scale = _DEFAULT_UI_SCALE
-
-        self._dock_data_browser = getattr(main_window, "_dock_data_browser")
-        self._dock_fit = getattr(main_window, "_dock_fit")
-        self._dock_fourier = getattr(main_window, "_dock_fourier")
-        self._dock_fit_parameters = getattr(main_window, "_dock_fit_parameters")
-        self._dock_log = getattr(main_window, "_dock_log")
-
-        self._main_toolbar = getattr(main_window, "_main_toolbar")
-        self._ui_scale_actions: dict[float, QAction] = dict(
-            getattr(main_window, "_ui_scale_actions", {})
-        )
 
         if self._app is not None:
             base_font = self._app.property(_APP_BASE_FONT_PROP)
@@ -113,17 +107,23 @@ class UIManager(QObject):
         _ui_scale_broadcast.ui_scale_broadcast.connect(self._follow_ui_scale_broadcast)
 
     def restore_settings(self) -> None:
-        """Restore persisted UI scale preferences and clear legacy compact-mode state."""
+        """Restore the persisted UI scale and publish its fonts, before the window is built.
+
+        Publishes steps 1–2 only, so the widget tree is born at scale. The
+        stylesheet (step 3) waits for :meth:`apply_ui_scale` once the tree is
+        built: while an application sheet is active every reparent re-polishes
+        the moved subtree, so building under it costs ~0.1 s per window.
+        """
         self.ui_scale = _coerce_scale(
             self._settings.value(UI_SCALE_SETTINGS_KEY, _DEFAULT_UI_SCALE),
             default=_DEFAULT_UI_SCALE,
         )
         self._settings.remove(COMPACT_MODE_SETTINGS_KEY)
-        self.apply_ui_scale()
+        self._publish_fonts()
 
     def bind_actions(self) -> None:
         """Connect menu and toolbar actions to UIManager-owned behavior."""
-        for scale, action in self._ui_scale_actions.items():
+        for scale, action in self._window._ui_scale_actions.items():
             action.triggered.connect(lambda checked=False, s=scale: self.set_ui_scale(s))
 
     def set_ui_scale(self, scale: float) -> None:
@@ -165,12 +165,8 @@ class UIManager(QObject):
            so explicit-font chrome (dock/section headers, table headers,
            group-box titles) re-scales live.
         """
-        set_ui_font_scale(self.effective_scale)
+        self._publish_fonts()
         if self._app is not None:
-            font = QFont(self._base_font)
-            font.setPointSizeF(max(8.0, self._base_font_size * self.effective_scale))
-            if self._app.font() != font:
-                self._app.setFont(font)
             stylesheet = self.build_stylesheet(self.effective_scale)
             if self._base_stylesheet:
                 stylesheet = f"{self._base_stylesheet}\n{stylesheet}".strip()
@@ -183,6 +179,15 @@ class UIManager(QObject):
         self._sync_scale_controls()
         self.ui_scale_changed.emit(self.ui_scale, self.effective_scale)
 
+    def _publish_fonts(self) -> None:
+        """Publish the scale to the font builders and set the scaled application font."""
+        set_ui_font_scale(self.effective_scale)
+        if self._app is not None:
+            font = QFont(self._base_font)
+            font.setPointSizeF(max(8.0, self._base_font_size * self.effective_scale))
+            if self._app.font() != font:
+                self._app.setFont(font)
+
     def _apply_toolbar_icon_size(self) -> None:
         """Size the main toolbar's icons from the live application font.
 
@@ -190,9 +195,7 @@ class UIManager(QObject):
         list): icons that read as ~one text line tall track the UI scale for
         free, so a bigger zoom yields proportionally bigger tool icons.
         """
-        toolbar = self._main_toolbar
-        if toolbar is None:
-            return
+        toolbar = self._window._main_toolbar
         line = QFontMetrics(self._app.font() if self._app is not None else QFont()).height()
         side = max(12, round(line * 0.9))
         toolbar.setIconSize(QSize(side, side))
@@ -215,27 +218,25 @@ class UIManager(QObject):
         Parameters); the main window re-applies per-representation visibility
         on top of this via _apply_inspector_for_domain.
         """
-        self._window.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._dock_data_browser)
-        self._window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fourier)
-        self._window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_fit)
-        self._window.addDockWidget(
-            Qt.DockWidgetArea.RightDockWidgetArea,
-            self._dock_fit_parameters,
-        )
-        self._window.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._dock_log)
-        for dock in (self._dock_fourier, self._dock_fit, self._dock_fit_parameters):
+        window = self._window
+        window.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, window._dock_data_browser)
+        window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, window._dock_fourier)
+        window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, window._dock_fit)
+        window.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, window._dock_fit_parameters)
+        window.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, window._dock_log)
+        for dock in (window._dock_fourier, window._dock_fit, window._dock_fit_parameters):
             dock.setFloating(False)
-        self._window.tabifyDockWidget(self._dock_fourier, self._dock_fit)
-        self._window.tabifyDockWidget(self._dock_fit, self._dock_fit_parameters)
+        window.tabifyDockWidget(window._dock_fourier, window._dock_fit)
+        window.tabifyDockWidget(window._dock_fit, window._dock_fit_parameters)
 
         defaults = self._default_full_visibility()
-        self._dock_data_browser.setVisible(defaults["data"])
-        self._dock_fit.setVisible(defaults["fit"])
-        self._dock_fourier.setVisible(defaults["fourier"])
-        self._dock_fit_parameters.setVisible(defaults["fit_parameters"])
-        self._dock_log.setVisible(defaults["log"])
-        self._window.resizeDocks([self._dock_data_browser], [330], Qt.Orientation.Horizontal)
-        self._window.resizeDocks([self._dock_log], [112], Qt.Orientation.Vertical)
+        window._dock_data_browser.setVisible(defaults["data"])
+        window._dock_fit.setVisible(defaults["fit"])
+        window._dock_fourier.setVisible(defaults["fourier"])
+        window._dock_fit_parameters.setVisible(defaults["fit_parameters"])
+        window._dock_log.setVisible(defaults["log"])
+        window.resizeDocks([window._dock_data_browser], [330], Qt.Orientation.Horizontal)
+        window.resizeDocks([window._dock_log], [112], Qt.Orientation.Vertical)
         # Restore the inspector deck to its controls-fitting default width via
         # the same helper the launch path uses — the deck panes are tabified into
         # one region and must be resized as a group (the stale single-dock resize
@@ -243,8 +244,8 @@ class UIManager(QObject):
         # Mirror __init__ + showEvent: a synchronous pass seeds the layout, and a
         # deferred pass makes the width stick once the relayout from the re-add/
         # tabify above has settled.
-        self._window._apply_default_dock_widths()
-        QTimer.singleShot(0, self._window, self._window._apply_default_dock_widths)
+        window._apply_default_dock_widths()
+        QTimer.singleShot(0, window, window._apply_default_dock_widths)
 
     def build_stylesheet(self, scale: float) -> str:
         """Return the global stylesheet block for the requested scale.
@@ -387,11 +388,11 @@ QAbstractItemView::indicator:disabled {{
 
     def _panel_dock(self, panel_key: str) -> QDockWidget:
         return {
-            "data": self._dock_data_browser,
-            "fit": self._dock_fit,
-            "fourier": self._dock_fourier,
-            "fit_parameters": self._dock_fit_parameters,
-            "log": self._dock_log,
+            "data": self._window._dock_data_browser,
+            "fit": self._window._dock_fit,
+            "fourier": self._window._dock_fourier,
+            "fit_parameters": self._window._dock_fit_parameters,
+            "log": self._window._dock_log,
         }[panel_key]
 
     def _default_full_visibility(self) -> dict[str, bool]:
@@ -407,7 +408,7 @@ QAbstractItemView::indicator:disabled {{
         }
 
     def _sync_scale_controls(self) -> None:
-        for scale, action in self._ui_scale_actions.items():
+        for scale, action in self._window._ui_scale_actions.items():
             action.blockSignals(True)
             action.setChecked(abs(scale - self.ui_scale) < 1e-9)
             action.blockSignals(False)

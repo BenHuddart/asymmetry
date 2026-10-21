@@ -253,6 +253,7 @@ def _boot_qapplication():
         configure_plot_fonts,
         register_bundled_fonts,
     )
+    from asymmetry.gui.ui_manager import set_base_stylesheet
 
     # Use a dedicated org/app so we never read or write the user's QSettings.
     app.setApplicationName("AsymmetryScreenshots")
@@ -264,9 +265,9 @@ def _boot_qapplication():
     register_bundled_fonts()
     configure_plot_fonts()
 
-    bench_css = app_module._load_bench_stylesheet()
-    if bench_css:
-        app.setStyleSheet(bench_css)
+    # Mirrors app.main: registered as the base the first MainWindow composes and
+    # applies once its widget tree is built.
+    set_base_stylesheet(app, app_module._load_bench_stylesheet())
 
     _apply_determinism_patches()
 

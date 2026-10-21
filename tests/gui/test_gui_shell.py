@@ -419,6 +419,9 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
         def setOrganizationName(self, org):  # noqa: N802
             self.org = org
 
+        def setProperty(self, _name, _value):  # noqa: N802
+            return
+
         def setWindowIcon(self, _icon):  # noqa: N802
             events.append("set-icon")
             return
@@ -527,6 +530,9 @@ def test_main_uses_resource_fallback_for_splash_logo(
             return
 
         def setOrganizationName(self, _name):  # noqa: N802
+            return
+
+        def setProperty(self, _name, _value):  # noqa: N802
             return
 
         def setWindowIcon(self, _icon):  # noqa: N802

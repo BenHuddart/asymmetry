@@ -203,6 +203,10 @@ def _cleanup_qt_widgets() -> Iterator[None]:
         except Exception:
             pass
     _drain()
+    # With no window left, drop the app sheet so the next test's MainWindow is
+    # built unstyled and styled once at the end (see UIManager.restore_settings);
+    # building under a live sheet re-polishes every reparented subtree.
+    app.setStyleSheet("")
 
     # Join any worker thread orphaned this test: a panel GC'd without
     # shutdown_workers(), or a shutdown() whose bounded wait timed out, hands its
