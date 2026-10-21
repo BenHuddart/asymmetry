@@ -70,6 +70,13 @@ scale change in exactly three publish steps (see `gui/ui_manager.py`):
    sizes, selected by `objectName` (`#benchSectionHeader`,
    `QHeaderView::section`, `QGroupBox::title`, `QDockWidget::title`).
 
+On `MainWindow` construction, steps 1–2 run before the widget tree is built and
+step 3 runs once after it: while an application sheet is active, every reparent
+re-polishes the moved subtree. The BENCH base sheet is therefore registered with
+`set_base_stylesheet`, never set on the `QApplication` directly. Widgets built
+during construction measure an unstyled `sizeHint`; anything that must fit its
+styled size re-derives on show or on `ui_scale_changed`.
+
 **What a new widget must do to be scale-safe: usually nothing.** If it inherits
 the application font and sizes through the builders/metrics, it re-scales for
 free. Two cases need a hook:

@@ -1096,18 +1096,23 @@ class MainWindow(QMainWindow):
         # clears the flag. Reset layout clears the whole memory.
         self._inspector_closed_docks: dict[str, set[str]] = {}
 
+        # Fonts are published before the tree is built so widgets are born at
+        # scale; the app stylesheet is applied once after it is built
+        # (apply_ui_scale below), since every reparent under a live sheet
+        # re-polishes the moved subtree.
+        self._ui_manager = UIManager(self)
+        self._ui_manager.restore_settings()
         self._setup_menus()
         self._create_toolbars()
         self._create_docks()
-        self._ui_manager = UIManager(self)
         # The status-bar labels set an explicit mono font that ignores the
         # (UI-scaled) application font and that QSS cannot reach cleanly without
         # a broad QLabel rule, so this owned hook re-derives them from the
-        # builders on every scale change. Connected before restore_settings so
-        # the initial apply_ui_scale emit reaches it.
+        # builders on every scale change. Connected before apply_ui_scale so
+        # the initial emit reaches it.
         self._ui_manager.ui_scale_changed.connect(self._on_ui_scale_changed)
         self._connect_actions()
-        self._ui_manager.restore_settings()
+        self._ui_manager.apply_ui_scale()
         # Surface the inspector deck for the initial representation (the app
         # lands in the default F-B view without firing a view-change signal).
         self._apply_inspector_for_domain(self._plot_workspace.active_view())
