@@ -2264,3 +2264,6 @@ Fresh full24 confirmation9 LIVE at /home/ben/.cache/asymmetry-luna6-overnight-20
 
 
 Confirmation9 first2/24scored: PTFE6/6Musts1/3Shoulds andYMnAl5/5Musts2/3Shoulds science/number/unit/strictcopy/boundaryPASS. Totals11/11Musts,2/2science/copy/combined/boundary,3/6Shoulds. PreservepoorPTFEConstant/Arrhenius,failedYMnAlcritical-lawandconditionalLF/reference-backgroundcaveats. AllsourcefrozenuntilALL24complete;no newfullgateafter04:30UTC.
+
+
+Confirmation9 now5/24scored: plateau5/5Musts2/5Shoulds,tin5/5Musts2/4Shoulds,spinPeierls6/6Musts2/3Shoulds allscience/number/unit/strictcopy/boundaryPASS. Totals27/27Musts,5/5science/copy/combined/boundary,9/18Shoulds. Tinquantitativecritical-line/OrderParameterfitfailed despitevalidsurveyprogression;plateaufullrange/freemlimitsandspinPeierlsdimerisationgapretained. SourcesfrozenuntilALL24.
