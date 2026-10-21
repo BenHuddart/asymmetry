@@ -504,6 +504,12 @@ def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
             else f"lower at the {point}"
         )
         shown = [first, following] + ([rows[-1]] if rows[-1] is not following else [])
+        if difference > 0 and significance >= 3 and first["key"] == endpoints[0]["key"]:
+            notes.append(
+                f"COLD-END EXCESS: {param} is higher at the coldest run {first['key']} "
+                f"than at the next measured temperature, run {following['key']}. "
+                "Report this adjacent-point upturn separately from the wider temperature trend."
+            )
         notes.append(
             f"ENDPOINTS: {param}: "
             + "; ".join(

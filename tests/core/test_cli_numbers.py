@@ -159,7 +159,7 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     draft = tmp_path / "summary.md"
     # The folder's files carry deadtimes this reduction left off, which a draft must say.
     draft.write_text(
-        f"{len(ALL_RUNS)} runs; ZF scan {min(ZF_RUNS)} – {max(ZF_RUNS)}; "
+        f"{len(ALL_RUNS)} runs, SIM .nxs; ZF scan {min(ZF_RUNS)} – {max(ZF_RUNS)}; "
         "the reduction left deadtime off.\n\nFiles\nplots/review.png\n",
         encoding="utf-8",
     )
@@ -234,7 +234,7 @@ def test_report_provenance_and_coupled_fits_are_required(
             str(index),
             {"kind": "series", "trend": {"rows": [{"key": str(run)} for run in members]}},
         )
-    text = "6 runs, two temperature groups: 201-203 and 204-206."
+    text = "6 runs, SIM .nxs, two temperature groups: 201-203 and 204-206."
     assert any("COUPLED FIELD GROUPS: 2" in m for m in report_obligations([workdir.root], text))
     # One global fit over both temperatures forces one set of dynamics on them.
     union = {"kind": "global", "trend": {"rows": [{"key": str(run)} for run in range(201, 207)]}}
@@ -817,10 +817,10 @@ def test_prepare_reply_only_removes_terminal_line_endings_after_a_pass(
     cli.main(["audit", str(draft), "--prepare-reply"])
     out = capsys.readouterr().out
     assert draft.read_bytes() == body.encode()
-    assert f"----- BEGIN -----\n{body}\n----- END -----" in out
-    assert "terminal newline: no" in out
+    assert out == body
     draft.write_text("Unprinted result 98765.4321.\n")
-    cli.main(["audit", str(draft), "--prepare-reply"])
+    with pytest.raises(SystemExit, match="1"):
+        cli.main(["audit", str(draft), "--prepare-reply"])
     assert draft.read_text().endswith("\n")
     assert "----- BEGIN -----" not in capsys.readouterr().out
 
@@ -878,3 +878,52 @@ def test_an_integral_only_scan_requires_its_first_local_dip_test(tmp_path: Path)
     }
     (scans / "local.json").write_text(json.dumps(payload | {"fit": fit}))
     assert _unfitted_dips([root]) == []
+
+
+def test_adjacent_cold_excess_is_not_replaced_by_distant_warm_comparison() -> None:
+    from asymmetry.cli._numbers import unstated
+
+    log = "COLD-END EXCESS: nu is higher at the coldest run 21 than the next run 22."
+    assert unstated("nu is higher at 5 K than at 100 K.", log)
+    assert not unstated("The coldest nu is higher than the next temperature point.", log)
+
+
+def test_conditional_coupling_needs_its_estimate_and_error() -> None:
+    from asymmetry.cli._numbers import unstated
+
+    log = "CONDITIONAL COUPLING: A_hf = 1516.298738 ± 80.450183 MHz, chi2_red 459.300."
+    assert unstated("A_hf is not established because the fit is poor.", log)
+    assert not unstated(
+        "A_hf = 1516.298738 ± 80.450183 MHz is model-conditioned; the fit is poor.", log
+    )
+
+
+def test_report_acquisition_and_sample_identities_are_not_reference_labels(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.audit import report_obligations
+    from asymmetry.core.workflow.survey import survey_folder
+    from asymmetry.core.workflow.workdir import RunSelection, WorkDir
+
+    survey = survey_folder(workflow_folder)
+    scan = replace(survey.scans[0], samples=("Salt/water", "Salt/hexane"))
+    workdir = WorkDir(tmp_path / "work")
+    workdir.write_manifest(RunSelection(workflow_folder, None))
+    workdir.write_survey(replace(survey, scans=[scan]).to_dict())
+    missing = report_obligations([workdir.root], "Two magnet references, cold and warm.")
+    assert any("SIM .nxs" in message for message in missing)
+    assert sum("recorded sample" in message for message in missing) == 2
+    stated = report_obligations([workdir.root], "SIM .nxs: Salt/water and Salt/hexane.")
+    assert not any(
+        "recorded sample" in message or "acquisition provenance" in message for message in stated
+    )
+
+
+def test_muonium_identity_is_not_an_unrelated_failed_species_fit() -> None:
+    from asymmetry.cli._numbers import unstated
+
+    log = "MUONIUM: runs 10-12 have a fast line."
+    assert unstated("The muonium model failed on the Ag control.", log)
+    assert not unstated("Muonium amplitude falls with the instrument frequency response.", log)

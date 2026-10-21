@@ -391,6 +391,37 @@ _DIRECTION = (
 #: statement — so the check catches a reply that leaves the point out entirely.
 _SAY_SO: tuple[_SaySo, ...] = (
     _SaySo(
+        _pattern(r"^MUONIUM:"),
+        _pattern(
+            r"muonium(?:[^.\n]|\.(?=\d)){0,180}(?:response|pulse|binning)"
+            r"|(?:response|pulse|binning)(?:[^.\n]|\.(?=\d)){0,180}muonium"
+        ),
+        "identify the measured weak-field muonium line and link its amplitude trend "
+        "to the instrument response; an unrelated rejected species fit is not that result",
+    ),
+    _SaySo(
+        _pattern(r"^TEMPERATURE: the logged sample temperature"),
+        _pattern(
+            r"(?:logged|sensor|T log)[^.\n]{0,120}(?:setpoint|fault|irrelevant|offset|nominal)"
+            r"|(?:setpoint|fault|irrelevant|offset|nominal)[^.\n]{0,120}(?:logged|sensor|T log)"
+        ),
+        "explain which logged-temperature readings or setpoints describe each block "
+        "and whether a conflicting sensor value is faulty or irrelevant",
+    ),
+    _SaySo(
+        _pattern(r"^COLD-END EXCESS:"),
+        _pattern(
+            r"(?:coldest|cold.end|lowest)(?:[^.\n]|\.(?=\d)){0,160}"
+            r"(?:next|adjacent)(?:[^.\n]|\.(?=\d)){0,100}(?:higher|upturn|excess)"
+            r"|(?:higher|upturn|excess)(?:[^.\n]|\.(?=\d)){0,160}"
+            r"(?:coldest|cold.end|lowest)(?:[^.\n]|\.(?=\d)){0,100}(?:next|adjacent)"
+            r"|(?:coldest|cold.end|lowest)(?:[^.\n]|\.(?=\d)){0,100}"
+            r"(?:higher|upturn|excess)(?:[^.\n]|\.(?=\d)){0,100}(?:next|adjacent)"
+        ),
+        "state the coldest-versus-next-temperature excess in words; a comparison with a "
+        "distant warm point does not account for the adjacent endpoint",
+    ),
+    _SaySo(
         _pattern(r"^\s*COMPOSITION AXIS:"),
         _pattern(
             r"(?:concentration|composition)[^.\n]{0,100}(?:titles?|notes)"
@@ -527,6 +558,17 @@ def unstated(draft: str, log_text: str) -> list[str]:
         if printed and owed and not say.stated.search(draft):
             quoted = "\n".join(f"    > {line[:240]}" for line in printed[:_QUOTED_LINES])
             messages.append(f"The draft does not {say.instruction}, as printed:\n{quoted}")
+    for name in dict.fromkeys(re.findall(r"^CONDITIONAL COUPLING: (\w+) =", log_text, re.M)):
+        if not re.search(
+            rf"\b{re.escape(name)}\b\s*(?:[|=:]|is|of)?\s*[-−+]?\d+(?:\.\d+)?"
+            rf"\s*(?:MHz)?\s*(?:±|\+/-)",
+            draft,
+            re.I,
+        ):
+            messages.append(
+                f"Report the conditional {name} estimate with its uncertainty and model/chi2 "
+                "limitation; rejecting a microscopic interpretation does not erase a determined fit parameter."
+            )
     return messages
 
 

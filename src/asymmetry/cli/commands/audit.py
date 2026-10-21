@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import shlex
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -39,7 +40,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     output.add_argument(
         "--prepare-reply",
         action="store_true",
-        help="After all checks pass, remove terminal line endings from the draft before printing it",
+        help="After all checks pass, finalize terminal line endings and emit only the reply body",
     )
     parser.set_defaults(func=run)
 
@@ -161,11 +162,15 @@ def run(args: argparse.Namespace) -> None:
             f"above (a measurement left unfitted or unread is a result missing from the "
             f"summary), add what each shows to {draft}, and run audit again."
         )
+        if args.prepare_reply:
+            raise UserError("Reply not prepared: resolve the audit findings first.")
         return
     if not found:
         if args.prepare_reply:
             text = text.rstrip("\r\n")
             draft.write_text(text, encoding="utf-8", newline="")
+            sys.stdout.write(text)
+            return
         # Agents retype a passed draft and add to it; the text to send is printed whole.
         print(
             f"No unprinted numbers found in {draft}. As the skill's Step 7 asks, your final "
@@ -199,6 +204,8 @@ def run(args: argparse.Namespace) -> None:
             f"Then run audit again: reply only once it prints 'No unprinted numbers found in "
             f"{draft}'."
         )
+    if args.prepare_reply:
+        raise UserError("Reply not prepared: resolve the audit findings first.")
 
 
 #: The marker framing the passed draft, which the reply copies.
@@ -234,6 +241,26 @@ def report_obligations(roots: list[Path], text: str) -> list[str]:
         if workdir.survey_path.is_file()
     }
     for selection, survey in surveys.items():
+        for instrument, suffix in sorted(
+            {(row["instrument"], Path(row["file"]).suffix) for row in survey["runs"]}
+        ):
+            if (
+                instrument.casefold() not in text.casefold()
+                or suffix.casefold() not in text.casefold()
+            ):
+                messages.append(
+                    f"Name the acquisition provenance {instrument} {suffix} in the report; "
+                    "a facility name or generic data folder does not identify its instrument/format."
+                )
+        samples = {sample for scan in survey["scans"] for sample in scan["samples"] if sample}
+        if len(samples) > 1:
+            normalized = re.sub(r"[^a-z0-9]", "", text.casefold())
+            for sample in sorted(samples):
+                if re.sub(r"[^a-z0-9]", "", sample.casefold()) not in normalized:
+                    messages.append(
+                        f"Name the recorded sample {sample!r} beside its campaign or scan. "
+                        "A magnet reference, temperature or folder label does not replace sample identity."
+                    )
         condition_runs = {row["run_number"] for row in condition_period_runs(survey["runs"])}
         if condition_runs:
             fitted_periods = {"red": set(), "green": set()}

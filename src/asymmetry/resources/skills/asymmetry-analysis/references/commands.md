@@ -566,8 +566,8 @@ options:
   --workdir WORKDIR  Work directory whose cli-output.log to check against (repeatable;
                      default: every ./asymmetry-work* directory here)
   --json             Emit the machine-readable payload
-  --prepare-reply    After all checks pass, remove terminal line endings from the
-                     draft before printing it
+  --prepare-reply    After all checks pass, finalize terminal line endings and emit
+                     only the reply body
 ```
 
 ## `asymmetry skill`

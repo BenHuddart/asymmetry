@@ -1228,7 +1228,7 @@ List the numbers in a draft summary that no command printed.
 
 .. code-block:: text
 
-   asymmetry audit [-h] [--workdir WORKDIR] [--json] draft
+   asymmetry audit [-h] [--workdir WORKDIR] [--json | --prepare-reply] draft
 
 Named parameter values with explicit units in printed tables are also checked
 for contradictory units in the draft, including rejected-fit diagnostics. This
@@ -1237,6 +1237,11 @@ Illumination measurements with two periods require a common science run fitted
 in separate red and green workdirs; a differential integral cannot substitute
 for the two time spectra. Mixed-instrument surveys use each scan's instrument
 when matching completed fits in other workdirs.
+
+The audit also requires the acquisition instrument/file suffix and the distinct
+recorded sample names; magnet-reference groups do not replace sample identity.
+Determined conditional coupling estimates and significant coldest-versus-next
+excesses remain reportable with their model and fit-quality limitations.
 
 The audit also checks that the report gives the folder run count and explicit
 members for each longer scan. For repeated weak-field groups it checks for
@@ -1275,11 +1280,13 @@ The repeated result-command footer and the evaluation image-review prompt use
 this same preparation step after the last edit. Copy its passed body without
 reformatting numeric precision or adding a final newline.
 After all checks pass, this opt-in operation removes terminal line endings
-from the saved draft and prints that exact body. Repeat it after every edit;
-editors may restore a newline. Without the option, audit leaves the file
-unchanged. It cannot be combined with ``--json``.
+from the saved draft and emits only that exact body on stdout, without markers,
+status lines or a copy-check footer. Copy the entire stdout unchanged. Failed
+preparation returns a nonzero status and leaves the draft unchanged. Repeat it
+after every edit; editors may restore a newline. Without the option, audit leaves
+the file unchanged. It cannot be combined with ``--json``.
 
-A clean audit prints the passed draft between ``----- BEGIN -----`` and
+A clean audit **without** ``--prepare-reply`` prints the passed draft between ``----- BEGIN -----`` and
 ``----- END -----`` lines for the reply to copy whole, since agents that retype
 it add unaudited text. A ``COPY CHECK`` after the markers gives the report's
 line count and final line, so copying can be checked through the last file-list
@@ -1991,3 +1998,15 @@ Composition-axis summaries name the title/notes source, normalization and
 units of supplied values. TF broadening alone does not select a superconducting
 model: unknown samples retain an open physics scope and magnetic experiments
 need magnetic line-shift/splitting interpretations.
+
+
+Sampling bandwidth in stored reductions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``reduce --rebin`` averages bins and lowers the Nyquist frequency used by later
+fits and transforms. Before averaging, the workflow checks detected spectral
+lines on the native record. It rejects a factor that would fold a detected line
+through the new Nyquist boundary and prints a safe maximum factor. Use a smaller
+factor, a shorter fit window, or ``--plot-tmax`` for display-only zoom. A high
+applied field alone does not forbid averaging a nonprecessing LF trace; the
+check protects measured lines, rather than assuming a Larmor line is present.

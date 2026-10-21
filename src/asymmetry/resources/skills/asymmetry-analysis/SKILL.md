@@ -1232,9 +1232,12 @@ asymmetry audit summary.md --prepare-reply
 ```
 
 `--prepare-reply` changes the draft only after every audit check passes: it
-removes terminal line endings and prints the exact remaining body. Use it
-again after every later edit; do not manually truncate characters or repair
-newlines after auditing. A plain audit remains read-only.
+removes terminal line endings and emits only the exact remaining report body.
+Its entire stdout is the final reply. There are no marker lines or copy-check
+footers to interpret. Use it again after every later edit; do not retype numbers,
+polish a word, close punctuation, or add a formatting comment after preparation.
+Image-review manifests belong only to a requested image-selection turn. A plain
+audit remains read-only; failed preparation returns nonzero and prepares nothing.
 
 Every command's printed output is logged in the work directory, and `audit`
 lists each number in the draft that no command printed. It first lists every
@@ -1275,16 +1278,37 @@ failed first fit calls for a local window/background comparison, not abandoning
 other conditions. Explain overlapping or confounded groups rather than deriving
 an extra temperature law from them.
 
+**Preserve bandwidth before reducing fit cost.** Rebinning lowers Nyquist and can
+fold a real line into a false low-frequency line or reverse an apparent shift.
+The CLI rejects rebinning that aliases a detected line in the original record.
+Use the printed safe factor or retain native bins and shorten the analysis
+window; a plot zoom alone does not change the stored spectrum. Lack of a line
+after averaging is not evidence it was absent at native resolution.
+
 **Preserve context and calibration per measurement.** Read supplied experiment
 notes before choosing a mechanism. An established magnetic experiment calls for
 magnetic interpretations; a generic TF broadening cue does not make it a
-superconducting experiment. If context is missing, keep the interpretation
-conditional and state what is missing. Name the actual calibrant and applied
+superconducting experiment. If phase information is missing, still interpret
+measured shifts and field distributions as bounded magnetic-response hypotheses
+(local susceptibility, internal-field distributions or inequivalent environments).
+State what evidence could distinguish them. A lack of a phase label is not a
+reason to omit the magnetic interpretation, and does not by itself justify a
+vortex-lattice or superconducting gap claim. Name the actual calibrant and applied
 alpha for every fitted exercise/period/block, including beam and detector changes.
-Check the final stored reduction after timing or background corrections; an earlier
-survey alpha can differ. Zero parameter errors do not mean zero fitted values:
+Keep sample identities distinct from magnet references and conditions, and name
+the instrument and file format rather than only its facility. Check the final
+stored reduction after timing or background corrections; an earlier survey alpha
+can differ. Zero parameter errors do not mean zero fitted values:
 quote the actual failed diagnostic or omit invalid parameters, never replace
 failed rows with a blanket numerical claim.
+
+**Calibration patterns still need their physical interpretation.** An instrumental
+exercise is not complete with a fit table: explain what centres the beam or
+stops muons in a degrader, identify weak-field muonium when the measured
+frequency/field relation supports it, and distinguish an unrecorded weak TF on
+a nonmagnetic reference from spontaneous order. State which temperature logs
+are faulty or irrelevant to the exercise. Do not promote a wizard's species
+model on a reference sample when its amplitude or calibration is invalid.
 
 **A kinetic rate needs the signal component that carries it.** In weak-field
 muonium/reaction experiments, generic smooth relaxation can describe the
@@ -1717,6 +1741,9 @@ what each term of the model represents physically, the `Constant` included.
 **Results** — a table from `trend`: the scan variable and, per key parameter,
 value ± error. Include the amplitudes, not only the rate or frequency, and say
 what fraction of the asymmetry is *not* in the component you are interpreting.
+Quote a primary model's determined conditional parameters and errors even when
+its overall fit is poor, then explain why they are not established microscopic
+quantities. Omitting the requested coupling or rate is not a fit-quality caveat.
 Only rows and values the tool produced. For a long scan, show the decisive
 endpoints and points defining a change, then name the stored full table; do
 not reproduce every parameter of every exploratory model. Preserve the

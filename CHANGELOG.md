@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- User-requested reduction binning rejects factors that would alias detected
+  native spectral lines. Reply preparation emits only the passed report body
+  and fails with nonzero status when checks remain; the evaluation runner
+  verifies these raw bytes without substituting a saved report. Acquisition
+  identities, conditional coupling estimates and adjacent cold-end excesses
+  receive explicit report checks and general skill guidance.
+
 - Survey output names geometry evidence per scan and per run, distinguishing
   file stamps from measured precession and coil readbacks. General LF
   diagnostic guidance preserves observed decoupling when alignment metadata

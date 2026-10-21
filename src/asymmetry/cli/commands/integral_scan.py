@@ -402,6 +402,21 @@ def _render(result: dict, settings, notes: list[str]) -> str:
             )
             for name, value in fit["parameters"].items()
         ]
+        for name in fit["parameters"]:
+            if (
+                units.get(name) == "MHz"
+                and name not in fit["fixed"]
+                and name not in fit["params_at_bound"]
+                and fit["success"]
+                and 0 < fit["uncertainties"][name] < abs(fit["parameters"][name])
+            ):
+                notes.append(
+                    f"CONDITIONAL COUPLING: {name} = {fit['parameters'][name]:.6f} ± "
+                    f"{_scaled(fit, name):.6f} MHz, chi2_red "
+                    f"{fit['reduced_chi_squared']:.3f}. Report this model-conditioned estimate "
+                    "and error with its fit quality even when the overall fit is poor; "
+                    "it does not establish a microscopic coupling or site assignment."
+                )
         lines.extend(
             [
                 f"fit: {fit['expression']}, chi2_red "

@@ -400,10 +400,34 @@ def reduce_run(run: Run, settings: ReductionSettings) -> MuonDataset:
     else:
         dataset = _reduce_period(run, settings)
     if settings.rebin > 1:
-        dataset = dataset.rebin(settings.rebin)
+        dataset = _bandwidth_preserving_rebin(dataset, settings.rebin)
     if settings.t_min is not None or settings.t_max is not None:
         dataset = dataset.time_range(settings.t_min, settings.t_max)
     return dataset
+
+
+def _bandwidth_preserving_rebin(dataset: MuonDataset, factor: int) -> MuonDataset:
+    """Reject user binning that would alias a detected line in the original record."""
+    import math
+
+    import numpy as np
+
+    from asymmetry.core.fitting.peak_detection import analyze_dataset_peaks
+
+    analysis = analyze_dataset_peaks(dataset, min_snr=6.0, burg_check="never", damped_pass=False)
+    dt = float(np.median(np.diff(dataset.time)))
+    nyquist = 0.5 / (dt * factor)
+    frequencies = [peak.frequency_mhz for peak in analysis.peaks if peak.frequency_mhz >= nyquist]
+    if frequencies:
+        highest = max(frequencies)
+        maximum = max(1, math.ceil(0.5 / (dt * highest)) - 1)
+        raise ValueError(
+            f"Run {dataset.run_number}: rebin {factor} lowers Nyquist to {nyquist:.6g} MHz "
+            f"and would alias a detected {highest:.6g} MHz line. Use rebin <= {maximum}, "
+            "or keep rebin 1 and shorten the fit window or zoom the plot. "
+            "A folded line is not a physical frequency shift."
+        )
+    return dataset.rebin(factor)
 
 
 def estimate_alpha_for_run(run: Run, settings: ReductionSettings) -> AlphaEstimate:

@@ -285,3 +285,22 @@ def test_agent_plot_cache_is_writable_and_project_local(tmp_path: Path) -> None:
     assert cache.is_relative_to(args.out / "project")
     (cache / "probe").write_text("cache")
     assert Path(runner.agent_env(args)["MPLCONFIGDIR"]) == cache
+
+
+def test_prepared_reply_is_raw_stdout_and_requires_success() -> None:
+    runner = _load_runner()
+    event = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "command": "asymmetry audit summary.md --prepare-reply",
+            "exit_code": 0,
+            "aggregated_output": "Report with precision 0.0832477.\nFiles\nplot.png",
+        },
+    }
+    report = event["item"]["aggregated_output"]
+    assert runner.final_report_audited(report, [event])
+    for changed in (report + "\n", report + "No terminal newline.", report.replace("2477", "2472")):
+        assert not runner.final_report_audited(changed, [event])
+    failed = event | {"item": event["item"] | {"exit_code": 1}}
+    assert not runner.final_report_audited(report, [event, failed])

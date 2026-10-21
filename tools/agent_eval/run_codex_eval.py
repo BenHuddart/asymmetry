@@ -56,10 +56,12 @@ resolution alongside the values they qualify. Explain any uncompleted work.
 
 After inspecting these images, write the complete final report to summary.md
 and resolve asymmetry audit summary.md findings. After the last edit, run
-asymmetry audit summary.md --prepare-reply. Copy its passed report body exactly
-into your reply, preserving numeric formatting and the final character; do not
-add a terminal newline or edit the report after preparation. An audit of a
-first-turn draft does not audit a different report written after image review.
+asymmetry audit summary.md --prepare-reply. A successful preparation emits only
+report text: use its entire stdout as your final reply, unchanged. Do not append
+image-review manifests, audit checks or statements about formatting; those are
+control instructions, not scientific findings. Do not retype numbers or polish
+phrasing after preparation. An audit of a first-turn draft does not audit a
+different report written after image review.
 """
 EVALUATION_INSTRUCTIONS = """# Agent evaluation boundary
 
@@ -511,7 +513,10 @@ def final_report_audited(summary: str, events: list[dict]) -> bool:
             and item.get("type") == "command_execution"
             and "asymmetry audit " in item.get("command", "")
         ):
-            _, begin, body = item.get("aggregated_output", "").partition("----- BEGIN -----\n")
+            output = item.get("aggregated_output", "")
+            if "--prepare-reply" in item["command"]:
+                return bool(summary and item["exit_code"] == 0 and output == summary)
+            _, begin, body = output.partition("----- BEGIN -----\n")
             report, end, _ = body.partition("\n----- END -----")
             return bool(begin and end and report == summary)
     return False

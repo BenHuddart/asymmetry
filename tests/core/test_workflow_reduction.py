@@ -342,3 +342,50 @@ def test_the_background_error_names_the_source_run_of_a_period_selection() -> No
     settings = ReductionSettings(background="tail_fit", period="red")
     with pytest.raises(ValueError, match=r"^Run 44: the tail_fit background"):
         reduce_run(red, settings)
+
+
+@pytest.mark.parametrize("frequency", [40.0, 60.0])
+def test_user_rebinning_cannot_fold_detected_lines(frequency: float) -> None:
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.workflow.reduction import _bandwidth_preserving_rebin
+
+    time = np.arange(8192) * 0.001
+    dataset = MuonDataset(
+        time=time,
+        asymmetry=12 * np.cos(2 * np.pi * frequency * time),
+        error=np.ones_like(time) * 0.1,
+        metadata={"run_number": 7},
+    )
+    safe = _bandwidth_preserving_rebin(dataset, 4)
+    assert safe.n_points == dataset.n_points // 4
+    with pytest.raises(ValueError, match="would alias a detected"):
+        _bandwidth_preserving_rebin(dataset, 20)
+    assert dataset.n_points == 8192
+
+
+def test_relaxation_only_data_can_be_rebinned_in_a_high_field() -> None:
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.workflow.reduction import _bandwidth_preserving_rebin
+
+    time = np.arange(8192) * 0.001
+    dataset = MuonDataset(
+        time=time,
+        asymmetry=20 * np.exp(-time),
+        error=np.ones_like(time),
+        metadata={"field": 80000},
+    )
+    rebinned = _bandwidth_preserving_rebin(dataset, 20)
+    assert rebinned.n_points == dataset.n_points // 20
+
+
+def test_reduction_rejects_aliasing_before_returning_a_cached_spectrum() -> None:
+    run = simulate_run(
+        BUILTIN_TEMPLATES["ideal_pulsed_fb"].build(),
+        lambda time: 15 * np.cos(2 * np.pi * 8 * time),
+        total_events=1e8,
+        seed=11,
+        run_number=18,
+    )
+    with pytest.raises(ValueError, match="would alias a detected"):
+        reduce_run(run, ReductionSettings(rebin=10))
+    assert reduce_run(run, ReductionSettings(rebin=2)).n_points > 0
