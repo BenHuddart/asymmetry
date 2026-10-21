@@ -2177,3 +2177,6 @@ Confirmation7 now13/24scored:EuO5/5Musts1/3Shoulds sciencePASS/copyFAILdropsfour
 
 
 Confirmation7 now15/24scored:Sn5/5Musts3/4Shoulds science/copyPASS;Re6Zr5/7Musts1/6Shoulds scienceFAILmissingnearTcZF/TRSBcandidateandSCgapfit,copyPASS. Totals80/85Musts,12/15science,14/15copy,11/15combined,15/15boundary,30/57Shoulds. Correctprevious13-caseplancombinedcountto10/13(computedJSONwasalwayscorrect). Sourcefrozenremaining9.
+
+
+Confirmation7 now16/24scored:RFbenzene5/5Musts2/5Shoulds science/number/unit/copy/boundaryPASS. Totals85/90Musts,13/16science,15/16copy,12/16combined,16/16boundary,32/62Shoulds. PreserveJSONrawerrorsandnoisyidentityauditfindings;remaining8sourcefrozen.
