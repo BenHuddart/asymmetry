@@ -2228,3 +2228,6 @@ Confirmation8 tin5/5Musts,3/4Shoulds; science/number/unit/strictcopy/boundaryPAS
 
 
 Confirmation8 LFbenzene6/6Musts,2/5Shoulds; science/number/unit/copy/boundaryPASS. Negativea_Dia and return drift correctly stated; actual range-dependent A_hf comparison omitted. Totals14/24scored,76/78Musts,13/14science,13/14copy,12/14combined,14/14boundary,30/53Shoulds. Source remains frozen.
+
+
+Confirmation8 AFM5/5Musts1/3Shoulds science/copyPASS and independent magnetic physics scope nowPASS: native1085MHz retained, bounded magnetic interpretation, noSCgaplaws. Nickel7/7Musts2/4Shoulds science/copyPASS. Totals16/24scored,88/90Musts,15/16science,15/16copy,14/16combined,16/16boundary,33/60Shoulds. Preserve AFMnegative-baseline/poor-fit caveats and nickel failedcritical-law/sample caveats; freeze continues through all24.
