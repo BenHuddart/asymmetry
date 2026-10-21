@@ -397,11 +397,11 @@ evidence, not a stamp:
 - `geom -` with `prec none` at nonzero field refutes the header's resolved-TF
   interpretation but does not alone prove LF. Test it on the scan's response:
   weak fields that suppress a matched ZF Kubo–Toyabe relaxation to a nearly
-  flat trace are longitudinal decoupling; at high field, a substantial slowly
-  relaxing count integral contradicts TF cancellation. State that evidence
-  and the LF reading it supports, with any alignment caveat — missing coil
-  metadata does not erase an observed decoupling — rather than relabelling
-  every unresolved run as LF.
+  flat trace support longitudinal decoupling; at high field, a substantial
+  slowly relaxing count integral can contradict TF cancellation. State that
+  evidence and the LF reading it supports, with any alignment caveat — missing
+  coil metadata does not erase an observed decoupling. These tests support LF;
+  they do not classify every unresolved run as LF.
 - `prec other@<MHz>` → the muon precesses in a field that is not the applied
   one (see the table above for what the frequency can mean). That says nothing
   about the applied field's direction, so `geom` falls back to the file; judge
