@@ -2297,3 +2297,6 @@ Confirmation9 now19/24scored:maleic5/5Musts4/4Shoulds science/number/unit/strict
 
 
 Confirmation9 now21/24scored:LiFeAs8/8Musts4/6Shoulds andRe6Zr7/7Musts4/6Shoulds science/number/unit/strictcopy/boundaryPASS. Totals120/121Musts,19/21science,21/21copy,19/21combined,21/21boundary,47/85Shoulds;AFMscopePASS. PreserveLiFeAsliteralGaussian/crossoverandRe6Zrpointspacingjudgements,poorfit/background/capabilitycaveats. OnlyBasics/corannulene/benzeneALCremain;sourcefrozen.
+
+
+Confirmation9 now23/24scored:corannulene10/10Musts2/6Shoulds science/copyPASS;benzeneALC7/7Musts2/6Shoulds sciencePASS/copyFAILpostpreparationphrase/punctuationrewrite. Totals137/138Musts,21/23science,22/23copy,20/23combined,23/23boundary,51/97Shoulds;AFMscopePASS. Corannulene12500inputexception andALCconditionalconvergedupperfeaturejudgementretained. OnlyBasicsrunning;sourcefrozenuntilfinish.
