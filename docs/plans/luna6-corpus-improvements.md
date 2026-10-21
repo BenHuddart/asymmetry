@@ -2261,3 +2261,6 @@ Round19 validation COMPLETE:380 focused/5964 fast passed (fast10skip1xfail), lin
 
 
 Fresh full24 confirmation9 LIVE at /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9; implementation3558f5205b246762165c2fd9dbfa86bbdcbc6626,wavePID835682,supervisor835673;parentconsoleconfirmation9-wave.log. AllfreshfirstattemptsCodex/gpt-6-luna,fixedrubrics,two_turn_image_review_v2semantics,strictactualbytes. Max12,wizardenvdefault1notceiling,numericalthreads1,30sresourcesand05:59:50UTCtermination/interruptions. FreezeCLI/skill/runner/rubricsuntilALL24finishincludingearlyfailures. ManualscoreACTUALsummary.mdwithallMust/Should,evidence,quantity/unitexcludingaudit/draft/logreportreads,copy,boundary,host/model/attempt/hashes/images/AFMscope. Rawattemptspersistentoutside repo;corpusonlyASYMMETRY_CORPUS_ROOT. No broadtestswithliveevals. Deadline06UTC/fullgatecutoff04:30UTC.
+
+
+Confirmation9 first2/24scored: PTFE6/6Musts1/3Shoulds andYMnAl5/5Musts2/3Shoulds science/number/unit/strictcopy/boundaryPASS. Totals11/11Musts,2/2science/copy/combined/boundary,3/6Shoulds. PreservepoorPTFEConstant/Arrhenius,failedYMnAlcritical-lawandconditionalLF/reference-backgroundcaveats. AllsourcefrozenuntilALL24complete;no newfullgateafter04:30UTC.
