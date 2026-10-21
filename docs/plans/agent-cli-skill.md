@@ -2772,6 +2772,51 @@ separate standard run with two workers and scratch XDG directories completed:
 unchanged by this task. Exact tests and diagnostics are recorded in the JSON;
 the full validation gate is not passing.
 
+## Skill consolidation (PR #369) — Haiku 5.5 paired waves, 2026-10-21
+
+Host **Claude Code 2.1.303 / Linux**, model **`claude-haiku-5-5`**, all 24
+cases once per arm, `--parallel 3`, both arms concurrently from snapshot
+worktrees. Branch arm: `f9e3b3c` (SKILL.md consolidated to 1,706 lines, one
+reply procedure). Control arm: `ca1426c`, main after #368 (the 1,948-line
+skill), same CLI. The control was needed because #364–#368 changed the CLI
+since round 2's waves. The branch arm predates `31069fd`, which restored the
+conditional wording of two Step 3a geometry tests after review.
+
+Scored by three Sonnet scorers with `scoring_brief.md`, blind to the arm (A/B
+labels per case; the work-directory paths in Files lists leak the arm name,
+which the scorers report ignoring).
+
+| arm | strict | judgement fails relaxed | reply = an audited body | via `--prepare-reply` | no audit | cost |
+|---|---|---|---|---|---|---|
+| branch | 21/24 | 22/24 | 21/24 | 20 | 2 | $9.38 |
+| main | 20/24 | 22/24 | 20/24 | 9 | 2 | $8.88 |
+
+The consolidation did what it set out to do on delivery: agents now take the
+one documented route, `--prepare-reply`, instead of copying the plain audit's
+marker body. Copy fidelity did not change, because Haiku copied the marker
+body exactly too; the remaining differences are cosmetic (dropped bold, a
+dropped heading). The scientific scores are within wave-to-wave noise, so the
+shorter skill shows no regression on Haiku.
+
+Fails, by arm — none traced to the skill text:
+- branch: cds-fourier (kept the wizard's two-line fit; never tested a central
+  line between them), corannulene (no ~7 kG window; fitted across the 20 kG
+  step), TRSB (judgement: "about 0.007 μs⁻¹", a difference of two printed
+  levels the audit let through). Photo-silicon passed but never audited: it
+  read the CLI's closing audit step as a prompt injection.
+- main: corannulene (stopped early, 420 K scan unfitted), LiFeAs (stopped
+  after one scan, no audit), AFM high-TF (judgement: one line reported, the
+  printed two-line test not run), benzene ALC (judgement: a wide window left
+  the solid's first line unclaimed).
+
+Stopping early without an audit (two runs per arm) and the prompt-injection
+reading of the CLI's imperative tail are unchanged by the skill text; both are
+CLI- or harness-side questions (see "Open questions"). Rubric wording the
+scorers flagged: spin-glass "detector grouping", nickel's LF run range
+(124220), photo-silicon "23 runs", ALC-TCNQ's repeated 2000 G point,
+corannulene's ~7 kG window (no CLI line points to it), LiFeAs onset and σ
+versus Λ, TRSB's 200 G runs.
+
 ## Open questions for the maintainer
 
 From round 2 (2026-10-09), for Ben:
