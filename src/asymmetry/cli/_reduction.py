@@ -193,13 +193,23 @@ def alpha_step_note(workdir: WorkDir, alpha_from: int | None, runs: list[int]) -
     """The NOTE for one ``--alpha-from`` applied across an ALPHA STEP the survey printed."""
     if alpha_from is None or not workdir.survey_path.is_file():
         return []
+    survey = workdir.read_survey()
+    # Run numbers order runs only within one instrument; a step between two
+    # instruments separates campaigns, which their own calibrations cover.
+    instruments: dict[int, set[str]] = {}
+    for row in survey["runs"]:
+        instruments.setdefault(row["run_number"], set()).add(row["instrument"])
     notes = []
-    for step in workdir.read_survey()["alpha_steps"]:
+    for step in survey["alpha_steps"]:
         before, after = step["before_run"], step["after_run"]
+        shared = instruments.get(before, set()) & instruments.get(after, set())
+        if not shared & instruments.get(alpha_from, set()):
+            continue
         across = [
             run
             for run in runs
-            if (alpha_from <= before and run >= after) or (alpha_from >= after and run <= before)
+            if shared & instruments.get(run, set())
+            and ((alpha_from <= before and run >= after) or (alpha_from >= after and run <= before))
         ]
         if across:
             notes.append(
