@@ -1356,7 +1356,11 @@ background limitations; listing numbers or describing a wider fit window
 does not state which feature is broader. ``STABILITY`` notes for alternative
 fits of the same runs do not impose a cross-condition claim. These are
 omission checks; the analyst still checks each direction against the two
-labelled estimates.
+labelled estimates. When one scan resolves a narrow line and the other's
+estimate is at least three times broader with its flanks outside its window,
+``COMPARE`` adds that only the first resolves a narrow line there, so the
+summary says the other shows none; and ``integral-scan`` no longer asks for a
+same-window refit of a scan whose converged fit already holds such a broad line.
 
 It holds the reply, quoting the printed line back, when a command asked the
 summary to say something the draft leaves out: that ``A_bg`` was held at 0

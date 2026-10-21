@@ -683,9 +683,9 @@ def _line_comparisons(
                 if abs(centre - c2) > width + w2:
                     continue
                 stability = other_fit in same_scan
-                resolved = line in _resolved_lines(fit, math.inf) and other_line in _resolved_lines(
-                    other_fit, math.inf
-                )
+                this_resolved = line in _resolved_lines(fit, math.inf)
+                other_resolved = other_line in _resolved_lines(other_fit, math.inf)
+                resolved = this_resolved and other_resolved
                 qualification = (
                     "are alternative fits of the same measurement"
                     if stability
@@ -705,6 +705,20 @@ def _line_comparisons(
                     "reorientation averaging hyperfine anisotropy. State that as a possible "
                     "interpretation, not a fitted motion rate or site assignment."
                 )
+                # A narrow line beside a broad estimate with its flanks outside its window.
+                narrow, broad = (
+                    ("this scan", f"scan {other}")
+                    if this_resolved and w2 >= _BROAD_WIDTHS * width
+                    else (f"scan {other}", "this scan")
+                    if other_resolved and width >= _BROAD_WIDTHS * w2
+                    else (None, None)
+                )
+                if narrow is not None and not stability:
+                    purpose += (
+                        f" Only {narrow} resolves a narrow line here: say in words that {broad} "
+                        f"shows no narrow line near {c2 if broad == 'this scan' else centre:g} — "
+                        "its estimate is a broad feature whose flanks its window does not hold."
+                    )
                 notes.append(
                     f"{prefix}: this line at {centre:g} ± {centre_err:.3g} (width {width:g} ± "
                     f"{width_err:.3g}) and scan {other}'s at {c2:g} ± {c2_err:.3g} (width {w2:g} ± "
@@ -735,6 +749,9 @@ def _line_comparisons(
     return notes
 
 
+#: An unresolved estimate this many times a resolved line's width is a broad feature.
+_BROAD_WIDTHS = 3.0
+
 #: Another scan's line within this many widths of a resolved one is that line moved,
 #: not absent.
 _COUNTERPART_WIDTHS = 5.0
@@ -750,12 +767,13 @@ def _absent_lines(folder: str, fit: dict, runs: list[int], payloads: dict[str, d
             continue
         name, xs, lines = scans.setdefault(tuple(stored_scan["runs"]), (stem, [], []))
         xs.extend(point["x"] for point in stored_scan["scan"]["points"])
+        # Any converged line counts: a broader one short of flank coverage is
+        # still the scan's line there, not an absence to refit in a narrow window.
+        parameters = stored_scan["fit"]["parameters"]
         lines.extend(
-            (
-                stored_scan["fit"]["parameters"][line],
-                abs(stored_scan["fit"]["parameters"][line.replace("B0", "Bwid", 1)]),
-            )
-            for line in _resolved_lines(stored_scan["fit"], math.inf)
+            (value, abs(parameters[name.replace("B0", "Bwid", 1)]))
+            for name, value in parameters.items()
+            if stored_scan["fit"]["success"] and name.split("_")[0] == "B0"
         )
     notes = []
     low, high = fit["x_range"]

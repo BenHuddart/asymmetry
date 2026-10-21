@@ -445,6 +445,7 @@ Delta 0.3505 0.2706 0.08  frequency 0.0326399  AICc 4241.2 8423.2
         ("the centre is stable to about 200 G across windows", ["200"]),
         ("the field steps by 200 G", []),
         ("the whole change is about three percent of Delta", ["three percent"]),
+        ("the two scans agree to within about ten gauss", ["within about ten"]),
     ],
 )
 def test_wave2_notation_and_contexts(draft: str, flagged: list[str]) -> None:

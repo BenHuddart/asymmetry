@@ -95,6 +95,7 @@ _NUMBER_WORD = (
 _RATIO_WORD = re.compile(
     rf"\bfactor of\s*{_HEDGE}\s*{_NUMBER_WORD}\b"
     rf"|\b{_NUMBER_WORD}\s+(?:per\s?cent|percent)\b"
+    rf"|\bwithin\s+{_HEDGE}{_NUMBER_WORD}(?=\s+(?:gauss|kelvin|tesla|G|kG|K|mK|MHz|kHz|percent|per\s?cent)\b)"
     rf"|\b{_NUMBER_WORD}(?:\s+to\s+{_NUMBER_WORD})?(?:-?fold\b|\s+times(?=\s+(?:its|their|the"
     r"|as|larger|smaller|faster|slower|higher|lower|broader|narrower|wider|greater|bigger"
     r"|stronger|weaker|longer|shorter|more|less)\b)"

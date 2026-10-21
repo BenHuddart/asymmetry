@@ -18,8 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gives the step and its percentage of the low level; ``reduce`` and
   ``integral-scan`` name runs reduced across a survey ``ALPHA STEP`` with one
   ``--alpha-from``.
+- **``integral-scan`` keeps a broad line apart from a narrow one.** ``COMPARE``
+  says when only one scan resolves a narrow line and the other's estimate is a
+  broad feature, and the same-window refit prompt no longer fires for a scan
+  whose converged fit already holds a broader line there.
 - **``audit`` catches hedged spreads and worded percentages.** "Stable to about
-  200 G" and "about three percent" are listed unless printed; a hedged round
+  200 G", "about three percent" and "within about ten gauss" are listed unless printed; a hedged round
   number's trailing zeros no longer count as significant digits.
 
 ## [0.27.0] - 2026-10-21

@@ -3702,6 +3702,13 @@ def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
     shallow = partial | {"parameters": partial["parameters"] | {"f": -0.001}}
     assert _line_comparisons(shallow, {"hot": hot}) == []
 
+    # A narrow resolved line beside a broad estimate: the broad scan has no narrow line there.
+    narrow = fit(15000.0, 300.0, 1.0)
+    (pairing,) = _line_comparisons(partial, {"hot": narrow})
+    assert "Only scan hot resolves a narrow line here" in pairing
+    assert "this scan shows no narrow line near 15000" in pairing
+    assert "Only" not in note
+
 
 def test_a_line_another_analysed_scan_covers_without_a_fit_there_is_named() -> None:
     from asymmetry.cli.commands.integral_scan import _absent_lines
@@ -3730,6 +3737,10 @@ def test_a_line_another_analysed_scan_covers_without_a_fit_there_is_named() -> N
     # The same line moved a little is that line, not an absence.
     moved = scan([1, 2], fit(7300.0, 400.0, 5000.0, 9500.0))
     assert _absent_lines("data", hot, [3, 4], {"cold": moved}) == []
+    # A broad line short of flank coverage is still that scan's line (corannulene, 2026-10-21).
+    hot_15 = fit(14827.0, 370.0, 14000.0, 15600.0)
+    broad = scan([1, 2], fit(15672.0, 1975.0, 11800.0, 19600.0))
+    assert _absent_lines("data", hot_15, [3, 4], {"cold": broad}) == []
     # A scan fitted with no line at all lacks this one as well.
     flat = fit(7080.0, 390.0, 5000.0, 9500.0) | {"parameters": {"m": 0.0, "b": 0.1}}
     (note,) = _absent_lines("data", hot, [3, 4], {"cold": scan([1, 2], flat)})
