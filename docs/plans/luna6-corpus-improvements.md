@@ -2285,3 +2285,6 @@ Confirmation9 now15/24scored:Cu5/6Musts2/3Shoulds scienceFAILactualcold-nextZFnu
 
 
 Confirmation9 now16/24scored:LFbenzene6/6Musts1/5Shoulds science/number/unit/copy/boundaryPASS. Totals87/88Musts,14/16science,16/16copy,14/16combined,16/16boundary,31/59Shoulds;AFMscopePASS. PoorMuRepolarisation/range-stability/negativefractioncaveats retained;sourcefrozenremaining8.
+
+
+Confirmation9 now17/24scored:Ni7/7Musts2/4Shoulds science/number/unit/strictcopy/boundaryPASS. Totals94/95Musts,15/17science,17/17copy,15/17combined,17/17boundary,33/63Shoulds;AFMscopePASS. ConditionalOrderParameterchi804.529/failedcoldfits/LFrepeatcaveatsretained;sourcefrozenremaining7.
