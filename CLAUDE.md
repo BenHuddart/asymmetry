@@ -31,13 +31,12 @@ push it, and open a PR — don't commit directly to `main`.
 
 - Use the project virtualenv: `.venv/bin/python`. It pins numpy 2.2.x and a working
   iminuit; the system Python has numpy ≥ 2.3, which breaks fitting.
-- CI runs lint + structural checks, then the standard-tier pytest suite **sharded
-  across four runners**: one non-GUI shard plus three GUI shards
-  (`--subset gui --shard {1,2,3}/3`). The GUI tests carry the per-test
-  `MainWindow` cost and on a 2-core runner take ~10 min unsplit vs ~2 min for
-  everything else, so splitting them three ways brings the critical path to
-  ~4–5 min. Locally, `python tools/harness.py validate` runs the same standard
-  tier single-box with `-n auto --dist load` in **~2 min**; `--tier fast`
+- CI runs lint + structural checks, then the standard-tier pytest suite **split
+  across six runners** by node-id hash (`--shard {1..6}/6`, each mixing GUI and
+  non-GUI tests), installing with uv from a cached store (see
+  `docs/HARNESS.md#test-tiers`). Locally, `python tools/harness.py validate`
+  runs the same standard tier single-box with `-n auto --dist worksteal` in
+  **~2 min**; `--tier fast`
   (non-GUI only) is the ~25s inner loop. Follow the "Using the test suite
   efficiently" rules in `AGENTS.md`: iterate on focused test files, gate with
   `--tier fast`, and run `validate` once per task. (Historically the suite took 30–60 min: GUI tests created a

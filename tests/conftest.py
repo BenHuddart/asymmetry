@@ -50,7 +50,7 @@ def pytest_unconfigure(config: pytest.Config) -> None:
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register ``--shard K/N`` for splitting a selection across CI runners.
 
-    CI shards the (heavy) GUI tests across several runners. The split is by a
+    CI splits the standard tier across several runners. The split is by a
     stable hash of each test's node id rather than collection order, so the N
     independent shard processes — which ``pytest-randomly`` orders differently —
     still cover every selected test exactly once, with no overlap or gap.

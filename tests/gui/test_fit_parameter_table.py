@@ -322,6 +322,21 @@ def test_narrow_columns_keep_their_character_widths(qapp):
     ]
 
 
+def test_narrow_columns_ignore_a_live_app_stylesheet(qapp):
+    """A padded app-wide header style must not raise the narrow columns either."""
+    previous = qapp.styleSheet()
+    qapp.setStyleSheet("QHeaderView::section { padding: 0 20px; }")
+    try:
+        table = FitParameterTable()
+        assert [table.columnWidth(c) for c in (2, 6, 7)] == [
+            char_width(4),
+            char_width(5),
+            char_width(5),
+        ]
+    finally:
+        qapp.setStyleSheet(previous)
+
+
 def _resting_table(qapp, width_chars: int = 60) -> FitParameterTable:
     """A shown Name·Value·Fix·Min·Max table in a dock wider than it needs."""
     table = FitParameterTable()

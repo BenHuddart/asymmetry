@@ -20,12 +20,18 @@ calibration run:
 - TF 100 G scan, 124249-124269 (21 runs): 380 K down to 340 K in 2 K
   steps — the same high-temperature region as the fine ZF re-scan.
 - LF scan, 124270-124278 (9 runs): fixed T = 200 K, field swept
-  4000 G down to 1200 G.
+  4000 G down to 1200 G. The survey's 200 K "field scan" lists 10 runs,
+  124220 and 124270-124278: it adds the 200 K ZF run 124220 as the 0 G
+  point.
 
 ## Must
 
 - [ ] Names the three field regimes (ZF, TF 100 G, LF) and their
-      run-number ranges.
+      run-number ranges: ZF 124218-124248, TF 124249-124269, LF
+      124270-124278. Giving the LF set as the survey's 200 K field scan
+      (124220 and 124270-124278) also passes, provided 124220 is not
+      called an LF run (it is the scan's zero-field point, from the ZF
+      series).
 - [ ] Identifies the paramagnetic 100 G runs as measured calibration
       candidates (or states that none exist) and says which run alpha
       came from.
@@ -58,6 +64,8 @@ calibration run:
 - ISIS EMU files can carry a nonzero field stamp on runs intended as
   ZF (or a zero stamp on a field run); grouping must follow the
   survey's own field column, not an assumed run label.
+- The survey's 200 K field scan includes ZF run 124220. Counting it as
+  a tenth LF run, or dropping it from the ZF series, misgroups it.
 - There is no *dedicated* calibration run in this range; the survey
   offers the paramagnetic 100 G runs as measured candidates instead.
   Quietly defaulting to alpha = 1.0 without saying so is a fail.

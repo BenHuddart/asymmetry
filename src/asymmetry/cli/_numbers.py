@@ -13,7 +13,7 @@ significance or a whole-number percentage (``10×``, ``4.3σ``, ``32 %``), or na
 as a difference (``ΔAICc 11``), match only when a command printed that exact
 token (``×``, ``x`` and "times" alike). A number whose context makes it
 arithmetic — after "a factor of", a difference phrase ("agree to about 0.02
-MHz", "falls by 0.03 MHz", "a margin of 3.6") or a conversion ("corresponds to
+MHz", "falls by 0.03 MHz", "a margin of 3.6", "the step is about 0.007") or a conversion ("corresponds to
 about 21 G"), named as a comparison ("4 points
 better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` — is listed unless
 a command printed it verbatim to three or more significant digits (a run number,
@@ -78,7 +78,7 @@ _DERIVED_PREFIX = re.compile(
     rf"|agree\w*\b{_CLAUSE}\bto"
     rf"|\b(?:correspond\w*\s+to|equivalent\s+(?:to|of)|amounts?\s+to|converts?\s+to"
     rf"|translat\w*\s+(?:in)?to|would\s+be){_CLAUSE}"
-    rf"|\b(?:margin|difference|gap|shift|drop|rise|increase|decrease|change|offset"
+    rf"|\b(?:margin|difference|gap|shift|step|jump|drop|rise|increase|decrease|change|offset"
     rf"|discrepancy|spread|scatter|deviation)s?\s+(?:of|(?:is|was|are|were)\s+(?:only\s+|just\s+)?{_APPROXIMATE}))"
     rf"\s*{_HEDGE}\s*$",
     re.IGNORECASE,

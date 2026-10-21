@@ -229,6 +229,11 @@ REQUIRED_KNOWLEDGE_FILES = (
     "docs/QUALITY.md",
     "docs/PLANS.md",
 )
+# The packaged agent skill grows by accretion: each evaluation failure tempts a
+# new paragraph. Its line count is frozen here and may only fall, so a new rule
+# replaces or merges an old one. Lower the baseline whenever the file shrinks.
+SKILL_MD = SRC_ROOT / "resources" / "skills" / "asymmetry-analysis" / "SKILL.md"
+SKILL_MD_MAX_LINES = 1706
 LINT_TARGETS = ("src", "tests", "tools")
 PORTING_REQUIRED_STUDY_FILES = (
     "README.md",
@@ -876,6 +881,27 @@ def find_knowledge_base_violations(root: Path = ROOT) -> list[HarnessFailure]:
     return failures
 
 
+def find_skill_growth_violations(
+    skill_md: Path = SKILL_MD, max_lines: int = SKILL_MD_MAX_LINES
+) -> list[HarnessFailure]:
+    """Return a failure when the packaged skill outgrows its frozen line count."""
+
+    lines = len(skill_md.read_text(encoding="utf-8").splitlines())
+    if lines <= max_lines:
+        return []
+    return [
+        HarnessFailure(
+            skill_md,
+            0,
+            (
+                f"{lines} lines, above the frozen baseline of {max_lines} "
+                "(SKILL_MD_MAX_LINES in tools/harness.py). Merge the new guidance into "
+                "the rule it refines, or delete one it supersedes, instead of adding text."
+            ),
+        )
+    ]
+
+
 def find_porting_policy_violations(root: Path = ROOT) -> list[HarnessFailure]:
     """Return porting-study layout issues that break the study-first workflow."""
 
@@ -1165,6 +1191,7 @@ def run_structural_checks() -> int:
 
     failures = [
         *find_knowledge_base_violations(),
+        *find_skill_growth_violations(),
         *find_porting_policy_violations(),
         *find_dependency_boundary_violations(),
         *find_core_boundary_violations(),
@@ -1322,9 +1349,8 @@ _TIER_MARKER: dict[str, str | None] = {
 _FULL_TIER_WORKERS = "2"
 _FULL_TIER_TIMEOUT_S = 600
 
-# CI shards the standard/full tier across two runners by Qt involvement: the GUI
-# tests carry the per-test MainWindow construction cost, so splitting them onto
-# their own runner roughly halves wall-clock. `all` is the default (no split).
+# Restrict a run to the GUI or non-GUI tests by marker. CI splits the tier with
+# `--shard` instead; `all` is the default (no split).
 _SUBSET_MARKER: dict[str, str | None] = {
     "all": None,
     "gui": "gui",
@@ -1376,8 +1402,8 @@ def build_pytest_command(
     ``gui`` would select zero tests and still exit 0 — a false green).
 
     ``shard`` (``"K/N"``) is forwarded to pytest's ``--shard`` (a conftest option)
-    to run a stable 1-of-N slice of the selection — used to split the GUI subset
-    across several CI runners. It is appended after marker composition so its
+    to run a stable 1-of-N slice of the selection — used to split the standard
+    tier across CI runners. It is appended after marker composition so its
     ``"K/N"`` value is never mistaken for a test target.
     """
     if tier == "fast" and subset != "all":
@@ -1404,9 +1430,11 @@ def build_pytest_command(
     if parallel and not user_jobs:
         # The full tier caps workers to keep the exhaustive-harness nested pool
         # from oversubscribing the runner (see ``_FULL_TIER_WORKERS`` above);
-        # every other tier scales to the box.
+        # every other tier scales to the box. Idle workers steal queued tests,
+        # so a multi-second fit late in the queue does not leave one worker
+        # finishing alone.
         workers = _FULL_TIER_WORKERS if tier == "full" else "auto"
-        parallel_args = ["-n", workers, "--dist", "load"]
+        parallel_args = ["-n", workers, "--dist", "worksteal"]
 
     user_timeout = any(a == "--timeout" or a.startswith("--timeout=") for a in pytest_args)
     timeout_args: list[str] = []
@@ -1573,13 +1601,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--subset",
         choices=["all", "gui", "non-gui"],
         default="all",
-        help="Restrict to GUI or non-GUI tests (composes with --tier; used to shard CI)",
+        help="Restrict to GUI or non-GUI tests (composes with --tier)",
     )
     test_parser.add_argument(
         "--shard",
         default=None,
         metavar="K/N",
-        help="Run a stable 1-of-N slice of the selection (e.g. 1/3); splits the GUI subset across runners",
+        help="Run a stable 1-of-N slice of the selection (e.g. 2/6); splits the tier across CI runners",
     )
     test_parser.add_argument(
         "--no-parallel",

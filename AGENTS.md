@@ -107,6 +107,8 @@ repo-local docs and use this file as the map.
   PySide's binding ties the shared `QScreen` wrapper's lifetime to the
   caller; see `docs/investigations/tahoe-qscreen-uaf.md`), no `test_*.py`
   file outside a sanctioned `tests/<subpackage>/` (see `tests/README.md`),
+  no growth of the packaged agent skill's `SKILL.md` past its frozen line
+  count (`SKILL_MD_MAX_LINES`: merge or replace a rule rather than add one),
   and no docs screenshot drift (every image referenced from the .rst sources
   maps to a registered scenario and vice versa, within the per-image size
   budget).
@@ -200,7 +202,7 @@ once-per-task gate, never an iteration loop.
    (~25s, non-GUI).
 3. **After a GUI change**: additionally run the affected GUI test files
    focused. Do not run the whole GUI subset locally while iterating — it is
-   most of the suite's wall-clock, and CI shards it across three runners.
+   most of the suite's wall-clock, and CI splits the tier across six runners.
 4. **Once, before committing / handing back**: `python tools/harness.py
    validate`. Do not re-run it for doc- or comment-only follow-up edits, and
    do not run `--tier full` locally unless you changed a `slow`/`integration`

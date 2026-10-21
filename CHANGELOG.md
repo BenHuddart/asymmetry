@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once the window is built rather than during construction, so the first
   window builds about three times faster.
 
+- **The packaged `asymmetry-analysis` skill is consolidated** from 1,948 to
+  1,706 lines. It now gives one procedure for sending the final reply (copy
+  the output of `asymmetry audit summary.md --prepare-reply` unchanged), states
+  each caution once where it applies, and phrases rules drawn from single
+  evaluation cases as general physics. `tools/harness.py structural` freezes
+  its line count so later guidance replaces text rather than adding to it.
+
 - Report audits retain parameter units for uncertainties, including dimensionless
   critical exponents. Trend diagnostics keep flagged adjacent temperatures visible,
   and survey guidance requires validation of extreme logger offsets before a
@@ -256,6 +263,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relaxation-only commands for all of it.
 
 ### Fixed
+
+- **`integral-scan` names every dip a fit leaves out, not only the largest.**
+  After a converged or failed resonance fit, each significant interior minimum
+  that a local one-line fit confirms gets its own window and command ("the scan
+  holds 2 more dips this fit does not include, in …"); previously only the
+  seeder's next dip was named, so a smaller resolved line (corannulene's 7 kG
+  line at 420 K) was never windowed. `audit` holds the reply on these dips too.
+
+- **`asymmetry audit` lists a hedged step between two printed levels.** "The
+  step is about 0.007" (or "jump") now counts as derived arithmetic, as "the
+  shift is about …" already did, instead of matching an unrelated printed
+  error within one unit of its last digit.
 
 - **The fit wizard no longer prints a false ``AsymmetryScaleWarning``** ("seeds
   look fraction-scale") for its constant-only baseline and resolution probes on
