@@ -26,8 +26,11 @@ frequencies through the transition to estimate a Neel temperature, TN.
 - [ ] Treats 17094-17103 as the ZF temperature sweep used for the
       ordering analysis, separate from the calibration run.
 - [ ] Reports oscillation(s) present in the low-temperature ZF spectra
-      that become more relaxed/damped as temperature rises through
-      the sweep.
+      and how they change on warming through the sweep: the frequency
+      falls, the oscillation damps, or it is gone at the warm end. Any one
+      of these, from this session's fits, spectra or survey, passes; the
+      damping need not be named separately. Reporting oscillations at
+      every temperature with no change fails.
 - [ ] Comments on whether more than one oscillation frequency is
       present (the worksheet flags this as something to check for),
       rather than assuming a single frequency without looking.

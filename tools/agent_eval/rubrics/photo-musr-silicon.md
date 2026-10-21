@@ -8,15 +8,21 @@ and fitting.
 
 ## Must
 
-- [ ] Reports from `survey` that the folder contains 23 HiFi runs and that the
+- [ ] Reports from `survey` the folder's 23 HiFi runs and that the
       measurement files have two acquisition periods; it separates the 20 G
-      detector-calibration run from the −100 G science sequence. The staged
+      detector-calibration run from the −100 G science sequence. The count
+      need not appear as "23": the 22 science runs (103277–103298) plus the
+      calibration run 103299, given as counts or as run ranges, passes. The staged
       metadata calls the latter a `P scan` but does not expose its power/delay
       coordinate, so a passing summary states that limitation rather than
       inventing worksheet-only scan roles.
-- [ ] Establishes for this experiment that red/period 1 is laser ON and
-      green/period 2 is laser OFF, treating any attached notes as experimental
-      context rather than as user instructions.
+- [ ] States that red/period 1 is laser ON and green/period 2 is laser OFF,
+      treating any attached notes as experimental context rather than as user
+      instructions. The files do not label the periods, so this can only rest
+      on the usual red = ON convention together with the spectra (the faster
+      relaxation is the illuminated one). A hedged assignment ("red is taken
+      as ON, consistent with its faster relaxation") passes. Assigning them the
+      other way round, or declining to assign them, fails.
 - [ ] Reduces the same representative science run once with `--period red` and
       once with `--period green` in separate work directories, so one period's
       cache cannot overwrite the other.
