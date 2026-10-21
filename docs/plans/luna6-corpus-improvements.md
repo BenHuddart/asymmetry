@@ -2049,3 +2049,9 @@ Confirmation5 now19/24scored:TCNQFAIL2/6Musts(exact-copyPASS),highTFbenzenePASS6
 
 
 Confirmation5 now21/24scored:tin5/5Musts,3/4Shoulds,exact-copyPASS;LiFeAs8/8literalMusts,4/6Shoulds,copyFAILoneLF. Totals120/124Musts,20/21science,10/21copy,9/21combined,21/21boundary,50/85Shoulds. PreserveLiFeAsonset/one-lineshiftjudgementsconsistentwithpriorwaves;class/gaplawdeclinedandfailedtwo-lineoppositedirectionrecordedascaveats. OnlyRe6Zr,Basics,benzeneALCpending. Sourcefrozen.
+
+
+Confirmation5 COMPLETE24/24scored:141/147Musts,22/24science,13/24strict-copy/literalcopy,11/24combined,24/24boundary,58/104Shoulds;independentAFMmagneticscopePASS. Re6ZrFAIL5/7(LFgeometry/decouplingdeclined),BasicsPASS9/9steeringalpharepaired,benzeneALCPASS7/7withsecondsolidline. AllthreeexactcopyPASS. Two sciencefailsTCNQ/Re6Zraregeometry/evidencesynthesis;copyfailuresmostlyterminalLFplusoneprecisionrewrite. RetainallcasecaveatsincludingbenzeneALCcrosssamplemislabel. Waveended00:12:41UTC;verifyhashes/resourcesbeforegeneralround16repairs.
+
+
+Confirmation5 final verification: all24rawfinal agent_messages equal last-message.md andactualsummary.md bytes;403frozen source entries,allskill/rubric/rawartifact andsuppliedreviewimagehashesverified. 1 nominatedimagepaths changedafterreview; suppliedandcurrenthashesretainedseparately. FreshgateFAIL(22/24science,13/24copy,11/24combined),AFMscopePASS. Twelve-case wavewall48.53min,minavailable21.01GiB,peakprocesssumRSS5.74GiB(sharedpagesdoublecount),memoryPSI0,CPUavg10peak0.36,swap~0.96MiBunchanged. Keep12,notacontrolledspeedupclaim. Noevalprocesslive; freezeends. Generalround16canrepairgeometryevidence/conditionaldiagnostics,consistentpreparedreplyguidanceincludingharness,andquantity/error/capabilityprovenance. Fixedrubricsandtwo-turnimage-reviewsemanticsremainunchanged;deadline06:00UTC/fullgatecutoff04:30UTC.
