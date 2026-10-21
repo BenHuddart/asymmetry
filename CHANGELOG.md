@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **``recipe --run`` starts each line where the run shows it.** At the recipe's
+  frequencies and rates, every precessing term's amplitude and phase (and a
+  single background) are solved by linear least squares against the run, so a
+  two-line test inside one FFT peak no longer collapses onto one line.
+- **The CLI prints the numbers agents were working out by hand.** The survey's
+  ``ZERO-FIELD HEADER`` gives the field each line implies; a ``trend`` step note
+  gives the step and its percentage of the low level; ``reduce`` and
+  ``integral-scan`` name runs reduced across a survey ``ALPHA STEP`` with one
+  ``--alpha-from``.
+- **``audit`` catches hedged spreads and worded percentages.** "Stable to about
+  200 G" and "about three percent" are listed unless printed; a hedged round
+  number's trailing zeros no longer count as significant digits.
+
 ## [0.27.0] - 2026-10-21
 
 ### Added
