@@ -2096,3 +2096,6 @@ Confirmation6 now4/24scored:YMnAl5/5Musts,1/3Shoulds andmolecularAFM5/5Musts,2/3
 
 
 Confirmation6 now5/24scored:LLZ6/6literalMusts,2/4Shoulds butscienceFAILglobalnumberrule andcopyFAIL afterprepared0.0832477uncertaintydigitsubstituted0.0832472inactualreply. BoundaryPASS;coupled13groupworkflowandconditionalLFcontrastverified. Totals28/28literalMusts,4/5science,3/5copy/combined,5/5boundary,8/16Shoulds. FreezeallsourceuntilALL24complete.
+
+
+Confirmation6 now7/24 scored:TCNQ repaired6/6Musts,4/4Shoulds andscience/copy/number/boundaryPASS. HighTF-AFM5/5literalMusts,2/3Shoulds,copy/number/boundaryPASS butindependentmagneticscopeFAIL. NewmaterialAFM8Talias:rebin20lowersFFTNyquistto1024MHz,originalsurveyline1084.788MHzbecomes963MHz;agentcallsitapplied-fieldline. Investigategeneralanti-aliasbinningguardafterfreeze. Totals39/39literalMusts,6/7science,5/7copy,4/7combined,7/7boundary,14/23Shoulds. Sourcefrozen.
