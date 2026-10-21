@@ -2243,3 +2243,6 @@ Confirmation8 benzeneALC7/7Musts2/6Shoulds science/number/unit/strictcopy/bounda
 
 
 Confirmation8 Basics9/9Musts3/7Shoulds science/number/unit/copy/boundaryPASS. Totals22/24scored,127/130Musts,20/22science,19/22copy,17/22combined,22/22boundary,48/92Shoulds; independentAFMscopePASS. OnlyRe6Zr/corannuleneremain;sourcefrozen. Preservefaulty-temperature/conditionaltwo-pointAgjudgementanddeadtime/t0/beamphysicsgaps.
+
+
+Confirmation8 Re6Zr7/7Musts5/6Shoulds science/number/unit/copy/boundaryPASS. Totals23/24scored,134/137Musts,21/23science,20/23copy,18/23combined,23/23boundary,53/98Shoulds;independentAFMscopePASS. Onlycorannuleneremains;sourcefrozen. GaussianSCgapandnearTcstaticZF/TRSBcandidate/LFdecouplingrepairedwithexplicitpoint-spacing/modelcaveats.
