@@ -1,5 +1,5 @@
 {
-  "status": "running; 17/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 18/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -2973,6 +2973,177 @@
       ],
       "scored_at": "2026-10-21T04:59:52.670987+00:00",
       "reply_matches_saved_file": true
+    },
+    "benzene-high-tf": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the two sets: 3678–3682 as repeats at one condition for co-adding, and 1808–1813 as a field scan at fixed temperature. It does not report a temperature dependence between 294 K and 300 K.",
+          "pass": true,
+          "evidence": "Five300K3678–3682 repeats coadded separately from294K1808–1813fieldscan; no temperature-dependence claim."
+        },
+        {
+          "requirement": "Co-adds 3678–3682 (`reduce --coadd`) and Fourier transforms the sum, calling it an FFT (not MaxEnt) and giving its resolution and window.",
+          "pass": true,
+          "evidence": "Actual coadd reduced and FFT cosine0.1–5.5us,resolution.185205MHz explicitly named."
+        },
+        {
+          "requirement": "Reports, from the peak table of the co-added spectrum, the diamagnetic line near the 3000 G Larmor frequency (40–41.5 MHz) and the two radical lines, one between 208 and 210 MHz and one between 305 and 307 MHz.",
+          "pass": true,
+          "evidence": "Coadd peak table supplies40.676347MHz and radical pairs208.526852/208.752078,305.499737/305.726187MHz."
+        },
+        {
+          "requirement": "Reports A_μ from the correlation spectrum (`fourier --correlation` on the co-add), with a peak between 510 and 518 MHz, and says in words that it is the sum of the two radical frequencies — not as a hand-added number.",
+          "pass": true,
+          "evidence": "Actual correlation A_mu514.483445/514.057344MHz described as sum of radical frequencies, not hand-added."
+        },
+        {
+          "requirement": "Does not assign the strong line near 50.6 MHz to a muon species (it is neither the Larmor line nor a member of the radical pair).",
+          "pass": true,
+          "evidence": "50.6MHz is not assigned to a muon species."
+        },
+        {
+          "requirement": "Contains no A_μ, frequency sum, splitting or proton coupling that was not produced by a tool call in this session (the worksheet's ~41, ~209, ~306 and ~500 MHz are background).",
+          "pass": true,
+          "evidence": "All pair/coupling frequencies direct CLI/wizard pattern outputs; no arithmetic splitting/proton estimate."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the radical lines and the correlation peak each appear as two close components (a small splitting of the hyperfine peak), quoting the printed values, saying the separation is only a few FFT resolution elements, and either offers a qualitative reason or says it was not established.",
+          "pass": true,
+          "evidence": "Radical close pairs and two correlation maxima quoted, near-resolution distinction and unestablished microscopic assignment explicit."
+        },
+        {
+          "requirement": "Transforms the 1808–1813 field scan and reports what changes as the field falls: the correlation spectrum still peaks near A_μ at the higher fields and finds nothing convincing at the lowest; single-run radical lines are at most visual candidates at this statistics.",
+          "pass": false,
+          "evidence": "Only1809/1813 transformed, not entire fieldscan to lowest200G."
+        },
+        {
+          "requirement": "Subtracts the pre-t0 background (`--background range`, a continuous source) and says so; states the alpha treatment (assumed 1.0, a named run from the other campaign, or a run of the set itself — each with its caveat).",
+          "pass": true,
+          "evidence": "Pre-t0range/background and named applied1813/coadd3678 alpha treatment explicit."
+        },
+        {
+          "requirement": "Identifies the ~50.6 MHz line (and the weaker ~101 MHz feature on the PNG) as instrumental, e.g. the cyclotron RF and its harmonic.",
+          "pass": false,
+          "evidence": "No instrumental cyclotronRF/harmonic assignment of50.6/101MHz."
+        },
+        {
+          "requirement": "Says the four-detector views and the worksheet's \"average correlation\" are not done: the CLI transforms one forward/backward pair.",
+          "pass": false,
+          "evidence": "Onepair/multigroup limitation stated, but fourdetector/averagecorrelation exercise not explicitly retired."
+        },
+        {
+          "requirement": "Names the spectrum JSON/NPZ/PNG products for the co-add and its correlation spectrum.",
+          "pass": false,
+          "evidence": "Spectrum folders and PNGs named, no explicit JSON/NPZ coadd/correlation product names."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct CLI FFT/correlation/pattern/series outputs; no manual frequency sum or splitting.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science6/6 and strict copy pass. Actual coadd/correlation step retained; complete fieldscan/instrument-artifact and product specificity Shoulds remain absent.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all22 completed commands inspected. All22 commands inspected. CLI/report edits only, no physical arithmetic. Four snapshot hashes verified; coadd and correlation pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 961.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 5,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "fef6769646ddf686703c834a3034053389b205b79c6a7701c5422b97711f7c6e",
+      "audited_file_sha256": "fef6769646ddf686703c834a3034053389b205b79c6a7701c5422b97711f7c6e",
+      "rubric_sha256": "c080ca4eab2cbf81923ef269333af30e22043457aff88cce14dd7720f3fe7d24",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/benzene-high-tf",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "All single-line scanfits poor; coaddthreecosine fit poor/flagged and does not resolve fourclose radical lines.",
+        "Close peak-table components not visually split at full-spectrum scale; no microscopic site/proton coupling inferred.",
+        "Highfield coadd ownalpha.6730 is an estimate without weakTF validity; absolute amplitudes not robust, especially differing campaign detector/timezero conditions.",
+        "t0minus5bins correction follows CLIphase diagnostic; no physical arithmetic performed.",
+        "50.6MHz robust and101MHz weaker instrumental origin left unidentified, not evidence of muon species."
+      ],
+      "judgement_calls": [
+        "Should1 PASS consistent with previous recorded criterion: tabulated close doublets, resolution qualifier and microscopic origin not established suffice.",
+        "Should3 PASS for explicit range subtraction and alpha provenance; limited highfield/crosscampaign calibration caveat remains scientific limitation."
+      ],
+      "number_evidence_commands": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        16
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "fef6769646ddf686703c834a3034053389b205b79c6a7701c5422b97711f7c6e",
+        "summary.md": "fef6769646ddf686703c834a3034053389b205b79c6a7701c5422b97711f7c6e",
+        "transcript.jsonl": "303eb97618d7cc1989b9f51e347330261fdfe65b4eea14618c7f6b20139ee471",
+        "commands.txt": "c448269acccadffaf6e567ad41bcc8b983b6bfd690b1d08f97e09e794b7fc4f1",
+        "cost.json": "f5d01e4bc8d13b12ad3315e0d875dc52ddfe15bc3e2410cb9700e624725be22f",
+        "image-inputs.json": "b0487d763bbdb771c408a6f28979b7469e224967ba053e45bc372e30dd94bfe6"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/benzene-field-t0fix-trend-frequency.png",
+          "snapshot_path": "review-images/515b7c354fc23cfd9a88d51e58831afb8da4d2af39d6cfb2c8c34b2cf1c90052.png",
+          "bytes": 25441,
+          "sha256": "515b7c354fc23cfd9a88d51e58831afb8da4d2af39d6cfb2c8c34b2cf1c90052",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-1813.png",
+          "snapshot_path": "review-images/733d27418cf734af4a0972ed76968e734c174e18e439e9387225bfcc54a9ed37.png",
+          "bytes": 40762,
+          "sha256": "733d27418cf734af4a0972ed76968e734c174e18e439e9387225bfcc54a9ed37",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-300K/plots/run-3678.png",
+          "snapshot_path": "review-images/49a386dc16902cffef9e94f0619ca41fb54160e78aa99342f3791ea74508dfa8.png",
+          "bytes": 30460,
+          "sha256": "49a386dc16902cffef9e94f0619ca41fb54160e78aa99342f3791ea74508dfa8",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-300K/plots/run-3678-correlation.png",
+          "snapshot_path": "review-images/436a9592173d3dbccd7922189d26a4087356eb52c1d2b4e636bd53b3400e8d61.png",
+          "bytes": 30543,
+          "sha256": "436a9592173d3dbccd7922189d26a4087356eb52c1d2b4e636bd53b3400e8d61",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T05:00:43.941049+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -2981,21 +3152,20 @@
     "trsb-re6zr",
     "basics",
     "corannulene-alc",
-    "benzene-high-tf",
     "benzene-alc"
   ],
   "totals": {
-    "scored": 17,
+    "scored": 18,
     "target": 24,
-    "scientific_pass": 15,
-    "must_pass": 94,
-    "must_total": 95,
-    "should_pass": 33,
-    "should_total": 63,
-    "exact_copy_pass": 17,
-    "literal_copy_pass": 17,
-    "combined_pass": 15,
-    "boundary_pass": 17
+    "scientific_pass": 16,
+    "must_pass": 100,
+    "must_total": 101,
+    "should_pass": 35,
+    "should_total": 69,
+    "exact_copy_pass": 18,
+    "literal_copy_pass": 18,
+    "combined_pass": 16,
+    "boundary_pass": 18
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round19 explicitly distinguishes diagnostic plain audit from final preparation after every edit; final report/capture semantics stay fixed.",

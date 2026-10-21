@@ -2288,3 +2288,6 @@ Confirmation9 now16/24scored:LFbenzene6/6Musts1/5Shoulds science/number/unit/cop
 
 
 Confirmation9 now17/24scored:Ni7/7Musts2/4Shoulds science/number/unit/strictcopy/boundaryPASS. Totals94/95Musts,15/17science,17/17copy,15/17combined,17/17boundary,33/63Shoulds;AFMscopePASS. ConditionalOrderParameterchi804.529/failedcoldfits/LFrepeatcaveatsretained;sourcefrozenremaining7.
+
+
+Confirmation9 now18/24scored:highTFbenzene6/6Musts2/6Shoulds science/number/unit/strictcopy/boundaryPASS. Totals100/101Musts,16/18science,18/18copy,16/18combined,18/18boundary,35/69Shoulds;AFMscopePASS. Allcoadd/correlationnumbersprinted;calibration/nearresolution/instrumentartifactgapsretained;sourcefrozenremaining6.
