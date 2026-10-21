@@ -1,5 +1,5 @@
 {
-  "status": "running; 16/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 17/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -2732,24 +2732,18 @@
       ],
       "number_evidence_commands": [
         1,
-        2,
         3,
         4,
-        5,
-        6,
         7,
         8,
-        9,
         10,
         11,
         12,
         13,
         14,
-        15,
         16,
         17,
         18,
-        19,
         20,
         21,
         22,
@@ -2762,13 +2756,11 @@
         29,
         30,
         31,
-        32,
         33,
         34,
         35,
         36,
         37,
-        38,
         39,
         40,
         41,
@@ -2784,11 +2776,9 @@
         51,
         52,
         53,
-        54,
         55,
         56,
         57,
-        58,
         59,
         60,
         61,
@@ -2802,7 +2792,6 @@
         69,
         70,
         71,
-        72,
         73,
         74,
         75,
@@ -2813,13 +2802,7 @@
         80,
         81,
         82,
-        83,
-        84,
-        85,
-        86,
-        87,
-        88,
-        89
+        87
       ],
       "raw_artifact_sha256": {
         "last-message.md": "f1d9b6817e3618134b2f52f09c63842ac3ea5a736c9905ea20782757e3c27264",
@@ -2861,6 +2844,191 @@
       ],
       "scored_at": "2026-10-21T01:19:54.322828+00:00",
       "reply_matches_saved_file": false
+    },
+    "benzene-repolarisation": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Identifies a longitudinal-field scan of the integral asymmetry from a few gauss to 4 kG at 300 K, the six interleaved 100 G transverse runs as calibration (excluded from the scan), and the repeated fields of the return pass.",
+          "pass": true,
+          "evidence": "44EMU300K,38LF3–4000Gpointsand6interleaved100GTFcalibrationsseparate;returnfieldsequenceexplicit."
+        },
+        {
+          "requirement": "Establishes the LF geometry of the high-field runs despite their TF stamp, and says how — e.g. that their integral asymmetry continues the LF curve where a transverse field would integrate to near zero, or that the survey refutes the stamp where it can measure.",
+          "pass": true,
+          "evidence": "HighfieldfileTFstampnotcoils;large0.225483integral/nonoscillationandcontinuouscurvecontradictTFcancellation."
+        },
+        {
+          "requirement": "Measures alpha on one of the 100 G TF runs, names it and the value, and states the deadtime treatment.",
+          "pass": true,
+          "evidence": "15958rawalpha1.3181/corrected1.3249andfiledeadtimeGroup1/2stated."
+        },
+        {
+          "requirement": "Runs `integral-scan` with `--model MuRepolarisation` over the LF runs and reports `A_hf` with its uncertainty, the χ²ᵣ and the field range fitted; says plainly how well the function describes the curve (a one-term fit over the whole range is poor).",
+          "pass": false,
+          "evidence": "ActualfullMuRepolarisationandtwo-termfitsrun,chi2=459.300/25.906andrangegiven,butfinalomitsA_hf1516.298738±80.450183MHz(andtwo-termcouplings)despitedeterminedCLIvalues."
+        },
+        {
+          "requirement": "Describes the curve itself: the integral asymmetry rises steadily with field over the whole scan and is still rising at the highest field.",
+          "pass": true,
+          "evidence": "Smoothintegralrecoveryfrom3to4000Gandrisingacrossfullcurve/upperfieldresponseexplicit,no saturationclaim."
+        },
+        {
+          "requirement": "Contains no B0, A, coupling or fraction that was not produced by a tool call in this session: no B0 converted from `A_hf` (or back) by hand, and no literature coupling presented as a result.",
+          "pass": true,
+          "evidence": "Nocoupling/fractioninvented,nomanualB0conversion,numericalquotesfromtools;timecrop7.897isanexplicitCLIinputexception."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Says the muonium repolarisation function treats the radical as a two-spin muon–electron system, so `A_hf` is only an effective coupling; the radical's proton couplings broaden the curve, and a radical repolarisation model is not available in the CLI.",
+          "pass": false,
+          "evidence": "Noexplicitmuon-electrontwo-spin/protonbroadeningaccount;genericmicroscopicmodelunavailableprosenotthatmechanism."
+        },
+        {
+          "requirement": "Notes the fitted diamagnetic term `a_Dia` is negative, i.e. unphysical as a fraction, as a symptom of that mismatch.",
+          "pass": false,
+          "evidence": "Omitsnegativea_Diafromone-termfit,thoughitexplainspoorfit."
+        },
+        {
+          "requirement": "If a sum of two `MuRepolarisation` terms is fitted, reports both with χ²ᵣ but calls it an empirical description, and notes the two `a_Dia` terms are the same constant (degenerate).",
+          "pass": false,
+          "evidence": "Two-termonlychi2andempiricalnottwospeciesgiven;doesnotreportbothcouplingsorthea_Diaconstantdegeneracy."
+        },
+        {
+          "requirement": "Notes that `A_hf` moves with the fitted field range (`--xmax`), so the number is not robust.",
+          "pass": false,
+          "evidence": "NoMuRepolarisationxmaxrangecomparison/couplingsensitivity."
+        },
+        {
+          "requirement": "Notes that repeated fields from the return pass differ by more than their errors (a drift between passes), limiting χ²ᵣ.",
+          "pass": true,
+          "evidence": "Explicitreturnpassdifferencesbeyond3errorsandwhichfieldsagree,driftlimitation."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. AllphysicalresultsfromdirectCLI. Singlecheckerflag7.897isexplicitrequested--tmax7.897incommands28/29,reportedascropinputnotcomputedresult;acceptinputrestatementborderlinewithretained-binendpointcaveat. Draft/audits/log-reportreadsexcluded,no physicalarithmetic.",
+      "number_checker_flags": [
+        {
+          "text": "7.897",
+          "line": 39
+        }
+      ],
+      "unit_checker_flags": [],
+      "root_cause": "ScienceFAILMust4becauseconvergedbutpoorMuRepolarisationparameterswithheldratherthanreportedaseffectiveroughshapeestimates. CLIprintsA_hf1516.298738±80.450183MHz,negativea_Dia,chi2=459.300;modelnotbound-pinned,butagentjustdeclinesphysicalcoupling. Two-termfitparametersalsoomitted;moretime-domain/Redfieldanalysisdoesnotreplaceprimaryintegralobservable. Finalpreparedcopyexact. Generalreportcoverageforprimarymodelparameters/negativefractionlimitationsneededafterfreeze.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all37 completed commands inspected. All37completedcommandsandreport-onlyeditsreviewed,stagedlogbookandCLIonly,nocustomphysicalanalysis/arithmetic. Fourreviewimageshashverified;actualfullintegralcurveinspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 751.9,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/benzene-repolarisation/data --series benzene-rate --model Redfield --param Lambda --fix m=2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/benzene-repolarisation/data --series benzene-rate --model Redfield --param Lambda --fix m=2 --xmin 100 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/benzene-repolarisation/data --series benzene-rate --model Redfield --param Lambda --fix m=2 --xmin 3 --xmax 90'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/benzene-repolarisation/data --series benzene-rate --model Redfield --param Lambda --fix m=2 --xmin 100'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/benzene-repolarisation/data --series benzene-rate --model Redfield --param Lambda --fix m=2 --xmin 150'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc \"sed -n '501,570p' .agents/skills/asymmetry-analysis/SKILL.md && sed -n '700,760p' .agents/skills/asymmetry-analysis/SKILL.md && rg -n 'wizard <|fit-series <|fit-series --' .agents/skills/asymmetry-analysis/references/commands.md\"",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "8779601e9f5376f72014c1d9fce0f924a676abc786803c2db201288d8ae7f7df",
+      "audited_file_sha256": "8779601e9f5376f72014c1d9fce0f924a676abc786803c2db201288d8ae7f7df",
+      "rubric_sha256": "394577546a8a6efae2ef56d912dbf00216156d50a4fa60e7800ea736fd2cd059",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/benzene-repolarisation",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "MuRepolarisationtwo-spineffectiveradicaldescriptionpoor;missingnegativea_Diaandprotonbroadeningspecificphysicalexplanation.",
+        "Two-termempiricalfitnotnewmuoniumspecies;finalcorrectlynotspeciesbutomitsdegenerateoffsetsandcouplings.",
+        "Redfielddecliningsidechi2=21.442notvaliduniqueprocess;rate/amplitudesallrunscleanbutgenericbackgroundsnotfractions.",
+        "QuotedFFT0.105–7.897μsusesrequestedcropinput,notverifiedretainedbin-centreendpoint;timeprovenancelimitation."
+      ],
+      "judgement_calls": [
+        "NumberruleacceptsexplicitCLIwindowinput7.897(notnewmeasuredquantity),consistentprinted-inputrestatementpolicy.",
+        "M5smoothrisingfull-range/highfieldrecoveryacceptedasstillrising;nomisleadingplateauclaim.",
+        "M4failuredoesnotrequireclaimingA_hfphysical;itrequiresreportingpoorconditionalestimateanduncertainty."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        7,
+        11,
+        12,
+        13,
+        14,
+        15,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        28,
+        29,
+        31,
+        32,
+        33,
+        35
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "8779601e9f5376f72014c1d9fce0f924a676abc786803c2db201288d8ae7f7df",
+        "summary.md": "8779601e9f5376f72014c1d9fce0f924a676abc786803c2db201288d8ae7f7df",
+        "transcript.jsonl": "c27e462d44aa739e44221c196aa3338155547e394f5d602ba27d1ef1a3d46a13",
+        "commands.txt": "c0f3f5e6f0c7dbd34331e08b099feaf22874ef72781cb7baa4f4e78798214ac0",
+        "cost.json": "4706ca703d0a12aa13333ea08b46e64f57d9ed427dad516d8198c70c84eb08c6",
+        "image-inputs.json": "70ab53ef4bc1c6ff2d52dea0cdfb73c97251bc45ab490d3170140292166d731b"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/benzene-field.png",
+          "snapshot_path": "review-images/f424291137b7f8130b943d454f0ec420c7cb9376cee70285fa9bb301725d0971.png",
+          "bytes": 36875,
+          "sha256": "f424291137b7f8130b943d454f0ec420c7cb9376cee70285fa9bb301725d0971",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/benzene-rate-trend-Lambda.png",
+          "snapshot_path": "review-images/c34fd5c8f75856db73e1914514e8fdb758f4ded2f572f13ef421c55191a89534.png",
+          "bytes": 32125,
+          "sha256": "c34fd5c8f75856db73e1914514e8fdb758f4ded2f572f13ef421c55191a89534",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-15993.png",
+          "snapshot_path": "review-images/11487178ff413b34653e463c4e597a1033a3ce4f0b9d0c74169a358bbad6b04f.png",
+          "bytes": 30320,
+          "sha256": "11487178ff413b34653e463c4e597a1033a3ce4f0b9d0c74169a358bbad6b04f",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/fit-15984.png",
+          "snapshot_path": "review-images/c0124b724de5c911f96ae82de47c3df0ae4dc859a50fa8ba02fdaf527af062cb.png",
+          "bytes": 72457,
+          "sha256": "c0124b724de5c911f96ae82de47c3df0ae4dc859a50fa8ba02fdaf527af062cb",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T01:21:19.250591+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -2870,7 +3038,6 @@
     "basics",
     "corannulene-alc",
     "benzene-high-tf",
-    "benzene-repolarisation",
     "benzene-alc"
   ],
   "gate_pass": false,
@@ -2904,16 +3071,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 16,
+    "scored": 17,
     "target": 24,
     "scientific_pass": 13,
-    "must_pass": 87,
-    "must_total": 89,
-    "should_pass": 35,
-    "should_total": 58,
-    "exact_copy_pass": 12,
-    "literal_copy_pass": 12,
+    "must_pass": 92,
+    "must_total": 95,
+    "should_pass": 36,
+    "should_total": 63,
+    "exact_copy_pass": 13,
+    "literal_copy_pass": 13,
     "combined_pass": 11,
-    "boundary_pass": 16
+    "boundary_pass": 17
   }
 }

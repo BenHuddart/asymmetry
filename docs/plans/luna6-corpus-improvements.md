@@ -2117,3 +2117,6 @@ Confirmation6 now14/24 scored:EuO4/5Musts scienceFAILstrictGPS/.binidentificatio
 
 
 Confirmation6 now16/24 scored:tin5/5Musts,3/4Shoulds science/copyPASS;copper5/6Musts,2/3Shoulds scienceFAILmissedactualcold-nextZFupturn andcopyFAILappendedauditEND/COPYCHECKfooter. Bothnumber/unit/boundaryPASS. Totals87/89Musts,13/16science,12/16copy,11/16combined,16/16boundary,35/58Shoulds. Sourcesfrozen;retainAFMindependentscope/aliasandallcasecaveats.
+
+
+Confirmation6 now17/24 scored:LFbenzene5/6Musts scienceFAILmissingA_hf/errorinfinaldespiteactualpoorMuRepolarisationfit;1/5Shoulds. Exactcopy/number/unit/boundaryPASS,explicitrequestedFFTcrop7.897inputexceptionrecorded. Totals92/95Musts,13/17science,13/17copy,11/17combined,17/17boundary,36/63Shoulds. Copperquantity-evidenceindicescleanedtoexcludeaudit/draftcommands(nojudgementchange). Sourcefrozen.
