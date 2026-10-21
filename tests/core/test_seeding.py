@@ -14,6 +14,7 @@ from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
 from asymmetry.core.fitting.seeding import (
     Seed,
     SeedContext,
+    line_amplitude_phase_values,
     phase_seed_from_sign,
     record_scale_estimate,
     seed_parameters,
@@ -433,3 +434,30 @@ def test_trend_seeds_hold_the_shape_factor_switch() -> None:
     assert seeds["shape_factor_a"].value == 0.0
     assert seeds["shape_factor_a"].fixed is True
     assert seeds["sigma_0"].fixed is False
+
+
+# ── line amplitude and phase ────────────────────────────────────────────────
+
+
+def test_line_amplitude_phase_values_recovers_each_line_of_a_close_doublet() -> None:
+    """Two lines inside one FFT peak start at their own amplitude and phase, not at π."""
+    model = CompositeModel(
+        ["Oscillatory", "Exponential", "Oscillatory", "Exponential", "Constant"],
+        operators=["*", "+", "*", "+"],
+    )
+    time = np.linspace(0.0, 9.5, 4000)
+    lines = {"A_1": 14.5, "frequency_1": 13.60, "phase_1": 4.44, "Lambda_2": 0.06}
+    lines |= {"A_3": 20.9, "frequency_3": 13.54, "phase_3": 5.52, "Lambda_4": 0.67, "A_bg": -9.5}
+    record = MuonDataset(
+        time=time,
+        asymmetry=model.function(time, **lines),
+        error=np.full_like(time, 0.1),
+        metadata={"run_number": 1},
+    )
+    start = {name: lines[name] for name in ("frequency_1", "frequency_3", "Lambda_2", "Lambda_4")}
+    start |= {"A_1": 1.0, "phase_1": math.pi, "A_3": 1.0, "phase_3": math.pi, "A_bg": 0.0}
+
+    seeded = line_amplitude_phase_values(model, record, start)
+
+    for name in ("A_1", "phase_1", "A_3", "phase_3", "A_bg"):
+        assert seeded[name] == pytest.approx(lines[name], abs=1e-6)
