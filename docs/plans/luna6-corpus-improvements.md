@@ -2114,3 +2114,6 @@ Confirmation6 now13/24 scored:Ni7/7Musts,2/4Shoulds sciencePASS/copyFAILterminal
 
 
 Confirmation6 now14/24 scored:EuO4/5Musts scienceFAILstrictGPS/.binidentificationomission(PSIonly),1/3Shoulds;number/unit/copy/boundaryPASS. Judgementcallrecorded,notwrongloaderclaim. Conditionalcriticallawandparamagrate/window/endpointcaveatsretained. Totals77/78Musts,12/14science,11/14copy,10/14combined,14/14boundary,30/51Shoulds;independentAFMscopeFAILseparate. Sourcefrozen.
+
+
+Confirmation6 now16/24 scored:tin5/5Musts,3/4Shoulds science/copyPASS;copper5/6Musts,2/3Shoulds scienceFAILmissedactualcold-nextZFupturn andcopyFAILappendedauditEND/COPYCHECKfooter. Bothnumber/unit/boundaryPASS. Totals87/89Musts,13/16science,12/16copy,11/16combined,16/16boundary,35/58Shoulds. Sourcesfrozen;retainAFMindependentscope/aliasandallcasecaveats.
