@@ -1006,7 +1006,7 @@ def sample_name(row: RunRow) -> str:
     name = row.sample or row.title
     labelled = re.search(r"\bSample\s*=\s*([^,;]+)", name, re.IGNORECASE)
     if labelled:
-        return labelled.group(1).strip()
+        name = labelled.group(1)
     return re.split(r"[\s_,]+[TFB]\s*=", name, maxsplit=1)[0].strip()
 
 

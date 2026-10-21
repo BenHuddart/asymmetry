@@ -219,6 +219,8 @@ _SHORT_SCAN_RUNS = 3
 def report_obligations(roots: list[Path], text: str) -> list[str]:
     """Report missing survey provenance and repeated field groups fitted independently."""
     from asymmetry.cli.commands.survey import condition_period_runs
+    from asymmetry.core.io.periods import GREEN_INDEX, RED_INDEX, resolve_period_index
+    from asymmetry.core.workflow.reduction import GREEN_MINUS_RED
     from asymmetry.core.workflow.survey import ScanGroup, coupled_field_groups
     from asymmetry.core.workflow.workdir import WorkDir
 
@@ -261,19 +263,22 @@ def report_obligations(roots: list[Path], text: str) -> list[str]:
                         f"Name the recorded sample {sample!r} beside its campaign or scan. "
                         "A magnet reference, temperature or folder label does not replace sample identity."
                     )
-        condition_runs = {row["run_number"] for row in condition_period_runs(survey["runs"])}
-        if condition_runs:
-            fitted_periods = {"red": set(), "green": set()}
+        condition_rows = condition_period_runs(survey["runs"])
+        if condition_rows:
+            # Keyed on (prefix, run): a run number can name a different run per instrument.
+            fitted_periods = {RED_INDEX: set(), GREEN_INDEX: set()}
             for workdir in workdirs:
                 if workdir.selection.folder != selection.folder:
                     continue
-                if workdir.selection.instrument not in (None, selection.instrument):
-                    continue
-                for run in condition_runs & set(workdir.reduced_runs()) & workdir.fitted_runs():
+                fitted = set(workdir.reduced_runs()) & workdir.fitted_runs()
+                for row in condition_rows:
+                    run = row["run_number"]
+                    if not workdir.selection.matches(row["prefix"]) or run not in fitted:
+                        continue
                     period = workdir.entry(run).settings.period
-                    if period in fitted_periods:
-                        fitted_periods[period].add(run)
-            if not fitted_periods["red"] & fitted_periods["green"]:
+                    if period not in (None, GREEN_MINUS_RED):
+                        fitted_periods[resolve_period_index(period, 2)].add((row["prefix"], run))
+            if not fitted_periods[RED_INDEX] & fitted_periods[GREEN_INDEX]:
                 messages.append(
                     "PERIOD COMPARISON: fit the same illumination science run as red and green "
                     "in separate workdirs; report the condition labels, fitted rates, windows "

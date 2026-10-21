@@ -987,6 +987,22 @@ def test_dimensionless_exponent_value_and_error_cannot_acquire_rate_units(name, 
     assert not unverified_units(f"Exponent {name} = {number} dimensionless.", log)
 
 
+@pytest.mark.parametrize(
+    ("draft", "flagged"),
+    [
+        ("Holding m fixed, nu = 2 MHz.", False),
+        ("Holding m fixed, nu = 2 dimensionless.", True),
+        ("With nu = 2 MHz, m = 2 dimensionless.", False),
+        ("With nu = 2 MHz, m = 2 MHz.", True),
+    ],
+)
+def test_unit_check_binds_each_number_to_the_nearest_named_parameter(draft, flagged):
+    from asymmetry.cli._numbers import unverified_units
+
+    log = "parameter value unit error\nm 2 dimensionless 0.1\nnu 2 MHz 0.1\n"
+    assert bool(unverified_units(draft, log)) is flagged
+
+
 def test_parameter_uncertainty_uses_units_after_value_or_errors():
     from asymmetry.cli._numbers import unverified_units
 

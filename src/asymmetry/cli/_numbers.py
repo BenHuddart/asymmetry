@@ -326,24 +326,29 @@ def unverified_units(draft: str, log_text: str) -> list[Unverified]:
             notation = re.search(r"[eE]([-+]?\d+)$", token)
             tolerance = 10.0 ** (int(notation[1]) if notation else 0) * scale
             tolerance *= 10.0 ** -_decimals(token)
-            for name, values in parameters.items():
-                if not re.search(
-                    rf"\b{re.escape(name)}\b", line[: number.start()].translate(aliases)
-                ):
-                    continue
-                units = {
-                    u.replace("μ", "µ")
-                    for value, u in values
-                    if abs(value - _value(token) * scale) <= tolerance + 1e-12
-                }
-                if units and suffix["unit"].replace("μ", "µ") not in units:
-                    found.append(
-                        Unverified(
-                            f"{number.group()} {suffix['unit']} ({name} printed in {', '.join(sorted(units))})",
-                            line_number,
-                            line.strip(),
-                        )
+            # The number belongs to the parameter named closest before it on the line.
+            before = line[: number.start()].translate(aliases)
+            named = [
+                (mention.end(), name)
+                for name in parameters
+                for mention in re.finditer(rf"\b{re.escape(name)}\b", before)
+            ]
+            if not named:
+                continue
+            name = max(named)[1]
+            units = {
+                u.replace("μ", "µ")
+                for value, u in parameters[name]
+                if abs(value - _value(token) * scale) <= tolerance + 1e-12
+            }
+            if units and suffix["unit"].replace("μ", "µ") not in units:
+                found.append(
+                    Unverified(
+                        f"{number.group()} {suffix['unit']} ({name} printed in {', '.join(sorted(units))})",
+                        line_number,
+                        line.strip(),
                     )
+                )
     return found
 
 

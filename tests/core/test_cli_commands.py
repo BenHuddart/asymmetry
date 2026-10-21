@@ -4070,11 +4070,22 @@ def test_wizard_rejects_nonpositive_worker_budget(tmp_path, capsys):
     assert "--workers must be positive" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("periods", "instrument"),
+    [
+        (("red", "green"), []),
+        (("RED", "Green"), []),
+        (("1", "2"), []),
+        (("red", "green"), ["--instrument", "SIM"]),
+    ],
+)
 def test_photo_period_audit_requires_one_common_run_fitted_in_both_periods(
     workflow_folder,
     tmp_path,
     monkeypatch,
     capsys,
+    periods,
+    instrument,
 ):
     from asymmetry.cli.commands.audit import report_obligations
     from asymmetry.core import io
@@ -4091,10 +4102,13 @@ def test_photo_period_audit_requires_one_common_run_fitted_in_both_periods(
     monkeypatch.setattr("asymmetry.core.io.load", illuminated_load)
     monkeypatch.setattr("asymmetry.core.workflow.reduction.load", illuminated_load)
     run = SCAN_RUNS[0]
+    survey_root = tmp_path / "asymmetry-work"
     roots = [tmp_path / "asymmetry-work-red", tmp_path / "asymmetry-work-green"]
-    cli.main(["survey", str(workflow_folder), "--workdir", str(roots[0])])
+    cli.main(["survey", str(workflow_folder), "--workdir", str(survey_root)])
     assert "PERIOD COMPARISON:" in capsys.readouterr().out
-    for root, period in zip(roots, ("red", "green"), strict=True):
+    # Any spelling --period accepts, and instrument-bound workdirs under an
+    # instrument-free survey, both count.
+    for root, period in zip(roots, periods, strict=True):
         cli.main(
             [
                 "reduce",
@@ -4105,12 +4119,14 @@ def test_photo_period_audit_requires_one_common_run_fitted_in_both_periods(
                 period,
                 "--workdir",
                 str(root),
+                *instrument,
             ]
         )
-    assert any("PERIOD COMPARISON:" in m for m in report_obligations(roots, "A report."))
+    audited = [survey_root, *roots]
+    assert any("PERIOD COMPARISON:" in m for m in report_obligations(audited, "A report."))
     for root in roots:
         (root / "fits" / f"relax-{run}.json").write_text(json.dumps({"run": run}))
-    assert not any("PERIOD COMPARISON:" in m for m in report_obligations(roots, "A report."))
+    assert not any("PERIOD COMPARISON:" in m for m in report_obligations(audited, "A report."))
 
 
 @pytest.mark.parametrize("varied", [False, True])
