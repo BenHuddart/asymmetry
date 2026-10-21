@@ -1,5 +1,5 @@
 {
-  "status": "running; 8/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 9/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -1387,10 +1387,176 @@
       ],
       "scored_at": "2026-10-21T01:05:28.481644+00:00",
       "reply_matches_saved_file": true
+    },
+    "plateau-redfield": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Uses run 9023 for alpha and says so.",
+          "pass": true,
+          "evidence": "Calibrationnames9023andrawalpha1.0069/correctedapplied1.0097."
+        },
+        {
+          "requirement": "Treats the longitudinal-field runs from 9035 to 9051 (with or without the zero-field 15.9 K runs 9031–9034 before them) as the 15 K field sweep, and does not present 9024–9030 as 15 K points of that sweep.",
+          "pass": true,
+          "evidence": "Separatescooldown9024–9030from15KLF9035–9051;ZF9031–9034coaddedwithownloggedtemperatures."
+        },
+        {
+          "requirement": "Reports the relaxation rate falling as the longitudinal field rises through the sweep, from a series fitted along field.",
+          "pass": true,
+          "evidence": "ActualExponential+Constantfit-seriesalongfield1000–38000G; Lambdafallingandhighfieldlevelreported."
+        },
+        {
+          "requirement": "Fits Redfield's law to λ(B) with the CLI (`trend --model Redfield` or a sum containing it), states the field range fitted, and reports the fitted parameters with uncertainties as the command printed them.",
+          "pass": true,
+          "evidence": "CLItrendRedfieldfullandrestricted5000–38000G;reportsD27.466652±0.260792MHz,nu179.141325±6.713670MHz,m2fixed,chi2=2.107."
+        },
+        {
+          "requirement": "Contains no correlation time, field width or rate that was not produced by a tool call in this session (the handout's and paper's values are background).",
+          "pass": true,
+          "evidence": "Rates,D,nu,axes/errorsallprintedbydirectCLI;nohandconversiontocorrelationtime/fieldwidth,no numeric/unitflags."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Fits over the plateau (roughly 0.5–3.6 T) rather than the whole sweep, or says why not.",
+          "pass": true,
+          "evidence": "Restricted5000–38000Gfitversusfull1000–38000shown;approximatelyplateauwindowwithupper3.8Tlimitationexplicitrecordedjudgement."
+        },
+        {
+          "requirement": "Holds the Redfield exponent `m` at 2 (the handout's equation) or says why it was left free.",
+          "pass": true,
+          "evidence": "m=2fixedintheRedfieldlawandreported."
+        },
+        {
+          "requirement": "Says how the initial and background asymmetries were handled as the field rises (the handout's first question).",
+          "pass": true,
+          "evidence": "ShowsnonmonotonicrelaxingA_1andstronglyrisingA_bg, explainsseparatefreesignal/backgroundcomponents."
+        },
+        {
+          "requirement": "Comments on whether the plateau edges show in λ(B) (a change of slope near 0.5 T, flattening near 3.6 T), marked as a qualitative reading.",
+          "pass": false,
+          "evidence": "Reportsqualitative5000Gdeparture/highfieldlevelbutdoesnotlinkbothplateauedgesoridentifyexpectedplateaucontext;explicitlydeclinesphase-boundaryassignment."
+        },
+        {
+          "requirement": "Notes the cooldown in 9024–9030 from the logged temperature.",
+          "pass": true,
+          "evidence": "Explicitlynot15Kfirstsevenruns,cooldownfrom285Kloggedversus15Ksetpoint."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. DirectCLI survey/alpha/reduce,fit/trendRedfieldandFFTprintedquantities. StoredspectrumJSONreadsvalid; log-reportreads/draft/auditexcluded. No physical arithmetic/convertedtau/width. All flags/countsprinted.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Allscience/number/unit/copy/boundaryPASS,lawparametersconvergewithphysicaldomainsandscalederrors. Approximateplateaurangeandqualitativeedgeinterpretationremainlimited; finaldeclinesmagnetisationplateauwithoutindependentcurve. Single-exponentialLFchoiceisphysics-motivatedratherthanblindtwo-exponentialwizardranking. NoactiveCLIrepairneededuntilfullwaveends.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all44 completed commands inspected. All44completedcommandsandreport-onlyeditsinspected; stagedlogbook, supportedCLI/JSONreads, no customanalysis/arithmetic. Fourreviewimageshashverified;actualLambdaandamplitudetrendplotsinspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1155.2,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 6,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/plateau-redfield/data --series lf-single --plot --model Redfield --param Lambda --fix m=2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/plateau-redfield/data --series lf-single --model Redfield --param Lambda --fix m=2 --xmin 5000 --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "99feace6a5cdafb56f83114d165049b9c11519335726031a798254a2c9e2435d",
+      "audited_file_sha256": "99feace6a5cdafb56f83114d165049b9c11519335726031a798254a2c9e2435d",
+      "rubric_sha256": "23bb04d9a398fa17dde7cf8fc51632eda64e51646ad926a80a7462453df6243e",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/plateau-redfield",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Redfieldrestrictedchi2=2.107/full3.450onlyapproximate;two-channelwizardandpoorhighfieldperrunfitslimituniquesingle-rateinterpretation.",
+        "5000–38000Grangeextendsaboverubricrough3.6Tplateauupperedge;acceptedapproximatelyasinpreviouswaves,notatrueplateau-boundarymeasurement.",
+        "ZFGaussianKTcomparisonsmostlyflagged,cooldownisnotcontrolledtemperaturescan;noTc/staticwidthlawclaim.",
+        "LargeandnonmonotonicA_bg/A_1fractionsreflectsample/backgrounddegeneracy,notindependentlyresolvedmagneticphases."
+      ],
+      "judgement_calls": [
+        "Should1accepts5000–38000Gapproximatelyplateauwindowasexplicitpriorpolicy;upperextensionremainscaveat.",
+        "Should4false:observedratelevelswithoutplateau-edgeinterpretationisnotfullqualitativephysicsdiscussion."
+      ],
+      "number_evidence_commands": [
+        1,
+        5,
+        6,
+        7,
+        11,
+        12,
+        13,
+        14,
+        16,
+        17,
+        19,
+        20,
+        21,
+        23,
+        24,
+        27,
+        28,
+        29,
+        30,
+        33,
+        34,
+        35,
+        36,
+        38,
+        39
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "99feace6a5cdafb56f83114d165049b9c11519335726031a798254a2c9e2435d",
+        "summary.md": "99feace6a5cdafb56f83114d165049b9c11519335726031a798254a2c9e2435d",
+        "transcript.jsonl": "1bf1ead1978345e0435fbfb7ccfd0e96548a4b586660c39de104ae25f4db9f4b",
+        "commands.txt": "13235ce7e41c9f2b2767be4877df17ca534ed55ac4f1fcc2ac8df8e929481b3c",
+        "cost.json": "1fc6b7050ae7a349976d8eaa537b22ed189d76871930d6095078296b19f8257a",
+        "image-inputs.json": "2c20a8e3c5ed1aef14dc1d1299088b9c73e991edf36544fa20e090f58f16e5c1"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/lf-single-trend-Lambda.png",
+          "snapshot_path": "review-images/10fe777e2f597c079c26f6409c257566cd18b53353715f6424421dea388aacaf.png",
+          "bytes": 25431,
+          "sha256": "10fe777e2f597c079c26f6409c257566cd18b53353715f6424421dea388aacaf",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/lf-single-trend-A_1.png",
+          "snapshot_path": "review-images/f45d28fa341d97ab6b819dfe9791b86af4b03fc69672624776fdd4eb81f20bb9.png",
+          "bytes": 22797,
+          "sha256": "f45d28fa341d97ab6b819dfe9791b86af4b03fc69672624776fdd4eb81f20bb9",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-zf/plots/reduced-9031.png",
+          "snapshot_path": "review-images/ba96280c79993e81c72f6caf34c7764177207630234459c339521bd56e8d4e07.png",
+          "bytes": 39986,
+          "sha256": "ba96280c79993e81c72f6caf34c7764177207630234459c339521bd56e8d4e07",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-zf/plots/reduced-9024.png",
+          "snapshot_path": "review-images/b6ca795a9c4f11234ab6d1ac4c162ce359a9c73776f93a1e7712ef114f5ffa79.png",
+          "bytes": 41447,
+          "sha256": "b6ca795a9c4f11234ab6d1ac4c162ce359a9c73776f93a1e7712ef114f5ffa79",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T01:06:27.066123+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
-    "plateau-redfield",
     "sn-critical-field",
     "euo-psi",
     "maleic-mu-kinetics",
@@ -1438,16 +1604,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 8,
+    "scored": 9,
     "target": 24,
-    "scientific_pass": 7,
-    "must_pass": 45,
-    "must_total": 45,
-    "should_pass": 16,
-    "should_total": 27,
-    "exact_copy_pass": 6,
-    "literal_copy_pass": 6,
-    "combined_pass": 6,
-    "boundary_pass": 8
+    "scientific_pass": 8,
+    "must_pass": 50,
+    "must_total": 50,
+    "should_pass": 20,
+    "should_total": 32,
+    "exact_copy_pass": 7,
+    "literal_copy_pass": 7,
+    "combined_pass": 7,
+    "boundary_pass": 9
   }
 }

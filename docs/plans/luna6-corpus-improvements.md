@@ -2102,3 +2102,6 @@ Confirmation6 now7/24 scored:TCNQ repaired6/6Musts,4/4Shoulds andscience/copy/nu
 
 
 Confirmation6 now8/24scored:CDS6/6Musts,2/4Shoulds,science/number/unit/copy/boundaryPASS. Noisycoldvisualtripletjudgementretained;noalgorithmiccoldpeaksandpoorfitprecisionexplicit. Totals45/45literalMusts,7/8science,6/8copy/combined,8/8boundary,16/27Shoulds;independentAFMscopeFAILstillseparate. Sourcefrozen.
+
+
+Confirmation6 now9/24scored:plateau5/5Musts,4/5Shoulds,science/number/unit/copy/boundaryPASS. Redfieldm2fixedrestricted5000–38000GconvergeswithscaledD/nuerrors;approximateplateau-windowjudgementretained,edgeinterpretationmissing. Totals50/50literalMusts,8/9science,7/9copy/combined,9/9boundary,20/32Shoulds. IndependentAFMscopeFAILremains;sourcefrozen.
