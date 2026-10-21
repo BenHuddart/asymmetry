@@ -1,5 +1,5 @@
 {
-  "status": "running; 4/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 5/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -731,6 +731,165 @@
       ],
       "scored_at": "2026-10-21T00:53:30.180658+00:00",
       "reply_matches_saved_file": true
+    },
+    "ionic-motion-llz": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Reports the survey-level design: run 51315 is the weak-TF detector-balance run and the science data form 13 temperature groups, each containing the 0, 5 and 10 G longitudinal-field runs spanning roughly 160–400 K.",
+          "pass": true,
+          "evidence": "Experiment identifies51315weakTF balance run and13temperaturetriplets0/5/10G over160–404K nominal; individualgroupmembers enumerated."
+        },
+        {
+          "requirement": "Reduces and jointly fits at least one complete field triplet with `fit-global`; the 160 K group is runs 51341–51343. It does not describe `fit-series --global` or three independent fits as simultaneous fitting.",
+          "pass": true,
+          "evidence": "Explicit fit-global --groups jointly fits all13complete triplets, including51341–51343; summaries report simultaneous coupled fits rather than independent series."
+        },
+        {
+          "requirement": "Uses a physically appropriate dynamic Gaussian relaxation model (`Keren` or `DynamicGaussianKT`) plus a constant background.",
+          "pass": true,
+          "evidence": "DynamicGaussianKT+Constant chosen on dense nuclear host physics; DynamicLorentzianKT competing coupled family reported separately."
+        },
+        {
+          "requirement": "Shares the sample amplitude, static width `Delta`, fluctuation rate `nu` and background amplitude across the triplet, while taking `B_L` from each file and holding it per run.",
+          "pass": true,
+          "evidence": "A_1,Delta,nu,A_bg shared across eachtriplet, B_L fixed per file; model and command17 both explicit."
+        },
+        {
+          "requirement": "Reports the shared values and uncertainties produced by the coupled fit, including both amplitudes and fit-quality information. For the 160 K group, a defensible first pass has `Delta` approximately 0.25–0.45 µs⁻¹ and `nu` approximately 0.15–0.45 MHz; values outside those broad ranges must be called out as suspect rather than interpreted.",
+          "pass": true,
+          "evidence": "Coldgroup A_1=15.5271±0.0743445,Delta0.350525±0.00214056,nu0.344501±0.00623992,A_bg2.74977±0.0784372 and per-run chi2given; physicalcoldranges satisfied. Separate final-row uncertaintytypo fails globalnumberrule."
+        },
+        {
+          "requirement": "Does not claim a fluctuation-rate-versus-temperature result unless every group in that trend was fitted as a coupled group (with `fit-global --groups`, or one `fit-global` per group); one coupled group is not a trend.",
+          "pass": true,
+          "evidence": "Temperaturetrend comprises all13groups fitted via fit-global --groups in both Gaussian and Lorentzian families."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Estimates alpha from run 51315 and reports the applied value, or clearly justifies another calibration choice.",
+          "pass": true,
+          "evidence": "Reports alpha from51315, raw0.8567 and correctedapplied0.8561."
+        },
+        {
+          "requirement": "Uses a fit window near 0–12 µs and the guide's order-of-magnitude seeds (`A_1` about 15%, `A_bg` about 5%, `Delta` about 0.3, `nu` about 0.2), then judges convergence from output rather than assuming the seeds worked.",
+          "pass": false,
+          "evidence": "Uses full0.177–32.609μs window rather than near0–12μs; Delta/nu seeds given but guide amplitude/background seeds not documented."
+        },
+        {
+          "requirement": "Notes the Keren low-rate/ZF caveat; retaining the ZF run is acceptable when this run's diagnostics show clean convergence.",
+          "pass": false,
+          "evidence": "No Keren low-rate/ZF approximation caveat; DynamicGKT chosen instead, but literalShouldasks explanatorycaveat."
+        },
+        {
+          "requirement": "Points the reader to the stored global-series JSON and per-run fit plots.",
+          "pass": true,
+          "evidence": "Links storedglobalseries dynamics.json/dynamics-lkt.json and reduced/parameterplots; per-runfits retained in workdir."
+        }
+      ],
+      "number_rule": "FAIL: Actualfinal line48 A_bg uncertainty0.0832472 is absent from directCLI outputs; repeated command17/26/30 trend tables and preparedfile show0.0832477 (single-grouprounded0.083248). All othernumbers/units verified; summary/audit/log-report reads excluded. Digittypo is not arithmeticor legit rounding.",
+      "number_checker_flags": [
+        {
+          "text": "0.0832472",
+          "line": 48
+        }
+      ],
+      "unit_checker_flags": [],
+      "root_cause": "Literal coupled-workflow Musts pass, but number-rule FAIL and strict-copy FAIL: command36 prepared/Audited176.891Krow A_bg error0.0832477 becomes0.0832472 in actual final. This is a digit substitution, not a rounded printed value. Rawfinal agent_message matches summarybytes, so no capture normalization issue. Source unchanged duringwave. Fitwindow/Keren caveats remain generalShouldgaps.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all37 completed commands inspected. All37completedcommands and summary-onlyfilechanges inspected: scopedCLI, supportedrecipes,13coupledgroups, trends, providedlogbook; no customphysicalarithmetic. Fourreview snapshots hash-verified; cold0/10Gimages inspected. Rawfinal agent_message equals actualsummarybytes.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 543.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/ionic-motion-llz/data --series dynamics --model Arrhenius --param nu --xmin 234.349 --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "51ecf0dae16e090de1aa07e55bbf267ea292ab8e1768ab7b4bbe184d796006b0",
+      "audited_file_sha256": "729ac732d1730bc5dc330645cef23776a8a2e21577ca1c916a2470cd1d3e3f77",
+      "rubric_sha256": "26a96516c6b7d735288e5a79b9d63cd349de9e38850c4eba7367f47fc00a1b28",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/ionic-motion-llz",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -45,7 +45,7 @@\n | Logged temperature (K) | Group runs | A_1 (%) | Delta (μs⁻¹) | nu (MHz) | A_bg (%) |\n |---:|---|---:|---:|---:|---:|\n | 157.327 | 51341–51343 | 15.5271 ± 0.0743445 | 0.350525 ± 0.00214056 | 0.344501 ± 0.00623992 | 2.74977 ± 0.0784372 |\n-| 176.891 | 51344–51346 | 15.4257 ± 0.0789288 | 0.338256 ± 0.00213696 | 0.343723 ± 0.00634829 | 2.87241 ± 0.0832477 |\n+| 176.891 | 51344–51346 | 15.4257 ± 0.0789288 | 0.338256 ± 0.00213696 | 0.343723 ± 0.00634829 | 2.87241 ± 0.0832472 |\n | 234.349 | 51353–51355 | 15.2811 ± 0.0972077 | 0.300059 ± 0.00211032 | 0.32337 ± 0.00626506 | 3.09632 ± 0.102235 |\n | 295.738 | 51362–51364 | 14.2888 ± 0.138684 | 0.270621 ± 0.00252184 | 0.402311 ± 0.00881155 | 4.55819 ± 0.144741 |\n | 371.879 | 51374–51376 | 12.0748 ± 0.287718 | 0.266501 ± 0.00511322 | 0.853176 ± 0.0301066 | 7.35223 ± 0.295883 |\n",
+      "physics_caveats": [
+        "FourGaussianrunlevelpoor fits but no parameterflags; competing Lorentzian coldnegativebackground unphysical, modeldependence explicitly qualified.",
+        "RestrictedArrheniusEa45.271753±9.075604meVchi2=29.850 is roughconditionaltrend, not measuredmicroscopichopbarrier; fullrangechi2=69.111 crossesminimum.",
+        "Opening one run at each13setpoints is imprecise; table/explicittripletdesign immediately clarifies threefields pertemperature.",
+        "LF decoupling interpretation uses measured0/10G response, not unresolvedfieldstamp or detector-banklabel; actualreviewimages support contrast."
+      ],
+      "judgement_calls": [
+        "EveryliteralMustpasses; scientificverdict neverthelessFAIL under globalnumberrule, preserving separateworkflowandprovenancejudgements.",
+        "M1conditionalLF context accepted because matchedweakfielddecoupling is explicitly supported while coilorientation remainsunknown."
+      ],
+      "number_evidence_commands": [
+        1,
+        5,
+        6,
+        9,
+        13,
+        14,
+        17,
+        22,
+        26,
+        29,
+        30,
+        32
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "51ecf0dae16e090de1aa07e55bbf267ea292ab8e1768ab7b4bbe184d796006b0",
+        "summary.md": "51ecf0dae16e090de1aa07e55bbf267ea292ab8e1768ab7b4bbe184d796006b0",
+        "transcript.jsonl": "1cd21306709f2a26de5d2340d44bc8b0ef3507499f0e23537cd8ec55cd07d5bb",
+        "commands.txt": "d49bc7a88322cca9cb4f48017f33b0d90c2343f3459cadfc5e3ccec798484223",
+        "cost.json": "54ae539b8c0e7d9e0dfd66d2a3805caa07895c5959725b4fd56da9cf55025523",
+        "image-inputs.json": "27fafc4b28f8817aea8e1903466ee1d6254ede395f25fd6cb82e7ba5466622eb"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-51341.png",
+          "snapshot_path": "review-images/0ac1703106c4595fa4f672c483b5b6746a770af62dec0f69a7375d2c3b23ae08.png",
+          "bytes": 43208,
+          "sha256": "0ac1703106c4595fa4f672c483b5b6746a770af62dec0f69a7375d2c3b23ae08",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-51343.png",
+          "snapshot_path": "review-images/8d1bc7d20d4c96dfe8b1d342462840962b4956842e8ad9404eaf8499d1f73efb.png",
+          "bytes": 40748,
+          "sha256": "8d1bc7d20d4c96dfe8b1d342462840962b4956842e8ad9404eaf8499d1f73efb",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-trend-Delta.png",
+          "snapshot_path": "review-images/f94bf6df403a0b73651feb64e6978b76534acf1a6302d05a5e9f25db6a1ed81d.png",
+          "bytes": 30666,
+          "sha256": "f94bf6df403a0b73651feb64e6978b76534acf1a6302d05a5e9f25db6a1ed81d",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/dynamics-trend-nu.png",
+          "snapshot_path": "review-images/9a6f6c06bf197d5e78c0386fb994c41dca5598dd6bfeab4c9e331c1d840cdeac.png",
+          "bytes": 27712,
+          "sha256": "9a6f6c06bf197d5e78c0386fb994c41dca5598dd6bfeab4c9e331c1d840cdeac",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T00:58:18.329582+00:00",
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
@@ -743,7 +902,6 @@
     "copper-diffusion",
     "afm-high-tf-mdu",
     "alc-tcnq",
-    "ionic-motion-llz",
     "photo-musr-silicon",
     "cds-fourier",
     "lifeas-psi",
@@ -786,16 +944,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 4,
+    "scored": 5,
     "target": 24,
     "scientific_pass": 4,
-    "must_pass": 22,
-    "must_total": 22,
-    "should_pass": 6,
-    "should_total": 12,
+    "must_pass": 28,
+    "must_total": 28,
+    "should_pass": 8,
+    "should_total": 16,
     "exact_copy_pass": 3,
     "literal_copy_pass": 3,
     "combined_pass": 3,
-    "boundary_pass": 4
+    "boundary_pass": 5
   }
 }

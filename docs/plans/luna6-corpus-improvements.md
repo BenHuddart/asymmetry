@@ -2093,3 +2093,6 @@ Confirmation6 now2/24scored:PTFE6/6Musts,1/3Shoulds,science/number/unit/boundary
 
 
 Confirmation6 now4/24scored:YMnAl5/5Musts,1/3Shoulds andmolecularAFM5/5Musts,2/3Shoulds bothscience/number/unit/boundary/exactcopyPASS. Totals22/22Musts,4/4science,3/4copy/combined,4/4boundary,6/12Shoulds. PreserveconditionalLF/24591ZF,failedmolecularOrderParameter/noTc,temperatureandcritical-lawgaps. Frozenremainingcasescontinue.
+
+
+Confirmation6 now5/24scored:LLZ6/6literalMusts,2/4Shoulds butscienceFAILglobalnumberrule andcopyFAIL afterprepared0.0832477uncertaintydigitsubstituted0.0832472inactualreply. BoundaryPASS;coupled13groupworkflowandconditionalLFcontrastverified. Totals28/28literalMusts,4/5science,3/5copy/combined,5/5boundary,8/16Shoulds. FreezeallsourceuntilALL24complete.
