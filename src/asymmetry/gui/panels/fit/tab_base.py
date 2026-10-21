@@ -1605,6 +1605,9 @@ class FitParameterTable(ElasticTable):
         # (38 px under Fusion with Noto Sans) would silently raise the narrow
         # Fix/Link/Tie widths below, and restyling never lowers them again.
         _apply_param_table_style(self)
+        # The header's style-derived minimum (12-38 px depending on whether an
+        # app stylesheet is live) would still clamp Fix (4 chars); pin it to that.
+        self.horizontalHeader().setMinimumSectionSize(char_width(4))
         # Name (col 0) holds formatted "name (unit)" labels; a too-narrow column
         # clips common cases like "f (MHz)" / "A_bg (%)" (tooltip backs the rest).
         # Widths are char-based (metrics.char_width) so they track the UI font
