@@ -39,16 +39,21 @@ on every run and no alpha candidates. With `--pair Up/Down` the survey finds
 - [ ] Treats `LFA` (3366–3387) and `LFA_2` (3662–3697) as two separate
       samples or campaigns, not one series.
 - [ ] Identifies 3366–3373 as the 400 G temperature scan. Reports that the
-      Gaussian TF width σ is roughly flat at the warm end and rises
-      steeply on cooling (or, with a two-line fit, that the broad vortex
-      component appears on cooling). The onset lies between 14 and 17 K.
+      TF relaxation rate is roughly flat at the warm end and rises steeply on
+      cooling (or, with a two-line fit, that the broad vortex component
+      appears on cooling). The rate may be a Gaussian σ or an exponential Λ
+      (the exponential fits the cold runs better; see Known traps). It states
+      where the rise begins (where the rate leaves its warm-end level), and that
+      onset lies between 14 and 17 K logged. Words ("below about 17 K") or the trend note's levelling-off point
+      ("levels off from 16.9 K") both count. A Tc from an `SC_*` fit is
+      judged by the Should, not by this line.
 - [ ] Reports that the line shifts to lower frequency below the transition
       (a diamagnetic shift), in words or from fitted frequencies.
 - [ ] Describes the other runs as pairs above and below Tc at each field (a
       field dependence at base temperature) — two field scans, at ~20 K and
       at base, compared field by field, count — not as a temperature scan or
-      an LF decoupling scan. Reports the paired widths for at least one
-      campaign, or names the fields whose fits failed.
+      an LF decoupling scan. Reports the paired widths (σ or Λ) for at least
+      one campaign, or names the fields whose fits failed.
 - [ ] Does not present a penetration depth λ, a superfluid density ρ_s, or
       an Uemura-plot position as Asymmetry output. It either omits them or
       says that converting σ to λ is not something the tool does.

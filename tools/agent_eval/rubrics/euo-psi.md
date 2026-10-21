@@ -31,19 +31,26 @@ contiguous, no gaps), no ISIS-style field stamp in the filename:
 - [ ] Reports an internal field (from the TF block, or from ZF
       oscillations if present) that changes with temperature, growing
       as the sample is cooled below the ordering region.
-- [ ] Reports the relaxation rate above the ordering region as this
-      session's fits give it, and does not claim a critical divergence
-      (critical slowing down) that those fits do not show. The paper
-      finds the paramagnetic relaxation rate roughly constant, near
-      2 MHz, rather than diverging at the transition.
+- [ ] Reports the relaxation rate above the ordering region (ZF or TF)
+      from this session's fits, as values or as a trend in words, and
+      does not claim a critical divergence (critical slowing down) above
+      the transition that those fits do not show. Matching the paper's
+      value is not required (the paper finds the paramagnetic rate
+      roughly constant, near 2 MHz, rather than diverging; see the
+      background trap). Reading a rise that the fits do show, on either
+      side of the transition, as possibly critical does not fail this
+      line.
 - [ ] Contains no internal-field value, relaxation rate, or Curie
       temperature that was not produced by a tool call in this
       session.
 
 ## Should
 
-- [ ] Notes that both blocks revisit a narrow temperature window
-      several times rather than assuming a single monotonic sweep.
+- [ ] Notes in words that the run order is not monotonic in
+      temperature: both blocks revisit a narrow window near the
+      transition several times. Ordering series by logged temperature
+      without saying so does not tick this; stating that the runs are in
+      temperature order fails it.
 - [ ] Treats run 2960 (1.5 K, out of sequence at the end of the ZF
       block) as a low-temperature reference point rather than ignoring
       it or assuming it belongs elsewhere in the sequence.
