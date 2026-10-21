@@ -1,5 +1,5 @@
 {
-  "status": "running; 5/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 6/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -914,6 +914,155 @@
       ],
       "scored_at": "2026-10-21T02:14:10.812328+00:00",
       "reply_matches_saved_file": true
+    },
+    "cds-fourier": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Surveys the folder and identifies a transverse-field temperature series in CdS, selecting the 100 G base-temperature/high-statistics run 20721 for the representative spectrum from current command output.",
+          "pass": true,
+          "evidence": "23-run100GTFtemperature/cooldownseries,20721cold5.17541Khighstats49Mselectedfromsurvey."
+        },
+        {
+          "requirement": "Reduces run 20721 and actually runs `fourier` with a saved plot, using a defensible alpha calibration (run 20729 is the expected candidate) or explicitly stating the alternative used.",
+          "pass": true,
+          "evidence": "Actual20721reductionandfourier--window none--plot,20729alpha.9499explicit."
+        },
+        {
+          "requirement": "Calls the result an FFT, not a maximum-entropy reconstruction, and reports the command's frequency resolution/window alongside any quantitative peak.",
+          "pass": true,
+          "evidence": "FFTnotMaxEnt,full.10500006–31.753005uswindowand.0315976MHzresolution/reportedband/bins."
+        },
+        {
+          "requirement": "Finds the principal structure near the 100 G muon Larmor line around 1.4 MHz. It uses the PNG as well as the conservative peak table and notes weaker shoulders/satellites near roughly 1.27 and 1.51 MHz when visible; it does not claim those were algorithmically detected if only one row was printed.",
+          "pass": true,
+          "evidence": "Principal1.3896candidateandoppositeside1.2396/1.5001maximafromcurrentCLI/PNG;noclaimalgorithmicdetectedcoldlines."
+        },
+        {
+          "requirement": "Interprets a resolved central line with roughly symmetric satellites as consistent with a shallow-muonium hyperfine triplet, without presenting a visual shoulder or sub-resolution splitting as a precision measurement.",
+          "pass": true,
+          "evidence": "Qualifiedcentral-plus-sidepatternconsistentwithshallowmuoniumhyperfinetriplet;asymmetry/noise/subresolutionprecisionlimitationsstated."
+        },
+        {
+          "requirement": "Heeds any early-signal apodisation warning: it retries with an unwindowed physical crop or an appropriate Lorentzian filter rather than treating a symmetric-window spectrum as automatically authoritative.",
+          "pass": true,
+          "evidence": "ActualunwindowedFFTsfromstart,nosymmetricapodisationwarningignored."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares the central frequency with the applied-field Larmor expectation and states whether they agree within the reported resolution.",
+          "pass": false,
+          "evidence": "CentralnearappliedfieldstatedbutnoexplicitcentralminusLarmoragreementwithinreportedresolution."
+        },
+        {
+          "requirement": "Gives a cautious splitting estimate only when supported by the plotted or tabulated current-session output and labels how it was obtained.",
+          "pass": false,
+          "evidence": "Nosupportedquantitativesplittingestimate;onlycandidatefrequenciesandqualitativeopposite-sidedstructure."
+        },
+        {
+          "requirement": "Points the reader to the stored spectrum JSON/NPZ and PNG.",
+          "pass": true,
+          "evidence": "Cold/warmJSON,NPZandPNGnamed."
+        },
+        {
+          "requirement": "Avoids turning one representative low-temperature FFT into an unsupported claim about the entire temperature dependence.",
+          "pass": true,
+          "evidence": "All23timefitsandmatchedwarmFFTused;poorfitstemperatureinterpretationconditional,notextrapolatedfromonecoldFFT."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. DirectCLI/FFT/survey/trendverifyallnumerics/units;noaudit/draft/log-reportreads. One-resolutionelementisastatedvisualcomparisonthresholdusingprintedresolution,notanewnumericsplitting;recordedborderlinecaveat.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Core6/6andcopyPASS. Correctreport-onlypreparationandactualmatchedFFTvisualreview. Conservativecoldpeakdetectorstillnone;agentpreservesconditionaltripletinterpretationwithoutcallingcandidatesdetected. MissingprecisioncomparisonsareShouldgaps.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all20 completed commands inspected. All20completedcommandsandreport-onlyeditsinspected,CLI/notesonly,nophysicalarithmetic. Fourreviewhashesverified,actualnoisycoldandcleanwarmFFTpixelsinspected;noactualreplysubstitution.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 324.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "3e8ae6925c7022afc9cb407e756b5072045b0a4dff0e3d4bcb8cf775b6995385",
+      "audited_file_sha256": "3e8ae6925c7022afc9cb407e756b5072045b0a4dff0e3d4bcb8cf775b6995385",
+      "rubric_sha256": "b77ddad87b0a7c8fdf6f51dffedf188069a7ec0ed18a30d06c043ccf1b5d7d3a",
+      "staged_skill_sha256": "166e50451f0545f41f184dca6279df8306d5585ddfb2cbd0216011a3712e0f96",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/cds-fourier",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Noisyfull-windowcoldFFTdoesnotestablishthreeresolvedlines;roughlyoppositesidemaximaonly,matchingearlierborderlinepolicy.",
+        "Statementoffsetsnot symmetricwithinoneresolutionelementhasnoexplicitCLIderivedsymmetrytest;treatasqualitativevisualthresholdcomparison,notmeasuredsplitting.",
+        "SeventeenpoorsingleGaussianfitsatlow/intermediateTcannotquantifymicroscopicwidths/populations;novalidatedhoppinglaw.",
+        "Finalsaysconstrainedshallowmuoniumtime-modelunavailable;genericmulti-cosineparameterconstraintsarepossible,MaxEntnotnecessarytoreportconditionalfits."
+      ],
+      "judgement_calls": [
+        "Must5acceptsqualifiednoisycentral-plus-opposite-sidevisualtripletwithoutalgorithmicthree-lineclaimconsistentpreviousCDSjudgements.",
+        "Numberruledoesnotfailonqualitativeone-resolutionvisualthresholdalone;nounprintedsplitting/offsetquantityiscalculated."
+      ],
+      "number_evidence_commands": [
+        1,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        13
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "3e8ae6925c7022afc9cb407e756b5072045b0a4dff0e3d4bcb8cf775b6995385",
+        "summary.md": "3e8ae6925c7022afc9cb407e756b5072045b0a4dff0e3d4bcb8cf775b6995385",
+        "transcript.jsonl": "19276dc70f80b1b38cf3dd9b737a43ac90f78f40169b211b399849eeb712e8fa",
+        "commands.txt": "c3021ae161a141f13b9053386528ea644564108eaa7fff4d72c48672cf18be55",
+        "cost.json": "81708756eb8d4a896135bf061e9c4ef5704dd324f2f20e18fc00fb09cf75a858",
+        "image-inputs.json": "3321861a3a8cf89ad7c7095c3b6cdda338056d010f1f87a87a4af47feaa69729"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-20721.png",
+          "snapshot_path": "review-images/78e345b0bd2a6c6dcfc63be852653e9fbf11715b4036b1a3d77a4d9947ca380b.png",
+          "bytes": 69716,
+          "sha256": "78e345b0bd2a6c6dcfc63be852653e9fbf11715b4036b1a3d77a4d9947ca380b",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-20711.png",
+          "snapshot_path": "review-images/1087f53c7a4d9883e963ea5cfe85291ad50e14d71d66923ab7e89592a6c050e1.png",
+          "bytes": 52888,
+          "sha256": "1087f53c7a4d9883e963ea5cfe85291ad50e14d71d66923ab7e89592a6c050e1",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-20721.png",
+          "snapshot_path": "review-images/b5ad18f8e6f76b33e38a123240596ce1d7764e1c3827e2d6b233374a937cd457.png",
+          "bytes": 39623,
+          "sha256": "b5ad18f8e6f76b33e38a123240596ce1d7764e1c3827e2d6b233374a937cd457",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/cds-tf-trend-sigma.png",
+          "snapshot_path": "review-images/1f3cf6bbe69391c46780807383d79eeaf7b6e932a1baf65ff38115698a944aa4.png",
+          "bytes": 30892,
+          "sha256": "1f3cf6bbe69391c46780807383d79eeaf7b6e932a1baf65ff38115698a944aa4",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T02:16:58.792353+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -927,7 +1076,6 @@
     "alc-tcnq",
     "ionic-motion-llz",
     "photo-musr-silicon",
-    "cds-fourier",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
@@ -938,17 +1086,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 5,
+    "scored": 6,
     "target": 24,
-    "scientific_pass": 3,
-    "must_pass": 24,
-    "must_total": 27,
-    "should_pass": 7,
-    "should_total": 16,
-    "exact_copy_pass": 5,
-    "literal_copy_pass": 5,
-    "combined_pass": 3,
-    "boundary_pass": 5
+    "scientific_pass": 4,
+    "must_pass": 30,
+    "must_total": 33,
+    "should_pass": 9,
+    "should_total": 20,
+    "exact_copy_pass": 6,
+    "literal_copy_pass": 6,
+    "combined_pass": 4,
+    "boundary_pass": 6
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics unchanged. Round17 makes successful --prepare-reply stdout report-only and nonzero on failure; runner verifies exit status and exact raw stdout without normalization or saved-file substitution.",

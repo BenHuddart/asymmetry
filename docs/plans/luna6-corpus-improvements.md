@@ -2162,3 +2162,6 @@ Confirmation7 now2/24scored:molecularAFM5/5Musts1/3Shoulds science/number/unit/c
 
 
 Confirmation7 now5/24scored:YMnAl5/5Musts2/3Shoulds science/copyPASS;spinPeierls5/6Musts2/3ShouldsFAILjudgementZFendpointshapeomission;maleic3/5Musts1/4ShouldsFAILwrong100Gconcentrationslope/noMu kinetics. Allthreecopy/number/unit/boundaryPASS. Totals24/27Musts,3/5science,5/5copy,3/5combined,5/5boundary,7/16Shoulds. Sourcefrozen;finishall24beforerepair.
+
+
+Confirmation7 now6/24scored:CDS6/6Musts2/4Shoulds science/number/unit/copy/boundaryPASS,qualifiednoisyvisualtripletjudgementretained. Totals30/33Musts,4/6science,6/6copy,4/6combined,6/6boundary,9/20Shoulds. Allsourcefrozen;finishremaining18.
