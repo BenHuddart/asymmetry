@@ -2180,3 +2180,6 @@ Confirmation7 now15/24scored:Sn5/5Musts3/4Shoulds science/copyPASS;Re6Zr5/7Musts
 
 
 Confirmation7 now16/24scored:RFbenzene5/5Musts2/5Shoulds science/number/unit/copy/boundaryPASS. Totals85/90Musts,13/16science,15/16copy,12/16combined,16/16boundary,32/62Shoulds. PreserveJSONrawerrorsandnoisyidentityauditfindings;remaining8sourcefrozen.
+
+
+Confirmation7 now17/24scored:LFbenzene6/6Musts1/5Shoulds science/number/unit/copy/boundaryPASS;explicit7.897inputexceptionandactualendpointcaveatretained. Totals91/96Musts,14/17science,16/17copy,13/17combined,17/17boundary,33/67Shoulds. Sourcefrozenremaining7.
