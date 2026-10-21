@@ -2216,3 +2216,6 @@ Confirmation8 first four cases scored: molecular antiferromagnet5/5 Musts (copy 
 
 
 Confirmation8 spin-Peierls now6/6 Musts,2/3 Shoulds; science, number/unit, strict copy and boundary pass. Actual ZF cold/warm endpoint trace shapes are explicitly compared and verified against reviewed pixels. Five cases scored:27/27 Musts,5/5 science,4/5 copy/combined,5/5 boundary,8/17 Shoulds. Source remains frozen through all24.
+
+
+Confirmation8 now10/24 scored: LLZ6/6 Musts2/4 Shoulds,TCNQ6/6 and4/4,silicon6/6 and3/4,CDS6/6 and2/4,cuprate5/5 and2/3. All five science/number/unit/copy/boundary pass. Totals56/56 Musts,10/10science,9/10copy/combined,10/10boundary,21/36Shoulds. Preserve CDS qualified noisy-triplet judgement, silicon rejected ON diagnostic-rate caveat and tentative plot/table discrepancy; no plotting bug claimed. Sources frozen through all24.
