@@ -1,5 +1,5 @@
 {
-  "status": "running; 13/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 14/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -2279,6 +2279,156 @@
       ],
       "scored_at": "2026-10-21T03:49:36.149948+00:00",
       "reply_matches_saved_file": true
+    },
+    "benzene-repolarisation": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies a longitudinal-field scan of the integral asymmetry from a few gauss to 4 kG at 300 K, the six interleaved 100 G transverse runs as calibration (excluded from the scan), and the repeated fields of the return pass.",
+          "pass": true,
+          "evidence": "38-run3–4000G/300K LF integral sweep; six100GTF calibrants separate and return-pass repeated fields explicit."
+        },
+        {
+          "requirement": "Establishes the LF geometry of the high-field runs despite their TF stamp, and says how — e.g. that their integral asymmetry continues the LF curve where a transverse field would integrate to near zero, or that the survey refutes the stamp where it can measure.",
+          "pass": true,
+          "evidence": "Large high-field integral/nonoscillatory4000G trace refutes aboveNyquist file TF stamp, no coil claim."
+        },
+        {
+          "requirement": "Measures alpha on one of the 100 G TF runs, names it and the value, and states the deadtime treatment.",
+          "pass": true,
+          "evidence": "15958 rawalpha1.3181/corrected1.3250, file deadtime and tail background explicit."
+        },
+        {
+          "requirement": "Runs `integral-scan` with `--model MuRepolarisation` over the LF runs and reports `A_hf` with its uncertainty, the χ²ᵣ and the field range fitted; says plainly how well the function describes the curve (a one-term fit over the whole range is poor).",
+          "pass": true,
+          "evidence": "Actual full-range MuRepolarisation fit A_hf1516.467045±80.457289MHz,chi458.747,3–4000G and poorcurve clearly stated."
+        },
+        {
+          "requirement": "Describes the curve itself: the integral asymmetry rises steadily with field over the whole scan and is still rising at the highest field.",
+          "pass": true,
+          "evidence": "Integral rises.053288 at3G to.225515 at4000G, still rising/no saturation."
+        },
+        {
+          "requirement": "Contains no B0, A, coupling or fraction that was not produced by a tool call in this session: no B0 converted from `A_hf` (or back) by hand, and no literature coupling presented as a result.",
+          "pass": true,
+          "evidence": "All coupling/amplitude/fraction output directlyCLI, no manualB0/coupling conversion or remainingfraction."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Says the muonium repolarisation function treats the radical as a two-spin muon–electron system, so `A_hf` is only an effective coupling; the radical's proton couplings broaden the curve, and a radical repolarisation model is not available in the CLI.",
+          "pass": false,
+          "evidence": "Effective/isotropic description and unavailable radical model stated, but no explicit two-spin muon-electron approximation/proton broadening explanation."
+        },
+        {
+          "requirement": "Notes the fitted diamagnetic term `a_Dia` is negative, i.e. unphysical as a fraction, as a symptom of that mismatch.",
+          "pass": true,
+          "evidence": "Negativea_Dia−.094425 and mismatch explicitly invalid physical fraction."
+        },
+        {
+          "requirement": "If a sum of two `MuRepolarisation` terms is fitted, reports both with χ²ᵣ but calls it an empirical description, and notes the two `a_Dia` terms are the same constant (degenerate).",
+          "pass": false,
+          "evidence": "No two-term empirical model fitted, so requested two-term comparison/degen discussion absent."
+        },
+        {
+          "requirement": "Notes that `A_hf` moves with the fitted field range (`--xmax`), so the number is not robust.",
+          "pass": false,
+          "evidence": "Actual xmax1200 fit A_hf1129.599580 differs from full1516.467045, but final omits range-sensitivity comparison."
+        },
+        {
+          "requirement": "Notes that repeated fields from the return pass differ by more than their errors (a drift between passes), limiting χ²ᵣ.",
+          "pass": true,
+          "evidence": "Repeated10/500/1000/2000G disagreements beyond3errors and100/3000G agreement explicitly limit reproducibility."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct scan/integral parameter tables, correctedalpha and repeated-point diagnostics; no physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science6/6 and exact copyPASS. Full poor-fit conditional coupling retained rather than suppressed; partial-window result not carried into final range-sensitivity explanation.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all20 completed commands inspected. All20 commands inspected, only summary edits and direct storedCLIJSONreads. Four review hashes verified and full curve mismatch pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 308.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 0,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "43e877dac3b5d560cbba2deb4272e8c1ec375eeddb6348f7fb338a015b72da4c",
+      "audited_file_sha256": "43e877dac3b5d560cbba2deb4272e8c1ec375eeddb6348f7fb338a015b72da4c",
+      "rubric_sha256": "394577546a8a6efae2ef56d912dbf00216156d50a4fa60e7800ea736fd2cd059",
+      "staged_skill_sha256": "7aec2595cbec0f0a1bd10e4949822f76cfc94e35301159cc3f3285d84f2be9b4",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/benzene-repolarisation",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Poorchi458.747 and negative diamagnetic coefficient reject microscopic fraction/coupling interpretation.",
+        "Actual partial-window A_hf1129.599580±31.212819MHz is omitted, although available; no robust coupling established.",
+        "Full-record tail-fit background and return-pass drift limit curve interpretation; no radical proton-coupled repolarisation model supplied."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        13,
+        14,
+        15
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "43e877dac3b5d560cbba2deb4272e8c1ec375eeddb6348f7fb338a015b72da4c",
+        "summary.md": "43e877dac3b5d560cbba2deb4272e8c1ec375eeddb6348f7fb338a015b72da4c",
+        "transcript.jsonl": "71980a2a07527cb0068fea6eeba6a0200cfe6ede8ee420de847881de0ccc855a",
+        "commands.txt": "4ae85a595a2193a8316d04740c645d8bd9d078b3b6f26ab859000db0a8858799",
+        "cost.json": "ce4b502413f0ded13e49026c1ed53e0476ba964cb6e2c7e1a084286f256f0597",
+        "image-inputs.json": "77222ca001ca529fca7c07b310159067c42714e55feee29fa92652badc75db5d"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-15958.png",
+          "snapshot_path": "review-images/8f0176018809e8de049ca45e9ac87badce8f1c5eb6a753116dfd23f5af71bb9d.png",
+          "bytes": 41916,
+          "sha256": "8f0176018809e8de049ca45e9ac87badce8f1c5eb6a753116dfd23f5af71bb9d",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-15993.png",
+          "snapshot_path": "review-images/b841dac9eb4c2c5d5e6e3581fcae37bd27e11a4d86aa5392dfa50613edcef752.png",
+          "bytes": 41923,
+          "sha256": "b841dac9eb4c2c5d5e6e3581fcae37bd27e11a4d86aa5392dfa50613edcef752",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/benzene-field.png",
+          "snapshot_path": "review-images/e7077f6f59e2a2d3f95da4101b964cc2c2e0397cef62f741bbc8a093a76b7fe9.png",
+          "bytes": 27450,
+          "sha256": "e7077f6f59e2a2d3f95da4101b964cc2c2e0397cef62f741bbc8a093a76b7fe9",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/benzene-murepol-full.png",
+          "snapshot_path": "review-images/1174fde70c6d0a88f5a3eb2f60fa74be1190f99a8d3e7de4d67010eac91e95d6.png",
+          "bytes": 37737,
+          "sha256": "1174fde70c6d0a88f5a3eb2f60fa74be1190f99a8d3e7de4d67010eac91e95d6",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T03:51:05.923333+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -2291,21 +2441,20 @@
     "basics",
     "corannulene-alc",
     "benzene-high-tf",
-    "benzene-repolarisation",
     "benzene-alc"
   ],
   "totals": {
-    "scored": 13,
+    "scored": 14,
     "target": 24,
-    "scientific_pass": 12,
-    "must_pass": 70,
-    "must_total": 72,
-    "should_pass": 28,
-    "should_total": 48,
-    "exact_copy_pass": 12,
-    "literal_copy_pass": 12,
-    "combined_pass": 11,
-    "boundary_pass": 13
+    "scientific_pass": 13,
+    "must_pass": 76,
+    "must_total": 78,
+    "should_pass": 30,
+    "should_total": 53,
+    "exact_copy_pass": 13,
+    "literal_copy_pass": 13,
+    "combined_pass": 12,
+    "boundary_pass": 14
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round18 explicitly retires the first-turn image-manifest instruction after review; final turn returns the scientific report alone.",

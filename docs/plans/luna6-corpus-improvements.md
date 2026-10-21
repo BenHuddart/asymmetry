@@ -2225,3 +2225,6 @@ Confirmation8 now12/24 scored: copper4/6 literalMusts,2/3Shoulds and GLOBAL numb
 
 
 Confirmation8 tin5/5Musts,3/4Shoulds; science/number/unit/strictcopy/boundaryPASS. Fixed TypeI critical-field law reports conditional Tc with poorchi; no accepted-Tc thermometry comparison. Totals13/24scored,70/72Musts,12/13science,12/13copy,11/13combined,13/13boundary,28/48Shoulds. Source remains frozen; preserve earlier reviewed trend versus final law caveat.
+
+
+Confirmation8 LFbenzene6/6Musts,2/5Shoulds; science/number/unit/copy/boundaryPASS. Negativea_Dia and return drift correctly stated; actual range-dependent A_hf comparison omitted. Totals14/24scored,76/78Musts,13/14science,13/14copy,12/14combined,14/14boundary,30/53Shoulds. Source remains frozen.
