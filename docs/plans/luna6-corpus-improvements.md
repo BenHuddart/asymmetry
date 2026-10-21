@@ -2156,3 +2156,6 @@ Fresh full24 confirmation7 LIVE at /home/ben/.cache/asymmetry-luna6-overnight-20
 
 
 Confirmation7 now1/24scored:PTFE6/6Musts1/3Shoulds science/number/unit/strictcopy/boundaryPASSwithreport-onlypreparation. Preservewrong17316/17306rowassociationandpoorfit/temperatureuncertaintycaveats;scalarcheckerdoesnotvalidaterowidentity. SourcefrozenthroughALL24.
+
+
+Confirmation7 now2/24scored:molecularAFM5/5Musts1/3Shoulds science/number/unit/copy/boundaryPASS. Totals11/11Musts,2/2science/copy/combined/boundary,2/6Shoulds. OrderParameteronsurvey_line_mhzunsupportedandpoororderedtimefitsleaveTNunestablished;fit-direction/worksheettemperaturegapsretained. Sourcefrozen.

@@ -1,5 +1,5 @@
 {
-  "status": "running; 1/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 2/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -281,6 +281,163 @@
       ],
       "scored_at": "2026-10-21T02:06:37.229256+00:00",
       "reply_matches_saved_file": true
+    },
+    "molecular-antiferromagnet": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies 17104 as the TF 20 G calibration run and states alpha was determined from it.",
+          "pass": true,
+          "evidence": "17104separate20GTFcalibrant,rawalpha1.2584/corrected1.2594applied."
+        },
+        {
+          "requirement": "Treats 17094-17103 as the ZF temperature sweep used for the ordering analysis, separate from the calibration run.",
+          "pass": true,
+          "evidence": "17094–17103ZFtemperaturesweepseparatefromcalibration."
+        },
+        {
+          "requirement": "Reports oscillation(s) present in the low-temperature ZF spectra that become more relaxed/damped as temperature rises through the sweep.",
+          "pass": true,
+          "evidence": "SpontaneousZFlinecold1.56MHzfalls1.07MHzandunresolvedabove4.90–5.88K;magneticorderweakeningexplicit."
+        },
+        {
+          "requirement": "Comments on whether more than one oscillation frequency is present (the worksheet flags this as something to check for), rather than assuming a single frequency without looking.",
+          "pass": true,
+          "evidence": "Actualtwodampedcosines1.10164/1.69844MHztested,oneFFTpeakplusvisual1.7shoulderqualified,notassumedsingleline."
+        },
+        {
+          "requirement": "Contains no frequency, TN, or relaxation-rate number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Frequencies/rates/tempsfromCLI;noinventedTNfromlossbracketorhandconversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes the \"Cryostat Temperature\" vs \"Sample Temperature\" columns logged for these runs are identical in the worksheet table, and does not imply a discrepancy that isn't there.",
+          "pass": false,
+          "evidence": "Loggedsampletemperaturesusedbutnoexplicitworksheetcryostat/samplecolumnidentity."
+        },
+        {
+          "requirement": "Discusses whether it fit from low to high temperature or vice versa, and why (the worksheet explicitly raises this as a design choice).",
+          "pass": false,
+          "evidence": "Saysscreenedvisible17098andwarm17103butdoesnotexplainwhichdirectionserieswaschainedorwhy;commandsstartat17098isnotfinalreplyevidence."
+        },
+        {
+          "requirement": "Chooses a relaxing-oscillation function appropriate to magnetic order (e.g. damped cosine terms) rather than a generic unstructured relaxation function.",
+          "pass": true,
+          "evidence": "DampedcosinesfororderedsideandDynamicGaussianKTwarmside,notunstructuredrelaxationforprecessingcolddata."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. DirectCLI/storedfit/survey/FFTverifyquotedscalars/units;noaudit/draft/log-reportreads. Visual1.7MHzroundedfromactuallyfitted1.69844component,notpixel-derivednewnumber.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Core5/5scienceandstrictcopypass. Four/fiveorderedtimefitrowsfail;agenttriesOrderParameteronsurvey_line_mhzbutCLItrenddoesnotexposethatcolumnasparameter,soquantitativeTNnotestablished. Generalrecovery/measurement-columnworkflowgap,notacorpus-specificlawanswer.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all28 completed commands inspected. All28completedcommandsandreporteditsinspected,CLI/notesonly,nophysicalarithmetic. Fourimagehashesverified;actualcold-side/warmFFTpixelsshowsupportedshoulderandnoalgorithmicwarmpeak. Rawreplyexactcopiedfrompreparedreport.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 548.5,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 4,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/molecular-antiferromagnet/data --series ordered-lines --model OrderParameter --param survey_line_mhz --xmax 4.89531 --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/molecular-antiferromagnet/data --series ordered-lines --model OrderParameter --param survey_line_mhz --xmax 4.89531 --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "87ca60644f569c0a757bbd01ae3e3bea9a8950bd50fd369b3511aa588e389d0e",
+      "audited_file_sha256": "87ca60644f569c0a757bbd01ae3e3bea9a8950bd50fd369b3511aa588e389d0e",
+      "rubric_sha256": "a6dcbd9c0ae82a5ff22433c944584a709ccf430256a594c0acee0073d8b540b7",
+      "staged_skill_sha256": "166e50451f0545f41f184dca6279df8306d5585ddfb2cbd0216011a3712e0f96",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7/molecular-antiferromagnet",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Only17098orderedfitunflaggedandstillpoor;twocomponentfrequencyinterpretationconditional,visual1.7MHznotdetectedFFTline.",
+        "MatchedFFT17098versus17103isnotactualcoldendpoint17094;survey/reducedcoldendpointstillprovidesobservedprecession.",
+        "Noorderparameterlawresult:survey_line_mhzunsupportedtrendcolumnandtimefitsinvalid,lossbracketnotmeasuredTN.",
+        "Warm17099failedpointnotphysicalDelta/nu,17100–17103roughlystablewithpoorqualityseveralrows;lowstatisticswarmendpointlimitsabsenceclaim."
+      ],
+      "judgement_calls": [
+        "Should2requiresfinalreplyfit-directiondiscussion;actualstartcommandalonecountsasroot-causeevidencebutcannotcompleteShould."
+      ],
+      "number_evidence_commands": [
+        2,
+        5,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        16,
+        17,
+        18,
+        21
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "87ca60644f569c0a757bbd01ae3e3bea9a8950bd50fd369b3511aa588e389d0e",
+        "summary.md": "87ca60644f569c0a757bbd01ae3e3bea9a8950bd50fd369b3511aa588e389d0e",
+        "transcript.jsonl": "a55e725c2400dd34e89765c64519f1e5daf5b12fbd6edd9317ab3288e95d7b3f",
+        "commands.txt": "03a06db4739c1f0cab9cab37678c12009e8ec210ed8e0b791bc2447269582181",
+        "cost.json": "67f211f6bcae7054e20965c3d6c976cd3527ab51ac3c969d15420ebf75f39b3c",
+        "image-inputs.json": "5f3f0cbe5e7ec09bd994d5131e64449f27b58d90dc6e90e7340aeb7f84a8b920"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-17094.png",
+          "snapshot_path": "review-images/6075206ec0025d3b1739df01783d990f9b54b5e8201a66630f4c41061e1e5c74.png",
+          "bytes": 44398,
+          "sha256": "6075206ec0025d3b1739df01783d990f9b54b5e8201a66630f4c41061e1e5c74",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-17099.png",
+          "snapshot_path": "review-images/401c137615ed0d30573f4e2c11af6532bd3bf95e0f5aaebed60bffbb35057c28.png",
+          "bytes": 45291,
+          "sha256": "401c137615ed0d30573f4e2c11af6532bd3bf95e0f5aaebed60bffbb35057c28",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-17098.png",
+          "snapshot_path": "review-images/97c48d45079cdd0e18049e44af8e0cddba6b0c771ec8a4944e4dc4195a3ba938.png",
+          "bytes": 58385,
+          "sha256": "97c48d45079cdd0e18049e44af8e0cddba6b0c771ec8a4944e4dc4195a3ba938",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-17103.png",
+          "snapshot_path": "review-images/310a2eb8d43878e13a6b76e8672a2403dc4703eff26f51a7bb6206cb49b6d580.png",
+          "bytes": 72931,
+          "sha256": "310a2eb8d43878e13a6b76e8672a2403dc4703eff26f51a7bb6206cb49b6d580",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T02:07:43.203879+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -292,7 +449,6 @@
     "spin-glass-ymnal",
     "high-tc-cuprate",
     "copper-diffusion",
-    "molecular-antiferromagnet",
     "spin-peierls",
     "afm-high-tf-mdu",
     "alc-tcnq",
@@ -309,17 +465,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 1,
+    "scored": 2,
     "target": 24,
-    "scientific_pass": 1,
-    "must_pass": 6,
-    "must_total": 6,
-    "should_pass": 1,
-    "should_total": 3,
-    "exact_copy_pass": 1,
-    "literal_copy_pass": 1,
-    "combined_pass": 1,
-    "boundary_pass": 1
+    "scientific_pass": 2,
+    "must_pass": 11,
+    "must_total": 11,
+    "should_pass": 2,
+    "should_total": 6,
+    "exact_copy_pass": 2,
+    "literal_copy_pass": 2,
+    "combined_pass": 2,
+    "boundary_pass": 2
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics unchanged. Round17 makes successful --prepare-reply stdout report-only and nonzero on failure; runner verifies exit status and exact raw stdout without normalization or saved-file substitution.",
