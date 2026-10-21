@@ -2219,3 +2219,6 @@ Confirmation8 spin-Peierls now6/6 Musts,2/3 Shoulds; science, number/unit, stric
 
 
 Confirmation8 now10/24 scored: LLZ6/6 Musts2/4 Shoulds,TCNQ6/6 and4/4,silicon6/6 and3/4,CDS6/6 and2/4,cuprate5/5 and2/3. All five science/number/unit/copy/boundary pass. Totals56/56 Musts,10/10science,9/10copy/combined,10/10boundary,21/36Shoulds. Preserve CDS qualified noisy-triplet judgement, silicon rejected ON diagnostic-rate caveat and tentative plot/table discrepancy; no plotting bug claimed. Sources frozen through all24.
+
+
+Confirmation8 now12/24 scored: copper4/6 literalMusts,2/3Shoulds and GLOBAL number-ruleFAIL(unprinted derived8% fraction), strictcopy/boundaryPASS; RFbenzene5/5Musts2/5Shoulds science/copyPASS. Totals65/67Musts,11/12science,11/12copy,10/12combined,12/12boundary,25/44Shoulds. Copper omits KT/QLCR and falsely says wizard never returned despite completed recommendation; retain runtime retry/stream warnings. Freeze remains through all24; repair only afterward.
