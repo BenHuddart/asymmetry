@@ -25,7 +25,10 @@ conservative peak reporting.
       visual shoulder or sub-resolution splitting as a precision measurement.
 - [ ] Heeds any early-signal apodisation warning: it retries with an unwindowed
       physical crop or an appropriate Lorentzian filter rather than treating a
-      symmetric-window spectrum as automatically authoritative.
+      symmetric-window spectrum as automatically authoritative. When no
+      transform printed that warning (for example, every `fourier` call used
+      `--window none`), this line is met; check `commands.txt` for the window
+      used.
 
 ## Should
 

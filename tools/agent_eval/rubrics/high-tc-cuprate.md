@@ -30,11 +30,19 @@ run (each TF run is itself a precessing calibration-style measurement):
       separate field groups, not a single 400 G scan.
 - [ ] Reports a Gaussian (or Gaussian-like) TF relaxation rate that
       rises as temperature drops below the transition, for at least
-      one of the field/instrument combinations.
+      one of the field/instrument combinations, from this session's
+      fits. Either direction of description passes ("rises on
+      cooling" or "falls on warming to a flat normal-state level").
+      An exponential rate on a combination where the Gaussian was
+      rejected does not tick this line on its own.
 - [ ] Discusses how the non-superconducting fraction of the signal was
-      handled (e.g. a second, slowly-relaxing or non-relaxing
-      component), rather than fitting a single Gaussian and ignoring
-      it.
+      handled. Either (a) the fit has a second precessing component
+      near the applied field (narrow or slowly relaxing) that the
+      summary identifies as the non-superconducting or background
+      signal, or (b) the summary says explicitly that its fits did not
+      separate that fraction. Silence fails, and so does calling a
+      time-independent `Constant` the non-superconducting fraction: in
+      TF that signal precesses at the applied field.
 - [ ] Contains no sigma, Tc, or penetration-depth number not produced
       by a tool call in this session.
 

@@ -52,7 +52,9 @@ runs), `solid` (123) and `solution` (360). All HIFI `.nxs`, deadtime in files.
 - [ ] Solid: reports two resonances from converged fits (a joint fit, or
       one windowed fit per resonance), one between 19.3 and 19.7 kG and one
       between 21.3 and 21.6 kG. A failed fit's position is not a fitted
-      resonance.
+      resonance. "Converged" means `integral-scan` did not report the fit as
+      failed and the centre is not at a bound; a large χ²ᵣ (about 10 is
+      common on this scan) does not by itself make a fit unconverged.
 - [ ] Solution: names the three samples and fits at least one scan, stating
       sample and temperature, with a resonance between 20.4 and 21.2 kG.
 - [ ] Contains no A_μ, A_p, D_μ or resonance field that was not produced by a

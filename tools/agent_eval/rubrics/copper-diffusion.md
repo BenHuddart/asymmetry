@@ -40,8 +40,10 @@ reference):
       states whether the relaxation (e.g. the fluctuation rate ν) at the
       lowest-temperature run differs from the next-lowest — the low-T
       upturn — whether or not it interprets it.
-- [ ] Identifies the fixed-temperature, swept-field runs as the LF/QLCR
-      data, distinct from the temperature scans.
+- [ ] Identifies the fixed-temperature, swept-field runs as LF field-sweep
+      data, distinct from the temperature scans. The term "QLCR" is not
+      required for this line (the Should below asks for it); describing them
+      as a temperature scan fails.
 - [ ] Contains no hop rate, activation energy, or rate number not
       produced by a tool call in this session.
 
@@ -54,6 +56,8 @@ reference):
       both eras' runs into one T-axis.
 - [ ] Flags any run whose logged sample temperature deviates
       substantially from its nominal set-point.
+- [ ] Names the LF field sweeps as the quadrupolar level-crossing
+      (QLCR) scans the worksheet describes.
 
 ## Known traps
 

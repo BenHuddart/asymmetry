@@ -12,20 +12,28 @@ or forcing the individual runs through time-domain decay fits.
       µLCR) experiment in which each run contributes one time-integral
       asymmetry point versus applied field.
 - [ ] Reports the folder structure from its own survey: 128 EMU runs comprising
-      four 31-point scans over 2000–5000 G, plus the non-scan/calibration runs,
-      without claiming the absent run 19618 was loaded.
-- [ ] Actually runs `integral-scan` on at least one complete 31-run temperature
-      block and states which block it analysed. It does not substitute
+      four temperature blocks of 31 field points over 2000–5000 G, plus the
+      non-scan/calibration runs, without claiming the absent run 19618 was
+      loaded. The 350 K block holds more than 31 runs (the survey lists 33,
+      19487–19519: the ZF run 19487 and 2000 G measured twice, 19488 and
+      19489), so per-block counts of 31 points or the survey's run counts
+      (33, 31, 31, 31) both pass.
+- [ ] Actually runs `integral-scan` on at least one complete temperature block
+      (all 31 field points from 2000 to 5000 G at one temperature) and states
+      which block it analysed. For the 350 K block, keeping both 2000 G runs,
+      co-adding them, or dropping one and saying so are all complete; so is the
+      survey's 33-run range with 19487 as a 0 G point. It does not substitute
       `wizard`, `fit-series`, or individual time-domain fits for the ALC scan.
 - [ ] Fits the field scan with a resonance-plus-smooth-background model. A
       single `LorentzianLCR` with a cubic background is acceptable; it does not
       add a second line merely because the teaching worksheet used a
       two-Lorentzian template.
-- [ ] Reports an observed negative resonance feature close to 3.1 kG, together
-      with the fitted centre, width and uncertainty/quality information from
-      this run's command output. A centre far outside 2.9–3.2 kG (the
-      resonance moves a few tens of gauss between the four temperature
-      blocks) without an explicit failed-fit warning is a fail.
+- [ ] Reports an observed negative resonance feature with a fitted centre
+      between 2.9 and 3.2 kG, together with its width and uncertainty/quality
+      information from this run's command output (the resonance moves a few
+      tens of gauss between the four temperature blocks). A centre outside
+      2.9–3.2 kG fails unless the summary itself calls that fit failed or
+      unreliable.
 - [ ] Separates measured/fitted output from physical interpretation and does
       not invent hyperfine constants that the CLI did not calculate.
 

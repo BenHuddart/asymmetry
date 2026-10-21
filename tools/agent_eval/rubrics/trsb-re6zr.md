@@ -34,16 +34,19 @@ decouples the relaxation, so the fields are static.
 - [ ] Reports the alpha step between the TF block and the ZF/LF block and
       calibrates each from a run inside it (38222 for ZF/LF; a TF run of
       38176–38221 for TF), naming the runs.
-- [ ] Treats the 50–200 G field runs as longitudinal, not transverse, and
-      reports that the 100 G LF runs show little or no relaxation at any
-      temperature: the ZF relaxation is decoupled, so its fields are static.
+- [ ] Treats the field runs 38261–38275 (50 G pair, 100 G scan, 200 G run
+      38274) as longitudinal, not transverse, and reports that the 100 G LF
+      runs show little or no relaxation at any temperature: the ZF relaxation
+      is decoupled, so its fields are static. The 200 G pair 38220–38221 is
+      TF and is not part of this line.
 - [ ] Fits the ZF scan with a static Gaussian Kubo–Toyabe × exponential +
       constant (or an equivalent KT model) and says there is no spontaneous
       precession. It does not adopt a precession model (the wizard has
       ranked Bessel or Overhauser forms first on some runs) as the ZF physics.
 - [ ] States the headline in words: the ZF KT rate (`Delta`, the paper's σ)
-      rises on cooling below a temperature at or near the TF Tc (within a
-      point spacing of the Tc this session's TF fit gives, or 6–7.5 K) while Λ
+      rises on cooling below a temperature at or near the TF Tc — the onset it
+      names lies within 0.4 K (the ZF point spacing there) of the Tc this
+      session's TF fit gives, or between 6.0 and 7.5 K — while Λ
       (or, in a dynamic KT fit, the fluctuation rate ν) shows no such change; the
       extra relaxation is small against the nuclear rate and is read as
       spontaneous static fields appearing at Tc — broken time-reversal

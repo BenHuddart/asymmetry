@@ -49,7 +49,10 @@ LF from the coil readbacks (`LF+`).
       stated `--xmin/--xmax` windows, and reports each fitted centre, width,
       uncertainty and χ²ᵣ from its own output.
 - [ ] Reports two resonances in the hot (~410 K) scan: one centred between
-      6.9 and 7.3 kG and one between 14.6 and 15.0 kG.
+      6.9 and 7.3 kG and one between 14.6 and 15.0 kG. No CLI message points
+      to the ~7 kG line, so the agent must find it in the plotted scan and fit
+      a window there. The line is kept as written because the 7 kG resonance is the
+      dataset's headline; a miss is an agent gap, not a rubric ambiguity.
 - [ ] Reports the resonance in the cold (~43 K) scan centred between 15.1 and
       15.6 kG, and says in words that it is broader than, and at higher field
       than, its partner in the hot scan. Also states that the cold scan shows

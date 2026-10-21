@@ -98,3 +98,17 @@ worksheet's textbook Tc is far higher than the temperatures probed
 here") without failing this rule, provided it is clear the number is
 being quoted from the source material and not claimed as this
 session's own result.
+
+## Wording revisions
+
+Rubrics stay fixed across an evaluation loop. A wording change lands in its own
+PR, and each run directory keeps the `rubric.md` it was scored against.
+
+- **2026-10-21** — Must wording tightened where three blind scorers of the
+  PR #369 Haiku pair disagreed on whether a line was met: spin glass, nickel,
+  photo-silicon, ALC-TCNQ, CdS Fourier, copper, AFM high TF, molecular
+  antiferromagnet, LiFeAs, TRSB, benzene ALC, EuO and the cuprate; corannulene
+  notes that no CLI message points to its ~7 kG line. The physics of each line
+  is unchanged. Waves scored before this change used the earlier wording, so
+  compare scores across it with care. It applies to waves scored after it
+  merges; the PR #369 Luna pair was scored under the earlier wording.

@@ -13,8 +13,9 @@ tracked as the sample cools towards its glass transition.
 
 20 MUSR `.nxs` runs:
 
-- Calibration, 24563: TF 20 G, 265 K (damped-oscillation fit for alpha
-  and detector grouping).
+- Calibration, 24563: TF 20 G, 265 K (damped-oscillation fit for
+  alpha). The detector grouping is the file's own forward/backward pair;
+  it is not derived from this run.
 - LF 110 G temperature series, 24573-24591 (19 runs): worksheet's
   headline table only names 24576-24590 (90-280 K); the folder also
   holds 24573-24575 and 24591, extra temperature points not in that
@@ -24,7 +25,9 @@ tracked as the sample cools towards its glass transition.
 
 - [ ] Identifies 24563 as the TF calibration run, separate from the LF
       series.
-- [ ] States that alpha (and detector grouping) came from 24563.
+- [ ] States that alpha came from 24563. Grouping is not part of this
+      line: naming the file's own forward/backward pair, or not mentioning
+      grouping at all, passes.
 - [ ] Reports the LF series as fit with a relaxation function that
       combines a stretched-exponential (or comparable stretched decay)
       component with a flat/time-independent background.
