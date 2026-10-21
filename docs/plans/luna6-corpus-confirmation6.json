@@ -1,5 +1,5 @@
 {
-  "status": "running; 13/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 14/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -2211,11 +2211,215 @@
       ],
       "scored_at": "2026-10-21T01:14:15.416827+00:00",
       "reply_matches_saved_file": true
+    },
+    "euo-psi": {
+      "verdict": "FAIL",
+      "must": [
+        {
+          "requirement": "Identifies this as PSI GPS data (the `.bin` format), not an ISIS NeXus dataset.",
+          "pass": false,
+          "evidence": "Finalcallsall51runsPSIbutnevernamesGPSor.binformat;cannotidentifythePSIGPSbinarytrackfromthissummaryalone(thoughitdoesnotincorrectlycallthemISIS)."
+        },
+        {
+          "requirement": "Separates the ZF block from the TF 60 G block as two distinct scans.",
+          "pass": true,
+          "evidence": "ExplicitZF2923–2960and60GTF2961–2973separated,conditionalgeometriesandwholeinventorycovered."
+        },
+        {
+          "requirement": "Reports an internal field (from the TF block, or from ZF oscillations if present) that changes with temperature, growing as the sample is cooled below the ordering region.",
+          "pass": true,
+          "evidence": "ColdZFearlyFFT30.169388MHzvswarmnodetectedcounterpart,internallinefrequencyweakensneartheorderingregion;TFshiftalsoreported."
+        },
+        {
+          "requirement": "Reports the relaxation rate above the ordering region as this session's fits give it, and does not claim a critical divergence (critical slowing down) that those fits do not show. The paper finds the paramagnetic relaxation rate roughly constant, near 2 MHz, rather than diverging at the transition.",
+          "pass": true,
+          "evidence": "Reportscurrentearly-windowparamagrates2.33133,4.81614,1.81443μs−1witherrors/windowdependence;nocriticaldivergenceclaim."
+        },
+        {
+          "requirement": "Contains no internal-field value, relaxation rate, or Curie temperature that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Allline/rate/conditionalTcvaluesprintedCLI,OrderParameterlogged1.604–64.864Kfixedalpha1Tc67.917176±0.960783chi2=15.230explicitrough;no numeric/unitflags."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that both blocks revisit a narrow temperature window several times rather than assuming a single monotonic sweep.",
+          "pass": false,
+          "evidence": "ZF2950–2956revisitsnoted,butdoesnotexplicitlynotethat60GTFblockalsorevisitsthenarrowtransitionwindow."
+        },
+        {
+          "requirement": "Treats run 2960 (1.5 K, out of sequence at the end of the ZF block) as a low-temperature reference point rather than ignoring it or assuming it belongs elsewhere in the sequence.",
+          "pass": true,
+          "evidence": "2960out-of-sequence1.5Kreferenceretainedincoldseries/FFT/coldloggedtrend."
+        },
+        {
+          "requirement": "Frames the comparison to theory (e.g. mean-field/Heisenberg critical behaviour) as the paper's stated goal. A critical exponent, if quoted, comes from a `trend --model OrderParameter` fit in this session with its fit range stated, and is labelled with the temperature axis it was measured against (the PSI header's logged sensor reading, or the setpoint with a reason).",
+          "pass": false,
+          "evidence": "Conditionalbetafitwithrange/axisreportedbutnotframedasmeanfield/Heisenberg/theorycomparisonorpapergoal."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. DirectCLI/storedwizardJSONverifiesallquotedquantitiesandconditional/rejectedlaws. CLI-output.logreads50/51,draft/audits excluded;no customphysicalarithmetic. ExplicitliteratureTcnotinventedasresult.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "LiteralMust1FAIL(judgementcall):summaryonlysaysPSIandgroups,omitsGPS/.binmetadataavailablefromsurvey/infofilenames. Thisisreportingomission,notwrongloaderorincorrectISISanalysis. Number/unit/copy/boundaryPASS. Physicalline/paramagratescorrectlyqualified. Generalnext-roundreportcheckcouldensureinstrument+formatprovenanceinopening,notcorpusname-specificdispatch.",
+      "exact_copy": true,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all64 completed commands inspected. All64completedcommandsandreport-onlyeditsinspected;severalCLIboundary/schemaerrorsrecoverviavalidcommands, no customanalysis/arithmetic. Fourreviewimageshashverified;actualmatchedcold/warmFFTinspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1771.8,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 11,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend ../data --series euo-zf-ordered --model OrderParameter --param frequency --plot && asymmetry trend ../data --series euo-zf-cold --model OrderParameter --param frequency --plot --exclude 2923,2924,2925,2926,2927,2928,2929,2930,2931,2932,2933,2934,2935,2936,2937,2938,2939,2960'",
+        "/bin/bash -lc 'asymmetry trend ../data --series euo-zf-cold --model OrderParameter --param frequency --plot'",
+        "/bin/bash -lc 'asymmetry trend ../data --series euo-zf-cold --model OrderParameter --param frequency --fix alpha=1.000 --plot'",
+        "/bin/bash -lc 'asymmetry fit-series ../data --runs 2925-2939,2960 --recipe wizard-2938 --order sample_temperature_logged --start 2938 --name euo-zf-cold-logged --plot && asymmetry trend ../data --series euo-zf-cold-logged --model OrderParameter --param frequency --fix alpha=1.000 --plot'",
+        "/bin/bash -lc 'asymmetry trend ../data --series euo-zf-cold-logged --model OrderParameter --param frequency --fix alpha=1.000 --exclude 2926,2927 --plot'",
+        "/bin/bash -lc 'asymmetry trend ../data --series euo-zf-cold-relax --model Arrhenius --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend ../data --series euo-zf-cosline --model OrderParameter --param frequency'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series ../data --runs 2923-2939 --recipe wizard-2938 --order sample_temperature_logged --start 2938 --name euo-zf-cold --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend ../data --series euo-zf-ordered --model OrderParameter --param frequency --plot && asymmetry trend ../data --series euo-zf-cold --model OrderParameter --param frequency --plot --exclude 2923,2924,2925,2926,2927,2928,2929,2930,2931,2932,2933,2934,2935,2936,2937,2938,2939,2960'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry fit-series ../data --runs 2923-2939,2960 --recipe wizard-2938 --order sample_temperature_logged --x 2923=5,2924=10,2925=10.048,2926=10.025,2927=10.0268,2928=17.181,2929=24.158,2930=30.136,2931=36.307,2932=41.277,2933=46.23,2934=50.25,2935=52.76,2936=57.778,2937=61.315,2938=63.363,2939=64.86,2960=1.604 --start 2938 --name euo-zf-cold-logged --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"jq '{lines, recommended_key: .recommendation.recommended_key, candidates: [.recommendation.candidates[:4][] | {key: .key, title: .title, aicc: .aicc, parameters: .parameters}]}' asymmetry-work/wizard/2964.json\"",
+          "exit_code": 5
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend --series euo-zf-cosline'",
+          "exit_code": 2
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend ../data --series euo-zf-cold-relax --model Arrhenius --param Lambda'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "cbd2153e0ee1546acebb8246a256da3af299d5e62087db0a23d84ee7e10c5516",
+      "audited_file_sha256": "cbd2153e0ee1546acebb8246a256da3af299d5e62087db0a23d84ee7e10c5516",
+      "rubric_sha256": "fe9da3aa512839d6107beebcf6bbb0c343d0d6f7fc668e02e8a3d7ce74096600",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/euo-psi",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "Paramagneticratesstrongwindowdependence/risinglatebaseline;nostableintrinsiccriticalrateclaim.",
+        "ConditionalfixedalphaOrderParameterTc67.917K/beta0.319chi2=15.230andmanyflaggedfrequencyfitsnotestablishedcriticalphysics.",
+        "Finalcalls2944coldparamagneticendpointbutloggedseriesactualminimumisflagged2950at68.946K,valid2951alsoearlierthan2944;donotreplaceactualendpointwithconvenientinteriorrun.",
+        "ColdOverhauserfrequencyandseparatecosinelineuncertaintiescrosscheckedwithsurveylines;somefitfrequenciesdisagreewithsurveyandaredeclined.",
+        "NoGPS/binmentiondespitecorrectPSIfacility,defaultBack/Forwpairandheadersused."
+      ],
+      "judgement_calls": [
+        "Must1failureisstrictinstrument/formatidentificationomission:PSIaloneispartialbutnotPSIGPS(.bin). EarlieracceptanceofGPSshorthanddoesnotapplybecauseGPSitselfisabsenthere.",
+        "Must4acceptshonestwindow-sensitivecurrentratesandabsenceofdivergenceclaimratherthanrequiringpaper2MHzvalue.",
+        "Should1requiresbothblockrevisits;onlyZFisexplicitlyidentified."
+      ],
+      "number_evidence_commands": [
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        14,
+        15,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        28,
+        29,
+        31,
+        32,
+        34,
+        36,
+        37,
+        40,
+        41,
+        42,
+        43,
+        44,
+        46,
+        47,
+        48,
+        49,
+        52,
+        54,
+        58,
+        59,
+        60
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "cbd2153e0ee1546acebb8246a256da3af299d5e62087db0a23d84ee7e10c5516",
+        "summary.md": "cbd2153e0ee1546acebb8246a256da3af299d5e62087db0a23d84ee7e10c5516",
+        "transcript.jsonl": "93f6db6fee02b47e8571d0954b2552c380203f0a4ef662eff0e83b62a1fb5824",
+        "commands.txt": "359122bb128dc3e7624f3453d52e19c85d8ecae463366b108ed7df54aa3adbf1",
+        "cost.json": "49f33718f2f42079f08eb6e6c580e8de97e1533227f018d8be39f360bb986f4e",
+        "image-inputs.json": "8d9d5b79f877f11ff2a3cbdeb7e9c7e1fc250ce0b22a0a2db9f940ac67669850"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-2960.png",
+          "snapshot_path": "review-images/1156b40d64ab227809d38bcc7412448bef7e68d95e460618775f9a821208bfff.png",
+          "bytes": 55971,
+          "sha256": "1156b40d64ab227809d38bcc7412448bef7e68d95e460618775f9a821208bfff",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-2959.png",
+          "snapshot_path": "review-images/ed5b04fff02096d5d8e81b03964740155e032f09bf3fcdf77ebf391e95cdeac4.png",
+          "bytes": 78043,
+          "sha256": "ed5b04fff02096d5d8e81b03964740155e032f09bf3fcdf77ebf391e95cdeac4",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-2960.png",
+          "snapshot_path": "review-images/864eb45d9b5aaccfa539db0e10db62cdd05ee11d2fd2f6ab0aedef5a3396ec74.png",
+          "bytes": 48271,
+          "sha256": "864eb45d9b5aaccfa539db0e10db62cdd05ee11d2fd2f6ab0aedef5a3396ec74",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-2959.png",
+          "snapshot_path": "review-images/734370ff425542341ae12f7d75e3b2cac3ada87625db80d411d439f5115ae210.png",
+          "bytes": 46432,
+          "sha256": "734370ff425542341ae12f7d75e3b2cac3ada87625db80d411d439f5115ae210",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T01:15:34.348112+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
     "sn-critical-field",
-    "euo-psi",
     "maleic-mu-kinetics",
     "copper-diffusion",
     "lifeas-psi",
@@ -2257,16 +2461,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 13,
+    "scored": 14,
     "target": 24,
     "scientific_pass": 12,
-    "must_pass": 73,
-    "must_total": 73,
-    "should_pass": 29,
-    "should_total": 48,
-    "exact_copy_pass": 10,
-    "literal_copy_pass": 10,
+    "must_pass": 77,
+    "must_total": 78,
+    "should_pass": 30,
+    "should_total": 51,
+    "exact_copy_pass": 11,
+    "literal_copy_pass": 11,
     "combined_pass": 10,
-    "boundary_pass": 13
+    "boundary_pass": 14
   }
 }

@@ -2111,3 +2111,6 @@ Confirmation6 now11/24 scored:RFbenzene5/5Musts,2/5Shoulds andsilicon6/6Musts,3/
 
 
 Confirmation6 now13/24 scored:Ni7/7Musts,2/4Shoulds sciencePASS/copyFAILterminalLFafterplainaudit;cuprate5/5Musts,2/3Shoulds science/copyPASS. Bothnumber/unit/boundaryPASS. Totals73/73literalMusts,12/13science,10/13copy/combined,13/13boundary,29/48Shoulds. Retainpoorcriticallaws,conditionalSCgap/DwaveoverlayandAFMindependentscopeFAIL. Sourcefrozen.
+
+
+Confirmation6 now14/24 scored:EuO4/5Musts scienceFAILstrictGPS/.binidentificationomission(PSIonly),1/3Shoulds;number/unit/copy/boundaryPASS. Judgementcallrecorded,notwrongloaderclaim. Conditionalcriticallawandparamagrate/window/endpointcaveatsretained. Totals77/78Musts,12/14science,11/14copy,10/14combined,14/14boundary,30/51Shoulds;independentAFMscopeFAILseparate. Sourcefrozen.
