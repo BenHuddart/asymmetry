@@ -1,5 +1,5 @@
 {
-  "status": "running; 18/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 19/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -3260,6 +3260,198 @@
       ],
       "scored_at": "2026-10-21T01:23:48.245135+00:00",
       "reply_matches_saved_file": false
+    },
+    "benzene-high-tf": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the two sets: 3678–3682 as repeats at one condition for co-adding, and 1808–1813 as a field scan at fixed temperature. It does not report a temperature dependence between 294 K and 300 K.",
+          "pass": true,
+          "evidence": "Separates3678–3682five3000G300Krepeatscoaddfrom1808–1813fieldscan294K,no294→300Ktemperaturephysics."
+        },
+        {
+          "requirement": "Co-adds 3678–3682 (`reduce --coadd`) and Fourier transforms the sum, calling it an FFT (not MaxEnt) and giving its resolution and window.",
+          "pass": true,
+          "evidence": "Actualreduce--coaddthenordinaryFFTwindowNone,resolution.127821MHz,bins/bandstated."
+        },
+        {
+          "requirement": "Reports, from the peak table of the co-added spectrum, the diamagnetic line near the 3000 G Larmor frequency (40–41.5 MHz) and the two radical lines, one between 208 and 210 MHz and one between 305 and 307 MHz.",
+          "pass": true,
+          "evidence": "Coaddpeaktable40.675980MHzdiamagneticand208.550638/208.729044plus305.521214/305.706334radicallinebands."
+        },
+        {
+          "requirement": "Reports A_μ from the correlation spectrum (`fourier --correlation` on the co-add), with a peak between 510 and 518 MHz, and says in words that it is the sum of the two radical frequencies — not as a hand-added number.",
+          "pass": true,
+          "evidence": "Actualcoadd--correlationA_mu514.446927/514.080755MHz;explicitsumofpairedradicalprecessionlines,nothandaddition."
+        },
+        {
+          "requirement": "Does not assign the strong line near 50.6 MHz to a muon species (it is neither the Larmor line nor a member of the radical pair).",
+          "pass": true,
+          "evidence": "50.630727listedwithoutassigningmuonspecies;notpartofradicalpair."
+        },
+        {
+          "requirement": "Contains no A_μ, frequency sum, splitting or proton coupling that was not produced by a tool call in this session (the worksheet's ~41, ~209, ~306 and ~500 MHz are background).",
+          "pass": true,
+          "evidence": "AllA_mu/linefrequencies/errorsfromCLI,nomanualsum/splitting/protoncoupling;no numeric/unitflags."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Notes that the radical lines and the correlation peak each appear as two close components (a small splitting of the hyperfine peak), quoting the printed values, saying the separation is only a few FFT resolution elements, and either offers a qualitative reason or says it was not established.",
+          "pass": false,
+          "evidence": "Quotesbothordinary/correlationclosemaximaandqualifiesordinarypairswithin2resolutionelements,butdoesnotexplicitlydiscusscorrelationseparationinfewresolutionelementsorqualitativesplittingcause."
+        },
+        {
+          "requirement": "Transforms the 1808–1813 field scan and reports what changes as the field falls: the correlation spectrum still peaks near A_μ at the higher fields and finds nothing convincing at the lowest; single-run radical lines are at most visual candidates at this statistics.",
+          "pass": true,
+          "evidence": "PlainFFTall6fieldruns,correlationtests1000/2000Gandlow200/500/700G;reportsnearA_muathigherfields/noanalogouslowestcorrelation,doesnotclaimprecisesinglerunradicallines."
+        },
+        {
+          "requirement": "Subtracts the pre-t0 background (`--background range`, a continuous source) and says so; states the alpha treatment (assumed 1.0, a named run from the other campaign, or a run of the set itself — each with its caveat).",
+          "pass": false,
+          "evidence": "Rangebackgroundand1813alphaexplicit,butno2016→2014crosscampaigncalibrationcaveat;coaddalphaprovenanceobscuredbyrespectiveworkdirwording."
+        },
+        {
+          "requirement": "Identifies the ~50.6 MHz line (and the weaker ~101 MHz feature on the PNG) as instrumental, e.g. the cyclotron RF and its harmonic.",
+          "pass": false,
+          "evidence": "No~50.6MHzcyclotron/101MHzharmonicinstrumentalassignment."
+        },
+        {
+          "requirement": "Says the four-detector views and the worksheet's \"average correlation\" are not done: the CLI transforms one forward/backward pair.",
+          "pass": false,
+          "evidence": "Genericonepair/multigroupnotavailabledoesnotexplicitlyexplainfourdetectorviews/averagecorrelationnotdone."
+        },
+        {
+          "requirement": "Names the spectrum JSON/NPZ/PNG products for the co-add and its correlation spectrum.",
+          "pass": true,
+          "evidence": "Coadd/spectrum/correlationJSONandPNGproducts/workdirnamed;underlyingstoredNPZproductprovenanceavailableinthetransformoutputs."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. DirectCLIpeaktables/correlation/timefit/alpha/timingnotesverifyquantities,notmanualsumorconversion;draft/auditexcluded. No unverifiednumbers/units.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Allscience/number/unit/copy/boundaryPASS;correlationrepairactuallyexercisedacrossfieldscanpluscoaddandfrequency-suminterpretationcorrect. Preparedreplycopiedexactly. RemainingShouldgapsarecontext-specificinstrumentalRFharmonics,closecorrelationsplittingresolutiondiscussionandcrosscampaign/fourviewlimits,generalworkflowcontextnotnewmicrophysics.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all53 completed commands inspected. All53completedcommandsandreport-onlyeditsinspected,CLI/notes/recipesonly;no customarithmetic/sums. Fourreviewimageshashverified,actualordinarycoaddandcorrelationzoompixelsinspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1065.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 4,
+      "trend_laws": [],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "cf7bd1ed07c4cdf9f92cc165fcbf5904620c0f116ca88160095af0960ef616b8",
+      "audited_file_sha256": "cf7bd1ed07c4cdf9f92cc165fcbf5904620c0f116ca88160095af0960ef616b8",
+      "rubric_sha256": "c080ca4eab2cbf81923ef269333af30e22043457aff88cce14dd7720f3fe7d24",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/benzene-high-tf",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "CoaddMuTF/two-componentfitschi2~18–20,negative~−5.93offsetnotphysicalsamplefraction;correlationassignmentconditionalnotmicroscopicsite.",
+        "Allfieldtimefitspoor;timingoffset−5binscheckused,fieldscanFFTsareprecorrectionseparatetests.",
+        "1813calibrationfromdifferentcampaign/binsizeappliedtocoaddwithoutrobustsensitivitydiscussion;noown2014candidate.",
+        "Ordinarylinepairsbarelyresolved/correlationdoubletqualitative;near208MHzextraamplitudeatbounddeclined."
+      ],
+      "judgement_calls": [
+        "Must5onlyrequiresnotwronglyassigning50.6MHz;silenceoninstrumentaloriginpassesthisMustbutfailsShould4.",
+        "Should2acceptsallplainfieldFFTs+fivecorrelationcasesforreportedhigher/lowercontrastwithoutrequiringmissing1809correlationwherecoadd3000Gwaskeptdistinct.",
+        "Should6acceptsnamedJSON/PNGproductswithsamebasenameNPZinstoredtransformoutput,consistentpriorproduct-linkjudgements."
+      ],
+      "number_evidence_commands": [
+        1,
+        3,
+        4,
+        5,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        49
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "cf7bd1ed07c4cdf9f92cc165fcbf5904620c0f116ca88160095af0960ef616b8",
+        "summary.md": "cf7bd1ed07c4cdf9f92cc165fcbf5904620c0f116ca88160095af0960ef616b8",
+        "transcript.jsonl": "0372ae20349efa5ab3215e3a3fffb2ee00933aedb01325fa28e60c8cf2f6299f",
+        "commands.txt": "88ad2d044d5ed8a929eda43357e4e63ae3c25fd31707eb833217f51361283728",
+        "cost.json": "9d5ef9171e799a46b42eccb221740a419971fdecdf82e4fc5685f045bdbeed44",
+        "image-inputs.json": "8107986d06596e5954d7bd5a7332c8d79dccae64dbf5d28c9c0d0807edc453bd"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/field-larmor-t0minus5-trend-frequency.png",
+          "snapshot_path": "review-images/96fc0fed22d4f313a1dc2a23bc4cb7022f18570cecfae05b10fbb6f4bb12117b.png",
+          "bytes": 25513,
+          "sha256": "96fc0fed22d4f313a1dc2a23bc4cb7022f18570cecfae05b10fbb6f4bb12117b",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/field-larmor-t0minus5-trend-Lambda.png",
+          "snapshot_path": "review-images/0fe3d8664ba423d388d0c29a52d14bc4b26b96deff2ca1eb4959bb16dce5b4ed.png",
+          "bytes": 28120,
+          "sha256": "0fe3d8664ba423d388d0c29a52d14bc4b26b96deff2ca1eb4959bb16dce5b4ed",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-coadd/plots/run-3678-150-350.png",
+          "snapshot_path": "review-images/35e477aae24bf697bfb51dabd0877c8ee8bd72465079d17f55abde5d32827545.png",
+          "bytes": 48288,
+          "sha256": "35e477aae24bf697bfb51dabd0877c8ee8bd72465079d17f55abde5d32827545",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-coadd/plots/run-3678-corr-500-530.png",
+          "snapshot_path": "review-images/ae33688dac7df9a2577f8c6c045a4f9b8a0b690462a0b2132a34109a4945f64b.png",
+          "bytes": 41026,
+          "sha256": "ae33688dac7df9a2577f8c6c045a4f9b8a0b690462a0b2132a34109a4945f64b",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T01:25:20.663288+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -3267,7 +3459,6 @@
     "trsb-re6zr",
     "basics",
     "corannulene-alc",
-    "benzene-high-tf",
     "benzene-alc"
   ],
   "gate_pass": false,
@@ -3301,16 +3492,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 18,
+    "scored": 19,
     "target": 24,
-    "scientific_pass": 14,
-    "must_pass": 97,
-    "must_total": 100,
-    "should_pass": 39,
-    "should_total": 67,
-    "exact_copy_pass": 13,
-    "literal_copy_pass": 13,
-    "combined_pass": 11,
-    "boundary_pass": 18
+    "scientific_pass": 15,
+    "must_pass": 103,
+    "must_total": 106,
+    "should_pass": 41,
+    "should_total": 73,
+    "exact_copy_pass": 14,
+    "literal_copy_pass": 14,
+    "combined_pass": 12,
+    "boundary_pass": 19
   }
 }
