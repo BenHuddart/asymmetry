@@ -253,6 +253,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`integral-scan` names every dip a fit leaves out, not only the largest.**
+  After a converged or failed resonance fit, each significant interior minimum
+  that a local one-line fit confirms gets its own window and command ("the scan
+  holds 2 more dips this fit does not include, in …"); previously only the
+  seeder's next dip was named, so a smaller resolved line (corannulene's 7 kG
+  line at 420 K) was never windowed. `audit` holds the reply on these dips too.
+
+- **`asymmetry audit` lists a hedged step between two printed levels.** "The
+  step is about 0.007" (or "jump") now counts as derived arithmetic, as "the
+  shift is about …" already did, instead of matching an unrelated printed
+  error within one unit of its last digit.
+
 - **The fit wizard no longer prints a false ``AsymmetryScaleWarning``** ("seeds
   look fraction-scale") for its constant-only baseline and resolution probes on
   percent-scale data: a seeded curve flat across the window has no amplitude
