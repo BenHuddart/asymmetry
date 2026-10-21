@@ -2150,3 +2150,6 @@ Round17 final focused377/fast5949passed(10skip1xfail),lint/structural/skill/refe
 
 
 Round17 validation COMPLETE:377focused/5949fastpassed(10skip1xfail),lint/structural/skill/referencepass,docs80existingwarnings. Standard9962passed/4failed/25skip1xfail in451.13s: exactly two documentedfit-table andtwogrouping-dialogsizingfailures,noerrors/workercrashes;QScreenwrapper-lifetimewarningretained. StandardNOTgreen,noGUIredesign. Real8Tanti-aliasregressionverifiedandlogpreserved. Commitround17thenfreshfull24confirmation7at12cases;strictscientificrubrics/rawbytes/two-turnsemanticsunchanged.
+
+
+Fresh full24 confirmation7 LIVE at /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation7; implementationc7aa99bd685f2e9a988a8c131be95c15c0a537e0,wavePID704828,supervisor704819;parentconsoleconfirmation7-wave.log. AllfreshfirstattemptsCodex/gpt-6-luna,fixedrubrics,two_turn_image_review_v2semantics,strictactualreplybytes. Max12,wizardenvdefault1notceiling,numericalthreads1,30sresourcesand05:59:50UTChardtermination/interruptions. FreezeCLI/skill/runner/rubricsuntilALL24finishdespitefailures. Scoreactualsummary.mdusingmanualhelperwithallMust/Should,number/unit,boundary,copy,host/model/attempt/hashes/images/AFMscope. No broadtests;deadline06UTC/fullgatecutoff04:30UTC.
