@@ -4186,7 +4186,7 @@
       "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Alldirectintegral-scan/metadata/jqscanJSONvaluesreviewed; no audit/draft/log-report-display sources, no physicalarithmetic on dB (CLIprintsrequiredsign).",
       "number_checker_flags": [],
       "unit_checker_flags": [],
-      "root_cause": "7/7scienceandstrictcopyPASS; generalsampleidentitycheckrecoverspreviousmissingthreesolutionsamples. Fullall17solutionworkflowplusunneededcandidatechecks/failedglobalMu-likefitmakeverylongreport. Solidjointwidthphysicsstillmissing.",
+      "root_cause": "7/7 science PASS, strict-copy FAIL swaps aq20mM360.json with aq20mM320_cubic.json in final file list after preparation; both paths retained but order differs. General sample identity check recovers three named solutions; solid joint-width physics still missing.",
       "exact_copy": false,
       "combined_pass": false,
       "boundary_pass": true,
@@ -4231,7 +4231,8 @@
         "Solidwarming/stabilizationloggedtemperaturefallswhilefieldrises;cannotuniquelyattributebroadfeaturetoT/field.",
         "Solutionnarrowwindowslackflanks,raw/scalederrorcolumnsnotconsistentlyidentifiedandwidthsconditional;no preciseprotoncouplings.",
         "Aqueouspersistent20900Gversushexane20800Gcontextpartlywrongfor20mMJuneaqueous20800G; crosscampaignabsolutecomparisonsneedcare.",
-        "Liquid29799calibrationgeometry/periodprovenanceheld;RGbaselineestimatorrepairedwithretainedfailedfirstattempt."
+        "Liquid29799calibrationgeometry/periodprovenanceheld;RGbaselineestimatorrepairedwithretainedfailedfirstattempt.",
+        "Actual file-list order differs from saved prepared report, despite all paths and scientific text retained; byte-copy rule remains strict."
       ],
       "judgement_calls": [],
       "number_evidence_commands": [

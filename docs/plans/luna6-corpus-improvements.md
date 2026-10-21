@@ -2194,4 +2194,4 @@ Confirmation7 now20/24scored:copper6/6Musts2/3Shoulds science/number/unit/copy/b
 Confirmation7 now21/24scored:highTFbenzene6/6Musts2/6Shoulds science/number/unit/copy/boundaryPASS. Totals116/121Musts,18/21science,20/21copy,17/21combined,21/21boundary,43/85Shoulds;independentAFMscopeFAIL. OnlyBasics/corannulene/benzeneALCremain,sourcefrozen.
 
 
-Confirmation7 now23/24scored:Basics9/9Musts4/7Shoulds andbenzeneALC7/7Musts3/6Shoulds science/number/unit/copy/boundaryPASS. Totals132/137Musts,20/23science,22/23copy,19/23combined,23/23boundary,50/98Shoulds;independentAFMscopeFAIL. Onlycorannulene running;sourcefrozenuntilcompletion. PreserveBasicsfaulty-temperaturejudgementandALCconditionalwidth/referencecaveats.
+Confirmation7 now23/24scored:Basics9/9Musts4/7Shoulds science/copyPASS;benzeneALC7/7Musts3/6Shoulds sciencePASS/copyFAILtwofilelistentriesreordered. Bothnumber/unit/boundaryPASS. Totals132/137Musts,20/23science,21/23copy,18/23combined,23/23boundary,50/98Shoulds;independentAFMscopeFAIL. Onlycorannulene running;sourcefrozenuntilcompletion. PreserveBasicsfaulty-temperaturejudgementandALCconditionalwidth/referencecaveats.
