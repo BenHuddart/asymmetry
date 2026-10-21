@@ -268,3 +268,16 @@ def test_a_close_nested_precession_model_is_a_portable_scan_alternative() -> Non
     assert _runner_up(recommendation, lined=True) is simple
     simple.aicc = 111.0
     assert _runner_up(recommendation, lined=True) is None
+
+
+def test_screen_forwards_explicit_fit_worker_budget(monkeypatch):
+    def cancelled_screen(dataset, *, max_workers, scope):
+        assert max_workers == 2
+        raise RuntimeError("budget reached fitting backend")
+
+    monkeypatch.setattr(
+        "asymmetry.core.workflow.screen.build_fit_wizard_recommendation",
+        cancelled_screen,
+    )
+    with pytest.raises(RuntimeError, match="budget reached fitting backend"):
+        screen_run(_dataset({"field": 0.0}), run_number=1, max_workers=2)

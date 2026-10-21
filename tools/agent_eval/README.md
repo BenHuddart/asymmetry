@@ -5,8 +5,9 @@ nothing else, produces a defensible analysis with the `asymmetry` CLI and the
 packaged `asymmetry-analysis` skill. `run_eval.py` drives Claude Code;
 `run_codex_eval.py` drives Codex. They implement the loop Phase 4 of
 [`docs/plans/agent-cli-skill.md`](../../docs/plans/agent-cli-skill.md) runs:
-run the agent, score its summary against the dataset's rubric, and fix **the
-skill text** — never the rubric, never the CLI.
+run the agent, score its summary against the dataset's rubric, and improve
+general skill guidance or reusable CLI behavior. Keep the rubric fixed and
+record which skill, CLI and runner version each wave evaluated.
 
 The datasets come from the WiMDA muon-school corpus, which is never in this
 repository: extract its release and set `ASYMMETRY_CORPUS_ROOT` to it (see
@@ -50,15 +51,25 @@ in `cost.json`; do not compare an unlabeled Codex run with the historical
 Sonnet table below. The Codex runner uses a persistent two-turn `codex exec`
 session with `--ignore-user-config --approve-for-me`: the first turn performs
 the analysis and nominates up to four decisive project-local plots, then the
-runner validates and hashes those files and attaches them explicitly with
+runner validates, hashes and snapshots those files outside the agent project
+under `<out>/review-images/`, then attaches the snapshots explicitly with
 `codex exec resume --image` for the final report. The staged project is
 writable, the sibling data copy is read-only to the nested sandbox, and
-personal plugins, instructions and host-installed skills do not vary the run.
-It enables `skip_host_skill_discovery` and installs the evaluated skill under
-`<out>/project/.agents/skills/`.
+user configuration is ignored. It enables `skip_host_skill_discovery`, disables
+the evaluated skill's personal copies using per-skill configuration overrides,
+and installs the evaluated skill under `<out>/project/.agents/skills/`.
+The project boundary names that copy explicitly. These discovery controls are
+not a read sandbox: inspect transcripts for personal/source reads and record
+violations separately, even if a personal symlink has identical skill bytes.
 
 Protocol `two_turn_image_review_v2` requires the second turn to save and audit
 the complete final report after image inspection, then return it verbatim.
+The final-review prompt distinguishes plain diagnostic audit from the final
+send and uses `audit --prepare-reply` after every edit, including corrections.
+The final-review prompt uses `audit --prepare-reply` after resolving findings
+and making the last edit. Preparation removes terminal line endings only on
+a pass; the model must still emit the prepared body without reformatting its
+numbers or changing its final character. The runner does not repair its reply.
 Both invocations use `codex exec --approve-for-me`; the resume invocation puts
 that option before `resume`, since the subcommand does not accept it after
 `resume` and otherwise defaults to read-only in the tested CLI.
@@ -66,6 +77,11 @@ that option before `resume`, since the subcommand does not accept it after
 printed by the last passed audit. This prevents an audited first-turn draft
 from being mistaken for a different, shorter final report. Rubric scoring
 still checks the final report's scientific content and provenance.
+The comparison includes whitespace. The explicit last message is saved without
+trimming or appending a newline; the saved draft is never substituted for it.
+Snapshots preserve the actual reviewed pixels if a second-turn fit overwrites
+the original plot. These artifact-fidelity checks do not change the scientific
+prompt, rubric or two-turn protocol.
 
 Unlike the Claude runner's tool allowlist, Codex cannot mechanically hide
 every readable sibling path from shell commands. The generated project
@@ -148,12 +164,48 @@ python tools/agent_eval/run_wave.py --case copper-diffusion --case molecular-ant
     --out /tmp/evals/hold-out
 ```
 
-The named sets (`--set` is repeatable) are `trend-fit` (the four cases the 2026-09-23/24 loop iterated
-on), `tier-a` (the regression set) and `hold-out` (two cases never tuned
-against); `--case` adds any rubric. Run repeats of a set as separate waves —
-single runs are noisy, and a claim that a change fixed a case needs two or
-three passing repeats. Score a wave with [`scoring_brief.md`](scoring_brief.md),
-by hand or by handing it to a scoring agent.
+Select Codex with `--agent codex`; its default model is `gpt-6-luna`. The
+Claude default remains `--agent claude --model sonnet`; pass an explicit
+`--model` for other Claude evaluations, including Haiku. Every case's
+`cost.json` and the wave's console report identify the host and model. Codex
+records token usage without estimating a dollar cost.
+
+```bash
+# All 24 cases shared with the Claude suite:
+python tools/agent_eval/run_wave.py --agent codex --set all --out /tmp/evals/luna-full
+# The 16 cases beyond the previously verified eight-case Codex gate:
+python tools/agent_eval/run_wave.py --agent codex --set codex-expansion \
+    --out /tmp/evals/luna-expansion
+```
+
+The named sets (`--set` is repeatable) are:
+
+| Set | Coverage |
+| --- | --- |
+| `all` | All 24 rubric-backed cases, for either host |
+| `codex-gate` | The original eight: `tier-a` plus `workflow` |
+| `codex-expansion` | The other 16 cases; disjoint from `codex-gate` |
+| `tier-a` | Nickel, PTFE, YMnAl and cuprate |
+| `workflow` | TCNQ, Al-LLZ, photo-silicon and CdS |
+| `trend-fit` | Plateau, Sn, EuO and maleic-acid kinetics |
+| `hold-out` | Copper and molecular antiferromagnet (historical hold-outs) |
+| `tier-b` | Spin-Peierls and high-TF MDU |
+| `corpus-2026` | LiFeAs, TRSB, basics, corannulene and four benzene exercises |
+
+Waves default to one case at a time. Increase `--parallel` only when memory
+allows for each analysis command's own fit workers. Keep broad test suites
+separate from live evaluations, and cap pytest workers explicitly with
+`python tools/harness.py validate -- -n 2`. Pin BLAS threads before starting a
+wave when the host would otherwise oversubscribe numerical fits (for example,
+`OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1`).
+
+`--case` adds any individual case; overlapping selections run each case once.
+Run repeats as separate output roots — single runs are noisy, and a claim that
+a change fixed a case needs two or three passing repeats. Score a wave with
+[`scoring_brief.md`](scoring_brief.md). Completion and final-report audit
+status alone do not establish a scientific pass. Keep corpus copies and raw
+transcripts outside the repository, and commit score records only as
+[Score records](#score-records) describes.
 
 Delete the dataset copies of old waves: a few passes fill a disk, and on macOS
 iCloud then offloads the corpus, whose "dataless" files read as empty.
@@ -169,7 +221,8 @@ Everything lands under `--out`, and nothing outside it is touched:
 | `summary.md` | the agent's final message — **the only thing the rubric scores** |
 | `commands.txt` | every Bash command the agent ran, in order |
 | `transcript.jsonl` | the raw Claude `stream-json` or Codex JSONL event stream |
-| `image-inputs.json` | validated relative paths, sizes and SHA-256 hashes of plots attached to the Codex review turn |
+| `image-inputs.json` | original relative paths, snapshot paths, sizes and SHA-256 hashes of plots attached to the Codex review turn |
+| `review-images/` | frozen copies of the pixels attached to the Codex review turn |
 | `cost.json` | host/model, wall time, usage, the CLI's `returncode`, completion state, and skill signal |
 | `workdir/` | the `asymmetry-work/` work directory the agent built, plots included |
 | `project/` | the directory the agent worked in: its work directory and the installed skill |
@@ -178,6 +231,27 @@ Everything lands under `--out`, and nothing outside it is touched:
 
 Eval outputs are **never committed**: they carry copies of the corpus. Write
 them to a scratch directory outside the repository.
+
+## Score records
+
+A scored wave produces a per-case record: Must/Should decisions with evidence,
+number and boundary checks, and hashes. Over an improvement loop these grow
+to hundreds of kilobytes per wave, and they mean nothing without the raw
+attempts they cite. So the repository keeps only a small amount of it:
+
+- **One summary entry per wave**, in the campaign's `docs/plans/*-waves.json`.
+  The entry records the commit, host, model, concurrency, Must/Should and
+  science/copy/combined/boundary totals, and the cases that failed science or
+  exact copying.
+- **The latest full per-case record** of each campaign, beside that summary.
+  When a newer wave lands, move the older record out.
+- **Every other full record**, plus any long execution log, goes to the
+  private corpus repository under `eval-records/<campaign>/`, with a README
+  that names the branch and PR, so each record sits beside the corpus it
+  scores.
+
+The plan page links the summary, the latest record and the archive, and
+states its conclusions. It is not a running log of each wave.
 
 ## Ticking the rubric
 
@@ -216,3 +290,7 @@ python tools/agent_eval/render_command_reference.py --check  # verify
 
 `tests/tools/test_skill_package.py` runs the check, so a new CLI flag that
 never reaches `references/commands.md` fails the suite.
+
+Codex cases set `MPLCONFIGDIR` to a writable `.cache/matplotlib` directory in
+their staged project, so plotting does not rebuild a font cache against a
+read-only home directory. This cache is not analysis evidence.

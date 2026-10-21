@@ -32,6 +32,43 @@ def test_field_scan_payload_keeps_units_points_and_run_provenance() -> None:
     assert data["points"][-1]["x"] == pytest.approx(5000.0)
 
 
+def test_shape_candidates_recover_an_interior_dip_without_a_resonance_model() -> None:
+    from asymmetry.core.workflow.integral_scan import candidate_dip_windows
+
+    scan = _scan()
+    (window,) = candidate_dip_windows(scan)
+    assert window["centre"] == pytest.approx(3500)
+    assert window["x_min"] < 3500 - 180 < 3500 + 180 < window["x_max"]
+
+
+def test_shape_candidates_reject_monotonic_recovery_and_sub_error_structure() -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow.integral_scan import candidate_dip_windows
+
+    scan = _scan()
+    recovery = 0.2 - 0.1 * np.exp(-(scan.x - 2000) / 800)
+    assert candidate_dip_windows(replace(scan, value=recovery)) == []
+    assert candidate_dip_windows(replace(scan, value=0.2 + 1e-4 * np.sin(scan.x))) == []
+    assert candidate_dip_windows(replace(scan, order_key="temperature")) == []
+
+
+def test_shape_candidates_keep_separated_dips_on_a_sloping_background() -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow.integral_scan import candidate_dip_windows
+
+    scan = _scan()
+    values = (
+        0.18
+        + 1e-6 * scan.x
+        - 0.02 / (1 + ((scan.x - 2800) / 100) ** 2)
+        - 0.03 / (1 + ((scan.x - 4200) / 150) ** 2)
+    )
+    windows = candidate_dip_windows(replace(scan, value=values))
+    assert [w["centre"] for w in windows] == pytest.approx([2800, 4200], abs=50)
+
+
 def test_fit_integral_scan_seeds_an_off_zero_lorentzian_from_the_data() -> None:
     _fitted, result = fit_integral_scan(_scan(), "LorentzianLCR + Constant")
 
@@ -39,6 +76,53 @@ def test_fit_integral_scan_seeds_an_off_zero_lorentzian_from_the_data() -> None:
     assert result["parameters"]["B0"] == pytest.approx(3500.0, abs=20.0)
     assert abs(result["parameters"]["Bwid"]) == pytest.approx(180.0, abs=20.0)
     assert result["parameters"]["c"] == pytest.approx(0.18, abs=0.005)
+
+
+def test_explicit_width_bounds_recover_a_broad_line_and_keep_the_interval() -> None:
+    from dataclasses import replace
+
+    scan = _scan()
+    scan = replace(scan, value=0.18 - 0.04 / (1 + ((scan.x - 3500) / 1800) ** 2))
+    _, default = fit_integral_scan(scan, "LorentzianLCR + Constant")
+    _, expanded = fit_integral_scan(
+        scan, "LorentzianLCR + Constant", bounds={"Bwid": (10.0, 2000.0)}
+    )
+    assert default["parameters"]["Bwid"] <= 1500.01
+    assert expanded["success"]
+    assert expanded["parameters"]["Bwid"] == pytest.approx(1800, rel=0.01)
+    assert expanded["parameters"]["B0"] == pytest.approx(3500, abs=1)
+    assert "Bwid" not in expanded["params_at_bound"]
+    assert expanded["bounds"] == {"Bwid": [10.0, 2000.0]}
+
+
+def test_width_search_does_not_truncate_a_partially_covered_line() -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow.integral_scan import _holds_a_line
+
+    scan = _scan()
+    scan = replace(scan, value=0.18 - 0.04 / (1 + ((scan.x - 3500) / 1000) ** 2))
+    _, fit = fit_integral_scan(scan, "LorentzianLCR + Constant")
+    assert fit["success"]
+    assert fit["parameters"]["Bwid"] == pytest.approx(1000, rel=0.01)
+    assert "Bwid" not in fit["params_at_bound"]
+    # A fitted width with partial flanks still does not establish an isolated line.
+    assert not _holds_a_line(scan, {"x_min": 2000, "x_max": 5000})
+
+
+@pytest.mark.parametrize(
+    ("bounds", "initial", "message"),
+    [
+        ({"missing": (1, 2)}, {}, "Unknown bounded parameter"),
+        ({"Bwid": (1, float("inf"))}, {}, "finite"),
+        ({"Bwid": (2, 1)}, {}, "LO < HI"),
+        ({"Bwid": (-1, 2)}, {}, "positive"),
+        ({"Bwid": (10, 100)}, {"Bwid": 180}, "outside its bounds"),
+    ],
+)
+def test_invalid_scan_bounds_are_rejected_at_the_api_boundary(bounds, initial, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        fit_integral_scan(_scan(), "LorentzianLCR + Constant", bounds=bounds, initial=initial)
 
 
 def test_fit_integral_scan_seeds_cubic_on_a_kilogauss_axis() -> None:
@@ -375,3 +459,18 @@ def test_a_tf_stamp_on_a_kilogauss_run_that_keeps_its_integral_is_contradicted()
     # calibration run (too few periods to average) and an unstamped run are not judged.
     stamped = {1: 3000.0, 2: 3000.0, 3: 4000.0, 4: 100.0}
     assert contradicted_tf_stamps(scan, stamped) == [2, 3]
+
+
+def test_stored_scan_restores_units_errors_and_exclusions() -> None:
+    from dataclasses import replace
+
+    from asymmetry.core.workflow.integral_scan import field_scan_from_payload
+
+    scan = replace(_scan(), excluded=[(999, "not in period")])
+    restored = field_scan_from_payload(field_scan_payload(scan))
+    np.testing.assert_array_equal(restored.x, scan.x)
+    np.testing.assert_array_equal(restored.value, scan.value)
+    np.testing.assert_array_equal(restored.error, scan.error)
+    assert restored.units == scan.units
+    assert restored.run_numbers == scan.run_numbers
+    assert restored.excluded == scan.excluded

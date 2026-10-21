@@ -95,6 +95,17 @@ def parameters_at_bound(parameters: Any, *, rel_tol: float = _BOUND_REL_TOL) -> 
     return names
 
 
+def large_relative_error(
+    value: float | None, sigma: float | None, *, threshold: float = DEFAULT_REL_ERR_THRESHOLD
+) -> bool:
+    """Whether a finite positive error leaves its value undetermined."""
+    if value is None or sigma is None or not math.isfinite(sigma) or sigma <= 0.0:
+        return False
+    return (
+        not math.isfinite(value) or abs(value) <= _ZERO_VALUE_ATOL or sigma / abs(value) > threshold
+    )
+
+
 def large_relative_error_params(
     fit_result: Any, *, threshold: float = DEFAULT_REL_ERR_THRESHOLD
 ) -> list[str]:
@@ -121,13 +132,7 @@ def large_relative_error_params(
             value = float(p.value)
         except (TypeError, ValueError):
             continue
-        if not math.isfinite(sigma) or sigma <= 0.0:
-            continue
-        if not math.isfinite(value) or abs(value) <= _ZERO_VALUE_ATOL:
-            # Value collapsed to ~0 (or non-finite) with a real σ → undetermined.
-            names.append(name)
-            continue
-        if sigma / abs(value) > threshold:
+        if large_relative_error(value, sigma, threshold=threshold):
             names.append(name)
     return names
 

@@ -268,6 +268,7 @@ def screen_run(
     include: Iterable[str] = (),
     exclude: Iterable[str] = (),
     run_number: int,
+    max_workers: int | None = None,
 ) -> ScreenResult:
     """Screen *dataset* against the wizard's candidate models.
 
@@ -302,6 +303,7 @@ def screen_run(
 
     recommendation = build_fit_wizard_recommendation(
         scoped,
+        max_workers=max_workers,
         scope=WizardScope(
             physics=SCOPE_PRESETS[scope_preset],
             include_components=include,

@@ -309,6 +309,25 @@ def test_survey_table_shows_the_precession_column_and_the_measured_geometry(
     assert "TF" not in decoupling
 
 
+def test_survey_keeps_file_geometry_evidence_in_each_scan(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import survey_folder
+
+    survey = survey_folder(workflow_folder)
+    rows = [replace(row, geometry_source="file") for row in survey.runs]
+    text = _render(replace(survey, runs=rows), tmp_path / "survey.json")
+    header = next(line for line in text.splitlines() if line.startswith("run "))
+    assert "source" in header.split()
+    for scan in survey.scans:
+        assert f"geometry sources: file on {len(scan.runs)} run(s)" in text
+    assert "FILE GEOMETRY: a header stamp is not a coil measurement" in text
+    assert "detector orient" in text
+
+
 def test_survey_marks_a_coil_geometry_and_explains_a_psi_header_temperature(
     workflow_folder: Path, tmp_path: Path
 ) -> None:
@@ -424,6 +443,7 @@ def test_survey_points_a_red_green_field_scan_at_the_period_difference(
     survey = survey_folder(workflow_folder)
     text = _render(replace(survey, scans=[scan]), tmp_path / "survey.json")
     assert "T = 300 K, 2 periods (red/green): 3 runs" in text
+    assert "fit-series --order field, then test trend --model Redfield" in text
     assert (
         f"asymmetry integral-scan {workflow_folder} --runs 701-703 --period green-red; with a "
         "field step between the periods (differential ALC) fit --model LorentzianLCRPair "
@@ -975,7 +995,7 @@ def test_integral_scan_of_two_period_runs_without_a_period_says_it_summed_them(
     out = capsys.readouterr().out
     assert "summed both periods" not in out
     # No field step between the periods: the green - red contrast is the RF.
-    assert "this is an RF resonance scan" in out and "RFResonanceMuP converts its lines" in out
+    assert "longitudinal-field RF resonance" in out and "RFResonanceMuP converts its lines" in out
 
 
 def test_integral_scan_single_period_reports_the_source_run_number(
@@ -2594,6 +2614,8 @@ def test_wizard_prints_its_spectral_evidence_and_keeps_a_screening_window(
             str(CALIBRATION_RUN),
             "--geometry",
             "TF",
+            "--scope",
+            "tf-superconductor",
             "--tmax",
             "6",
             "--workdir",
@@ -2602,6 +2624,9 @@ def test_wizard_prints_its_spectral_evidence_and_keeps_a_screening_window(
     )
     out = capsys.readouterr().out
     # 100 G precesses at 1.355 MHz; the line and the fitted values are printed.
+    assert "SUPERCONDUCTING WORKFLOW" in out
+    assert "SC_SWave" in out and "SC_DWave" in out
+    assert "LF decoupling" in out and "spontaneous-field/TRSB" in out
     assert "Spectral lines: 1.3" in out
     assert "Recommended fit: " in out
     assert "Fit windows (retained bin centres)" in out
@@ -2753,6 +2778,7 @@ def test_a_frequency_held_along_the_scan_is_not_called_an_order_parameter(
             "frequency_err": 0.001 if value > 1.0 else 0.01,
             "sigma": 0.3,
             "sigma_err": 0.01,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, value in enumerate(frequencies, start=1)
@@ -2853,7 +2879,14 @@ def _gap_trend():
     sigma = law(x, sigma_0=0.4, Tc=7.0, gap_ratio=1.764, sigma_bg=0.1)
     noise = np.random.default_rng(3).normal(0.0, 0.004, x.size)
     rows = [
-        {"key": str(run), "x": float(t), "sigma": float(s), "sigma_err": 0.004, "flags": []}
+        {
+            "key": str(run),
+            "x": float(t),
+            "sigma": float(s),
+            "sigma_err": 0.004,
+            "params_at_bound": [],
+            "flags": [],
+        }
         for run, (t, s) in enumerate(zip(x, sigma + noise, strict=True), start=1)
     ]
     return TrendTable("temperature", ["key", "x", "sigma", "sigma_err", "flags"], rows)
@@ -2984,6 +3017,90 @@ def test_integral_scan_fits_inside_the_window_and_reports_a_failed_fit(
     assert (tmp_path / "wd" / "scans" / "failed.json").exists()
 
 
+@pytest.mark.parametrize("chi2, expected_error", [(9.0, 9.0), (0.25, 3.0)])
+def test_integral_fit_table_keeps_raw_and_scaled_uncertainties(chi2, expected_error) -> None:
+    from asymmetry.cli.commands.integral_scan import _render
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    result = {
+        "name": "local-dip",
+        "scan": {"points": [], "order_key": "field", "method": "integral"},
+        "period_field_offset": None,
+        "fit": {
+            "expression": "LorentzianLCR",
+            "parameters": {"B0": 1200.0, "Bwid": 40.0, "f": -0.1},
+            "uncertainties": {"B0": 2.0, "Bwid": 3.0, "f": 0.01},
+            "fixed": ["B0"],
+            "params_at_bound": ["f"],
+            "success": True,
+            "reduced_chi_squared": chi2,
+        },
+        "scan_path": "scans/local-dip.json",
+        "plot": None,
+    }
+    text = _render(result, ReductionSettings(), [])
+    row = next(line.split() for line in text.splitlines() if line.startswith("Bwid "))
+    assert row[:3] == ["Bwid", "40.000000", "G"]
+    assert float(row[3]) == expected_error
+    if chi2 > 1:
+        assert float(row[4]) == 3.0
+        assert "unscaled error" in text
+    else:
+        assert len(row) == 4
+    assert result["fit"]["uncertainties"]["Bwid"] == 3.0
+    fixed = next(line.split() for line in text.splitlines() if line.startswith("B0 "))
+    assert fixed[3] == "fixed"
+    assert "(at bound)" in next(line for line in text.splitlines() if line.startswith("f "))
+
+
+@pytest.mark.parametrize(
+    ("expression", "parameters", "uncertainties", "noted"),
+    [
+        ("MuRepolarisation", {"a_Mu": 10.0, "A_hf": 1516.0, "a_Dia": 5.0}, 80.0, "A_hf"),
+        ("MuRepolarisation", {"a_Mu": 10.0, "A_hf": 300.0, "a_Dia": 5.0}, 80.0, None),
+        ("Redfield", {"D": 20.0, "nu": 150.0, "m": 1.0}, 1.0, None),
+    ],
+)
+def test_conditional_coupling_notes_only_a_determined_hyperfine_coupling(
+    expression, parameters, uncertainties, noted
+) -> None:
+    from asymmetry.cli.commands.integral_scan import _render
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    result = {
+        "name": "scan",
+        "scan": {"points": [], "order_key": "field", "method": "integral"},
+        "period_field_offset": None,
+        "fit": {
+            "expression": expression,
+            "parameters": parameters,
+            "uncertainties": dict.fromkeys(parameters, uncertainties),
+            "fixed": [],
+            "params_at_bound": [],
+            "success": True,
+            "reduced_chi_squared": 4.0,
+        },
+        "scan_path": "scans/scan.json",
+        "plot": None,
+    }
+    notes = [
+        line
+        for line in _render(result, ReductionSettings(), []).splitlines()
+        if line.startswith("CONDITIONAL COUPLING:")
+    ]
+    # Errors are quoted scaled by sqrt(chi2_red): 80 -> 160 MHz.
+    assert notes == (
+        [
+            f"CONDITIONAL COUPLING: {noted} = 1516.000000 ± 160.000000 MHz, chi2_red 4.000."
+            " Report this model-conditioned estimate and error with its fit quality even when"
+            " the overall fit is poor; it does not establish a microscopic coupling or site"
+            " assignment."
+        ]
+        if noted
+        else []
+    )
+
+
 def _failed_resonance_fit(**changes) -> dict:
     return {
         "success": False,
@@ -3034,7 +3151,7 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
 
     result = {
         "name": "scan",
-        "scan": {"points": [], "order_key": "field"},
+        "scan": {"points": [], "order_key": "field", "method": "integral"},
         "period_field_offset": None,
         "settings": ReductionSettings().to_dict(),
         "fit": _failed_resonance_fit(),
@@ -3042,6 +3159,9 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
         "plot": None,
     }
     text = _render(result, ReductionSettings(), _notes(result, [], [], [], []))
+    assert "Estimator: sum counts before forming A" in text
+    differential = result | {"scan": result["scan"] | {"method": "differential"}}
+    assert "not a period difference" in _render(differential, ReductionSettings(), [])
     assert "FAILED (Fit failed: call limit reached, hesse failed; at a bound: B0_2)" in text
     assert (
         "Next: the scan's own largest dips are at B0_1 1200, B0_2 1800. The fit already "
@@ -3118,7 +3238,14 @@ def test_a_small_step_in_a_width_is_named_with_where_it_happens() -> None:
     # A Kubo–Toyabe width that rises by a few percent below a transition near
     # 6 K: small against the value, large against the errors.
     rows = [
-        {"key": str(run), "x": x, "Delta": delta, "Delta_err": 0.001, "flags": []}
+        {
+            "key": str(run),
+            "x": x,
+            "Delta": delta,
+            "Delta_err": 0.001,
+            "params_at_bound": [],
+            "flags": [],
+        }
         for run, (x, delta) in enumerate(
             [(0.3, 0.261), (2.0, 0.260), (4.0, 0.259), (6.8, 0.253), (8.0, 0.252), (10.0, 0.253)]
         )
@@ -3140,7 +3267,7 @@ def test_an_amplitude_lowest_inside_a_supplied_scan_is_a_minimum_not_a_step() ->
     points = [(-1.0, 7.6), (-0.75, 7.2), (-0.5, 6.4), (-0.25, 5.6), (0.0, 5.3), (0.25, 5.7)]
     points += [(0.5, 6.3), (0.75, 6.8), (1.0, 7.0)]
     rows = [
-        {"key": str(run), "x": x, "A_1": a, "A_1_err": 0.05, "flags": []}
+        {"key": str(run), "x": x, "A_1": a, "A_1_err": 0.05, "params_at_bound": [], "flags": []}
         for run, (x, a) in enumerate(points)
     ]
     columns = ["key", "x", "A_1", "A_1_err", "flags"]
@@ -3166,7 +3293,14 @@ def test_a_gradual_step_is_bracketed_by_where_the_width_leaves_each_level() -> N
         *((x, 0.2534) for x in (6.8, 7.5, 8.0, 9.0, 10.0)),
     ]
     rows = [
-        {"key": str(run), "x": x, "Delta": delta, "Delta_err": 0.0002, "flags": []}
+        {
+            "key": str(run),
+            "x": x,
+            "Delta": delta,
+            "Delta_err": 0.0002,
+            "params_at_bound": [],
+            "flags": [],
+        }
         for run, (x, delta) in enumerate(points)
     ]
 
@@ -3196,6 +3330,7 @@ def test_a_phase_linear_in_field_is_named_a_t0_offset(delay_us: float, direction
             - 2.0 * math.pi * field_gauss_to_frequency_mhz(field) * delay_us
             + (0.01 if run % 2 else -0.01),
             "phase_err": 0.01,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, field in enumerate(fields)
@@ -3226,6 +3361,7 @@ def test_a_precession_amplitude_falling_with_frequency_is_the_instruments_respon
             "frequency_err": 0.001,
             "A_bg": 2.0,
             "A_bg_err": 0.1,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, field in enumerate(fields)
@@ -3257,6 +3393,7 @@ def test_a_held_high_field_line_is_offered_a_two_line_fit() -> None:
             "frequency_err": 0.001,
             "Lambda": rate,
             "Lambda_err": 0.01,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, x, rate in ((686, 5.0, 0.2), (690, 30.0, 0.1), (693, 50.0, 0.1))
@@ -3311,6 +3448,9 @@ def test_fourier_names_two_peaks_closer_than_two_resolution_elements() -> None:
     assert "maximum-entropy (MaxEnt) spectra and multi-group" in text
     # A line far from the applied field's Larmor frequency is a radical's, not a split one.
     assert "NOTE: the line at" not in _render(result | {"field_gauss": 3000.0})
+    assert "--correlation" in _render(result | {"field_gauss": 3000.0})
+    assert "not a radical assignment" in _render(result | {"field_gauss": 3000.0})
+    assert "--correlation" not in _render(result | {"field_gauss": None})
     # Lines the transform detected outside the band are named, not hidden.
     hidden = _render(result | {"outside_band": [{"frequency_mhz": 208.7, "snr": 35.0}]})
     assert "NOTE: the transform also holds lines outside this band — 208.7 MHz (SNR 35)" in hidden
@@ -3330,6 +3470,7 @@ def test_a_muonium_phase_drift_is_timed_against_its_own_frequency() -> None:
             "frequency_err": 0.001,
             "phase": -2 * math.pi * 1.394 * field * 0.040,
             "phase_err": 0.01,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, field in enumerate((1.0, 2.0, 3.0, 4.0))
@@ -3366,8 +3507,14 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
     assert poor.endswith("--model 'LorentzianLCR + Linear' --xmin 18880 --xmax 20080.")
     # With no further dip found it says the background may be why.
     (bare,) = _poor_fit_note(fit | {"next_dip_windows": windows[:1]})
-    assert "a fit that cannot is not a result" in bare
+    assert "does not erase a determined fitted centre" in bare
     assert _poor_fit_note(fit | {"reduced_chi_squared": 1.2, "next_dip_windows": []}) == []
+    (bound,) = _poor_fit_note(
+        fit | {"params_at_bound": ["B0"], "reduced_chi_squared": 1.2, "next_dip_windows": []}
+    )
+    assert "BOUND-LIMITED CENTRE: B0" in bound
+    assert "widen or shift nearby windows" in bound
+    assert "both flanks" in bound
     # A line whose flank runs off the fitted range may be a step, not a dip.
     (edge,) = _poor_fit_note(
         fit
@@ -3380,7 +3527,11 @@ def test_a_converged_but_poor_resonance_fit_asks_for_more_dips() -> None:
             "next_dip_windows": [],
         }
     )
-    assert "runs off the fitted range 5000–11000" in edge
+    assert "lacks two fitted widths" in edge
+    assert "inside 5000–11000" in edge
+    assert "conditional fitted centre" in edge
+    assert "--model 'LorentzianLCR + Cubic' --xmin -1000 --xmax 17000" in edge
+    assert "widen independently for this condition" in edge
     # A whole scan narrower than its line is not a window that cut it off.
     whole = {"x_min": None, "x_max": None}
     assert _poor_fit_note(fit | {"reduced_chi_squared": 1.5, "next_dip_windows": []} | whole) == []
@@ -3403,10 +3554,10 @@ def test_a_windowed_line_with_both_flanks_and_depth_is_called_a_resonance() -> N
     # Resolved even at a poor chi2_red, which then qualifies its errors instead of
     # sending the agent off to look for a background it does not need.
     (note,) = _poor_fit_note(fit)
-    assert note.startswith("RESONANCE: the line at 19475.5 ± 6.5 (width 232.5)")
-    assert "16.0 errors from zero" in note and "chi2_red of 3.143" in note
-    # The scaled errors are printed, so nobody scales them by hand.
-    assert "± 11.5 on the centre and ± 21.3 on the width" in note
+    assert note.startswith("RESONANCE: the line at 19475.5 ± 11.5 (width 232.5 ± 21.3)")
+    assert "16.0 raw fit errors from zero" in note
+    assert "sqrt(chi2_red = 3.143)" in note
+    assert "poor-fit limitation" in note
     # A shallow line is no resonance, and the poor fit's note returns.
     (poor,) = _poor_fit_note(fit | {"uncertainties": fit["uncertainties"] | {"f": 0.004}})
     assert poor.startswith("NOTE: the fit converged at chi2_red 3.143")
@@ -3435,10 +3586,17 @@ def test_readings_leave_out_unreliable_rows_and_small_frequency_drifts() -> None
 
     # A flat width with one bound-pinned row at a wild value draws no step.
     rows = [
-        {"key": str(run), "x": 10.0 * run, "Lambda": 0.077, "Lambda_err": 0.001, "flags": []}
+        {
+            "key": str(run),
+            "x": 10.0 * run,
+            "Lambda": 0.077,
+            "Lambda_err": 0.001,
+            "params_at_bound": [],
+            "flags": [],
+        }
         for run in range(1, 7)
     ]
-    rows[0] = rows[0] | {"Lambda": 1e-14, "flags": ["bound_pinned"]}
+    rows[0] = rows[0] | {"Lambda": 1e-14, "params_at_bound": ["Lambda"], "flags": ["bound_pinned"]}
     steps = TrendTable("temperature", ["key", "x", "Lambda", "Lambda_err", "flags"], rows)
     assert _rate_steps(steps, ["Lambda"]) == []
 
@@ -3452,6 +3610,7 @@ def test_readings_leave_out_unreliable_rows_and_small_frequency_drifts() -> None
             "A_1_err": 0.05,
             "frequency": frequency,
             "frequency_err": 0.0001,
+            "params_at_bound": [],
             "flags": [],
         }
         for run, (x, amplitude, frequency) in enumerate(
@@ -3489,7 +3648,7 @@ def test_a_result_command_ends_with_the_audit_step_and_a_reduction_does_not(
 
 
 def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
-    from asymmetry.cli.commands.integral_scan import _line_comparisons
+    from asymmetry.cli.commands.integral_scan import _line_comparisons, _resolved_lines
 
     def fit(centre: float, width: float, chi2: float) -> dict:
         return {
@@ -3510,6 +3669,25 @@ def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
     # Within two combined errors there is no direction to report.
     (same,) = _line_comparisons(fit(15390.0, 1150.0, 1.0), {"cold": cold})
     assert "of a width these errors cannot tell apart and at a field these errors" in same
+
+    (stability,) = _line_comparisons(fit(15390.0, 1150.0, 1.0), {"cold": cold}, [cold])
+    assert stability.startswith("STABILITY:")
+    assert "alternative fits of the same measurement" in stability
+    assert "not different conditions" in stability
+    assert "reorientation" not in stability
+    assert note.startswith("COMPARE:")
+
+    # A broad fitted feature can be compared even without resolved flanks.
+    partial = cold | {"x_range": [14000.0, 17000.0], "x_min": 14000.0, "x_max": 17000.0}
+    assert _resolved_lines(partial) == []
+    (conditional,) = _line_comparisons(partial, {"hot": hot})
+    assert "conditional fitted estimates" in conditional
+    assert "not two resolved lines" in conditional
+    assert "this one is broader and higher in field" in conditional
+    assert _line_comparisons(partial | {"params_at_bound": ["Bwid"]}, {"hot": hot}) == []
+    assert _line_comparisons(partial | {"success": False}, {"hot": hot}) == []
+    shallow = partial | {"parameters": partial["parameters"] | {"f": -0.001}}
+    assert _line_comparisons(shallow, {"hot": hot}) == []
 
 
 def test_a_line_another_analysed_scan_covers_without_a_fit_there_is_named() -> None:
@@ -3564,7 +3742,9 @@ def test_relaxing_amplitude_moving_between_shapes_is_named() -> None:
     def row(t: float, a1: float, lam: float, a2: float, sig: float) -> dict:
         values = dict(zip(names, (a1, lam, a2, sig), strict=True))
         return (
-            {"key": str(int(t)), "x": t, "flags": []} | values | {f"{n}_err": 0.05 for n in names}
+            {"key": str(int(t)), "x": t, "params_at_bound": [], "flags": []}
+            | values
+            | {f"{n}_err": 0.05 for n in names}
         )
 
     # Cold: an exponential carries the relaxation; warm: its rate is zero and a
@@ -3617,7 +3797,7 @@ def test_a_dip_another_fit_of_the_scan_holds_is_not_announced_again() -> None:
     assert any("another dip" in note for note in _poor_fit_note(fit, [broad]))
 
 
-def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
+def test_a_shift_with_a_growing_width_keeps_mechanism_context_explicit() -> None:
     from asymmetry.cli.commands.trend import _law_hints
     from asymmetry.core.workflow.series import TrendTable
 
@@ -3633,6 +3813,7 @@ def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
             "frequency_err": 0.0005,
             "sigma": w,
             "sigma_err": 0.005,
+            "params_at_bound": [],
             "flags": [],
         }
         for i, (t, f, w) in enumerate(zip(temperatures, frequencies, widths, strict=True))
@@ -3640,14 +3821,96 @@ def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
     text = "\n".join(
         _law_hints("tf", TrendTable("temperature", columns, rows), ["frequency", "sigma"])
     )
-    assert "if the sample is a superconductor" in text
-    assert "--model SC_SWave --param sigma" in text
+    assert "magnetic-response hypothesis" in text
+    assert "phase identity is unknown" in text
+    assert "Select tf-superconductor only when supplied experiment" in text
+    assert "SC_SWave" not in text
     # A width that narrows on cooling (no vortex lattice) gets no gap law.
     flipped = [row | {"sigma": w} for row, w in zip(rows, widths[::-1], strict=True)]
     text = "\n".join(
         _law_hints("tf", TrendTable("temperature", columns, flipped), ["frequency", "sigma"])
     )
     assert "SC_SWave" not in text
+
+    # An exponential rate is not silently relabelled as a Gaussian vortex width.
+    exponential = [
+        {
+            ("Lambda" + key[5:] if key.startswith("sigma") else key): value
+            for key, value in row.items()
+        }
+        for row in rows
+    ]
+    text = "\n".join(
+        _law_hints("tf", TrendTable("temperature", columns, exponential), ["frequency", "Lambda"])
+    )
+    assert "Oscillatory * Gaussian + Constant" in text
+    assert "SC_SWave --param Lambda" not in text
+
+
+def test_temperature_edge_comparison_preserves_a_cold_upturn_and_kt_control() -> None:
+    from asymmetry.cli.commands.trend import _edge_comparisons
+    from asymmetry.core.workflow.series import TrendTable
+
+    rows = [
+        {
+            "key": str(index),
+            "x": temperature,
+            "nu": rate,
+            "nu_err": 0.001,
+            "Delta": 0.3,
+            "Delta_err": 0.01,
+            "params_at_bound": [],
+            "flags": flags,
+        }
+        for index, (temperature, rate, flags) in enumerate(
+            [(1, 9.99, ["failed"]), (5, 0.1, []), (40, 0.02, []), (100, 0.3, [])]
+        )
+    ]
+    notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu", "Delta"]))
+    assert "0.100000 ± 0.001000 at temperature=5" in notes
+    assert "0.020000 ± 0.001000 at temperature=40" in notes
+    assert "9.990000" not in notes
+    assert "run 0 at temperature=1 (flags: failed)" in notes
+    assert "run 3 at temperature=100" in notes
+    assert "Lowest reliable minus next" in notes
+    assert "Coldest minus next" not in notes
+    assert "KT CONTROL" in notes
+    assert _edge_comparisons(TrendTable("field", [], rows), ["nu", "Delta"]) == []
+
+
+def test_integral_scan_bound_syntax_and_model_requirement(workflow_folder, capsys) -> None:
+    from asymmetry.cli._recipes import parse_bounds
+
+    assert parse_bounds(["Bwid=1:1000"]) == {"Bwid": (1.0, 1000.0)}
+    for invalid in ["Bwid=1", "=1:2", "Bwid=a:2"]:
+        with pytest.raises(UserError):
+            parse_bounds([invalid])
+    with pytest.raises(SystemExit):
+        cli.main(["integral-scan", str(workflow_folder), "--runs", "102", "--bound", "Bwid=1:10"])
+    assert "--bound require --model" in capsys.readouterr().err
+
+
+def test_integral_scan_passes_explicit_bounds_to_the_stored_fit(
+    workflow_folder, tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cli.main(
+        [
+            "integral-scan",
+            str(workflow_folder),
+            "--runs",
+            ",".join(map(str, ALL_RUNS)),
+            "--model",
+            "Constant",
+            "--bound",
+            "c=-1:1",
+            "--json",
+        ]
+    )
+    result = _json_output(capsys)
+    assert result["fit"]["bounds"] == {"c": [-1.0, 1.0]}
+    stored = json.loads((tmp_path / "asymmetry-work/scans/integral-scan.json").read_text())
+    assert stored["fit"]["bounds"] == result["fit"]["bounds"]
 
 
 def test_a_reduction_leaving_off_the_files_deadtimes_says_so(
@@ -3760,3 +4023,293 @@ def test_fmuf_temperature_trend_checks_coupling_separately_from_dynamics() -> No
     assert not any(
         note.startswith("DIPOLAR COUPLING") for note in _law_hints("rates", trend, ["Lambda"])
     )
+
+
+def test_a_nuisance_bound_does_not_hide_a_precise_observable() -> None:
+    from asymmetry.cli.commands.trend import _measured
+    from asymmetry.core.workflow.series import TrendTable
+
+    row = {
+        "key": "1",
+        "x": 1.0,
+        "A_1": 20.0,
+        "A_1_err": 0.1,
+        "Lambda": 0.0,
+        "Lambda_err": 0.02,
+        "params_at_bound": ["Lambda"],
+        "flags": ["bound_pinned", "large_rel_err"],
+    }
+    trend = TrendTable("foils", ["A_1", "Lambda"], [row])
+    assert _measured(trend, "A_1") == [row]
+    assert _measured(trend, "Lambda") == []
+    failed = row | {"flags": ["failed", "bound_pinned"]}
+    assert _measured(TrendTable("foils", trend.columns, [failed]), "A_1") == []
+
+
+def test_compatible_cold_rates_are_not_called_an_upturn() -> None:
+    from asymmetry.cli.commands.trend import _edge_comparisons
+    from asymmetry.core.workflow.series import TrendTable
+
+    rows = [
+        {
+            "key": str(i),
+            "x": float(i),
+            "Lambda": value,
+            "Lambda_err": 0.004,
+            "params_at_bound": [],
+            "flags": [],
+        }
+        for i, value in [(1, 0.040), (2, 0.037), (3, 0.038)]
+    ]
+    notes = _edge_comparisons(TrendTable("temperature", ["Lambda"], rows), ["Lambda"])
+    note = notes[-1]
+    assert "SPECTRAL ENDPOINTS:" in notes[0]
+    assert "Coldest minus next: 0.003000 ± 0.005657" in note
+    assert "consistent within two combined errors" in note
+
+
+def test_linear_rate_fit_records_the_supplied_axis_units(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    axis = ",".join(f"{run}={i}" for i, run in enumerate(SCAN_RUNS))
+    _fit_scan(workflow_folder, fitting_workdir, "--order", "concentration", "--x", axis)
+    capsys.readouterr()
+    _cli(
+        workflow_folder,
+        fitting_workdir,
+        "trend",
+        "--series",
+        "scan",
+        "--model",
+        "Linear",
+        "--param",
+        "Lambda",
+    )
+    assert "APPARENT FITTED COEFFICIENT:" in capsys.readouterr().out
+    stored = json.loads((fitting_workdir / "series/scan.json").read_text())
+    assert stored["trend_fits"]["Lambda:Linear"]["units"]["m"] == "µs⁻¹ per unit concentration"
+
+
+def test_zero_header_line_retains_the_unrecorded_field_alternative(workflow_folder, tmp_path):
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import survey_folder
+
+    survey = survey_folder(workflow_folder)
+    row = survey.row(CALIBRATION_RUN)
+    row = replace(row, field=0.0, precession=replace(row.precession, state="other"))
+    text = _render(replace(survey, runs=[row]), tmp_path / "survey.json")
+    assert "ZERO-FIELD HEADER:" in text
+    assert "unrecorded weak TF" in text
+    assert "sensor drift is not a sample-temperature campaign" in text
+
+
+def test_wizard_worker_budget_has_explicit_override(monkeypatch):
+    monkeypatch.setenv("ASYMMETRY_WIZARD_WORKERS", "2")
+    parser = cli.build_parser()
+    assert parser.parse_args(["wizard", "data", "--run", "1"]).workers == 2
+    assert parser.parse_args(["wizard", "data", "--run", "1", "--workers", "3"]).workers == 3
+
+
+def test_wizard_rejects_nonpositive_worker_budget(tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["wizard", str(tmp_path), "--run", "1", "--workers", "0"])
+    assert "--workers must be positive" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("title", "notes", "illuminated"),
+    [
+        ("Si T=291", "Laser on, hwp1=50", True),
+        ("Si T=291", "photoexcitation at 532 nm", True),
+        ("Si optically pumped", "", True),
+        ("GaAs", "pump-probe delay 100 ns", True),
+        ("Si T=291", "He pump on", False),
+        ("Si T=291", "pumped cryostat", False),
+        ("Si photograph", "", False),
+    ],
+)
+def test_illumination_periods_need_a_light_stimulus(title, notes, illuminated) -> None:
+    from asymmetry.cli.commands.survey import condition_period_runs
+
+    row = {"run_number": 1, "n_periods": 2, "title": title, "notes": notes}
+    assert condition_period_runs([row]) == ([row] if illuminated else [])
+    assert condition_period_runs([row | {"n_periods": 1}]) == []
+
+
+def test_audit_of_an_older_schema_workdir_is_a_user_error(
+    workflow_folder, fitting_workdir, tmp_path, capsys
+):
+    root, run = fitting_workdir, SCAN_RUNS[0]
+    cli.main(
+        [
+            "fit",
+            str(workflow_folder),
+            "--run",
+            str(run),
+            "--recipe",
+            "relax",
+            "--workdir",
+            str(root),
+        ]
+    )
+    sidecar = root / "reduced" / f"{run}.json"
+    sidecar.write_text(json.dumps(json.loads(sidecar.read_text()) | {"schema": 4}))
+    summary = tmp_path / "summary.md"
+    summary.write_text("A report.")
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as stop:
+        cli.main(["audit", str(summary), "--workdir", str(root)])
+    assert stop.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("asymmetry: Run ") and "reduce it again" in err
+    assert "Traceback" not in err
+
+
+@pytest.mark.parametrize(
+    ("periods", "instrument"),
+    [
+        (("red", "green"), []),
+        (("RED", "Green"), []),
+        (("1", "2"), []),
+        (("red", "green"), ["--instrument", "SIM"]),
+    ],
+)
+def test_photo_period_audit_requires_one_common_run_fitted_in_both_periods(
+    workflow_folder,
+    tmp_path,
+    monkeypatch,
+    capsys,
+    periods,
+    instrument,
+):
+    from asymmetry.cli.commands.audit import report_obligations
+    from asymmetry.core import io
+
+    monkeypatch.chdir(tmp_path)
+    _two_identical_periods(monkeypatch)
+    period_load = io.load
+
+    def illuminated_load(path):
+        dataset = period_load(path)
+        dataset.run.metadata["notes"] = "Laser illumination ON/OFF"
+        return dataset
+
+    monkeypatch.setattr("asymmetry.core.io.load", illuminated_load)
+    monkeypatch.setattr("asymmetry.core.workflow.reduction.load", illuminated_load)
+    run = SCAN_RUNS[0]
+    survey_root = tmp_path / "asymmetry-work"
+    roots = [tmp_path / "asymmetry-work-red", tmp_path / "asymmetry-work-green"]
+    cli.main(["survey", str(workflow_folder), "--workdir", str(survey_root)])
+    assert "PERIOD COMPARISON:" in capsys.readouterr().out
+    # Any spelling --period accepts, and instrument-bound workdirs under an
+    # instrument-free survey, both count.
+    for root, period in zip(roots, periods, strict=True):
+        cli.main(
+            [
+                "reduce",
+                str(workflow_folder),
+                "--runs",
+                str(run),
+                "--period",
+                period,
+                "--workdir",
+                str(root),
+                *instrument,
+            ]
+        )
+    audited = [survey_root, *roots]
+    assert any("PERIOD COMPARISON:" in m for m in report_obligations(audited, "A report."))
+    for root in roots:
+        (root / "fits" / f"relax-{run}.json").write_text(json.dumps({"run": run}))
+    assert not any("PERIOD COMPARISON:" in m for m in report_obligations(audited, "A report."))
+
+
+@pytest.mark.parametrize("varied", [False, True])
+def test_muonium_kinetics_and_field_response_are_different_scans(workflow_folder, tmp_path, varied):
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import MUONIUM_MHZ_PER_G, survey_folder
+
+    survey = survey_folder(workflow_folder)
+    rows = [
+        replace(
+            row,
+            field=field,
+            precession=replace(
+                row.precession, state="other", frequency_mhz=field * MUONIUM_MHZ_PER_G
+            ),
+        )
+        for row, field in zip(survey.runs[:2], [2.0, 4.0 if varied else 2.0], strict=True)
+    ]
+    text = _render(replace(survey, runs=rows, scans=[]), tmp_path / "survey.json")
+    if varied:
+        assert "MUONIUM:" in text
+        assert "--order field" in text
+        assert "instrument's frequency response" in text
+        assert "MUONIUM KINETICS:" not in text
+    else:
+        assert "MUONIUM KINETICS:" in text
+        assert "--order field" not in text
+        assert "--order concentration --x" in text
+        assert "fix/share its frequency and phase" in text
+        assert "not the high-field diamagnetic control" in text
+
+
+def test_a_flagged_next_temperature_cannot_promote_a_distant_point_to_adjacent():
+    from asymmetry.cli.commands.trend import _edge_comparisons
+    from asymmetry.core.workflow.series import TrendTable
+
+    rows = [
+        {"key": str(i), "x": t, "nu": rate, "nu_err": 0.001, "params_at_bound": [], "flags": flags}
+        for i, (t, rate, flags) in enumerate(
+            [(5, 0.1, []), (10, 0.08, ["failed"]), (100, 0.01, [])]
+        )
+    ]
+    notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu"]))
+    assert "COLD-END EXCESS" not in notes
+    assert "minus next" not in notes
+    assert "ADJACENT ENDPOINT: nu" in notes
+    assert "run 1 (temperature=10)" in notes
+    assert "with fitted nu = 0.080000 ± 0.001000" in notes
+    assert "failed" in notes
+    assert "SPECTRAL ENDPOINTS" in notes
+    rows[1]["flags"] = []
+    notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu"]))
+    assert "next measured temperature, run 1" in notes
+    assert "0.080000" in notes
+    rows[1] |= {"nu": None, "nu_err": None, "flags": ["failed"]}
+    notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu"]))
+    assert "with no fitted value" in notes
+
+
+def test_critical_divergence_exponent_is_explicitly_dimensionless():
+    from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+
+    model = ParameterCompositeModel.from_expression("CriticalDivergence")
+    assert model.param_info["nu"].unit == "dimensionless"
+    assert ParameterCompositeModel.from_expression("Redfield").param_info["nu"].unit == "MHz"
+
+
+@pytest.mark.parametrize("offset, warned", [(10.0, False), (250.0, True), (-300.0, True)])
+def test_survey_extreme_logger_requires_context_not_automatic_temperature_inference(
+    workflow_folder: Path, tmp_path: Path, offset: float, warned: bool
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import survey_folder
+
+    survey = survey_folder(workflow_folder)
+    row = replace(survey.runs[0], temperature=290.0, sample_temperature_logged=290.0 + offset)
+    text = _render(
+        replace(survey, runs=[row], temperature_departures=[row.run_number]),
+        tmp_path / "survey.json",
+    )
+    assert ("EXTREME TEMPERATURE OFFSET:" in text) is warned
+    if warned:
+        assert "independently validated" in text
+        assert "not evidence for a thermal confound" in text

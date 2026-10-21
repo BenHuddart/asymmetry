@@ -103,7 +103,10 @@ From a script or an agent, ``asymmetry fourier --run N --correlation``
 (:doc:`agent_workflow`) builds the same spectrum on the command line, with
 ``--correlation-field`` and ``--correlation-order`` for the two controls
 above; the stored peak table is already on the hyperfine-coupling axis, so
-no unit conversion is needed after it.
+no unit conversion is needed after it. An ordinary CLI FFT with several lines
+above the applied-field muon Larmor frequency suggests this test conditionally
+when radical physics is relevant. That cue does not identify the species:
+inspect both the ordinary line table and the correlation coupling table.
 
 With several detector groups selected the correlation is built from the averaged
 spectrum; select a single group to correlate that group alone. The peak position

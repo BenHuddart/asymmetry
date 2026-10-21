@@ -30,7 +30,12 @@ import numpy as np
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, fit_parameter_model
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.seeding import seed_trend_parameters
-from asymmetry.core.workflow.series import ScanAxis, TrendTable, build_trend_table
+from asymmetry.core.workflow.series import (
+    ScanAxis,
+    TrendTable,
+    build_trend_table,
+    parameter_quality_flags,
+)
 
 #: Extra deterministic starts beyond the seeded one — the trend dialog's value.
 _EXTRA_STARTS = 4
@@ -148,8 +153,9 @@ def fit_trend(
             excluded.append({"key": key, "reason": reason})
             continue
         keys.append(key)
-        if row["flags"]:
-            flagged.append({"key": key, "flags": list(row["flags"])})
+        flags = parameter_quality_flags(row, param)
+        if flags:
+            flagged.append({"key": key, "flags": sorted(flags)})
 
     x = np.asarray([rows_by_key[key]["x"] for key in keys], dtype=float)
     y = np.asarray([rows_by_key[key][param] for key in keys], dtype=float)
@@ -243,6 +249,7 @@ def fit_trend_table(
                 if param in fit["uncertainties"]
                 else {}
             ),
+            "params_at_bound": list(fit["params_at_bound"]),
             "quality_flags": (["failed"] if not fit["success"] else [])
             + (["bound_pinned"] if param in fit["params_at_bound"] else []),
         }

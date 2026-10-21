@@ -9,6 +9,7 @@ import pytest
 
 from asymmetry import cli
 from asymmetry.cli._numbers import unverified_numbers
+from asymmetry.core.workflow.workdir import SCHEMA
 from tests.core.conftest import ALL_RUNS, SCAN_RUNS, ZF_RUNS
 
 _LOG = """$ asymmetry fit-series runs --runs 102-106
@@ -159,8 +160,8 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     draft = tmp_path / "summary.md"
     # The folder's files carry deadtimes this reduction left off, which a draft must say.
     draft.write_text(
-        f"{len(ALL_RUNS)} runs; ZF scan {min(ZF_RUNS)} – {max(ZF_RUNS)}; "
-        "the reduction left deadtime off.\n",
+        f"{len(ALL_RUNS)} runs, SIM .nxs; ZF scan {min(ZF_RUNS)} – {max(ZF_RUNS)}; "
+        "the reduction left deadtime off.\n\nFiles\nplots/review.png\n",
         encoding="utf-8",
     )
     capsys.readouterr()
@@ -181,7 +182,31 @@ def test_audit_names_the_runs_of_a_surveyed_scan_that_no_fit_covers(
     out = capsys.readouterr().out
     assert "your final message is this summary itself" in out
     # The passed text is printed whole, for the reply to copy rather than retype.
-    assert f"----- BEGIN -----\n{draft.read_text().strip()}\n----- END -----" in out
+    assert f"----- BEGIN -----\n{draft.read_text()}\n----- END -----" in out
+    assert (
+        "COPY CHECK: 4 report lines; terminal newline: yes; the final line is 'plots/review.png'"
+        in out
+    )
+
+
+@pytest.mark.parametrize(
+    ("draft", "missing"),
+    [
+        ("The fit table lists conditional centres and widths.", 2),
+        ("The cold fitted centre is higher in field, but window-sensitive.", 1),
+        ("The cold feature is broader, with a model-mismatch caveat.", 1),
+        ("The broader-window fit is not a stable centre comparison.", 2),
+        ("The field scan rises at higher fields; its width is uncertain.", 2),
+        ("The cold estimate is higher in field and broader; the shift is conditional.", 0),
+    ],
+)
+def test_audit_requires_the_printed_cross_condition_directions(draft: str, missing: int) -> None:
+    from asymmetry.cli._numbers import unstated
+
+    note = "COMPARE: conditional fitted estimates; this one is broader and higher in field.\n"
+    assert len(unstated(draft, note)) == missing
+    # Alternative windows of one measurement impose no condition-change claim.
+    assert unstated(draft, note.replace("COMPARE:", "STABILITY:")) == []
 
 
 def test_report_provenance_and_coupled_fits_are_required(
@@ -210,7 +235,7 @@ def test_report_provenance_and_coupled_fits_are_required(
             str(index),
             {"kind": "series", "trend": {"rows": [{"key": str(run)} for run in members]}},
         )
-    text = "6 runs, two temperature groups: 201-203 and 204-206."
+    text = "6 runs, SIM .nxs, two temperature groups: 201-203 and 204-206."
     assert any("COUPLED FIELD GROUPS: 2" in m for m in report_obligations([workdir.root], text))
     # One global fit over both temperatures forces one set of dynamics on them.
     union = {"kind": "global", "trend": {"rows": [{"key": str(run)} for run in range(201, 207)]}}
@@ -486,6 +511,22 @@ def test_a_printed_request_the_draft_leaves_out_is_quoted_back(
     assert unstated(stated, log) == []
 
 
+@pytest.mark.parametrize(
+    ("draft", "explained"),
+    [
+        ("The polynomial describes the local non-resonant field dependence.", False),
+        ("The whole-scan recovery fit failed; local cubic fits describe the dips.", False),
+        ("A single polynomial cannot follow the stepped background across the scan.", True),
+        ("The background is not described by one cubic over the full range.", True),
+        ("The background rises or steps where no polynomial can follow.", True),
+    ],
+)
+def test_background_explanation_requires_a_limitation(draft: str, explained: bool) -> None:
+    from asymmetry.cli._numbers import unstated
+
+    assert (unstated(draft, _BACKGROUND_NOTE) == []) is explained
+
+
 def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     workdir = tmp_path / "asymmetry-work"
@@ -501,7 +542,7 @@ def test_audit_names_a_notes_scan_that_no_fit_covers(tmp_path: Path, monkeypatch
         "runs": [11, 12, 13],
         "values": [-1.0, 0.0, 1.0],
     }
-    survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
+    survey = {"schema": SCHEMA, "folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (workdir / "manifest.json").write_text(_manifest("data"), encoding="utf-8")
     draft = tmp_path / "summary.md"
@@ -601,7 +642,7 @@ def test_a_hold_is_restated_when_unprinted_numbers_are_listed_too(
         "runs": [11, 12, 13],
         "values": [-1.0, 0.0, 1.0],
     }
-    survey = {"folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
+    survey = {"schema": SCHEMA, "folder": "data", "runs": [], "scans": [], "notes_scans": [scan]}
     (workdir / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
     (workdir / "manifest.json").write_text(_manifest("data"), encoding="utf-8")
     draft = tmp_path / "summary.md"
@@ -633,7 +674,7 @@ def test_each_survey_is_held_against_its_own_work_directory(
         root = tmp_path / name
         (root / "fits").mkdir(parents=True)
         (root / "cli-output.log").write_text("$ asymmetry survey data\n", encoding="utf-8")
-        survey = {"folder": name, "runs": [], "scans": [], "notes_scans": notes}
+        survey = {"schema": SCHEMA, "folder": name, "runs": [], "scans": [], "notes_scans": notes}
         (root / "survey.json").write_text(json.dumps(survey), encoding="utf-8")
         (root / "manifest.json").write_text(_manifest(name), encoding="utf-8")
     for run in (11, 12, 13):
@@ -690,7 +731,7 @@ def test_review_edge_cases_of_the_audit(tmp_path: Path) -> None:
     # A precession series with a held frequency does not fit a lineless run it failed on.
     root = tmp_path / "wd"
     (root / "series").mkdir(parents=True)
-    survey = {"runs": [{"run_number": 7, "precession": "none"}]}
+    survey = {"schema": SCHEMA, "runs": [{"run_number": 7, "precession": "none"}]}
     (root / "survey.json").write_text(json.dumps(survey))
     series = {
         "kind": "series",
@@ -700,3 +741,317 @@ def test_review_edge_cases_of_the_audit(tmp_path: Path) -> None:
     }
     (root / "series" / "held.json").write_text(json.dumps(series))
     assert WorkDir(root).fitted_runs() == set()
+
+
+@pytest.mark.parametrize(
+    ("draft", "flagged"),
+    [
+        ("A_hf = 512.35 MHz", False),
+        ("The rejected A_hf values were 512.35 and 613.28 G.", True),
+        ("A_hf = 512.35 G", True),
+        ("B0 = 512.35 G", False),
+        ("An unrelated field is 512.35 G", False),
+        ("A_hf = 5.1235 × 10² G", True),
+        ("A_hf = 5.1235e2 MHz", False),
+    ],
+)
+def test_named_parameter_units_are_not_verified_by_a_bare_number(draft, flagged):
+    from asymmetry.cli._numbers import unverified_units
+
+    log = "parameter value unit error\nA_hf 512.3456 MHz 0.1\nA_hf 613.2781 MHz 0.2\nB0 512.3456 G 0.3\n"
+    assert bool(unverified_units(draft, log)) is flagged
+
+
+def test_all_instrument_survey_uses_each_instruments_fit_coverage(tmp_path):
+    from asymmetry.cli.commands.audit import unfitted_scans
+
+    roots = [tmp_path / "overview", tmp_path / "other"]
+    scan = {
+        "instrument": "MUSR",
+        "axis": "temperature",
+        "temperature": None,
+        "field": 0.0,
+        "geometry": "ZF",
+        "geometry_note": "",
+        "runs": [11, 12, 13, 14],
+        "values": [1.0, 2.0, 3.0, 4.0],
+        "notes": "",
+        "samples": [],
+    }
+    for root, instrument in zip(roots, ("EMU", "MUSR"), strict=True):
+        (root / "fits").mkdir(parents=True)
+        (root / "manifest.json").write_text(_manifest("same-data", instrument))
+    (roots[0] / "survey.json").write_text(
+        json.dumps(
+            {
+                "schema": SCHEMA,
+                "folder": "same-data",
+                "runs": [],
+                "scans": [scan],
+                "notes_scans": [],
+            }
+        )
+    )
+    assert unfitted_scans(roots)[0]
+    for run in scan["runs"]:
+        (roots[0] / "fits" / f"wrong-{run}.json").write_text(json.dumps({"run": run}))
+    assert unfitted_scans(roots)[0]  # Same-number fits in the other instrument do not count.
+    for run in scan["runs"]:
+        (roots[1] / "fits" / f"right-{run}.json").write_text(json.dumps({"run": run}))
+    assert unfitted_scans(roots) == ([], [])
+
+
+def test_composition_axis_requires_its_experimental_source():
+    from asymmetry.cli._numbers import unstated
+
+    log = "COMPOSITION AXIS: state concentration provenance and normalization."
+    assert unstated("The relative concentration is shown in a table.", log)
+    assert not unstated("Relative concentrations came from the run titles; full = 1.", log)
+
+
+@pytest.mark.parametrize("ending", ["\n", "\n\n", ""])
+def test_prepare_reply_only_removes_terminal_line_endings_after_a_pass(
+    tmp_path: Path, monkeypatch, capsys, ending: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "asymmetry-work"
+    root.mkdir()
+    (root / "cli-output.log").write_text("$ asymmetry info data\n")
+    draft = tmp_path / "summary.md"
+    body = "Measured signal.  \n\nFiles\nplots/result.png"
+    draft.write_text(body + ending)
+    cli.main(["audit", str(draft)])
+    assert draft.read_text() == body + ending
+    capsys.readouterr()
+    cli.main(["audit", str(draft), "--prepare-reply"])
+    out = capsys.readouterr().out
+    assert draft.read_bytes() == body.encode()
+    assert out == body
+    draft.write_text("Unprinted result 98765.4321.\n")
+    with pytest.raises(SystemExit, match="1"):
+        cli.main(["audit", str(draft), "--prepare-reply"])
+    assert draft.read_text().endswith("\n")
+    assert "----- BEGIN -----" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "The Redfield fit failed because its exponent was negative.",
+        "Redfield was rejected as unresolved.",
+        "The activation energy is not established.",
+    ],
+)
+def test_failed_law_descriptions_do_not_claim_a_supported_mechanism(sentence: str) -> None:
+    from asymmetry.cli._numbers import unsupported_laws
+
+    log = "Fit of Redfield to Lambda against field\nLAW NOT ESTABLISHED\n"
+    assert unsupported_laws(sentence, log) == []
+    assert unsupported_laws("The Redfield law explains the rate.", log) == [
+        ("Redfield", "redfield")
+    ]
+
+
+def test_an_integral_only_scan_requires_its_first_local_dip_test(tmp_path: Path) -> None:
+    import numpy as np
+
+    from asymmetry.cli.commands.audit import _unfitted_dips
+    from asymmetry.core.transform import FieldScan
+    from asymmetry.core.workflow.integral_scan import field_scan_payload
+
+    root = tmp_path / "wd"
+    scans = root / "scans"
+    scans.mkdir(parents=True)
+    x = np.linspace(2000, 5000, 61)
+    scan = FieldScan(
+        x=x,
+        value=0.2 - 0.04 / (1 + ((x - 3500) / 180) ** 2),
+        error=np.full_like(x, 0.0005),
+        run_numbers=list(range(61)),
+        order_key="field",
+        method="integral",
+    )
+    payload = {"runs": list(range(61)), "scan": field_scan_payload(scan), "fit": None}
+    (scans / "measured.json").write_text(json.dumps(payload))
+    ((directory, name, window),) = _unfitted_dips([root])
+    assert (directory, name) == (root, "measured")
+    assert window["centre"] == pytest.approx(3500)
+    # A failed local test is still a test; it must be reported as unresolved,
+    # not repeatedly fitted until a noisy candidate becomes a claimed line.
+    fit = {
+        "success": False,
+        "parameters": {},
+        "next_dip_windows": [],
+        "x_min": window["x_min"],
+        "x_max": window["x_max"],
+    }
+    (scans / "local.json").write_text(json.dumps(payload | {"fit": fit}))
+    assert _unfitted_dips([root]) == []
+
+
+def test_adjacent_cold_excess_is_not_replaced_by_distant_warm_comparison() -> None:
+    from asymmetry.cli._numbers import unstated
+
+    log = "COLD-END EXCESS: nu is higher at the coldest run 21 than the next run 22."
+    assert unstated("nu is higher at 5 K than at 100 K.", log)
+    assert not unstated("The coldest nu is higher than the next temperature point.", log)
+
+
+def test_conditional_coupling_needs_its_estimate_and_error() -> None:
+    from asymmetry.cli._numbers import unstated
+
+    log = "CONDITIONAL COUPLING: A_hf = 1516.298738 ± 80.450183 MHz, chi2_red 459.300."
+    assert unstated("A_hf is not established because the fit is poor.", log)
+    assert not unstated(
+        "A_hf = 1516.298738 ± 80.450183 MHz is model-conditioned; the fit is poor.", log
+    )
+
+
+@pytest.mark.parametrize(
+    "draft",
+    [
+        "A_mu = 123.4(5) MHz, conditional on the poor fit.",
+        "A_μ = 123.4 ± 0.5 MHz, conditional on the poor fit.",
+        "Aµ was 123 ± 1 MHz in this model.",
+        "The fitted A_mu was 123.4 +/- 0.5 MHz.",
+    ],
+)
+def test_conditional_coupling_accepts_common_value_and_error_spellings(draft) -> None:
+    from asymmetry.cli._numbers import unstated
+
+    log = "CONDITIONAL COUPLING: A_mu = 123.412345 ± 0.512345 MHz, chi2_red 9.000."
+    assert not unstated(draft, log)
+    assert unstated("A_mu could not be interpreted.", log)
+
+
+def test_report_acquisition_and_sample_identities_are_not_reference_labels(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.audit import report_obligations
+    from asymmetry.core.workflow.survey import survey_folder
+    from asymmetry.core.workflow.workdir import RunSelection, WorkDir
+
+    survey = survey_folder(workflow_folder)
+    scan = replace(survey.scans[0], samples=("Salt/water", "Salt/hexane"))
+    workdir = WorkDir(tmp_path / "work")
+    workdir.write_manifest(RunSelection(workflow_folder, None))
+    workdir.write_survey(replace(survey, scans=[scan]).to_dict())
+    missing = report_obligations([workdir.root], "Two magnet references, cold and warm.")
+    assert any("SIM .nxs" in message for message in missing)
+    assert sum("recorded sample" in message for message in missing) == 2
+    stated = report_obligations([workdir.root], "SIM .nxs: Salt/water and Salt/hexane.")
+    assert not any(
+        "recorded sample" in message or "acquisition provenance" in message for message in stated
+    )
+
+
+def test_muonium_identity_is_not_an_unrelated_failed_species_fit() -> None:
+    from asymmetry.cli._numbers import unstated
+
+    log = "MUONIUM: runs 10-12 have a fast line."
+    assert unstated("The muonium model failed on the Ag control.", log)
+    assert not unstated("Muonium amplitude falls with the instrument frequency response.", log)
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "No site assignment was attempted; fields were not converted into couplings.",
+        "A hyperfine model was not attempted because the scan is incomplete.",
+    ],
+)
+def test_unattempted_extraction_does_not_state_a_cli_capability_limit(description):
+    from asymmetry.cli._numbers import unstated
+
+    log = "No radical ALC or hyperfine model is available."
+    assert unstated(description, log)
+    assert not unstated("The CLI lacks a radical ALC model, so no couplings are extracted.", log)
+    assert not unstated("A radical ALC model is not implemented in this CLI.", log)
+
+
+def test_same_field_muonium_does_not_owe_a_frequency_response_claim():
+    from asymmetry.cli._numbers import unstated
+
+    assert not unstated(
+        "Muonium envelope rates are compared across composition at the same field.",
+        "MUONIUM KINETICS: runs 10-12 precess at one field.",
+    )
+
+
+@pytest.mark.parametrize(
+    "draft",
+    [
+        "A_bg is about 8% of the fitted relaxing-plus-constant signal.",
+        "The amplitude is 8.2% of the total.",
+        "The fitted fraction is 8.2%.",
+        "A relative error of 8.2%.",
+    ],
+)
+def test_relative_percentages_need_a_printed_percentage_not_an_amplitude(draft):
+    log = "A_bg 8.2 0.1\nA_1 94.0 0.2\n8 runs\n"
+    assert unverified_numbers(draft, log)
+    assert not unverified_numbers(draft, log + "relative fraction 8.2%\n8% of total\n")
+
+
+def test_absolute_percent_asymmetry_remains_a_printed_quantity():
+    assert not unverified_numbers("A_bg is 8.2% and the amplitude is about 8%.", "A_bg 8.2 0.1\n")
+
+
+@pytest.mark.parametrize("name", ["nu", "ν"])
+@pytest.mark.parametrize("number", ["0.000000", "10.257125"])
+def test_dimensionless_exponent_value_and_error_cannot_acquire_rate_units(name, number):
+    from asymmetry.cli._numbers import unverified_units
+
+    log = (
+        "parameter  value  error  unscaled error  unit\n"
+        "---------  -----  -----  --------------  ----\n"
+        "nu  0.000000  10.257125 (at bound)  3.955147  dimensionless\n"
+    )
+    assert unverified_units(f"Rejected exponent {name} has error {number} μs⁻¹.", log)
+    assert not unverified_units(f"Exponent {name} = {number} dimensionless.", log)
+
+
+@pytest.mark.parametrize(
+    ("draft", "flagged"),
+    [
+        ("Holding m fixed, nu = 2 MHz.", False),
+        ("Holding m fixed, nu = 2 dimensionless.", True),
+        ("With nu = 2 MHz, m = 2 dimensionless.", False),
+        ("With nu = 2 MHz, m = 2 MHz.", True),
+    ],
+)
+def test_unit_check_binds_each_number_to_the_nearest_named_parameter(draft, flagged):
+    from asymmetry.cli._numbers import unverified_units
+
+    log = "parameter value unit error\nm 2 dimensionless 0.1\nnu 2 MHz 0.1\n"
+    assert bool(unverified_units(draft, log)) is flagged
+
+
+def test_parameter_uncertainty_uses_units_after_value_or_errors():
+    from asymmetry.cli._numbers import unverified_units
+
+    for row in ["A_hf  512.3456  MHz  0.123456", "A_hf  512.3456  0.123456  MHz"]:
+        log = "parameter  value  error  unit\n" + row + "\n"
+        assert unverified_units("A_hf uncertainty 0.123456 G", log)
+        assert not unverified_units("A_hf uncertainty 0.123456 MHz", log)
+
+
+def test_flagged_adjacent_parameter_is_not_replaced_by_an_unrelated_upturn():
+    from asymmetry.cli._numbers import unstated
+
+    log = "ADJACENT ENDPOINT: nu at run 1; next measured run 2 is bound-pinned."
+    assert unstated("TF sigma has a cold upturn; nu rises at high temperature.", log)
+    assert not unstated(
+        "The next adjacent nu fit is bound-pinned, so its upturn is uncertain.", log
+    )
+
+
+def test_extreme_logger_is_not_a_temperature_confound_without_validation():
+    from asymmetry.cli._numbers import unstated
+
+    log = "EXTREME TEMPERATURE OFFSET: run 17. Check its channel."
+    assert unstated("The high logger value confounds the foil curve.", log)
+    assert not unstated("The logger is railed and irrelevant to this calibration.", log)
+    assert not unstated("The sample temperature was independently validated.", log)

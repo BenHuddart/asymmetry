@@ -51,6 +51,19 @@ def test_codex_runner_defaults_to_luna(tmp_path: Path) -> None:
     assert args.model == "gpt-6-luna"
 
 
+def test_personal_skill_copies_are_disabled_without_disabling_project_skill(
+    tmp_path: Path, monkeypatch
+) -> None:
+    runner = _load_runner()
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    flag, value = runner.skill_source_options()
+    assert flag == "--config"
+    expected = json.dumps(str(tmp_path / "codex-home/skills/asymmetry-analysis/SKILL.md"))
+    assert value.startswith(f"skills.config=[{{path={expected},enabled=false}},")
+    assert value.count("enabled=false") == 2
+    assert ".agents/skills/asymmetry-analysis/SKILL.md" in runner.EVALUATION_INSTRUCTIONS
+
+
 def test_command_is_persistent_and_uses_the_controlled_workspace(tmp_path: Path) -> None:
     runner = _load_runner()
     args = _args(runner, tmp_path)
@@ -102,6 +115,10 @@ def test_review_images_are_project_local_hashed_and_capped(tmp_path: Path) -> No
         f"asymmetry-work/plots/plot-{index}.png" for index in range(1, 5)
     ]
     assert all(len(item["sha256"]) == 64 for item in images)
+    # A second-turn replot must not change the pixels attached to that turn.
+    (plots / "plot-1.png").write_bytes(b"replacement")
+    assert images[0]["path"].read_bytes() == b"image-1"
+    assert images[0]["path"].parent == project.parent / "review-images"
 
 
 def test_resume_command_attaches_each_nominated_image(tmp_path: Path) -> None:
@@ -169,11 +186,16 @@ def test_final_report_must_match_the_last_passed_audit() -> None:
         "item": {
             "type": "command_execution",
             "command": "asymmetry audit summary.md",
-            "aggregated_output": "Passed\n----- BEGIN -----\nFull report\n----- END -----\n",
+            "aggregated_output": (
+                "Passed\n----- BEGIN -----\nFull report\n----- END -----\n"
+                "COPY CHECK: 1 report lines; the final line is 'Full report'.\n"
+            ),
         },
     }
     assert runner.final_report_audited("Full report", [event])
     assert not runner.final_report_audited("Shorter recap", [event])
+    assert not runner.final_report_audited("Full report\n", [event])
+    assert not runner.final_report_audited(" Full report", [event])
     failed = event | {"item": event["item"] | {"aggregated_output": "One unprinted number"}}
     assert not runner.final_report_audited("Full report", [event, failed])
     assert not runner.final_report_audited("Full report", [])
@@ -201,7 +223,7 @@ def test_summary_prefers_the_explicit_last_message(tmp_path: Path) -> None:
         }
     ]
 
-    assert runner.extract_summary(args, events) == "Final report"
+    assert runner.extract_summary(args, events) == "Final report\n"
 
 
 def test_cost_record_names_codex_and_exact_model(tmp_path: Path) -> None:
@@ -211,13 +233,14 @@ def test_cost_record_names_codex_and_exact_model(tmp_path: Path) -> None:
     project = args.out / "project"
     data.mkdir(parents=True)
     (project / ".agents" / "skills" / "asymmetry-analysis").mkdir(parents=True)
-    (args.out / "last-message.md").write_text("A report", encoding="utf-8")
+    (args.out / "last-message.md").write_text(" A report\n\n", encoding="utf-8")
     events = [
         {"type": "turn.completed", "usage": {"input_tokens": 1}},
         {"type": "turn.completed", "usage": {"input_tokens": 2}},
     ]
 
     runner.write_outputs(args, data, project, events, 1.25, 0, [])
+    assert (args.out / "summary.md").read_bytes() == b" A report\n\n"
 
     record = json.loads((args.out / "cost.json").read_text(encoding="utf-8"))
     assert record["agent"] == "Codex"
@@ -253,3 +276,46 @@ def test_report_replaces_characters_the_console_cannot_encode(tmp_path: Path, mo
     runner.report(args)
 
     stream.flush()
+
+
+def test_agent_plot_cache_is_writable_and_project_local(tmp_path: Path) -> None:
+    runner = _load_runner()
+    args = _args(runner, tmp_path)
+    cache = Path(runner.agent_env(args)["MPLCONFIGDIR"])
+    assert cache.is_relative_to(args.out / "project")
+    (cache / "probe").write_text("cache")
+    assert Path(runner.agent_env(args)["MPLCONFIGDIR"]) == cache
+
+
+def test_prepared_reply_is_raw_stdout_and_requires_success() -> None:
+    runner = _load_runner()
+    event = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "command": "asymmetry audit summary.md --prepare-reply",
+            "exit_code": 0,
+            "aggregated_output": "Report with precision 0.0832477.\nFiles\nplot.png",
+        },
+    }
+    report = event["item"]["aggregated_output"]
+    assert runner.final_report_audited(report, [event])
+    for changed in (report + "\n", report + "No terminal newline.", report.replace("2477", "2472")):
+        assert not runner.final_report_audited(changed, [event])
+    failed = event | {"item": event["item"] | {"exit_code": 1}}
+    assert not runner.final_report_audited(report, [event, failed])
+
+
+def test_final_review_retires_the_first_turn_control_manifest():
+    runner = _load_runner()
+    assert (
+        "first-turn instruction to end with an image manifest is now satisfied"
+        in runner.FINAL_REVIEW_PROMPT
+    )
+    assert "second turn ends with the scientific report alone" in runner.FINAL_REVIEW_PROMPT
+
+
+def test_final_review_reprepares_after_corrections():
+    prompt = _load_runner().FINAL_REVIEW_PROMPT
+    assert "Plain audit is a diagnostic" in prompt
+    assert "after every edit, including a correction or file-list change" in prompt

@@ -192,9 +192,9 @@ def run(args: argparse.Namespace) -> None:
             f"NOTE: on {range_text(held)} {HELD_BACKGROUND} Say in the summary that it was "
             f"held there."
         )
-    from asymmetry.core.workflow.series import envelope_change, lineless_end
+    from asymmetry.core.workflow.series import envelope_summary, lineless_end
 
-    for note in (window_note(workdir, sorted(datasets)), envelope_change(outcome.trend)):
+    for note in (window_note(workdir, sorted(datasets)), envelope_summary(outcome.trend)):
         if note is not None:
             print(note)
     lineless = lineless_end(outcome.trend)

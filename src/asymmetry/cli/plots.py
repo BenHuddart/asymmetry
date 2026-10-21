@@ -426,7 +426,7 @@ def plot_trend(
     *param_name*, ``f"{param_name}_err"`` and ``"flags"`` straight off each
     row rather than the caller re-deriving parallel arrays.
 
-    The y range is framed on the *unflagged* points (plus a margin), so a
+    The y range is framed on the points unflagged for this parameter (plus a margin), so a
     single wildly-flagged run cannot squash every other point onto the axis
     edge — see the module docstring. A flagged point that still falls inside
     that range is drawn hollow, as before; one that falls outside it is
@@ -442,7 +442,11 @@ def plot_trend(
     x = np.asarray([row["x"] for row in rows], dtype=np.float64)
     y = np.asarray([row.get(param_name) for row in rows], dtype=np.float64)
     y_err = np.asarray([row.get(f"{param_name}_err") for row in rows], dtype=np.float64)
-    flagged = np.asarray([bool(row.get("flags")) for row in rows], dtype=bool)
+    from asymmetry.core.workflow.series import parameter_quality_flags
+
+    flagged = np.asarray(
+        [bool(parameter_quality_flags(row, param_name)) for row in rows], dtype=bool
+    )
     clean = ~flagged
 
     y_lo, y_hi, outside = _trend_frame(y, y_err, flagged)

@@ -172,6 +172,9 @@ def seed_trend_parameters(
     here is run-bound.
     """
     seeds = _base_seeds(model.param_names, model.param_defaults, frozenset())
+    for name, info in model.param_info.items():
+        if info.default_min is not None:
+            seeds[name] = replace(seeds[name], min=float(info.default_min))
     _apply_values(seeds, _trend_scale_values(model, x, y), run_bound=False)
     _apply_values(seeds, suggest_trend_seeds(model, x, y), run_bound=False)
     return seeds
@@ -297,6 +300,26 @@ def _trend_scale_values(
             values[param_name] = max(1e-6, (x_max - x_min) / 2.0)
         elif param_name.startswith("D"):
             values[param_name] = max(1e-6, default)
+    from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+
+    for index, component in enumerate(model.components):
+        if component.name == "Redfield":
+            # The turnover scale is a frequency, not a field; λ(0)=D²/(2ν).
+            fields = np.abs(x_values[np.isfinite(x_values) & (x_values != 0)])
+            nu = (
+                float(np.median(fields)) * GAUSS_TO_TESLA * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+                if fields.size
+                else component.param_defaults["nu"]
+            )
+            values.update(
+                {
+                    model.component_param_name(index, "nu"): max(nu, 1e-6),
+                    model.component_param_name(index, "D"): math.sqrt(
+                        max(2 * nu * (float(np.nanmax(y_values)) if finite_y else 0.0), 1e-12)
+                    ),
+                    model.component_param_name(index, "m"): component.param_defaults["m"],
+                }
+            )
     return values
 
 

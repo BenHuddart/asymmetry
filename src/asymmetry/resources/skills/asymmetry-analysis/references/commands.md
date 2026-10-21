@@ -131,9 +131,10 @@ usage: asymmetry reduce [-h] --runs RUNS [--coadd] [--alpha ALPHA]
                         [--pair FWD/BWD]
                         [--background none|tail_fit|range[:FIRST:LAST]]
                         [--t0-offset BINS] [--t-good-offset BINS]
-                        [--period RED|GREEN|N|green-red] [--rebin REBIN] [--tmin TMIN]
-                        [--tmax TMAX] [--plot-tmax PLOT_TMAX] [--plot] [--json]
-                        [--workdir WORKDIR] [--instrument NAME]
+                        [--period RED|GREEN|N|green-red] [--rebin REBIN]
+                        [--allow-aliasing] [--tmin TMIN] [--tmax TMAX]
+                        [--plot-tmax PLOT_TMAX] [--plot] [--json] [--workdir WORKDIR]
+                        [--instrument NAME]
                         folder
 
 positional arguments:
@@ -170,6 +171,9 @@ options:
                         green period 2), or green-red for the difference of a two-
                         period run
   --rebin REBIN         Merge this many bins (default: 1)
+  --allow-aliasing      Rebin even when a detected line lies above the new Nyquist
+                        frequency, deliberately averaging a known fast line away to
+                        study slower relaxation
   --tmin TMIN           Discard points below this time/µs from the stored reduction
                         every later fit uses
   --tmax TMAX           Discard points above this time/µs from the stored reduction
@@ -197,7 +201,7 @@ usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
                                [--tmax TMAX] [--method {integral,differential}]
                                [--order {field,temperature,run}] [--model MODEL]
                                [--initial NAME=VALUE] [--fix NAME=VALUE] [--xmin XMIN]
-                               [--xmax XMAX] [--baseline MODEL]
+                               [--bound NAME=LO:HI] [--xmax XMAX] [--baseline MODEL]
                                [--baseline-regions LO:HI,...] [--plot] [--json]
                                [--workdir WORKDIR] [--instrument NAME]
                                folder
@@ -235,11 +239,14 @@ options:
   --tmin TMIN           Integration-window start / µs
   --tmax TMAX           Integration-window end / µs
   --method {integral,differential}
+                        integral: sum counts before forming A (default); differential:
+                        mean per-bin A. Independent of the --period green-red contrast
   --order {field,temperature,run}
   --model MODEL         Optional field-scan expression, e.g. 'LorentzianLCR + Cubic'
   --initial NAME=VALUE  Fit start (repeatable)
   --fix NAME=VALUE      Fixed fit value (repeatable)
   --xmin XMIN           Fit only points at or above this x
+  --bound NAME=LO:HI    Override a fit parameter's search interval (repeatable)
   --xmax XMAX           Fit only points at or below this x
   --baseline MODEL      Fit and subtract this baseline model first
   --baseline-regions LO:HI,...
@@ -256,8 +263,9 @@ options:
 
 ```
 usage: asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope NAME]
-                        [--include C,D] [--exclude C,D] [--tmin TMIN] [--tmax TMAX]
-                        [--plot] [--json] [--workdir WORKDIR] [--instrument NAME]
+                        [--include C,D] [--exclude C,D] [--tmin TMIN]
+                        [--workers WORKERS] [--tmax TMAX] [--plot] [--json]
+                        [--workdir WORKDIR] [--instrument NAME]
                         folder
 
 positional arguments:
@@ -278,6 +286,8 @@ options:
   --exclude C,D         Components to drop from the scope, e.g.
                         'VortexLattice,VortexLatticePowder'
   --tmin TMIN           Screen only above this time / µs
+  --workers WORKERS     Maximum concurrent fit workers (default:
+                        $ASYMMETRY_WIZARD_WORKERS, else automatic)
   --tmax TMAX           Screen only below this time / µs (the recipe keeps the window)
   --plot                Write plots/wizard-<run>.png of data + recommendation
   --json                Emit the machine-readable payload
@@ -550,7 +560,7 @@ options:
 ## `asymmetry audit`
 
 ```
-usage: asymmetry audit [-h] [--workdir WORKDIR] [--json] draft
+usage: asymmetry audit [-h] [--workdir WORKDIR] [--json | --prepare-reply] draft
 
 positional arguments:
   draft              The draft summary (a text or Markdown file)
@@ -560,6 +570,8 @@ options:
   --workdir WORKDIR  Work directory whose cli-output.log to check against (repeatable;
                      default: every ./asymmetry-work* directory here)
   --json             Emit the machine-readable payload
+  --prepare-reply    After all checks pass, finalize terminal line endings and emit
+                     only the reply body
 ```
 
 ## `asymmetry skill`

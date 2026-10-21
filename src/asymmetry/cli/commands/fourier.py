@@ -329,6 +329,20 @@ def _render(result: dict) -> str:
             f", then asymmetry fit <folder> --run {result['run']} --recipe two-line."
         )
     if not coupling:
+        from asymmetry.core.fitting.knight_shift import larmor_frequency_mhz
+
+        field = result["field_gauss"]
+        if field is not None and field != 0:
+            larmor = larmor_frequency_mhz(abs(field))
+            if sum(peak["frequency_mhz"] > larmor for peak in peaks) >= 2:
+                lines.append(
+                    "Several lines lie above the applied-field muon Larmor frequency. "
+                    "If the experiment involves muoniated radicals, test their pairing with "
+                    f"asymmetry fourier <folder> --run {result['run']} --correlation using "
+                    "the same time range and window. Its coupling-axis peak tests the "
+                    "frequency sum; an ordinary FFT alone does not supply that result. "
+                    "This is a candidate test, not a radical assignment."
+                )
         lines.append(
             "This is an FFT: maximum-entropy (MaxEnt) spectra and multi-group "
             "field-distribution analysis are not available here — where the field "

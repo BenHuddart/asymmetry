@@ -86,6 +86,21 @@ def parse_fix(entries: list[str], *, flag: str = "--fix") -> dict[str, float]:
     return fixed
 
 
+def parse_bounds(entries: list[str]) -> dict[str, tuple[float, float]]:
+    """Parse explicit parameter intervals; the fitting boundary validates their values."""
+    bounds = {}
+    for entry in entries:
+        name, equal, interval = entry.partition("=")
+        lower, colon, upper = interval.partition(":")
+        if not equal or not colon or not name.strip():
+            raise UserError(f"--bound {entry!r} is not NAME=LO:HI.")
+        try:
+            bounds[name.strip()] = (float(lower), float(upper))
+        except ValueError:
+            raise UserError(f"--bound {entry!r} does not name two numbers.") from None
+    return bounds
+
+
 def recipe_with_overrides(
     recipe: FitRecipe,
     *,
