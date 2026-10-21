@@ -345,8 +345,8 @@ dominant line is compared with the Larmor frequency of the recorded field,
        the file's ``TF`` stamp is **refuted** and ``geom`` reads ``-``
        (``geometry_source`` ``"refuted"``): the run is either a longitudinal
        measurement or a transverse one with no resolvable line, and the file's
-       claim is evidence for neither. A fixed-temperature field scan of such
-       runs is longitudinal decoupling.
+       claim is evidence for neither. Compare the scan response and context
+       before choosing a physical geometry.
    * - ``-``
      - Not measured: no field is recorded, or its Larmor frequency is above
        the record's Nyquist frequency. ``precession_note`` in the JSON says
@@ -360,6 +360,18 @@ spectrum is silent or the file stamps it ``TF``. Where this decides, ``geom``
 carries a ``+`` (``TF+``, ``LF+``; ``geometry_source`` ``"coils"``) instead of
 the ``*`` a measured precession earns, and ranks below a measured line but
 above the file's own stamp; see :doc:`loading_data` for the readback rule.
+
+The plain-text table includes a ``source`` column, and every scan lists
+``geometry sources`` before the long run table. ``file`` is a header claim,
+not a measured line or a coil readback. In particular, an above-Nyquist
+``prec -`` cannot verify a TF stamp. Detector-bank ``orient`` is not the
+applied-field direction. For an ALC or recovery hypothesis, the reduced
+spectra and a consistent-block integral scan can test whether a substantial
+nonoscillating signal contradicts TF cancellation. For matched ZF/applied-field
+measurements, strong suppression of a ZF KT relaxation supports longitudinal
+static-field decoupling; missing orientation metadata remains a caveat, not a
+reason to discard that measured contrast. These tests do not classify every
+unresolved precession as LF.
 
 **Zero-field runs are searched for a spontaneous line** by the same reading —
 the resolved dominant line, else the damped-line scan's. There is no Larmor
@@ -1259,6 +1271,9 @@ that produces results (``fit``, ``fit-series``, ``fit-global``, ``trend``,
 ``summary.md`` and run ``asymmetry audit summary.md`` before replying, preceded
 by a "Still unfitted:" line naming the surveyed measurements no fit holds yet.
 For the final send, run ``asymmetry audit summary.md --prepare-reply``.
+The repeated result-command footer and the evaluation image-review prompt use
+this same preparation step after the last edit. Copy its passed body without
+reformatting numeric precision or adding a final newline.
 After all checks pass, this opt-in operation removes terminal line endings
 from the saved draft and prints that exact body. Repeat it after every edit;
 editors may restore a newline. Without the option, audit leaves the file
@@ -1464,7 +1479,13 @@ usually converges without ``--initial``; ``--initial``/``--fix`` values are
 folded into that seeding, not applied afterwards, so a fixed value is never
 overridden by a seed near it.
 The scan points, excluded runs, reduction settings, fit parameters and
-uncertainties are stored in ``scans/<name>.json``. Each run's counts are
+uncertainties are stored in ``scans/<name>.json``. The human-readable fit
+table puts uncertainties scaled by sqrt(chi2_red) first when reduced chi-squared
+exceeds one, with ``unscaled error`` alongside. Fixed parameters remain
+``fixed``, bound flags remain visible, and a failed fit prints no usable error.
+Stored JSON uncertainties remain the raw fit errors. Scaling does not make a
+poor model physically adequate; retain window and baseline limitations.
+Each run's counts are
 grouped and corrected under the `Reduction options`_ — ``--deadtime
 from_file`` on an ISIS repolarisation or ALC scan, as in ``reduce``, and
 ``--background`` the same way (see `Reduction options`_ for how its error

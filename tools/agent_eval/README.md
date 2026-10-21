@@ -64,6 +64,10 @@ violations separately, even if a personal symlink has identical skill bytes.
 
 Protocol `two_turn_image_review_v2` requires the second turn to save and audit
 the complete final report after image inspection, then return it verbatim.
+The final-review prompt uses `audit --prepare-reply` after resolving findings
+and making the last edit. Preparation removes terminal line endings only on
+a pass; the model must still emit the prepared body without reformatting its
+numbers or changing its final character. The runner does not repair its reply.
 Both invocations use `codex exec --approve-for-me`; the resume invocation puts
 that option before `resume`, since the subcommand does not accept it after
 `resume` and otherwise defaults to read-only in the tested CLI.

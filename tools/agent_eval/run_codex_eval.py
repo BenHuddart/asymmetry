@@ -55,9 +55,11 @@ the physical meaning of every model component, and the fit/FFT windows and
 resolution alongside the values they qualify. Explain any uncompleted work.
 
 After inspecting these images, write the complete final report to summary.md
-and run asymmetry audit summary.md. Resolve its findings, then copy that final
-audited file verbatim into your reply. An audit of a first-turn draft does not
-audit a different report written after image review.
+and resolve asymmetry audit summary.md findings. After the last edit, run
+asymmetry audit summary.md --prepare-reply. Copy its passed report body exactly
+into your reply, preserving numeric formatting and the final character; do not
+add a terminal newline or edit the report after preparation. An audit of a
+first-turn draft does not audit a different report written after image review.
 """
 EVALUATION_INSTRUCTIONS = """# Agent evaluation boundary
 

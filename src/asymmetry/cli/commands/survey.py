@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import re
 import shlex
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -217,6 +218,7 @@ def _render(survey, survey_path: Path) -> str:
         "T log/K",
         "B/G",
         "geom",
+        "source",
         "prec",
         "orient",
         "hist",
@@ -234,6 +236,7 @@ def _render(survey, survey_path: Path) -> str:
             format_number(row.sample_temperature_logged, 2),
             format_number(row.field, 2),
             (row.geometry or "-") + _GEOMETRY_MARKS.get(row.geometry_source, ""),
+            row.geometry_source,
             # An `other` line's frequency is itself evidence: an internal
             # field, a muonium line, or a sub-cycle artefact near 0.1 MHz.
             (row.precession.state or "-")
@@ -265,7 +268,9 @@ def _render(survey, survey_path: Path) -> str:
             "(not measurable). "
             "geom*: geometry measured from that precession rather than read from the file; "
             "geom+: geometry read from the run's logged field-coil readbacks (axial against "
-            "transverse), not its field-state stamp."
+            "transverse), not its field-state stamp. source=file is only a header claim, "
+            "not measured precession or coil evidence; orient names the detector bank, "
+            "not the applied field."
         )
         if any(
             row.sample_temperature_log_source == PSI_HEADER_SAMPLE_SENSOR for row in survey.runs
@@ -415,6 +420,26 @@ def _render(survey, survey_path: Path) -> str:
             lines.append(f"  {scan_label(scan)}")
             if scan.geometry_note:
                 lines.append(f"      geometry: {scan.geometry_note}")
+            sources = Counter(
+                row.geometry_source
+                for row in survey.runs
+                if row.instrument == scan.instrument and row.run_number in scan.runs
+            )
+            lines.append(
+                "      geometry sources: "
+                + "; ".join(
+                    f"{source} on {count} run(s)" for source, count in sorted(sources.items())
+                )
+            )
+            if sources["file"]:
+                lines.append(
+                    "      FILE GEOMETRY: a header stamp is not a coil measurement. "
+                    "Above Nyquist, prec '-' cannot test that stamp. For an ALC/recovery "
+                    "hypothesis, inspect the reduced traces and test integral-scan on this "
+                    "consistent run block: a substantial nonoscillating high-field signal "
+                    "can contradict TF cancellation. Explain the evidence and remaining "
+                    "ambiguity; do not infer applied-field direction from detector orient."
+                )
             if len(scan.samples) > 1:
                 rows = {
                     row.run_number: row for row in survey.runs if row.instrument == scan.instrument
@@ -447,8 +472,12 @@ def _render(survey, survey_path: Path) -> str:
             lines.append(
                 "FIELD OBSERVABLE: establish geometry before choosing the quantity. A TF "
                 "field scan measures precession frequency, phase or amplitude; its full-time "
-                "integral can cancel and is not an LF recovery curve. Unresolved geometry "
-                "does not establish LF. Only for an LF muonium/radical repolarisation "
+                "integral can cancel and is not an LF recovery curve. A file-only TF stamp "
+                "or unresolved precession does not settle the direction. Use scan context "
+                "and the observed response: suppression of matched ZF relaxation by a weak "
+                "applied field supports LF static-field decoupling, even without a coil "
+                "orientation log. State that supported interpretation and its limits rather "
+                "than withholding the observed decoupling. For an LF muonium/radical repolarisation "
                 "experiment, measure integral asymmetry versus field with "
                 "integral-scan --model MuRepolarisation and report recovery at the highest "
                 "field, including a poor-fit caveat if needed. Redfield on a time-domain "

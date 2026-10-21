@@ -2055,3 +2055,29 @@ Confirmation5 COMPLETE24/24scored:141/147Musts,22/24science,13/24strict-copy/lit
 
 
 Confirmation5 final verification: all24rawfinal agent_messages equal last-message.md andactualsummary.md bytes;403frozen source entries,allskill/rubric/rawartifact andsuppliedreviewimagehashesverified. 1 nominatedimagepaths changedafterreview; suppliedandcurrenthashesretainedseparately. FreshgateFAIL(22/24science,13/24copy,11/24combined),AFMscopePASS. Twelve-case wavewall48.53min,minavailable21.01GiB,peakprocesssumRSS5.74GiB(sharedpagesdoublecount),memoryPSI0,CPUavg10peak0.36,swap~0.96MiBunchanged. Keep12,notacontrolledspeedupclaim. Noevalprocesslive; freezeends. Generalround16canrepairgeometryevidence/conditionaldiagnostics,consistentpreparedreplyguidanceincludingharness,andquantity/error/capabilityprovenance. Fixedrubricsandtwo-turnimage-reviewsemanticsremainunchanged;deadline06:00UTC/fullgatecutoff04:30UTC.
+
+
+Round16 general repair in progress after complete confirmation5; no eval live.
+CLI/skill/harness finalization now consistently names --prepare-reply after
+last edits. Survey adds source column and scan-level evidence tallies, plus
+conditional highfield integral/decoupling tests without treating detector-bank
+orientation as applied field or relabelling all unresolvedTF. Integral-fit
+tables put chi2-scaled errors first with raw errors alongside, JSON unchanged.
+Skill separates supported exact RF diagonalisation from unavailable site/ALC
+models and permits bounded competing hypotheses without material identity.
+Fixed scientific rubrics, strict byte copying and two-turn image-review
+semantics remain unchanged. Focused tests, docs and validation precede commit
+and a fresh full24 confirmation6 at12 concurrent cases before cutoff.
+
+Round16 final focused438 andfast5940passed (10skip/1xfail), lint/structural,
+skillvalidation andgeneratedreferencecheckpass;docsbuild80existingwarnings.
+Resonance notes, comparison notes and fit tables now share one uncertainty
+scaling function (never shrink errors below raw); detection SNR remains based
+on raw fit errors and is labelled accordingly. Final standard validation is
+LIVE in /tmp/luna6-round16-standard.log, exec37560. Inspect actual host
+processes before any tests/launch. Scratch XDG homes, two pytest workers and
+numericalthreads1; no eval live. Only after standard is assessed should round16
+be committed and confirmation6 launched. No GUI code or scientific rubrics changed.
+
+
+Round16 validation COMPLETE:438 focused and5940 fast passed (fast10skip/1xfail); lint, structural, skill validation and generated command reference pass; docs build80existingwarnings. Standard9953passed,4failed,25skipped,1xfailed in453.43s: exactly the two documented fit-parameter-table and two grouping-dialog sizing failures, no worker errors/crashes. QScreen wrapper-lifetime teardown warning retained. Standard remains NOT green; no GUI redesign. Scratch XDG homes, pytest2, numericalthreads1. Ready to commit general source/provenance/finalization/error-presentation repairs, then fresh full24 confirmation6 at12 concurrent cases with fixed scientific rubrics and two-turn image-review semantics.

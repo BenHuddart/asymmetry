@@ -372,6 +372,8 @@ def _render(result: dict, settings, notes: list[str]) -> str:
             for local, info in component.param_info.items()
             if info.unit in ("G", "MHz")
         }
+        scale = math.sqrt(max(fit["reduced_chi_squared"], 1.0))
+        error_header = f"error (x sqrt(chi2_red) = {scale:.3g})" if scale > 1 else "error"
         # A held parameter has no error; one pinned on a bound is not determined.
         rows = [
             [
@@ -381,19 +383,34 @@ def _render(result: dict, settings, notes: list[str]) -> str:
                 (
                     "fixed"
                     if name in fit["fixed"]
-                    else format_number(fit["uncertainties"][name], 6)
+                    else format_number(_scaled(fit, name), 6)
                     if fit["success"]
                     else "-"
                 )
                 + (" (at bound)" if name in fit["params_at_bound"] else ""),
             ]
+            + (
+                [
+                    "fixed"
+                    if name in fit["fixed"]
+                    else format_number(fit["uncertainties"][name], 6)
+                    if fit["success"]
+                    else "-"
+                ]
+                if scale > 1
+                else []
+            )
             for name, value in fit["parameters"].items()
         ]
         lines.extend(
             [
                 f"fit: {fit['expression']}, chi2_red "
                 f"{format_number(fit['reduced_chi_squared'], 3)}{verdict}",
-                render_table(["parameter", "value", "unit", "error"], rows),
+                render_table(
+                    ["parameter", "value", "unit", error_header]
+                    + (["unscaled error"] if scale > 1 else []),
+                    rows,
+                ),
             ]
         )
     lines.extend(notes)
@@ -615,12 +632,11 @@ def _line_comparisons(
     def described(scan_fit: dict, line: str) -> tuple[float, float, float, float]:
         """Centre, error, width, error — errors scaled by √chi2_red where it exceeds 1."""
         width = line.replace("B0", "Bwid", 1)
-        scale = math.sqrt(max(scan_fit["reduced_chi_squared"], 1.0))
         return (
             scan_fit["parameters"][line],
-            scale * scan_fit["uncertainties"][line],
+            _scaled(scan_fit, line),
             abs(scan_fit["parameters"][width]),
-            scale * scan_fit["uncertainties"][width],
+            _scaled(scan_fit, width),
         )
 
     def direction(a: float, a_err: float, b: float, b_err: float, words: tuple[str, ...]) -> str:
@@ -762,7 +778,7 @@ _DISTINCT_REPEAT = 3.0
 
 def _scaled(fit: dict, name: str) -> float:
     """*name*'s error scaled by √chi2_red, as a poor fit's errors are quoted."""
-    return fit["uncertainties"][name] * math.sqrt(fit["reduced_chi_squared"])
+    return fit["uncertainties"][name] * math.sqrt(max(fit["reduced_chi_squared"], 1.0))
 
 
 def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
@@ -816,17 +832,15 @@ def _poor_fit_note(fit: dict, same_scan: Sequence[dict] = ()) -> list[str]:
             amplitude = name.replace("B0", "f", 1)
             depth = abs(fit["parameters"][amplitude]) / fit["uncertainties"][amplitude]
             notes.append(
-                f"RESONANCE: the line at {centre:g} ± {fit['uncertainties'][name]:g} (width "
-                f"{width:g}) sits inside the window {low:g}–{high:g} with data on both flanks, "
-                f"its amplitude {depth:.1f} errors from zero: a resolved resonance — report "
-                f"its centre and width"
+                f"RESONANCE: the line at {centre:g} ± {_scaled(fit, name):.3g} "
+                f"(width {width:g} ± {_scaled(fit, name.replace('B0', 'Bwid', 1)):.3g}) "
+                f"sits inside the window {low:g}–{high:g} with data on both flanks, "
+                f"its amplitude {depth:.1f} raw fit errors from zero: a resolved resonance — "
+                "report its centre and width with these uncertainties"
                 + (
-                    f", with errors understated by the chi2_red of "
-                    f"{format_number(fit['reduced_chi_squared'], 3)}: scaled by its square root "
-                    f"they are ± {_scaled(fit, name):.3g} on the centre and ± "
-                    f"{_scaled(fit, name.replace('B0', 'Bwid', 1)):.3g} on the width — quote "
-                    f"these."
-                    if fit["reduced_chi_squared"] > _POOR_SCAN_FIT
+                    f", scaled by sqrt(chi2_red = {format_number(fit['reduced_chi_squared'], 3)}). "
+                    "Scaling does not remove the poor-fit limitation."
+                    if fit["reduced_chi_squared"] > 1
                     else "."
                 )
             )

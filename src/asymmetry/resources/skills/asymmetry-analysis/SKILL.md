@@ -464,13 +464,21 @@ evidence, not a stamp:
 
 - A run at **0 G is ZF**, whatever the file says.
 - `geom TF*` with `prec larmor` → **transverse, measured**. Take it.
-- `geom -` with `prec none` at a non-zero field → the file's stamp was
-  **refuted**: the muon is not precessing in the applied field. That is either
-  an **LF** measurement — the field is along the beam — or a TF run whose line is
-  not resolvable (a broad field distribution, or a frequency too fast for the
-  pulse). **A fixed-temperature field scan of such runs is LF decoupling**, and
-  this is how you confirm it; a single such run in a temperature scan wants the
-  PNG looked at before you call it. Pass `--geometry LF` once you have decided.
+- `geom LF+` or `TF+`, source `coils` → the logged axial/transverse coil
+  readbacks establish the applied-field direction.
+- A plain `TF` with source `file` is only the header's claim. It is not a
+  coil measurement. `prec -` above Nyquist cannot verify it; an unobserved
+  fast transverse line and a longitudinal signal are different possibilities.
+- `geom -` with `prec none` at nonzero field refutes the header's resolved-TF
+  interpretation but does not alone prove LF. Compare the scan response:
+  weak applied fields that suppress a matched ZF KT relaxation to a nearly
+  flat trace support longitudinal decoupling of static fields. State that
+  evidence and the supported LF interpretation, with any alignment caveat;
+  missing coil metadata does not erase the observed decoupling. For a
+  high-field ALC/recovery hypothesis, inspect a count-integral scan of one
+  consistent block. A substantial slowly relaxing integral can contradict
+  TF cancellation and motivate LF local-dip fits. These are evidence tests,
+  not permission to relabel every unresolved TF run as LF.
 - `prec other@<MHz>` → the muon precesses in a field that is not the applied
   one (see the table above for what the frequency can mean). That says nothing
   about the applied field's direction, so `geom` falls back to the file; judge
@@ -480,9 +488,10 @@ evidence, not a stamp:
 **Confirm on the reduced PNG** — always for `other` and `-`, and as a sanity
 check otherwise. A **transverse** field precesses the muon at γ_μ/2π × B —
 13.55 kHz/G, so 20 G ≈ 0.27 MHz, 110 G ≈ 1.5 MHz, 400 G ≈ 5.4 MHz — a plainly
-visible oscillation filling the early-time window. No oscillation at that
-frequency means the field is longitudinal. (Use `reduce --plot --plot-tmax 2` to zoom
-the early window if the full range is too compressed to judge.)
+visible oscillation when the frequency and damping are resolvable. Use the
+observed field response and experiment context where they are not. Detector
+bank `orient` is not the applied-field direction. Use `reduce --plot
+--plot-tmax 2` to inspect early times without cutting the stored record.
 
 Then pass the right `--geometry ZF|TF|LF` to `wizard` for every run you screen,
 and say in the summary what each scan's geometry is and how you established it.
@@ -513,9 +522,14 @@ re-screens — and it will happily offer a vortex lattice to a ferromagnet.
 | Muonium chemistry in a weak TF | water, solutions, gases, a few gauss TF paired with ~100 G diamagnetic runs; samples differing by concentration in the titles | not the wizard — see "Weak-TF muonium" in section 5 and write the recipe with `asymmetry recipe` | `Linear` on λ_Mu against the concentration you supply with `--order concentration --x …` |
 | Radicals at high field, level crossings | kilogauss TF lines at hundreds of MHz; ALC field scans | `--scope muonium-radical`; `fourier`; `integral-scan` | the scan's own resonance fit |
 
-Say in the summary which class you decided and on what evidence. If the
-evidence contradicts it once you look at the spectra, change your mind and say
-that too.
+Say in the summary which class you decided and on what evidence. When identity
+is uncertain, a distinct observed combination can motivate a bounded hypothesis
+test: for example, a lower line frequency and extra Gaussian width on cooling
+can be tested against a vortex-width law without claiming material identity or
+pairing symmetry. Compare competing explanations and retain the observed trend
+if the microscopic interpretation remains uncertain. Established magnetic or
+calibration context takes precedence over a generic superconducting suggestion.
+If the spectra contradict the proposed class, change it and explain why.
 
 ### Step 4 — screen one run with the wizard
 
@@ -822,7 +836,10 @@ of the whole-range background when the CLI identifies it.
   mean RF-on minus RF-off. If that estimator gives a noisy scan and unusable
   couplings, retry the count integral with the same contrast and a justified
   time window before declaring the resonance undetermined. A valid fit
-  gives the muon and proton hyperfine couplings `A_mu`, `A_p`. Which period
+  gives the muon and proton hyperfine couplings `A_mu`, `A_p` using its built-in
+  exact spin-Hamiltonian diagonalisation. That supported RF model is distinct
+  from an unavailable radical ALC/site Hamiltonian or DFT site assignment;
+  do not describe all Hamiltonian calculations as unavailable. Which period
   had the RF on is read from the sign, not a colour convention: the RF
   depolarises at resonance, so green − red peaking positive means green kept
   its polarisation — green was RF-off. State the LF RF-resonance geometry from
@@ -1745,6 +1762,8 @@ CLI** explicitly. If a microscopic radical/site Hamiltonian is unavailable,
 say that the CLI lacks it and therefore cannot extract those microscopic
 couplings or sites; "outside this analysis" alone does not explain whether
 the limitation is the software, the data, or a choice made in this session.
+Name the specific missing model, preserving capabilities actually used such
+as the exact-diagonalisation RF resonance model.
 
 **Files** — the work directory, stored scan/spectrum products, and PNGs worth
 looking at. Write complete plain paths, one per line, without inline backticks
@@ -1752,7 +1771,10 @@ or abbreviated follow-on filenames. Finish this list before the last audit;
 the reply must retain its final line exactly as well as the scientific text.
 Finish the file list, then run `asymmetry audit summary.md --prepare-reply`.
 It removes terminal line endings only when the checks pass. Copy that printed
-body without further edits, retaining the last path's final character. Repeat
+body without further edits, retaining the last path's final character. Numeric
+precision is part of the audited text: do not expand or round an uncertainty
+while copying. Check each comparison against its own labelled scan rows before
+preparation; a nearby value from another sample is not its result. Repeat
 the preparation after any edit; ordinary editors may restore a terminal newline.
 
 ## 7. Worked example

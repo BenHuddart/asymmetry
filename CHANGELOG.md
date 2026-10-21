@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Survey output names geometry evidence per scan and per run, distinguishing
+  file stamps from measured precession and coil readbacks. General LF
+  diagnostic guidance preserves observed decoupling when alignment metadata
+  are incomplete. Integral-fit tables show scaled and raw errors together;
+  CLI, skill and evaluation prompts share the final reply preparation step.
+
 - Agent reports can use `audit --prepare-reply` to finalize terminal whitespace
   after checks pass; local scan candidates and co-added fit coverage are audited
   without suppressing honest failed-law descriptions. Generalized Redfield

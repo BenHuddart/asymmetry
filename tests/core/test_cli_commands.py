@@ -309,6 +309,25 @@ def test_survey_table_shows_the_precession_column_and_the_measured_geometry(
     assert "TF" not in decoupling
 
 
+def test_survey_keeps_file_geometry_evidence_in_each_scan(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import survey_folder
+
+    survey = survey_folder(workflow_folder)
+    rows = [replace(row, geometry_source="file") for row in survey.runs]
+    text = _render(replace(survey, runs=rows), tmp_path / "survey.json")
+    header = next(line for line in text.splitlines() if line.startswith("run "))
+    assert "source" in header.split()
+    for scan in survey.scans:
+        assert f"geometry sources: file on {len(scan.runs)} run(s)" in text
+    assert "FILE GEOMETRY: a header stamp is not a coil measurement" in text
+    assert "detector orient" in text
+
+
 def test_survey_marks_a_coil_geometry_and_explains_a_psi_header_temperature(
     workflow_folder: Path, tmp_path: Path
 ) -> None:
@@ -2993,6 +3012,42 @@ def test_integral_scan_fits_inside_the_window_and_reports_a_failed_fit(
     assert (tmp_path / "wd" / "scans" / "failed.json").exists()
 
 
+@pytest.mark.parametrize("chi2, expected_error", [(9.0, 9.0), (0.25, 3.0)])
+def test_integral_fit_table_keeps_raw_and_scaled_uncertainties(chi2, expected_error) -> None:
+    from asymmetry.cli.commands.integral_scan import _render
+    from asymmetry.core.workflow.reduction import ReductionSettings
+
+    result = {
+        "name": "local-dip",
+        "scan": {"points": [], "order_key": "field", "method": "integral"},
+        "period_field_offset": None,
+        "fit": {
+            "expression": "LorentzianLCR",
+            "parameters": {"B0": 1200.0, "Bwid": 40.0, "f": -0.1},
+            "uncertainties": {"B0": 2.0, "Bwid": 3.0, "f": 0.01},
+            "fixed": ["B0"],
+            "params_at_bound": ["f"],
+            "success": True,
+            "reduced_chi_squared": chi2,
+        },
+        "scan_path": "scans/local-dip.json",
+        "plot": None,
+    }
+    text = _render(result, ReductionSettings(), [])
+    row = next(line.split() for line in text.splitlines() if line.startswith("Bwid "))
+    assert row[:3] == ["Bwid", "40.000000", "G"]
+    assert float(row[3]) == expected_error
+    if chi2 > 1:
+        assert float(row[4]) == 3.0
+        assert "unscaled error" in text
+    else:
+        assert len(row) == 4
+    assert result["fit"]["uncertainties"]["Bwid"] == 3.0
+    fixed = next(line.split() for line in text.splitlines() if line.startswith("B0 "))
+    assert fixed[3] == "fixed"
+    assert "(at bound)" in next(line for line in text.splitlines() if line.startswith("f "))
+
+
 def _failed_resonance_fit(**changes) -> dict:
     return {
         "success": False,
@@ -3446,10 +3501,10 @@ def test_a_windowed_line_with_both_flanks_and_depth_is_called_a_resonance() -> N
     # Resolved even at a poor chi2_red, which then qualifies its errors instead of
     # sending the agent off to look for a background it does not need.
     (note,) = _poor_fit_note(fit)
-    assert note.startswith("RESONANCE: the line at 19475.5 ± 6.5 (width 232.5)")
-    assert "16.0 errors from zero" in note and "chi2_red of 3.143" in note
-    # The scaled errors are printed, so nobody scales them by hand.
-    assert "± 11.5 on the centre and ± 21.3 on the width" in note
+    assert note.startswith("RESONANCE: the line at 19475.5 ± 11.5 (width 232.5 ± 21.3)")
+    assert "16.0 raw fit errors from zero" in note
+    assert "sqrt(chi2_red = 3.143)" in note
+    assert "poor-fit limitation" in note
     # A shallow line is no resonance, and the poor fit's note returns.
     (poor,) = _poor_fit_note(fit | {"uncertainties": fit["uncertainties"] | {"f": 0.004}})
     assert poor.startswith("NOTE: the fit converged at chi2_red 3.143")
