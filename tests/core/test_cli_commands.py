@@ -3128,6 +3128,7 @@ def _failed_resonance_fit(**changes) -> dict:
                 "x_max": 2000.0,
             },
         ],
+        "next_dip_windows": [],
     } | changes
 
 
@@ -3184,6 +3185,18 @@ def test_a_failed_resonance_fit_says_why_and_names_a_window_per_dip(tmp_path: Pa
         "The fit started away from them: refit with --initial B0_1=1200 --initial "
         "B0_2=1800, or fit one resonance per window on its own local background"
     ) in text
+    # Smaller dips beyond the model's lines get a window each, unless a stored fit holds one.
+    smaller = [{"x_min": 400.0, "x_max": 700.0}, {"x_min": 2300.0, "x_max": 2600.0}]
+    result["fit"] = _failed_resonance_fit(next_dip_windows=smaller)
+    text = _render(result, ReductionSettings(), _notes(result, [], [], [], []))
+    assert (
+        "NOTE: the scan holds 2 more dips this fit does not include, in 400–700; 2300–2600: "
+        "fit each on its own local background — --model 'LorentzianLCR + Linear' --xmin 400 "
+        "--xmax 700; --model 'LorentzianLCR + Linear' --xmin 2300 --xmax 2600"
+    ) in text
+    held = {"success": True, "parameters": {"B0": 550.0, "Bwid": 30.0}}
+    text = _render(result, ReductionSettings(), _notes(result, [], [], [], [held]))
+    assert "holds another dip this fit does not include, in 2300–2600: fit it" in text
 
 
 def test_fit_series_skips_run_numbers_the_folder_does_not_hold(

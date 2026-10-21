@@ -349,22 +349,27 @@ def fit_integral_scan(
         "resonance_windows": (
             [] if result.success else resonance_windows(fitted_scan, model, fixed or {})
         ),
-        # Where one more line would go: the seeder's window around the next dip
-        # (its centre can sit off the resonance on a curved background; the
-        # window still holds it).
         "x_range": [float(np.min(fitted_scan.x)), float(np.max(fitted_scan.x))],
-        "next_dip_windows": (
-            [
-                window
-                for window in resonance_windows(
-                    whole_scan, as_composite_model(f"LorentzianLCR + {expression}"), {}
-                )
-                if _holds_a_line(whole_scan, window)
-            ]
-            if result.success and any(c.name in _LCR_LINES for c in model.components)
-            else []
-        ),
     }
+    # Where more lines would go: after a converged fit, the seeder's window around
+    # the next dip (its centre can sit off the resonance on a curved background;
+    # the window still holds it); then every other dip a local line confirms.
+    named = (
+        [
+            window
+            for window in resonance_windows(
+                whole_scan, as_composite_model(f"LorentzianLCR + {expression}"), {}
+            )
+            if _held_line(whole_scan, window) is not None
+        ]
+        if result.success
+        else fit_payload["resonance_windows"]
+    )
+    fit_payload["next_dip_windows"] = (
+        (named if result.success else []) + _further_dips(whole_scan, named)
+        if any(c.name in _LCR_LINES for c in model.components)
+        else []
+    )
     return fitted_scan, fit_payload
 
 
@@ -414,20 +419,23 @@ def candidate_dip_windows(scan: FieldScan) -> list[dict[str, float]]:
     )
     indices = np.arange(scan.n_points)
     windows = []
-    for peak, width in zip(peaks, properties["widths"], strict=True):
+    for peak, width, prominence in zip(
+        peaks, properties["widths"], properties["prominences"], strict=True
+    ):
         half_span = max(2 * width, _WINDOW_MIN_POINTS / 2)
         windows.append(
             {
                 "centre": float(scan.x[peak]),
                 "x_min": float(np.interp(peak - half_span, indices, scan.x)),
                 "x_max": float(np.interp(peak + half_span, indices, scan.x)),
+                "prominence": float(prominence),
             }
         )
     return windows
 
 
-def _holds_a_line(scan: FieldScan, window: Mapping[str, Any]) -> bool:
-    """Whether one line on a straight background fits inside *window* as a resonance.
+def _held_line(scan: FieldScan, window: Mapping[str, Any]) -> float | None:
+    """The centre of the one line on a straight background that fits inside *window*, if any.
 
     A seeder's window on a curved background can hold only the background's
     rise or step, or a line's wing: there a line's fit runs its centre to the
@@ -435,13 +443,13 @@ def _holds_a_line(scan: FieldScan, window: Mapping[str, Any]) -> bool:
     """
     part = _cropped(scan, window["x_min"], window["x_max"])
     if part.x.size < _WINDOW_MIN_POINTS:
-        return False
+        return None
     model, parameters = _parameters(part, "LorentzianLCR + Linear", initial=None, fixed=None)
     result = fit_scan_model(part, model, parameters=parameters, extra_starts=1)
     centre = float(result.parameters["B0"].value)
     flank = DIP_FLANK_WIDTHS * abs(float(result.parameters["Bwid"].value))
     depth = float(result.parameters["f"].value)
-    return (
+    held = (
         bool(result.success)
         and not {"B0", "Bwid"} & set(result.params_at_bound)
         and window["x_min"] < centre - flank
@@ -449,6 +457,21 @@ def _holds_a_line(scan: FieldScan, window: Mapping[str, Any]) -> bool:
         # An ALC dip lowers the integral asymmetry, well beyond its error.
         and depth < -_DIP_SIGNIFICANCE * float(result.uncertainties["f"])
     )
+    return centre if held else None
+
+
+def _further_dips(scan: FieldScan, named: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The window of each interior minimum, deepest first, whose line no *named* or earlier window holds.
+
+    A wide minimum's window can reach a deeper neighbour and fit that line instead
+    of its own, so a window counts by where its line lands, not where it is centred.
+    """
+    listed = list(named)
+    for window in sorted(candidate_dip_windows(scan), key=lambda w: -w["prominence"]):
+        centre = _held_line(scan, window)
+        if centre is not None and not any(w["x_min"] <= centre <= w["x_max"] for w in listed):
+            listed.append(window)
+    return sorted(listed[len(named) :], key=lambda w: w["centre"])
 
 
 #: Single-line resonance shapes a scan can be searched for one more of.

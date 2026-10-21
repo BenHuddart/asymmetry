@@ -424,6 +424,8 @@ Delta 0.3505 0.2706 0.08  frequency 0.0326399  AICc 4241.2 8423.2
         ("the frequency shift of about 0.03 MHz", ["0.03"]),
         ("preferred by 274–480 in chi2", ["274", "480"]),
         ("Delta at 0.3505 drops by about 0.08", ["0.08"]),
+        # A step between two printed levels, printed by chance (Haiku, 2026-10-21).
+        ("Delta is 0.3505 and 0.2706; the step is about 0.08", ["0.08"]),
         ("Lambda falls to 0.2706 by 5000 G", []),
         ("| Tc (K) | 0.3505 | ± 0.08 |", []),
         ("| T_c | 0.3505 K | ± 0.08 |", []),
