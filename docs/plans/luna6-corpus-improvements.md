@@ -2174,3 +2174,6 @@ Confirmation7 now11/24scored:TCNQ6/6Musts4/4Shoulds andcuprate5/5Musts2/3Shoulds
 
 
 Confirmation7 now13/24scored:EuO5/5Musts1/3Shoulds sciencePASS/copyFAILdropsfourpaths+IMAGE_REVIEW_END;LLZ6/6Musts2/4Shoulds science/copyPASS. Totals70/73Musts,11/13science,12/13copy,11/13combined,13/13boundary,26/47Shoulds. Preserveplot/tablepointdifferencesandallcaveats;sourcefrozenremaining11.
+
+
+Confirmation7 now15/24scored:Sn5/5Musts3/4Shoulds science/copyPASS;Re6Zr5/7Musts1/6Shoulds scienceFAILmissingnearTcZF/TRSBcandidateandSCgapfit,copyPASS. Totals80/85Musts,12/15science,14/15copy,11/15combined,15/15boundary,30/57Shoulds. Correctprevious13-caseplancombinedcountto10/13(computedJSONwasalwayscorrect). Sourcefrozenremaining9.
