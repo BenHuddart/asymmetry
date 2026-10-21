@@ -2234,3 +2234,6 @@ Confirmation8 AFM5/5Musts1/3Shoulds science/copyPASS and independent magnetic ph
 
 
 Confirmation8 now18/24scored: maleic5/5Musts4/4Shoulds sciencePASS/copyFAIL after post-preparationFFTwidth correction; EuO5/5Musts1/3Shoulds science/copyPASS. Totals98/100Musts,17/18science,16/18copy,15/18combined,18/18boundary,38/67Shoulds. Mu-envelope kinetics/concentration/Arrhenius workflow repaired with logged-temperature/poor-fit caveats; source remains frozen through all24.
+
+
+Confirmation8 now20/24scored: LiFeAs7/8Musts3/6Shoulds scienceFAILomitsGaussianwidth/onsetdespitecompletedcomparison,copyPASS; highTFbenzene6/6Musts2/6Shoulds sciencePASS/copyFAILterminalLF. Totals111/114Musts,18/20science,17/20copy,15/20combined,20/20boundary,43/79Shoulds. IndependentAFMscopePASS. Preserve explicitLiFeAsM3judgementandallscientificcaveats; source remains frozen through all24.
