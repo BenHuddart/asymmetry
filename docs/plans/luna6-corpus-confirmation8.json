@@ -1,5 +1,5 @@
 {
-  "status": "running; 4/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 5/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -754,6 +754,163 @@
       ],
       "scored_at": "2026-10-21T03:34:27.824949+00:00",
       "reply_matches_saved_file": true
+    },
+    "spin-peierls": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Separates the TF 100 G runs from the ZF scan rather than fitting them as one series.",
+          "pass": true,
+          "evidence": "Separate16-run ZF and10-run100GTF tables and actual series memberships."
+        },
+        {
+          "requirement": "States what was used for alpha (a TF 100 G run, named), rather than silently assuming 1.0.",
+          "pass": true,
+          "evidence": "29929 named alpha reference0.9717 with forward/backward groups."
+        },
+        {
+          "requirement": "Reports on the full run range actually present (29919-29944), not only the subset the worksheet happens to tabulate.",
+          "pass": true,
+          "evidence": "\"26 runs...29919–29944\" and all grouped members retained."
+        },
+        {
+          "requirement": "Does not report findings for runs 29945-29951 as if they were analyzed — they are not present in this data folder.",
+          "pass": true,
+          "evidence": "No findings claimed for absent29945–29951."
+        },
+        {
+          "requirement": "Reports a change in ZF line shape between the highest- and lowest-temperature runs actually available.",
+          "pass": true,
+          "evidence": "Explicit actual ZF endpoints29923/59.419K steep early decay versus29920/297.874K much flatter early signal; both nonoscillatory. Snapshot pixels support comparison."
+        },
+        {
+          "requirement": "Contains no relaxation rate, frequency, or transition-temperature number not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "Rates/frequencies/temperatures directly printed; number/unit check clear, no physical arithmetic."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Accounts for every run in the block — the ZF runs below 130 K and the interleaved TF runs — rather than silently dropping any.",
+          "pass": true,
+          "evidence": "All26 members included, below130K ZF and interleavedTF separately fitted."
+        },
+        {
+          "requirement": "Discusses candidate fit functions for above vs below the transition, without inventing fitted values.",
+          "pass": true,
+          "evidence": "Multiple ZF exponential/Gaussian alternatives and cold/warm TF envelope candidates discussed, with flagged rows preventing a continuous ZF law."
+        },
+        {
+          "requirement": "Connects the observed line-shape change to the singlet-triplet / dimerisation physics described in the worksheet background.",
+          "pass": false,
+          "evidence": "No singlet-triplet/dimerisation interpretation; spin-Peierls label is mentioned but not connected physically."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. All scalar results match direct CLI survey/series/trend/FFT tables; no physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science6/6 and copy PASS; actual ZF endpoint shape comparison restored after reviewing reduced endpoint pixels. Physical dimerisation interpretation remains omitted; fit instability and absence of resolved spontaneous line lead to overcautious transition scope.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all33 completed commands inspected. All33 commands inspected, only summary edited. No physical arithmetic; all four review snapshots verified. Actual ZF cold/warm reduced pixels inspected independently.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 711.7,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 3,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "783bd761cea2f48b45afd4f7302ef7279e0bb5c5c82db19599860aa27027068c",
+      "audited_file_sha256": "783bd761cea2f48b45afd4f7302ef7279e0bb5c5c82db19599860aa27027068c",
+      "rubric_sha256": "45ec06c3c47445ea279531822116d0b68bbaaf3cb6a47c792093f64bc65b3bb6",
+      "staged_skill_sha256": "7aec2595cbec0f0a1bd10e4949822f76cfc94e35301159cc3f3285d84f2be9b4",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation8/spin-peierls",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "M5 now passes on explicit ZF observed trace shapes, not TF envelope or ZF parameter-plot inference; preserve previous wave judgement rather than regrade it.",
+        "Most ZF multi-rate fits unphysical; TF headline/envelope change cannot establish microscopic spin-Peierls mechanism.",
+        "Lack of resolved spontaneous precession is not itself evidence against a spin-Peierls transition; singlet-triplet candidate explanation absent.",
+        "S2 accepted for explicit competing functions across measured cold/warm scan, not a claimed reliable transition law."
+      ],
+      "judgement_calls": [
+        "S2 accepts competing fit functions and temperature-dependent envelopes without requiring a successful transition law."
+      ],
+      "number_evidence_commands": [
+        1,
+        6,
+        7,
+        8,
+        9,
+        10,
+        12,
+        13,
+        14,
+        15,
+        16,
+        18,
+        19,
+        20,
+        21,
+        23,
+        24,
+        25,
+        26
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "783bd761cea2f48b45afd4f7302ef7279e0bb5c5c82db19599860aa27027068c",
+        "summary.md": "783bd761cea2f48b45afd4f7302ef7279e0bb5c5c82db19599860aa27027068c",
+        "transcript.jsonl": "17b6edc5a0863d91b008afe0d1ae1f6c470212c1c7e4061ce5ae3840ec67c575",
+        "commands.txt": "9d2b6fa17c4a4130cf6dd0c2809e19e08209026a41147f3d1f127b89263185b6",
+        "cost.json": "6534e84cf6ab1f5ca00d29a00e28733c29b85a3df269ec67165be665edb50c18",
+        "image-inputs.json": "48826e48bc9a6e88743903ac3b7b5501eedaec71927ee18183c99d0585c40d41"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/reduced-29923.png",
+          "snapshot_path": "review-images/877d609d230e823a61a2a7c1c8d931907e927c49458c2d552735e97b649c8079.png",
+          "bytes": 43121,
+          "sha256": "877d609d230e823a61a2a7c1c8d931907e927c49458c2d552735e97b649c8079",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-29920.png",
+          "snapshot_path": "review-images/0a86f9a28cee33dc7a993ecb41b04858adabc6d74ded887fc495f26316745c7e.png",
+          "bytes": 40124,
+          "sha256": "0a86f9a28cee33dc7a993ecb41b04858adabc6d74ded887fc495f26316745c7e",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-scan/29922.png",
+          "snapshot_path": "review-images/301c2a28e1fdafb3a9593560ec3381570d473761e4a861bfc7de9d88c43b01ff.png",
+          "bytes": 87938,
+          "sha256": "301c2a28e1fdafb3a9593560ec3381570d473761e4a861bfc7de9d88c43b01ff",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/tf-scan/29919.png",
+          "snapshot_path": "review-images/f092de32009866ffbe01a2eae1db7e021c75e9c21a151219399deccef8e2a967.png",
+          "bytes": 94447,
+          "sha256": "f092de32009866ffbe01a2eae1db7e021c75e9c21a151219399deccef8e2a967",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T03:35:53.382733+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
@@ -763,7 +920,6 @@
     "ferromagnetic-nickel",
     "high-tc-cuprate",
     "copper-diffusion",
-    "spin-peierls",
     "afm-high-tf-mdu",
     "alc-tcnq",
     "ionic-motion-llz",
@@ -779,17 +935,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 4,
+    "scored": 5,
     "target": 24,
-    "scientific_pass": 4,
-    "must_pass": 21,
-    "must_total": 21,
-    "should_pass": 6,
-    "should_total": 14,
-    "exact_copy_pass": 3,
-    "literal_copy_pass": 3,
-    "combined_pass": 3,
-    "boundary_pass": 4
+    "scientific_pass": 5,
+    "must_pass": 27,
+    "must_total": 27,
+    "should_pass": 8,
+    "should_total": 17,
+    "exact_copy_pass": 4,
+    "literal_copy_pass": 4,
+    "combined_pass": 4,
+    "boundary_pass": 5
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round18 explicitly retires the first-turn image-manifest instruction after review; final turn returns the scientific report alone.",

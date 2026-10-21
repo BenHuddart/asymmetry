@@ -2213,3 +2213,6 @@ Fresh full24 confirmation8 LIVE at /home/ben/.cache/asymmetry-luna6-overnight-20
 
 
 Confirmation8 first four cases scored: molecular antiferromagnet5/5 Musts (copy fails one terminal LF), PTFE6/6, plateau5/5 and YMnAl5/5 (science and copy pass). All number/unit and boundary checks pass with the molecular FFT requested-window input exception recorded. Shoulds:1/3,1/3,3/5,1/3 respectively. Source remains frozen through all24; calibration, fit-quality and physical-scope caveats retained.
+
+
+Confirmation8 spin-Peierls now6/6 Musts,2/3 Shoulds; science, number/unit, strict copy and boundary pass. Actual ZF cold/warm endpoint trace shapes are explicitly compared and verified against reviewed pixels. Five cases scored:27/27 Musts,5/5 science,4/5 copy/combined,5/5 boundary,8/17 Shoulds. Source remains frozen through all24.
