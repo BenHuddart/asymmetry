@@ -1,5 +1,5 @@
 {
-  "status": "running; 18/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 19/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -3144,10 +3144,266 @@
       ],
       "scored_at": "2026-10-21T05:00:43.941049+00:00",
       "reply_matches_saved_file": true
+    },
+    "maleic-mu-kinetics": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Recognises the 2 G runs as muonium precession measurements and the 100 G runs as diamagnetic ones.",
+          "pass": true,
+          "evidence": "2G Mu envelope/oscillatory measurements separated from100G diamagnetic calibrations; not LF response."
+        },
+        {
+          "requirement": "Separates the samples by concentration, read from titles or notes, and says where the concentration values came from.",
+          "pass": true,
+          "evidence": "Relative0/.25/.5/1 concentrations from titles/notes and neat normalization, no molarity invented."
+        },
+        {
+          "requirement": "Reports the Mu relaxation rate rising with maleic acid concentration at a fixed temperature (290 K, or matched setpoints), from fits of the 2 G runs.",
+          "pass": true,
+          "evidence": "Actual fixed-frequency freephase2Gcomposition rates rise .567072/1.74181/2.25014/3.07982 us^-1."
+        },
+        {
+          "requirement": "Obtains a rate constant from the slope of λ_Mu against concentration with a CLI fit (e.g. `fit-series`/`fit-global` with `--order concentration --x ...`, then `trend --model Linear`), reported with its uncertainty and in the concentration units it used. A fit-quality caveat is fine; withdrawing the converged slope is not.",
+          "pass": true,
+          "evidence": "Actual Linear m2.820026±.515030 us^-1 per unit relativeconcentration,chi5.350 retained as conditional empirical slope."
+        },
+        {
+          "requirement": "Contains no rate constant, activation energy or fraction that was not produced by a tool call in this session (the worksheet's published values are background).",
+          "pass": true,
+          "evidence": "Rate slopes/Arrhenius diagnostics/amplitudes all direct CLI, no inferred fractions or physical arithmetic."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares deoxygenated with untreated water (the untreated Mu signal relaxes faster, or leaves no resolvable line: dissolved O₂).",
+          "pass": true,
+          "evidence": "Untreated water unresolved/faster damping contrasted with deoxygenated control and oxygen scavenging qualified."
+        },
+        {
+          "requirement": "Uses a calibration run appropriate to the sample being reduced rather than one alpha for the whole folder, or notes the alpha step.",
+          "pass": true,
+          "evidence": "Alpha step and sample-specific calibration provenance explicit."
+        },
+        {
+          "requirement": "Holds the Mu and diamagnetic frequencies or amplitudes common across the concentration set (shared in `fit-global`, or fixed) and says so.",
+          "pass": true,
+          "evidence": "Common2.744MHz frequency fixed for composition set, phase recovery explicit."
+        },
+        {
+          "requirement": "States that the Arrhenius step needs k_Mu at several temperatures, each from its own concentration fit, and either does it per temperature and fits the Arrhenius law through them with a command (`trend --from-fits … --model Arrhenius`) rather than by hand, or declines that step with the reason.",
+          "pass": true,
+          "evidence": "Separate concentration slopes at eachT thenactualfrom-fits Arrhenius, invalidwarmrows excluded; no directlambda(T) activation claim."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct CLI timefits, supplied-concentration slope fits and from-fits Arrhenius outputs; no molarity, manual regressions or physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science5/5, allfourShoulds and strict copy pass. True Mu-envelope/concentration workflow and per-temperature slopes retained, with severe conditional-kinetics caveats.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all112 completed commands inspected. All112 completed commands inspected. CLI/report edits only; no scripted physical calculations. Four snapshot hashes verified; composition and untreated-water pixels inspected, apparent table/plot mismatch retained.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 2181.4,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 1,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series composition-290-freephase --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-278 --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-278 --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-288 --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-298 --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-308 --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-318 --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-328 --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-338 --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-348 --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-358 --model Linear --param Lambda'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series muonium-k-rate-vs-temperature --from-fits composition-290-freephase,kinetics-278,kinetics-288,kinetics-298,kinetics-308,kinetics-318,kinetics-328,kinetics-338,kinetics-348,kinetics-358 --fit Lambda:m --order temperature --model Arrhenius --param m --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series muonium-k-rate-vs-temperature --from-fits composition-290-freephase,kinetics-278,kinetics-288,kinetics-298,kinetics-308,kinetics-318,kinetics-328,kinetics-338,kinetics-348,kinetics-358 --fit Lambda:Linear --order temperature --model Arrhenius --param m --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series muonium-k-rate-vs-logged-temperature --from-fits composition-290-freephase,kinetics-278,kinetics-288,kinetics-298,kinetics-308,kinetics-318,kinetics-328,kinetics-338,kinetics-348,kinetics-358 --fit Lambda:Linear --order sample_temperature_logged --model Arrhenius --param m --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series composition-290-frequency-free --model Linear --param Lambda --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series muonium-k-rate-vs-logged-temperature-valid --from-fits composition-290-freephase,kinetics-278,kinetics-288,kinetics-298,kinetics-308,kinetics-318,kinetics-328,kinetics-338,kinetics-348,kinetics-358 --fit Lambda:Linear --order sample_temperature_logged --exclude kinetics-318,kinetics-328,kinetics-338,kinetics-348,kinetics-358 --model Arrhenius --param m --plot'"
+      ],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry reduce /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --runs 78251,78257,78259,78261,78263,78265,78267,78269,78271,78273,78275 --alpha-from 78252 --deadtime from_file --background range --plot --plot-tmax 4'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc \"asymmetry recipe /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --expression 'Oscillatory * Exponential + Constant' --run 78277 --initial frequency=2.744 --name mu-line --tmax 4\"",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series kinetics-278 --model Linear --param Lambda'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics/data --series muonium-k-rate-vs-temperature --from-fits composition-290-freephase,kinetics-278,kinetics-288,kinetics-298,kinetics-308,kinetics-318,kinetics-328,kinetics-338,kinetics-348,kinetics-358 --fit Lambda:m --order temperature --model Arrhenius --param m --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend asymmetry-work --series quarter-warm-relax --workdir asymmetry-work'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "0a6a80916d053f9683661ad92cd12e6425d0a2f867d449628c282daeae966658",
+      "audited_file_sha256": "0a6a80916d053f9683661ad92cd12e6425d0a2f867d449628c282daeae966658",
+      "rubric_sha256": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/maleic-mu-kinetics",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "All primarycompositionfits remain poor; freefrequency diagnostic differs from survey lines, loggedtemperatures vary across nominal290K comparison.",
+        "Warmquarter runs lack resolved lines; oscillatory fits excluded and relaxation-only fits fail/poor. Neat/half fixed-frequency rate trends not independently resolved Mu lines.",
+        "Retainedfive-slope Arrhenius Ea186.651778±40.016316meV has undetermined prefactor a4621±7270; correctly not established law despite CLI calling parameters determined.",
+        "Apparent reviewed composition PNG point/table mismatch: hash4ac9004c... also current; pixels appear near.62/1.94/2.46/3.15 while directcommand19 reports.567072/1.74181/2.25014/3.07982. Not confirmed plot bug; controlled reproduction after freeze required.",
+        "Reviewquartertrend became invalid after later no-precession diagnostics; final explicitly withdraws that visual full-range kinetic interpretation."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        4,
+        6,
+        7,
+        8,
+        10,
+        11,
+        12,
+        13,
+        14,
+        16,
+        17,
+        18,
+        19,
+        20,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        64,
+        65,
+        70,
+        71,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        90,
+        91,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        108,
+        109
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "0a6a80916d053f9683661ad92cd12e6425d0a2f867d449628c282daeae966658",
+        "summary.md": "0a6a80916d053f9683661ad92cd12e6425d0a2f867d449628c282daeae966658",
+        "transcript.jsonl": "791d889aa4e9126e1f82a11e8b3ffa0e1fce5f644600fb586b7ee2e07a7757f6",
+        "commands.txt": "46667189395b3ea2b1fe28fe2501311b2c7aaeddc69327852522ca93a7bcc079",
+        "cost.json": "68610b1df54b55fb89d4a1716f329d0bf9c65d679092e6d7778221f95ec178d5",
+        "image-inputs.json": "506d7b144256122f9d18ca42b379420d705b40d7ef9c4903c38d1cd836b82198"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/composition-290-freephase-trend-Lambda.png",
+          "snapshot_path": "review-images/4ac9004c5eeefe2257a4d3f31e836f88f03239f7e21600cf54443d0c6105c709.png",
+          "bytes": 28303,
+          "sha256": "4ac9004c5eeefe2257a4d3f31e836f88f03239f7e21600cf54443d0c6105c709",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/quarter-temperature-trend-Lambda.png",
+          "snapshot_path": "review-images/d702801abf6d42763258b2934c163f79dd870a5ff60c0f8ecea76ea934b1d00d.png",
+          "bytes": 33115,
+          "sha256": "d702801abf6d42763258b2934c163f79dd870a5ff60c0f8ecea76ea934b1d00d",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/half-temperature-trend-Lambda.png",
+          "snapshot_path": "review-images/3f509eb36f1467800433c29ad030bf0c4c17b917caac918d9efb68ec318b2fe1.png",
+          "bytes": 29149,
+          "sha256": "3f509eb36f1467800433c29ad030bf0c4c17b917caac918d9efb68ec318b2fe1",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/reduced-78291.png",
+          "snapshot_path": "review-images/97253cf38b4e38c88e3ed2c33eeb011fa2cd6b0543f916c755cb3ee0557b4427.png",
+          "bytes": 37230,
+          "sha256": "97253cf38b4e38c88e3ed2c33eeb011fa2cd6b0543f916c755cb3ee0557b4427",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T05:01:58.004541+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
-    "maleic-mu-kinetics",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
@@ -3155,17 +3411,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 18,
+    "scored": 19,
     "target": 24,
-    "scientific_pass": 16,
-    "must_pass": 100,
-    "must_total": 101,
-    "should_pass": 35,
-    "should_total": 69,
-    "exact_copy_pass": 18,
-    "literal_copy_pass": 18,
-    "combined_pass": 16,
-    "boundary_pass": 18
+    "scientific_pass": 17,
+    "must_pass": 105,
+    "must_total": 106,
+    "should_pass": 39,
+    "should_total": 73,
+    "exact_copy_pass": 19,
+    "literal_copy_pass": 19,
+    "combined_pass": 17,
+    "boundary_pass": 19
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round19 explicitly distinguishes diagnostic plain audit from final preparation after every edit; final report/capture semantics stay fixed.",

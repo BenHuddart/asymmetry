@@ -2291,3 +2291,6 @@ Confirmation9 now17/24scored:Ni7/7Musts2/4Shoulds science/number/unit/strictcopy
 
 
 Confirmation9 now18/24scored:highTFbenzene6/6Musts2/6Shoulds science/number/unit/strictcopy/boundaryPASS. Totals100/101Musts,16/18science,18/18copy,16/18combined,18/18boundary,35/69Shoulds;AFMscopePASS. Allcoadd/correlationnumbersprinted;calibration/nearresolution/instrumentartifactgapsretained;sourcefrozenremaining6.
+
+
+Confirmation9 now19/24scored:maleic5/5Musts4/4Shoulds science/number/unit/strictcopy/boundaryPASS. Totals105/106Musts,17/19science,19/19copy,17/19combined,19/19boundary,39/73Shoulds;AFMscopePASS. PrimaryMuconcentrationslopeandfrom-fitsArrheniusworkflowretainedwithpoorfit/loggedT/unresolvedwarmcaveats. ApparentcompositionPNG/tablepointdifferencehash4ac900...requirescontrolledpostfreezereproduction,notconfirmedbug. Sourcefrozenremaining5.
