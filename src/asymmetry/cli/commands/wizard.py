@@ -195,6 +195,17 @@ def run(args: argparse.Namespace) -> None:
             "describe a time-independent contribution or offset; it alone does not "
             "measure a non-superconducting volume fraction. Do not turn sigma_bg, a "
             "width-law floor, into a signal fraction."
+            "\nSUPERCONDUCTING WORKFLOW: the selected tf-superconductor scope supplies "
+            "the hypothesis; test it with a Gaussian-width temperature series ordered "
+            "by logged sample temperature. If secondary amplitudes/harmonics are "
+            "unstable, compare a simpler Oscillatory * Gaussian + Constant recipe "
+            "without discarding the primary width. Run trend --model SC_SWave --param "
+            "<sigma-column> and SC_DWave on that series, report Tc/gap parameter/errors "
+            "and chi2, and judge the curves. In a matching ZF KT scan compare the full "
+            "width step with that TF Tc and with the electronic rate, then use LF "
+            "decoupling to test whether extra fields are static. A small static width "
+            "onset without an electronic-rate step can be a spontaneous-field/TRSB "
+            "candidate; absence of a step in the electronic rate does not refute it."
         )
     note = window_note(workdir, [args.run])
     if note is not None:

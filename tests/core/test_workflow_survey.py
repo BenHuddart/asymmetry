@@ -1099,6 +1099,8 @@ def test_a_transverse_field_across_another_pair_names_that_pair() -> None:
         (None, "nickel_T=100_F=0", "nickel"),
         ("LiFeAs powder", "LFA T=2 B=400", "LiFeAs powder"),
         (None, "", ""),
+        ("Temp=290, Field=50, Sample=BE/B; RF=10", "ignored", "BE/B"),
+        (None, "Temp=300, Field=100, Sample=BE/B; RF=20", "BE/B"),
     ],
 )
 def test_a_runs_sample_is_its_own_name_or_its_title_before_the_conditions(

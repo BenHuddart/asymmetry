@@ -488,7 +488,13 @@ _SAY_SO: tuple[_SaySo, ...] = (
     ),
     _SaySo(
         _pattern(r"no radical ALC or hyperfine model is available"),
-        _pattern(r"model[^.\n]{0,60}(?:available|exist)|not (?:been )?converted|site assignment"),
+        _pattern(
+            r"no (?:radical ALC|hyperfine)[^.\n]{0,60}(?:available|implemented|provided|supported)"
+            r"|(?:radical ALC|hyperfine (?:model|Hamiltonian))[^.\n]{0,80}"
+            r"(?:unavailable|not (?:available|implemented|provided|supported))"
+            r"|(?:CLI|tool|Asymmetry)[^.\n]{0,50}(?:lacks?|does not (?:implement|provide|support))"
+            r"[^.\n]{0,50}(?:radical ALC|hyperfine)"
+        ),
         "say that no radical ALC or hyperfine model is available, so the resonance fields are "
         "not converted into couplings or sites",
     ),

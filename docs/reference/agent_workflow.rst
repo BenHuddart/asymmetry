@@ -274,7 +274,11 @@ rest stands out as its own measurement.
 Runs whose line sits within 15 % of muonium's weak-field triplet frequency for
 their field (about 1.394 MHz per gauss) are named on a ``MUONIUM:`` line, with
 the ``recipe`` (one damped line started at a low-field run's own line) and the
-``fit-series`` that chains it up the field scan.
+``fit-series`` that chains it up a field scan. Same-field detections instead
+print ``MUONIUM KINETICS:``: compare temperature or composition using the
+muonium oscillation's envelope rate, with frequency and phase constrained by
+a reference and an early window that retains the oscillation. A high-field
+diamagnetic control or slow late-time baseline is not that reaction rate.
 Each alpha-calibration candidate is listed with its own
 measured alpha, and where alpha moves by more than 10 % between consecutive
 candidates in run order — a sample change, a moved detector, a second
@@ -1140,7 +1144,14 @@ undetermined ones at a textbook value and report the rest with it stated.
 Trend hints defer mechanism selection to the supplied experiment context.
 Cooling-induced broadening and a line shift alone do not identify a
 superconducting phase; established magnetic systems require a magnetic
-interpretation rather than an automatic gap-law fit.
+interpretation rather than an automatic gap-law fit. Generic trend hints
+therefore offer bounded local-susceptibility, internal-field and inequivalent-site
+hypotheses without printing gap-law commands. An explicitly selected
+``tf-superconductor`` wizard scope prints the Gaussian-width/gap-law workflow
+and the matching ZF/LF tests for a small static-field onset. A cold-end excess
+compares the actual next measured temperature only when both estimates pass
+the parameter-quality gates; a failed intervening point cannot be skipped and
+a distant point called adjacent.
 
 Generalized Redfield exponents have a model-specific positive lower bound;
 this does not constrain Linear slopes. Initial Redfield fluctuation frequencies

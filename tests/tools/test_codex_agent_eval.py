@@ -304,3 +304,12 @@ def test_prepared_reply_is_raw_stdout_and_requires_success() -> None:
         assert not runner.final_report_audited(changed, [event])
     failed = event | {"item": event["item"] | {"exit_code": 1}}
     assert not runner.final_report_audited(report, [event, failed])
+
+
+def test_final_review_retires_the_first_turn_control_manifest():
+    runner = _load_runner()
+    assert (
+        "first-turn instruction to end with an image manifest is now satisfied"
+        in runner.FINAL_REVIEW_PROMPT
+    )
+    assert "second turn ends with the scientific report alone" in runner.FINAL_REVIEW_PROMPT

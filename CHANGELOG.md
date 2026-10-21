@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Trend endpoint comparisons retain the actual adjacent measurement before
+  applying quality gates. Survey guidance distinguishes same-field muonium
+  kinetics from field response and extracts sample labels from acquisition
+  descriptions. Magnetic-response hints and explicitly selected superconducting
+  workflows remain separate; report audits require explicit model-capability
+  limitations, and final image review retires the first-turn control manifest.
+
 - User-requested reduction binning rejects factors that would alias detected
   native spectral lines. Reply preparation emits only the passed report body
   and fails with nonzero status when checks remain; the evaluation runner

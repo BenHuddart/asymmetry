@@ -2614,6 +2614,8 @@ def test_wizard_prints_its_spectral_evidence_and_keeps_a_screening_window(
             str(CALIBRATION_RUN),
             "--geometry",
             "TF",
+            "--scope",
+            "tf-superconductor",
             "--tmax",
             "6",
             "--workdir",
@@ -2622,6 +2624,9 @@ def test_wizard_prints_its_spectral_evidence_and_keeps_a_screening_window(
     )
     out = capsys.readouterr().out
     # 100 G precesses at 1.355 MHz; the line and the fitted values are printed.
+    assert "SUPERCONDUCTING WORKFLOW" in out
+    assert "SC_SWave" in out and "SC_DWave" in out
+    assert "LF decoupling" in out and "spontaneous-field/TRSB" in out
     assert "Spectral lines: 1.3" in out
     assert "Recommended fit: " in out
     assert "Fit windows (retained bin centres)" in out
@@ -3744,7 +3749,7 @@ def test_a_dip_another_fit_of_the_scan_holds_is_not_announced_again() -> None:
     assert any("another dip" in note for note in _poor_fit_note(fit, [broad]))
 
 
-def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
+def test_a_shift_with_a_growing_width_keeps_mechanism_context_explicit() -> None:
     from asymmetry.cli.commands.trend import _law_hints
     from asymmetry.core.workflow.series import TrendTable
 
@@ -3768,10 +3773,10 @@ def test_a_diamagnetic_shift_with_a_growing_width_offers_a_gap_law() -> None:
     text = "\n".join(
         _law_hints("tf", TrendTable("temperature", columns, rows), ["frequency", "sigma"])
     )
-    assert "interpretation is a hypothesis to test" in text
-    assert "in an established magnetic system discuss internal" in text
-    assert "test applies only when the experiment supports a superconducting hypothesis" in text
-    assert "--model SC_SWave --param sigma" in text
+    assert "magnetic-response hypothesis" in text
+    assert "phase identity is unknown" in text
+    assert "Select tf-superconductor only when supplied experiment" in text
+    assert "SC_SWave" not in text
     # A width that narrows on cooling (no vortex lattice) gets no gap law.
     flipped = [row | {"sigma": w} for row, w in zip(rows, widths[::-1], strict=True)]
     text = "\n".join(
@@ -4106,3 +4111,55 @@ def test_photo_period_audit_requires_one_common_run_fitted_in_both_periods(
     for root in roots:
         (root / "fits" / f"relax-{run}.json").write_text(json.dumps({"run": run}))
     assert not any("PERIOD COMPARISON:" in m for m in report_obligations(roots, "A report."))
+
+
+@pytest.mark.parametrize("varied", [False, True])
+def test_muonium_kinetics_and_field_response_are_different_scans(workflow_folder, tmp_path, varied):
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.workflow.survey import MUONIUM_MHZ_PER_G, survey_folder
+
+    survey = survey_folder(workflow_folder)
+    rows = [
+        replace(
+            row,
+            field=field,
+            precession=replace(
+                row.precession, state="other", frequency_mhz=field * MUONIUM_MHZ_PER_G
+            ),
+        )
+        for row, field in zip(survey.runs[:2], [2.0, 4.0 if varied else 2.0], strict=True)
+    ]
+    text = _render(replace(survey, runs=rows, scans=[]), tmp_path / "survey.json")
+    if varied:
+        assert "MUONIUM:" in text
+        assert "--order field" in text
+        assert "instrument's frequency response" in text
+        assert "MUONIUM KINETICS:" not in text
+    else:
+        assert "MUONIUM KINETICS:" in text
+        assert "--order field" not in text
+        assert "--order concentration --x" in text
+        assert "fix/share its frequency and phase" in text
+        assert "not the high-field diamagnetic control" in text
+
+
+def test_a_flagged_next_temperature_cannot_promote_a_distant_point_to_adjacent():
+    from asymmetry.cli.commands.trend import _edge_comparisons
+    from asymmetry.core.workflow.series import TrendTable
+
+    rows = [
+        {"key": str(i), "x": t, "nu": rate, "nu_err": 0.001, "params_at_bound": [], "flags": flags}
+        for i, (t, rate, flags) in enumerate(
+            [(5, 0.1, []), (10, 0.08, ["failed"]), (100, 0.01, [])]
+        )
+    ]
+    notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu"]))
+    assert "COLD-END EXCESS" not in notes
+    assert "minus next" not in notes
+    assert "SPECTRAL ENDPOINTS" in notes
+    rows[1]["flags"] = []
+    notes = "\n".join(_edge_comparisons(TrendTable("temperature", [], rows), ["nu"]))
+    assert "next measured temperature, run 1" in notes
+    assert "0.080000" in notes

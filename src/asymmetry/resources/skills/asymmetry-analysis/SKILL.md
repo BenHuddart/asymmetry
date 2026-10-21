@@ -877,7 +877,11 @@ prevent a conditional explanation of narrowing by reorientation averaging
 hyperfine anisotropy when the measured comparison supports it.
 `STABILITY` compares windows/backgrounds for the same runs; agreement there
 cannot erase a `COMPARE` difference between separate conditions. Keep each
-comparison's two scan names beside its conclusion.
+comparison's two scan names beside its conclusion. Keep the physical explanation
+in the final report: a width/field table and a statement that no coupling was
+extracted do not explain reorientation averaging hyperfine anisotropy. Separately
+state whether the CLI lacks the radical ALC model; "not attempted" or "no site
+assignment" does not describe that capability limit.
 `COMPARE` also labels conditional fitted estimates when flanks are incomplete:
 retain the direction of those estimates with their window/background caveat,
 without calling either feature a resolved line or a measured physical shift.
@@ -1291,6 +1295,11 @@ magnetic interpretations; a generic TF broadening cue does not make it a
 superconducting experiment. If phase information is missing, still interpret
 measured shifts and field distributions as bounded magnetic-response hypotheses
 (local susceptibility, internal-field distributions or inequivalent environments).
+For closely split high-field crystal lines, include a bounded staggered-field
+or field-induced canting hypothesis when appropriate, without assigning a phase,
+site or angle. Do not run gap laws merely because a generic trend hint names them.
+A selected superconducting experimental scope instead calls for a conditional
+Gaussian-width/gap-law test and comparison with ZF/LF evidence.
 State what evidence could distinguish them. A lack of a phase label is not a
 reason to omit the magnetic interpretation, and does not by itself justify a
 vortex-lattice or superconducting gap claim. Name the actual calibrant and applied
@@ -1317,7 +1326,10 @@ component using the measured line, suitable early-time window and calibration;
 compare a constrained/shared-frequency or amplitude model across the reaction
 coordinate. Report kinetic slopes only from that component's measured rates,
 with a stated concentration scale and temperature matching. Merely fitting all
-runs with a generic decay does not complete the kinetic workflow.
+runs with a generic decay does not complete the kinetic workflow. A set of Mu
+lines all measured at one field is not an instrument frequency-response scan:
+keep the composition/temperature variable and the muonium envelope rate. Fit a
+short early window before the late diamagnetic/background tail can dominate.
 
 
 **AICc ranks the candidates; the physics picks the model.** The wizard's

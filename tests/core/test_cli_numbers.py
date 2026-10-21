@@ -927,3 +927,28 @@ def test_muonium_identity_is_not_an_unrelated_failed_species_fit() -> None:
     log = "MUONIUM: runs 10-12 have a fast line."
     assert unstated("The muonium model failed on the Ag control.", log)
     assert not unstated("Muonium amplitude falls with the instrument frequency response.", log)
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "No site assignment was attempted; fields were not converted into couplings.",
+        "A hyperfine model was not attempted because the scan is incomplete.",
+    ],
+)
+def test_unattempted_extraction_does_not_state_a_cli_capability_limit(description):
+    from asymmetry.cli._numbers import unstated
+
+    log = "No radical ALC or hyperfine model is available."
+    assert unstated(description, log)
+    assert not unstated("The CLI lacks a radical ALC model, so no couplings are extracted.", log)
+    assert not unstated("A radical ALC model is not implemented in this CLI.", log)
+
+
+def test_same_field_muonium_does_not_owe_a_frequency_response_claim():
+    from asymmetry.cli._numbers import unstated
+
+    assert not unstated(
+        "Muonium envelope rates are compared across composition at the same field.",
+        "MUONIUM KINETICS: runs 10-12 precess at one field.",
+    )

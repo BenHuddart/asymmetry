@@ -316,19 +316,33 @@ def _render(survey, survey_path: Path) -> str:
         middle = sorted(muonium, key=lambda row: row.field)[len(muonium) // 4]
         listed = run_spec(sorted(row.run_number for row in muonium), separator=", ")
         folder = shlex.quote(survey.folder)
+        varied_field = len({row.field for row in muonium}) > 1
         lines.append(
-            f"MUONIUM: runs {listed} precess near {MUONIUM_MHZ_PER_G:.4g} MHz per gauss of their "
+            f"{'MUONIUM' if varied_field else 'MUONIUM KINETICS'}: runs {listed} precess near {MUONIUM_MHZ_PER_G:.4g} MHz per gauss of their "
             f"field (the other@ line), muonium's triplet precession in a weak transverse field, "
             f"not the bare muon's {field_gauss_to_frequency_mhz(1.0):.4g} MHz/G. Fit them as one "
             f"precessing line, not with the wizard:\n"
             f"  asymmetry recipe {folder} --expression 'Oscillatory * Exponential + Constant' "
             f"--run {middle.run_number} --initial "
             f"frequency={middle.precession.frequency_mhz:.4g} --name mu-line\n"
-            f"  asymmetry fit-series {folder} --runs "
-            f"{run_spec(sorted(row.run_number for row in muonium))} --recipe mu-line --order "
-            f"field --start {middle.run_number}\n"
-            f"Report the line's amplitude against field (falling as its frequency rises: the "
-            f"instrument's frequency response) and the field where it is lost."
+            + (
+                f"  asymmetry fit-series {folder} --runs "
+                f"{run_spec(sorted(row.run_number for row in muonium))} --recipe mu-line "
+                f"--order field --start {middle.run_number}\n"
+                "Report the line's amplitude against field (falling as its frequency "
+                "rises: the instrument's frequency response) and the field where it is lost."
+                if varied_field
+                else "These detected lines are at one field, not a field/frequency-response "
+                "scan. Compare their temperatures and compositions. For reaction kinetics, "
+                "the rate belongs to this muonium oscillation, not the high-field "
+                "diamagnetic control or a slow late-time baseline. Reduce the least-reactive "
+                "reference with its block's alpha, inspect an early window containing the "
+                "oscillation, and fix/share its frequency and phase across the same-field "
+                "composition set. A second slow diamagnetic term or constant may be needed. "
+                "Use --order concentration --x from the titles/notes and fit Linear to "
+                "the muonium envelope rate. A missing rapidly damped line calls for this "
+                "constrained early-window test, not a new microscopic Hamiltonian."
+            )
         )
         lines.append("")
     unrecorded = [

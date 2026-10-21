@@ -1003,7 +1003,11 @@ def build_run_row(
 
 def sample_name(row: RunRow) -> str:
     """The run's sample: the file's own name for it, else its title before any ``T=``/``F=``."""
-    return row.sample or re.split(r"[\s_,]+[TFB]\s*=", row.title, maxsplit=1)[0].strip()
+    name = row.sample or row.title
+    labelled = re.search(r"\bSample\s*=\s*([^,;]+)", name, re.IGNORECASE)
+    if labelled:
+        return labelled.group(1).strip()
+    return re.split(r"[\s_,]+[TFB]\s*=", name, maxsplit=1)[0].strip()
 
 
 #: A sample named by a leading number over a name ("0.25 M salt/water"):

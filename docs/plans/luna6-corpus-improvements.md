@@ -4,8 +4,8 @@ The user resumed the improvement/evaluation loop on 20 October, with a hard
 stop at **07:00 Europe/London on 21 October 2026 (06:00 UTC)**. After each
 completed wave score actual replies, make general CLI/skill and eval-harness
 repairs, validate and commit before another wave. Scientific rubrics remain
-fixed. Trial twelve concurrent cases with one wizard worker each and numerical
-library threads one; resource measurements must determine whether to keep it.
+fixed. Trial twelve concurrent cases with the wizard-worker environment default one
+(not an enforced ceiling) and numerical library threads one; resource measurements must determine whether to keep it.
 Do not launch a full gate after 04:30 UTC. The supervised evaluation process
 tree must stop by the deadline; retain interruption records for unfinished
 attempts. Pause the follow-up by the deadline or on a genuinely passing fresh
@@ -27,8 +27,8 @@ that warning must be resolved as well as the literal rubric failures.
   skill and rubrics frozen while the wave runs. Score the completed reports
   before starting the next round, recording Must/Should evidence, number and
   boundary checks, model/host, commit, skill/rubric hashes, and first attempts.
-- For confirmation4, trial twelve eval cases concurrently, with wizard fit
-  workers limited to one per case and all BLAS thread counts pinned to one.
+- For confirmation4, trial twelve eval cases concurrently, with the wizard-worker environment default one per case (explicit agent
+  overrides remain possible) and all BLAS thread counts pinned to one.
   Confirmation3 used six cases/two wizard workers; earlier waves used three cases. Check available memory and CPU/memory PSI
   before launching and sample the process tree while running; reduce load
   if pressure rises. Never overlap broad tests with live evaluations. Cap
@@ -2201,3 +2201,9 @@ Confirmation7 COMPLETE24/24scored:corannulene8/10Musts2/6Shoulds scienceFAILmiss
 
 
 Confirmation7 final verification: all24 raw final agent_messages equal last-message.md and actual summary.md bytes; 403 frozen source entries, skill/rubric/raw artifacts and supplied review-image hashes verified. 2 nominated paths changed after review; supplied/current hashes retained. Fresh gate FAIL:140/147Musts,20/24science,22/24strictcopy,18/24combined,24/24boundary,52/104Shoulds; independent AFM scope FAIL. Twelve-case wall61.04min,minavailable19.40GiB,peak summedRSS9.90GiB(shared double count),memoryPSIpeak0.72,CPUavg10peak13.79. No eval live; freeze ends. Round18 prioritizes actual-adjacent endpoint invariant, constant-field Mu kinetics versus frequency response, bounded magnetic context and final report/control separation. Fixed scientific rubrics/two-turn semantics/strict raw bytes remain. Keep12; no controlled speedup claim. Deadline06:00UTC/fullgatecutoff04:30UTC.
+
+
+Round18 implemented, not committed; no eval live. General repairs choose actual adjacent temperatures before parameter-quality gates, distinguish same-field muonium kinetics from a field-response scan, extract labelled sample identities from full acquisition descriptions, and require an explicit radical-ALC model capability limitation. Generic TF trend hints offer bounded magnetic hypotheses without SC commands; explicitly selected tf-superconductor scope prints Gaussian-width/gap-law and ZF/LF checks. Packaged skill retains primary Mu-envelope kinetics and molecular reorientation interpretation; final review explicitly retires the first-turn manifest, with strict capture unchanged. Focused452pass, lint/structural/skill/generatedreferencepass,docs80existingwarnings; fast tier running /tmp/luna6-round18-fast.log exec91100. Standard once after fast with scratch XDG homes, then commit and fresh full24 confirmation8 at12. Prepared external launcher/helper are /tmp/launch-luna6-confirmation8.py and /tmp/luna6_confirmation8_score_utils.py, not run. Deadline06UTC/cutoff04:30UTC.
+
+
+Round18 validation complete: **452 focused and 5,958 fast tests passed** (fast: 10 skipped, 1 xfailed). Lint, structural, skill and generated-reference checks passed; Sphinx retained 80 existing warnings. Standard: **9,971 passed, four failed, 25 skipped, one xfailed** in 454.62 seconds. The failures are exactly the two documented fit-parameter-table and two grouping-dialog sizing tests. No worker crashes or errors; retain the QScreen wrapper-lifetime warning. Standard remains not green; no GUI changes were made. Logs are `/tmp/luna6-round18-{focused,fast,docs,lint,structural,standard}.log` and will be copied into confirmation8. Commit this implementation before the fresh full24 wave, with twelve cases, one wizard-worker environment default (overridable), numerical threads one, fixed rubrics and unchanged two-turn/strict-byte semantics.

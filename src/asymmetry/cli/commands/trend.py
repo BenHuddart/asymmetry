@@ -489,8 +489,8 @@ def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
         if len(rows) < 2:
             continue
         first = rows[0]
-        following = next((row for row in rows[1:] if row["x"] > first["x"]), None)
-        if following is None:
+        following = next((row for row in endpoints if row["x"] > first["x"]), None)
+        if following is None or following not in rows:
             continue
         difference = first[param] - following[param]
         error = math.hypot(first[f"{param}_err"], following[f"{param}_err"])
@@ -960,23 +960,18 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
                     hints.append(
                         f"{frequencies[0]} falls below its warm value on cooling while "
                         f"{widths[0]} grows: compare a Gaussian-width temperature series "
-                        "before deciding the mechanism. Read the supplied experiment "
-                        "context first: in an established magnetic system discuss internal "
-                        "field distributions and magnetic ordering, not superconducting "
-                        "gap laws. The following gap-model test applies only when the "
-                        "experiment supports a superconducting hypothesis. A vortex-lattice "
-                        "interpretation is a hypothesis to test, not established by this "
-                        "trend or a sample abbreviation alone — "
-                        + (
-                            f"fit the Gaussian width: {command} SC_SWave --param {widths[0]}, "
-                            "then SC_DWave."
-                            if re.sub(r"_\d+$", "", widths[0]) == "sigma"
-                            else "obtain a Gaussian-width series with an "
-                            "Oscillatory * Gaussian + Constant recipe. Fit SC_* to sigma, "
-                            "not to this exponential Lambda; the two envelopes describe "
-                            "different field distributions. A conditional gap-model test "
-                            "still needs a context-supported superconducting hypothesis."
-                        )
+                        "before deciding the mechanism. A magnetic-response hypothesis "
+                        "is a temperature-dependent local susceptibility or a distribution "
+                        "of internal fields; close lines can represent inequivalent sites "
+                        "or magnetic sublattices, and field-induced canting is a possible "
+                        "mechanism to test, not a measured angle. State this bounded "
+                        "magnetic interpretation even when the phase identity is unknown. "
+                        "A generic shift/width cue does not justify superconducting gap "
+                        "laws. Select tf-superconductor only when supplied experiment "
+                        "context supports that hypothesis; its wizard prints the gap-law "
+                        "workflow. For an exponential envelope, first compare an "
+                        "Oscillatory * Gaussian + Constant recipe rather than calling "
+                        "Lambda a Gaussian sigma."
                     )
             if shift is not None:
                 hints.append(

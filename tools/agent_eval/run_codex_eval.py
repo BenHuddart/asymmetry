@@ -54,6 +54,10 @@ folder coverage, each scan's run members and geometry evidence, calibration,
 the physical meaning of every model component, and the fit/FFT windows and
 resolution alongside the values they qualify. Explain any uncompleted work.
 
+The first-turn instruction to end with an image manifest is now satisfied and
+no longer applies. This second turn ends with the scientific report alone.
+List product directories or decisive files once; a complete report need not
+repeat every exploratory output path or duplicate every diagnostic table.
 After inspecting these images, write the complete final report to summary.md
 and resolve asymmetry audit summary.md findings. After the last edit, run
 asymmetry audit summary.md --prepare-reply. A successful preparation emits only
