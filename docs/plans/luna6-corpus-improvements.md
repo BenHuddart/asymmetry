@@ -2171,3 +2171,6 @@ Confirmation7 now9/24scored:plateau5/5Musts3/5Shoulds,silicon6/6Musts3/4Shoulds,
 
 
 Confirmation7 now11/24scored:TCNQ6/6Musts4/4Shoulds andcuprate5/5Musts2/3Shoulds science/number/unit/copy/boundaryPASS. Totals59/62Musts,9/11science,11/11copy,9/11combined,11/11boundary,23/40Shoulds. Newgeneralrepairfinding: COLD-ENDpromptfiltersflaggedrowsbeforechoosingnextmeasuredtemperature, falselycallingdistant1288adjacentinoriginalcupratemodel;preservecaveatandfixafterfreeze. Remaining13continue.
+
+
+Confirmation7 now13/24scored:EuO5/5Musts1/3Shoulds sciencePASS/copyFAILdropsfourpaths+IMAGE_REVIEW_END;LLZ6/6Musts2/4Shoulds science/copyPASS. Totals70/73Musts,11/13science,12/13copy,11/13combined,13/13boundary,26/47Shoulds. Preserveplot/tablepointdifferencesandallcaveats;sourcefrozenremaining11.
