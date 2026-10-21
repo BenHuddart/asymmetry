@@ -2132,3 +2132,9 @@ Confirmation6 now22/24scored:LiFeAs8/8Musts4/6Shoulds,corannulene10/10Musts1/6Sh
 
 
 Confirmation6 now23/24scored:Re6Zr7/7Musts5/6Shoulds science/number/unit/boundaryPASS,copyFAILliteralNo terminal newline.addedafterpreparedbody. LFdecouplingandSCgapworkflowrepaired;TRSBcandidatequalification/sharingcaveatsretained. Totals134/138Musts,18/23science,16/23copy,14/23combined,23/23boundary,53/97Shoulds. OnlyBasicsrunning;sourcefrozen.
+
+
+Confirmation6 COMPLETE24/24scored:Basics6/9Musts3/7Shoulds scienceFAILMUSRweakTF/calibrationmeaning,quartzmuoniumidentificationandfaultytemperaturewarning;copyFAILlastbacktick. Totals140/147Musts,18/24science,16/24strictcopy,14/24combined,24/24boundary,56/104Shoulds;independentAFMmagneticscopeFAIL. Allcasesreturned0;verifyhashes/resourcesbeforeendingfreezeandround17repairs.
+
+
+Confirmation6 final verification: all24 raw final agent_messages equal last-message.md and actual summary.md bytes; 403 frozen source entries, all skill/rubric/raw artifacts and supplied review-image hashes verified. 1 nominated paths changed after review, both supplied/current hashes retained. Fresh gate FAIL:140/147Musts,18/24science,16/24copy,14/24combined,24/24boundary,56/104Shoulds; independent AFM magnetic scope FAIL. Twelve-case wall54.04min,minavailable20.65GiB,peak summedRSS6.19GiB(shared double count),memoryPSI0,CPUavg10peak0.36. No eval live; freeze ends. Round17 prioritizes anti-alias sampling, primary quantities/endpoints/identity coverage and report/control separation. Keep12, fixed rubrics/two-turn semantics; no controlled speedup claim. Deadline06:00UTC/fullgatecutoff04:30UTC.
