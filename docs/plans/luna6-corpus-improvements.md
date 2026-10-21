@@ -2120,3 +2120,6 @@ Confirmation6 now16/24 scored:tin5/5Musts,3/4Shoulds science/copyPASS;copper5/6M
 
 
 Confirmation6 now17/24 scored:LFbenzene5/6Musts scienceFAILmissingA_hf/errorinfinaldespiteactualpoorMuRepolarisationfit;1/5Shoulds. Exactcopy/number/unit/boundaryPASS,explicitrequestedFFTcrop7.897inputexceptionrecorded. Totals92/95Musts,13/17science,13/17copy,11/17combined,17/17boundary,36/63Shoulds. Copperquantity-evidenceindicescleanedtoexcludeaudit/draftcommands(nojudgementchange). Sourcefrozen.
+
+
+Confirmation6 now18/24 scored:maleic5/5Musts,3/4Shoulds science/number/unit/boundaryPASS;copyFAILone-wordpost-preparationrewrite. Empiricalrelativeconcentrationslope3.148180±0.488439reportedwithloggedtemperatureconfound;untreatedwatercomparisonmissing. Totals97/100Musts,14/18science,13/18copy,11/18combined,18/18boundary,39/67Shoulds. Sourcefrozen.

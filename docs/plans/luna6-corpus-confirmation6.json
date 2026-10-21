@@ -1,5 +1,5 @@
 {
-  "status": "running; 17/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 18/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -3029,10 +3029,240 @@
       ],
       "scored_at": "2026-10-21T01:21:19.250591+00:00",
       "reply_matches_saved_file": true
+    },
+    "maleic-mu-kinetics": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Recognises the 2 G runs as muonium precession measurements and the 100 G runs as diamagnetic ones.",
+          "pass": true,
+          "evidence": "2GweakTFMu2.7MHzversus100GdiamagneticLarmorregimesexplicit;notLFpairsscan."
+        },
+        {
+          "requirement": "Separates the samples by concentration, read from titles or notes, and says where the concentration values came from.",
+          "pass": true,
+          "evidence": "Titles/notessourceforblank0,quarter.25,half.5,neat1relativeconcentration;noinventedmolarity."
+        },
+        {
+          "requirement": "Reports the Mu relaxation rate rising with maleic acid concentration at a fixed temperature (290 K, or matched setpoints), from fits of the 2 G runs.",
+          "pass": true,
+          "evidence": "FittedMuLambda_2rises.423905→1.62517→2.24104→3.24956atnominal290K;logged291.57–315.48Kconfoundexplicit."
+        },
+        {
+          "requirement": "Obtains a rate constant from the slope of λ_Mu against concentration with a CLI fit (e.g. `fit-series`/`fit-global` with `--order concentration --x ...`, then `trend --model Linear`), reported with its uncertainty and in the concentration units it used. A fit-quality caveat is fine; withdrawing the converged slope is not.",
+          "pass": true,
+          "evidence": "ActualLinearLambda_2vsconcentration3.148180±0.488439μs−1/unitrelativeconcentration,intercept0.509488±0.160823chi2=4.568;reportednotwithdrawn."
+        },
+        {
+          "requirement": "Contains no rate constant, activation energy or fraction that was not produced by a tool call in this session (the worksheet's published values are background).",
+          "pass": true,
+          "evidence": "DirectCLIallrates/slopes/amplitudes/errors/alphas, no numeric/unitflags orinventedEa/fractionconversion."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Compares deoxygenated with untreated water (the untreated Mu signal relaxes faster, or leaves no resolvable line: dissolved O₂).",
+          "pass": false,
+          "evidence": "Separates78291straightwaterandinvalidfitbutdoesnotcompareitsMuvisibility/relaxationagainstdeoxygenatedwaterorO2interpretation."
+        },
+        {
+          "requirement": "Uses a calibration run appropriate to the sample being reduced rather than one alpha for the whole folder, or notes the alpha step.",
+          "pass": true,
+          "evidence": "Notes78280→78281alphastep,paired100Greferencespercompositionandlaterblock."
+        },
+        {
+          "requirement": "Holds the Mu and diamagnetic frequencies or amplitudes common across the concentration set (shared in `fit-global`, or fixed) and says so.",
+          "pass": true,
+          "evidence": "BothMu2.79MHzanddia.0271MHzfrequenciesfixedacrossconcentration/temperaturetwo-cosinemodels;fixedcommonfrequencystrategyexplicit."
+        },
+        {
+          "requirement": "States that the Arrhenius step needs k_Mu at several temperatures, each from its own concentration fit, and either does it per temperature and fits the Arrhenius law through them with a command (`trend --from-fits … --model Arrhenius`) rather than by hand, or declines that step with the reason.",
+          "pass": true,
+          "evidence": "DeclinesArrheniusbecausek_Mu(T)needsindependentconcentrationslopesateachT,loggedaxesnotmatchedandmosttemperaturefitspoor;notLambda(T)asreactionEa."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. DirectCLIandstoredsurvey/wizardJSONreadssupplyallvaluesandquantities,notdraft/auditreadbacks. Relativeconcentrationaxisuser-inputfromtitles/notesexplicit;noXLSX/customphysicalarithmetic. No inventedmolarity.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science/number/unit/boundaryPASS; requiredconvergedconcentrationslopeisreportedwithconditionaltemperaturelimit. CopyFAILaftercommand111prepare:actualfinalchangeswithCLIplacing“thechange”to“itschange”. Samegeneralpostpreparationproseeditingfailure. Untreated-waterO2comparisonShouldgapremainsafterflaggedcontrol, nofakefraction/molarity.",
+      "exact_copy": false,
+      "combined_pass": false,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all112 completed commands inspected. All112completedcommandsandreport-onlyeditsreviewed,onlysupportedCLI/recipes/storedJSON;no XLSX/externalaccess/customanalysis/arithmetic. Fourreviewimageshashverified;actualconcentrationslopeplotinspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 2058.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": false
+      },
+      "wizard_calls": 4,
+      "trend_laws": [
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/maleic-mu-kinetics/data --series comp-290 --model Linear --param Lambda_2'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/maleic-mu-kinetics/data --series comp-290-valid --model Linear --param Lambda_2 --plot'",
+        "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/maleic-mu-kinetics/data --series comp-290-line --model Linear --param Lambda --plot'"
+      ],
+      "command_failures": [],
+      "permission_denials": 0,
+      "summary_sha256": "9afeeafd126a095de04e7e42bfd6bf7a5fec1657c0386aac07ea76475797abb6",
+      "audited_file_sha256": "f0c17dcaaa262e54f28f1cee9f40ff8553e4b7b6aac689c556684ef5372cf4f6",
+      "rubric_sha256": "b475b5d6674ce20366c8590b425362f0b93741772c305fe0a3711c0ec95ef9b4",
+      "staged_skill_sha256": "afa8943b379f846937c4cd289ac5bc74f151e2dbacc1b12ae05f1ae4f11be0ab",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation6/maleic-mu-kinetics",
+      "exact_copy_evidence": "--- audited\n+++ reply\n@@ -78,7 +78,7 @@\n | Half | 78294, 274.479 | 2.25131 ± 0.10836 | 1.66206 ± 0.0938827 | 17.6614 ± 0.017323 | 0.00997372 ± 0.000599423 | poor |\n | Half | 78302, 352.984 | 6.5034 ± 2.44462 | 8.10299 ± 1.43598 | 18.8321 ± 0.0289528 | 0.0122211 ± 0.000914048 | good |\n \n-For neat solution, the CLI's logged-temperature trend leaves its low Λ_2 level above 307.213 K and reaches its higher level at 344.825 K; the change is between 307.213 and 344.825 K. The final run at 375.153 K is flagged and its Mu amplitude/rate are not results. For quarter concentration, the fitted Λ_2 rises from 1.110781 ± 0.041556 μs⁻¹ at 273.048 K to 4.739587 ± 0.424093 μs⁻¹ at 349.838 K; the CLI places its change between 282.439 and 340.232 K. For half concentration, it rises from 1.662064 ± 0.093883 μs⁻¹ at 274.479 K to 8.102987 ± 1.435976 μs⁻¹ at 352.984 K, with the CLI placing the change between 284.383 and 323.553 K. The later level in each case is a fitted trend description, not an established transition: the quarter series is poor throughout and most half and neat fits are poor.\n+For neat solution, the CLI's logged-temperature trend leaves its low Λ_2 level above 307.213 K and reaches its higher level at 344.825 K; the change is between 307.213 and 344.825 K. The final run at 375.153 K is flagged and its Mu amplitude/rate are not results. For quarter concentration, the fitted Λ_2 rises from 1.110781 ± 0.041556 μs⁻¹ at 273.048 K to 4.739587 ± 0.424093 μs⁻¹ at 349.838 K; the CLI places its change between 282.439 and 340.232 K. For half concentration, it rises from 1.662064 ± 0.093883 μs⁻¹ at 274.479 K to 8.102987 ± 1.435976 μs⁻¹ at 352.984 K, with the CLI placing its change between 284.383 and 323.553 K. The later level in each case is a fitted trend description, not an established transition: the quarter series is poor throughout and most half and neat fits are poor.\n \n The endpoint plots show the quarter run 78282 has conspicuous early-time oscillation; the 358 K endpoint 78290 decays smoothly after a small initial wiggle. The survey reports a muonium line at 2.76 MHz in run 78282 and at 2.65 MHz in run 78285 (308 K), with no line at the warm 358 K endpoint. These are the survey's spectral-line measurements. Matched FFTs of runs 78282 and 78285 used an unwindowed 0.2–4 μs crop (61 bins; resolution 0.263713 MHz; reported band 1.05042–4.98949 MHz). Neither peak table promoted a peak to detection. The strongest candidates were 2.6917 MHz and 2.9543 MHz in run 78282, and 1.3130 MHz, 2.6917 MHz and 2.9543 MHz in run 78285. The attached pixels show broad structure around 2.7 MHz, strongest in the cold spectrum, but not a resolved narrow FFT line. The wizard's damped-line detection on run 78277 is a separate time-domain spectral search; it should not be conflated with those FFT peak tables. These transforms are FFTs, not MaxEnt.\n \n",
+      "physics_caveats": [
+        "Nominal290Kcompositionpointslogged291.57–315.48K,chemistryslopeempiricalnotintrinsicisothermalk.",
+        "FixedMu/diafrequenciesonly;amps/dampingfree,poorhighTfitsandflaggedneatendpointlimitmicroscopickinetics.",
+        "Highfieldampchangespartlyinstrumentresponse;100GbounddampingnotMuchemicalrate.",
+        "MatchedFFTuses78282and78285(308K),notfullwarm358Kendpoint;summarylabelsactualtransformsanddoesnotinventFFTdetectedsatellites."
+      ],
+      "judgement_calls": [
+        "Must3acceptsnominalmatchedsetpointconcentrationslopewithloggedspreadcaveat,consistentfixedrubricpermittingmatchedsetpoints.",
+        "Should3acceptsfixedfrequencies,notrequirecommonampsifoneallowedstrategyused."
+      ],
+      "number_evidence_commands": [
+        1,
+        3,
+        5,
+        6,
+        9,
+        10,
+        11,
+        12,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        101,
+        102
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "9afeeafd126a095de04e7e42bfd6bf7a5fec1657c0386aac07ea76475797abb6",
+        "summary.md": "9afeeafd126a095de04e7e42bfd6bf7a5fec1657c0386aac07ea76475797abb6",
+        "transcript.jsonl": "48007adc2aa73bdc348e16f47f6fb92d990f1b832493d475a02d46fa6f0ce5c8",
+        "commands.txt": "71232e06743d9934c2dc6a88232439ad8a50a9bce94ac978aebb142a6f307fc0",
+        "cost.json": "558ffce8a327e52f8fab22cf8f725c14318b6319db071357d3c96bfe60fc9037",
+        "image-inputs.json": "3f126dcfb3f552454b4acd6af4cd84084fb47ee918ab4cff64910dbde6c3f833"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/comp-290-valid-trend-Lambda_2.png",
+          "snapshot_path": "review-images/5ccad115a335cc1b4872f908251bd5dbc925e7a99993df8048f858106a83c610.png",
+          "bytes": 33501,
+          "sha256": "5ccad115a335cc1b4872f908251bd5dbc925e7a99993df8048f858106a83c610",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/comp-290-valid/78277.png",
+          "snapshot_path": "review-images/a0be3012d82e4c374a2de3f26ee927aa0c20813e359e279c3ae886333ac5d5cf.png",
+          "bytes": 67700,
+          "sha256": "a0be3012d82e4c374a2de3f26ee927aa0c20813e359e279c3ae886333ac5d5cf",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/quarter-cold-short.png",
+          "snapshot_path": "review-images/3d8247e69e8de8d94a8b8bc4e2812e4e6bfe9a2f5fe545555eea1dacc065ffaf.png",
+          "bytes": 62582,
+          "sha256": "3d8247e69e8de8d94a8b8bc4e2812e4e6bfe9a2f5fe545555eea1dacc065ffaf",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/quarter-308-short.png",
+          "snapshot_path": "review-images/0034add00c77f3f0baa100852d50ed231a8ff909f655042081f99ef167e662c9.png",
+          "bytes": 72991,
+          "sha256": "0034add00c77f3f0baa100852d50ed231a8ff909f655042081f99ef167e662c9",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T01:23:48.245135+00:00",
+      "reply_matches_saved_file": false
     }
   },
   "pending_cases": [
-    "maleic-mu-kinetics",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
@@ -3071,16 +3301,16 @@
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "totals": {
-    "scored": 17,
+    "scored": 18,
     "target": 24,
-    "scientific_pass": 13,
-    "must_pass": 92,
-    "must_total": 95,
-    "should_pass": 36,
-    "should_total": 63,
+    "scientific_pass": 14,
+    "must_pass": 97,
+    "must_total": 100,
+    "should_pass": 39,
+    "should_total": 67,
     "exact_copy_pass": 13,
     "literal_copy_pass": 13,
     "combined_pass": 11,
-    "boundary_pass": 17
+    "boundary_pass": 18
   }
 }
