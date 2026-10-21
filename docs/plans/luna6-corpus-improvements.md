@@ -2189,3 +2189,6 @@ Confirmation7 now19/24scored:AFM5/5literalMusts2/3Shoulds science/copyPASSbutind
 
 
 Confirmation7 now20/24scored:copper6/6Musts2/3Shoulds science/number/unit/copy/boundaryPASS,actualEMUcold-nextZFupturnrestored. Totals110/115Musts,17/20science,19/20copy,16/20combined,20/20boundary,41/79Shoulds;independentAFMscopeFAIL. Remaining4sourcefrozen.
+
+
+Confirmation7 now21/24scored:highTFbenzene6/6Musts2/6Shoulds science/number/unit/copy/boundaryPASS. Totals116/121Musts,18/21science,20/21copy,17/21combined,21/21boundary,43/85Shoulds;independentAFMscopeFAIL. OnlyBasics/corannulene/benzeneALCremain,sourcefrozen.
