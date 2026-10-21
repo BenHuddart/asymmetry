@@ -2246,3 +2246,9 @@ Confirmation8 Basics9/9Musts3/7Shoulds science/number/unit/copy/boundaryPASS. To
 
 
 Confirmation8 Re6Zr7/7Musts5/6Shoulds science/number/unit/copy/boundaryPASS. Totals23/24scored,134/137Musts,21/23science,20/23copy,18/23combined,23/23boundary,53/98Shoulds;independentAFMscopePASS. Onlycorannuleneremains;sourcefrozen. GaussianSCgapandnearTcstaticZF/TRSBcandidate/LFdecouplingrepairedwithexplicitpoint-spacing/modelcaveats.
+
+
+Confirmation8 ALL24scored: corannulene10/10Musts2/6Shoulds science/number/unit/copy/boundaryPASS,conditionalcoldbroader/higherandreorientationphysicsretained. Totals144/147Musts,22/24science,21/24copy,19/24combined,24/24boundary,55/104Shoulds;independentAFMscopePASS. Verifyallsource/rawfinal/imagehashes/resourcesbeforeendingfreezeandround19repairs. Matchedbeamcalibration/unsupportedMuRepolarisationcaveatsremain.
+
+
+Confirmation7 final verification: all24 raw final agent_messages equal last-message.md and actual summary.md bytes; 403 frozen source entries, skill/rubric/raw artifacts and supplied review-image hashes verified. 5 nominated paths changed after review; supplied/current hashes retained. Fresh gate FAIL:144/147Musts,22/24science,21/24strictcopy,19/24combined,24/24boundary,55/104Shoulds; independent AFM scope PASS. Twelve-case wall51.04min,minavailable21.34GiB,peak summedRSS5.66GiB(shared double count),memoryPSIpeak0.0,CPUavg10peak0.36. No eval live; freeze ends. Round19 prioritizes percentage-of-total provenance, retaining completed Gaussian-width comparisons and successful command results, and preparation after every final edit. Fixed scientific rubrics/two-turn semantics/strict raw bytes remain. Keep12; no controlled speedup claim. Deadline06:00UTC/fullgatecutoff04:30UTC.
