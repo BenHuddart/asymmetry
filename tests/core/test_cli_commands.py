@@ -4128,7 +4128,12 @@ def test_reduce_names_runs_across_an_alpha_step_from_one_calibration(tmp_path):
     root.mkdir()
     step = {"before_run": 103, "after_run": 104, "alpha_before": 0.89, "alpha_after": 1.06}
     # A step from one instrument's last candidate to another's first (EMU 76993 -> MUSR 1276).
-    across_instruments = {"before_run": 76993, "after_run": 1, "alpha_before": 1.0, "alpha_after": 0.6}
+    across_instruments = {
+        "before_run": 76993,
+        "after_run": 1,
+        "alpha_before": 1.0,
+        "alpha_after": 0.6,
+    }
     runs = [{"run_number": run, "instrument": "EMU"} for run in (101, 102, 103, 104, 105, 76993)]
     runs += [{"run_number": run, "instrument": "MUSR"} for run in (1, 2)]
     survey = {"schema": SCHEMA, "runs": runs, "alpha_steps": [step, across_instruments]}
