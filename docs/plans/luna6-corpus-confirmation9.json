@@ -1,5 +1,5 @@
 {
-  "status": "complete; fresh full24 gate FAIL; authorized improvement loop continues before deadline",
+  "status": "complete; fresh full24 gate FAIL; overnight follow-up paused at deadline",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -5268,7 +5268,7 @@
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round19 explicitly distinguishes diagnostic plain audit from final preparation after every edit; final report/capture semantics stay fixed.",
   "gate_pass": false,
   "objective_achieved": false,
-  "followup_status": "ACTIVE",
+  "followup_status": "PAUSED at authorized overnight deadline",
   "wizard_call_count_policy": "Analytical wizard invocations/attempts only; exclude --help and -h.",
   "audit_copy_policy": "exact_copy includes the exact-whitespace runner final_report_audited guard introduced in round14. summary.md is the unmodified explicit last message, with no automatic terminal newline; earlier gates normalized it. Scientific rubrics remain unchanged. literal_copy_pass separately counts byte-identical saved-file replies when an audit itself does not pass.",
   "completed_at": "2026-10-21T05:15:48.325598+00:00",
@@ -5382,5 +5382,7 @@
       },
       "conclusion": "No plot/data divergence reproduced. Apparent visual point/axis differences are scorer visual-reading uncertainty, not a confirmed plotting bug. Original replies, images, recorded caveats and rubric judgements unchanged."
     }
-  }
+  },
+  "final_implementation_commit": "d440092",
+  "final_implementation_has_fresh_agent_gate": false
 }
