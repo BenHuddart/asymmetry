@@ -2276,3 +2276,6 @@ Confirmation9 now9/24 scored: molecularAFM5/5Musts1/3Shoulds andTCNQ6/6Musts4/4S
 
 
 Confirmation9 now11/24scored:CdS6/6Musts2/4Shoulds science/copyPASS;EuO5/5literalMusts1/3Shoulds copyPASS butGLOBALunitruleFAIL(dimensionlessCriticalDivergencenuerror10.257125labelledus^-1). Totals60/60Musts,10/11science,11/11copy,10/11combined,11/11boundary,21/39Shoulds. Scalarcheckerflagsnone;manualunit-contextfailurepreserved. SourcesfrozenuntilALL24.
+
+
+Confirmation9 now13/24scored:AFM5/5Musts1/3Shoulds science/copyPASS and independentmagneticscopePASS;silicon6/6Musts4/4Shoulds science/copyPASS with rejectedONrate and early1.5usretry judgement. Totals71/71Musts,12/13science,13/13copy,12/13combined,13/13boundary,26/46Shoulds. EuOglobalunitfailure remains;sourcefrozenuntilALL24.

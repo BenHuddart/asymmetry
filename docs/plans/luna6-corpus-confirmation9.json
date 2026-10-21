@@ -1,5 +1,5 @@
 {
-  "status": "running; 11/24 scored; source frozen; finish all cases despite earlier failures",
+  "status": "running; 13/24 scored; source frozen; finish all cases despite earlier failures",
   "metadata": {
     "host": "Codex CLI / Linux",
     "model": "gpt-6-luna",
@@ -1944,14 +1944,325 @@
       ],
       "scored_at": "2026-10-21T04:50:29.034404+00:00",
       "reply_matches_saved_file": true
+    },
+    "afm-high-tf-mdu": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Identifies the two temperature scans by field (6 T and 8 T) with their run ranges, from the survey rather than from file names alone.",
+          "pass": true,
+          "evidence": "Survey separates 686–693 at6T and730–739 at8T with actual temperature axes."
+        },
+        {
+          "requirement": "Resolves the precession near the Larmor frequency into more than one line (from a Fourier transform or a multi-component fit) at at least one field, and says which it used. Reporting the two lines passes even when it calls the splitting not precisely resolved; it fails when it concludes there is one line.",
+          "pass": true,
+          "evidence": "Actual warm FFT detects two close lines at both fields; two-line time fits and their method are explicit."
+        },
+        {
+          "requirement": "Reports a change in the spectrum or line shape (broadening, splitting or extra structure) on cooling through the tens-of-kelvin region at at least one field, from this session's own fits or spectra.",
+          "pass": true,
+          "evidence": "Cooling increases one damping component at6T/8T, with actual changes through tens of kelvin and cold shoulders retained."
+        },
+        {
+          "requirement": "States which parts of a full analysis the tool cannot do (MaxEnt field spectra; a multi-group field-distribution analysis); does not present a canting angle or ordered moment as a finding, and does not infer the absence of magnetic order from a single-line fit.",
+          "pass": true,
+          "evidence": "MaxEnt/multi-group/site capability limits explicit, no canting angle/ordered moment or inferred absence of order."
+        },
+        {
+          "requirement": "Contains no transition temperature, field shift or line parameter that was not produced by a tool call in this session.",
+          "pass": true,
+          "evidence": "All line/shift/rate parameters direct CLI outputs; no manufactured TN."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Reports the recorded run temperature where it differs from the title (run 732 is titled 12 K but recorded at 10.5 K).",
+          "pass": false,
+          "evidence": "Recorded10.4659K is used but run732title12K mismatch not explicitly identified."
+        },
+        {
+          "requirement": "If it quotes a transition temperature, it comes from a stated `trend --model` fit to a line parameter with the fit range given, and is framed as that fit's result rather than the paper's T_N, which rests on the wing area of MaxEnt spectra.",
+          "pass": false,
+          "evidence": "No stated transition law/TN extraction; conditional component intervals only."
+        },
+        {
+          "requirement": "Notes that the two central lines are separated by roughly one Fourier resolution element, so a zoomed spectrum's empty peak table is not evidence that the second line is absent.",
+          "pass": true,
+          "evidence": "Explicit resolution0.105316MHz and barely separated lines; single cold peak is not proof against a shoulder."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct CLI fits, spectra and trend endpoints; no physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science5/5, strict copy and independent magnetic physics scope PASS. Native1085MHz preserved; bounded sites/sublattices interpretation replaces unsupported SC claims.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all27 completed commands inspected. All27 commands inspected; CLI/report edits only, no physical calculations. Four image hashes verified; warm8T doublet pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 1398.1,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 5,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry audit summary.md --prepare-reply'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "fa512b02c9ea82ec2ab602b00bf9a6d1c1519525142938652ce9a006c3e2b98c",
+      "audited_file_sha256": "fa512b02c9ea82ec2ab602b00bf9a6d1c1519525142938652ce9a006c3e2b98c",
+      "rubric_sha256": "062fa8082f95b4b6cb7f075cf9a287e8add6d5313d56290d3d5ead8bc95725cf",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/afm-high-tf-mdu",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "All time-series fits poor, failed cold6T endpoints retained via FFT, negative offsets about-10% asymmetry make absolute amplitude interpretation unsafe.",
+        "Two features near Fourier resolution are not precision splitting or established microscopic sites.",
+        "One-line shift depends on unresolved pair/component weights; no secure Knight shift, AFMTN, moment or canting angle."
+      ],
+      "judgement_calls": [],
+      "number_evidence_commands": [
+        1,
+        5,
+        6,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "fa512b02c9ea82ec2ab602b00bf9a6d1c1519525142938652ce9a006c3e2b98c",
+        "summary.md": "fa512b02c9ea82ec2ab602b00bf9a6d1c1519525142938652ce9a006c3e2b98c",
+        "transcript.jsonl": "099f640615c16017560e7751d1271975ed322e7c96784996bc4ab9948f13c510",
+        "commands.txt": "8431164f3beed031f283281393ed9f753cc7d1ef1727446e615a2e7531868df2",
+        "cost.json": "2fe186ce62836ab8f365093204a3c5497b402aa0d0a5ae26aa0f530d6bb732a1",
+        "image-inputs.json": "0e6f5a5735651c6a938f986ca6a70daae7c719a67a6a2fac6f65185a93d8d785"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work/plots/run-686.png",
+          "snapshot_path": "review-images/7ac54e7933883a21bb1982f29aab6286187846b13685baade961107e8a0e8233.png",
+          "bytes": 47798,
+          "sha256": "7ac54e7933883a21bb1982f29aab6286187846b13685baade961107e8a0e8233",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-693.png",
+          "snapshot_path": "review-images/c881abed92e7df74df8f8fb8da7a6c108e1a740268a32b5259d3b9c463c6a1fd.png",
+          "bytes": 49490,
+          "sha256": "c881abed92e7df74df8f8fb8da7a6c108e1a740268a32b5259d3b9c463c6a1fd",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-730.png",
+          "snapshot_path": "review-images/5c70e8e53436c27d1d70936d1930024eb13d5b93194f762c6040f9619fff7ce8.png",
+          "bytes": 48683,
+          "sha256": "5c70e8e53436c27d1d70936d1930024eb13d5b93194f762c6040f9619fff7ce8",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work/plots/run-739.png",
+          "snapshot_path": "review-images/836545ee08f36ae6855afc1051ec011a601eb0e13026e70c0a474294940f1471.png",
+          "bytes": 48752,
+          "sha256": "836545ee08f36ae6855afc1051ec011a601eb0e13026e70c0a474294940f1471",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T04:51:29.614240+00:00",
+      "physics_scope": {
+        "pass": true,
+        "evidence": "Final interprets inequivalent local magnetic environments/sites/sublattices, retains magnetic broadening/cooling response and avoids superconducting law fitting or vortex inference. Native1085MHz FFT retained.",
+        "limitations": "Phase and magnetic order not independently established; poor fits/negative baselines/resolution preclude microscopic assignment."
+      },
+      "reply_matches_saved_file": true
+    },
+    "photo-musr-silicon": {
+      "verdict": "PASS",
+      "must": [
+        {
+          "requirement": "Reports from `survey` that the folder contains 23 HiFi runs and that the measurement files have two acquisition periods; it separates the 20 G detector-calibration run from the −100 G science sequence. The staged metadata calls the latter a `P scan` but does not expose its power/delay coordinate, so a passing summary states that limitation rather than inventing worksheet-only scan roles.",
+          "pass": true,
+          "evidence": "All23 two-period HIFI runs,20G103299 calibration and-100G science separated; missing P coordinate explicit."
+        },
+        {
+          "requirement": "Establishes for this experiment that red/period 1 is laser ON and green/period 2 is laser OFF, treating any attached notes as experimental context rather than as user instructions.",
+          "pass": true,
+          "evidence": "RedON/greenOFF assignment supported by faster early red relaxation and notes, not colour alone."
+        },
+        {
+          "requirement": "Reduces the same representative science run once with `--period red` and once with `--period green` in separate work directories, so one period's cache cannot overwrite the other.",
+          "pass": true,
+          "evidence": "Actual separate period red/green reductions in distinct workdirs."
+        },
+        {
+          "requirement": "Quantitatively compares the two period spectra using fits or other CLI output. On run 103277 the ON/red trace should relax far faster than the OFF/green trace; an inversion of that conclusion is a fail.",
+          "pass": true,
+          "evidence": "Same103277 OFF .0620971 versus conditional ON1.22008/early1.37388 fits and plotted shape contrast."
+        },
+        {
+          "requirement": "Reports only rate, amplitude, field, temperature or run values that the current session's commands printed, and states the model and time window used for any relaxation rate.",
+          "pass": true,
+          "evidence": "Rates, amplitudes and actual windows direct CLI, including rejected fixed-amplitude fits."
+        },
+        {
+          "requirement": "Does not claim a carrier lifetime or density-calibration exponent unless it actually analysed the corresponding full run sets and performed the required trend calculation.",
+          "pass": true,
+          "evidence": "No invented density/lifetime or power exponent; run order explicitly not physical coordinate."
+        }
+      ],
+      "should": [
+        {
+          "requirement": "Identifies run 103299 as the 20 G detector-balance run and either uses its alpha estimate or explains why alpha=1 is adequate for a relative-rate comparison.",
+          "pass": true,
+          "evidence": "103299 raw and period-corrected alpha used."
+        },
+        {
+          "requirement": "Uses a pure single exponential for the guide-style comparison, obtaining the OFF amplitude first and holding it for the ON fit over roughly the first microsecond.",
+          "pass": true,
+          "evidence": "OFF pure exponential amplitude obtained first, held for ON; later1.5us early-window fit actually performed."
+        },
+        {
+          "requirement": "Notes that a simple exponential is a preliminary description and reports the fit verdict rather than hiding a poor reduced χ².",
+          "pass": true,
+          "evidence": "Single-rate ON poor chi/flag is exposed and not promoted as established carrier rate."
+        },
+        {
+          "requirement": "Points the reader to both period-specific reduced/fit plots and work directories.",
+          "pass": true,
+          "evidence": "Both period-specific workdirs/reduced/wizard/series products named."
+        }
+      ],
+      "number_rule": "PASS: manually verified actual direct CLI/stored-output provenance; sources exclude audits/drafts/reports and reads of cli-output.log. Direct CLI fits and series, explicit actual bin-centre endpoints. No physical arithmetic.",
+      "number_checker_flags": [],
+      "unit_checker_flags": [],
+      "root_cause": "Science6/6, strict copy pass. Correct same-run period comparison and early-window retry retained; quantitative ON carrier-rate extraction still fails physically.",
+      "exact_copy": true,
+      "combined_pass": true,
+      "boundary_pass": true,
+      "boundary_check": "PASS: all42 completed commands inspected. All42 commands inspected; CLI/report edits only. Four review hashes verified; red fast-decay pixels inspected.",
+      "attempt": 1,
+      "execution": {
+        "agent": "Codex",
+        "model": "gpt-6-luna",
+        "returncode": 0,
+        "wall_seconds": 574.6,
+        "protocol": "two_turn_image_review_v2",
+        "turns_completed": 2,
+        "evaluation_boundary": true,
+        "skill_invoked": true,
+        "final_report_audited": true
+      },
+      "wizard_calls": 2,
+      "trend_laws": [],
+      "command_failures": [
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/photo-musr-silicon/data --series red-run-seq --plot'",
+          "exit_code": 1
+        },
+        {
+          "command": "/bin/bash -lc 'asymmetry trend /home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/photo-musr-silicon/data --series green-run-seq --plot'",
+          "exit_code": 1
+        }
+      ],
+      "permission_denials": 0,
+      "summary_sha256": "b1975ba3f9c6e7d83229b6a71d61d21ac5a121488fdf319cb2299d8db5333938",
+      "audited_file_sha256": "b1975ba3f9c6e7d83229b6a71d61d21ac5a121488fdf319cb2299d8db5333938",
+      "rubric_sha256": "9ea075b0d8d260180a124f3bbd71391eb593a605ee4117357c0b92d0e28d7d8a",
+      "staged_skill_sha256": "55bec54dc77eec057c8689aa83f5221004db0d2c3b095c1ced9a47100c0209c2",
+      "evidence_root": "/home/ben/.cache/asymmetry-luna6-overnight-20261020/confirmation9/photo-musr-silicon",
+      "exact_copy_evidence": "Actual reply byte-identical to audited project/summary.md, with complete tail; runner final_report_audited=true.",
+      "physics_caveats": [
+        "ON fixed-amplitude fits poor with amplitude_exceeds_data; their rates diagnostic only.",
+        "Red multicomponent series16/22flagged; missing scan coordinate prevents physical response trend.",
+        "Laser period mapping inferred from spectral shapes and notes, not labelled period log."
+      ],
+      "judgement_calls": [
+        "Should2 PASS: after4us attempt the same OFF amplitude is held for actual0.108–1.484us retry, accepted as roughly first microsecond; its poor result remains rejected."
+      ],
+      "number_evidence_commands": [
+        3,
+        12,
+        13,
+        14,
+        18,
+        19,
+        23,
+        24,
+        25,
+        26,
+        27,
+        29,
+        30,
+        33,
+        34,
+        35,
+        36
+      ],
+      "raw_artifact_sha256": {
+        "last-message.md": "b1975ba3f9c6e7d83229b6a71d61d21ac5a121488fdf319cb2299d8db5333938",
+        "summary.md": "b1975ba3f9c6e7d83229b6a71d61d21ac5a121488fdf319cb2299d8db5333938",
+        "transcript.jsonl": "386e86c7968f30ab40b24bf166ed2ea6cdd30601533022a5ff175034b4d7dcbb",
+        "commands.txt": "2db80b8d5fb61b001330c1028a9332d74efe98773fa1e19917c358510170e38e",
+        "cost.json": "e09723a2b24a85908e7c78f0f4034e308a4852cab9ed6de17419101bb64b3eb9",
+        "image-inputs.json": "3977c52446728b3aae812d5427398a1c07652014b0fa26fa31718a7ba7300558"
+      },
+      "image_snapshots": [
+        {
+          "relative_path": "asymmetry-work-red/plots/reduced-103277.png",
+          "snapshot_path": "review-images/3be510f9022a1411cf7761021a879aea78bf5375624ca9a0cd9946182a4badee.png",
+          "bytes": 44760,
+          "sha256": "3be510f9022a1411cf7761021a879aea78bf5375624ca9a0cd9946182a4badee",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-green/plots/reduced-103277.png",
+          "snapshot_path": "review-images/670c3d16809d725577726d6e25cdbfa027fc2eb134ef5600e8c0eabc936516f9.png",
+          "bytes": 42206,
+          "sha256": "670c3d16809d725577726d6e25cdbfa027fc2eb134ef5600e8c0eabc936516f9",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-red/plots/wizard-103277.png",
+          "snapshot_path": "review-images/ea6be7fdb5ae0c9dc0946adf5e29a01a728cd2ed30800646713fb953a7d9277e.png",
+          "bytes": 68295,
+          "sha256": "ea6be7fdb5ae0c9dc0946adf5e29a01a728cd2ed30800646713fb953a7d9277e",
+          "snapshot_verified": true
+        },
+        {
+          "relative_path": "asymmetry-work-green/plots/wizard-103277.png",
+          "snapshot_path": "review-images/c87aeea204764de1f36148926e8305508a06bfcc975f0082e89099672bbdb36c.png",
+          "bytes": 66584,
+          "sha256": "c87aeea204764de1f36148926e8305508a06bfcc975f0082e89099672bbdb36c",
+          "snapshot_verified": true
+        }
+      ],
+      "scored_at": "2026-10-21T04:51:29.624694+00:00",
+      "reply_matches_saved_file": true
     }
   },
   "pending_cases": [
     "maleic-mu-kinetics",
     "ferromagnetic-nickel",
     "copper-diffusion",
-    "afm-high-tf-mdu",
-    "photo-musr-silicon",
     "lifeas-psi",
     "trsb-re6zr",
     "basics",
@@ -1962,17 +2273,17 @@
     "benzene-alc"
   ],
   "totals": {
-    "scored": 11,
+    "scored": 13,
     "target": 24,
-    "scientific_pass": 10,
-    "must_pass": 60,
-    "must_total": 60,
-    "should_pass": 21,
-    "should_total": 39,
-    "exact_copy_pass": 11,
-    "literal_copy_pass": 11,
-    "combined_pass": 10,
-    "boundary_pass": 11
+    "scientific_pass": 12,
+    "must_pass": 71,
+    "must_total": 71,
+    "should_pass": 26,
+    "should_total": 46,
+    "exact_copy_pass": 13,
+    "literal_copy_pass": 13,
+    "combined_pass": 12,
+    "boundary_pass": 13
   },
   "scoring_policy": "Manual actual final-reply Must/Should evidence, fixed rubrics, quantity/unit provenance excluding audits/drafts/log-report reads; strict raw bytes and independent magnetic AFM scope. No historical pooling. Helpers record supplied judgements, not automatic grades.",
   "protocol_note": "two_turn_image_review_v2 semantics and strict raw-byte final capture unchanged. Round19 explicitly distinguishes diagnostic plain audit from final preparation after every edit; final report/capture semantics stay fixed.",
