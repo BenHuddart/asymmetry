@@ -138,6 +138,27 @@
       ],
       "cost_usd": 30.33,
       "status": "complete; all three fails are judgement calls on hand-derived prose numbers. fmuf: a nu range wrong at one end (f6ad515 prints each level's spread, 8aa3541 each column's range); cds: 'symmetric about it by about 0.12 MHz' (c473bde prints line spacings, audit reads 'symmetric by'); benzene-alc: 'a width roughly a third of the solid's' (left open: the skill tells agents to state an unprinted relation in words). Every earlier failure mode held: TRSB, basics, corannulene, LiFeAs (onset 14.76-16.9 K from the new note), AFM, benzene high TF, wave-8 fmuf and cuprate."
+    },
+    {
+      "wave": "w10",
+      "kind": "confirmation (last)",
+      "recorded_at": "2026-10-22",
+      "commit": "c473bde",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 19,
+      "scientific_pass_judgement_relaxed": 22,
+      "scientific_failures": [
+        "sn-critical-field",
+        "lifeas-psi",
+        "high-tc-cuprate",
+        "cds-fourier",
+        "benzene-alc"
+      ],
+      "cost_usd": 31.2,
+      "status": "complete; every fail is a hand-made count or ratio in prose. sn: 'every run flagged' against a printed 5 of 9, and two flags' tallies merged; lifeas: 'measured on 28 runs' (survey shows 30 larmor rows, no tally); cuprate (judgement): 'about a tenth of the events'; cds (judgement): 'the six warmest runs' covers five; benzene-alc (judgement): 'Eighteen field scans' (17). Not fixed: the loop paused here."
     }
   ]
 }

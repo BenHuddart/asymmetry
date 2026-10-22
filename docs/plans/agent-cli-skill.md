@@ -3091,7 +3091,9 @@ directories lived in a scratch tmpfs and are not archived.
 | corannulene repeats | `b85274e` | 2/2 | — |
 | 5 | `b85274e` | 23/24 | nickel (judgement: a hand recount) |
 | 6 | `dd871f7` | 21/24 | EuO, LiFeAs (both judgement), benzene high TF |
-| 8 (confirmation) | `20f137c` | WAVE8_PASS | WAVE8_FAILED |
+| 8 (16 run, 8 scored) | `20f137c` | 6/8 | fmuf, cuprate (both judgement) |
+| 9 | `da8b5e6` | 21/24 | fmuf, CdS, benzene ALC (all judgement) |
+| 10 | `c473bde` | WAVE10_PASS | WAVE10_FAILED |
 
 Every failure traced to the CLI, and every fix is in the CLI; `SKILL.md` is
 unchanged. As in earlier loops, a printed line changed behaviour where a
@@ -3136,6 +3138,24 @@ sentence in the skill would not have:
   because only σ had a note; in a model of two or more lines, `trend` now names
   where a line's amplitude leaves its warm level on cooling (14.76–16.9 K for
   LiFeAs), and the ENDPOINTS difference names the two runs it compares.
+- **Waves 8–9: what remained was summarising printed columns by hand.** A
+  flag count taken from the `reseeded` list, "good on every run" over a block
+  with four poor fits, a range wrong at one end, a triplet spacing. The CLI now
+  prints each flag's tally, each verdict's χ²ᵣ range, each step level's spread,
+  each trend column's range and a multi-line fit's line spacings; `recipe
+  --run` leaves a line under one cycle in the record out of its solve (a 2 G
+  diamagnetic line beside muonium had been seeded at A = 106.7).
+
+By wave 9 every failure mode of waves 1–6 held on repeat — TRSB, basics,
+corannulene, LiFeAs, AFM high TF, benzene high TF — and the three fails were
+judgement calls on a hand-derived prose number. One stays open on purpose:
+benzene ALC's "a width roughly a third of the solid's". The skill (Step 7)
+tells an agent to state an unprinted relation in words; flagging hedged
+fractions ("about half", "roughly twice") in `audit` was tried and replayed
+over waves 5, 6 and 9 — it would have flagged eleven such phrases, nearly all
+in runs the scorers passed. Whether a worded ratio of two printed values breaks
+the number rule is a question for the rubric (below), not something to settle
+in `audit`.
 
 Judgement calls the scorers raised repeatedly, for the maintainer: the
 corannulene cold-line range 15.1–15.6 kG is narrower than the window
@@ -3147,6 +3167,15 @@ laws, the plateau-redfield plateau window, `MuRepolarisation` A_hf quoted
 from fits with χ²ᵣ in the hundreds.
 
 ## Open questions for the maintainer
+
+From the Sonnet 5.5 loop (2026-10-22), for Ben:
+- Is a worded ratio of two printed values ("roughly a third", "about twice")
+  a derived number under the rubric's number rule? Step 7 tells agents to say
+  an unprinted relation in words, and the scorers split on it.
+- Corannulene's cold-line window (15.1–15.6 kG) is narrower than one
+  Lorentzian's window sensitivity on that asymmetric line (15.3–15.7 kG across
+  two windows in one run); cuprate's non-superconducting-fraction Must passes
+  on a disclaimer. Tighten or widen either?
 
 From round 2 (2026-10-09), for Ben:
 - May the fluorine sniff recognise fluorinated materials by name (polymer
