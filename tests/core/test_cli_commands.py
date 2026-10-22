@@ -3985,6 +3985,20 @@ def test_two_close_fourier_peaks_get_the_two_line_recipe() -> None:
     }
     assert "--initial frequency_1=813.595 --initial frequency_3=813.497" in _render(result)
 
+    # Twin correlation peaks print their separation (benzene high TF, Sonnet wave 6).
+    twins = result | {
+        "axis": "hyperfine_coupling",
+        "correlation": {"field_gauss": 3000.0},
+        "resolution_mhz": 0.127821,
+        "peak_analysis": {
+            "peaks": [
+                {"frequency_mhz": f, "amplitude": 1.0, "width_mhz": 0.1, "snr": 600.0}
+                for f in (514.080755, 514.446927)
+            ]
+        },
+    }
+    assert "514.081 and 514.447 MHz are 0.366 MHz apart, 2.9 resolution elements" in _render(twins)
+
 
 def test_two_fitted_frequencies_within_two_percent_are_a_pair() -> None:
     from asymmetry.cli.commands.fourier import close_pair

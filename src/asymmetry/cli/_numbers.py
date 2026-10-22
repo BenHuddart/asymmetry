@@ -90,6 +90,19 @@ _NUMBER_WORD = (
     r"|a hundred|hundred|a thousand|thousand)(?:\s+and\s+a\s+half)?"
 )
 
+_DIGITS = {
+    word: str(n)
+    for n, word in enumerate(
+        ("two three four five six seven eight nine ten eleven twelve").split(), start=2
+    )
+}
+
+
+def _in_digits(phrase: str) -> str:
+    """*phrase* with its small number words written as digits, as commands print them."""
+    return re.sub(r"\b[a-z]+\b", lambda m: _DIGITS.get(m.group(), m.group()), phrase.lower())
+
+
 #: A ratio written in words ("a factor of six", "tenfold", "five and a half
 #: times its error", "four to six times").
 _RATIO_WORD = re.compile(
@@ -99,7 +112,8 @@ _RATIO_WORD = re.compile(
     rf"|\b{_NUMBER_WORD}(?:\s+to\s+{_NUMBER_WORD})?(?:-?fold\b|\s+times(?=\s+(?:its|their|the"
     r"|as|larger|smaller|faster|slower|higher|lower|broader|narrower|wider|greater|bigger"
     r"|stronger|weaker|longer|shorter|more|less)\b)"
-    r"|\s+(?:combined\s+|standard\s+)*(?:errors?|sigma|σ|standard deviations?)\b)",
+    r"|\s+(?:combined\s+|standard\s+)*(?:errors?|sigma|σ|standard deviations?"
+    r"|resolution elements?)\b)",
     re.IGNORECASE,
 )
 
@@ -114,7 +128,7 @@ _VALUE_PLUS_MINUS = re.compile(r"\d(?:\s*[^\W\d][^\s|±(]*)?[\s|(]*±\s*$")
 #: Words after a number (and its unit) that name it a comparison of two values.
 _COMPARISON_SUFFIX = re.compile(
     r"(?:\s?(?:%|[^\W\d][^\s,;.)]*)(?:\s(?:units?|points?))?)?"
-    r"\s(?:better|worse|lower|higher|larger|smaller|faster"
+    r"\s(?:apart|better|worse|lower|higher|larger|smaller|faster"
     r"|slower|spread|difference|discrepancy|mismatch|disagreement|scatter|behind|ahead)\b"
     r"(?!\s+(?:bound|limit|edge))",
     re.IGNORECASE,
@@ -208,6 +222,7 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             Unverified(match.group(), line_number, line.strip())
             for match in _RATIO_WORD.finditer(line)
             if match.group().lower() not in log_text.lower()
+            and _in_digits(match.group()).lower() not in log_text.lower()
         )
         shared_until = -1
         for match in _DRAFT_NUMBER.finditer(line):
@@ -225,7 +240,11 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             derived = (
                 match.end() <= shared_until
                 or _DERIVED_PREFIX.search(before) is not None
-                or _COMPARISON_SUFFIX.match(line, after) is not None
+                or (
+                    (comparison := _COMPARISON_SUFFIX.match(line, after)) is not None
+                    # A comparison copied from the output ("0.0706 ± 0.0045 MHz apart") is printed.
+                    and line[match.start() : comparison.end()] not in log_text
+                )
                 or (before.rstrip().endswith("±") and not _VALUE_PLUS_MINUS.search(before))
             )
             if derived:
