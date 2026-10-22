@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ends "in all, Exponential on 14 of 15 runs" and fit quality prints
   "poor 27 of 29"; an "N of M" in a draft verifies only as a printed tally, so a
   recount by hand ("13 of 15") is listed.
+- **``trend`` names where a line appears or vanishes on cooling.** In a
+  several-line model, a line whose amplitude switches on or off along a
+  temperature scan gets a note bracketing its onset by where it leaves its warm
+  level, rather than leaving the onset to a width step.
 - **``audit`` catches hedged spreads and worded percentages.** "Stable to about
   200 G", "about three percent" and "within about ten gauss" are listed unless printed; a hedged round
   number's trailing zeros no longer count as significant digits.

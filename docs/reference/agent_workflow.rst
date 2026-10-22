@@ -1090,7 +1090,11 @@ of the scan into two contiguous blocks whose weighted means differ most and,
 when that is more than five combined errors, names the step, which way it
 goes and where it falls, bracketed by where the parameter leaves the level of
 one end and reaches the other's (where it levels off), and gives the step's size
-and its percentage of the low end's level. Along a supplied axis
+and its percentage of the low end's level. Along temperature, in a model of two
+or more lines, a line whose amplitude at one end is under 30 % of the other's
+gets a note naming where it leaves its warm level on cooling: that span is the
+line's onset, which a width it multiplies cannot show once the amplitude is
+near zero. Along a supplied axis
 (a steering current, a foil count) an amplitude lower or higher inside the
 scan than at both ends by five combined errors is named a minimum or maximum
 instead, to report with where it lies — a Kubo–Toyabe width a few percent larger below a superconductor's

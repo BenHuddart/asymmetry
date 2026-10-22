@@ -4367,3 +4367,32 @@ def test_survey_extreme_logger_requires_context_not_automatic_temperature_infere
     if warned:
         assert "independently validated" in text
         assert "not evidence for a thermal confound" in text
+
+
+def test_a_line_whose_amplitude_appears_on_cooling_names_its_onset() -> None:
+    from asymmetry.cli.commands.trend import _component_onsets
+    from asymmetry.core.workflow.series import TrendTable
+
+    # LiFeAs 400 G (Sonnet wave 6): the broad line's weight moves to it below 16.9 K,
+    # while its width steps lower down; the onset is where the amplitude leaves its warm level.
+    table = [
+        (1.74, 12.92, 4.34),
+        (4.02, 12.90, 4.87),
+        (7.42, 12.87, 5.47),
+        (10.49, 13.11, 5.32),
+        (12.62, 9.93, 9.25),
+        (14.76, 5.43, 14.14),
+        (16.90, 1.65, 17.44),
+        (19.02, 1.71, 18.09),
+    ]
+    rows = [
+        {"key": str(i), "x": x, "A_1": a1, "A_1_err": 0.4, "A_3": a3, "A_3_err": 0.4, "flags": []}
+        for i, (x, a1, a3) in enumerate(table)
+    ]
+    trend = TrendTable("sample_temperature_logged", ["A_1", "A_3"], rows)
+    two_lines = "Oscillatory * Gaussian + Oscillatory * Gaussian + Constant"
+    appears, vanishes = _component_onsets(trend, ["A_1", "A_3"], two_lines)
+    assert "appears on cooling between 14.76 and 16.9" in appears
+    assert "vanishes on cooling between 14.76 and 16.9" in vanishes
+    # One line beside a relaxation is not a pair of lines trading weight.
+    assert _component_onsets(trend, ["A_1", "A_3"], "Oscillatory * Gaussian + Exponential") == []

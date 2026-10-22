@@ -362,6 +362,7 @@ def _render(
     readings = [
         *([change] if change is not None else []),
         *_rate_steps(trend, series["free_params"]),
+        *_component_onsets(trend, series["free_params"], series["expression"]),
         *_edge_comparisons(trend, series["free_params"]),
         *_phase_drift(trend, series["free_params"]),
         *_frequency_response(series, trend),
@@ -633,6 +634,62 @@ def _rate_steps(trend, free_params: list[str]) -> list[str]:
             f"did not."
         )
     return notes
+
+
+def _component_onsets(trend, free_params: list[str], expression: str) -> list[str]:
+    """A note per line of a several-line model whose amplitude appears or vanishes on cooling.
+
+    Where one end's level is under :data:`_VANISHED` of the other's, the
+    component switches on or off along the scan, and its onset on cooling is
+    where its amplitude leaves the warm end's level — not where a width it
+    multiplies steps, which means nothing once the amplitude is near zero.
+    """
+    amplitudes = [p for p in free_params if re.fullmatch(r"A_\d+", p)]
+    if (
+        trend.order_key not in ("temperature", "sample_temperature_logged")
+        or expression.count("Oscillatory") < 2
+        or len(amplitudes) < 2
+    ):
+        return []
+    notes = []
+    for param in amplitudes:
+        rows = sorted(
+            (
+                row
+                for row in trend.rows
+                if row[param] is not None and row[f"{param}_err"] and "failed" not in row["flags"]
+            ),
+            key=lambda row: row["x"],
+        )
+        # A block at one temperature (a normal-state set) is not a scan to place an onset on.
+        if len(rows) < 4 or rows[-1]["x"] - rows[0]["x"] < _SCAN_SPAN * abs(rows[-1]["x"]):
+            continue
+        half = len(rows) // 2
+        cold, _ = _held_level(rows[:half], param)
+        warm, warm_rows = _held_level(rows[::-1][:half], param)
+        if min(abs(cold), abs(warm)) >= _VANISHED * max(abs(cold), abs(warm)):
+            continue
+        edge = warm_rows[-1]
+        colder = [row for row in rows if row["x"] < edge["x"]]
+        if not colder:
+            continue
+        notes.append(
+            f"NOTE: {param} holds its warm level ({format_number(warm, 4)} over "
+            f"{edge['x']:g}–{rows[-1]['x']:g}) against {format_number(cold, 4)} at the cold end, "
+            f"and leaves it on cooling below {edge['x']:g}: the component it scales "
+            f"{'appears' if abs(warm) < abs(cold) else 'vanishes'} on cooling between "
+            f"{colder[-1]['x']:g} and {edge['x']:g}, which is that component's onset; a width or "
+            f"rate this amplitude multiplies is not a result where the amplitude is near zero."
+        )
+    return notes
+
+
+#: An amplitude whose level at one end is under this fraction of the other's
+#: switches its component on or off along the scan.
+_VANISHED = 0.3
+
+#: A temperature scan spans at least this fraction of its top temperature.
+_SCAN_SPAN = 0.1
 
 
 #: Order keys a run records for itself; any other was supplied with --x.
