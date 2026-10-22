@@ -1856,6 +1856,8 @@ def test_trend_model_prints_the_fit_and_what_it_left_out(
     assert f"{SCAN_RUNS[-1]} (outside the x range)" in out
     # What the trend shows is still named beside the law fitted to one column.
     assert re.search(r"NOTE: Lambda (?:rises|falls) along the scan", out)
+    # Each column's range is printed, so a summary quotes it rather than reading one off.
+    assert re.search(r"Column ranges \(.*\): temperature 10–\S+; .*Lambda \S+–\S+", out)
 
 
 @pytest.mark.parametrize(

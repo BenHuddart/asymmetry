@@ -340,6 +340,17 @@ def _plots(workdir, name: str, series: dict[str, Any], trend, fit: dict | None) 
     ]
 
 
+def _column_ranges(trend, free_params: list[str]) -> str:
+    """Each fitted column's min–max over the runs holding a value, so a range is quoted."""
+    ranges = []
+    for param in ["x", *free_params]:
+        values = [row[param] for row in trend.rows if row[param] is not None]
+        if values:
+            label = trend.order_key if param == "x" else param
+            ranges.append(f"{label} {min(values):.6g}–{max(values):.6g}")
+    return "Column ranges (every run with a value, flagged ones included): " + "; ".join(ranges)
+
+
 def _render(
     series: dict[str, Any],
     trend,
@@ -353,6 +364,7 @@ def _render(
         f"{series['name']} — {series['expression']}, ordered by {trend.order_key}",
         "",
         render_trend(trend),
+        _column_ranges(trend, series["free_params"]),
     ]
     from asymmetry.core.workflow.series import envelope_summary
 
