@@ -3093,7 +3093,7 @@ directories lived in a scratch tmpfs and are not archived.
 | 6 | `dd871f7` | 21/24 | EuO, LiFeAs (both judgement), benzene high TF |
 | 8 (16 run, 8 scored) | `20f137c` | 6/8 | fmuf, cuprate (both judgement) |
 | 9 | `da8b5e6` | 21/24 | fmuf, CdS, benzene ALC (all judgement) |
-| 10 | `c473bde` | WAVE10_PASS | WAVE10_FAILED |
+| 10 | `c473bde` | 19/24 (22 with judgement calls relaxed) | Sn, LiFeAs; cuprate, CdS, benzene ALC (judgement) |
 
 Every failure traced to the CLI, and every fix is in the CLI; `SKILL.md` is
 unchanged. As in earlier loops, a printed line changed behaviour where a
@@ -3156,6 +3156,15 @@ over waves 5, 6 and 9 — it would have flagged eleven such phrases, nearly all
 in runs the scorers passed. Whether a worded ratio of two printed values breaks
 the number rule is a question for the rubric (below), not something to settle
 in `audit`.
+
+Where the loop paused (wave 10): what remains is counting by hand in prose —
+"every run flagged" against a printed 5 of 9, "28 runs" against 30 `larmor`
+rows, "the six warmest runs" covering five, "Eighteen field scans" for 17.
+The next fixes, none made yet: a `survey` tally of `prec` per pair and of
+scans per family; `audit` checking a count beside a flag name against that
+flag's printed tally, a universal ("every run flagged") against `flagged : K
+of M`, and spelled-out counts; and aligning LiFeAs's onset note, which in
+wave 10 bracketed 12.6–14.8 K (the amplitude left its warm level earlier).
 
 Judgement calls the scorers raised repeatedly, for the maintainer: the
 corannulene cold-line range 15.1–15.6 kG is narrower than the window
