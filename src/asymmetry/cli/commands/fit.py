@@ -116,6 +116,26 @@ def run(args: argparse.Namespace) -> None:
             f"one line's envelope, not the line: it does not cancel the chi2 gain, so do not "
             f"headline a single line either."
         )
+    lines = sorted(
+        (abs(value), result["uncertainties"].get(name))
+        for name, value in result["parameters"].items()
+        if name.split("_")[0] == "frequency"
+    )
+    if result["success"] and len(lines) >= (2 if pair is None else 3):
+        # The spacings a summary would otherwise take as differences of printed lines.
+        print(
+            "Line spacings: "
+            + "; ".join(
+                f"{high:.6g} − {low:.6g} = {high - low:.4g}"
+                + (
+                    ""
+                    if low_err is None or high_err is None
+                    else f" ± {math.hypot(low_err, high_err):.2g}"
+                )
+                + " MHz"
+                for (low, low_err), (high, high_err) in zip(lines, lines[1:])
+            )
+        )
     note = window_note(workdir, [args.run])
     if note is not None:
         print(note)

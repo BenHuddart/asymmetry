@@ -60,19 +60,29 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def run(args: argparse.Namespace) -> None:
     """Build the recipe, store it, and print every parameter it carries."""
+    from asymmetry.core.fitting.seeding import line_amplitude_phase_values
     from asymmetry.core.workflow.recipe import FitRecipe
 
     workdir, _selection = workdir_for(Path(args.folder), args.workdir, args.instrument)
     name = checked_name(args.name, flag="--name")
     dataset = None if args.run is None else reduced_datasets(workdir, [args.run])[args.run]
+    initial = parse_fix(args.initial, flag="--initial")
     try:
         recipe = FitRecipe.from_expression(
             args.expression, dataset=dataset, t_min=args.tmin, t_max=args.tmax
-        ).with_overrides(initial=parse_fix(args.initial, flag="--initial"), fix=parse_fix(args.fix))
+        ).with_overrides(initial=initial, fix=parse_fix(args.fix))
     except KeyError as exc:
         raise UserError(str(exc.args[0])) from None
     except ValueError as exc:
         raise UserError(str(exc)) from None
+    if dataset is not None:
+        # Lines start at the amplitude and phase the run shows at their frequencies.
+        values = {parameter.name: parameter.value for parameter in recipe.parameters}
+        held = set(initial) | {parameter.name for parameter in recipe.parameters if parameter.fixed}
+        seeded = line_amplitude_phase_values(recipe.model(), dataset, values)
+        recipe = recipe.with_overrides(
+            initial={name: value for name, value in seeded.items() if name not in held}
+        )
     recipe_path = workdir.write_recipe(name, recipe)
 
     if args.json:

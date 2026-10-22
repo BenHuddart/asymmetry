@@ -116,7 +116,15 @@ def recipe_with_overrides(
         raise UserError(str(exc.args[0])) from None
 
 
+#: Said beside every printed two-line test: its seeds come from the run.
+LINE_SEEDS = (
+    "recipe --run seeds each line's amplitude and phase from the run itself, so give it "
+    "only the two frequencies"
+)
+
+
 __all__ = [
+    "LINE_SEEDS",
     "add_recipe_arguments",
     "load_recipe",
     "parse_fix",

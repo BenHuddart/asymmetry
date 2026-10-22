@@ -10,7 +10,13 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from asymmetry.cli._numbers import unstated, unsupported_laws, unverified_numbers, unverified_units
+from asymmetry.cli._numbers import (
+    unstated,
+    unsupported_laws,
+    unverified_counts,
+    unverified_numbers,
+    unverified_units,
+)
 from asymmetry.cli._output import UserError, emit_json, payload
 from asymmetry.cli._runs import range_text, run_spec
 from asymmetry.cli._workdir import OUTPUT_LOG, WORKDIR_NAME
@@ -66,6 +72,7 @@ def run(args: argparse.Namespace) -> None:
     text = draft.read_text(encoding="utf-8")
     found = unverified_numbers(text, log_text)
     found.extend(unverified_units(text, log_text))
+    found.extend(unverified_counts(text, log_text))
     laws = unsupported_laws(text, log_text)
     relations = unstated(text, log_text)
     unpaired = _correlations_without_lines(roots)

@@ -13,6 +13,7 @@ from asymmetry.cli._output import (
     payload,
     render_table,
 )
+from asymmetry.cli._recipes import LINE_SEEDS
 from asymmetry.cli._runs import reduced_datasets, resolve_run
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 from asymmetry.cli.commands.trend import HIGH_FIELD_LINE_MHZ
@@ -200,6 +201,9 @@ def _reduced_counts(workdir, selection, entry):
 #: transform barely separates.
 _CLOSE_PEAKS = 2
 
+#: Correlation peaks within this many resolution elements are one coupling's twins.
+_TWIN_COUPLINGS = 4
+
 
 #: Two fitted frequencies this close (relative) are a resolved pair, not a line
 #: and its harmonic.
@@ -309,7 +313,7 @@ def _render(result: dict) -> str:
             f"<folder> --run {result['run']} --name two-line --expression 'Oscillatory * "
             "Exponential + Oscillatory * Exponential + Constant' --initial "
             f"frequency_1={pairs[0][1]:.6g} --initial frequency_3={pairs[0][0]:.6g}, then "
-            f"asymmetry fit <folder> --run {result['run']} --recipe two-line."
+            f"asymmetry fit <folder> --run {result['run']} --recipe two-line ({LINE_SEEDS})."
         )
     paired = {frequency for pair in pairs for frequency in pair}
     high = [peak for peak in tesla_field_lines(result) if peak["frequency_mhz"] not in paired]
@@ -326,7 +330,8 @@ def _render(result: dict) -> str:
             f"<folder> --run {result['run']} --name two-line --expression 'Oscillatory * "
             f"Exponential + Oscillatory * Exponential + Constant' --initial "
             f"frequency_1={centre + width / 2:.6g} --initial frequency_3={centre - width / 2:.6g}"
-            f", then asymmetry fit <folder> --run {result['run']} --recipe two-line."
+            f", then asymmetry fit <folder> --run {result['run']} --recipe two-line "
+            f"({LINE_SEEDS})."
         )
     if not coupling:
         from asymmetry.core.fitting.knight_shift import larmor_frequency_mhz
@@ -347,6 +352,21 @@ def _render(result: dict) -> str:
             "This is an FFT: maximum-entropy (MaxEnt) spectra and multi-group "
             "field-distribution analysis are not available here — where the field "
             "distribution is part of the question, say so under Not done."
+        )
+    twins = [
+        (low, high)
+        for low, high in zip(close, close[1:])
+        if high - low <= _TWIN_COUPLINGS * resolution
+    ]
+    if coupling and twins:
+        lines.append(
+            "NOTE: the correlation peaks "
+            + "; ".join(
+                f"{low:.6g} and {high:.6g} MHz are {high - low:.3g} MHz apart, "
+                f"{(high - low) / resolution:.1f} resolution elements"
+                for low, high in twins
+            )
+            + ": quote both as printed, with this separation, rather than one coupling."
         )
     if coupling:
         lines.append(

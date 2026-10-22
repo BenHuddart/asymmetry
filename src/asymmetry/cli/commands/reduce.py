@@ -17,6 +17,7 @@ from asymmetry.cli._output import (
 )
 from asymmetry.cli._reduction import (
     add_reduction_arguments,
+    alpha_step_note,
     deadtime_note,
     describe,
     reduction_settings,
@@ -209,7 +210,10 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(entries, settings, workdir.root, plot_paths))
-    for note in deadtime_note(settings, carries_deadtime):
+    runs = [run_number for run_number, _prefix, _paths, _members in reductions]
+    for note in deadtime_note(settings, carries_deadtime) + alpha_step_note(
+        workdir, args.alpha_from, runs
+    ):
         print(note)
 
 

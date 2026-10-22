@@ -346,10 +346,27 @@ def _render(outcome, series_path: Path, plot_paths: list[Path] | None = None) ->
             + (f" — {branch.seeding_reason}" if branch.seeding_reason else "")
         )
     if outcome.reseeded_runs:
-        lines.append("reseeded : " + ", ".join(str(run) for run in outcome.reseeded_runs))
+        lines.append(
+            "reseeded : "
+            + ", ".join(str(run) for run in outcome.reseeded_runs)
+            + " (runs whose chain restarted from a fresh seed; the spurious_reseeded flag "
+            "also marks runs a restart did not rescue — count it from the flags column)"
+        )
     if outcome.global_params:
         lines.append(f"pinned   : {', '.join(outcome.global_params)}")
-    lines.append(f"flagged  : {flagged} of {len(outcome.results)} run(s) — none were dropped")
+    tally = Counter(flag for entry in outcome.results for flag in entry["quality_flags"])
+    lines.append(
+        f"flagged  : {flagged} of {len(outcome.results)} run(s) — none were dropped"
+        + (
+            " ("
+            + ", ".join(
+                f"{flag} {n} of {len(outcome.results)}" for flag, n in sorted(tally.items())
+            )
+            + ")"
+            if tally
+            else ""
+        )
+    )
     lines.append(f"Series written to {series_path}")
     if plot_paths:
         lines.append(f"{len(plot_paths)} plot(s) written under {plot_paths[0].parent.parent}")

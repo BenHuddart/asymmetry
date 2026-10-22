@@ -358,6 +358,15 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         ("the alphas differ by about 0.5 %", ["0.5 %"]),
         # A comparison named after the number, over a whole range.
         ("about 4 points better on AICc", ["4"]),
+        ("the Overhauser model about 29 AICc units behind it", ["29"]),
+        # A spacing of printed lines (Sonnet wave 9, CdS triplet).
+        ("two satellites symmetric about it by about 0.12 MHz", ["0.12"]),
+        ("a splitting of about 0.12 MHz", ["0.12"]),
+        # A separation of two printed peaks (Sonnet wave 6, benzene high TF).
+        (
+            "the two peaks are 0.37 MHz apart, about three resolution elements",
+            ["three resolution elements", "0.37"],
+        ),
         ("values 1.22–1.25 Å, a 1.2–1.3% spread", ["1.2", "1.3%"]),
         ("the 0.2–0.3 % difference is unresolved", ["0.2", "0.3 %"]),
         # A relative error is a ratio; an absolute error on an asymmetry is not.
@@ -405,7 +414,7 @@ def test_wave_derived_numbers_are_flagged(draft: str, flagged: list[str]) -> Non
 
 
 _WAVE2_LOG = """rate 3.2e-08  candidate 3.3x the noise floor  2.9x
-field 5000 G  run 91500  A_bg 3.56102  dchi2 274.851 480.2
+field 5000 G  step 200 G  run 91500  A_bg 3.56102  dchi2 274.851 480.2
 Delta 0.3505 0.2706 0.08  frequency 0.0326399  AICc 4241.2 8423.2
 """
 
@@ -440,6 +449,12 @@ Delta 0.3505 0.2706 0.08  frequency 0.0326399  AICc 4241.2 8423.2
         ("the scan drifted by about 3 K", ["3"]),
         ("amplitudes add up to several times the asymmetry", []),
         ("lines 2.5 resolution elements apart", ["2.5 resolution elements"]),
+        # A hedged round spread is one digit, whatever grid value it repeats (Sonnet, 2026-10-21).
+        ("the centre moves by about 200 G with window", ["200"]),
+        ("the centre is stable to about 200 G across windows", ["200"]),
+        ("the field steps by 200 G", []),
+        ("the whole change is about three percent of Delta", ["three percent"]),
+        ("the two scans agree to within about ten gauss", ["within about ten"]),
     ],
 )
 def test_wave2_notation_and_contexts(draft: str, flagged: list[str]) -> None:
@@ -1057,3 +1072,31 @@ def test_extreme_logger_is_not_a_temperature_confound_without_validation():
     assert unstated("The high logger value confounds the foil curve.", log)
     assert not unstated("The logger is railed and irrelevant to this calibration.", log)
     assert not unstated("The sample temperature was independently validated.", log)
+
+
+def test_a_count_verifies_only_as_a_printed_tally() -> None:
+    from asymmetry.cli._numbers import unverified_counts
+    from asymmetry.cli._output import render_quality_counts
+
+    log = (
+        "in all, Exponential on 14 of 15 runs\n"
+        + render_quality_counts(
+            [{"quality": {"verdict": "poor", "chi2_reduced": c}} for c in (1.1, 1.3, 1.2)]
+            + [{"quality": None}]
+        )
+        + "\nruns 13 and 15 at 20 G\n"
+    )
+    # Each verdict carries its chi2_red range, so a summary need not read one off a table.
+    assert "poor 3 of 4 (chi2_red 1.1–1.3)" in log
+    # A recount by hand finds both numbers in the log, but not as that tally (Sonnet, 2026-10-22).
+    assert [e.text for e in unverified_counts("exponential on 13 of 15 runs", log)] == ["13 of 15"]
+    assert unverified_counts("exponential on 14 of the 15 runs; poor on 3 of 4", log) == []
+
+
+def test_a_unit_check_reads_only_the_parameter_named_in_the_numbers_clause() -> None:
+    from asymmetry.cli._numbers import unverified_units
+
+    log = "parameter  value  unit\nB0  10.2  G  1\n"
+    # A scan label's temperature after a clause naming B0 is not B0 (Sonnet, 2026-10-22).
+    assert unverified_units("B0 is fitted per scan; the 10 K line sits higher", log) == []
+    assert [e.text for e in unverified_units("B0 is 10 K", log)] == ["10 K (B0 printed in G)"]

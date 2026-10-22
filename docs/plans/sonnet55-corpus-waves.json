@@ -1,0 +1,164 @@
+{
+  "description": "Per-wave summary of the Sonnet 5.5 corpus improvement loop of 2026-10-21/22 (branch claude/wimda-corpus-eval-sonnet-a65c74). Host Claude Code 2.1.303 / Linux, run_wave.py --set all --parallel 4, scored per group by Sonnet scorers with tools/agent_eval/scoring_brief.md. Raw run directories were kept in a scratch tmpfs and are not archived; a reboot removed waves 1-4, and later waves were not archived either.",
+  "waves": [
+    {
+      "wave": "w1",
+      "kind": "baseline",
+      "recorded_at": "2026-10-21",
+      "commit": "ac53471",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 20,
+      "scientific_failures": [
+        "afm-high-tf-mdu",
+        "trsb-re6zr",
+        "basics",
+        "corannulene-alc"
+      ],
+      "status": "complete. afm: printed two-line test collapsed (phases started at pi); trsb: 'about three percent' hand-derived; basics: 'roughly 21 G' hand conversion and one alpha across an ALPHA STEP; corannulene: 'stable to about 200 G' spread. Judgement passes: plateau ('16 of 18' miscount), maleic (derived temperature gaps), cuprate (non-SC fraction)."
+    },
+    {
+      "wave": "w2",
+      "kind": "aborted",
+      "recorded_at": "2026-10-21",
+      "commit": "91cb05c",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 4,
+      "status": "stopped after four cases to run the next commit instead; not scored"
+    },
+    {
+      "wave": "w3",
+      "kind": "round",
+      "recorded_at": "2026-10-21",
+      "commit": "e9b7791",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 23,
+      "scientific_failures": [
+        "corannulene-alc"
+      ],
+      "status": "complete. corannulene (judgement): the same-window prompt fitted the broad cold 15 kG line in the hot line's narrow window (15055.7 G, outside 15.1-15.6 kG). TRSB and basics fixed by the printed step percentage and implied field. Found: the ALPHA STEP NOTE fired across instruments (cuprate, copper) without misleading either agent; fixed in fe2ab1f."
+    },
+    {
+      "wave": "c1",
+      "kind": "repeats",
+      "recorded_at": "2026-10-21",
+      "commit": "b85274e",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 2,
+      "cases": 2,
+      "scientific_pass": 2,
+      "scientific_failures": [],
+      "status": "corannulene-alc twice: cold line 15479 and 15435.9 G, both state no narrow cold line near 7 kG"
+    },
+    {
+      "wave": "w4",
+      "kind": "round",
+      "recorded_at": "2026-10-22",
+      "commit": "ab6f08a",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 4,
+      "status": "all 24 ran; only Tier A was scored (4/4) before the usage limit, and the run directories were lost with the scratch tmpfs"
+    },
+    {
+      "wave": "w5",
+      "kind": "round",
+      "recorded_at": "2026-10-22",
+      "commit": "b85274e",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 23,
+      "scientific_failures": [
+        "ferromagnetic-nickel"
+      ],
+      "cost_usd": 29.97,
+      "status": "complete. nickel (judgement, number rule): 'exponential on 13 of 15 runs' against a printed 14/1 split; fixed in 6c7adbf (tallies printed as N of M, audit checks N of M). Corannulene, basics, TRSB, LiFeAs and AFM all passed using the new CLI lines."
+    },
+    {
+      "wave": "w6",
+      "kind": "round",
+      "recorded_at": "2026-10-22",
+      "commit": "dd871f7",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 21,
+      "scientific_failures": [
+        "euo-psi",
+        "lifeas-psi",
+        "benzene-high-tf"
+      ],
+      "cost_usd": 30.14,
+      "status": "complete. euo (judgement, number rule): 'about 29 AICc units behind' (fixed 6ce6e07); lifeas (judgement): onset placed at the broad line's width step, not where its amplitude leaves its warm level (fixed 312652c); benzene-high-tf (number rule): '0.37 MHz apart, about three resolution elements' from two printed correlation peaks (fixed 8ca38d9). The N-of-M count check caught nickel's '8 of 9' and plateau's '18 of 21' before reply."
+    },
+    {
+      "wave": "w8",
+      "kind": "round (partial)",
+      "recorded_at": "2026-10-22",
+      "commit": "20f137c",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 16,
+      "scientific_pass": 6,
+      "scored": 8,
+      "scientific_failures": [
+        "fmuf-ptfe",
+        "high-tc-cuprate"
+      ],
+      "status": "stopped by a usage limit after 16 cases; 8 scored. fmuf (judgement): 'spurious_reseeded on 14' counted from the reseeded list (17 flagged); cuprate (judgement): 'good on every run, chi2_red 1.045 to 1.152' over a block with 4 poor fits. Both fixed in da8b5e6 (per-flag tallies, chi2_red range per verdict). Maleic's recipe seeded a 2 G diamagnetic line at A = 106.7; fixed in 2a8a14b."
+    },
+    {
+      "wave": "w9",
+      "kind": "confirmation",
+      "recorded_at": "2026-10-22",
+      "commit": "da8b5e6",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 21,
+      "scientific_failures": [
+        "fmuf-ptfe",
+        "cds-fourier",
+        "benzene-alc"
+      ],
+      "cost_usd": 30.33,
+      "status": "complete; all three fails are judgement calls on hand-derived prose numbers. fmuf: a nu range wrong at one end (f6ad515 prints each level's spread, 8aa3541 each column's range); cds: 'symmetric about it by about 0.12 MHz' (c473bde prints line spacings, audit reads 'symmetric by'); benzene-alc: 'a width roughly a third of the solid's' (left open: the skill tells agents to state an unprinted relation in words). Every earlier failure mode held: TRSB, basics, corannulene, LiFeAs (onset 14.76-16.9 K from the new note), AFM, benzene high TF, wave-8 fmuf and cuprate."
+    },
+    {
+      "wave": "w10",
+      "kind": "confirmation (last)",
+      "recorded_at": "2026-10-22",
+      "commit": "c473bde",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 19,
+      "scientific_pass_judgement_relaxed": 22,
+      "scientific_failures": [
+        "sn-critical-field",
+        "lifeas-psi",
+        "high-tc-cuprate",
+        "cds-fourier",
+        "benzene-alc"
+      ],
+      "cost_usd": 31.2,
+      "status": "complete; every fail is a hand-made count or ratio in prose. sn: 'every run flagged' against a printed 5 of 9, and two flags' tallies merged; lifeas: 'measured on 28 runs' (survey shows 30 larmor rows, no tally); cuprate (judgement): 'about a tenth of the events'; cds (judgement): 'the six warmest runs' covers five; benzene-alc (judgement): 'Eighteen field scans' (17). Not fixed: the loop paused here."
+    }
+  ]
+}
