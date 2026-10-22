@@ -103,15 +103,20 @@ def render_trend(trend: Any) -> str:
 
 
 def render_quality_counts(results: Iterable[dict[str, Any]]) -> str:
-    """Print verdict counts so reports need not calculate them from fit tables."""
-    counts = Counter(
-        "unknown" if result["quality"] is None else result["quality"]["verdict"]
+    """Print verdict counts, each with its chi2_red range, so reports need not read them off."""
+    verdicts = [
+        ("unknown", None)
+        if result["quality"] is None
+        else (result["quality"]["verdict"], result["quality"]["chi2_reduced"])
         for result in results
-    )
-    total = sum(counts.values())
-    return "Fit quality counts: " + ", ".join(
-        f"{name} {count} of {total}" for name, count in sorted(counts.items())
-    )
+    ]
+    counts = Counter(verdict for verdict, _ in verdicts)
+    parts = []
+    for verdict, count in sorted(counts.items()):
+        chi2 = [value for name, value in verdicts if name == verdict and value is not None]
+        span = f" (chi2_red {min(chi2):.4g}–{max(chi2):.4g})" if chi2 else ""
+        parts.append(f"{verdict} {count} of {len(verdicts)}{span}")
+    return "Fit quality counts: " + ", ".join(parts)
 
 
 def render_fit_windows(windows: dict[int, tuple[float, float]]) -> str:

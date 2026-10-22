@@ -23,9 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broad feature, and the same-window refit prompt no longer fires for a scan
   whose converged fit already holds a broader line there.
 - **Counts are printed as tallies, and ``audit`` checks them.** The envelope NOTE
-  ends "in all, Exponential on 14 of 15 runs" and fit quality prints
-  "poor 27 of 29"; an "N of M" in a draft verifies only as a printed tally, so a
-  recount by hand ("13 of 15") is listed.
+  ends "in all, Exponential on 14 of 15 runs"; fit quality prints "poor 4 of 14
+  (chi2_red 1.10–1.15)" with each verdict's range; ``fit-series`` tallies each
+  flag ("spurious_reseeded 17 of 29") and says its ``reseeded`` list is only the
+  runs a restart rescued. An "N of M" in a draft verifies only as a printed tally,
+  so a recount by hand ("13 of 15") is listed.
 - **``fourier --correlation`` prints the separation of twin coupling peaks**, so a
   summary quotes both peaks and their printed separation rather than one value.
 - **``trend`` names where a line appears or vanishes on cooling.** In a

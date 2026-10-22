@@ -1077,10 +1077,14 @@ def test_a_count_verifies_only_as_a_printed_tally() -> None:
 
     log = (
         "in all, Exponential on 14 of 15 runs\n"
-        + render_quality_counts([{"quality": {"verdict": "poor"}}] * 3 + [{"quality": None}])
+        + render_quality_counts(
+            [{"quality": {"verdict": "poor", "chi2_reduced": c}} for c in (1.1, 1.3, 1.2)]
+            + [{"quality": None}]
+        )
         + "\nruns 13 and 15 at 20 G\n"
     )
-    assert "poor 3 of 4" in log
+    # Each verdict carries its chi2_red range, so a summary need not read one off a table.
+    assert "poor 3 of 4 (chi2_red 1.1–1.3)" in log
     # A recount by hand finds both numbers in the log, but not as that tally (Sonnet, 2026-10-22).
     assert [e.text for e in unverified_counts("exponential on 13 of 15 runs", log)] == ["13 of 15"]
     assert unverified_counts("exponential on 14 of the 15 runs; poor on 3 of 4", log) == []

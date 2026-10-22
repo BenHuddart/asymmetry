@@ -790,8 +790,10 @@ rebinning is included for fits, and the wizard's own analysis rebinning for
 the wizard. Their JSON products retain the same bounds
 as ``time_window`` or, for a series or coupled group, ``time_windows``. Quote these alongside
 relaxation rates, rather than inferring exact limits from plot axes.
-Series and grouped-fit batches also print ``Fit quality counts`` so a report
-can quote the verdict totals directly rather than calculate them from rows.
+Series and grouped-fit batches also print ``Fit quality counts`` — each
+verdict as "N of M" with its chi2_red range — so a report can quote the verdict
+totals directly rather than calculate them from rows; ``fit-series`` tallies
+each flag beside its ``flagged`` count the same way.
 For a field sweep containing a zero-field reference, the survey reports
 ``INTERNAL-FIELD AMBIGUITY`` when a high-field Larmor-like line also matches
 the spontaneous zero-field precession. That coincidence cannot establish

@@ -1525,6 +1525,9 @@ def test_fit_series_offers_the_screenings_runner_up_when_most_runs_run_away(
     out = capsys.readouterr().out
     assert "amplitude_exceeds_data, so Exponential + Constant does not describe this scan" in out
     assert f"--runs {runs} --recipe wizard-7-alt --order " in out
+    # Each flag is tallied, so a summary quotes the count rather than counting a column.
+    n = len(SCAN_RUNS)
+    assert f"amplitude_exceeds_data {n} of {n}" in out
 
     # The runner-up's own series is quiet, and so is a recipe with no runner-up.
     _cli(
