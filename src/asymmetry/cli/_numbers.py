@@ -62,7 +62,7 @@ _HEDGE = r"(?:(?:about|roughly|approximately|around|some|only|up to|~|≈)\s*)*"
 _CHANGE_VERB = (
     r"(?:differ|fall|fell|rise|rose|drop|shift|move|change|var(?:y|ie)|increase|decrease"
     r"|grow|grew|exceed|prefer|depart|deviate|disagree|offset|apart|separat|split|beat"
-    r"|outperform|improv|lower|rais|reduc|narrow|broaden|widen|drift|climb|sank|sink)"
+    r"|outperform|improv|lower|rais|reduc|narrow|broaden|widen|drift|climb|sank|sink|symmetric)"
 )
 
 #: The rest of one clause: no punctuation but a decimal point, no second verb
@@ -80,6 +80,7 @@ _DERIVED_PREFIX = re.compile(
     rf"|\b(?:correspond\w*\s+to|equivalent\s+(?:to|of)|amounts?\s+to|converts?\s+to"
     rf"|translat\w*\s+(?:in)?to|would\s+be){_CLAUSE}"
     rf"|\b(?:margin|difference|gap|shift|step|jump|drop|rise|increase|decrease|change|offset"
+    rf"|splitting|separation|spacing"
     rf"|discrepancy|spread|scatter|deviation)s?\s+(?:of|(?:is|was|are|were)\s+(?:only\s+|just\s+)?{_APPROXIMATE}))"
     rf"\s*{_HEDGE}\s*$",
     re.IGNORECASE,

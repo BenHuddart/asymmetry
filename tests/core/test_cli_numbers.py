@@ -359,6 +359,9 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         # A comparison named after the number, over a whole range.
         ("about 4 points better on AICc", ["4"]),
         ("the Overhauser model about 29 AICc units behind it", ["29"]),
+        # A spacing of printed lines (Sonnet wave 9, CdS triplet).
+        ("two satellites symmetric about it by about 0.12 MHz", ["0.12"]),
+        ("a splitting of about 0.12 MHz", ["0.12"]),
         # A separation of two printed peaks (Sonnet wave 6, benzene high TF).
         (
             "the two peaks are 0.37 MHz apart, about three resolution elements",

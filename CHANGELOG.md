@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flag ("spurious_reseeded 17 of 29") and says its ``reseeded`` list is only the
   runs a restart rescued. An "N of M" in a draft verifies only as a printed tally,
   so a recount by hand ("13 of 15") is listed.
+- **``fit`` prints the spacing of each pair of adjacent lines** in a multi-line
+  model, and ``audit`` reads "symmetric about it by about 0.12 MHz" and "a
+  splitting of" as differences.
 - **``fourier --correlation`` prints the separation of twin coupling peaks**, so a
   summary quotes both peaks and their printed separation rather than one value.
 - **``trend`` names where a line appears or vanishes on cooling.** In a

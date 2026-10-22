@@ -4414,3 +4414,20 @@ def test_a_line_whose_amplitude_appears_on_cooling_names_its_onset() -> None:
     assert "vanishes on cooling between 14.76 and 16.9" in vanishes
     # One line beside a relaxation is not a pair of lines trading weight.
     assert _component_onsets(trend, ["A_1", "A_3"], "Oscillatory * Gaussian + Exponential") == []
+
+
+def test_fit_prints_the_spacing_of_separate_lines(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    from asymmetry.core.workflow.recipe import FitRecipe
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    # A summary otherwise takes a triplet's spacing as a difference of printed lines (CdS).
+    expression = "Oscillatory * Exponential + Oscillatory * Exponential + Constant"
+    recipe = FitRecipe.from_expression(expression).with_overrides(
+        fix={"frequency_1": 1.0, "frequency_3": 2.5}
+    )
+    WorkDir(fitting_workdir).write_recipe("lines", recipe)
+    capsys.readouterr()
+    _cli(workflow_folder, fitting_workdir, "fit", "--run", str(SCAN_RUNS[0]), "--recipe", "lines")
+    assert "Line spacings: 2.5 − 1 = 1.5 MHz" in capsys.readouterr().out
