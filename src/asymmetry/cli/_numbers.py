@@ -310,6 +310,10 @@ def unverified_counts(draft: str, log_text: str) -> list[Unverified]:
     ]
 
 
+#: Characters a parameter's name may sit before the number it names.
+_NAMED_REACH = 40
+
+
 def unverified_units(draft: str, log_text: str) -> list[Unverified]:
     """Flag a named parameter restated with a unit incompatible with its printed table."""
     unit = r"(?:dimensionless|MHz|kHz|Hz|kG|G|K|meV|ns|[µμ]s(?:⁻¹)?)(?!\w)"
@@ -352,12 +356,14 @@ def unverified_units(draft: str, log_text: str) -> list[Unverified]:
             notation = re.search(r"[eE]([-+]?\d+)$", token)
             tolerance = 10.0 ** (int(notation[1]) if notation else 0) * scale
             tolerance *= 10.0 ** -_decimals(token)
-            # The number belongs to the parameter named closest before it on the line.
+            # The number belongs to the parameter named closest before it in its clause.
             before = line[: number.start()].translate(aliases)
             named = [
                 (mention.end(), name)
                 for name in parameters
                 for mention in re.finditer(rf"\b{re.escape(name)}\b", before)
+                if len(before) - mention.end() <= _NAMED_REACH
+                and not re.search(r"[;:)]|\.(?!\d)", before[mention.end() :])
             ]
             if not named:
                 continue

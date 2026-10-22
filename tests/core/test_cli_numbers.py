@@ -1078,3 +1078,12 @@ def test_a_count_verifies_only_as_a_printed_tally() -> None:
     # A recount by hand finds both numbers in the log, but not as that tally (Sonnet, 2026-10-22).
     assert [e.text for e in unverified_counts("exponential on 13 of 15 runs", log)] == ["13 of 15"]
     assert unverified_counts("exponential on 14 of the 15 runs; poor on 3 of 4", log) == []
+
+
+def test_a_unit_check_reads_only_the_parameter_named_in_the_numbers_clause() -> None:
+    from asymmetry.cli._numbers import unverified_units
+
+    log = "parameter  value  unit\nB0  10.2  G  1\n"
+    # A scan label's temperature after a clause naming B0 is not B0 (Sonnet, 2026-10-22).
+    assert unverified_units("B0 is fitted per scan; the 10 K line sits higher", log) == []
+    assert [e.text for e in unverified_units("B0 is 10 K", log)] == ["10 K (B0 printed in G)"]
