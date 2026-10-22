@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   two-line test inside one FFT peak no longer collapses onto one line.
 - **The CLI prints the numbers agents were working out by hand.** The survey's
   ``ZERO-FIELD HEADER`` gives the field each line implies; a ``trend`` step note
-  gives the step and its percentage of the low level; ``reduce`` and
+  gives the step, its percentage of the low level and each level's spread of values; ``reduce`` and
   ``integral-scan`` name runs reduced across a survey ``ALPHA STEP`` with one
   ``--alpha-from``.
 - **``integral-scan`` keeps a broad line apart from a narrow one.** ``COMPARE``

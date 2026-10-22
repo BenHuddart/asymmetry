@@ -3324,9 +3324,10 @@ def test_a_gradual_step_is_bracketed_by_where_the_width_leaves_each_level() -> N
         TrendTable("temperature", ["key", "x", "Delta", "Delta_err", "flags"], rows), ["Delta"]
     )
 
-    assert "low-temperature level (0.2597 over 0.3–5.6) above 5.6" in note
+    # Each level gives its spread, so a range is quoted, not assembled from table rows.
+    assert "low-temperature level (0.2597 over 0.3–5.6; values 0.2597–0.2597) above 5.6" in note
     assert "falls along the scan" in note
-    assert "reaches its high-temperature level (0.2534 over 6.8–10) at 6.8" in note
+    assert "high-temperature level (0.2534 over 6.8–10; values 0.2534–0.2534) at 6.8" in note
     assert "the change lies between 5.6 and 6.8, it levels off from 6.8 on" in note
 
 

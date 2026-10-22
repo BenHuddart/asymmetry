@@ -619,12 +619,18 @@ def _rate_steps(trend, free_params: list[str]) -> list[str]:
         low_level, low_rows = _held_level(rows[:k], param)
         high_level, high_rows = _held_level(rows[k:][::-1], param)
         low_edge, high_edge = low_rows[-1]["x"], high_rows[-1]["x"]
+
+        def spread(block: list[dict[str, Any]]) -> str:
+            values = [row[param] for row in block]
+            return f"values {format_number(min(values), 4)}–{format_number(max(values), 4)}"
+
         notes.append(
             f"NOTE: {param} {'rises' if high_level > low_level else 'falls'} along the scan "
             f"({significance:.0f}x the combined error between the weighted means of its two "
             f"sides). It leaves its low-{axis} level ({format_number(low_level, 4)} over "
-            f"{low_rows[0]['x']:g}–{low_edge:g}) above {low_edge:g} and reaches its high-{axis} "
-            f"level ({format_number(high_level, 4)} over {high_edge:g}–{high_rows[0]['x']:g}) "
+            f"{low_rows[0]['x']:g}–{low_edge:g}; {spread(low_rows)}) above {low_edge:g} and "
+            f"reaches its high-{axis} level ({format_number(high_level, 4)} over "
+            f"{high_edge:g}–{high_rows[0]['x']:g}; {spread(high_rows)}) "
             f"at {high_edge:g}, a step of {abs(high_level - low_level):#.3g} "
             f"({100 * abs(high_level - low_level) / abs(low_level):#.3g} % of the "
             f"low-{axis} level): the change lies between {low_edge:g} and {high_edge:g}, it "
