@@ -839,7 +839,10 @@ are set (``--initial`` and ``--fix`` included), each precessing term's
 amplitude and phase, and a single background, are solved by linear least
 squares against that run — two lines inside one FFT peak then start apart
 rather than both at the record-scale phase, where a fit collapses one onto the
-other. A value passed with ``--initial`` or ``--fix`` is kept.
+other. A value passed with ``--initial`` or ``--fix`` is kept. A line completing
+under one cycle in the record (a diamagnetic line at a few gauss) keeps its
+record-scale start, and a solve whose amplitudes exceed twice the record's own
+excursion is discarded.
 ``--initial`` moves a start value, ``--fix`` holds one (and pins it, so a series never re-seeds it), and
 ``--tmin``/``--tmax`` set the fit window. The command writes
 ``recipes/<name>.json`` and prints every parameter — the names a repeated

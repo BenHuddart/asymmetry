@@ -461,3 +461,25 @@ def test_line_amplitude_phase_values_recovers_each_line_of_a_close_doublet() -> 
 
     for name in ("A_1", "phase_1", "A_3", "phase_3", "A_bg"):
         assert seeded[name] == pytest.approx(lines[name], abs=1e-6)
+
+
+def test_a_line_under_one_cycle_keeps_its_record_scale_start() -> None:
+    """A 2 G diamagnetic line beside muonium is a slope over the record, not a phase to solve."""
+    model = CompositeModel(
+        ["Oscillatory", "Exponential", "Oscillatory", "Exponential"], operators=["*", "+", "*"]
+    )
+    time = np.linspace(0.0, 10.0, 2000)
+    truth = {"A_1": 2.0, "frequency_1": 2.79, "phase_1": 0.2, "Lambda_2": 0.4}
+    truth |= {"A_3": 18.0, "frequency_3": 0.0271, "phase_3": 0.0, "Lambda_4": 0.05}
+    record = MuonDataset(
+        time=time,
+        asymmetry=model.function(time, **truth),
+        error=np.full_like(time, 0.1),
+        metadata={"run_number": 1},
+    )
+    # The slow line keeps the start it has (record scale in a recipe); the fast one is solved.
+    seeded = line_amplitude_phase_values(model, record, truth | {"A_1": 1.0, "phase_1": 3.14})
+
+    assert "A_3" not in seeded and "phase_3" not in seeded
+    assert seeded["A_1"] == pytest.approx(2.0, rel=0.05)
+    assert seeded["phase_1"] == pytest.approx(0.2, abs=0.05)

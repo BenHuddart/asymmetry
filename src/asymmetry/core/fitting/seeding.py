@@ -158,6 +158,11 @@ def seed_parameters(model: CompositeModel, context: SeedContext) -> dict[str, Se
     return seeds
 
 
+#: A solved line amplitude above this multiple of the record's own excursion is
+#: an artefact of nearly collinear columns, not a start.
+_SEED_SCALE_LIMIT = 2.0
+
+
 def line_amplitude_phase_values(
     model: CompositeModel, dataset: MuonDataset, values: dict[str, float]
 ) -> dict[str, float]:
@@ -177,15 +182,21 @@ def line_amplitude_phase_values(
     for name, identity in identities.items():
         if isinstance(identity, ComponentParameter):
             by_component.setdefault(identity.component, {})[kinds[name]] = name
+    time = np.asarray(dataset.time, dtype=float)
+    span = float(time[-1] - time[0])
+    # A line completing under a cycle in the record is a slope the background
+    # absorbs: it keeps its record-scale start and stays out of the solve.
     lines = [
         (names[ParameterKind.AMPLITUDE], names[ParameterKind.PHASE])
         for names in by_component.values()
-        if ParameterKind.PHASE in names and ParameterKind.AMPLITUDE in names
+        if ParameterKind.PHASE in names
+        and ParameterKind.AMPLITUDE in names
+        and ParameterKind.FREQUENCY in names
+        and abs(values[names[ParameterKind.FREQUENCY]]) * span >= 1.0
     ]
     backgrounds = [name for name, kind in kinds.items() if kind == ParameterKind.BACKGROUND]
     if not lines or len(backgrounds) > 1:
         return {}
-    time = np.asarray(dataset.time, dtype=float)
     silent = dict(values) | {amplitude: 0.0 for amplitude, _ in lines}
     silent |= {name: 0.0 for name in backgrounds}
     rest = model.function(time, **silent)
@@ -203,6 +214,12 @@ def line_amplitude_phase_values(
         (np.asarray(dataset.asymmetry, dtype=float) - rest) * weights,
         rcond=None,
     )
+    asymmetry = np.asarray(dataset.asymmetry, dtype=float)
+    scale = float(np.max(np.abs(asymmetry - np.median(asymmetry))))
+    amplitudes = np.hypot(solution[0 : 2 * len(lines) : 2], solution[1 : 2 * len(lines) : 2])
+    # Columns that nearly cancel give amplitudes no record holds: keep the old starts.
+    if np.any(amplitudes > _SEED_SCALE_LIMIT * scale):
+        return {}
     seeded = {}
     for index, (amplitude, phase) in enumerate(lines):
         cosine, sine = solution[2 * index], solution[2 * index + 1]
