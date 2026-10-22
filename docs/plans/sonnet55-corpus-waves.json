@@ -103,6 +103,41 @@
       ],
       "cost_usd": 30.14,
       "status": "complete. euo (judgement, number rule): 'about 29 AICc units behind' (fixed 6ce6e07); lifeas (judgement): onset placed at the broad line's width step, not where its amplitude leaves its warm level (fixed 312652c); benzene-high-tf (number rule): '0.37 MHz apart, about three resolution elements' from two printed correlation peaks (fixed 8ca38d9). The N-of-M count check caught nickel's '8 of 9' and plateau's '18 of 21' before reply."
+    },
+    {
+      "wave": "w8",
+      "kind": "round (partial)",
+      "recorded_at": "2026-10-22",
+      "commit": "20f137c",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 16,
+      "scientific_pass": 6,
+      "scored": 8,
+      "scientific_failures": [
+        "fmuf-ptfe",
+        "high-tc-cuprate"
+      ],
+      "status": "stopped by a usage limit after 16 cases; 8 scored. fmuf (judgement): 'spurious_reseeded on 14' counted from the reseeded list (17 flagged); cuprate (judgement): 'good on every run, chi2_red 1.045 to 1.152' over a block with 4 poor fits. Both fixed in da8b5e6 (per-flag tallies, chi2_red range per verdict). Maleic's recipe seeded a 2 G diamagnetic line at A = 106.7; fixed in 2a8a14b."
+    },
+    {
+      "wave": "w9",
+      "kind": "confirmation",
+      "recorded_at": "2026-10-22",
+      "commit": "da8b5e6",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 21,
+      "scientific_failures": [
+        "fmuf-ptfe",
+        "cds-fourier",
+        "benzene-alc"
+      ],
+      "cost_usd": 30.33,
+      "status": "complete; all three fails are judgement calls on hand-derived prose numbers. fmuf: a nu range wrong at one end (f6ad515 prints each level's spread, 8aa3541 each column's range); cds: 'symmetric about it by about 0.12 MHz' (c473bde prints line spacings, audit reads 'symmetric by'); benzene-alc: 'a width roughly a third of the solid's' (left open: the skill tells agents to state an unprinted relation in words). Every earlier failure mode held: TRSB, basics, corannulene, LiFeAs (onset 14.76-16.9 K from the new note), AFM, benzene high TF, wave-8 fmuf and cuprate."
     }
   ]
 }
