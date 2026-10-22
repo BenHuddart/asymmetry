@@ -243,6 +243,11 @@ def envelope_summary(trend: TrendTable) -> str | None:
             for shape, rows in groups
             if rows
         )
+        tally = ", ".join(
+            f"{shape} on {len(rows)} of {len(trend.rows)}" for shape, rows in groups if rows
+        )
+        if tally:
+            described += f" (in all, {tally} runs)"
         return (
             f"NOTE: envelope comparison — {described or 'no reliable comparison'}. "
             "Rows marked 'either' cannot distinguish Gaussian from exponential; this "

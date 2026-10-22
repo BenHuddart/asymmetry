@@ -113,7 +113,8 @@ _VALUE_PLUS_MINUS = re.compile(r"\d(?:\s*[^\W\d][^\s|±(]*)?[\s|(]*±\s*$")
 
 #: Words after a number (and its unit) that name it a comparison of two values.
 _COMPARISON_SUFFIX = re.compile(
-    r"\s?(?:%|[^\W\d][^\s,;.]*)?\s(?:better|worse|lower|higher|larger|smaller|faster"
+    r"(?:\s?(?:%|[^\W\d][^\s,;.)]*)(?:\s(?:units?|points?))?)?"
+    r"\s(?:better|worse|lower|higher|larger|smaller|faster"
     r"|slower|spread|difference|discrepancy|mismatch|disagreement|scatter|behind|ahead)\b"
     r"(?!\s+(?:bound|limit|edge))",
     re.IGNORECASE,

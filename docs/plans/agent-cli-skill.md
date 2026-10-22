@@ -3075,6 +3075,67 @@ Lorentzian), and benzene's 29.5 kG and corannulene's cold 15.5 kG lines at
 10–18. The RESONANCE limit of 8 would drop all three; any cutoff above 43
 rejects nothing stored.
 
+## Sonnet 5.5 corpus loop — 2026-10-21/22
+
+Host **Claude Code 2.1.303 / Linux**, model **`claude-sonnet-5-5`**, all 24
+cases per wave with `run_wave.py --set all --parallel 4`, each wave from a
+detached snapshot worktree; scored per group of four by Sonnet scorers with
+`scoring_brief.md`. Per-wave summaries:
+[`sonnet55-corpus-waves.json`](sonnet55-corpus-waves.json). Raw run
+directories lived in a scratch tmpfs and are not archived.
+
+| wave | commit | pass | failed |
+|---|---|---|---|
+| 1 (baseline, main 0.27.0) | `ac53471` | 20/24 | AFM high TF, TRSB, basics, corannulene |
+| 3 | `e9b7791` | 23/24 | corannulene (judgement) |
+| corannulene repeats | `b85274e` | 2/2 | — |
+| 5 | `b85274e` | 23/24 | nickel (judgement: a hand recount) |
+| 6 (confirmation) | `WAVE6_COMMIT` | WAVE6_PASS | WAVE6_FAILED |
+
+Every failure traced to the CLI, and every fix is in the CLI; `SKILL.md` is
+unchanged. As in earlier loops, a printed line changed behaviour where a
+sentence in the skill would not have:
+
+- **AFM high TF:** the printed two-line test left both phases at the
+  record-scale π, and the fit collapsed one line onto the other.
+  `recipe --run` now solves each precessing term's amplitude and phase by
+  linear least squares at the recipe's frequencies; the printed test resolves
+  the doublet at 6 T and 8 T, and the hints say to give only the frequencies.
+- **Hand-derived numbers the audit let through** (TRSB "about three
+  percent", basics "roughly 21 G", corannulene "stable to about 200 G",
+  nickel "13 of 15 runs"): the CLI now prints the number agents were computing
+  — a trend step's size and percentage, a zero-field-header line's implied
+  field, tallies as "N of M" — and `audit` lists hedged round spreads (their
+  trailing zeros are not significant digits), percentages and "within about
+  ten gauss" in words, and any "N of M" not printed as that pair. Replayed over
+  every stored draft of waves 1, 3 and 5, the new checks flag exactly the
+  slips the scorers found.
+- **Basics, one alpha across an ALPHA STEP:** `reduce` and `integral-scan`
+  name runs reduced on the far side of a same-instrument step from their
+  `--alpha-from`. The first version compared run numbers across instruments
+  and fired on correct reductions in the cuprate and copper folders (both
+  agents saw through it); it now compares within one instrument only.
+- **Corannulene:** a broad cold line short of flank coverage did not count as
+  the hot line's counterpart, so `integral-scan` asked for a refit in the hot
+  line's narrow window, which cut the broad line off (15055.7 G). Any
+  converged line now counts, and `COMPARE` says when only one scan resolves a
+  narrow line ("say in words that this scan shows no narrow line near …").
+  Corannulene then passed four runs out of four (two repeats, waves 5–6 to
+  be confirmed below).
+- **Audit friction:** the unit check took a parameter named anywhere earlier
+  in the line as the owner of a number (TCNQ lost three rounds to
+  "10 K (B0 printed in G)"); it now reads only a name in the number's own
+  clause, within 40 characters.
+
+Judgement calls the scorers raised repeatedly, for the maintainer: the
+corannulene cold-line range 15.1–15.6 kG is narrower than the window
+sensitivity of one Lorentzian on an asymmetric line; the cuprate
+non-superconducting-fraction Must passes on a disclaimer; the AFM two-line
+Must passes on one run's two-line fit while the tables use one line. Should
+gaps that recur and no CLI line points to: σ_bg added linearly in `SC_*`
+laws, the plateau-redfield plateau window, `MuRepolarisation` A_hf quoted
+from fits with χ²ᵣ in the hundreds.
+
 ## Open questions for the maintainer
 
 From round 2 (2026-10-09), for Ben:

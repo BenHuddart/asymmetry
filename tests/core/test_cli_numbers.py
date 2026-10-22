@@ -358,6 +358,7 @@ series ionic-11 written; recipe wizard-12; 4 unresolved; 1.3 1.2 0.2 0.3 0.6
         ("the alphas differ by about 0.5 %", ["0.5 %"]),
         # A comparison named after the number, over a whole range.
         ("about 4 points better on AICc", ["4"]),
+        ("the Overhauser model about 29 AICc units behind it", ["29"]),
         ("values 1.22–1.25 Å, a 1.2–1.3% spread", ["1.2", "1.3%"]),
         ("the 0.2–0.3 % difference is unresolved", ["0.2", "0.3 %"]),
         # A relative error is a ratio; an absolute error on an asymmetry is not.
