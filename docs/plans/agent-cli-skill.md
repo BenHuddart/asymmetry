@@ -3075,7 +3075,116 @@ Lorentzian), and benzene's 29.5 kG and corannulene's cold 15.5 kG lines at
 10–18. The RESONANCE limit of 8 would drop all three; any cutoff above 43
 rejects nothing stored.
 
+## Sonnet 5.5 corpus loop — 2026-10-21/22
+
+Host **Claude Code 2.1.303 / Linux**, model **`claude-sonnet-5-5`**, all 24
+cases per wave with `run_wave.py --set all --parallel 4`, each wave from a
+detached snapshot worktree; scored per group of four by Sonnet scorers with
+`scoring_brief.md`. Per-wave summaries:
+[`sonnet55-corpus-waves.json`](sonnet55-corpus-waves.json). Raw run
+directories lived in a scratch tmpfs and are not archived.
+
+| wave | commit | pass | failed |
+|---|---|---|---|
+| 1 (baseline, main 0.27.0) | `ac53471` | 20/24 | AFM high TF, TRSB, basics, corannulene |
+| 3 | `e9b7791` | 23/24 | corannulene (judgement) |
+| corannulene repeats | `b85274e` | 2/2 | — |
+| 5 | `b85274e` | 23/24 | nickel (judgement: a hand recount) |
+| 6 | `dd871f7` | 21/24 | EuO, LiFeAs (both judgement), benzene high TF |
+| 8 (16 run, 8 scored) | `20f137c` | 6/8 | fmuf, cuprate (both judgement) |
+| 9 | `da8b5e6` | 21/24 | fmuf, CdS, benzene ALC (all judgement) |
+| 10 | `c473bde` | 19/24 (22 with judgement calls relaxed) | Sn, LiFeAs; cuprate, CdS, benzene ALC (judgement) |
+
+Every failure traced to the CLI, and every fix is in the CLI; `SKILL.md` is
+unchanged. As in earlier loops, a printed line changed behaviour where a
+sentence in the skill would not have:
+
+- **AFM high TF:** the printed two-line test left both phases at the
+  record-scale π, and the fit collapsed one line onto the other.
+  `recipe --run` now solves each precessing term's amplitude and phase by
+  linear least squares at the recipe's frequencies; the printed test resolves
+  the doublet at 6 T and 8 T, and the hints say to give only the frequencies.
+- **Hand-derived numbers the audit let through** (TRSB "about three
+  percent", basics "roughly 21 G", corannulene "stable to about 200 G",
+  nickel "13 of 15 runs"): the CLI now prints the number agents were computing
+  — a trend step's size and percentage, a zero-field-header line's implied
+  field, tallies as "N of M" — and `audit` lists hedged round spreads (their
+  trailing zeros are not significant digits), percentages and "within about
+  ten gauss" in words, and any "N of M" not printed as that pair. Replayed over
+  every stored draft of waves 1, 3 and 5, the new checks flag exactly the
+  slips the scorers found.
+- **Basics, one alpha across an ALPHA STEP:** `reduce` and `integral-scan`
+  name runs reduced on the far side of a same-instrument step from their
+  `--alpha-from`. The first version compared run numbers across instruments
+  and fired on correct reductions in the cuprate and copper folders (both
+  agents saw through it); it now compares within one instrument only.
+- **Corannulene:** a broad cold line short of flank coverage did not count as
+  the hot line's counterpart, so `integral-scan` asked for a refit in the hot
+  line's narrow window, which cut the broad line off (15055.7 G). Any
+  converged line now counts, and `COMPARE` says when only one scan resolves a
+  narrow line ("say in words that this scan shows no narrow line near …").
+  Corannulene then passed both repeats and waves 5 and 6 (wave 6 on the
+  boundary: "15.3 to 15.7 kG" across two windows).
+- **Audit friction:** the unit check took a parameter named anywhere earlier
+  in the line as the owner of a number (TCNQ lost three rounds to
+  "10 K (B0 printed in G)"); it now reads only a name in the number's own
+  clause, within 40 characters.
+- **Wave 6's three:** EuO wrote "about 29 AICc units behind" (two words
+  between the number and "behind"), benzene high TF "0.37 MHz apart, about
+  three resolution elements" from two printed correlation peaks — `audit` now
+  reads both, `fourier --correlation` prints the twin peaks' separation, and a
+  phrase copied verbatim from the output or a number word whose digits were
+  printed verifies. LiFeAs placed its onset at the broad line's width step
+  because only σ had a note; in a model of two or more lines, `trend` now names
+  where a line's amplitude leaves its warm level on cooling (14.76–16.9 K for
+  LiFeAs), and the ENDPOINTS difference names the two runs it compares.
+- **Waves 8–9: what remained was summarising printed columns by hand.** A
+  flag count taken from the `reseeded` list, "good on every run" over a block
+  with four poor fits, a range wrong at one end, a triplet spacing. The CLI now
+  prints each flag's tally, each verdict's χ²ᵣ range, each step level's spread,
+  each trend column's range and a multi-line fit's line spacings; `recipe
+  --run` leaves a line under one cycle in the record out of its solve (a 2 G
+  diamagnetic line beside muonium had been seeded at A = 106.7).
+
+By wave 9 every failure mode of waves 1–6 held on repeat — TRSB, basics,
+corannulene, LiFeAs, AFM high TF, benzene high TF — and the three fails were
+judgement calls on a hand-derived prose number. One stays open on purpose:
+benzene ALC's "a width roughly a third of the solid's". The skill (Step 7)
+tells an agent to state an unprinted relation in words; flagging hedged
+fractions ("about half", "roughly twice") in `audit` was tried and replayed
+over waves 5, 6 and 9 — it would have flagged eleven such phrases, nearly all
+in runs the scorers passed. Whether a worded ratio of two printed values breaks
+the number rule is a question for the rubric (below), not something to settle
+in `audit`.
+
+Where the loop paused (wave 10): what remains is counting by hand in prose —
+"every run flagged" against a printed 5 of 9, "28 runs" against 30 `larmor`
+rows, "the six warmest runs" covering five, "Eighteen field scans" for 17.
+The next fixes, none made yet: a `survey` tally of `prec` per pair and of
+scans per family; `audit` checking a count beside a flag name against that
+flag's printed tally, a universal ("every run flagged") against `flagged : K
+of M`, and spelled-out counts; and aligning LiFeAs's onset note, which in
+wave 10 bracketed 12.6–14.8 K (the amplitude left its warm level earlier).
+
+Judgement calls the scorers raised repeatedly, for the maintainer: the
+corannulene cold-line range 15.1–15.6 kG is narrower than the window
+sensitivity of one Lorentzian on an asymmetric line; the cuprate
+non-superconducting-fraction Must passes on a disclaimer; the AFM two-line
+Must passes on one run's two-line fit while the tables use one line. Should
+gaps that recur and no CLI line points to: σ_bg added linearly in `SC_*`
+laws, the plateau-redfield plateau window, `MuRepolarisation` A_hf quoted
+from fits with χ²ᵣ in the hundreds.
+
 ## Open questions for the maintainer
+
+From the Sonnet 5.5 loop (2026-10-22), for Ben:
+- Is a worded ratio of two printed values ("roughly a third", "about twice")
+  a derived number under the rubric's number rule? Step 7 tells agents to say
+  an unprinted relation in words, and the scorers split on it.
+- Corannulene's cold-line window (15.1–15.6 kG) is narrower than one
+  Lorentzian's window sensitivity on that asymmetric line (15.3–15.7 kG across
+  two windows in one run); cuprate's non-superconducting-fraction Must passes
+  on a disclaimer. Tighten or widen either?
 
 From round 2 (2026-10-09), for Ben:
 - May the fluorine sniff recognise fluorinated materials by name (polymer

@@ -1525,6 +1525,9 @@ def test_fit_series_offers_the_screenings_runner_up_when_most_runs_run_away(
     out = capsys.readouterr().out
     assert "amplitude_exceeds_data, so Exponential + Constant does not describe this scan" in out
     assert f"--runs {runs} --recipe wizard-7-alt --order " in out
+    # Each flag is tallied, so a summary quotes the count rather than counting a column.
+    n = len(SCAN_RUNS)
+    assert f"amplitude_exceeds_data {n} of {n}" in out
 
     # The runner-up's own series is quiet, and so is a recipe with no runner-up.
     _cli(
@@ -1853,6 +1856,8 @@ def test_trend_model_prints_the_fit_and_what_it_left_out(
     assert f"{SCAN_RUNS[-1]} (outside the x range)" in out
     # What the trend shows is still named beside the law fitted to one column.
     assert re.search(r"NOTE: Lambda (?:rises|falls) along the scan", out)
+    # Each column's range is printed, so a summary quotes it rather than reading one off.
+    assert re.search(r"Column ranges \(.*\): temperature 10–\S+; .*Lambda \S+–\S+", out)
 
 
 @pytest.mark.parametrize(
@@ -3321,9 +3326,10 @@ def test_a_gradual_step_is_bracketed_by_where_the_width_leaves_each_level() -> N
         TrendTable("temperature", ["key", "x", "Delta", "Delta_err", "flags"], rows), ["Delta"]
     )
 
-    assert "low-temperature level (0.2597 over 0.3–5.6) above 5.6" in note
+    # Each level gives its spread, so a range is quoted, not assembled from table rows.
+    assert "low-temperature level (0.2597 over 0.3–5.6; values 0.2597–0.2597) above 5.6" in note
     assert "falls along the scan" in note
-    assert "reaches its high-temperature level (0.2534 over 6.8–10) at 6.8" in note
+    assert "high-temperature level (0.2534 over 6.8–10; values 0.2534–0.2534) at 6.8" in note
     assert "the change lies between 5.6 and 6.8, it levels off from 6.8 on" in note
 
 
@@ -3702,6 +3708,13 @@ def test_one_line_resolved_in_two_scans_is_compared_with_directions() -> None:
     shallow = partial | {"parameters": partial["parameters"] | {"f": -0.001}}
     assert _line_comparisons(shallow, {"hot": hot}) == []
 
+    # A narrow resolved line beside a broad estimate: the broad scan has no narrow line there.
+    narrow = fit(15000.0, 300.0, 1.0)
+    (pairing,) = _line_comparisons(partial, {"hot": narrow})
+    assert "Only scan hot resolves a narrow line here" in pairing
+    assert "this scan shows no narrow line near 15000" in pairing
+    assert "Only" not in note
+
 
 def test_a_line_another_analysed_scan_covers_without_a_fit_there_is_named() -> None:
     from asymmetry.cli.commands.integral_scan import _absent_lines
@@ -3730,6 +3743,15 @@ def test_a_line_another_analysed_scan_covers_without_a_fit_there_is_named() -> N
     # The same line moved a little is that line, not an absence.
     moved = scan([1, 2], fit(7300.0, 400.0, 5000.0, 9500.0))
     assert _absent_lines("data", hot, [3, 4], {"cold": moved}) == []
+    # A broad line short of flank coverage is still that scan's line (corannulene, 2026-10-21).
+    hot_15 = fit(14827.0, 370.0, 14000.0, 15600.0)
+    broad = scan([1, 2], fit(15672.0, 1975.0, 11800.0, 19600.0))
+    assert _absent_lines("data", hot_15, [3, 4], {"cold": broad}) == []
+    # A line whose depth is consistent with zero is not a counterpart (Codex review).
+    shallow = fit(15672.0, 1975.0, 11800.0, 19600.0)
+    shallow["parameters"]["f"] = -0.0001
+    (note,) = _absent_lines("data", hot_15, [3, 4], {"cold": scan([1, 2], shallow)})
+    assert "none of its fits holds a line there" in note
     # A scan fitted with no line at all lacks this one as well.
     flat = fit(7080.0, 390.0, 5000.0, 9500.0) | {"parameters": {"m": 0.0, "b": 0.1}}
     (note,) = _absent_lines("data", hot, [3, 4], {"cold": scan([1, 2], flat)})
@@ -3885,8 +3907,8 @@ def test_temperature_edge_comparison_preserves_a_cold_upturn_and_kt_control() ->
     assert "9.990000" not in notes
     assert "run 0 at temperature=1 (flags: failed)" in notes
     assert "run 3 at temperature=100" in notes
-    assert "Lowest reliable minus next" in notes
-    assert "Coldest minus next" not in notes
+    assert "Lowest reliable (run 1) minus next (run 2)" in notes
+    assert "Coldest (run" not in notes
     assert "KT CONTROL" in notes
     assert _edge_comparisons(TrendTable("field", [], rows), ["nu", "Delta"]) == []
 
@@ -3973,6 +3995,20 @@ def test_two_close_fourier_peaks_get_the_two_line_recipe() -> None:
         "plot": None,
     }
     assert "--initial frequency_1=813.595 --initial frequency_3=813.497" in _render(result)
+
+    # Twin correlation peaks print their separation (benzene high TF, Sonnet wave 6).
+    twins = result | {
+        "axis": "hyperfine_coupling",
+        "correlation": {"field_gauss": 3000.0},
+        "resolution_mhz": 0.127821,
+        "peak_analysis": {
+            "peaks": [
+                {"frequency_mhz": f, "amplitude": 1.0, "width_mhz": 0.1, "snr": 600.0}
+                for f in (514.080755, 514.446927)
+            ]
+        },
+    }
+    assert "514.081 and 514.447 MHz are 0.366 MHz apart, 2.9 resolution elements" in _render(twins)
 
 
 def test_two_fitted_frequencies_within_two_percent_are_a_pair() -> None:
@@ -4077,7 +4113,8 @@ def test_compatible_cold_rates_are_not_called_an_upturn() -> None:
     notes = _edge_comparisons(TrendTable("temperature", ["Lambda"], rows), ["Lambda"])
     note = notes[-1]
     assert "SPECTRAL ENDPOINTS:" in notes[0]
-    assert "Coldest minus next: 0.003000 ± 0.005657" in note
+    # The difference names both runs, so it is not quoted beside another pair.
+    assert "Coldest (run 1) minus next (run 2): 0.003000 ± 0.005657" in note
     assert "consistent within two combined errors" in note
 
 
@@ -4116,6 +4153,35 @@ def test_zero_header_line_retains_the_unrecorded_field_alternative(workflow_fold
     assert "ZERO-FIELD HEADER:" in text
     assert "unrecorded weak TF" in text
     assert "sensor drift is not a sample-temperature campaign" in text
+    # The field the line implies is printed, so a summary quotes it instead of converting.
+    assert f"{row.precession.frequency_mhz:.4g} MHz = " in text
+
+
+def test_reduce_names_runs_across_an_alpha_step_from_one_calibration(tmp_path):
+    from asymmetry.cli._reduction import alpha_step_note
+    from asymmetry.core.workflow.workdir import SCHEMA, WorkDir
+
+    root = tmp_path / "asymmetry-work"
+    root.mkdir()
+    step = {"before_run": 103, "after_run": 104, "alpha_before": 0.89, "alpha_after": 1.06}
+    # A step from one instrument's last candidate to another's first (EMU 76993 -> MUSR 1276).
+    across_instruments = {
+        "before_run": 76993,
+        "after_run": 1,
+        "alpha_before": 1.0,
+        "alpha_after": 0.6,
+    }
+    runs = [{"run_number": run, "instrument": "EMU"} for run in (101, 102, 103, 104, 105, 76993)]
+    runs += [{"run_number": run, "instrument": "MUSR"} for run in (1, 2)]
+    survey = {"schema": SCHEMA, "runs": runs, "alpha_steps": [step, across_instruments]}
+    (root / "survey.json").write_text(json.dumps(survey))
+    workdir = WorkDir(root)
+
+    (note,) = alpha_step_note(workdir, 101, [101, 102, 103, 104, 105])
+    assert "runs 104-105 lie on the other side" in note
+    assert alpha_step_note(workdir, 105, [104, 105]) == []
+    assert alpha_step_note(workdir, None, [101, 105]) == []
+    assert alpha_step_note(workdir, 1, [1, 2]) == []
 
 
 def test_wizard_worker_budget_has_explicit_override(monkeypatch):
@@ -4326,3 +4392,65 @@ def test_survey_extreme_logger_requires_context_not_automatic_temperature_infere
     if warned:
         assert "independently validated" in text
         assert "not evidence for a thermal confound" in text
+
+
+def test_a_line_whose_amplitude_appears_on_cooling_names_its_onset() -> None:
+    from asymmetry.cli.commands.trend import _component_onsets
+    from asymmetry.core.workflow.series import TrendTable
+
+    # LiFeAs 400 G (Sonnet wave 6): the broad line's weight moves to it below 16.9 K,
+    # while its width steps lower down; the onset is where the amplitude leaves its warm level.
+    table = [
+        (1.74, 12.92, 4.34),
+        (4.02, 12.90, 4.87),
+        (7.42, 12.87, 5.47),
+        (10.49, 13.11, 5.32),
+        (12.62, 9.93, 9.25),
+        (14.76, 5.43, 14.14),
+        (16.90, 1.65, 17.44),
+        (19.02, 1.71, 18.09),
+    ]
+    rows = [
+        {
+            "key": str(i),
+            "x": x,
+            "A_1": a1,
+            "A_1_err": 0.4,
+            "A_3": a3,
+            "A_3_err": 0.4,
+            "params_at_bound": [],
+            "flags": [],
+        }
+        for i, (x, a1, a3) in enumerate(table)
+    ]
+    trend = TrendTable("sample_temperature_logged", ["A_1", "A_3"], rows)
+    two_lines = "Oscillatory * Gaussian + Oscillatory * Gaussian + Constant"
+    appears, vanishes = _component_onsets(trend, ["A_1", "A_3"], two_lines)
+    assert "appears on cooling between 14.76 and 16.9" in appears
+    assert "vanishes on cooling between 14.76 and 16.9" in vanishes
+    # An amplitude at a bound is no measurement, so it cannot place the onset.
+    pinned = [row | {"params_at_bound": ["A_1"]} if row["x"] == 16.9 else row for row in rows]
+    pinned_trend = TrendTable("sample_temperature_logged", ["A_1", "A_3"], pinned)
+    assert (
+        "between 14.76 and 19.02"
+        in _component_onsets(pinned_trend, ["A_1"] * 0 + ["A_1", "A_3"], two_lines)[0]
+    )
+    # One line beside a relaxation is not a pair of lines trading weight.
+    assert _component_onsets(trend, ["A_1", "A_3"], "Oscillatory * Gaussian + Exponential") == []
+
+
+def test_fit_prints_the_spacing_of_separate_lines(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    from asymmetry.core.workflow.recipe import FitRecipe
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    # A summary otherwise takes a triplet's spacing as a difference of printed lines (CdS).
+    expression = "Oscillatory * Exponential + Oscillatory * Exponential + Constant"
+    recipe = FitRecipe.from_expression(expression).with_overrides(
+        fix={"frequency_1": 1.0, "frequency_3": 2.5}
+    )
+    WorkDir(fitting_workdir).write_recipe("lines", recipe)
+    capsys.readouterr()
+    _cli(workflow_folder, fitting_workdir, "fit", "--run", str(SCAN_RUNS[0]), "--recipe", "lines")
+    assert "Line spacings: 2.5 − 1 = 1.5 MHz" in capsys.readouterr().out

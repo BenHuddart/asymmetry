@@ -43,6 +43,7 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.parameter_carry import ComponentParameter
 from asymmetry.core.fitting.parameter_models import ParameterCompositeModel, suggest_trend_seeds
 from asymmetry.core.fitting.parameters import get_param_info, split_parameter_name
 from asymmetry.core.fitting.spectral import (
@@ -155,6 +156,83 @@ def seed_parameters(model: CompositeModel, context: SeedContext) -> dict[str, Se
     _apply_values(seeds, _frequency_peak_values(model, context), run_bound=True)
     _hold_at_zero(seeds, _individual_group_held_names(model, context))
     return seeds
+
+
+#: A solved line amplitude above this multiple of the record's own excursion is
+#: an artefact of nearly collinear columns, not a start.
+_SEED_SCALE_LIMIT = 2.0
+
+
+def line_amplitude_phase_values(
+    model: CompositeModel, dataset: MuonDataset, values: dict[str, float]
+) -> dict[str, float]:
+    """Each precessing term's amplitude and phase, solved linearly at *values*' frequencies.
+
+    At fixed frequencies and rates a term ``A cos(ωt + φ) g(t)`` is
+    ``A cos φ · cos(ωt) g − A sin φ · sin(ωt) g``: linear in its two
+    coefficients, so a weighted least-squares solve against the record (with a
+    constant for the background) gives every line's ``A`` and ``φ`` at once.
+    Two lines inside one FFT peak then start apart in phase and amplitude
+    rather than both at the record-scale guess, where a fit collapses one of
+    them onto the other.
+    """
+    identities = model.parameter_identities()
+    kinds = model.parameter_kinds()
+    by_component: dict[int, dict[ParameterKind, str]] = {}
+    # Only an Oscillatory term is A cos(2πft + φ): a Bessel's or a powder
+    # average's phase does not split into a cosine and a sine column.
+    for name, identity in identities.items():
+        if (
+            isinstance(identity, ComponentParameter)
+            and model.components[identity.component].name == "Oscillatory"
+        ):
+            by_component.setdefault(identity.component, {})[kinds[name]] = name
+    time = np.asarray(dataset.time, dtype=float)
+    span = float(time[-1] - time[0])
+    # A line completing under a cycle in the record is a slope the background
+    # absorbs: it keeps its record-scale start and stays out of the solve.
+    lines = [
+        (names[ParameterKind.AMPLITUDE], names[ParameterKind.PHASE])
+        for names in by_component.values()
+        if ParameterKind.PHASE in names
+        and ParameterKind.AMPLITUDE in names
+        and ParameterKind.FREQUENCY in names
+        and abs(values[names[ParameterKind.FREQUENCY]]) * span >= 1.0
+    ]
+    backgrounds = [name for name, kind in kinds.items() if kind == ParameterKind.BACKGROUND]
+    if not lines or len(backgrounds) > 1:
+        return {}
+    silent = dict(values) | {amplitude: 0.0 for amplitude, _ in lines}
+    silent |= {name: 0.0 for name in backgrounds}
+    rest = model.function(time, **silent)
+    columns = []
+    for amplitude, phase in lines:
+        for quadrature in (0.0, -math.pi / 2):
+            columns.append(
+                model.function(time, **(silent | {amplitude: 1.0, phase: quadrature})) - rest
+            )
+    if backgrounds:
+        columns.append(np.ones_like(time))
+    weights = 1.0 / np.asarray(dataset.error, dtype=float)
+    solution, *_ = np.linalg.lstsq(
+        np.column_stack(columns) * weights[:, None],
+        (np.asarray(dataset.asymmetry, dtype=float) - rest) * weights,
+        rcond=None,
+    )
+    asymmetry = np.asarray(dataset.asymmetry, dtype=float)
+    scale = float(np.max(np.abs(asymmetry - np.median(asymmetry))))
+    amplitudes = np.hypot(solution[0 : 2 * len(lines) : 2], solution[1 : 2 * len(lines) : 2])
+    # Columns that nearly cancel give amplitudes no record holds: keep the old starts.
+    if np.any(amplitudes > _SEED_SCALE_LIMIT * scale):
+        return {}
+    seeded = {}
+    for index, (amplitude, phase) in enumerate(lines):
+        cosine, sine = solution[2 * index], solution[2 * index + 1]
+        seeded[amplitude] = float(math.hypot(cosine, sine))
+        seeded[phase] = float(math.atan2(-sine, cosine) % (2 * math.pi))
+    if backgrounds:
+        seeded[backgrounds[0]] = float(solution[-1])
+    return seeded
 
 
 def seed_trend_parameters(
@@ -381,6 +459,7 @@ def _hold_at_zero(seeds: dict[str, Seed], param_names: Iterable[str]) -> None:
 __all__ = [
     "Seed",
     "SeedContext",
+    "line_amplitude_phase_values",
     "phase_seed_from_sign",
     "record_scale_estimate",
     "record_scale_window_counts",

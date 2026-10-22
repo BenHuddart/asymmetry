@@ -23,7 +23,7 @@ from asymmetry.cli._output import (
     render_table,
     render_trend,
 )
-from asymmetry.cli._recipes import parse_fix
+from asymmetry.cli._recipes import LINE_SEEDS, parse_fix
 from asymmetry.cli._runs import parse_run_spec, reduced_datasets
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 from asymmetry.core.workflow.series import parameter_quality_flags
@@ -340,6 +340,17 @@ def _plots(workdir, name: str, series: dict[str, Any], trend, fit: dict | None) 
     ]
 
 
+def _column_ranges(trend, free_params: list[str]) -> str:
+    """Each fitted column's min–max over the runs holding a value, so a range is quoted."""
+    ranges = []
+    for param in ["x", *free_params]:
+        values = [row[param] for row in trend.rows if row[param] is not None]
+        if values:
+            label = trend.order_key if param == "x" else param
+            ranges.append(f"{label} {min(values):.6g}–{max(values):.6g}")
+    return "Column ranges (every run with a value, flagged ones included): " + "; ".join(ranges)
+
+
 def _render(
     series: dict[str, Any],
     trend,
@@ -353,6 +364,7 @@ def _render(
         f"{series['name']} — {series['expression']}, ordered by {trend.order_key}",
         "",
         render_trend(trend),
+        _column_ranges(trend, series["free_params"]),
     ]
     from asymmetry.core.workflow.series import envelope_summary
 
@@ -362,6 +374,7 @@ def _render(
     readings = [
         *([change] if change is not None else []),
         *_rate_steps(trend, series["free_params"]),
+        *_component_onsets(trend, series["free_params"], series["expression"]),
         *_edge_comparisons(trend, series["free_params"]),
         *_phase_drift(trend, series["free_params"]),
         *_frequency_response(series, trend),
@@ -536,7 +549,8 @@ def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
                 f"at {trend.order_key}={row['x']:g} (run {row['key']})"
                 for row in shown
             )
-            + f". {'Coldest' if point == 'coldest point' else 'Lowest reliable'} minus next: "
+            + f". {'Coldest' if point == 'coldest point' else 'Lowest reliable'} "
+            f"(run {first['key']}) minus next (run {following['key']}): "
             f"{format_number(difference, 6)} ± "
             f"{format_number(error, 6)} ({significance:.2f} combined errors): {comparison}. "
             "A whole-scan step note does not rule out an endpoint upturn; central values "
@@ -617,19 +631,98 @@ def _rate_steps(trend, free_params: list[str]) -> list[str]:
         low_level, low_rows = _held_level(rows[:k], param)
         high_level, high_rows = _held_level(rows[k:][::-1], param)
         low_edge, high_edge = low_rows[-1]["x"], high_rows[-1]["x"]
+
+        def spread(block: list[dict[str, Any]]) -> str:
+            values = [row[param] for row in block]
+            return f"values {format_number(min(values), 4)}–{format_number(max(values), 4)}"
+
         notes.append(
             f"NOTE: {param} {'rises' if high_level > low_level else 'falls'} along the scan "
             f"({significance:.0f}x the combined error between the weighted means of its two "
             f"sides). It leaves its low-{axis} level ({format_number(low_level, 4)} over "
-            f"{low_rows[0]['x']:g}–{low_edge:g}) above {low_edge:g} and reaches its high-{axis} "
-            f"level ({format_number(high_level, 4)} over {high_edge:g}–{high_rows[0]['x']:g}) "
-            f"at {high_edge:g}: the change lies between {low_edge:g} and {high_edge:g}, it "
+            f"{low_rows[0]['x']:g}–{low_edge:g}; {spread(low_rows)}) above {low_edge:g} and "
+            f"reaches its high-{axis} level ({format_number(high_level, 4)} over "
+            f"{high_edge:g}–{high_rows[0]['x']:g}; {spread(high_rows)}) "
+            f"at {high_edge:g}, a step of {abs(high_level - low_level):#.3g} "
+            f"({100 * abs(high_level - low_level) / abs(low_level):#.3g} % of the "
+            f"low-{axis} level): the change lies between {low_edge:g} and {high_edge:g}, it "
             f"levels off from {high_edge:g} on, and an onset is where it leaves a level, not a "
             f"midpoint. Report it and that span: a small step in a width or rate is often the "
             f"physics (a transition, an onset), even when the parameter you expected to move "
             f"did not."
         )
     return notes
+
+
+def _component_onsets(trend, free_params: list[str], expression: str) -> list[str]:
+    """A note per line of a several-line model whose amplitude appears or vanishes on cooling.
+
+    Where one end's level is under :data:`_VANISHED` of the other's, the
+    component switches on or off along the scan, and its onset on cooling is
+    where its amplitude leaves the warm end's level — not where a width it
+    multiplies steps, which means nothing once the amplitude is near zero.
+    """
+    amplitudes = [p for p in free_params if re.fullmatch(r"A_\d+", p)]
+    if (
+        trend.order_key not in ("temperature", "sample_temperature_logged")
+        or expression.count("Oscillatory") < 2
+        or len(amplitudes) < 2
+    ):
+        return []
+    notes = []
+    for param in amplitudes:
+        rows = sorted(
+            (
+                row
+                for row in trend.rows
+                if row[param] is not None
+                and row[f"{param}_err"]
+                and not _MEANINGLESS_AMPLITUDE & parameter_quality_flags(row, param)
+            ),
+            key=lambda row: row["x"],
+        )
+        # A block at one temperature (a normal-state set) is not a scan to place an onset on.
+        if len(rows) < 4 or rows[-1]["x"] - rows[0]["x"] < _SCAN_SPAN * abs(rows[-1]["x"]):
+            continue
+        half = len(rows) // 2
+        cold, _ = _held_level(rows[:half], param)
+        # Seeded by the warmest run alone: a warm plateau of one or two runs
+        # must not average in the first run that has already left it.
+        warm_rows = [rows[-1]]
+        for row in rows[-2::-1]:
+            level, error = _weighted_mean(warm_rows, param)
+            if abs(row[param] - level) > _LEVEL_DEPARTURE * math.hypot(row[f"{param}_err"], error):
+                break
+            warm_rows.append(row)
+        warm, _ = _weighted_mean(warm_rows, param)
+        if min(abs(cold), abs(warm)) >= _VANISHED * max(abs(cold), abs(warm)):
+            continue
+        edge = warm_rows[-1]
+        colder = [row for row in rows if row["x"] < edge["x"]]
+        if not colder:
+            continue
+        notes.append(
+            f"NOTE: {param} holds its warm level ({format_number(warm, 4)} over "
+            f"{edge['x']:g}–{rows[-1]['x']:g}) against {format_number(cold, 4)} at the cold end, "
+            f"and leaves it on cooling below {edge['x']:g}: the component it scales "
+            f"{'appears' if abs(warm) < abs(cold) else 'vanishes'} on cooling between "
+            f"{colder[-1]['x']:g} and {edge['x']:g}, which is that component's onset; a width or "
+            f"rate this amplitude multiplies is not a result where the amplitude is near zero."
+        )
+    return notes
+
+
+#: Flags that leave an amplitude no value. A large relative error stays — an
+#: amplitude near zero is how a vanished line reads — and so does
+#: spurious_reseeded, which also marks runs a restart rescued.
+_MEANINGLESS_AMPLITUDE = _UNRELIABLE - {"spurious_reseeded"}
+
+#: An amplitude whose level at one end is under this fraction of the other's
+#: switches its component on or off along the scan.
+_VANISHED = 0.3
+
+#: A temperature scan spans at least this fraction of its top temperature.
+_SCAN_SPAN = 0.1
 
 
 #: Order keys a run records for itself; any other was supplied with --x.
@@ -861,7 +954,7 @@ def _doublet_hint(series: dict[str, Any], trend) -> list[str]:
         f"story — or the sample as unordered — fit the coldest run with two lines and "
         f"compare chi2_red: asymmetry recipe <folder> --run {coldest['key']} --name two-line "
         f"--expression '{two_line}'{initial}, then asymmetry fit <folder> --run "
-        f"{coldest['key']} --recipe two-line. A field distribution beyond two lines needs "
+        f"{coldest['key']} --recipe two-line ({LINE_SEEDS}). A field distribution beyond two lines needs "
         f"MaxEnt or a multi-group analysis, which this CLI does not do: say so under Not done."
     ]
 

@@ -14,6 +14,7 @@ from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
 from asymmetry.core.fitting.seeding import (
     Seed,
     SeedContext,
+    line_amplitude_phase_values,
     phase_seed_from_sign,
     record_scale_estimate,
     seed_parameters,
@@ -433,3 +434,60 @@ def test_trend_seeds_hold_the_shape_factor_switch() -> None:
     assert seeds["shape_factor_a"].value == 0.0
     assert seeds["shape_factor_a"].fixed is True
     assert seeds["sigma_0"].fixed is False
+
+
+# ── line amplitude and phase ────────────────────────────────────────────────
+
+
+def test_line_amplitude_phase_values_recovers_each_line_of_a_close_doublet() -> None:
+    """Two lines inside one FFT peak start at their own amplitude and phase, not at π."""
+    model = CompositeModel(
+        ["Oscillatory", "Exponential", "Oscillatory", "Exponential", "Constant"],
+        operators=["*", "+", "*", "+"],
+    )
+    time = np.linspace(0.0, 9.5, 4000)
+    lines = {"A_1": 14.5, "frequency_1": 13.60, "phase_1": 4.44, "Lambda_2": 0.06}
+    lines |= {"A_3": 20.9, "frequency_3": 13.54, "phase_3": 5.52, "Lambda_4": 0.67, "A_bg": -9.5}
+    record = MuonDataset(
+        time=time,
+        asymmetry=model.function(time, **lines),
+        error=np.full_like(time, 0.1),
+        metadata={"run_number": 1},
+    )
+    start = {name: lines[name] for name in ("frequency_1", "frequency_3", "Lambda_2", "Lambda_4")}
+    start |= {"A_1": 1.0, "phase_1": math.pi, "A_3": 1.0, "phase_3": math.pi, "A_bg": 0.0}
+
+    seeded = line_amplitude_phase_values(model, record, start)
+
+    for name in ("A_1", "phase_1", "A_3", "phase_3", "A_bg"):
+        assert seeded[name] == pytest.approx(lines[name], abs=1e-6)
+
+
+def test_a_line_under_one_cycle_keeps_its_record_scale_start() -> None:
+    """A 2 G diamagnetic line beside muonium is a slope over the record, not a phase to solve."""
+    model = CompositeModel(
+        ["Oscillatory", "Exponential", "Oscillatory", "Exponential"], operators=["*", "+", "*"]
+    )
+    time = np.linspace(0.0, 10.0, 2000)
+    truth = {"A_1": 2.0, "frequency_1": 2.79, "phase_1": 0.2, "Lambda_2": 0.4}
+    truth |= {"A_3": 18.0, "frequency_3": 0.0271, "phase_3": 0.0, "Lambda_4": 0.05}
+    record = MuonDataset(
+        time=time,
+        asymmetry=model.function(time, **truth),
+        error=np.full_like(time, 0.1),
+        metadata={"run_number": 1},
+    )
+    # The slow line keeps the start it has (record scale in a recipe); the fast one is solved.
+    seeded = line_amplitude_phase_values(model, record, truth | {"A_1": 1.0, "phase_1": 3.14})
+
+    assert "A_3" not in seeded and "phase_3" not in seeded
+    assert seeded["A_1"] == pytest.approx(2.0, rel=0.05)
+    assert seeded["phase_1"] == pytest.approx(0.2, abs=0.05)
+
+
+def test_line_seeding_leaves_a_term_that_is_not_a_cosine_alone() -> None:
+    """A Bessel's phase is not a cosine and a sine column, so it keeps its start."""
+    model = CompositeModel(["Bessel", "Exponential", "Constant"], operators=["*", "+"])
+    record = _decaying_record()
+    values = {name: 1.0 for name in model.param_names}
+    assert line_amplitude_phase_values(model, record, values) == {}

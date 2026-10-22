@@ -13,11 +13,11 @@ significance or a whole-number percentage (``10×``, ``4.3σ``, ``32 %``), or na
 as a difference (``ΔAICc 11``), match only when a command printed that exact
 token (``×``, ``x`` and "times" alike). A number whose context makes it
 arithmetic — after "a factor of", a difference phrase ("agree to about 0.02
-MHz", "falls by 0.03 MHz", "a margin of 3.6", "the step is about 0.007") or a conversion ("corresponds to
-about 21 G"), named as a comparison ("4 points
+MHz", "falls by 0.03 MHz", "a margin of 3.6", "the step is about 0.007", "stable to about
+200 G") or a conversion ("corresponds to about 21 G"), named as a comparison ("4 points
 better", "a 1.2–1.3 % spread"), or a spread after a bare ``±`` — is listed unless
 a command printed it verbatim to three or more significant digits (a run number,
-a field on the scan's grid). A range ``a–b`` shares its context between both
+a field on the scan's grid; a hedged round number's trailing zeros do not count). A range ``a–b`` shares its context between both
 ends, and ``4,200`` and ``3.2 × 10⁻⁸`` read as one number. A hedged integer
 ("about 12340 G") may round away its trailing zeros, a field in kG restates
 one printed in G, and "1σ errors", "> 3σ" and "2× LorentzianLCR" are
@@ -62,7 +62,7 @@ _HEDGE = r"(?:(?:about|roughly|approximately|around|some|only|up to|~|≈)\s*)*"
 _CHANGE_VERB = (
     r"(?:differ|fall|fell|rise|rose|drop|shift|move|change|var(?:y|ie)|increase|decrease"
     r"|grow|grew|exceed|prefer|depart|deviate|disagree|offset|apart|separat|split|beat"
-    r"|outperform|improv|lower|rais|reduc|narrow|broaden|widen|drift|climb|sank|sink)"
+    r"|outperform|improv|lower|rais|reduc|narrow|broaden|widen|drift|climb|sank|sink|symmetric)"
 )
 
 #: The rest of one clause: no punctuation but a decimal point, no second verb
@@ -76,9 +76,11 @@ _CLAUSE = r"(?:(?!\b(?:and|to)\b)(?:[^.,;:]|\.(?=\d)))*?"
 _DERIVED_PREFIX = re.compile(
     rf"(?:factor of|times|fold|within|\b{_CHANGE_VERB}\w*\b{_CLAUSE},?\s*\bby"
     rf"|agree\w*\b{_CLAUSE}\bto"
+    rf"|\b(?:stable|steady|constant|reproducible|repeatable)\s+to"
     rf"|\b(?:correspond\w*\s+to|equivalent\s+(?:to|of)|amounts?\s+to|converts?\s+to"
     rf"|translat\w*\s+(?:in)?to|would\s+be){_CLAUSE}"
     rf"|\b(?:margin|difference|gap|shift|step|jump|drop|rise|increase|decrease|change|offset"
+    rf"|splitting|separation|spacing"
     rf"|discrepancy|spread|scatter|deviation)s?\s+(?:of|(?:is|was|are|were)\s+(?:only\s+|just\s+)?{_APPROXIMATE}))"
     rf"\s*{_HEDGE}\s*$",
     re.IGNORECASE,
@@ -89,14 +91,30 @@ _NUMBER_WORD = (
     r"|a hundred|hundred|a thousand|thousand)(?:\s+and\s+a\s+half)?"
 )
 
+_DIGITS = {
+    word: str(n)
+    for n, word in enumerate(
+        ("two three four five six seven eight nine ten eleven twelve").split(), start=2
+    )
+}
+
+
+def _in_digits(phrase: str) -> str:
+    """*phrase* with its small number words written as digits, as commands print them."""
+    return re.sub(r"\b[a-z]+\b", lambda m: _DIGITS.get(m.group(), m.group()), phrase.lower())
+
+
 #: A ratio written in words ("a factor of six", "tenfold", "five and a half
 #: times its error", "four to six times").
 _RATIO_WORD = re.compile(
     rf"\bfactor of\s*{_HEDGE}\s*{_NUMBER_WORD}\b"
+    rf"|\b{_NUMBER_WORD}\s+(?:per\s?cent|percent)\b"
+    rf"|\bwithin\s+{_HEDGE}{_NUMBER_WORD}(?=\s+(?:gauss|kelvin|tesla|G|kG|K|mK|MHz|kHz|percent|per\s?cent)\b)"
     rf"|\b{_NUMBER_WORD}(?:\s+to\s+{_NUMBER_WORD})?(?:-?fold\b|\s+times(?=\s+(?:its|their|the"
     r"|as|larger|smaller|faster|slower|higher|lower|broader|narrower|wider|greater|bigger"
     r"|stronger|weaker|longer|shorter|more|less)\b)"
-    r"|\s+(?:combined\s+|standard\s+)*(?:errors?|sigma|σ|standard deviations?)\b)",
+    r"|\s+(?:combined\s+|standard\s+)*(?:errors?|sigma|σ|standard deviations?"
+    r"|resolution elements?)\b)",
     re.IGNORECASE,
 )
 
@@ -110,7 +128,8 @@ _VALUE_PLUS_MINUS = re.compile(r"\d(?:\s*[^\W\d][^\s|±(]*)?[\s|(]*±\s*$")
 
 #: Words after a number (and its unit) that name it a comparison of two values.
 _COMPARISON_SUFFIX = re.compile(
-    r"\s?(?:%|[^\W\d][^\s,;.]*)?\s(?:better|worse|lower|higher|larger|smaller|faster"
+    r"(?:\s?(?:%|[^\W\d][^\s,;.)]*)(?:\s(?:units?|points?))?)?"
+    r"\s(?:apart|better|worse|lower|higher|larger|smaller|faster"
     r"|slower|spread|difference|discrepancy|mismatch|disagreement|scatter|behind|ahead)\b"
     r"(?!\s+(?:bound|limit|edge))",
     re.IGNORECASE,
@@ -204,6 +223,7 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             Unverified(match.group(), line_number, line.strip())
             for match in _RATIO_WORD.finditer(line)
             if match.group().lower() not in log_text.lower()
+            and _in_digits(match.group()).lower() not in log_text.lower()
         )
         shared_until = -1
         for match in _DRAFT_NUMBER.finditer(line):
@@ -221,12 +241,20 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
             derived = (
                 match.end() <= shared_until
                 or _DERIVED_PREFIX.search(before) is not None
-                or _COMPARISON_SUFFIX.match(line, after) is not None
+                or (
+                    (comparison := _COMPARISON_SUFFIX.match(line, after)) is not None
+                    # A comparison copied from the output ("0.0706 ± 0.0045 MHz apart") is printed.
+                    and line[match.start() : comparison.end()] not in log_text
+                )
                 or (before.rstrip().endswith("±") and not _VALUE_PLUS_MINUS.search(before))
             )
             if derived:
                 shared_until = after
-                significant = len(re.sub(r"\D", "", token).lstrip("0"))
+                digits = re.sub(r"\D", "", token).lstrip("0")
+                # "about 200 G" rounds to one digit: its trailing zeros are not significant.
+                if "." not in token and "," not in match.group() and _ROUNDED_HEDGE.search(before):
+                    digits = digits.rstrip("0")
+                significant = len(digits)
                 printed = _printed_verbatim(token, log_text) or _printed_verbatim(
                     match.group("mantissa"), log_text
                 )
@@ -284,6 +312,29 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
     return found
 
 
+#: A count of a total ("14 of 15 runs", "17 of the 18"), which only a printed tally verifies.
+_COUNT_OF = re.compile(r"(?<![\w.])(\d+)\s+of\s+(?:the\s+|all\s+|its\s+)?(\d+)(?![\w.])")
+
+
+def unverified_counts(draft: str, log_text: str) -> list[Unverified]:
+    """Each "N of M" in *draft* that no output printed as that tally.
+
+    Both numbers appear somewhere in a long log by chance, so a count verifies
+    only as a pair: a recount by hand ("13 of 15" for a printed 14 of 15) is listed.
+    """
+    printed = {(int(n), int(m)) for n, m in _COUNT_OF.findall(log_text)}
+    return [
+        Unverified(match.group(), line_number, line.strip())
+        for line_number, line in enumerate(draft.splitlines(), start=1)
+        for match in _COUNT_OF.finditer(line)
+        if (int(match.group(1)), int(match.group(2))) not in printed
+    ]
+
+
+#: Characters a parameter's name may sit before the number it names.
+_NAMED_REACH = 40
+
+
 def unverified_units(draft: str, log_text: str) -> list[Unverified]:
     """Flag a named parameter restated with a unit incompatible with its printed table."""
     unit = r"(?:dimensionless|MHz|kHz|Hz|kG|G|K|meV|ns|[µμ]s(?:⁻¹)?)(?!\w)"
@@ -326,12 +377,14 @@ def unverified_units(draft: str, log_text: str) -> list[Unverified]:
             notation = re.search(r"[eE]([-+]?\d+)$", token)
             tolerance = 10.0 ** (int(notation[1]) if notation else 0) * scale
             tolerance *= 10.0 ** -_decimals(token)
-            # The number belongs to the parameter named closest before it on the line.
+            # The number belongs to the parameter named closest before it in its clause.
             before = line[: number.start()].translate(aliases)
             named = [
                 (mention.end(), name)
                 for name in parameters
                 for mention in re.finditer(rf"\b{re.escape(name)}\b", before)
+                if len(before) - mention.end() <= _NAMED_REACH
+                and not re.search(r"[;:)]|\.(?!\d)", before[mention.end() :])
             ]
             if not named:
                 continue

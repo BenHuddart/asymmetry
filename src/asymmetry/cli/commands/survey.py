@@ -211,6 +211,7 @@ def _selection_options(survey, instrument: str, clashes: dict[int, list[Path]]) 
 
 def _render(survey, survey_path: Path) -> str:
     """The human-readable survey: the run table, then candidates and scans."""
+    from asymmetry.core.fitting.spectral import frequency_mhz_to_field_gauss
     from asymmetry.core.io.psi import PSI_HEADER_SAMPLE_SENSOR
     from asymmetry.core.workflow.survey import NOTES_PLACEHOLDER, composition_sets
     from asymmetry.core.workflow.workdir import instrument_name
@@ -349,17 +350,21 @@ def _render(survey, survey_path: Path) -> str:
             )
         )
         lines.append("")
-    unrecorded = [
-        row.run_number for row in survey.runs if row.field == 0 and row.precession.state == "other"
-    ]
+    unrecorded = [row for row in survey.runs if row.field == 0 and row.precession.state == "other"]
     if unrecorded:
+        fields = "; ".join(
+            f"{row.run_number}: {row.precession.frequency_mhz:.4g} MHz = "
+            f"{frequency_mhz_to_field_gauss(row.precession.frequency_mhz):.3g} G"
+            for row in unrecorded
+        )
         lines.append(
-            f"ZERO-FIELD HEADER: runs {run_spec(unrecorded)} have a measured line but "
-            "a zero recorded field. Establish sample context before calling it spontaneous "
-            "magnetism: a nonmagnetic calibration/reference sample can carry an unrecorded "
-            "weak TF. Fit its precession and check the experimental notes; an unrelated "
-            "sensor drift is not a sample-temperature campaign. For a magnetic sample, "
-            "compare the internal line across the actual temperature scan."
+            f"ZERO-FIELD HEADER: runs {run_spec([row.run_number for row in unrecorded])} have a "
+            "measured line but a zero recorded field. Establish sample context before calling "
+            "it spontaneous magnetism: a nonmagnetic calibration/reference sample can carry an "
+            "unrecorded weak TF. Fit its precession and check the experimental notes; an "
+            "unrelated sensor drift is not a sample-temperature campaign. For a magnetic "
+            "sample, compare the internal line across the actual temperature scan. The field "
+            f"each line implies for a diamagnetic muon (13.55 kHz/G): {fields}."
         )
         lines.append("")
     if survey.temperature_departures:

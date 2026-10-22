@@ -284,7 +284,9 @@ measured alpha, and where alpha moves by more than 10 % between consecutive
 candidates in run order — a sample change, a moved detector, a second
 instrument — the survey prints an ``ALPHA STEP`` line naming the two runs: no
 single run calibrates such a folder, and each block of runs is reduced with a
-calibration run from inside it (``alpha_steps`` in ``--json``). ``T/K`` is the temperature setpoint and ``T log/K`` the
+calibration run from inside it (``alpha_steps`` in ``--json``). ``reduce`` and
+``integral-scan`` print a NOTE naming any run they reduced on the far side of a
+step from its ``--alpha-from`` run. ``T/K`` is the temperature setpoint and ``T log/K`` the
 logged sample temperature where the file records one (``-`` where it does
 not, as in these simulated files and in PSI ``.bin`` files); a cryostat can
 leave the two several kelvin apart, and a series can be ordered by either:
@@ -788,8 +790,10 @@ rebinning is included for fits, and the wizard's own analysis rebinning for
 the wizard. Their JSON products retain the same bounds
 as ``time_window`` or, for a series or coupled group, ``time_windows``. Quote these alongside
 relaxation rates, rather than inferring exact limits from plot axes.
-Series and grouped-fit batches also print ``Fit quality counts`` so a report
-can quote the verdict totals directly rather than calculate them from rows.
+Series and grouped-fit batches also print ``Fit quality counts`` — each
+verdict as "N of M" with its chi2_red range — so a report can quote the verdict
+totals directly rather than calculate them from rows; ``fit-series`` tallies
+each flag beside its ``flagged`` count the same way.
 For a field sweep containing a zero-field reference, the survey reports
 ``INTERNAL-FIELD AMBIGUITY`` when a high-field Larmor-like line also matches
 the spontaneous zero-field precession. That coincidence cannot establish
@@ -832,7 +836,15 @@ run-bound, so ``fit-series`` and ``fit-global`` re-seed it per run from each
 run's own record rather than carrying the first run's value down the scan (see
 `The fit recipe`_); the Larmor frequency is only a start, since the line being
 fitted may be an internal or critical field's, and a series keeps the
-recipe's or the neighbouring run's frequency.
+recipe's or the neighbouring run's frequency. Once the frequencies and rates
+are set (``--initial`` and ``--fix`` included), each precessing term's
+amplitude and phase, and a single background, are solved by linear least
+squares against that run — two lines inside one FFT peak then start apart
+rather than both at the record-scale phase, where a fit collapses one onto the
+other. A value passed with ``--initial`` or ``--fix`` is kept. A line completing
+under one cycle in the record (a diamagnetic line at a few gauss) keeps its
+record-scale start, and a solve whose amplitudes exceed twice the record's own
+excursion is discarded.
 ``--initial`` moves a start value, ``--fix`` holds one (and pins it, so a series never re-seeds it), and
 ``--tmin``/``--tmax`` set the fit window. The command writes
 ``recipes/<name>.json`` and prints every parameter — the names a repeated
@@ -849,11 +861,11 @@ component is numbered with are otherwise easy to guess wrong:
    -----------  ---------  ------  ---  -----
    A_1          ...        0.0000  inf  free
    frequency_1  2.790000   0.0000  inf  fixed
-   phase_1      0.000000   -inf    inf  free
+   phase_1      ...        -inf    inf  free
    Lambda_2     ...        0.0000  inf  free
    A_3          ...        0.0000  inf  free
    frequency_3  0.027100   0.0000  inf  fixed
-   phase_3      0.000000   -inf    inf  free
+   phase_3      ...        -inf    inf  free
    Lambda_4     ...        0.0000  inf  free
 
 An unknown component is refused with the nearest names, and a parameter the
@@ -1082,7 +1094,12 @@ rate (``sigma``, ``Delta``, ``Lambda``, ``nu``) the report also finds the split
 of the scan into two contiguous blocks whose weighted means differ most and,
 when that is more than five combined errors, names the step, which way it
 goes and where it falls, bracketed by where the parameter leaves the level of
-one end and reaches the other's (where it levels off). Along a supplied axis
+one end and reaches the other's (where it levels off), and gives the step's size
+and its percentage of the low end's level. Along temperature, in a model of two
+or more lines, a line whose amplitude at one end is under 30 % of the other's
+gets a note naming where it leaves its warm level on cooling: that span is the
+line's onset, which a width it multiplies cannot show once the amplitude is
+near zero. Along a supplied axis
 (a steering current, a foil count) an amplitude lower or higher inside the
 scan than at both ends by five combined errors is named a minimum or maximum
 instead, to report with where it lies — a Kubo–Toyabe width a few percent larger below a superconductor's
@@ -1328,8 +1345,15 @@ A report listing only numbers ends by asking for
 another audit before replying. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions ("which
 would be a field of about 21 G", "corresponds to roughly 16 G"),
-differences between printed columns — which the agent skill's number rule
-forbids. It also lists a law's vocabulary ("critical slowing",
+differences between printed columns ("29 AICc units behind", "0.37 MHz
+apart"), a spread across windows ("stable to about 200 G") — which the agent
+skill's number rule forbids. A comparison copied verbatim from the output, or
+a number word whose digits a command printed ("within two resolution
+elements"), verifies. A hedged round number's
+trailing zeros are not significant digits, so "about 200 G" cannot verify
+against an unrelated printed 200. A count "N of M" verifies only as a
+printed tally (the envelope NOTE and ``Fit quality counts`` print theirs as
+"14 of 15"), so a recount by hand is listed. It also lists a law's vocabulary ("critical slowing",
 "activation energy", "correlation time") when every fit of that law in the
 logged session printed ``LAW NOT ESTABLISHED``; explicit failed or rejected
 attempts remain valid descriptions. Integral scans with significant local
@@ -1346,7 +1370,11 @@ background limitations; listing numbers or describing a wider fit window
 does not state which feature is broader. ``STABILITY`` notes for alternative
 fits of the same runs do not impose a cross-condition claim. These are
 omission checks; the analyst still checks each direction against the two
-labelled estimates.
+labelled estimates. When one scan resolves a narrow line and the other's
+estimate is at least three times broader with its flanks outside its window,
+``COMPARE`` adds that only the first resolves a narrow line there, so the
+summary says the other shows none; and ``integral-scan`` no longer asks for a
+same-window refit of a scan whose converged fit already holds such a broad line.
 
 It holds the reply, quoting the printed line back, when a command asked the
 summary to say something the draft leaves out: that ``A_bg`` was held at 0
@@ -1911,7 +1939,8 @@ dropped.
 A zero recorded field plus a detected line is ambiguous without sample context.
 ``survey`` prints ``ZERO-FIELD HEADER:`` for these runs: a nonmagnetic reference
 may carry an unrecorded weak TF, while a magnetic sample may precess in an
-internal field. Calibration sensor drift is not automatically a sample scan.
+internal field. The note prints the field each line implies for a diamagnetic
+muon (13.55 kHz/G), so a summary quotes it rather than converting. Calibration sensor drift is not automatically a sample scan.
 Broad local ALC troughs also require baseline checks: compare local Linear and
 Cubic backgrounds, bounds and adjacent windows before abandoning a bound-pinned
 width. A polynomial need not describe a whole scan containing a baseline step.

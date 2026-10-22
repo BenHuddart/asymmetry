@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **``recipe --run`` starts each line where the run shows it.** At the recipe's
+  frequencies and rates, every precessing term's amplitude and phase (and a
+  single background) are solved by linear least squares against the run, so a
+  two-line test inside one FFT peak no longer collapses onto one line.
+- **The CLI prints the numbers agents were working out by hand.** The survey's
+  ``ZERO-FIELD HEADER`` gives the field each line implies; a ``trend`` step note
+  gives the step, its percentage of the low level and each level's spread of values;
+  ``trend`` prints each column's range under its table; ``reduce`` and
+  ``integral-scan`` name runs reduced across a survey ``ALPHA STEP`` with one
+  ``--alpha-from``.
+- **``integral-scan`` keeps a broad line apart from a narrow one.** ``COMPARE``
+  says when only one scan resolves a narrow line and the other's estimate is a
+  broad feature, and the same-window refit prompt no longer fires for a scan
+  whose converged fit already holds a broader line there.
+- **Counts are printed as tallies, and ``audit`` checks them.** The envelope NOTE
+  ends "in all, Exponential on 14 of 15 runs"; fit quality prints "poor 4 of 14
+  (chi2_red 1.10–1.15)" with each verdict's range; ``fit-series`` tallies each
+  flag ("spurious_reseeded 17 of 29") and says its ``reseeded`` list is only the
+  runs a restart rescued. An "N of M" in a draft verifies only as a printed tally,
+  so a recount by hand ("13 of 15") is listed.
+- **``fit`` prints the spacing of each pair of adjacent lines** in a multi-line
+  model, and ``audit`` reads "symmetric about it by about 0.12 MHz" and "a
+  splitting of" as differences.
+- **``fourier --correlation`` prints the separation of twin coupling peaks**, so a
+  summary quotes both peaks and their printed separation rather than one value.
+- **``trend`` names where a line appears or vanishes on cooling.** In a
+  several-line model, a line whose amplitude switches on or off along a
+  temperature scan gets a note bracketing its onset by where it leaves its warm
+  level, rather than leaving the onset to a width step.
+- **``audit`` catches hedged spreads and worded percentages.** "Stable to about
+  200 G", "about three percent", "within about ten gauss", "29 AICc units behind" and
+  "0.37 MHz apart" are listed unless printed (a phrase copied from the output, or a
+  number word whose digits were printed, verifies); a hedged round
+  number's trailing zeros no longer count as significant digits.
+
 ## [0.27.0] - 2026-10-21
 
 ### Added
