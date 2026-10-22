@@ -675,7 +675,9 @@ def _component_onsets(trend, free_params: list[str], expression: str) -> list[st
             (
                 row
                 for row in trend.rows
-                if row[param] is not None and row[f"{param}_err"] and "failed" not in row["flags"]
+                if row[param] is not None
+                and row[f"{param}_err"]
+                and not _MEANINGLESS_AMPLITUDE & parameter_quality_flags(row, param)
             ),
             key=lambda row: row["x"],
         )
@@ -684,7 +686,15 @@ def _component_onsets(trend, free_params: list[str], expression: str) -> list[st
             continue
         half = len(rows) // 2
         cold, _ = _held_level(rows[:half], param)
-        warm, warm_rows = _held_level(rows[::-1][:half], param)
+        # Seeded by the warmest run alone: a warm plateau of one or two runs
+        # must not average in the first run that has already left it.
+        warm_rows = [rows[-1]]
+        for row in rows[-2::-1]:
+            level, error = _weighted_mean(warm_rows, param)
+            if abs(row[param] - level) > _LEVEL_DEPARTURE * math.hypot(row[f"{param}_err"], error):
+                break
+            warm_rows.append(row)
+        warm, _ = _weighted_mean(warm_rows, param)
         if min(abs(cold), abs(warm)) >= _VANISHED * max(abs(cold), abs(warm)):
             continue
         edge = warm_rows[-1]
@@ -701,6 +711,11 @@ def _component_onsets(trend, free_params: list[str], expression: str) -> list[st
         )
     return notes
 
+
+#: Flags that leave an amplitude no value. A large relative error stays — an
+#: amplitude near zero is how a vanished line reads — and so does
+#: spurious_reseeded, which also marks runs a restart rescued.
+_MEANINGLESS_AMPLITUDE = _UNRELIABLE - {"spurious_reseeded"}
 
 #: An amplitude whose level at one end is under this fraction of the other's
 #: switches its component on or off along the scan.

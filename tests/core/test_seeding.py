@@ -483,3 +483,11 @@ def test_a_line_under_one_cycle_keeps_its_record_scale_start() -> None:
     assert "A_3" not in seeded and "phase_3" not in seeded
     assert seeded["A_1"] == pytest.approx(2.0, rel=0.05)
     assert seeded["phase_1"] == pytest.approx(0.2, abs=0.05)
+
+
+def test_line_seeding_leaves_a_term_that_is_not_a_cosine_alone() -> None:
+    """A Bessel's phase is not a cosine and a sine column, so it keeps its start."""
+    model = CompositeModel(["Bessel", "Exponential", "Constant"], operators=["*", "+"])
+    record = _decaying_record()
+    values = {name: 1.0 for name in model.param_names}
+    assert line_amplitude_phase_values(model, record, values) == {}

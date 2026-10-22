@@ -634,29 +634,31 @@ def _resolved_lines(fit: dict, fit_limit: float = _RESOLVED_FIT) -> list[str]:
     return resolved
 
 
+def _line_estimates(scan_fit: dict) -> list[str]:
+    """Each significant windowed line's ``B0``: in its window, none at a bound, depth clear of 0."""
+    if (
+        not scan_fit["success"]
+        or scan_fit["params_at_bound"]
+        or (scan_fit["x_min"] is None and scan_fit["x_max"] is None)
+    ):
+        return []
+    return [
+        name
+        for name, centre in scan_fit["parameters"].items()
+        if name.split("_")[0] == "B0"
+        and scan_fit["x_range"][0] < centre < scan_fit["x_range"][1]
+        and scan_fit["uncertainties"][name] > 0
+        and scan_fit["uncertainties"][name.replace("B0", "Bwid", 1)] > 0
+        and scan_fit["uncertainties"][name.replace("B0", "f", 1)] > 0
+        and abs(scan_fit["parameters"][name.replace("B0", "f", 1)])
+        >= _RESOLVED_DEPTH * scan_fit["uncertainties"][name.replace("B0", "f", 1)]
+    ]
+
+
 def _line_comparisons(
     fit: dict, stored: dict[str, dict], same_scan: Sequence[dict] = ()
 ) -> list[str]:
     """Compare significant fitted line estimates without requiring resolved flanks."""
-
-    def estimates(scan_fit: dict) -> list[str]:
-        if (
-            not scan_fit["success"]
-            or scan_fit["params_at_bound"]
-            or (scan_fit["x_min"] is None and scan_fit["x_max"] is None)
-        ):
-            return []
-        return [
-            name
-            for name, centre in scan_fit["parameters"].items()
-            if name.split("_")[0] == "B0"
-            and scan_fit["x_range"][0] < centre < scan_fit["x_range"][1]
-            and scan_fit["uncertainties"][name] > 0
-            and scan_fit["uncertainties"][name.replace("B0", "Bwid", 1)] > 0
-            and scan_fit["uncertainties"][name.replace("B0", "f", 1)] > 0
-            and abs(scan_fit["parameters"][name.replace("B0", "f", 1)])
-            >= _RESOLVED_DEPTH * scan_fit["uncertainties"][name.replace("B0", "f", 1)]
-        ]
 
     def described(scan_fit: dict, line: str) -> tuple[float, float, float, float]:
         """Centre, error, width, error — errors scaled by √chi2_red where it exceeds 1."""
@@ -675,10 +677,10 @@ def _line_comparisons(
 
     notes = []
     # Missing flanks limit identification, not the ordering of fitted estimates.
-    for line in estimates(fit):
+    for line in _line_estimates(fit):
         centre, centre_err, width, width_err = described(fit, line)
         for other, other_fit in stored.items():
-            for other_line in estimates(other_fit):
+            for other_line in _line_estimates(other_fit):
                 c2, c2_err, w2, w2_err = described(other_fit, other_line)
                 if abs(centre - c2) > width + w2:
                     continue
@@ -767,13 +769,12 @@ def _absent_lines(folder: str, fit: dict, runs: list[int], payloads: dict[str, d
             continue
         name, xs, lines = scans.setdefault(tuple(stored_scan["runs"]), (stem, [], []))
         xs.extend(point["x"] for point in stored_scan["scan"]["points"])
-        # Any converged line counts: a broader one short of flank coverage is
-        # still the scan's line there, not an absence to refit in a narrow window.
+        # Any significant estimate counts: a broader line short of flank coverage
+        # is still the scan's line there, not an absence to refit in a narrow window.
         parameters = stored_scan["fit"]["parameters"]
         lines.extend(
-            (value, abs(parameters[name.replace("B0", "Bwid", 1)]))
-            for name, value in parameters.items()
-            if stored_scan["fit"]["success"] and name.split("_")[0] == "B0"
+            (parameters[name], abs(parameters[name.replace("B0", "Bwid", 1)]))
+            for name in _line_estimates(stored_scan["fit"])
         )
     notes = []
     low, high = fit["x_range"]

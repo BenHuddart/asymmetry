@@ -179,8 +179,13 @@ def line_amplitude_phase_values(
     identities = model.parameter_identities()
     kinds = model.parameter_kinds()
     by_component: dict[int, dict[ParameterKind, str]] = {}
+    # Only an Oscillatory term is A cos(2πft + φ): a Bessel's or a powder
+    # average's phase does not split into a cosine and a sine column.
     for name, identity in identities.items():
-        if isinstance(identity, ComponentParameter):
+        if (
+            isinstance(identity, ComponentParameter)
+            and model.components[identity.component].name == "Oscillatory"
+        ):
             by_component.setdefault(identity.component, {})[kinds[name]] = name
     time = np.asarray(dataset.time, dtype=float)
     span = float(time[-1] - time[0])

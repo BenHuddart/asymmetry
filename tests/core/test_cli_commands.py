@@ -3747,6 +3747,11 @@ def test_a_line_another_analysed_scan_covers_without_a_fit_there_is_named() -> N
     hot_15 = fit(14827.0, 370.0, 14000.0, 15600.0)
     broad = scan([1, 2], fit(15672.0, 1975.0, 11800.0, 19600.0))
     assert _absent_lines("data", hot_15, [3, 4], {"cold": broad}) == []
+    # A line whose depth is consistent with zero is not a counterpart (Codex review).
+    shallow = fit(15672.0, 1975.0, 11800.0, 19600.0)
+    shallow["parameters"]["f"] = -0.0001
+    (note,) = _absent_lines("data", hot_15, [3, 4], {"cold": scan([1, 2], shallow)})
+    assert "none of its fits holds a line there" in note
     # A scan fitted with no line at all lacks this one as well.
     flat = fit(7080.0, 390.0, 5000.0, 9500.0) | {"parameters": {"m": 0.0, "b": 0.1}}
     (note,) = _absent_lines("data", hot, [3, 4], {"cold": scan([1, 2], flat)})
@@ -4406,7 +4411,16 @@ def test_a_line_whose_amplitude_appears_on_cooling_names_its_onset() -> None:
         (19.02, 1.71, 18.09),
     ]
     rows = [
-        {"key": str(i), "x": x, "A_1": a1, "A_1_err": 0.4, "A_3": a3, "A_3_err": 0.4, "flags": []}
+        {
+            "key": str(i),
+            "x": x,
+            "A_1": a1,
+            "A_1_err": 0.4,
+            "A_3": a3,
+            "A_3_err": 0.4,
+            "params_at_bound": [],
+            "flags": [],
+        }
         for i, (x, a1, a3) in enumerate(table)
     ]
     trend = TrendTable("sample_temperature_logged", ["A_1", "A_3"], rows)
@@ -4414,6 +4428,13 @@ def test_a_line_whose_amplitude_appears_on_cooling_names_its_onset() -> None:
     appears, vanishes = _component_onsets(trend, ["A_1", "A_3"], two_lines)
     assert "appears on cooling between 14.76 and 16.9" in appears
     assert "vanishes on cooling between 14.76 and 16.9" in vanishes
+    # An amplitude at a bound is no measurement, so it cannot place the onset.
+    pinned = [row | {"params_at_bound": ["A_1"]} if row["x"] == 16.9 else row for row in rows]
+    pinned_trend = TrendTable("sample_temperature_logged", ["A_1", "A_3"], pinned)
+    assert (
+        "between 14.76 and 19.02"
+        in _component_onsets(pinned_trend, ["A_1"] * 0 + ["A_1", "A_3"], two_lines)[0]
+    )
     # One line beside a relaxation is not a pair of lines trading weight.
     assert _component_onsets(trend, ["A_1", "A_3"], "Oscillatory * Gaussian + Exponential") == []
 
