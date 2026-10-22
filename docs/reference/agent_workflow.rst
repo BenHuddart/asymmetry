@@ -1340,8 +1340,11 @@ A report listing only numbers ends by asking for
 another audit before replying. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions ("which
 would be a field of about 21 G", "corresponds to roughly 16 G"),
-differences between printed columns, a spread across windows ("stable to about
-200 G") — which the agent skill's number rule forbids. A hedged round number's
+differences between printed columns ("29 AICc units behind", "0.37 MHz
+apart"), a spread across windows ("stable to about 200 G") — which the agent
+skill's number rule forbids. A comparison copied verbatim from the output, or
+a number word whose digits a command printed ("within two resolution
+elements"), verifies. A hedged round number's
 trailing zeros are not significant digits, so "about 200 G" cannot verify
 against an unrelated printed 200. A count "N of M" verifies only as a
 printed tally (the envelope NOTE and ``Fit quality counts`` print theirs as

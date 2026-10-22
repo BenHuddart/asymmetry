@@ -3090,7 +3090,8 @@ directories lived in a scratch tmpfs and are not archived.
 | 3 | `e9b7791` | 23/24 | corannulene (judgement) |
 | corannulene repeats | `b85274e` | 2/2 | — |
 | 5 | `b85274e` | 23/24 | nickel (judgement: a hand recount) |
-| 6 (confirmation) | `WAVE6_COMMIT` | WAVE6_PASS | WAVE6_FAILED |
+| 6 | `dd871f7` | 21/24 | EuO, LiFeAs (both judgement), benzene high TF |
+| 8 (confirmation) | `20f137c` | WAVE8_PASS | WAVE8_FAILED |
 
 Every failure traced to the CLI, and every fix is in the CLI; `SKILL.md` is
 unchanged. As in earlier loops, a printed line changed behaviour where a
@@ -3120,12 +3121,21 @@ sentence in the skill would not have:
   line's narrow window, which cut the broad line off (15055.7 G). Any
   converged line now counts, and `COMPARE` says when only one scan resolves a
   narrow line ("say in words that this scan shows no narrow line near …").
-  Corannulene then passed four runs out of four (two repeats, waves 5–6 to
-  be confirmed below).
+  Corannulene then passed both repeats and waves 5 and 6 (wave 6 on the
+  boundary: "15.3 to 15.7 kG" across two windows).
 - **Audit friction:** the unit check took a parameter named anywhere earlier
   in the line as the owner of a number (TCNQ lost three rounds to
   "10 K (B0 printed in G)"); it now reads only a name in the number's own
   clause, within 40 characters.
+- **Wave 6's three:** EuO wrote "about 29 AICc units behind" (two words
+  between the number and "behind"), benzene high TF "0.37 MHz apart, about
+  three resolution elements" from two printed correlation peaks — `audit` now
+  reads both, `fourier --correlation` prints the twin peaks' separation, and a
+  phrase copied verbatim from the output or a number word whose digits were
+  printed verifies. LiFeAs placed its onset at the broad line's width step
+  because only σ had a note; in a model of two or more lines, `trend` now names
+  where a line's amplitude leaves its warm level on cooling (14.76–16.9 K for
+  LiFeAs), and the ENDPOINTS difference names the two runs it compares.
 
 Judgement calls the scorers raised repeatedly, for the maintainer: the
 corannulene cold-line range 15.1–15.6 kG is narrower than the window
