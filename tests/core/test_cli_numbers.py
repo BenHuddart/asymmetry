@@ -1063,3 +1063,18 @@ def test_extreme_logger_is_not_a_temperature_confound_without_validation():
     assert unstated("The high logger value confounds the foil curve.", log)
     assert not unstated("The logger is railed and irrelevant to this calibration.", log)
     assert not unstated("The sample temperature was independently validated.", log)
+
+
+def test_a_count_verifies_only_as_a_printed_tally() -> None:
+    from asymmetry.cli._numbers import unverified_counts
+    from asymmetry.cli._output import render_quality_counts
+
+    log = (
+        "in all, Exponential on 14 of 15 runs\n"
+        + render_quality_counts([{"quality": {"verdict": "poor"}}] * 3 + [{"quality": None}])
+        + "\nruns 13 and 15 at 20 G\n"
+    )
+    assert "poor 3 of 4" in log
+    # A recount by hand finds both numbers in the log, but not as that tally (Sonnet, 2026-10-22).
+    assert [e.text for e in unverified_counts("exponential on 13 of 15 runs", log)] == ["13 of 15"]
+    assert unverified_counts("exponential on 14 of the 15 runs; poor on 3 of 4", log) == []

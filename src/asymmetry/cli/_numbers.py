@@ -291,6 +291,25 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
     return found
 
 
+#: A count of a total ("14 of 15 runs", "17 of the 18"), which only a printed tally verifies.
+_COUNT_OF = re.compile(r"(?<![\w.])(\d+)\s+of\s+(?:the\s+|all\s+|its\s+)?(\d+)(?![\w.])")
+
+
+def unverified_counts(draft: str, log_text: str) -> list[Unverified]:
+    """Each "N of M" in *draft* that no output printed as that tally.
+
+    Both numbers appear somewhere in a long log by chance, so a count verifies
+    only as a pair: a recount by hand ("13 of 15" for a printed 14 of 15) is listed.
+    """
+    printed = {(int(n), int(m)) for n, m in _COUNT_OF.findall(log_text)}
+    return [
+        Unverified(match.group(), line_number, line.strip())
+        for line_number, line in enumerate(draft.splitlines(), start=1)
+        for match in _COUNT_OF.finditer(line)
+        if (int(match.group(1)), int(match.group(2))) not in printed
+    ]
+
+
 def unverified_units(draft: str, log_text: str) -> list[Unverified]:
     """Flag a named parameter restated with a unit incompatible with its printed table."""
     unit = r"(?:dimensionless|MHz|kHz|Hz|kG|G|K|meV|ns|[µμ]s(?:⁻¹)?)(?!\w)"

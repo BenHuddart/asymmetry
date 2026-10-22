@@ -280,9 +280,13 @@ def envelope_summary(trend: TrendTable) -> str | None:
             f"A change of shape along {trend.order_key} is a result: report it with the "
             "runs on each side, not only the rate."
         )
+    counts: dict[str, int] = {}
+    for row in decided:
+        counts[row["envelope"]] = counts.get(row["envelope"], 0) + 1
+    tally = ", ".join(f"{shape} on {n} of {len(decided)}" for shape, n in counts.items())
     return (
         f"NOTE: the relaxation shape changes along this scan — {described} (the envelope "
-        f"column; runs marked 'either' fit both alike). {meaning}"
+        f"column; runs marked 'either' fit both alike; in all, {tally} runs). {meaning}"
     )
 
 

@@ -108,8 +108,9 @@ def render_quality_counts(results: Iterable[dict[str, Any]]) -> str:
         "unknown" if result["quality"] is None else result["quality"]["verdict"]
         for result in results
     )
+    total = sum(counts.values())
     return "Fit quality counts: " + ", ".join(
-        f"{name} {count}" for name, count in sorted(counts.items())
+        f"{name} {count} of {total}" for name, count in sorted(counts.items())
     )
 
 

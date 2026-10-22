@@ -606,6 +606,8 @@ def test_the_series_weighs_a_gaussian_against_an_exponential_envelope_run_by_run
     assert "Gaussian on 1, 2 (temperature 50–100)" in note
     assert "Exponential on 3, 4 (temperature 200–300)" in note
     assert "motional narrowing" in note
+    # The tally is printed, so a summary quotes it rather than recounting.
+    assert "in all, Gaussian on 2 of 4, Exponential on 2 of 4 runs" in note
     # Along a field the same change is reported without the narrowing reading.
     by_field = envelope_summary(replace(outcome.trend, order_key="field"))
     assert "motional narrowing" not in by_field

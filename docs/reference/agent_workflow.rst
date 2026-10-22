@@ -1339,7 +1339,9 @@ would be a field of about 21 G", "corresponds to roughly 16 G"),
 differences between printed columns, a spread across windows ("stable to about
 200 G") — which the agent skill's number rule forbids. A hedged round number's
 trailing zeros are not significant digits, so "about 200 G" cannot verify
-against an unrelated printed 200. It also lists a law's vocabulary ("critical slowing",
+against an unrelated printed 200. A count "N of M" verifies only as a
+printed tally (the envelope NOTE and ``Fit quality counts`` print theirs as
+"14 of 15"), so a recount by hand is listed. It also lists a law's vocabulary ("critical slowing",
 "activation energy", "correlation time") when every fit of that law in the
 logged session printed ``LAW NOT ESTABLISHED``; explicit failed or rejected
 attempts remain valid descriptions. Integral scans with significant local

@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   says when only one scan resolves a narrow line and the other's estimate is a
   broad feature, and the same-window refit prompt no longer fires for a scan
   whose converged fit already holds a broader line there.
+- **Counts are printed as tallies, and ``audit`` checks them.** The envelope NOTE
+  ends "in all, Exponential on 14 of 15 runs" and fit quality prints
+  "poor 27 of 29"; an "N of M" in a draft verifies only as a printed tally, so a
+  recount by hand ("13 of 15") is listed.
 - **``audit`` catches hedged spreads and worded percentages.** "Stable to about
   200 G", "about three percent" and "within about ten gauss" are listed unless printed; a hedged round
   number's trailing zeros no longer count as significant digits.
