@@ -1,0 +1,67 @@
+{
+  "description": "Per-wave summary of the Sonnet 5.5 corpus improvement loop of 2026-10-21/22 (branch claude/wimda-corpus-eval-sonnet-a65c74). Host Claude Code 2.1.303 / Linux, run_wave.py --set all --parallel 4, scored per group by Sonnet scorers with tools/agent_eval/scoring_brief.md. Raw run directories were kept in a scratch tmpfs and are not archived; a reboot removed waves 1-4.",
+  "waves": [
+    {
+      "wave": "w1",
+      "kind": "baseline",
+      "recorded_at": "2026-10-21",
+      "commit": "ac53471",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 20,
+      "scientific_failures": ["afm-high-tf-mdu", "trsb-re6zr", "basics", "corannulene-alc"],
+      "status": "complete. afm: printed two-line test collapsed (phases started at pi); trsb: 'about three percent' hand-derived; basics: 'roughly 21 G' hand conversion and one alpha across an ALPHA STEP; corannulene: 'stable to about 200 G' spread. Judgement passes: plateau ('16 of 18' miscount), maleic (derived temperature gaps), cuprate (non-SC fraction)."
+    },
+    {
+      "wave": "w2",
+      "kind": "aborted",
+      "recorded_at": "2026-10-21",
+      "commit": "91cb05c",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 4,
+      "status": "stopped after four cases to run the next commit instead; not scored"
+    },
+    {
+      "wave": "w3",
+      "kind": "round",
+      "recorded_at": "2026-10-21",
+      "commit": "e9b7791",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 23,
+      "scientific_failures": ["corannulene-alc"],
+      "status": "complete. corannulene (judgement): the same-window prompt fitted the broad cold 15 kG line in the hot line's narrow window (15055.7 G, outside 15.1-15.6 kG). TRSB and basics fixed by the printed step percentage and implied field. Found: the ALPHA STEP NOTE fired across instruments (cuprate, copper) without misleading either agent; fixed in fe2ab1f."
+    },
+    {
+      "wave": "c1",
+      "kind": "repeats",
+      "recorded_at": "2026-10-21",
+      "commit": "b85274e",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 2,
+      "cases": 2,
+      "scientific_pass": 2,
+      "scientific_failures": [],
+      "status": "corannulene-alc twice: cold line 15479 and 15435.9 G, both state no narrow cold line near 7 kG"
+    },
+    {
+      "wave": "w4",
+      "kind": "round",
+      "recorded_at": "2026-10-22",
+      "commit": "ab6f08a",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 4,
+      "status": "all 24 ran; only Tier A was scored (4/4) before the usage limit, and the run directories were lost with the scratch tmpfs"
+    }
+  ]
+}
