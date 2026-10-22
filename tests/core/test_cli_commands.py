@@ -3896,8 +3896,8 @@ def test_temperature_edge_comparison_preserves_a_cold_upturn_and_kt_control() ->
     assert "9.990000" not in notes
     assert "run 0 at temperature=1 (flags: failed)" in notes
     assert "run 3 at temperature=100" in notes
-    assert "Lowest reliable minus next" in notes
-    assert "Coldest minus next" not in notes
+    assert "Lowest reliable (run 1) minus next (run 2)" in notes
+    assert "Coldest (run" not in notes
     assert "KT CONTROL" in notes
     assert _edge_comparisons(TrendTable("field", [], rows), ["nu", "Delta"]) == []
 
@@ -4088,7 +4088,8 @@ def test_compatible_cold_rates_are_not_called_an_upturn() -> None:
     notes = _edge_comparisons(TrendTable("temperature", ["Lambda"], rows), ["Lambda"])
     note = notes[-1]
     assert "SPECTRAL ENDPOINTS:" in notes[0]
-    assert "Coldest minus next: 0.003000 ± 0.005657" in note
+    # The difference names both runs, so it is not quoted beside another pair.
+    assert "Coldest (run 1) minus next (run 2): 0.003000 ± 0.005657" in note
     assert "consistent within two combined errors" in note
 
 

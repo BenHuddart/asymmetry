@@ -536,7 +536,8 @@ def _edge_comparisons(trend, free_params: list[str]) -> list[str]:
                 f"at {trend.order_key}={row['x']:g} (run {row['key']})"
                 for row in shown
             )
-            + f". {'Coldest' if point == 'coldest point' else 'Lowest reliable'} minus next: "
+            + f". {'Coldest' if point == 'coldest point' else 'Lowest reliable'} "
+            f"(run {first['key']}) minus next (run {following['key']}): "
             f"{format_number(difference, 6)} ± "
             f"{format_number(error, 6)} ({significance:.2f} combined errors): {comparison}. "
             "A whole-scan step note does not rule out an endpoint upturn; central values "
