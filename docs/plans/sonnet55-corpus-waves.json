@@ -85,6 +85,24 @@
       ],
       "cost_usd": 29.97,
       "status": "complete. nickel (judgement, number rule): 'exponential on 13 of 15 runs' against a printed 14/1 split; fixed in 6c7adbf (tallies printed as N of M, audit checks N of M). Corannulene, basics, TRSB, LiFeAs and AFM all passed using the new CLI lines."
+    },
+    {
+      "wave": "w6",
+      "kind": "round",
+      "recorded_at": "2026-10-22",
+      "commit": "dd871f7",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 21,
+      "scientific_failures": [
+        "euo-psi",
+        "lifeas-psi",
+        "benzene-high-tf"
+      ],
+      "cost_usd": 30.14,
+      "status": "complete. euo (judgement, number rule): 'about 29 AICc units behind' (fixed 6ce6e07); lifeas (judgement): onset placed at the broad line's width step, not where its amplitude leaves its warm level (fixed 312652c); benzene-high-tf (number rule): '0.37 MHz apart, about three resolution elements' from two printed correlation peaks (fixed 8ca38d9). The N-of-M count check caught nickel's '8 of 9' and plateau's '18 of 21' before reply."
     }
   ]
 }
