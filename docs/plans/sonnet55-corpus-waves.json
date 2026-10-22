@@ -1,5 +1,5 @@
 {
-  "description": "Per-wave summary of the Sonnet 5.5 corpus improvement loop of 2026-10-21/22 (branch claude/wimda-corpus-eval-sonnet-a65c74). Host Claude Code 2.1.303 / Linux, run_wave.py --set all --parallel 4, scored per group by Sonnet scorers with tools/agent_eval/scoring_brief.md. Raw run directories were kept in a scratch tmpfs and are not archived; a reboot removed waves 1-4.",
+  "description": "Per-wave summary of the Sonnet 5.5 corpus improvement loop of 2026-10-21/22 (branch claude/wimda-corpus-eval-sonnet-a65c74). Host Claude Code 2.1.303 / Linux, run_wave.py --set all --parallel 4, scored per group by Sonnet scorers with tools/agent_eval/scoring_brief.md. Raw run directories were kept in a scratch tmpfs and are not archived; a reboot removed waves 1-4, and later waves were not archived either.",
   "waves": [
     {
       "wave": "w1",
@@ -11,7 +11,12 @@
       "parallel": 4,
       "cases": 24,
       "scientific_pass": 20,
-      "scientific_failures": ["afm-high-tf-mdu", "trsb-re6zr", "basics", "corannulene-alc"],
+      "scientific_failures": [
+        "afm-high-tf-mdu",
+        "trsb-re6zr",
+        "basics",
+        "corannulene-alc"
+      ],
       "status": "complete. afm: printed two-line test collapsed (phases started at pi); trsb: 'about three percent' hand-derived; basics: 'roughly 21 G' hand conversion and one alpha across an ALPHA STEP; corannulene: 'stable to about 200 G' spread. Judgement passes: plateau ('16 of 18' miscount), maleic (derived temperature gaps), cuprate (non-SC fraction)."
     },
     {
@@ -35,7 +40,9 @@
       "parallel": 4,
       "cases": 24,
       "scientific_pass": 23,
-      "scientific_failures": ["corannulene-alc"],
+      "scientific_failures": [
+        "corannulene-alc"
+      ],
       "status": "complete. corannulene (judgement): the same-window prompt fitted the broad cold 15 kG line in the hot line's narrow window (15055.7 G, outside 15.1-15.6 kG). TRSB and basics fixed by the printed step percentage and implied field. Found: the ALPHA STEP NOTE fired across instruments (cuprate, copper) without misleading either agent; fixed in fe2ab1f."
     },
     {
@@ -62,6 +69,22 @@
       "cases": 24,
       "scientific_pass": 4,
       "status": "all 24 ran; only Tier A was scored (4/4) before the usage limit, and the run directories were lost with the scratch tmpfs"
+    },
+    {
+      "wave": "w5",
+      "kind": "round",
+      "recorded_at": "2026-10-22",
+      "commit": "b85274e",
+      "model": "claude-sonnet-5-5",
+      "host": "Claude Code 2.1.303 / Linux",
+      "parallel": 4,
+      "cases": 24,
+      "scientific_pass": 23,
+      "scientific_failures": [
+        "ferromagnetic-nickel"
+      ],
+      "cost_usd": 29.97,
+      "status": "complete. nickel (judgement, number rule): 'exponential on 13 of 15 runs' against a printed 14/1 split; fixed in 6c7adbf (tallies printed as N of M, audit checks N of M). Corannulene, basics, TRSB, LiFeAs and AFM all passed using the new CLI lines."
     }
   ]
 }
