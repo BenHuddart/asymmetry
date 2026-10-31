@@ -6,13 +6,9 @@ Asymmetry reads the major muSR raw-data formats through a common
 muon NeXus (legacy V1 and V2), PSI BIN/MDU, and MusrRoot/LEM ROOT. The
 practical consequence is that data from different facilities can be
 compared in one session without manual format-by-format pre-processing.
-Each loader is implemented against the same authoritative reference used
-by the facility's own software — musrfit's ``PRunDataHandler`` for PSI
-BIN/MDU and MusrRoot/LEM ROOT, with Mantid's ``LoadPSIMuonBin`` used as a
-PSI-BIN cross-check — so format-specific subtleties (bin-index
-conventions, per-detector :math:`t_0` offsets, multi-period ISIS files,
-PSI temperature sidecars) are handled consistently with what those
-packages do.
+The loaders preserve format-specific bin indices, per-detector :math:`t_0`
+offsets, multi-period ISIS files, and PSI temperature sidecars in the same
+raw-run data model.
 
 If you are loading a new dataset for the first time, the subsections
 below document the metadata each loader extracts and the common failure
@@ -192,12 +188,16 @@ Asymmetry supports PSI raw histogram files in the classic PSI-BIN and PSI-MDU
 formats. These files are loaded into normal raw histogram runs, so they use the
 same full Grouping dialog as ISIS NeXus data.
 
-This loader is intentionally based on established PSI readers rather than a
-new file interpretation. The BIN/MDU binary layout and metadata offsets follow
-the musrfit PSI reader, especially ``PRunDataHandler::ReadPsiBinFile`` and the
-``MuSR_td_PSI_bin``/MDU structures it uses. Mantid's ``LoadPSIMuonBin`` was
-also checked for PSI-BIN behaviour. Asymmetry keeps the implementation in pure
-Python and maps the result into the existing ``Run``/``Histogram`` data model.
+PSI publishes a `data-format overview <https://www.psi.ch/en/smus/data-format>`_
+and a `BIN layout description
+<https://lmu.web.psi.ch/docu/manuals/bulk_manuals/software/general/psi_format.txt>`_.
+The BIN document does not specify the native MDU layout. Asymmetry accepts
+MDU signatures ``M3``, ``T4``, and ``T5`` and reads signed 32-bit histogram
+samples and detector tags. All selected histograms share the largest eligible
+extent, with zero padding for shorter histograms, so a longer later histogram
+retains its samples. M3 retains its final-bin omission. Contradictory
+settings and histogram records raise an error before count-array allocation;
+selected records must agree in histogram eligibility and bin bounds.
 
 PSI files can store different ``t0`` values per detector. Asymmetry preserves
 those detector-specific offsets and aligns histograms by their own ``t0`` when
@@ -211,10 +211,11 @@ headers store the histogram length itself, for example ``8192`` for an
 extracts good-bin ranges. Asymmetry stores the corresponding valid inclusive
 array index, so that example becomes ``8191`` internally.
 
-For PSI-MDU, the tag metadata are converted to the same zero-based internal
-coordinate system used by musrfit's public reader methods. The converted
-``t0``, ``first good``, and ``last good`` values from the musrfit reader match
-the values stored by Asymmetry.
+For PSI-MDU, timing markers use the settings' resolution factor :math:`q`:
+``t0 = (stored_t0 + 1) * q - 1``,
+``first_good = (stored_first_good + 1) * q - 1``, and
+``last_good = stored_last_good * q``. The loader preserves these values;
+subsequent grouping resolves the usable common window.
 
 PSI label metadata is used to build initial grouping suggestions. BIN labels
 such as ``Forw``/``Back`` and MDU positron labels such as ``F1``/``B1`` become
@@ -403,8 +404,8 @@ Reference provenance
 The format and correction behaviour is split by source so that the application
 does not invent format rules:
 
-* PSI BIN/MDU parsing follows musrfit's PSI raw-data reader, with Mantid's
-  ``LoadPSIMuonBin`` used as a cross-check for BIN files.
+* PSI BIN/MDU files preserve detector counts, labels, and timing markers.
+  BIN offsets are described in the public PSI format document linked above.
 * MusrRoot/LEM ROOT parsing follows musrfit
   ``PRunDataHandler::ReadRootFile`` and the MusrRoot documentation:
   ``RunHeader`` metadata plus ``hDecay`` histograms are mapped into

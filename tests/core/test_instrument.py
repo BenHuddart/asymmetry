@@ -889,8 +889,8 @@ class TestGpsPsiConvention:
 
     PSI names detectors by beam direction; for surface muons the polarization
     points toward the beam-Backward detector, which must occupy the analysis-
-    forward slot.  These tests transcribe the musrfit/GPS-paper oracle literally
-    and cross-check the loader default against every GPS preset.
+    forward slot. The tests check the beam-direction sign convention shared
+    with musrfit and the GPS paper, and every GPS preset against the loader.
     """
 
     def test_wep_fb_projection_reduces_to_musrfit_oracle(self):
@@ -919,7 +919,7 @@ class TestGpsPsiConvention:
         analysis_backward = np.array([counts[bwd_ids[0]]])
         got = compute_asymmetry(analysis_forward, analysis_backward, fb.alpha)
 
-        # Oracle, transcribed literally: A = (B - 0.75 F) / (B + 0.75 F).
+        # Backward-minus-forward convention: A = (B - 0.75 F) / (B + 0.75 F).
         alpha = 0.75
         oracle = (b - alpha * f) / (b + alpha * f)
         assert got[0] == pytest.approx(oracle[0])

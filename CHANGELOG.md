@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- PSI MDU loading retains longer later histograms, zero-pads shorter ones,
+  and rejects contradictory settings and histogram bounds before allocation.
+
 ### Changed
 
 - **``recipe --run`` starts each line where the run shows it.** At the recipe's
