@@ -1,9 +1,7 @@
 name: Full test suite
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
   workflow_dispatch:
     inputs:
       tier:
@@ -21,8 +19,9 @@ permissions:
 
 jobs:
   full-suite:
-    name: Full test suite (${{ github.event.inputs.tier || 'full' }} tier)
+    name: Full test suite (${{ inputs.tier || 'full' }} tier)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -46,4 +45,5 @@ jobs:
       - name: Run full test suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python tools/harness.py test --tier=${{ github.event.inputs.tier || 'full' }}
+          ASYMMETRY_FAULTHANDLER_TIMEOUT: "600"
+        run: python tools/harness.py test --tier=${{ inputs.tier || 'full' }}

@@ -17,7 +17,8 @@ release, docs deploy — is fully automated; the only human steps are saying
    ```
 
 3. The workflow refuses to run unless the `CI success` check is green on
-   `main` HEAD. It then runs `tools/release_prep.py`, which bumps
+   `main` HEAD. This pre-flight check is an early refusal; publication is gated
+   separately on the exact tagged commit. It then runs `tools/release_prep.py`, which bumps
    `pyproject.toml`, promotes `[Unreleased]` in `CHANGELOG.md` to
    `## [X.Y.Z] - <date>`, and prints the promoted section into the run
    summary for a quick eyeball. Finally it commits `release: X.Y.Z` to
@@ -25,13 +26,36 @@ release, docs deploy — is fully automated; the only human steps are saying
 4. The tag push triggers the existing pipelines untouched: `release.yml`
    builds and smoke-tests the macOS DMG and Windows installer and publishes
    the GitHub release; `docs-pages.yml` deploys the documentation site.
-   `release.yml` starts with a guard that fails fast if the tag does not
-   match `pyproject.toml` or the changelog was not rolled.
+   `release.yml` checks that the tag matches `pyproject.toml` and the changelog
+   was rolled. Its macOS and Windows builds run alongside the reusable full
+   Linux test suite, all checking out the triggering commit. Publication waits
+   for successful validation and both artifact builds. A failed, cancelled,
+   skipped, or pending validation cannot publish, and validation on another
+   commit does not satisfy this dependency.
 
 There is no release PR and no manual tagging. Version numbers live in exactly
 one place (`pyproject.toml`); `asymmetry.__version__` reads it via package
 metadata, and the release workflows derive theirs from the tag, with the
 guard keeping the two honest.
+
+## Non-publishing rehearsals and retries
+
+Run validation and both artifact builds on a branch without creating a release:
+
+```bash
+gh workflow run release.yml --ref <branch>
+```
+
+The publishing job runs only for a tag push; a manual dispatch skips it. The
+rehearsal reads the version from `pyproject.toml` for artifact names. Release
+runs do not cancel each other.
+
+For a failed tag run, use **Re-run failed jobs** on that run to retain its event
+and commit. Build artifacts expire after one day; after that, use **Re-run all
+jobs** so both builds upload fresh artifacts. GitHub permits re-runs for 30 days.
+For an older run or a failure needing code changes, fix `main` and propose the
+next patch release. Never move or delete the failed tag. Its version heading
+remains in the changelog even though no GitHub release was published.
 
 ## Guidelines for agents
 
