@@ -35,6 +35,41 @@ def test_required_knowledge_files_exist() -> None:
     assert harness.find_knowledge_base_violations() == []
 
 
+def test_agent_guide_is_within_its_cap_and_imported_by_claude_md() -> None:
+    harness = _load_harness()
+
+    assert harness.find_agent_guide_violations() == []
+
+
+def test_agent_guide_check_reports_an_overlong_guide_and_a_missing_import(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text("# CLAUDE.md\n", encoding="utf-8")
+    harness = _load_harness()
+
+    failures = harness.find_agent_guide_violations(tmp_path, max_lines=2)
+
+    assert [failure.path.name for failure in failures] == ["AGENTS.md", "CLAUDE.md"]
+
+
+@pytest.mark.parametrize(
+    "claude_md",
+    [
+        "See `@AGENTS.md` for the guide.\n",
+        "```\n@AGENTS.md\n```\n",
+    ],
+)
+def test_agent_guide_check_ignores_a_mention_that_does_not_import(
+    tmp_path: Path, claude_md: str
+) -> None:
+    (tmp_path / "AGENTS.md").write_text("guide\n", encoding="utf-8")
+    (tmp_path / "CLAUDE.md").write_text(claude_md, encoding="utf-8")
+    harness = _load_harness()
+
+    failures = harness.find_agent_guide_violations(tmp_path)
+
+    assert [failure.path.name for failure in failures] == ["CLAUDE.md"]
+
+
 def test_packaged_skill_is_within_its_frozen_line_count() -> None:
     harness = _load_harness()
 

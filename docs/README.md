@@ -225,6 +225,11 @@ python -m http.server 8000
 
 Then open http://localhost:8000 in your browser.
 
+The site is built and deployed to GitHub Pages on release tags (`v*`) and on
+pushes to `main` that touch `docs/**`, `src/**` or the docs workflow, because
+screenshots are captured from the live GUI and `src/**` changes can alter them.
+PRs that touch `docs/**` get a cheap build-only smoke with no screenshots.
+
 ## Contributing
 
 When adding new features:

@@ -174,8 +174,7 @@ with a cooperative cancel path, marshal results back as plain objects via queued
 signals, hold strong references to live threads, and shut them down in
 `closeEvent`. Never construct a bespoke `QThread` in `gui/`, and never connect a
 worker signal to a bare lambda/partial that touches widgets — route through a
-GUI-thread `QObject` method. See the threading invariants in
-[AGENTS.md](AGENTS.md).
+GUI-thread `QObject` method.
 
 ## Keeping the GUI responsive
 
@@ -232,7 +231,9 @@ widgets or window state cannot go to a worker; if it is a bounded-item loop
 `MainWindow._apply_items_with_progress` — one item per event-loop turn behind
 a cancellable window-modal progress dialog, cancel stopping at an item
 boundary. `QApplication.processEvents()` inside a loop is banned (the harness
-enforces it): it invites re-entrancy while still freezing between calls.
+enforces it): it invites re-entrancy while still freezing between calls. A loop
+adding datasets to the browser runs inside `DataBrowserPanel.batch_updates()`,
+because per-add table rebuilds are O(n²).
 
 **Session state snapshots hold analysis results by reference.** A panel's
 `get_state()`/`restore_state()` pair is usually *both* the project-persistence

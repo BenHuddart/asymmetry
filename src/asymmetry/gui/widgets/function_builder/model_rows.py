@@ -1165,7 +1165,8 @@ class ModelRowList(QWidget):
                 # it, and Qt only dispatches a detached widget's queued
                 # deleteLater via an explicit DeferredDelete event, so without
                 # this call these accumulate for the life of the app (the
-                # repo's established leaked-widget pattern; see CLAUDE.md).
+                # repo's established leaked-widget pattern; see
+                # ``_cleanup_qt_widgets`` in tests/conftest.py).
                 if widget is not self._empty_label:
                     widget.deleteLater()
 

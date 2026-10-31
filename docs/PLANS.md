@@ -1,5 +1,9 @@
 # Execution Plans
 
+> **Retired.** Do not add to this file or to `docs/plans/`. Planned work lives in
+> GitHub issues (see `AGENTS.md`). A `polish` issue moves open items out of here
+> and deletes the rest.
+
 This file tracks repo-local plans that are useful for agents. Keep short tasks
 inline here; create a dedicated plan file only when a project spans multiple
 subsystems or days.

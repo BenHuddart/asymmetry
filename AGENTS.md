@@ -1,226 +1,150 @@
-# Asymmetry Agent Map
+# Asymmetry agent guide
 
-This file is the short entry point for coding agents. Keep detailed guidance in
-repo-local docs and use this file as the map.
+This is the one instruction file for every coding agent and contributor. Claude Code imports
+it from `CLAUDE.md`; Codex, Cursor and Copilot read it directly. Its rules are binding; linked
+docs give the rationale. `tools/harness.py structural` caps it at 150 lines.
 
-## Start Here
+These rules describe the repository we want, not always the one we have. Issues labelled
+`polish` bring existing code and docs into line. Every line you add or touch meets the rule,
+and an old pattern is never a reason to extend it.
 
-- [README.md](README.md): user-facing overview, install commands, and common workflows.
-- [CONTRIBUTING.md](CONTRIBUTING.md): contributor setup and review expectations.
-- [docs/INDEX.md](docs/INDEX.md): documentation table of contents.
-- [benhuddart.github.io/asymmetry](https://benhuddart.github.io/asymmetry/): published documentation site.
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): system design, domain boundaries, and feature specs.
-- [docs/GUI_GUIDELINES.md](docs/GUI_GUIDELINES.md): how to build GUI here — tokens, fonts, metrics, PanelSection/ActionFooter, the UI zoom, and the harness rules.
-- [docs/HARNESS.md](docs/HARNESS.md): agent harness workflow and validation ladder.
-- [RELEASING.md](RELEASING.md): how releases are cut, changelog discipline, and
-  when/how agents should propose a release (never cut one unprompted).
-- [docs/porting/README.md](docs/porting/README.md): mandatory study-first workflow for feature ports.
-- [docs/QUALITY.md](docs/QUALITY.md): quality map and current risk areas.
-- [docs/PLANS.md](docs/PLANS.md): active and deferred execution plans.
+## What Asymmetry is
 
-## Repository Shape
+A public, MIT-licensed Python library, CLI and PySide6 application for muon-spin spectroscopy
+(μSR) analysis. Results end up in papers, so correctness and provenance come before features.
+Users, instrument scientists and other μSR authors read what you commit, and your issues and PRs.
 
-- `src/asymmetry/core/`: pure-Python analysis engine. This layer must not import
-  Qt, matplotlib, or `asymmetry.gui`.
-- `src/asymmetry/gui/`: PySide6 desktop application and plotting surfaces. GUI
-  code wraps the core API instead of reimplementing analysis behavior.
-  - `gui/panels/fit/`: the fit-setup-and-results package (`FitPanel`,
-    `FitTabBase`, `SingleFitTab`, `GlobalFitTab`, `FitParameterTable`, plus
-    seeding helpers) — see `docs/ARCHITECTURE.md` for the module map.
-  - New axis/limit fields, Matplotlib canvases, GLE export code, parameter
-    label formatting, or fit-tab run controls must reuse the shared
-    `gui/widgets/` and `gui/utils/` foundations (`FloatLimitField` /
-    `AxisLimitControls`, `create_canvas`, `compile_gle`,
-    `format_param_label`, `FitRunControls`) rather than re-rolling a new
-    implementation. New guided-wizard windows should subclass
-    `gui/windows/wizard_base.py::WizardWindowBase` instead of hand-rolling a
-    `TaskRunner` + progress-UI skeleton.
-- `src/asymmetry/core/io/`: loader registry and file-format adapters.
-- `src/asymmetry/core/fitting/`: fitting engines, built-in models, and wizard
-  recommendation logic.
-- `src/asymmetry/core/project/`: serialized `.asymp` project schema.
-- `tests/`: pytest coverage, organized by layer under `tests/{core,gui,io,
-  project,tools,integration}/` (a new test file belongs beside its layer's
-  existing tests, mirroring the feature's module path) — see `tests/README.md`.
-- `tools/harness.py`: executable validation harness for agents and CI.
+## Where to read first
 
-## Engineering Invariants
+| Need | Read |
+|---|---|
+| Layers, data model, boundaries | `docs/ARCHITECTURE.md` |
+| GUI tokens, panels, threading, responsiveness | `docs/GUI_GUIDELINES.md` |
+| Test tiers and placement, CI, what the harness checks | `docs/HARNESS.md`, `tests/README.md` |
+| Docs upkeep, screenshots, science standard, voice | `docs/README.md`, `docs/STYLE.md` |
+| Feature behaviour | `docs/reference/index.rst` and the page it names |
+| Changelog and releases | `RELEASING.md` |
 
-- Keep the core scriptable and GUI-free. Any new analysis behavior belongs in
-  `asymmetry.core` first, with GUI panels calling into it.
-- Parse and validate data at file, project, or user-input boundaries. Do not
-  build behavior on guessed shapes when a schema or typed object can represent
-  the contract.
-- Preserve experiment provenance. Loaders and transforms should keep run
-  metadata, detector grouping, t0, good-bin ranges, deadtime, and background
-  assumptions explicit.
-- Feature ports from reference programs must start with a study pass in
-  `docs/porting/<feature-slug>/` before implementation begins.
-- Prefer small, focused changes with tests beside the behavior they protect.
-- When a repeated review comment exposes a rule, encode it in
-  `tools/harness.py`, tests, or docs so future agents can discover it.
-- Never run long work (file I/O, fits, transforms, reconstructions) on the
-  GUI thread. Use the worker machinery in `src/asymmetry/gui/tasks.py` (or
-  the fit-panel worker pattern) with a cooperative cancel path, and marshal
-  results back as plain objects via queued signals. Never connect a worker
-  signal to a bare lambda/partial that touches widgets — with no receiver
-  QObject the slot runs on the worker thread; route through a GUI-thread
-  QObject method instead. Hold strong references to live threads, and shut
-  them down in `closeEvent` — and on a `QDialog` also in `reject()`, which
-  the Close button reaches without `closeEvent`.
-- GUI responsiveness rules (the distilled patterns live in
-  `docs/GUI_GUIDELINES.md` § "Keeping the GUI responsive" — read it before
-  wiring any slot to a high-frequency signal): per-event slots only read
-  widgets and build payloads, deferring reductions/resolves to a debounced
-  single-flight worker; expensive derived results are cached keyed on
-  content digests, never recomputed per event; table repopulation blocks
-  `itemChanged`; hidden panels defer painting to view entry and completed
-  renders use `draw_idle()`; `QApplication.processEvents()` in a loop is
-  banned (harness-enforced) — widget-touching loops use the chunked
-  progress runner (`MainWindow._apply_items_with_progress`); any threading
-  change is validated by repeated parallel test runs on a quiet machine,
-  not a single green run.
-- When adding datasets to the browser in a loop, wrap the loop in
-  `DataBrowserPanel.batch_updates()` — per-add table rebuilds are O(n²).
-- A user-facing change is not complete until the Sphinx docs describe it: in
-  the same PR, update the owning page (find it via `reference/index.rst` or
-  `grep -rl <feature> docs/`), quote UI strings verbatim from the widget
-  code, and update/add the screenshot scenario when the UI changed visibly
-  (CI regenerates every screenshot on merge to main, so a stale scenario is
-  a stale published image). Full rules — scenario determinism, size budget,
-  the science/citation standard, the docs verification ladder — live in
-  `docs/README.md` § "Maintaining the documentation"; the writing voice in
-  `docs/STYLE.md`.
-- After a PR with user-visible changes merges, check `CHANGELOG.md`
-  `[Unreleased]` and propose a release per `RELEASING.md`: suggest the
-  version and bump kind with a one-line rationale, then wait for
-  confirmation — never cut a release unprompted. (This trigger lives here,
-  in the always-loaded map, because the moment it fires — end of a merged
-  task — is exactly when nothing else points an agent at `RELEASING.md`.)
-- `tools/harness.py structural` enforces the shared-foundations rules
-  mechanically, so a duplicate/bespoke implementation fails fast rather than
-  drifting: no second `*LimitField` class outside
-  `gui/widgets/axis_limits.py`, no direct `FigureCanvasQTAgg(` construction
-  outside `gui/widgets/mpl_canvas.py`, no bespoke `QThread(` construction in
-  `gui/` outside `gui/tasks.py`'s `TaskRunner`, no `.screen()` call on a
-  widget/window in `gui/` outside `gui/screen_guard.py` (use `screen_for` —
-  PySide's binding ties the shared `QScreen` wrapper's lifetime to the
-  caller; see `docs/investigations/tahoe-qscreen-uaf.md`), no `test_*.py`
-  file outside a sanctioned `tests/<subpackage>/` (see `tests/README.md`),
-  no growth of the packaged agent skill's `SKILL.md` past its frozen line
-  count (`SKILL_MD_MAX_LINES`: merge or replace a rule rather than add one),
-  and no docs screenshot drift (every image referenced from the .rst sources
-  maps to a registered scenario and vice versa, within the per-image size
-  budget).
+## Making a change
 
-## Lean Code Rules
+1. Find or open the issue. Anything bigger than a small fix starts from one.
+2. Branch `feature/*` or `fix/*` off `main`; never commit to `main`. To update an open PR, run
+   `gh pr checkout <n>`, confirm with `git branch --show-current`, and push to that branch.
+3. Find the owning layer below. A bug fix starts with a test that fails.
+4. Change implementation, tests, docs and `CHANGELOG.md` `[Unreleased]` together. A
+   user-facing change is incomplete until the owning Sphinx page describes it, quotes UI
+   strings verbatim and updates its screenshot scenario.
+5. Run focused tests through the harness, never bare pytest, then `validate` once before review.
+6. Open a PR with an imperative title, the body from `.github/PULL_REQUEST_TEMPLATE.md`
+   (`gh pr create --body` does not apply it) and `Closes #n`.
+7. After a PR with user-visible changes merges, propose a release per `RELEASING.md`: suggest
+   the version and bump with a one-line reason, then wait. Never cut one unprompted.
 
-The codebase must stay small enough to read. These rules bind every new or
-changed line; existing code is brought into line where it is touched, not
-rewritten wholesale. Briefs for subagents carry this section verbatim.
+## Issues hold the plans
 
-- **Prevent bad states by construction; never guard against them.** No
-  `hasattr`/`getattr(..., None)` on our own attributes, no `try/except` around
-  our own code, no "in progress" flags or latches, no `if x is None: return`
-  where the design can make `None` impossible. Validation lives only at the
-  three boundaries — file, project, user input — and its job is to produce a
-  typed value that nothing downstream re-checks. Where a bad state genuinely
-  cannot be made impossible, raise an exception naming the violated invariant;
-  a silent fallback hides the bug.
-- **One source of truth per fact.** Do not store a derived value beside its
-  source; compute one from the other, and let one function own writing it.
-- **Aliases live in schema migrations, not runtime code.** A key is renamed
-  once, in `core/project/schema.py`; runtime code reads one name.
-- **A private helper needs two callers or a domain name.** A method with one
-  call site whose name describes a step rather than a concept is inlined at
-  that site. No two-line slot wrappers: connect the target directly, or share
-  one slot.
-- **Do not mirror a scaffold; generalise it.** When a feature would copy a
-  family of methods and rename a prefix, extract the shared shape instead.
-  Prefer a table of cases walked by one function over parallel near-identical
-  bodies.
-- **Comments state the invariant; docs hold the history.** A comment longer
-  than three lines must carry a physics, units or coordinate argument, not a
-  narrative — the narrative goes in `docs/plans/` or `docs/investigations/`
-  with a one-line link from the code. Docstring length tracks surprise, not
-  size: one line for the obvious helper, a paragraph only for a non-obvious
-  contract.
-- **Delete, don't deprecate.** Rewrite tests that pin old behaviour rather
-  than skip them; remove code paths rather than leave them behind a flag.
-- **Ratchet, don't rewrite.** When one of these rules draws a repeated review
-  comment, encode it in `tools/harness.py structural` as a ratchet: freeze the
-  current count (guards per file, single-caller private methods) as the
-  baseline and fail when it rises, so new code meets the rule without a
-  rewrite of what exists.
+- Plans, roadmaps, studies, audits, decision logs, investigations and evaluation results live in
+  GitHub issues. Nothing new goes in `docs/plans/`, `docs/porting/`, `docs/studies/`,
+  `docs/audit/`, `docs/investigations/` or `docs/PLANS.md`; those are being retired.
+- An issue states the problem, change, tests, docs and decisions taken, enough to start from.
+- What outlives the work moves into the repository as an invariant comment, a regression test
+  or a paragraph in the owning doc. The reasoning behind a decision goes in the PR body.
 
-## Test Corpus
+## Layers
 
-Real-data tests, the agent-skill evaluations (`tools/agent_eval/`) and the
-corpus screenshot scenarios read the WiMDA muon-school corpus, which is never
-copied into this repository. It is published as a release archive on the
-private `BenHuddart/wimda-muon-school-corpus` repository; extract it and set
-`ASYMMETRY_CORPUS_ROOT` to the extracted `wimda-corpus/` directory. That
-variable is the only way code finds the corpus: tests resolve paths through
-`tests/corpus.py` and skip when it is unset, and `run_wave.py` reads it as
-its `--corpus` default. Never hard-code a corpus path.
+`asymmetry.core` is pure-Python analysis and never imports Qt, matplotlib or `asymmetry.gui`;
+new behaviour goes there first and stays scriptable. `cli/` and `gui/` are thin front ends that
+never reimplement analysis. Validate only at the three boundaries (file, project, user input),
+producing a typed value nothing downstream re-checks.
 
-## Validation Ladder
+## Facilities and instruments
 
-Agent-skill evaluations use Claude Sonnet when driven through Claude Code and
-`gpt-6-luna` when driven through Codex. Keep the host and model recorded with
-every result so scores from the two evaluation tracks are not conflated.
+An instrument scientist must be able to check what we assume about their spectrometer without
+reading the program, so each instrument has one file in one shape (migrating from
+`core/instrument.py` and scattered branches).
 
-Use the smallest check that answers the question, then climb when the blast
-radius grows.
+- `core/instruments/<facility>_<instrument>.py` holds one frozen `InstrumentProfile`, always in
+  this order: identity (facility, beamline, the names its files use), source (pulsed or
+  continuous, pulse structure), recognition (metadata, labels, filename tokens), detectors,
+  grouping presets, file quirks, defaults, sources, review. It holds data, not logic.
+- Every value names its source (manual, paper, file header, measured run) or is marked
+  `unverified`. Never guess silently: an unrecognised instrument gets `generic_layout`.
+- Code elsewhere asks the profile (`profile.source.pulsed`, `profile.quirks`). It never branches
+  on an instrument or facility name. Loaders parse formats, not conventions.
+- `docs/reference/instruments/<facility>_<instrument>.rst` is generated from the profile. The
+  reviewer checks that page through the *Instrument review* issue form; the profile records the
+  version reviewed and the reviewer, whose name is published only with their consent.
+- Adding an instrument means one profile and one test taking a sample or synthetic run through
+  recognition and default grouping, and nothing else.
 
-In this workspace, use the project virtual environment. The harness will
-re-execute itself with `.venv/bin/python` when that interpreter exists.
+## Other μSR programs
+
+WiMDA, musrfit and Mantid are colleagues' work under their own terms, and Asymmetry is MIT.
+
+- Implement from published mathematics, manuals, documented formats and observed behaviour. GPL
+  source (musrfit, Mantid) and Numerical Recipes code never enter this repository in any form.
+- WiMDA's source is not open source. Read it to understand a method, but never quote or
+  translate it. Where existing code follows a routine closely, the docstring names the routine.
+  `NOTICE` must stay true.
+- Check numbers by running the other program; the test records its version, input and tolerance.
+- Comparisons go in the Sphinx docs: `docs/explanation/comparison.rst`, plus a "Compared with other
+  programs" section on the owning reference page. Name the version, cite the source, and state
+  conventions and agreement neutrally, in terms its authors would accept. No "parity" or roadmaps.
+
+## Science
+
+- Physical constants live in `core/utils/constants.py`, with units in the name and a cited
+  source. Never type a value anywhere else.
+- Every model, correction and estimator cites its primary source in the docs and has a test
+  against an independent value: an analytic limit, a published result or a cross-check.
+- Provenance travels with the data: run metadata, grouping, t0, good-bin range, deadtime and
+  background assumptions. Stochastic methods take a seed and record it.
+- A project saved by any release keeps loading. Renames and format changes happen once, as a
+  tested migration in `core/project/schema.py`; runtime code reads one name.
+
+## Lean code
+
+The codebase must stay small enough to read. Briefs for subagents carry this section verbatim.
+
+- **Prevent bad states by construction.** No `hasattr`/`getattr(..., None)` on our own
+  attributes, no `try/except` around our own code, no "in progress" latches. Where a bad state
+  cannot be made impossible, raise an exception naming the invariant; never fall back silently.
+- **One source of truth per fact.** Do not store a derived value beside its source.
+- **A private helper needs two callers or a domain name.** Inline the rest; no two-line wrappers.
+- **Generalise, don't mirror.** Prefer a table of cases walked by one function to parallel bodies.
+- **Reuse the `gui/widgets/` and `gui/utils/` foundations;** `docs/GUI_GUIDELINES.md` lists them.
+- **Never run long work on the GUI thread.** Use `TaskRunner` with a cooperative cancel path, and
+  never connect a worker signal to a bare lambda that touches widgets.
+- **Small modules.** A new module stays under 1,000 lines; one already over may only shrink.
+- **Delete, don't deprecate.** Rewrite tests that pin old behaviour; leave no flagged-off paths.
+- **Comments state the invariant.** Over three lines, one must carry a physics, units or
+  coordinate argument. No history, phases, decision numbers or plan-file links.
+- **Encode, don't repeat.** A rule that draws a repeated review comment becomes a check in
+  `tools/harness.py structural`, as a ratchet that freezes today's count, not as a line here.
+
+## Public repository
+
+- Never commit credentials, absolute paths, personal notes, session hand-offs, agent transcripts
+  or scorecards, one-off probes, or data whose owner has not agreed to publication.
+- `docs/` is a contract, not a changelog: current behaviour only, no "previously", no dates, no
+  migration narrative. Published pages never point at repository internals.
+- A `CHANGELOG.md` entry names the user-visible change in one or two lines; the detail belongs in
+  the docs. Describe what changed for users, not which agent or model found it.
+
+## Test corpus
+
+Real-data tests, agent evaluations and corpus screenshots read the WiMDA muon-school corpus,
+which is never copied here. Maintainers extract the private `BenHuddart/wimda-muon-school-corpus`
+release and set `ASYMMETRY_CORPUS_ROOT`, the only way code finds it (`tests/corpus.py`); tests
+skip when it is unset. Never hard-code its path or commit data or results from it.
+
+## Commands
 
 ```bash
-python tools/harness.py structural
-python tools/harness.py lint
-python tools/harness.py test -- tests/core/test_transforms.py   # focused, exact targets
-python tools/harness.py test --tier fast                   # inner loop, non-GUI (~25s)
-python tools/harness.py validate                           # standard tier, pre-push gate (~2 min)
-```
-
-`lint` and `lint-all` both run the full Ruff baseline across `src`, `tests`, and
-`tools`.
-
-### Using the test suite efficiently
-
-The standard tier is ~4,000 tests and takes ~2 minutes locally; treat it as a
-once-per-task gate, never an iteration loop.
-
-1. **While iterating**, run exactly the tests beside the behavior you are
-   changing: `python tools/harness.py test -- tests/<layer>/test_x.py` (or a
-   `::node-id`). Test files mirror feature names and live under `tests/core/`,
-   `tests/gui/`, `tests/io/`, `tests/project/`, `tests/tools/`, or
-   `tests/integration/` (see `tests/README.md`); find coverage with
-   `grep -rl "<symbol>" tests/`.
-2. **After a core/non-GUI change**: `python tools/harness.py test --tier fast`
-   (~25s, non-GUI).
-3. **After a GUI change**: additionally run the affected GUI test files
-   focused. Do not run the whole GUI subset locally while iterating — it is
-   most of the suite's wall-clock, and CI splits the tier across six runners.
-4. **Once, before committing / handing back**: `python tools/harness.py
-   validate`. Do not re-run it for doc- or comment-only follow-up edits, and
-   do not run `--tier full` locally unless you changed a `slow`/`integration`
-   test.
-5. Always go through `tools/harness.py` rather than bare pytest — it re-execs
-   into `.venv` and sets `QT_QPA_PLATFORM=offscreen`. Output is quiet by
-   default; pass `-v` only when you need per-test lines.
-
-See [docs/HARNESS.md](docs/HARNESS.md#test-tiers) for the full tier breakdown.
-
-For GUI startup or packaging work:
-
-```bash
-python tools/harness.py gui-smoke
-```
-
-For documentation-only changes:
-
-```bash
-python tools/harness.py docs
+python tools/harness.py structural                       # repository-shape checks
+python tools/harness.py lint                             # ruff format --check and ruff check
+python tools/harness.py test -- tests/core/test_x.py     # focused: while iterating
+python tools/harness.py test --tier fast                 # non-GUI, ~25 s: after a core change
+python tools/harness.py validate                         # standard tier, ~2 min: once per task
+python tools/harness.py gui-smoke                        # GUI startup or packaging work
+python tools/harness.py docs                             # documentation changes
 ```
