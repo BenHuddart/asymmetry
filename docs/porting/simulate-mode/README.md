@@ -74,21 +74,20 @@ accurate but incomplete. Mechanics:
   at t = 0 per histogram: `n0 = ntot/nhis · Δt/τ_μ` (exactly the lifetime
   envelope normalisation), further divided by `multifactor` (the number of
   raw detectors summed into each stored WiMDA histogram, derived in the
-  NeXus loader as `ndet div 32`, with an EMU special case).
+  NeXus loader from the detector count over 32, with an EMU special case).
 - **α split** (F/B asymmetry mode): `nf = 2·n0·α/(1+α)`, `nb = 2·n0/(1+α)`;
   forward histograms get `nf·exp(−t/τ)·(1 + 0.01·a(t))`, the backward group
-  `nb·exp(−t/τ)·(1 − 0.01·a(t))` with `a(t) = musrfunc(t, g, p)` in percent.
+  `nb·exp(−t/τ)·(1 − 0.01·a(t))` with `a(t)` the fit function (`musrfunc`) in percent.
 - **Per-group t0**: `t = (i − tzero[g])·Δt` — bins before t0 evaluate the
   same formula at negative t (a growing exponential; unphysical, see
   comparison.md).
 - **Double-pulse halving**: if the double-pulse flag is set, expected counts
   are halved for `t < dpsep/2` (only the first of the two proton pulses has
-  implanted muons before the second arrives; `dpsep2 = dpsep/2` in
-  `Analyse.pas`).
+  implanted muons before the second arrives).
 - **Non-FB fit modes** (single-histogram / count fits): the model already
-  returns count-scale values; WiMDA uses `nn = a(t)/ghists · evfactor ·
-  exp(−t/τ)` with `evfactor = ntot/eventstot` scaling relative to the loaded
-  run's real event total.
+  returns count-scale values; WiMDA takes the model value per histogram in the group,
+  times the lifetime decay and the ratio of requested events to the loaded run's
+  real event total.
 - **Sampling**: `poisson(m)` in `numlib.pas` is the Numerical Recipes
   `poidev` rejection sampler driven by Delphi's global `random` — there is
   **no seed control** anywhere in the UI.
@@ -104,7 +103,7 @@ accurate but incomplete. Mechanics:
   dataset shapes — the simulation is therefore locked to the template's
   detector count and bin count.
 - **DegradeStats**: in-place, one-shot (button disables itself):
-  `histos[d,i] := poisson(histos[d,i] · factor)` for every bin, then
+  each bin becomes a Poisson draw with mean count × factor, then
   `regroup` + `histototals`. The factor is a free positive number (> 1
   "upgrades"). This is Poisson resampling of the *measured* counts, not
   binomial thinning (see comparison.md).

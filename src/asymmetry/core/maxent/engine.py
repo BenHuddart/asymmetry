@@ -5,9 +5,9 @@ shape: one non-negative frequency spectrum is reconstructed jointly from many
 detector-group count signals with group phases, amplitudes, and backgrounds.
 
 The numerical kernel is deliberately compact and isolated.  It uses the same
-forward/adjoint contract and resumable state shape needed by the full
-Skilling-Bryan port, while providing a deterministic entropy-regularized
-projected-gradient V1 implementation for Asymmetry's GUI and tests.
+forward/adjoint contract and resumable state shape a full Skilling-Bryan
+solver would need, while providing a deterministic entropy-regularized
+projected-gradient implementation for Asymmetry's GUI and tests.
 """
 
 from __future__ import annotations

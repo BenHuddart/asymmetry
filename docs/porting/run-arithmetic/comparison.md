@@ -9,35 +9,23 @@ Renzi, Lancaster and Pratt, *Muon Spectroscopy: An Introduction* (OUP, 2022) —
 ## WiMDA mechanism (verified)
 
 `loadrun` loads a "master" run into `mrun`; each subsequent run arrives as
-`thisrun` with `coadd`/`cosub` flags. The arithmetic:
+`thisrun` with `coadd`/`cosub` flags. Co-adding uses a sign of +1 and
+co-subtracting a sign of −1, applied to every contribution: the total frames, the
+per-detector per-bin counts (with the ACC time shift applied to the incoming
+run), the R and G histograms separately in RG mode, and the cycles, frames and
+histograms in period mode.
 
-```pascal
-if cosub then cosign := -1 else cosign := 1;          { line 2418 }
-
-{ frame / spill accumulation carries the sign }
-totalframes := totalframes + cosign * mrun.info.framestotal;   { 2429 }
-
-{ non-RG, non-period: per-detector, per-bin, with ACC tshift }
-mrun.histos[i, ii] := mrun.histos[i, ii] + cosign * thisrun.histos[i, ii + tsh]; { 2441 }
-
-{ RG mode (no periods): R and G histograms summed separately }   { 2455-2458 }
-{ period mode: periods.cycles, periods.frames[1..8] and          }
-{   periods.periodhistos[k, i, ii] all summed with cosign         } { 2469-2490 }
-```
-
-The `tsh = cgrp.tshift[i]` term is the **ACC alignment shift** computed at
-lines 2364–2416 when *Grouping → ACC shift* is enabled: per detector, WiMDA
-finds the prompt-peak bin (max logarithmic derivative) and shifts detectors
-whose peak deviates by > 8 bins from the mean, so detectors are time-aligned
-before the bin-by-bin sum. With ACC off, `tshift[i] = 0` and the sum is a plain
-detector-wise add.
+The time shift is the **ACC alignment shift**, computed when *Grouping → ACC
+shift* is enabled: per detector, WiMDA finds the prompt-peak bin (max logarithmic
+derivative) and shifts detectors whose peak deviates by > 8 bins from the mean,
+so detectors are time-aligned before the bin-by-bin sum. With ACC off the shift
+is zero and the sum is a plain detector-wise add.
 
 In-batch co-add (`BatchFit.pas:300–324`) reuses exactly this machinery: with
 *batch co-add* enabled it loads the master, then loads the next
-`CoAddUpDown.position` runs with `coadd := true` before fitting — i.e. there is
+`CoAddUpDown.position` runs with the co-add flag set before fitting — i.e. there is
 one co-add implementation, consumed by both the interactive and batch paths.
-The combined-run label is `"<master>+<next>"` (e.g. ALC averaging,
-`muondata.pas:787`: `runnumber.caption + '+' + runstr`).
+The combined-run label joins the two run numbers with a `+`, as in ALC averaging.
 
 ## Key divergences
 

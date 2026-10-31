@@ -61,7 +61,7 @@ WiMDA `.fit` logs for this example, GROUND_TRUTH §7.)*
 ## WiMDA
 
 - **Time-domain fit.** WiMDA fits a relaxing TF oscillation per run; its **link
-  groups** (equality-only ties, `p[follower] := p[main]`) are the native way to
+  groups** (equality-only ties) are the native way to
   hold one parameter common across a *multi-run* fit — i.e. the mechanism to share
   `A_Mu`. Mined in Asymmetry's `docs/porting/link-groups/` and ported as
   equality `link_group` ties; the asymmetry-domain analogue here is `fit_global`'s

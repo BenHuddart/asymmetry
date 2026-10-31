@@ -128,7 +128,7 @@ the two agree (same test module). Keep ΣF/ΣB as a third labelled method
 
 Triggered by the "BG correction" checkbox (`doBG`); runs inside `Regroup`
 per group. Takes the **late half** of the current output bins
-(`n0 = np div 2`), and fits two parameters (initial rate p₁, flat rate p₂) of
+and fits two parameters (initial rate p₁, flat rate p₂) of
 the bin-integrated model
 
     C(t, w) = [p₁ e^{−λ_μ t} · (e^{wλ_μ/2} − e^{−wλ_μ/2})/(wλ_μ) + p₂] · w
@@ -138,8 +138,8 @@ the per-bin counts with σᵢ = √Cᵢ, except **bins with ≤ 4 counts get
 σ = 10¹⁰** — i.e. they are effectively deleted rather than treated with
 Poisson statistics. Optimiser: the 1972 Gauss–Newton `FITE` with fixed
 starting values (1000, 0.001) and no convergence reporting. The flat rate p₂
-(counts/μs per group) is stored per histogram as `background[h] = p₂/n_hist`
-and subtracted as `groupd[i] −= p₂·wᵢ`. No uncertainty.
+(counts/μs per group) is stored per histogram as p₂ over the histogram count
+and subtracted as p₂ times the bin width. No uncertainty.
 
 Note the model has **no muon-correlated asymmetry term** — on a relaxing or
 oscillating group the late-time window must be long enough that P(t) has
@@ -310,7 +310,7 @@ with per-point σ).
 
 Per group: scan the **raw group histogram** downward from bin `np` to 1 and
 take the bin of maximum counts (ties → earliest bin, because the comparison
-is strict and the scan descends); set `tzero[group] = argmax`. For
+is strict and the scan descends); that bin becomes the group's t0. For
 continuous (non-pulsed) data the per-histogram t0 of the group's *first*
 member is also updated. Two quirks: the scan ceiling `np` is the current
 number of *output display bins*, not raw bins (a latent bug — with heavy
@@ -416,7 +416,7 @@ metadata (name, frames, sequence frames, binary output tag). Periods with
 defaults: first DAQ period → Red, second → Green. `MapPeriods` then sums the
 selected period histograms bin-wise into `Rhistos`/`Ghistos`, and the
 existing RG box (Red / Green / G−R / G+R) consumes them. Frame bookkeeping:
-`redfraction = redframes/periodDAQframes` (and green alike) feed the
+the red fraction, red frames over period DAQ frames (and green alike), feeds the
 RG deadtime correction (`ccorrectRG` normalises the per-frame rate by the
 fraction) and the G−R combination is `G·n_red/n_green − R` with integer
 error arithmetic on the uncorrected counts (`:1484–1486`).

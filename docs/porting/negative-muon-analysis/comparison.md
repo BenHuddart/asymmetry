@@ -1,8 +1,8 @@
 # Comparison: WiMDA `NegMuAnalyse` vs the Asymmetry μ⁻ API
 
 Reference: `$WIMDA_SRC/src/NegMuAnalyse.pas` (2474 lines) + hooks in
-`Analyse.pas` and `PlotPar.pas`. Object-Pascal source studied as an **oracle
-only** (GPL). Adapt the physics and data; discard the form structure.
+`Analyse.pas` and `PlotPar.pas`. Adapt the physics and data; discard the form
+structure.
 
 ## 1. The model
 
@@ -19,7 +19,7 @@ a single exponential with its own amplitude:
   carries `NF`/`NB` (forward/backward amplitudes) and an `alpha` detector
   balance; in single-group modes it carries one `N` per element.
 - `τ_μ` — the free-μ⁻ decay-background lifetime; WiMDA sets
-  `pp.Lifetime := 2197.03` ns (`NegMuAnalyse.pas:140`).
+  it to 2197.03 ns.
 
 The asymmetry-style fit functions of ordinary μSR play no role in the basic
 capture analysis — the observable is the **count decay**, not a polarization.
@@ -95,7 +95,7 @@ concrete problems were found:
 1. **Length mismatch.** `mystrings` declares **69** values but `myelements`
    declares **67** symbols. The two trailing lifetime values (`'0.076'`,
    `'0.07'`) have no element — orphan data.
-2. **Symbol bug.** `myelements[66] = 'Ti'` — but position 66 in the sequence
+2. **Symbol bug.** The symbol table reads `Ti` at position 66 — but position 66 in the sequence
    `…Au, Hg, ?, Pb` is **thallium**: it must read `'Tl'`. (Titanium already
    appears correctly at position 22.) A copy of the WiMDA "do not oracle against"
    ledger pattern.
@@ -118,7 +118,7 @@ the existing `MUON_LIFETIME_US = 2.1969811 μs` (= 2196.981 ns).
 
 > Bug-ledger addition (for `wimda-parity-gap/decision-record.md` §3 style):
 > *NegMuAnalyse element table — `mystrings` length 69 ≠ `myelements` length 67;
-> `myelements[66]='Ti'` is a typo for `'Tl'`; several lifetime values diverge
+> the `Ti` at position 66 is a typo for `Tl`; several lifetime values diverge
 > from Suzuki/Measday/Roalsvig 1987 (Ne, Zn, Sr, Ba notably) and the whole
 > lanthanide block is absent. Do not oracle the table against WiMDA.*
 

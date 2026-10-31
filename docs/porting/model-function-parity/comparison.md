@@ -121,7 +121,7 @@ to their physical non-negative domain). Docs recipe, not code.
 parameter excursions with `abs()` (|x/Tc|, |p3|, |q2|); Asymmetry clips
 α, β ≥ 0 and Tc > 0 instead. On the physical domain (0 ≤ T ≤ Tc, positive
 exponents) the two are *identical* — note for the record that WiMDA's
-`abs(q2)` can never differ from `q2` below Tc since |x/Tc|^|α| ≤ 1 there;
+|q2| can never differ from q2 below Tc since |x/Tc|^|α| ≤ 1 there;
 the mirroring only changes behaviour for unphysical negative-parameter
 trials during minimisation, where Asymmetry's clipping collapses the
 degenerate sign instead of silently reporting it.
@@ -197,11 +197,11 @@ Five radio buttons: `UseColumn`, `UsePercent`, `UseAbsolute`, `UseNone`,
 
 | Mode | σᵢ | Notes (verified) |
 |---|---|---|
-| Column | error-column value | `DerivedErrors := false`; the only mode using the table's propagated errors |
+| Column | error-column value | Derived errors off; the only mode using the table's propagated errors |
 | Percent | (pct/100)·yᵢ | pct from the shared text box; **proportional to the y value**, so yᵢ = 0 ⇒ σᵢ = 0 and the point is silently skipped by the χ² accumulation (`Chi2Update` requires yerr > 0) |
-| Absolute | constant `errabs` | from the shared text box; parse failure ⇒ errabs := 1 |
+| Absolute | constant `errabs` | from the shared text box; parse failure ⇒ error of 1 |
 | None | 1 | the `else` branch of the radio cascade (unit weights) |
-| Estimate | constant `errabs` (same as Absolute) | after each successful fit: `errabs := errabs·sqrt(ch2dof)` and the text box is updated (`FitButtonClick` 685–690) — the user refits by hand until χ²ᵣ → 1 |
+| Estimate | constant `errabs` (same as Absolute) | after each successful fit the constant is scaled by √χ²ᵣ and the text box is updated (`FitButtonClick`) — the user refits by hand until χ²ᵣ → 1 |
 
 **Estimate-mode equivalence (the reason we do NOT port the iteration).**
 With constant σ = e, χ²(e) = χ²₁/e² where χ²₁ is the unweighted (σ=1) value;

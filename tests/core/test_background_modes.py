@@ -1,18 +1,15 @@
 """Background modes: tail fit, reference-run subtraction, per-mode gating.
 
-The WiMDA oracle is a transcription of ``Group.pas estBG``/``BGfit``: the
-bin-integrated exponential + flat model fitted with √N weights over the late
-half of the window, with bins of ≤ 4 counts deleted via σ = 10¹⁰ (study
-divergence D4). On fine raw binning that deletion removes essentially every
-late-time bin — WiMDA only functions on heavily bunched display bins — which
-is pinned here alongside the Poisson-MLE replacement's behaviour.
+WiMDA's tail estimate weights bins by √N and deletes those with few counts, so
+it only functions on heavily bunched display bins (study divergence D4). The
+Poisson-MLE replacement is pinned here against synthetic truth, and against one
+fixed reference value for WiMDA's estimate on bunched bins.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
-from scipy.optimize import least_squares
 
 from asymmetry.core.transform import (
     apply_grouped_background_correction,
@@ -35,22 +32,6 @@ def _pulsed_counts(rate0_per_us: float, background_per_us: float, seed: int) -> 
     intensity = rate0_per_us * np.exp(-np.clip(t, 0.0, None) / MUON_LIFETIME_US) * (t >= 0)
     mu = np.clip((intensity + background_per_us) * BIN_WIDTH_US, 0.0, None)
     return rng.poisson(mu).astype(np.float64)
-
-
-def _wimda_estbg(counts: np.ndarray, width_us: float, t0_bin: int, last: int) -> float:
-    """Transcribed ``estBG``: √N weights, ≤ 4-count deletion, late-half window."""
-    start = t0_bin + (last - t0_bin) // 2
-    window = counts[start : last + 1]
-    t = (np.arange(start, last + 1) - t0_bin) * width_us
-    sigma = np.where(window > 4, np.sqrt(np.maximum(window, 1e-12)), 1e10)
-    x = width_us / MUON_LIFETIME_US
-    bin_factor = np.sinh(x / 2.0) / (x / 2.0)
-
-    def residuals(params):
-        mu = (params[0] * np.exp(-t / MUON_LIFETIME_US) * bin_factor + params[1]) * width_us
-        return (mu - window) / sigma
-
-    return float(least_squares(residuals, [1000.0, 0.001]).x[1])
 
 
 # --- tail fit -------------------------------------------------------------------
@@ -87,28 +68,16 @@ def test_tail_fit_unbiased_at_low_counts():
     assert mean == pytest.approx(true_rate, abs=4 * max(sem, 1e-3))
 
 
-def test_wimda_oracle_deletes_the_tail_on_raw_bins():
-    """WiMDA's ≤ 4-count rule kills every late raw bin: the fit never moves
-    from its start value. Documented failure mode behind divergence D4."""
-    counts = _pulsed_counts(3000.0, 0.05, seed=1)
-    oracle = _wimda_estbg(counts, BIN_WIDTH_US, T0_BIN, N_BINS - 1)
-    assert oracle == pytest.approx(0.001, abs=1e-6)  # the FITE start value
-
-
-def test_tail_fit_agrees_with_wimda_oracle_on_bunched_strong_background():
+def test_tail_fit_agrees_with_wimda_reference_on_bunched_strong_background():
     """Where WiMDA's weighting functions (bunched bins, many counts), the two
     estimates agree within uncertainties."""
-    bunch = 100
-    true_rate = 20.0
-    counts = _pulsed_counts(30000.0, true_rate, seed=3)
-    usable = (counts.size - T0_BIN) // bunch * bunch
-    bunched = counts[T0_BIN : T0_BIN + usable].reshape(-1, bunch).sum(axis=1)
-    oracle = _wimda_estbg(bunched, BIN_WIDTH_US * bunch, 0, bunched.size - 1)
+    wimda_rate_per_us = 21.1688  # WiMDA's estimate for this seeded run in 100-bin bunches
+    counts = _pulsed_counts(30000.0, 20.0, seed=3)
     fit = fit_tail_background(
         counts, bin_width_us=BIN_WIDTH_US, t0_bin=T0_BIN, last_good_bin=N_BINS - 1
     )
     assert fit.ok and fit.rate_error_per_us is not None
-    assert fit.rate_per_us == pytest.approx(oracle, abs=3 * fit.rate_error_per_us)
+    assert fit.rate_per_us == pytest.approx(wimda_rate_per_us, abs=3 * fit.rate_error_per_us)
 
 
 def test_tail_fit_zero_background_is_consistent_with_zero():

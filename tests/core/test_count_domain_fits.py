@@ -1,9 +1,9 @@
 """Count-domain fit modes: single-histogram and forward/backward (alpha-free).
 
-Verification under the study's transcribe + synthetic + cross-check oracle
-(``docs/porting/count-domain-fit-modes/verification-plan.md``). WiMDA is a
-source-only oracle: the count models are checked against formulas transcribed
-from ``AsymFitFunction.pas``, and parameter recovery is checked against
+Verification under the study's formula + synthetic + cross-check oracle
+(``docs/porting/count-domain-fit-modes/verification-plan.md``). The count models
+are checked against formulas that follow WiMDA's ``ArrayMusrFunc``, and parameter
+recovery is checked against
 ``core/simulate`` ground truth.
 """
 
@@ -81,7 +81,7 @@ def _continuous_run(*, seed=2):
     )
 
 
-# --- model transcription / identity ----------------------------------------
+# --- model forms / identity -------------------------------------------------
 
 
 def test_raw_model_is_lifetime_corrected_times_decay():
@@ -94,7 +94,7 @@ def test_raw_model_is_lifetime_corrected_times_decay():
     np.testing.assert_allclose(raw(t, **kw), np.exp(-t / MUON_LIFETIME_US) * corrected, rtol=1e-12)
 
 
-def test_fb_count_model_matches_wimda_transcription():
+def test_fb_count_model_matches_expected_form():
     """fgFB: forward = N0*sqrt(alpha)*(1+a), backward = N0/sqrt(alpha)*(1-a), + bg*exp(t/tau)."""
     fb = build_fb_count_model(_percent_to_fraction(_tf))
     t = np.linspace(0.05, 8.0, 40)
@@ -655,10 +655,10 @@ def test_deadtime_off_state_is_noop():
     assert with_dt.parameters["A"].value == pytest.approx(base.parameters["A"].value, abs=1e-6)
 
 
-# --- deadtime loss-form transcription (AsymFitFunction.pas:280-314) ----------
+# --- deadtime loss forms (following WiMDA's ArrayMusrFunc) --------------------
 
 
-def test_deadtime_simple_form_transcription():
+def test_deadtime_simple_form():
     counts = np.array([1.0e4, 5.0e3, 2.0e3])
     frame_norm, dt0 = 1.0e5, 0.02
     qq = counts / frame_norm
@@ -697,7 +697,7 @@ def test_deadtime_polynomial_form_carries_wimda_decade_scalings():
     np.testing.assert_allclose(out, expected, rtol=1e-12)
 
 
-def test_deadtime_power_form_transcription():
+def test_deadtime_power_form():
     counts = np.array([1.0e4, 5.0e3, 2.0e3])
     time = np.array([0.1, 1.0, 5.0])
     dt0, c2, c3, c4, evfr = 0.02, 1.5, 2.0, 0.3, 0.4

@@ -15,7 +15,7 @@ of the forward and backward detector groups: forward-group detectors receive
 the weight 2α/(1+α) and backward-group detectors 2/(1+α), so the reduction
 (F − αB)/(F + αB) recovers a(t) with α restored.
 
-The functional behaviour follows WiMDA's ``Simulate.pas``/``DegradeStats.pas``
+The functional behaviour follows WiMDA's simulate and degrade-statistics modes
 (study: ``docs/porting/simulate-mode/``), with the divergences documented in
 the study's comparison.md: an optional flat background, background-only bins
 before t0, deterministic seeding, and exact binomial thinning for degrade
@@ -1157,7 +1157,7 @@ def simulate_count_run(
         N_g(t) = N₀_g · exp(−t/τ_μ) · [1 + a(t)] + b        (t ≥ 0)
 
     with no balancing backward detector — the non-FB convention WiMDA's
-    ``Simulate.pas`` evfactor branch (``nn = a(t)/ghists·evfactor·e^{−t/τ}``)
+    simulate-mode ``evfactor`` branch
     produces. The event budget is divided equally over the detectors (no α
     split), so each group's ``N₀`` follows its detector count.
 

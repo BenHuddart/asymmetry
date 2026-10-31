@@ -10,7 +10,7 @@ for a high-TF line — while χ² and the uncertainties keep their exact
 per-bin Poisson statistics.
 
 WiMDA precedent: ``MusrFun`` shifts exactly its three rotation component
-types by ``rotfreq`` (``$WIMDA_SRC/src/Analyse.pas``), but fits raw data and
+types by ``rotfreq``, but fits raw data and
 guards the combination only by disabling the fit form while the RRF display
 is on; a fit run in that state would bias the fitted frequency by a full ν₀
 (study comparison ledger, item 4).  Here the offset owns the parameter

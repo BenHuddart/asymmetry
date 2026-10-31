@@ -27,14 +27,9 @@ adding a second component that differs only by √2.
 
 ### A1. Risch–Kehr relaxation (`rtRK`)
 
-WiMDA (`AsymFitFunction.pas:621-636`):
-
-```pascal
-gt := abs(x[k] * parameters[7*i+2]);
-if gt < 20 then RK := ex(gt) * erfc(sqrt(gt))
-else RK := 1 / sqrt(pi*gt);          // asymptotic form
-if parameters[7*i+2] < 0 then RK := 2 - RK;   // mirrored branch for Γ<0
-```
+WiMDA (`AsymFitFunction.pas`) evaluates the form below directly up to Γt = 20,
+uses the asymptotic form above that, and for negative Γ mirrors the result about
+1 (giving 2 − G).
 
 Math: G(t) = e^{Γt}·erfc(√(Γt)). Spin relaxation of a muon (or muonium)
 polarization coupled to a 1D-diffusing carrier/defect; the long-time tail decays
@@ -45,7 +40,7 @@ MS-Intro** (closest context: §8.4 mobile excitations) — flagged for review.
 
 Port notes: implement with `scipy.special.erfcx` (`erfcx(x) = e^{x²}erfc(x)`, so
 G(t) = erfcx(√(Γt))) — numerically stable for all Γt, no branch needed. Γ ≥ 0
-enforced; WiMDA's negative-Γ mirror `2 − RK` is an unphysical fitting convenience
+enforced; WiMDA's negative-Γ mirror 2 − G is an unphysical fitting convenience
 we propose **not** to port.
 
 ### A2. Frequency-normalised stretched exponential (`rtFstr`)
@@ -92,12 +87,9 @@ high-field reductions.
 
 ### B1. High-TF muonium pair (`MuoniumPairRot`, `muoniumfunctions.dpr:26-35`)
 
-```pascal
-wminus := (ge-gm)*p1/2;                       // p1 = B (G)
-Omega  := sqrt(sqr(w0)+sqr((ge+gm)*p1))/2 - w0/2;   // w0 = A (MHz)
-f2 := Omega - wminus;  f1 := f2 + w0;
-result := 0.5*( cos(2π(f1·t+(φ)/360)) + cos(2π(f2·t+φ/360)) );
-```
+With ω₋ = ½(γ_e−γ_µ)B and Ω = ½√(A² + ((γ_e+γ_µ)B)²) − A/2, WiMDA places the
+lines at f₂ = Ω − ω₋ and f₁ = f₂ + A and takes the equal-weight sum
+½[cos 2π(f₁t + φ/360) + cos 2π(f₂t + φ/360)], with B in G and A in MHz.
 
 Physics: at high field only the ν₁₂ and ν₃₄ lines have weight (MS-Intro
 Fig. 4.12, Eq. 4.65: A = ν₁₂+ν₃₄); both carry amplitude ½ (of the muonium
@@ -123,8 +115,8 @@ Port notes: keep a phase parameter (Asymmetry components are not slot-limited);
 make the angular grid size an implementation detail (fixed 32–64 point
 Gauss–Legendre rather than WiMDA's 15 midpoints — verify convergence in tests).
 
-**Implementation-pass finding (review-confirmed).** WiMDA's `f2 := f2 − d/2`
-acts on the *signed* (negative) `f2`, so the observed line |f2| shifts **up**
+**Implementation-pass finding (review-confirmed).** WiMDA applies its −d/2 shift
+to the *signed* (negative) lower line, so the observed line |f₂| shifts **up**
 by d/2 — both lines co-shift and the pair sum tracks the orientation's
 effective coupling A(θ) = A_hf + d. A literal `−d/2` applied to the positive
 ν₁₂ of our positive-frequency convention flips that shift (an early version
@@ -139,23 +131,23 @@ isotropic pair. Fitted D is therefore not directly comparable with WiMDA's
 
 ### B3. Muonium LF relaxation (`MuLFrel`, `muoniumfunctions.dpr:118-132`)
 
-```pascal
-w0 = 2π·4463 MHz (vacuum Mu hyperfine, hard-coded as 2*pi*4464);
-x := 2*Gpl*B/w0;  // Gpl=(ge-gm)/2 — NB: code sets Gpl=Gmi=(ge-gm)/2
-w12 := w0/2*(1+(Gmi/Gpl)*x-sqrt(1+sqr(x)));
-lam := (1-x/sqrt(1+sqr(x)))*sqr(deltex)*tauc/(1+sqr(w12*tauc));
-result := exp(-lam*t);
-```
+G(t) = exp(−λt), with
+
+    λ(B) = (1 − x/√(1+x²))·δ_ex²·τ_c / (1 + (ω₁₂τ_c)²)
+    ω₁₂  = (ω₀/2)·(1 + (γ₋/γ₊)·x − √(1+x²)),   x = 2γ₊B/ω₀
+
+WiMDA hard-codes ω₀ = 2π·4464 MHz (the vacuum muonium hyperfine constant is
+4463 MHz) and sets both γ₊ and γ₋ to (γ_e−γ_µ)/2.
 
 Physics: longitudinal-field T₁ relaxation of muonium undergoing electron
 spin-exchange collisions; λ(B) follows the ν₁₂ transition with exchange coupling
 δ_ex and correlation time τ_c. Source: R. Kadono et al., Phys. Rev. Lett.
 **64**, 665 (1990) (cited in the WiMDA source comment as "Kadono PRL64,665").
 **Not in MS-Intro** (general spin-exchange context: MS-Intro §12) — flagged for
-review, including the suspicious `Gpl = Gmi = (ge−gm)/2` (the standard
-Breit–Rabi ν₁₂ uses (γ_e+γ_µ) in x; this looks like a WiMDA bug or deliberate
-approximation — the implementation pass must re-derive λ(B) from the cited paper
-rather than transliterate).
+review, including the suspicious use of (γ_e−γ_µ)/2 for both couplings (the
+standard Breit–Rabi ν₁₂ uses (γ_e+γ_µ) in x; this looks like a WiMDA bug or
+deliberate approximation — the implementation pass must re-derive λ(B) from the
+cited paper).
 
 Parameters: δ_ex (MHz), τ_c (µs), B (G). WiMDA hard-codes A = 4463 MHz (vacuum
 muonium); we propose exposing A_hf as a fixed-by-default parameter for
@@ -290,7 +282,7 @@ Use case: ZF precession from muon–quadrupolar-nucleus pairs (e.g. µ⁺–⁹�
 
 **Implementation-pass finding (review-confirmed): WiMDA's `ZFdipgen` is wrong
 for every J > 1/2.** Its per-block mixing angle is reconstructed from
-`cos² 2α` (`csqa := 0.5*(1+sqrt(csq2a))`), discarding the sign of
+`cos² 2α` by a positive square root, discarding the sign of
 `cos 2α = −q1/W_m`. Verified against exact diagonalization of
 `H = ω_d(S·I − 3 S_z I_z) + ω_q I_z²` (which reproduces the closed form's
 eigenvalues to machine precision): the |·| variant deviates by up to ~0.56 of

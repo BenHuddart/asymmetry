@@ -13,7 +13,7 @@ GUI fit builders. Promotion trigger for a GUI: real ISIS μ⁻ data AND a user.
 
 Set-as-BG capture-component subtraction.
 
-Adapts WiMDA's ``SetBgButtonClick`` (NegMuAnalyse.pas) as a histogram-level
+Same workflow as WiMDA's ``SetBgButtonClick``, as a histogram-level
 model subtraction: evaluate the unwanted components from the fitted parameters
 and subtract from the counts, leaving the signal of interest. The derived
 :class:`~asymmetry.core.data.dataset.Run` produced by

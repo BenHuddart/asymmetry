@@ -26,33 +26,16 @@ In a new module `src/asymmetry/core/fitting/muonium.py`. g-factors from
 `G_MU = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA` (MHz/G),
 `G_E = ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G / (2*pi)` (MHz/G).
 
-```python
-def _muonium_tf(t, A, field, A_hf, phase):           # WiMDA TFMuonium
-    x = (G_E + G_MU) * field / A_hf
-    d = (G_E - G_MU) / (G_E + G_MU)
-    delta = x / np.sqrt(1.0 + x*x)
-    E1 = A_hf/4*(1+2*d*x); E2 = A_hf/4*(-1+2*np.sqrt(1+x*x))
-    E3 = A_hf/4*(1-2*d*x); E4 = A_hf/4*(-1-2*np.sqrt(1+x*x))
-    w12,w14,w34,w23 = E1-E2, E1-E4, E3-E4, E2-E3
-    tp = 2*np.pi
-    return A * 0.25 * (
-        (1+delta)*np.cos(tp*w12*t + phase) + (1-delta)*np.cos(tp*w14*t + phase)
-        + (1+delta)*np.cos(tp*w34*t + phase) + (1-delta)*np.cos(tp*w23*t + phase)
-    )
+Three private functions evaluate the forms in [comparison.md](comparison.md):
 
-def _muonium_low_tf(t, A, field, A_hf, phase):        # WiMDA LowTFMuonium (w12,w23, -ve sign)
-    ... E1,E2,E3 as above; w12=E1-E2, w23=E2-E3
-    return A * 0.25 * ((1+delta)*np.cos(tp*(-w12)*t + phase)
-                       + (1-delta)*np.cos(tp*(-w23)*t + phase))
-
-def _muonium_zf(t, A, A_hf, D, f_cut, phase):          # WiMDA ZFmuonium
-    f1,f2,f3 = A_hf - D, A_hf + D/2, 1.5*D
-    a1 = 1/(1+(f1/f_cut)**2) if f_cut > 0 else 1.0
-    a2 = 2/(1+(f2/f_cut)**2) if f_cut > 0 else 2.0
-    a3 = 2/(1+(f3/f_cut)**2) if f_cut > 0 else 2.0
-    return A * (a1*np.cos(tp*f1*t+phase) + a2*np.cos(tp*f2*t+phase)
-                + a3*np.cos(tp*f3*t+phase)) / 6.0
-```
+- `_muonium_tf(t, A, field, A_hf, phase)`: the four-line TF signal, amplitude
+  `A`, with `phase` added to each cosine.
+- `_muonium_low_tf(t, A, field, A_hf, phase)`: the ν₁₂ and ν₂₃ lines only, at the
+  same weights and with negative frequencies, following WiMDA `LowTFMuonium`.
+- `_muonium_zf(t, A, A_hf, D, f_cut, phase)`: three cosines at `A_hf − D`,
+  `A_hf + D/2` and `3D/2` with weights 1, 2, 2 over 6, each weight multiplied by
+  the low-pass factor `1/(1 + (f/f_cut)²)` when `f_cut > 0`, following WiMDA
+  `ZFmuonium`.
 
 Notes: frequency arithmetic, `(1±delta)` weights, the `-w` sign in LowTF, and the
 ZF `/6` and `f_cut` Lorentzian are ported verbatim. `A` is the standard leading

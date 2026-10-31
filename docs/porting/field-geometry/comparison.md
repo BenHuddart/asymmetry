@@ -24,17 +24,12 @@ as found during the 2026-06-07 study pass.
 - Muon NeXus V2 path constant
   `instrument/detector_1/orientation`:
   `Framework/DataHandling/src/LoadMuonNexusV2NexusHelper.cpp:35`.
-  Classification at `:117-130`:
-  ```cpp
-  std::string mainFieldDirection = "Longitudinal"; // default
-  NXChar orientation = m_entry.openNXChar(NeXusEntry::ORIENTATON);
-  orientation.load();
-  if (std::tolower(orientation[0]) == 't') { mainFieldDirection = "Transverse"; }
-  ```
-  catch at `:126-128` ("no data - assume main field was longitudinal").
+  Classification at `:117-130`: the default is longitudinal, and the run is
+  transverse when the first character of the orientation string, lowered, is
+  `t`. A read failure falls back to longitudinal (`:126-128`).
 - Muon NeXus V1 (legacy/HDF4) path `run/instrument/detector/orientation`:
   `Framework/Muon/src/LoadMuonNexus1.cpp:771-786` — note the V1 check is
-  **case-sensitive** `orientation[0] == 't'` (uppercase `'T'` would misclassify).
+  **case-sensitive** against lowercase `t` (uppercase `T` would misclassify).
 - Applied-field magnitude is read **separately** into `sample_magn_field` and is
   **not** used for geometry: `LoadMuonNexusV2NexusHelper.cpp:45,239`.
 - Result stored as run log `main_field_direction`
@@ -61,9 +56,9 @@ as found during the 2026-06-07 study pass.
 - Per-format reads in `src/classes/PRunDataHandler.cpp`:
   - MusrRoot: `RunInfo/Setup` (`:1840-1842`), `RunInfo/Sample Magnetic Field`
     with G/T scaling (`:1856-1864`), `RunInfo/Sample Orientation` (`:1916-1918`).
-  - PSI-bin: `SetSetup(GetComment())` (`:2711`), `SetOrientation(GetOrient())`
-    (`:2715`), field parsed from string (`:2722-2729`); struct fields
-    `char fOrient[11]; char fSetup[11];` in
+  - PSI-bin: setup from the header comment (`:2711`), orientation from the header
+    orientation string (`:2715`), field parsed from string (`:2722-2729`); both
+    header strings are 11-character buffers in
     `src/external/MuSR_software/Class_MuSR_PSI/MuSR_td_PSI_bin.h:74-75`.
   - NeXus (`src/include/PRunDataHandler.h`): IDF1 setup←`/run/notes` (`:572-574`),
     field←`/run/sample/magnetic_field` (`:550-558`), orientation hardcoded `"??"`
@@ -83,8 +78,8 @@ as found during the 2026-06-07 study pass.
 
 - `magnetic_field_state` is **not referenced anywhere** (empty grep across
   `src/*.pas`).
-- Applied-field **value**: `nexusunit.pas:929-930` (`field := fget('magnetic_field')`),
-  V1 `nexusunit_.pas:865`; stored as a formatted string into `mrun.info.field`.
+- Applied-field **value**: `nexusunit.pas` reads the `magnetic_field` item (V1 in
+  `nexusunit_.pas`) and stores it as a formatted string in the run info.
 - ISIS instrument selected-magnet flag `'L'/'T'/'A'` →
   chooses which selog field to print in the logbook only:
   `nexusunit.pas:2562-2571` (`L`→`Long_Field`, `T`→`Trans_Field`,
@@ -93,13 +88,13 @@ as found during the 2026-06-07 study pass.
   (`muondata.pas:127,158,198`) but only displayed (`LogbookUnit.pas:708`); `mode`
   is never read for logic.
 - Geometry is the user's choice: detector grouping from `.grp`
-  (`Group.pas:291 loadgroup`) and analysis-mode enum
-  `Fitgrp = (fgFBAsym, fgSelected, fgFB, fgAll, fgForward, fgBackward)`
+  (`Group.pas:291 loadgroup`) and an analysis-mode enumeration, `Fitgrp`, covering
+  `fgFBAsym`, `fgSelected`, `fgFB`, `fgAll`, `fgForward` and `fgBackward`
   (`FitTyps.pas:30`). CHRONUS TF is a user checkbox `ChronusTF` (`Group.pas:110`)
   that swaps to a hardcoded UDLR map (`nexusunit.pas:2114-2126`).
 - Only automatic ZF-vs-field distinction is value-based and logbook-only:
-  `nexusunit.pas:666-675` (`if Nexus_field <> 0` … else ZF magnitude). Exact
-  `<> 0`, no tolerance. Does not change analysis geometry.
+  `nexusunit.pas` tests the field against exactly zero, with no tolerance, and
+  otherwise uses the ZF magnitude. Does not change analysis geometry.
 
 ---
 

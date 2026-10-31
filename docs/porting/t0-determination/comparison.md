@@ -29,22 +29,15 @@ ISIS NeXus v1 attribute `t0_bin` broadcast to every histogram
 (`nexusunit.pas:1115-1128`); NeXus v2 `time_zero` µs → `round(t·1e3/tbinres)`
 then overridden by `time_zero_bin` / attr `t0_bin` (`:1902-2042`; for
 `pulsedTD` files all per-histogram arrays are then overwritten by element 1,
-`:2036-2042`); PSI `.bin` `nt0[i]/ntini[i]/ntfin[i]` (`muondata.pas:1744-1748`);
-`.mdu` `t0b div ibin` (`:1645-1649`); TRIUMF `hishead[8..10]` (`:2192-2195`);
-**no MusrRoot reader exists**. On load (`muondata.pas:2493-2506`):
-
-```pascal
-if FileVals or not runloaded then begin
-  for i := 1 to 32 do htzero[i] := mrun.info.t0bin[i];
-  cgrp.tzero := htzero;
-  cgrp.tgoodbeg := mrun.info.tgood_beg[1];
-  cgrp.tgoodend := mrun.info.tgood_end[1];
-  if cgrp.tgoodend = 0 then cgrp.tgoodend := mrun.info.lenhis;
-  cgrp.toff := cgrp.tgoodbeg - cgrp.tzero[1];
-```
+`:2036-2042`); PSI `.bin` per-histogram t0 and good-bin header fields; `.mdu`
+the header t0 divided by the binning factor; TRIUMF `hishead` entries;
+**no MusrRoot reader exists**. On load, WiMDA copies the header t0 bins into the
+group record, takes the good-bin range from histogram 1's values (falling back
+on the histogram length when the last good bin is 0), and sets the tgood offset
+to the first good bin minus histogram 1's t0.
 
 Only histogram 1's first/last good bins are used. Header bins index the
-1-based Pascal arrays verbatim — no ±1 anywhere.
+1-based Pascal arrays directly — no ±1 anywhere.
 
 ### Mantid (`$MANTID_SRC/Framework/...`)
 
@@ -69,8 +62,8 @@ All loaders expose `TimeZero` (µs, common), `FirstGoodData`, `LastGoodData`,
 
 ### musrfit (`$MUSRFIT_SRC/src/classes/PRunDataHandler.cpp`)
 
-`PRawRunDataSet` holds `Double_t fTimeZeroBin`, `fTimeZeroBinEstimated`,
-`Int_t fFirstGoodBin/fLastGoodBin` (`src/include/PMusr.h:657-711`), all
+`PRawRunDataSet` holds a floating-point t0 bin and t0 estimate plus integer
+first and last good bins (`src/include/PMusr.h:657-711`), all
 0-based bins. MusrRoot `DetectorInfo/.../Time Zero Bin` per detector
 (`:1911-1931`); PSI-BIN `GetT0Vector()` — the **integer** t0 (the float
 "real t0" at byte 792 is ignored), error if empty (`:2587-2610`; reader
@@ -78,16 +71,9 @@ clamps `t0 > length → 0`, `MuSR_td_PSI_bin.cpp:2001-2008`); MDU
 `(t0b+1)·f − 1` (`:1553-1555`); MUD `t0_bin` (`:2895-2934`); NeXus IDF1/2
 attribute `t0_bin` **one value for every histogram**, default −1
 (`src/include/PRunDataHandler.h:651-690, 868-901`). Every non-NeXus reader
-also stores an argmax **estimate** at read time (`:2620-2628`):
-
-```cpp
-    // estimate T0 from maximum of the data
-    for (UInt_t j=0; j<histoData.size(); j++)
-      if (histoData[j] > maxVal) { maxVal = histoData[j]; maxBin = j; }
-```
-
-(ROOT readers store `histo->GetMaximumBin()`, which is 1-based — a likely
-off-by-one in the *estimate* only.)
+also stores an argmax **estimate** at read time (`:2620-2628`). ROOT readers
+store ROOT's own maximum-bin index, which is 1-based — a likely off-by-one in the
+*estimate* only.
 
 ### Asymmetry (`src/asymmetry/core/io/`)
 
@@ -110,7 +96,7 @@ detector table** (`nexus.py:816-828`).
 |---|---|---|---|---|---|
 | WiMDA `SearchT0` (`$WIMDA_SRC/src/Group.pas:2225-2256`) | argmax of **group-summed raw** counts (a max-derivative variant is commented out) | bins `np`→2 descending, strict `>` ⇒ highest tie bin; `np` = last Regroup's *output* point count (`:1592`), can undercut the peak | per group | identical scan, but result copied into `htzero` only for continuous data; button disabled for pulsed (`SameT0` forced, `muondata.pas:2620`) and while FileValues is ticked | untouched |
 | Mantid | **none** (swept `Framework/Muon`, `DataHandling`, Python algorithms, Muon GUI) | — | — | — | — |
-| musrfit `musrt0 -g` (`$MUSRFIT_SRC/src/musrt0.cpp:145-160, 349-770`) | argmax of the raw histogram | whole histogram, strict `>` ⇒ lowest tie bin | per histogram (each F/B member and ADDRUN) | none; manual: "tries to estimate t0 from the prompt peak (maximum entry)" (`doc/html/user-manual.html:400`); musrFT warns "(assuming a prompt peak!!)" (`:355`) | `fgb := t0 + offset` if given, `lgb := length` |
+| musrfit `musrt0 -g` (`$MUSRFIT_SRC/src/musrt0.cpp:145-160, 349-770`) | argmax of the raw histogram | whole histogram, strict `>` ⇒ lowest tie bin | per histogram (each F/B member and ADDRUN) | none; manual: "tries to estimate t0 from the prompt peak (maximum entry)" (`doc/html/user-manual.html:400`); musrFT warns "(assuming a prompt peak!!)" (`:355`) | first good bin at t0 + offset if given, last good bin at the histogram length |
 | Asymmetry `find_t0` (`src/asymmetry/core/transform/t0.py:75-113`) | continuous: argmax (lowest tie); pulsed: half-maximum crossing of the leading edge walked back from the peak, linearly interpolated, rounded | whole histogram | per histogram; consensus = rounded **median**, `spread_bins` = range (`:116-158`) | strategy from facility/instrument tokens; unknown ⇒ pulsed (`:59-72`) | untouched (policy shifts `first_good_bin` with t0) |
 
 musrfit's interactive `musrt0` (`src/classes/PMusrT0.cpp`) draws the file t0
@@ -149,9 +135,9 @@ reference program comes to a file-vs-detected comparison.
 
 | | Stamp of raw bin *i* | t = 0 |
 |---|---|---|
-| WiMDA (`Group.pas:1405-1422`): `t1 := (i−0.5)·tres; timed := (t1+t2)/2` | `(i − t0)·tres` = **centre** of bin | centre of bin t0 |
-| musrfit (`PRunSingleHisto.cpp:1245-1275`): `DataTimeStart = dt·((fgb−0.5) + p/2 − t0)`; `musrt0` axis `−0.5 … N−0.5` (`PMusrT0.cpp:317-319`) | `(i − t0)·dt` = **centre**; packed point at block centre | centre of bin t0 (single-histo truncates a fractional t0 to int; asymmetry keeps the double, `PRunAsymmetry.cpp:1143`) |
-| Mantid: `x[0] = −t0` after `timeAxis − timeZero` on **edges** (`LoadMuonNexusV2Test.h:60-75`; PSI `absTimeZero = x[floor(t0)]`, `LoadPSIMuonBin.cpp:197-209`) | edges shifted | **left edge** of bin t0 — half a bin later than WiMDA/musrfit |
+| WiMDA (`Group.pas`): each point stamped at the midpoint of its bin's edges | `(i − t0)·tres` = **centre** of bin | centre of bin t0 |
+| musrfit (`PRunSingleHisto.cpp:1245-1275`): first packed point at dt·((fgb − ½) + p/2 − t0); `musrt0` axis `−0.5 … N−0.5` (`PMusrT0.cpp:317-319`) | `(i − t0)·dt` = **centre**; packed point at block centre | centre of bin t0 (single-histo truncates a fractional t0 to int; asymmetry keeps the double, `PRunAsymmetry.cpp:1143`) |
+| Mantid: time zero subtracted from the **edges**, so the first edge is at −t0 (`LoadMuonNexusV2Test.h:60-75`; PSI takes the edge at the floor of t0, `LoadPSIMuonBin.cpp:197-209`) | edges shifted | **left edge** of bin t0 — half a bin later than WiMDA/musrfit |
 | Asymmetry: `time = (k − t0)·w`, merged bins `t_start + (e0+e1−1)/2·w` (`core/transform/rebin.py:223, 265`) | `(k − t0)·w`; the merged formula equals musrfit's block centre | centre of bin t0 **numerically** — but the `rebin.py:196-201` docstring calls the stamps "left-edge", and the NeXus loader's own dataset axis is the file `corrected_time` (`nexus.py:740-744`), which Mantid treats as bin centres |
 
 Asymmetry, WiMDA and musrfit agree; Mantid is offset by half a bin (8 ns at
@@ -200,7 +186,7 @@ loader-time NeXus axis not being rebuilt from `t0_bin`.
   therefore correct; musrfit's NeXus reader (0-based verbatim) is one bin
   late; Mantid sidesteps it by using the µs `time_zero`.
 - No PSI document in the musrfit tree states who fills `Time Zero Bin`
-  (DAQ vs offline). The LEM reader sets `fgb := t0`, and example MusrRoot
+  (DAQ vs offline). The LEM reader sets the first good bin to t0, and example MusrRoot
   headers carry `First Good Bin == Time Zero Bin`.
 - The WiMDA manual figures (5.4, 10.1) were not inspected; captions only.
 - The half-bin question for NeXus v1 `corrected_time` rests on Mantid's

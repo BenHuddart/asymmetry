@@ -59,14 +59,9 @@ whitespace/comma-separated columns (run-level x columns + fitted parameters and
 their errors). `Model.pas` exposes four independent `TSpinEdit` column pickers —
 `Xcolumn`, `Ycolumn`, `Ecolumn`, `X2column` (`Model.pas:18–40`) — each clamped to
 the live column count by `checkcolumns` (`Model.pas:405–437`). The data builder
-`getmodeldata` (`Model.pas:560–631`) reads each as a 1-based column index via
-
-```pascal
-function columnscan(s: ansistring; c: integer): double;   { Model.pas:318–345 }
-```
-
-which just splits the row on space/comma/tab and parses the `c`-th token as a
-double (returns 0 if the column is absent). **There is no scoping, no type
+`getmodeldata` reads each as a 1-based column index via `columnscan`, which just
+splits the row on space/comma/tab and parses the requested token as a
+double (returning 0 if the column is absent). **There is no scoping, no type
 distinction, and no x-error concept** — *any* column can be X, Y or the error
 column E; the fit range windows (§ comparison 2.2) are tested against the chosen
 X column's values. Picking a fitted-parameter column as X is therefore exactly
@@ -76,7 +71,7 @@ WiMDA is the opt-in effective-variance treatment of x-uncertainty (decision C).
 
 ## Study artifacts
 
-- [comparison.md](comparison.md) — WiMDA columnscan transcription (verified);
+- [comparison.md](comparison.md) — WiMDA `columnscan` behaviour (verified);
   current Asymmetry surfaces with exact seams (file:line); the item-3 recursion
   model and `_FitRow` schema analysis; the effective-variance derivation and
   the ODR rejection; every divergence with both behaviours.

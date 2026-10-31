@@ -3,7 +3,7 @@
 In a transverse field the unshifted diamagnetic muon line is often the dominant
 feature and can swamp weaker shifted or radical lines.  WiMDA removes it by
 fitting a damped cosine to the time-domain signal *before* the FFT and
-subtracting it (``Plot.pas``).  The fitted frequency, converted back to field,
+subtracting it.  The fitted frequency, converted back to field,
 also provides an independent read of the applied field.
 
 The model is a single damped cosine on a constant offset,

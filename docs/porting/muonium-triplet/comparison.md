@@ -8,14 +8,10 @@
 **TFMuonium** (lines ~58–78), params `(B [G], A [MHz], Phase [deg])`:
 
 ```
-x      = (ge + gm)·B / A
-d      = (ge − gm)/(ge + gm) ≈ 0.99037
-delta  = x / sqrt(1 + x²)
-E1=A/4·(1+2d·x)   E2=A/4·(−1+2√(1+x²))
-E3=A/4·(1−2d·x)   E4=A/4·(−1−2√(1+x²))
-w12=E1−E2  w14=E1−E4  w23=E2−E3  w34=E3−E4
-signal = ¼·[ (1+delta)·cos(2π w12 t) + (1−delta)·cos(2π w14 t)
-            +(1+delta)·cos(2π w34 t) + (1−delta)·cos(2π w23 t) ]   (phase in deg/360)
+x = (γ_e + γ_µ)B/A,   ζ = (γ_e − γ_µ)/(γ_e + γ_µ) ≈ 0.99037,   δ = x/√(1 + x²)
+E₁,₃ = (A/4)(1 ± 2ζx),   E₂,₄ = (A/4)(−1 ± 2√(1 + x²))
+P(t) = ¼ Σ (1 ± δ) cos 2π(ν t + φ/360)
+       with weight 1 + δ on ν₁₂, ν₃₄ and 1 − δ on ν₁₄, ν₂₃
 ```
 
 **LowTFMuonium** keeps only `w12`,`w23`. **ZFmuonium** is zero-field axial

@@ -4,20 +4,10 @@
 
 WiMDA `muproton1` (in `RigiWorkshopfit.dpr`) builds an **8×8 real-symmetric**
 matrix in the `|m_e, m_µ, m_p⟩` product basis and diagonalises it with
-`eigen4` (real-symmetric Householder + QL from `Eigenuni.pas`). Diagonal:
-
-```
-Zm := -g_mu*f;  Ze := g_e*f;  Zp := -g_p*f;        { f = field in Gauss, MHz }
-Hr[1,1] = (+Ze+Zm+Zp)/2 + (+A+Ap)/4    Hr[5,5] = (+Ze-Zm+Zp)/2 + (-A+Ap)/4
-Hr[2,2] = (+Ze+Zm-Zp)/2 + (+A-Ap)/4    Hr[6,6] = (+Ze-Zm-Zp)/2 + (-A-Ap)/4
-Hr[3,3] = (-Ze+Zm+Zp)/2 + (-A-Ap)/4    Hr[7,7] = (-Ze-Zm+Zp)/2 + (+A-Ap)/4
-Hr[4,4] = (-Ze+Zm-Zp)/2 + (-A+Ap)/4    Hr[8,8] = (-Ze-Zm-Zp)/2 + (+A+Ap)/4
-```
-Off-diagonal (hyperfine flip-flop):
-```
-Hr[3,5]=Hr[4,6]=A/2     { Sₑ·S_µ flip-flop, proton spectator }
-Hr[2,3]=Hr[6,7]=Ap/2    { Sₑ·S_p flip-flop, muon spectator }
-```
+`eigen4` (real-symmetric Householder + QL from `Eigenuni.pas`). The diagonal
+holds each product state's Zeeman and longitudinal hyperfine energy; the
+off-diagonals are the electron–muon flip-flop (A/2, proton spectator) and the
+electron–proton flip-flop (A_p/2, muon spectator).
 
 This is exactly the **isotropic contact Hamiltonian**
 
@@ -42,14 +32,10 @@ validates the Hamiltonian against the independently-ported muonium levels.
 
 ## The RF resonance condition
 
-WiMDA `RFresonanceMuPlusProtonExact`:
+WiMDA `RFresonanceMuPlusProtonExact` finds the two resonance fields B₁ and B₂
+with `zbrent` on 0–2000 G, then returns a flat background plus two Lorentzians,
 
-```
-A:=p[1]; Ap:=p[2]; RF:=p[3]; a1:=p[4]; w1:=p[5]; a2:=p[6]; w2:=p[7]; BG:=p[8];
-zbrent(FreqDiff1exact,0,2000,0.001,B1);   { FreqDiff1exact: E7-E5 - RF, selector 75 }
-zbrent(FreqDiff2exact,0,2000,0.001,B2);   { FreqDiff2exact: E8-E6 - RF, selector 86 }
-result := BG + a1*sqr(w1)/(sqr(w1)+sqr(x-B1)) + a2*sqr(w2)/(sqr(w2)+sqr(x-B2));
-```
+    BG + Σₖ aₖwₖ²/(wₖ² + (B − Bₖ)²).
 
 The two driven transitions are between **sorted-eigenvalue** pairs `E₇−E₅` and
 `E₈−E₆`. Asymmetry mirrors this exactly: `rf_transition_freqs` returns

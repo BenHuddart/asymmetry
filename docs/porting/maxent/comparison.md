@@ -100,7 +100,7 @@ Both implementations use, identically:
   (`Wimdamax.pas:1064-1082`, `move.py:38-47`)
 - distance/trust-region constant `0.1·Σf/A` (`Wimdamax.pas:1084-1087`,
   `move.py:50-52`; not user-settable in either)
-- negativity clamp `f := 1e-3·A` (`Wimdamax.pas:1294`, `maxent.py:163`)
+- negativity clamp to `1e-3·A` (`maxent.py:163`)
 - inner stop: `TEST < 0.02` and `|χ²/χ²_target − 1| < 0.01`, max 10
   inner iterations (`Wimdamax.pas:1312-1314`, `maxent.py:69`)
 - deadtime correction `datum += τ·datum²` with σ inflation
@@ -349,9 +349,9 @@ orthogonal, and serve distinct experimental situations:
 
 Recorded explicitly so the implementing agent does not rediscover them:
 
-- **WiMDA phase-sign quirk**: `BACK` seeds `B := +AMP·sin φ`
-  (`Wimdamax.pas:436`) while `MODAMP` uses `B := −AMP·sin φ` (`:746`) and
-  `MODAB` infers `PHI := −57.296·atan2(B,A)` (`:666`). Internally consistent
+- **WiMDA phase-sign quirk**: `BACK` seeds the sine component with
+  the opposite sign to `MODAMP`, and `MODAB` infers the phase with the `MODAMP`
+  sign. Internally consistent
   within MODAB/MODAMP but the BACK seeding flips sign on the first
   fixed-phase cycle. Decide: reproduce or fix; document either way.
 - **WiMDA continuation semantics**: "+N" buttons skip

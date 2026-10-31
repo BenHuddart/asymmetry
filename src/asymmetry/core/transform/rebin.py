@@ -1,6 +1,6 @@
 """Rebinning utilities for time-domain data.
 
-Three binning modes (WiMDA ``Group.pas:1411–1418``, textbook Fig. 15.7):
+Three binning modes (WiMDA's binning modes, textbook Fig. 15.7):
 
 - **fixed** — every output bin merges the same number of raw bins
   (:func:`rebin`, the ``bunching_factor`` grouping key);

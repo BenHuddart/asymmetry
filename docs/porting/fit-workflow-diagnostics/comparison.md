@@ -2,8 +2,7 @@
 
 Reference behaviour across WiMDA / musrfit / Mantid / Asymmetry for each item, with
 documented divergences (both behaviours stated). WiMDA evidence cites
-`$WIMDA_SRC/src` by file:line; quotes are short behavioural paraphrases, not copied
-code (GPL — oracle reading only).
+`$WIMDA_SRC/src` by file:line.
 
 ## 1. χ² quality band
 
@@ -17,13 +16,13 @@ code (GPL — oracle reading only).
 | Presentation | colour (purple/chocolate/green) + "Quality of fit = …" + "Target x to y" | — | — | coloured chip + verdict + band tooltip |
 
 **WiMDA evidence:**
-- `$WIMDA_SRC/src/Fitucode.pas:1093` — `Rgoodfit := 0.95` default.
+- `$WIMDA_SRC/src/Fitucode.pas` — default good-fit probability 0.95.
 - `$WIMDA_SRC/src/FitOpt.pas:83–87` — clamp to [0.5, 0.999].
 - `$WIMDA_SRC/src/Model.pas:1483–1497` (≡ `Analyse.pas:5973–5987`) — the
   three-way `Gammp` classification with purple/chocolate/green colours and the
   "overdone / poor / good" captions.
-- `$WIMDA_SRC/src/Model.pas:1505–1508` — `targetlow := chilow(Rgoodfit, ν)`,
-  `targethigh := chihigh(Rgoodfit, ν)`, shown as "Target %5.3f to %5.3f".
+- `$WIMDA_SRC/src/Model.pas` — the target band from `chilow` and `chihigh` at that
+  probability and ν, shown as a target range.
 - `$WIMDA_SRC/src/Numlib.pas:120–138` — `chilow`/`chihigh` solve
   `gammp(ν/2, x/2) − q = 0` by Brent's method (`q = (1∓R)/2`).
 
@@ -46,16 +45,16 @@ chip. None of our target surfaces do this today; documented as a guard.
 | Aspect | WiMDA (`itPrevious`) | Asymmetry (target) |
 |---|---|---|
 | Modes | `itFixed` (reset to initial each run) / `itPrevious` (carry forward) | per-run static seed (current) / **chain from previous run** (new) |
-| Mechanism | skip the `p[j] := pinit[j]` reset so `DoFit` inherits `p[]` | build member N+1's seed from member N's fitted values |
+| Mechanism | skip the per-run reset to initial values so `DoFit` inherits the current parameters | build member N+1's seed from member N's fitted values |
 | Selection | radio group `InitVals` | seeding-mode control in the batch/series UI |
 | Ordering | batch table order | series **order key** (field/temperature) |
 
 **WiMDA evidence:**
-- `$WIMDA_SRC/src/BatchFit.pas:41` — `InitType = (itFixed, itPrevious)`.
+- `$WIMDA_SRC/src/BatchFit.pas` — the `InitType` enumeration has `itFixed` and `itPrevious`.
 - `$WIMDA_SRC/src/BatchFit.pas:161–167` — `InitValsClick` selects the mode.
-- `$WIMDA_SRC/src/BatchFit.pas:288–334` — `itFixed` snapshots `pinit := p` and
-  resets variable params each iteration; `itPrevious` skips the reset, so the next
-  `DoFit` starts from the prior run's fitted `p[]`.
+- `$WIMDA_SRC/src/BatchFit.pas` — `itFixed` snapshots the parameters and resets
+  variable params each iteration; `itPrevious` skips the reset, so the next
+  `DoFit` starts from the prior run's fitted values.
 
 **Divergence (intentional):** WiMDA carries the *whole* `p[]` array verbatim.
 Asymmetry's grouped fits use a **normalised-polarisation contract** (per-group
@@ -72,21 +71,19 @@ carry. Single-run (non-grouped) chaining carries values directly.
 | Aspect | WiMDA | Asymmetry (target) |
 |---|---|---|
 | Trigger | "Abort Fit" button sets global `StopFitting` | Stop button → worker `cancel()` flag |
-| Poll site | top of each FITE iteration: `if stopfitting then goto 8` | cost-function check (in-fit) + between-member loop checks |
+| Poll site | top of each FITE iteration: a stop-flag check that jumps to the abort path | cost-function check (in-fit) + between-member loop checks |
 | On abort | "FIT ABORTED", cleanup, exit; result not saved | raise `CancelledError`; discard Minuit; record nothing |
 | Execution | `FitMonitorThread` background thread; `FitStatusForm` modal | existing fit workers (QThread); Stop replaces Fit |
 
 **WiMDA evidence:**
 - `$WIMDA_SRC/src/FitStatusForm.pas:24,36` — `StopFitting: boolean`; `AbortFitClick`
   sets it true and closes the modal.
-- `$WIMDA_SRC/src/Fitucode.pas:267–278` — per-iteration poll `if stopfitting then
-  goto 8`.
+- `$WIMDA_SRC/src/Fitucode.pas` — per-iteration poll of the stop flag.
 - `$WIMDA_SRC/src/Fitucode.pas:561–566` — abort label: "FIT ABORTED", frees state,
   `exit` (no result persisted).
-- `$WIMDA_SRC/src/Model.pas:678` — `StopFitting := false` reset at fit start.
+- `$WIMDA_SRC/src/Model.pas` — stop flag reset at fit start.
 - `$WIMDA_SRC/src/FitMonitorThread.pas:44–62` — the fit runs in a worker thread;
-  the aborted case is distinguished from a genuine failure by `errormsg = 'Fit
-  aborted'`.
+  the aborted case is distinguished from a genuine failure by its error message.
 
 **Divergence (granularity):** WiMDA polls once per *iteration* of its own FITE
 engine. iminuit owns its migrad loop and exposes no per-iteration hook, but it calls

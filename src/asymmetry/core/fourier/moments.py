@@ -17,7 +17,7 @@ the penetration-depth reading) and the returned ``B_*`` moments share that unit,
 while ``skewness`` and ``beta`` are dimensionless and invariant under the linear
 field↔frequency rescaling.
 
-The arithmetic follows WiMDA's ``Moments.pas`` as a behavioural oracle — the
+The arithmetic follows WiMDA's spectral moments — the
 amplitude-weighted central moments, the five-point parabolic peak refinement, the
 cutoff-as-fraction-of-peak gate — with documented divergences (see
 ``docs/porting/spectral-moments/comparison.md``): a consistent ``0…n-1`` index

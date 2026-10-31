@@ -7,7 +7,7 @@ Four modes are supported, selected by the ``background_mode`` grouping key
 - ``"range"`` — musrfit's ``PRunAsymmetry`` convention: the mean count over
   a pre-t0 bin range (fallback range ``0.1·t0`` to ``0.6·t0``), only
   meaningful at continuous sources where a pre-t0 region exists.
-- ``"tail_fit"`` — WiMDA's pulsed-source mode (``Group.pas estBG/BGfit``):
+- ``"tail_fit"`` — WiMDA's pulsed-source mode (``estBG``/``BGfit``):
   a bin-integrated muon exponential plus a flat rate fitted to the late-time
   spectrum; the flat rate is subtracted. Asymmetry fits by Poisson maximum
   likelihood instead of WiMDA's √N weights (study divergence D4) and reports
@@ -179,7 +179,7 @@ def fit_tail_background(
 ) -> TailFitResult:
     """Fit exponential + flat background to the late-time spectrum.
 
-    The model is WiMDA's ``BGfit`` (``Group.pas:1114``), the muon exponential
+    The model is WiMDA's ``BGfit``, the muon exponential
     averaged across each bin plus a flat rate:
 
         µ_i = [p₁ · e^{−t_i/τ_µ} · sinh(w/2τ_µ)/(w/2τ_µ) + p₂] · w

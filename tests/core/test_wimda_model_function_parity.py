@@ -1,7 +1,7 @@
 """Tests for the WiMDA Model-layer (parameter-trending) parity components.
 
-Verification criteria from docs/porting/model-function-parity/: numerical
-oracles transcribed from WiMDA's ``fitfunctions.pas``, exact round-trips,
+Verification criteria from docs/porting/model-function-parity/: closed-form
+expected values for WiMDA's trend functions, exact round-trips,
 composite-recipe identities (with each documented divergence asserted as a
 behavioural test), and registry/doc hygiene. Oracle values: test-data.md.
 """
@@ -52,7 +52,7 @@ VACUUM_MU_A_HF_MHZ = 4463.302765
 
 
 # ---------------------------------------------------------------------------
-# WiMDA-transcribed oracles (fitfunctions.pas)
+# Closed-form expected values for WiMDA's trend functions
 # ---------------------------------------------------------------------------
 
 
@@ -88,7 +88,7 @@ def test_mu_repolarisation_matches_wimda_muonrep_oracle() -> None:
     b0 = isotropic_mu_b0_gauss(VACUUM_MU_A_HF_MHZ)
     x = np.array([0.0, 100.0, b0, 5000.0, 20000.0])
     r2 = (x / b0) ** 2
-    wimda = a_mu * (0.5 + r2) / (1.0 + r2) + a_dia  # transcription of muonrep
+    wimda = a_mu * (0.5 + r2) / (1.0 + r2) + a_dia  # WiMDA's muonrep form
     np.testing.assert_allclose(
         _mu_repolarisation(x, a_mu, VACUUM_MU_A_HF_MHZ, a_dia), wimda, rtol=1e-14
     )
@@ -208,18 +208,11 @@ def test_order_parameter_plus_constant_matches_wimda_func5() -> None:
     b0, tc, alpha, beta, b_bg = 29.9, 69.2, 1.23, 0.417, 3.0
     t = np.array([5.0, 30.0, 60.0, 69.19, 69.2, 80.0])
 
-    def wimda_func5(x: np.ndarray) -> np.ndarray:
-        out = np.empty_like(x)
-        for i, xv in enumerate(x):
-            if xv > tc:
-                out[i] = b_bg
-            else:
-                q2 = 1.0 - np.abs(xv / tc) ** np.abs(alpha)
-                out[i] = b0 * np.abs(q2) ** beta + b_bg
-        return out
+    below_tc = np.clip(1.0 - (t / tc) ** alpha, 0.0, None)
+    expected = b0 * below_tc**beta + b_bg
 
     ours = _order_parameter(t, y0=b0, Tc=tc, beta=beta, alpha=alpha) + b_bg
-    np.testing.assert_allclose(ours, wimda_func5(t), rtol=1e-12)
+    np.testing.assert_allclose(ours, expected, rtol=1e-12)
     # Clamp explicitly: zero order parameter at and above Tc.
     np.testing.assert_allclose(ours[-2:], [b_bg, b_bg], atol=1e-12)
 

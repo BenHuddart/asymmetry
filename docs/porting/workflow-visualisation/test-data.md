@@ -2,7 +2,7 @@
 
 Public repo: corpus paths are referenced via the `$ASYMMETRY_MUSRFIT_DATA` /
 testing-corpus convention and gated behind an env var; WiMDA oracle citations use
-`$WIMDA_SRC` placeholders (GPL — behaviour read, never copied). Unit tests that need
+`$WIMDA_SRC` placeholders. Unit tests that need
 no corpus run unconditionally; corpus comparisons skip when the env var is unset.
 
 ## Corpus runs

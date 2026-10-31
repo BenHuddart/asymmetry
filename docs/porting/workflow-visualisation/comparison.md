@@ -3,7 +3,7 @@
 The centrepiece of the study. Each item is weighed against the **established
 Asymmetry workflow** (browser-centric; view selector; inspector deck;
 Options → Advanced gate), not against WiMDA's single-run main window. WiMDA source
-citations are oracle-only (`$WIMDA_SRC`, GPL — behaviour read, never copied).
+citations use the `$WIMDA_SRC` placeholder.
 
 ## Verdict table
 

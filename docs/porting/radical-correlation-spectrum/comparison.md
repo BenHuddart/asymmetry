@@ -96,7 +96,7 @@ McKenzie's signed convention **ν₁₂ is negative** at the fields used (she no
 `x = (g_e+g_µ)·B/A_hf`. Its `ζ`-equivalent is
 `(g_e−g_µ)/(g_e+g_µ) = 0.99037` — **identical to WiMDA's `dg`** and the
 textbook's `ζ`. The constant `g_e+g_µ` (CODATA, via `units.py`) equals WiMDA's
-`gg = 2.8024 + 0.01355342`.
+sum, 2.8024 + 0.01355342.
 
 **Numerical verification** (this study, `.venv` + `muonium.py`):
 
@@ -112,21 +112,16 @@ correlation hyperfine axis is built on.
 
 ### 2.2 WiMDA's `rmatch` is an approximate inverse
 
-`rmatch(freq, field)` (`Plot.pas:515-523`) maps an observed line to its
-Breit–Rabi partner in closed form:
+`rmatch` (`Plot.pas`) maps an observed line to its Breit–Rabi partner in closed
+form. For a line at frequency f in field B it returns
 
-```pascal
-function rmatch(freq, field: double): double;
-begin
-  wemp := sqr(2.81555 * field);     { (≈(g_e+g_µ)·B)²       }
-  wemn := 1.394225 * field;         { ≈ ½(g_e−g_µ)·B        }
-  wplus := 4 * (wemn - freq);
-  rmatch := -(wemn - wemp / wplus);
-end;
-```
+    f′ = −ω₋ + (g₊B)² / [4(ω₋ − f)],   ω₋ = 1.394225·B,   g₊ = 2.81555
 
-WiMDA also defines `w12`/`w34` (`Plot.pas:525-551`) as cursor read-outs — these
-are textbook eqn 4.54 verbatim (`dg = 0.99037`, `gg = 2.8024 + 0.01355342`).
+with B in G and frequencies in MHz, where g₊ approximates g_e+g_µ and
+1.394225 approximates ½(g_e−g_µ).
+
+WiMDA also defines `w12`/`w34` as cursor read-outs. These are textbook eqn 4.54,
+with (g_e−g_µ)/(g_e+g_µ) = 0.99037 and g_e+g_µ = 2.8024 + 0.01355342.
 
 **What `rmatch` does** (this study, reconciled numerically). Fed the *upper*
 line of a pair (the more positive |ν|, i.e. `−w34` in WiMDA's negative-frequency
@@ -151,8 +146,8 @@ Combined with `rmatch` being a high-field expansion, the recovered A drifts by
 ~0.01–0.03 MHz over A ≈ 500–1200 MHz. **Asymmetry:** does not transliterate
 `rmatch`; it builds the spectrum by the **exact forward map** (§4 below), so A
 is recovered to machine precision and the constants come from the single
-`units.py` source. WiMDA's `rmatch` is retained only as a transcribed test
-oracle (verification-plan §3) documenting the divergence.
+`units.py` source. The tests pin fixed reference values for WiMDA's estimate
+(verification-plan §3), documenting the divergence.
 
 ### 2.3 High-field scope boundary
 
@@ -170,29 +165,16 @@ WiMDA (whose `rmatch` is likewise high-field).
 
 ## 3. `CorrFn` — the order-weighted line-pair combiner
 
-`Plot.pas:1387-1394`:
-
-```pascal
-function CorrFn(y1, y2: double; order: integer): double;
-begin
-  if (order > 0) and (y1 <> 0) and (y2 <> 0) then
-    CorrFn := 2 * abs(y1 * y2) /
-      (power(abs(y1 / y2), order) + power(abs(y2 / y1), order))
-  else
-    CorrFn := abs(y1 * y2);
-end;
-```
-
 `CorrFn(y₁, y₂, n)` combines the spectral amplitudes at the two paired
 frequencies. It is the product `|y₁·y₂|` weighted by an **order-`n` ratio
 penalty** `2 / (r^n + r^{−n})` with `r = |y₁/y₂|`. The penalty equals 1 when
 `y₁ = y₂` and falls toward 0 as the two amplitudes diverge — so a genuine pair
 (both lines present, comparable amplitude) is **rewarded** and a spurious pair
 (one line strong, one in noise) is **suppressed**, increasingly so for larger
-`order`. `order = 0` reduces to the plain product `|y₁·y₂|`. WiMDA's default is
-`CorrOrder = 2` (`FFTPar.dfm:817`).
+`order`. `order = 0`, or a zero amplitude, reduces to the plain product
+`|y₁·y₂|`. WiMDA's default order is 2 (the `CorrOrder` control).
 
-**Asymmetry:** ported verbatim as a small pure function in the new
+**Asymmetry:** the same formula, as a small pure function in the new
 `core/fourier/correlation.py`, default order 2, with the same `order = 0`
 fallback. No divergence.
 
@@ -200,43 +182,18 @@ fallback. No divergence.
 
 ## 4. The generation loop — `Corr` / `AvCorr`
 
-`Plot.pas:2149-2230` (power mode shown; `field`/`cfield`/`corder` from
-`1487-1490`, `2154`):
+The scan, in `Plot.pas` (power mode):
 
-```pascal
-i0 := 2 + trunc(0.01355342 * field / fint);   { first bin above diamag line }
-corder := FFTparams.CorrOrder.Value;
-if field <> 0 then
-  for i1 := i0 to nf2 do begin
-    f1 := -(i1 - 1) * fint;                    { candidate (negative) freq    }
-    f2 := rmatch(f1, cfield);                  { Breit–Rabi partner           }
-    i2 := trunc(abs(f2) / fint);
-    ifrac := frac(abs(f2) / fint);             { linear-interp partner bin    }
-    if i2 <= nf then begin
-      extrp := (1-ifrac)*fd^[abs(i2)] + ifrac*fd^[abs(i2+1)];      { S(f2)    }
-      if gindex = 1 then
-        dd^[ii,2] := CorrFn(fd^[abs(i1-1)], extrp, corder)         { group 1  }
-      else
-        dd^[ii,2] := dd^[ii,2] + CorrFn(fd^[abs(i1-1)], extrp, corder);
-      data^[ii,1] := abs(f1 + f2);             { hyperfine axis = |f1+f2|     }
-      ii := ii + 1;
-    end;
-  end;
-{ later: dd^[i,2] := dd^[i,2] / g1;  — average over g1 groups }
-```
-
-Reading it out:
-
-1. **Start above the diamagnetic line.** `i0` is the first bin above the
-   diamagnetic muon frequency `γ_µ·field` (WiMDA's `0.01355342·field`). The
-   diamagnetic peak is excluded from the scan.
-2. **For each candidate bin** at frequency `f1`, find its Breit–Rabi partner
-   `f2 = rmatch(f1, cfield)`, **linearly interpolate** the power spectrum at the
+1. **Start above the diamagnetic line.** The scan begins at the first bin above
+   the diamagnetic muon frequency γ_µB (WiMDA's 0.01355342·B). The diamagnetic
+   peak is excluded from the scan.
+2. **For each candidate bin** at (negative) frequency f₁, find its Breit–Rabi
+   partner f₂ with `rmatch`, **linearly interpolate** the power spectrum at the
    (generally non-integer) partner bin, and combine the two amplitudes with
    `CorrFn`.
-3. **Plot at the hyperfine axis** `|f1 + f2|`, which equals A at a genuine pair.
+3. **Plot at the hyperfine axis** |f₁ + f₂|, which equals A at a genuine pair.
 4. **`AvCorr`** accumulates `CorrFn` across groups then divides by the group
-   count `g1` (`Plot.pas:2244`); **`Corr`** is the single-group spectrum.
+   count; **`Corr`** is the single-group spectrum.
 
 **Two fields, by design.** `field` (run header / diamag-fit field, `Plot.pas:1487`)
 sets the diamagnetic start bin; `cfield` (the `CorrField` text box,
@@ -272,7 +229,7 @@ This **reuses `muonium.py`** (requirement (1)), needs no inversion, carries no
 rounded constants, and places each peak at the true A_µ to machine precision.
 The hyperfine axis is sampled directly (uniform A grid) instead of being read
 out as `|f₁+f₂|` from a scan, which also removes WiMDA's non-uniform-axis
-artefact (its `data[ii,1] = |f1+f2|` points are unequally spaced).
+artefact (its |f₁+f₂| points are unequally spaced).
 
 **Divergence (average-then-correlate vs correlate-then-average).** WiMDA's
 `AvCorr` averages the per-group `CorrFn` results; Asymmetry correlates the

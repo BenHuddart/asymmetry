@@ -13,16 +13,15 @@ hyperfine constant read off as the satellite splitting.
 ## Entry points (WiMDA, Delphi)
 
 - `src/Analyse.pas`
-  - `plinkgroup: array[0..pmax] of Integer` — per-parameter group id (0 = unlinked).
-  - `linkgroupmain: array[1..4] of Integer` — index of the "main" parameter of
-    each of the **four** groups.
-  - `LinkSet` (~3544) — invoked when the user clicks a parameter's coloured link
-    label; opens `LinkGroupSelect` and stores `plinkgroup[Pnum] := linkgroup`.
-  - `updatelinks` (~6514) — two passes: (1) choose each group's main, (2) enforce
-    `p[i] := p[linkgroupmain[j]]` and clear the vary flag on non-main members.
-  - `UpdatePars` (~4612) — applies `p[i] := p[linkgroupmain[plinkgroup[i]]]`
-    during evaluation (pure **equality**).
-  - fit log (~5212) — prints `"<param> linked to <main>"` for each follower.
+  - Each parameter carries a group id (0 = unlinked), and each of the **four**
+    groups records the index of its "main" parameter.
+  - `LinkSet` — invoked when the user clicks a parameter's coloured link label;
+    opens `LinkGroupSelect` and stores the chosen group id.
+  - `updatelinks` — two passes: (1) choose each group's main, (2) give every
+    member the main's value and clear the vary flag on non-main members.
+  - `UpdatePars` — applies the main's value to linked parameters during
+    evaluation (pure **equality**).
+  - fit log — prints `"<param> linked to <main>"` for each follower.
 - `src/LinkGroupForm.pas` / `.dfm` — the 5-button picker: No link / 1 / 2 / 3 / 4
   (red / green / blue / magenta).
 - `src/Extrafunctions/muoniumfunctions.dpr` — `ZFmuonium`, `TFMuonium`,

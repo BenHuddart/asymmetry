@@ -58,8 +58,6 @@ matching `(1+A²)/(1−A²)` (e.g. A = 0.333 → 1.25). **Derivation confirmed.*
 
 ## What the reference programs actually compute (oracle)
 
-GPL sources used as a verification oracle only — described in math, never copied.
-
 | Program | Asymmetry error | Form | Source |
 | --- | --- | --- | --- |
 | **Mantid `AsymmetryCalc`** | `√(F + α²B)·√(1 + A²) / (F + αB)` | **independent-propagation `1 + A²`** (over-estimate) | [docs.mantidproject.org/.../AsymmetryCalc-v1](https://docs.mantidproject.org/nightly/algorithms/AsymmetryCalc-v1.html) |

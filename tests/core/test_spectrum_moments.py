@@ -3,15 +3,12 @@
 Moments have closed-form values on analytic distributions, so the core is pinned
 without any external corpus: a Gaussian (zero skew, known width), a skewed
 two-Gaussian mixture (every moment analytic), a vortex-lattice-like lineshape for
-the β sign, plus the transcribed WiMDA oracle. See
-``docs/porting/spectral-moments/`` for the study.
+the β sign, plus fixed reference values that hold WiMDA's moment definitions.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import math
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -22,14 +19,6 @@ from asymmetry.core.fourier.moments import (
     spectrum_moments,
 )
 from asymmetry.core.fourier.units import FieldUnit, convert
-
-# Load the hyphen-named porting oracle module by path.
-_ORACLE_PATH = Path(__file__).parent.parent / "porting" / "spectral-moments" / "wimda_oracle.py"
-_spec = importlib.util.spec_from_file_location("_wimda_moments_oracle", _ORACLE_PATH)
-assert _spec and _spec.loader
-wimda_oracle = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(wimda_oracle)
-
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -318,36 +307,34 @@ def test_all_zero_amplitude_returns_empty():
     assert m.n_sample == 0
 
 
-# ── 8. WiMDA transcribed oracle ─────────────────────────────────────────────
+# ── 8. Reference values for WiMDA's moment definitions ──────────────────────
 
 
-def test_matches_wimda_oracle_on_shared_spectrum():
+def test_matches_wimda_reference_on_shared_spectrum():
     # One shared, mildly-skewed spectrum in field units (Gauss).
     x = np.linspace(2900.0, 3100.0, 2001)
     amp = _gaussian(x, 3000.0, 9.0, 1.0) + _gaussian(x, 3018.0, 7.0, 0.3)
     cutoff = 0.03
     ours = spectrum_moments(x, amp, x_range=None, cutoff_fraction=cutoff, uncertainty="none")
-    ref = wimda_oracle.wimda_moments(list(x), list(amp), cutoff_fraction=cutoff, x_range=None)
-    assert ours.b_pk == pytest.approx(ref["b_pk"], abs=1e-7)
-    assert ours.b_ave == pytest.approx(ref["b_ave"], abs=1e-9)
-    assert ours.b_diff == pytest.approx(ref["b_diff"], abs=1e-7)
-    assert ours.b_rms_mean == pytest.approx(ref["b_rms_mean"], abs=1e-9)
-    assert ours.b_rms_peak == pytest.approx(ref["b_rms_peak"], abs=1e-7)
-    assert ours.skewness == pytest.approx(ref["skewness"], rel=1e-7)
-    assert ours.beta == pytest.approx(ref["beta"], rel=1e-6)
-    assert ours.n_sample == ref["n_sample"]
+    assert ours.b_pk == pytest.approx(3000.3668001406068, abs=1e-7)
+    assert ours.b_ave == pytest.approx(3003.410647595248, abs=1e-9)
+    assert ours.b_diff == pytest.approx(3.043847454641309, abs=1e-7)
+    assert ours.b_rms_mean == pytest.approx(10.920319793904111, abs=1e-9)
+    assert ours.b_rms_peak == pytest.approx(11.336595244086002, abs=1e-7)
+    assert ours.skewness == pytest.approx(0.6010301225682126, rel=1e-7)
+    assert ours.beta == pytest.approx(0.26849749762647673, rel=1e-6)
+    assert ours.n_sample == 569
 
 
-def test_matches_wimda_oracle_with_range_and_cutoff():
+def test_matches_wimda_reference_with_range_and_cutoff():
     x = np.linspace(2900.0, 3100.0, 2001)
     amp = _gaussian(x, 3000.0, 9.0) + _gaussian(x, 3030.0, 6.0, 0.4)
     rng = (2960.0, 3060.0)
     ours = spectrum_moments(x, amp, x_range=rng, cutoff_fraction=0.05, uncertainty="none")
-    ref = wimda_oracle.wimda_moments(list(x), list(amp), cutoff_fraction=0.05, x_range=rng)
-    assert ours.b_ave == pytest.approx(ref["b_ave"], abs=1e-9)
-    assert ours.b_rms_mean == pytest.approx(ref["b_rms_mean"], abs=1e-9)
-    assert ours.skewness == pytest.approx(ref["skewness"], rel=1e-7)
-    assert ours.n_sample == ref["n_sample"]
+    assert ours.b_ave == pytest.approx(3006.3270620706157, abs=1e-9)
+    assert ours.b_rms_mean == pytest.approx(14.536916998171295, abs=1e-9)
+    assert ours.skewness == pytest.approx(0.847650770732608, rel=1e-7)
+    assert ours.n_sample == 643
 
 
 # ── 9. Unit invariance (alpha/beta) vs scaling (B_*) ────────────────────────

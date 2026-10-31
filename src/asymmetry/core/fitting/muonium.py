@@ -1,7 +1,7 @@
-"""Muonium oscillation line-shapes, ported from WiMDA's muonium functions.
+"""Muonium oscillation line-shapes following WiMDA's muonium functions.
 
-Faithful ports of WiMDA's ``TFMuonium`` / ``LowTFMuonium`` / ``ZFmuonium``
-(``src/Extrafunctions/muoniumfunctions.dpr``), adapted to Asymmetry conventions:
+These follow WiMDA's ``TFMuonium`` / ``LowTFMuonium`` / ``ZFmuonium``, adapted to
+Asymmetry conventions:
 
 * frequencies in MHz, time in µs, the ``2π`` factor explicit;
 * **phase in radians** (WiMDA uses degrees);
@@ -274,7 +274,7 @@ def high_tf_muonium_aniso(
     asymmetric (Pake-like) powder broadening; each line keeps equal weight
     ``1/2`` (the high-field limit, as in :func:`high_tf_muonium`).
 
-    This deliberately diverges from a literal port of WiMDA's
+    This deliberately diverges from WiMDA's
     ``AnisMuoniumPairRot``, which shifts its two (signed) line frequencies by
     a symmetric ``±d/2``: in our positive-frequency convention that moves
     ``ν_12`` in the wrong direction, and the symmetric split is in any case
@@ -318,8 +318,8 @@ def muonium_lf_relaxation(
     (:func:`_tf_levels`); WiMDA instead uses an approximate ``nu_12`` built with
     ``(gamma_e - gamma_mu)`` in both the linear and square-root terms (a
     convention also found in the quantum-diffusion literature) and contains a
-    2π unit inconsistency — this implementation deliberately re-derives rather
-    than transliterates (see docs/porting/wimda-fit-function-parity/).
+    2π unit inconsistency, so this function deliberately differs from it (see
+    docs/porting/wimda-fit-function-parity/).
 
     Field decoupling enters *solely* through ``omega_12(B)``: as the field
     grows the intra-triplet splitting moves the spectral density off the

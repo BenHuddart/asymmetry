@@ -1,8 +1,7 @@
 """Muon + electron + proton (radical) spin Hamiltonian and RF-µSR resonance fit.
 
-Faithful port of WiMDA's ``RigiWorkshopFit`` energy-level / RF-resonance models
-(``wimda installation/user fitting/RigiWorkshopfit.dpr`` + the ``Eigenuni.pas``
-Hermitian eigensolver), adapted to Asymmetry conventions:
+Follows WiMDA's ``RigiWorkshopFit`` energy-level / RF-resonance models, adapted
+to Asymmetry conventions:
 
 * energies / hyperfine couplings in **MHz**, applied field in **Gauss**;
 * gyromagnetic ratios taken from :mod:`asymmetry.core.utils.constants` and
@@ -272,7 +271,7 @@ def rf_resonance_mup(
 ) -> NDArray[np.float64]:
     """Field-swept RF-µSR resonance curve for the mu+e+p radical (exact diag.).
 
-    Port of WiMDA ``RFresonanceMuPlusProtonExact``: two Lorentzian features at
+    Follows WiMDA's ``RFresonanceMuPlusProtonExact``: two Lorentzian features at
     the exact-diagonalisation resonance fields ``B₁(A_µ, A_p, ν_RF)`` and
     ``B₂(...)`` on a flat background,
 

@@ -11,37 +11,28 @@ Source: `$WIMDA_SRC/src/MusrFunctionUnit.pas` (interface),
 
 ### Function contract
 
-```pascal
-TMusrFunction = function(t, p1, p2, p3, p4, p5: double; p6: boolean)
-  : double; stdcall;
-```
+A plugin function is a `stdcall` export returning a double. Its arguments, in
+order, are the time, up to three free fit parameters, the detector-group
+**phase**, a per-run auxiliary value and a **multifit flag**.
 
-- `t` — time; `p1–p3` — up to three free fit parameters.
-- `p4` — the detector-group **phase** variable (degrees). WiMDA passes the
-  fitted per-group phase in, so a plugin oscillation participates in
-  grouped-phase fitting. Example (`musrfunctions.dpr`, `TFrot`):
-  `cos((p1*t+(p2+ph)/360)*2*pi)`.
-- `p5`/`p6` — per-run auxiliary variable + **multifit flag**. When `p6` is
-  true (multi-run fitting), `p5` carries the run's scan variable (field,
-  delay, …); when false the plugin falls back to a parameter, e.g.
-  `if mult then delay:=xx else delay:=p2` (`DelayRot`).
+- WiMDA passes the fitted per-group phase (degrees) in, so a plugin oscillation
+  participates in grouped-phase fitting: the shipped `TFrot` example adds it to
+  its own phase parameter before taking the cosine.
+- When the flag is true (multi-run fitting), the auxiliary value carries the
+  run's scan variable (field, delay, …); when false the plugin falls back to a
+  parameter, as the `DelayRot` example does.
 
 ### Enumeration and metadata exports
 
-```pascal
-procedure GetOscFnList(var nfunc: integer; var fnam: array of pansichar); stdcall;
-procedure GetRelFnList(var nfunc: integer; var fnam: array of pansichar); stdcall;
-function  OscFnDetails(n: integer): pansichar; stdcall;
-function  RelFnDetails(n: integer): pansichar; stdcall;
-procedure GetOscFn(n: integer; var np: integer; var pn: array of pansichar;
-                   var fu: TMusrFunction); stdcall;
-procedure GetRelFn(...);  // same shape
-```
+Each of the two categories has three exports: a list routine (`GetOscFnList`,
+`GetRelFnList`) returning the function count and names, a details routine
+(`OscFnDetails`, `RelFnDetails`) returning a help string, and a lookup
+(`GetOscFn`, `GetRelFn`) returning the parameter count, parameter names and the
+function pointer.
 
 Oscillation vs relaxation is purely categorical — two picker lists. User
-entries are appended after the built-ins (`Analyse.pas:5790`
-`C1oscSel.max := otMax + nosc`). Parameter names (`pn`) label the GUI
-parameter rows; `…Details` strings feed help text.
+entries are appended after the built-ins. Parameter names label the GUI
+parameter rows; the details strings feed help text.
 
 ### Discovery, FORTRAN variant, errors
 
@@ -59,36 +50,22 @@ Source: `$WIMDA_SRC/src/UserUnit/` (`UserUnit.pas`, `FitTyps.pas`, example
 
 ### Function contract
 
-```pascal
-ffun = function(x: double; x2: double; p: array of double): double; stdcall;
-```
-
-`x` is whatever column the user selected (time, field, temperature…);
-`x2` is a reserved secondary ordinate; `p` is the parameter array. χ² is
-computed by WiMDA, not the DLL (`Model.pas:1459`).
+A model function is a `stdcall` export taking the chosen ordinate, a reserved
+secondary ordinate and the parameter array, and returning a double. The ordinate
+is whatever column the user selected (time, field, temperature…). χ² is computed
+by WiMDA, not the DLL.
 
 ### Required exports
 
-```pascal
-procedure getfnlist(var unitname: pansichar; var nfunc: integer;
-                    var fnam: array of pansichar); stdcall;
-procedure getparams(n: integer; var np: integer;
-                    var pn: array of pansichar; var fu: ffun); stdcall;
-function  details(n: integer): pansichar; stdcall;
-procedure getresults(r: array of double); stdcall;  // OPTIONAL
-```
+Three exports are required and one is optional:
 
-- `getfnlist` → library display name (`unitname`, e.g. "User Model
-  Examples") + function name list; populates a library combo then a model
-  combo.
+- `getfnlist` → library display name (e.g. "User Model Examples") + function
+  name list; populates a library combo then a model combo.
 - `getparams` → parameter count/names + the function pointer.
-- `details` → per-model help text shown by a Details button
-  (`Model.pas:1263`).
-- `getresults` → optional post-fit hook, called with the fitted parameter
-  array after **single-run** fits only
-  (`if (not mfitting) and (@getresults <> nil) then getresults(p)`,
-  `Model.pas:301–302`); may write derived quantities back in place. Lookup
-  failure is silent.
+- `details` → per-model help text shown by a Details button.
+- `getresults` (optional) → post-fit hook, called with the fitted parameter
+  array after **single-run** fits only, when the library provides it; may write
+  derived quantities back in place. Lookup failure is silent.
 
 ### Discovery, FORTRAN variant, errors
 
