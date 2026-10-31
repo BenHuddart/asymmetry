@@ -84,6 +84,7 @@ def test_only_tag_push_publishes() -> None:
 
 def test_builds_use_verified_version_in_rehearsals() -> None:
     jobs = _workflow("release.yml")["jobs"]
+    assert jobs["build-macos-arm"]["runs-on"] == "macos-15"
     assert jobs["verify-version"]["outputs"]["version"] == "${{ steps.version.outputs.version }}"
     for name in ("build-macos-arm", "build-windows"):
         steps = jobs[name]["steps"]
