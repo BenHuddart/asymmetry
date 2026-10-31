@@ -238,19 +238,6 @@ def test_dirty_close_via_discard_leaves_autosave_in_place(
     assert autosave_path.exists()
 
 
-def _redirect_app_data(monkeypatch, tmp_path) -> None:
-    """Point the untitled-session autosave directory at *tmp_path*."""
-
-    class _StandardPaths:
-        StandardLocation = mw_module.QStandardPaths.StandardLocation
-
-        @staticmethod
-        def writableLocation(_location) -> str:  # noqa: N802
-            return str(tmp_path / "appdata")
-
-    monkeypatch.setattr(mw_module, "QStandardPaths", _StandardPaths)
-
-
 def test_save_as_deletes_the_autosave_the_session_actually_wrote(
     win: MainWindow, qapp: QApplication, tmp_path, monkeypatch
 ) -> None:
@@ -260,7 +247,6 @@ def test_save_as_deletes_the_autosave_the_session_actually_wrote(
     then moves ``_current_project_path``, so deleting "this session's autosave"
     after the move looked beside the *new* file and left the real one behind.
     """
-    _redirect_app_data(monkeypatch, tmp_path)
     monkeypatch.setattr(mw_module, "autosave_interval_minutes", lambda: 5)
     assert win._current_project_path is None
     win._mark_dirty()

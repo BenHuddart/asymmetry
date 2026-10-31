@@ -52,8 +52,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
     CI splits the standard tier across several runners. The split is by a
     stable hash of each test's node id rather than collection order, so the N
-    independent shard processes — which ``pytest-randomly`` orders differently —
-    still cover every selected test exactly once, with no overlap or gap.
+    independent shard processes still cover every selected test exactly once,
+    with no overlap or gap.
     """
     parser.addoption(
         "--shard",
@@ -69,24 +69,17 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def qapp() -> object:
     """Return the process-wide ``QApplication``, creating it once per session.
 
-    A single application instance is reused across every GUI test. Defining it
-    here (session scope) decouples the application's lifetime from the xdist
-    distribution strategy: workers no longer rebuild the app per file. Test
-    modules that still declare their own module-scoped ``qapp`` fixture simply
-    shadow this one harmlessly. Returns ``None`` if PySide6 is unavailable.
+    GUI tests request this fixture; core tests never import Qt through it.
     """
-    try:
-        from PySide6.QtWidgets import QApplication
-    except Exception:
-        return None
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
 
-    app = QApplication.instance()
+    app = qt_widgets.QApplication.instance()
     if app is None:
-        app = QApplication([])
+        app = qt_widgets.QApplication([])
     return app
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _bypass_unsaved_changes_prompt(request: pytest.FixtureRequest) -> Iterator[None]:
     """Suppress ``MainWindow``'s unsaved-changes close prompt by default.
 
@@ -97,16 +90,13 @@ def _bypass_unsaved_changes_prompt(request: pytest.FixtureRequest) -> Iterator[N
     for every test except those explicitly marked ``real_save_guard``, which
     exercise the guard itself (with their own ``QMessageBox`` stubs).
 
-    Imported lazily so non-GUI test sessions (no PySide6) pay nothing.
+    The GUI fixture gate requests this only for gui-marked tests.
     """
     if "real_save_guard" in request.keywords:
         yield
         return
-    try:
-        from asymmetry.gui.mainwindow import MainWindow
-    except Exception:
-        yield
-        return
+    from asymmetry.gui.mainwindow import MainWindow
+
     original = MainWindow._maybe_save
     MainWindow._maybe_save = lambda self, *a, **k: True  # type: ignore[assignment]
     try:
@@ -115,7 +105,7 @@ def _bypass_unsaved_changes_prompt(request: pytest.FixtureRequest) -> Iterator[N
         MainWindow._maybe_save = original  # type: ignore[assignment]
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _cleanup_qt_widgets() -> Iterator[None]:
     """Tear down all Qt state after every test to prevent cross-test bleed.
 
@@ -232,65 +222,40 @@ def _cleanup_qt_widgets() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_qsettings(tmp_path: Path) -> Iterator[None]:
-    """Redirect ``QSettings`` to a per-test temp location.
+def _isolate_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent tests from discovering user-authored functions from the real home."""
+    from asymmetry.core import plugins
 
-    The application uses default-named ``QSettings()``, which otherwise share a
-    single backend file across every test *and* every ``pytest-xdist`` worker.
-    Under parallel runs that shared state leaks between tests (e.g. the UI-scale
-    persistence assertions intermittently reading another test's value), so we
-    point each test at its own temporary ini file. No-op if PySide6 is absent.
-    """
-    try:
-        from PySide6.QtCore import QSettings
-    except Exception:
-        yield
-        return
+    monkeypatch.setattr(plugins, "USER_FUNCTIONS_DIR", tmp_path / "user_functions")
 
+
+@pytest.fixture(autouse=True)
+def _gui_state_gate(request: pytest.FixtureRequest) -> None:
+    """Only gui-marked tests load Qt fixtures and window cleanup."""
+    if request.node.get_closest_marker("gui") is not None:
+        request.getfixturevalue("_isolated_gui_state")
+        request.getfixturevalue("_bypass_unsaved_changes_prompt")
+        request.getfixturevalue("_cleanup_qt_widgets")
+
+
+@pytest.fixture
+def _isolated_gui_state(qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep preferences, app data, and cached fit times inside this test's directory."""
+    from PySide6.QtCore import QCoreApplication, QSettings
+
+    from asymmetry.gui.styles import fonts
+    from asymmetry.gui.utils import app_data, fit_times
+
+    QCoreApplication.setOrganizationName("Asymmetry")
+    QCoreApplication.setApplicationName("Asymmetry")
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
-    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
-    yield
-
-
-@pytest.fixture(autouse=True)
-def _isolate_fit_time_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Point the wizards' per-machine fit-time store at a per-test file.
-
-    The store is loaded once per process from the app data folder; without this a
-    wizard test would read and write the real ``fit_times.json``, and one test's
-    timings would change which models the next test's picker tags slow.
-    """
-    try:
-        from asymmetry.gui.utils import fit_times
-    except Exception:
-        yield
-        return
-
-    monkeypatch.setattr(fit_times, "fit_times_path", lambda: tmp_path / "fit_times.json")
+    for scope in (QSettings.Scope.UserScope, QSettings.Scope.SystemScope):
+        QSettings.setPath(QSettings.Format.IniFormat, scope, str(tmp_path / "qt-settings"))
+    monkeypatch.setattr(app_data, "app_data_dir", lambda: tmp_path / "app-data")
     fit_times.shared_fit_time_store.cache_clear()
-    yield
-    fit_times.shared_fit_time_store.cache_clear()
-
-
-@pytest.fixture(autouse=True)
-def _reset_ui_font_scale() -> Iterator[None]:
-    """Reset the process-wide UI font scale to 1.0 around every test.
-
-    ``ui_manager.UIManager`` publishes the active scale to the font builders via
-    ``fonts.set_ui_font_scale`` (so chrome/value fonts built after a scale change
-    are born scaled). That module global persists across tests in a worker
-    process; without a reset, a test that constructs ``MainWindow`` (applying the
-    0.9 default scale) would leak a non-unity scale into a later test that asserts
-    design-size fonts. No-op when PySide6 is unavailable.
-    """
-    try:
-        from asymmetry.gui.styles import fonts
-    except Exception:
-        yield
-        return
-
     fonts.set_ui_font_scale(1.0)
     yield
+    fit_times.shared_fit_time_store.cache_clear()
     fonts.set_ui_font_scale(1.0)
 
 
@@ -313,9 +278,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if count < 1 or not (1 <= index <= count):
         raise pytest.UsageError(f"--shard K/N requires N >= 1 and 1 <= K <= N, got {shard!r}")
 
-    # Partition by a stable hash of the node id (NOT collection order, which
-    # pytest-randomly varies per process): every shard process then keeps a
-    # disjoint slice and the union is the whole selection.
+    # A stable node-id hash gives disjoint slices independent of collection order.
     kept, deselected = [], []
     for item in items:
         bucket = zlib.crc32(item.nodeid.encode("utf-8")) % count

@@ -16,10 +16,8 @@ import pytest
 # Qt-free imports (subprocess: the only reliable probe)
 # ---------------------------------------------------------------------------
 
-# An in-process sys.modules diff is a NO-OP here: the autouse _cleanup_qt_widgets
-# fixture in tests/conftest.py imports PySide6 before every test body, so Qt is
-# always already loaded by the time a test runs. A fresh interpreter is the only
-# way to verify that importing a negmu module pulls in no Qt / GUI.
+# A fresh interpreter certifies each import independently of modules loaded by
+# another test in the same worker.
 
 _NEGMU_MODULES = [
     "asymmetry.core.negmu",

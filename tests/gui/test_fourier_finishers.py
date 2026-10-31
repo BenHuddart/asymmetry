@@ -586,14 +586,14 @@ def test_settings_round_trip_unchanged_with_phase_hidden(qapp) -> None:
 
 
 @pytest.mark.gui
-def test_collapsed_section_state_persists_via_isolated_settings(qapp) -> None:
+def test_collapsed_section_state_persists_via_isolated_settings(tmp_path, qapp) -> None:
     """Expanding a collapsed section persists through an injected QSettings scope,
     so a freshly built panel reads the section back expanded."""
     from PySide6.QtCore import QSettings
 
     from asymmetry.gui.panels.fourier_panel import FourierPanel
 
-    settings = QSettings("AsymmetryTest", "fourier_sections_test")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.clear()
     try:
         first = FourierPanel(settings=settings)

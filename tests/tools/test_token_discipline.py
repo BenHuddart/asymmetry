@@ -78,6 +78,7 @@ def test_render_degrades_gracefully_when_template_missing(monkeypatch) -> None:
     assert stylesheet.render_bench_stylesheet() == ""
 
 
+@pytest.mark.gui
 def test_white_token_is_used_by_palette(qapp) -> None:
     """The WHITE token must be wired (not dead) — bright-text/light bevel roles."""
     from PySide6.QtGui import QColor, QPalette
@@ -93,6 +94,7 @@ def test_white_token_is_used_by_palette(qapp) -> None:
 # ── Type scale single source (P3-6) ──────────────────────────────────────────
 
 
+@pytest.mark.gui
 def test_chrome_qss_font_size_derives_from_typography(qapp) -> None:
     """The chrome font-size in build_stylesheet must equal scaled SIZE_HEADER."""
     from asymmetry.gui.styles import typography
@@ -104,6 +106,7 @@ def test_chrome_qss_font_size_derives_from_typography(qapp) -> None:
     assert f"{round(typography.SIZE_HEADER * 1.0, 2)}pt" in qss
 
 
+@pytest.mark.gui
 def test_apply_param_table_style_uses_header_font(qapp) -> None:
     """apply_param_table_style must reuse header_font() (no inline 9.5pt dup)."""
     from PySide6.QtWidgets import QTableWidget
@@ -131,6 +134,7 @@ def test_apply_param_table_style_uses_header_font(qapp) -> None:
 # ── UI-scale reaches chrome/value fonts (P1-4) ───────────────────────────────
 
 
+@pytest.mark.gui
 def test_font_builders_track_ui_scale(qapp) -> None:
     from asymmetry.gui.styles.fonts import mono_font, set_ui_font_scale
     from asymmetry.gui.styles.typography import (
@@ -151,6 +155,7 @@ def test_font_builders_track_ui_scale(qapp) -> None:
         set_ui_font_scale(1.0)
 
 
+@pytest.mark.gui
 def test_build_stylesheet_chrome_font_sizes_scale(qapp) -> None:
     from asymmetry.gui.ui_manager import UIManager
 
@@ -460,6 +465,7 @@ def test_period_overlay_palette_is_token_derived() -> None:
     assert tokens.TRACE_BLUE in fallback
 
 
+@pytest.mark.gui
 def test_data_browser_logged_and_accent_colours_are_token_derived(qapp) -> None:
     from PySide6.QtGui import QColor
 

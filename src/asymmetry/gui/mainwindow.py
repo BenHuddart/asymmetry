@@ -99,7 +99,6 @@ from PySide6.QtCore import (
     QEventLoop,
     QObject,
     QSettings,
-    QStandardPaths,
     Qt,
     QThread,
     QTimer,
@@ -350,6 +349,7 @@ from asymmetry.gui.ui_manager import (
     UI_SCALE_SETTINGS_KEY,
     UIManager,
 )
+from asymmetry.gui.utils import app_data
 from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_editor
 from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.phase_colors import phase_color
@@ -17119,21 +17119,11 @@ class MainWindow(QMainWindow):
         self._autosave_timer.start(minutes * 60_000)
 
     def _autosave_path(self) -> str:
-        """Return this session's crash-recovery snapshot path (D9).
-
-        Beside the project file (``<stem>.autosave.asymp``) once the session
-        has one; under the platform app-data directory, keyed as
-        ``untitled``, for a session that has never been saved.
-        """
+        """Locate the snapshot beside a saved project or in app data for an untitled one."""
         if self._current_project_path:
             current = Path(self._current_project_path)
             return str(current.with_name(current.stem + ".autosave.asymp"))
-        directory = (
-            Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation))
-            / "autosave"
-        )
-        directory.mkdir(parents=True, exist_ok=True)
-        return str(directory / "untitled.autosave.asymp")
+        return str(app_data.app_data_dir() / "autosave" / "untitled.autosave.asymp")
 
     def _delete_autosave_file(self) -> None:
         """Remove this session's autosave file, if one exists (D9)."""
@@ -17163,8 +17153,15 @@ class MainWindow(QMainWindow):
             return
         path = self._autosave_path()
         self._project_save_active = True
+
+        def write_autosave(worker):
+            if worker.is_cancelled():
+                return
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            save_project(state, path, backup=False)
+
         self._tasks.start(
-            lambda w, state=state, path=path: save_project(state, path, backup=False),
+            write_autosave,
             on_finished=lambda _result, path=path: self._on_autosave_finished(path),
             on_error=self._on_autosave_error,
         )
