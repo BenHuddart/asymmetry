@@ -130,13 +130,14 @@ def test_vectorised_pair_matches_scalar_reference() -> None:
 def test_breit_rabi_pair_matches_wimda_estimate_within_approximation() -> None:
     """The exact forward map agrees with WiMDA's approximate partner-line estimate.
 
-    WiMDA's rounded constants and high-field expansion drift A by up to about
-    0.03 MHz, while the forward-map sum is A to machine precision.
+    WiMDA's rounded constants and high-field expansion drift the lower line by up
+    to about 0.03 MHz, while the forward-map sum is A to machine precision. Each
+    reference is WiMDA's lower-line estimate given the exact upper line.
     """
-    for field, a_mhz, wimda_a_mhz in [(1000.0, 500.0, 500.00007), (5000.0, 1200.0, 1200.02747)]:
+    for field, a_mhz, wimda_nu12 in [(1000.0, 500.0, 214.42418), (5000.0, 1200.0, 506.73658)]:
         nu12, nu34 = breit_rabi_pair(field, a_mhz)
         assert nu12 + nu34 == pytest.approx(a_mhz, rel=1e-9)
-        assert nu12 + nu34 == pytest.approx(wimda_a_mhz, abs=0.05)
+        assert nu12 == pytest.approx(wimda_nu12, abs=0.05)
 
 
 # ── correlation_spectrum (pure core) ────────────────────────────────────────
