@@ -53,14 +53,6 @@ from asymmetry.gui.windows.grouping.preview_pane import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
     """Pump a real nested event loop until *predicate* holds (queued signals)."""
     if predicate():

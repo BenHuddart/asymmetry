@@ -17,14 +17,6 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _dataset() -> MuonDataset:
     t = np.linspace(0.0, 1.0, 8)
     return MuonDataset(

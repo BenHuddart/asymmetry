@@ -31,14 +31,6 @@ from asymmetry.core.representation.series import FitSeries
 from asymmetry.gui.mainwindow import MainWindow
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def win(qapp: QApplication) -> MainWindow:
     w = MainWindow()

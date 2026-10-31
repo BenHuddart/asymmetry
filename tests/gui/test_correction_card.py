@@ -24,14 +24,6 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.windows.grouping.correction_card import CorrectionCard
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _card_with_body(title: str = "Deadtime") -> tuple[CorrectionCard, QLabel]:
     card = CorrectionCard(title)
     body = QLabel("body content")

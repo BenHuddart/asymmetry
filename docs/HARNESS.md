@@ -156,6 +156,8 @@ is required. Hidden files and `__pycache__` directories are ignored.
 
 ## Test user-state isolation
 
+The root `qapp` fixture owns QApplication construction; structural checks reject
+local `qapp` fixtures and direct application construction elsewhere in tests.
 The root fixtures load Qt and run window cleanup only for tests marked `gui`.
 A core-only run imports no Qt through fixtures and can run without PySide6.
 GUI settings (including system fallbacks), app data, and cached fit times use

@@ -17,14 +17,6 @@ from asymmetry.core.maxent import MaxEntConfig, MaxEntWorkloadEstimate
 from asymmetry.gui.mainwindow import MainWindow
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _unsafe_estimate() -> MaxEntWorkloadEstimate:
     """An estimate far past every warning threshold (a raw full-res .mdu run)."""
     return MaxEntWorkloadEstimate(

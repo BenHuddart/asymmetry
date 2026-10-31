@@ -33,14 +33,6 @@ from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 from tests._qt_helpers import wait_for  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
     settings = QSettings()

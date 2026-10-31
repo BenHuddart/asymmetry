@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtWidgets import QLabel  # noqa: E402
 
 from asymmetry.core.data.dataset import MuonDataset, Run  # noqa: E402
 from asymmetry.core.fitting.component_tags import FieldGeometry, PhysicsClass  # noqa: E402
@@ -27,11 +27,6 @@ from asymmetry.gui.styles import tokens  # noqa: E402
 from asymmetry.gui.widgets.model_family_picker import ModelFamilyPicker  # noqa: E402
 
 NOT_RECORDED = 3  # the "Not recorded" button's id
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _run(field: float, **metadata: str) -> MuonDataset:

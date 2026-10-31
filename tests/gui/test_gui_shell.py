@@ -315,14 +315,6 @@ class _StubMultiGroupFitWindow(QWidget):
         return "A(t)"
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture(autouse=True)
 def _set_default_ui_scale() -> None:
     settings = QSettings()

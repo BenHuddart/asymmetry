@@ -31,8 +31,8 @@ from asymmetry.gui.panels.fit.tab_base import _fit_result_is_usable  # noqa: E40
 
 
 @pytest.fixture(scope="module")
-def app() -> QApplication:
-    return QApplication.instance() or QApplication([])
+def app(qapp) -> QApplication:
+    return qapp
 
 
 def _dataset() -> MuonDataset:

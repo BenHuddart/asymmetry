@@ -30,7 +30,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QApplication, QMenu, QPushButton, QToolButton
+from PySide6.QtWidgets import QMenu, QPushButton, QToolButton
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
@@ -56,8 +56,8 @@ _RETIRED_LABELS = {"Drop background", "More…", "Send to Batch", "Add to Series
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 def _run_stub_fit(tab: SingleFitTab) -> None:

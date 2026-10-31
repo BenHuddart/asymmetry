@@ -19,7 +19,6 @@ pytest.importorskip("PySide6")
 
 import numpy as np
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
@@ -35,8 +34,8 @@ _CURVE = (np.array([0.0, 0.3]), np.array([0.1, 0.05]))
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 def _new_window() -> MainWindow:

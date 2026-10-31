@@ -26,7 +26,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -36,8 +35,8 @@ from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 @pytest.fixture

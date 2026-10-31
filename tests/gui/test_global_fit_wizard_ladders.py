@@ -19,7 +19,6 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.windows.global_fit_wizard_window as wizard_window_module
 from asymmetry.core.fitting.fit_wizard import SelectionMetric
@@ -52,11 +51,6 @@ from tests.core.sharing_series import SimulatedSeries, hopping_series
 
 _GKT = "Dynamic GKT + Constant"
 _EXPONENTIAL = "Exponential + Constant"
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture(scope="module")

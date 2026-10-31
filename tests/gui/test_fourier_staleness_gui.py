@@ -273,10 +273,8 @@ def _tf_run(*, n: int = 512, bin_width: float = 0.04) -> Run:
 
 
 @pytest.fixture
-def window():
-    from PySide6.QtWidgets import QApplication
+def window(qapp):
 
-    QApplication.instance() or QApplication([])
     win = MainWindow()
     yield win
     win.close()

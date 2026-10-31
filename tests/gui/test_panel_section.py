@@ -12,16 +12,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QSettings, Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QWidget  # noqa: E402
+from PySide6.QtWidgets import QLabel, QPushButton, QWidget  # noqa: E402
 
 from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME  # noqa: E402
 from asymmetry.gui.widgets.flow_layout import FlowLayout  # noqa: E402
 from asymmetry.gui.widgets.panel_section import PanelSection  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

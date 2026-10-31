@@ -24,11 +24,6 @@ from asymmetry.core.project.profiles import AlphaPolicy
 from asymmetry.gui.windows.grouping.alpha_section import AlphaSectionWidget
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
 def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
     if predicate():
         return

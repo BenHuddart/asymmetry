@@ -29,14 +29,6 @@ from asymmetry.gui.panels.maxent_panel import MaxEntPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def test_log_panel_appends_message(qapp: QApplication) -> None:
     panel = LogPanel()
     panel.log("hello world")

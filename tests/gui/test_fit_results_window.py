@@ -33,14 +33,6 @@ from asymmetry.gui.windows.fit_results_window import (
 _GOOD = (tokens.SUCCESS_BG, tokens.SUCCESS_BORDER, tokens.OK)
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _range(
     *,
     model: str = "SC_TwoGap_SS",

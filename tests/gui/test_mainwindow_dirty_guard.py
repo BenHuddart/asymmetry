@@ -34,14 +34,6 @@ from asymmetry.core.fitting.wizard_scope import user_field_direction_overrides  
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def win(qapp: QApplication) -> MainWindow:
     settings = QSettings()

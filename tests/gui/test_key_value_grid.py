@@ -12,14 +12,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtWidgets import QLabel  # noqa: E402
 
 from asymmetry.gui.widgets.key_value_grid import KeyValueGrid  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def test_set_rows_populates_label_value_pairs(qapp) -> None:

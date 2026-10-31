@@ -1007,14 +1007,6 @@ from PySide6.QtWidgets import QApplication, QWidget
 from asymmetry.core.data.dataset import Histogram, MuonDataset
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture(autouse=True)
 def _set_default_ui_scale():
     settings = QSettings()
