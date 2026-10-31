@@ -497,94 +497,77 @@ def apply_grouped_background_correction(
 
 def _fixed_background_values(grouping: dict[str, Any]) -> tuple[float, float] | None:
     for key in ("background_fixed_values", "background_fix", "bkg_fix"):
-        value = grouping.get(key)
-        if isinstance(value, (list, tuple)) and len(value) >= 2:
+        candidate = grouping.get(key)
+        if isinstance(candidate, (list, tuple)) and len(candidate) >= 2:
             try:
-                return float(value[0]), float(value[1])
+                return float(candidate[0]), float(candidate[1])
             except (TypeError, ValueError):
                 return None
     return None
 
 
 def _fixed_background_error(values: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Return musrfit-style count errors for fixed-background subtraction."""
-    arr = np.asarray(values, dtype=np.float64)
-    return np.where(arr != 0.0, np.sqrt(np.maximum(arr, 0.0)), 1.0)
+    return np.where(values == 0.0, 1.0, np.sqrt(np.maximum(values, 0.0)))
 
 
 def _estimated_background_error(values: NDArray[np.float64]) -> float:
-    """Return musrfit's error on an estimated constant background."""
-    arr = np.asarray(values, dtype=np.float64)
-    if arr.size == 0:
-        return 0.0
-    total = float(np.sum(arr))
-    if total <= 0.0:
-        return 0.0
-    return float(np.sqrt(total) / float(arr.size))
+    total = float(np.sum(values))
+    return 0.0 if total <= 0.0 else float(np.sqrt(total) / values.size)
 
 
 def _estimated_background_count_error(
     values: NDArray[np.float64],
     background_error: float,
 ) -> NDArray[np.float64]:
-    """Return musrfit-style per-bin count errors after estimated subtraction."""
-    arr = np.asarray(values, dtype=np.float64)
-    return np.where(arr > 0.0, np.sqrt(np.maximum(arr + background_error**2, 0.0)), 1.0)
+    variance = np.maximum(values + background_error**2, 0.0)
+    return np.where(values > 0.0, np.sqrt(variance), 1.0)
 
 
 def _background_ranges(
     grouping: dict[str, Any],
     t0_bin: int,
 ) -> tuple[tuple[int, int], tuple[int, int]] | None:
-    raw = grouping.get("background_ranges")
-    parsed = _parse_range_pair(raw)
-    if parsed is not None:
-        return parsed
-
+    pair = _parse_range_pair(grouping.get("background_ranges"))
+    if pair is not None:
+        return pair
     forward = _parse_range(grouping.get("background_forward_range"))
     backward = _parse_range(grouping.get("background_backward_range"))
     if forward is not None and backward is not None:
         return forward, backward
-
     shared = _parse_range(grouping.get("background_range"))
-    if shared is not None:
-        return shared, shared
-
-    start = int(float(t0_bin) * 0.1)
-    end = int(float(t0_bin) * 0.6)
-    return _ordered_range((start, end)), _ordered_range((start, end))
+    if shared is None:
+        shared = _ordered_range((int(0.1 * t0_bin), int(0.6 * t0_bin)))
+    return shared, shared
 
 
 def _parse_range_pair(value: Any) -> tuple[tuple[int, int], tuple[int, int]] | None:
     if isinstance(value, dict):
         forward = _parse_range(value.get("forward"))
         backward = _parse_range(value.get("backward"))
-        if forward is not None and backward is not None:
-            return forward, backward
+    elif isinstance(value, (list, tuple)) and len(value) >= 2:
+        forward = _parse_range(value[0])
+        backward = _parse_range(value[1])
+        if forward is None or backward is None:
+            shared = _parse_range(value)
+            return (shared, shared) if shared is not None else None
+    else:
         return None
-    if isinstance(value, (list, tuple)) and len(value) >= 2:
-        first = _parse_range(value[0])
-        second = _parse_range(value[1])
-        if first is not None and second is not None:
-            return first, second
-        shared = _parse_range(value)
-        if shared is not None:
-            return shared, shared
-    return None
+    return (forward, backward) if forward is not None and backward is not None else None
 
 
 def _parse_range(value: Any) -> tuple[int, int] | None:
     if not isinstance(value, (list, tuple)) or len(value) < 2:
         return None
     try:
-        return _ordered_range((int(float(value[0])), int(float(value[1]))))
+        endpoints = int(float(value[0])), int(float(value[1]))
     except (TypeError, ValueError):
         return None
+    return _ordered_range(endpoints)
 
 
 def _ordered_range(value: tuple[int, int]) -> tuple[int, int]:
-    start, end = int(value[0]), int(value[1])
-    return (start, end) if start <= end else (end, start)
+    first, second = int(value[0]), int(value[1])
+    return min(first, second), max(first, second)
 
 
 def _adjust_range_for_beam_period(
@@ -593,28 +576,20 @@ def _adjust_range_for_beam_period(
     bin_width_us: float,
     facility: str,
 ) -> tuple[int, int]:
-    start, end = value
-    if bin_width_us <= 0.0:
-        return value
     period = _beam_period_us(facility)
-    if period <= 0.0:
+    if bin_width_us <= 0.0 or period <= 0.0:
         return value
-    interval_us = float(end - start) * float(bin_width_us)
-    full_cycles = int(interval_us / period)
-    adjusted_end = start + int((full_cycles * period) / float(bin_width_us))
-    if adjusted_end == start:
+    periods = int((value[1] - value[0]) * bin_width_us / period)
+    bins = int(periods * period / bin_width_us)
+    if bins == 0:
         return value
-    return _ordered_range((start, adjusted_end))
+    return _ordered_range((value[0], value[0] + bins))
 
 
 def _beam_period_us(facility: str) -> float:
-    text = str(facility or "").lower()
-    for key, period in _BEAM_PERIOD_US.items():
-        if key in text:
-            return period
-    return 0.0
+    label = facility.lower()
+    return next((period for name, period in _BEAM_PERIOD_US.items() if name in label), 0.0)
 
 
 def _range_is_valid(value: tuple[int, int], length: int) -> bool:
-    start, end = value
-    return length > 0 and 0 <= start <= end < length
+    return length > 0 and 0 <= value[0] <= value[1] < length

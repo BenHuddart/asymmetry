@@ -385,7 +385,7 @@ def test_bin_centre_default_reproduces_the_integer_bin_axis_bit_for_bit():
 
 @pytest.mark.parametrize("packing", [1, 5])
 def test_fixed_bunching_stamps_match_the_musrfit_packing_oracle(packing):
-    """musrfit ``PRunSingleHisto.cpp:1245-1275`` packing time, transcribed.
+    """Bin-centre packing times shared with musrfit.
 
     ``t_k = dt·((fgb − 0.5) + p/2 − t0) + k·p·dt`` for an integer ``t0``. This
     pins the bin-centre convention against the reference program: our stamp is

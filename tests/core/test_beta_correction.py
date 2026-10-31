@@ -85,8 +85,8 @@ class TestBetaFormula:
     def test_matches_musrfit_convention(self):
         """Ours == musrfit's (α_m·f − b)/(α_m·β·f + b) with α_m = 1/α.
 
-        The musrfit form is transcribed from PRunAsymmetry.cpp:1412; β is
-        numerically identical in both conventions (comparison.md).
+        The two conventions use reciprocal α values and the same β.
+        Substituting α_m = 1/α gives the same ratio.
         """
         rng = np.random.default_rng(13)
         f = rng.uniform(1.0, 1000.0, size=256)

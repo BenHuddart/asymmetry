@@ -1,11 +1,8 @@
-"""Load PSI BIN and MDU raw histogram data.
+"""Load PSI BIN/MDU histograms, detector labels, timing markers and monitor logs.
 
-The binary layout follows the PSI reader used by musrfit, particularly its
-``PRunDataHandler::ReadPsiBinFile`` path and the PSI BIN/MDU structures used
-there. Mantid's ``LoadPSIMuonBin`` was also checked for PSI-BIN behavior. The
-implementation here is pure Python and maps the raw histograms, detector
-labels, per-detector ``t0`` values, and good-bin metadata into Asymmetry's
-normal raw ``Run`` model.
+PSI's public BIN description is at
+https://lmu.web.psi.ch/docu/manuals/bulk_manuals/software/general/psi_format.txt.
+Native MDU record fields are covered by synthetic byte-format tests.
 """
 
 from __future__ import annotations
@@ -331,113 +328,116 @@ class PsiLoader(BaseLoader):
     # ------------------------------------------------------------------
 
     def _read_mdu(self, path: Path) -> _PsiRawRun:
-        with path.open("rb") as handle:
-            header_data = handle.read(_FE_HEADER.size)
-            if len(header_data) != _FE_HEADER.size:
+        with path.open("rb") as stream:
+            file_size = stream.seek(0, 2)
+            stream.seek(0)
+            header_data = stream.read(_FE_HEADER.size)
+            if len(header_data) < _FE_HEADER.size:
                 raise ValueError("PSI-MDU file is too small to contain a header")
             header = self._parse_mdu_header(header_data)
             if header.num_bytes_header != _FE_HEADER.size:
                 raise ValueError(f"Unsupported PSI-MDU header size: {header.num_bytes_header}")
-            if header.num_bytes_tag < 16 + 11 * 4:
+            if header.num_bytes_tag < 60:
                 raise ValueError(f"Unsupported PSI-MDU tag size: {header.num_bytes_tag}")
+            for name, size in (
+                ("settings", header.num_bytes_settings),
+                ("statistics", header.num_bytes_statistics),
+            ):
+                if size < 0:
+                    raise ValueError(f"Unsupported PSI-MDU {name} size: {size}")
+                if stream.tell() + size > file_size:
+                    raise ValueError(f"PSI-MDU file ended while reading {name}")
+                if name == "settings":
+                    settings_data = stream.read(size)
+                else:
+                    stream.seek(size, 1)
 
-            settings_data = handle.read(header.num_bytes_settings)
-            if len(settings_data) != header.num_bytes_settings:
-                raise ValueError("PSI-MDU file ended while reading settings")
-            stats_data = handle.read(header.num_bytes_statistics)
-            if len(stats_data) != header.num_bytes_statistics:
-                raise ValueError("PSI-MDU file ended while reading statistics")
-
+            bin_width_us, marker_scale, total_tags = self._mdu_resolution(header, settings_data)
             settings_tags = self._parse_mdu_settings_tags(header, settings_data)
-            bin_width_us, resolution_factor, total_tags = self._mdu_resolution(
-                header,
-                settings_data,
-            )
             selected = self._selected_mdu_tags(header.detector_number_list)
-            expected_length, expected_hists = self._mdu_histogram_shape(
-                header,
-                settings_tags,
-                selected,
-                total_tags,
+            common_length, expected = self._mdu_histogram_shape(
+                header, settings_tags, selected, total_tags
             )
-            if expected_hists <= 0 or expected_length <= 0:
+            if common_length <= 0 or expected == 0:
                 raise ValueError("PSI-MDU file does not contain usable positron histograms")
 
-            labels: list[str] = []
-            counts: list[np.ndarray] = []
-            t0_bins: list[int] = []
-            first_good: list[int] = []
-            last_good: list[int] = []
-
-            for tag_idx in range(total_tags):
-                tag_data = handle.read(header.num_bytes_tag)
-                if len(tag_data) != header.num_bytes_tag:
+            records: list[tuple[_MduTag, int]] = []
+            for index, settings_tag in enumerate(settings_tags):
+                if stream.tell() + header.num_bytes_tag > file_size:
                     raise ValueError("PSI-MDU file ended while reading histogram tag records")
-                tag = self._parse_mdu_tag(tag_data)
-                if tag.tag_type != _PTA_TAG_TYPE_POSITRON or tag.n_bins <= 1:
+                tag = self._parse_mdu_tag(stream.read(60))
+                stream.seek(header.num_bytes_tag - 60, 1)
+                data_offset = stream.tell()
+                eligible = tag.tag_type == _PTA_TAG_TYPE_POSITRON and tag.n_bins > 1
+                if eligible:
+                    if data_offset + tag.n_bins * 4 > file_size:
+                        raise ValueError("PSI-MDU file ended while reading histogram data")
+                    stream.seek(tag.n_bins * 4, 1)
+                if header.fmt == "M3" and index not in selected:
                     continue
+                settings_eligible = (
+                    settings_tag.tag_type == _PTA_TAG_TYPE_POSITRON and settings_tag.n_bins > 1
+                )
+                if eligible != settings_eligible:
+                    raise ValueError(
+                        f"PSI-MDU settings and histogram eligibility disagree for tag {index}"
+                    )
+                if eligible:
+                    if (tag.histominb, tag.histomaxb) != (
+                        settings_tag.histominb,
+                        settings_tag.histomaxb,
+                    ):
+                        raise ValueError(
+                            f"PSI-MDU settings and histogram bin ranges disagree for tag {index}"
+                        )
+                    records.append((tag, data_offset))
+            if len(records) != expected:
+                raise ValueError(
+                    f"PSI-MDU histogram count mismatch: expected {expected}, got {len(records)}"
+                )
 
-                hist_data = handle.read(tag.n_bins * 4)
-                if len(hist_data) != tag.n_bins * 4:
-                    raise ValueError("PSI-MDU file ended while reading histogram data")
-                if header.fmt == "M3" and tag_idx not in selected:
-                    continue
+            # Every selected record's geometry and payload are valid before dense allocation.
+            counts: list[np.ndarray] = []
+            for tag, data_offset in records:
+                values = np.zeros(common_length, dtype=np.float64)
+                start = max(0, tag.histominb)
+                retained = min(tag.n_bins, max(0, common_length - start))
+                if retained:
+                    stream.seek(data_offset)
+                    values[start : start + retained] = np.fromfile(
+                        stream, dtype="<i4", count=retained
+                    )
+                counts.append(values)
 
-                arr = np.zeros(expected_length, dtype=np.float64)
-                raw_counts = np.frombuffer(hist_data, dtype="<i4").astype(np.float64)
-                start = max(0, int(tag.histominb))
-                available = min(expected_length - start, len(raw_counts))
-                if available > 0:
-                    arr[start : start + available] = raw_counts[:available]
-                counts.append(arr)
-                labels.append(tag.label)
-                t0_bins.append((int(tag.t0b) + 1) * int(resolution_factor) - 1)
-                first_good.append((int(tag.tfb) + 1) * int(resolution_factor) - 1)
-                last_good.append(int(tag.tlb) * int(resolution_factor))
-
-        if len(counts) != expected_hists:
-            raise ValueError(
-                f"PSI-MDU histogram count mismatch: expected {expected_hists}, got {len(counts)}"
-            )
-
-        instrument, beamline, muon_source = self._guess_psi_instrument(path)
-        temp_text = header.mean_temp
-        if not temp_text.strip() or (
-            self._parse_temperature(temp_text) == 0.0
-            and self._parse_temperature(header.run_title[10:20]) != 0.0
-        ):
-            temp_text = header.run_title[10:20]
-        field_text = header.run_title[20:30]
         started = self._date_time(header.start_date, header.start_time)
         stopped = self._date_time(header.end_date, header.end_time)
-        # MDU runs carry the same ``.mon`` sidecars as BIN runs (their filenames
-        # are zero-padded the same way), so they get the same discovery/merge.
+        temperature = self._parse_temperature(header.mean_temp)
+        title_temperature = self._parse_temperature(header.run_title[10:20])
+        if not header.mean_temp or (temperature == 0 and title_temperature != 0):
+            temperature = title_temperature
+        instrument, beamline, muon_source = self._guess_psi_instrument(path)
         temperature_logs, temperature_log_rejections = self._read_temperature_logs(
-            path,
-            int(header.run_number),
-            started=started,
-            stopped=stopped,
+            path, header.run_number, started=started, stopped=stopped
         )
-
         return _PsiRawRun(
             source_file=str(path),
             psi_format="psi-mdu",
             run_number=header.run_number,
             title=header.run_subtitle,
             sample=header.run_title[:10].strip(),
-            temperature=self._parse_temperature(temp_text),
-            field=self._parse_field_gauss(field_text),
+            temperature=temperature,
+            field=self._parse_field_gauss(header.run_title[20:30]),
             orientation=header.run_title[30:40].strip(),
             setup="",
             comment=header.run_subtitle,
             started=started,
             stopped=stopped,
-            bin_width_us=float(bin_width_us),
-            histogram_labels=labels,
+            bin_width_us=bin_width_us,
+            histogram_labels=[tag.label for tag, _ in records],
             counts=counts,
-            t0_bins=t0_bins,
-            first_good_bins=first_good,
-            last_good_bins=last_good,
+            t0_bins=[(tag.t0b + 1) * marker_scale - 1 for tag, _ in records],
+            first_good_bins=[(tag.tfb + 1) * marker_scale - 1 for tag, _ in records],
+            last_good_bins=[tag.tlb * marker_scale for tag, _ in records],
             instrument=instrument,
             beamline=beamline,
             muon_source=muon_source,
@@ -496,35 +496,23 @@ class PsiLoader(BaseLoader):
         )
 
     def _mdu_resolution(self, header: _MduHeader, settings_data: bytes) -> tuple[float, int, int]:
-        values = _SETTINGS_PREFIX.unpack_from(settings_data, 0)
+        code = _SETTINGS_PREFIX.unpack_from(settings_data)[9]
         if header.fmt == "M3":
-            timespan = int(values[9])
-            table = {
-                11: 0.000625,
-                10: 0.0003125,
-                9: 0.00015625,
-                8: 0.000078125,
-                7: 0.0000390625,
+            widths = {
                 6: 0.00001953125,
+                7: 0.0000390625,
+                8: 0.000078125,
+                9: 0.00015625,
+                10: 0.0003125,
+                11: 0.000625,
             }
-            if timespan not in table:
-                raise ValueError(f"Unsupported PSI-MDU pTA timespan: {timespan}")
-            factor = 1
-            for _ in range(max(0, int(header.histo_resolution) + 8 - timespan)):
-                factor *= 2
-            return table[timespan], factor, 16
-
-        resolution_code = int(values[9])
-        table = {
-            25: 0.0000244140625,
-            100: 0.00009765625,
-            200: 0.0001953125,
-            800: 0.00078125,
-        }
-        if resolution_code not in table:
-            raise ValueError(f"Unsupported PSI-MDU TDC resolution code: {resolution_code}")
-        total_tags = 16 if header.fmt == "T4" else 32
-        return table[resolution_code], max(1, int(header.histo_resolution)), total_tags
+            if code not in widths:
+                raise ValueError(f"Unsupported PSI-MDU pTA timespan: {code}")
+            return widths[code], 2 ** max(0, header.histo_resolution + 8 - code), 16
+        widths = {25: 0.0000244140625, 100: 0.00009765625, 200: 0.0001953125, 800: 0.00078125}
+        if code not in widths:
+            raise ValueError(f"Unsupported PSI-MDU TDC resolution code: {code}")
+        return widths[code], max(1, header.histo_resolution), 16 if header.fmt == "T4" else 32
 
     def _mdu_histogram_shape(
         self,
@@ -533,30 +521,28 @@ class PsiLoader(BaseLoader):
         selected: set[int],
         total_tags: int,
     ) -> tuple[int, int]:
-        n_hist = 0
-        length = 0
-        for idx, tag in enumerate(tags[:total_tags]):
+        extent = 0
+        count = 0
+        for index, tag in enumerate(tags[:total_tags]):
             if tag.tag_type != _PTA_TAG_TYPE_POSITRON or tag.n_bins <= 1:
                 continue
-            if header.fmt == "M3" and idx not in selected:
+            if header.fmt == "M3" and index not in selected:
                 continue
-            candidate = int(tag.n_bins) + int(tag.histominb)
-            if length == 0:
-                length = candidate
-            n_hist += 1
-        if header.fmt == "M3" and length > 0:
-            length -= 1
-        return max(0, length), n_hist
+            count += 1
+            extent = max(extent, tag.histomaxb + 1)
+        if header.fmt == "M3" and extent > 0:
+            extent -= 1
+        return extent, count
 
     def _selected_mdu_tags(self, detector_list: str) -> set[int]:
         selected: set[int] = set()
         for token in detector_list.split():
             try:
-                idx = int(token)
+                index = int(token)
             except ValueError:
                 continue
-            if 0 <= idx < _MAX_PSI_HISTOGRAMS:
-                selected.add(idx)
+            if 0 <= index < _MAX_PSI_HISTOGRAMS:
+                selected.add(index)
         return selected
 
     # ------------------------------------------------------------------
@@ -1574,31 +1560,29 @@ class PsiLoader(BaseLoader):
         return [max(0, min(int(max_value), int(v))) for v in out]
 
     def _guess_psi_instrument(self, path: Path) -> tuple[str, str, str]:
-        token = path.stem.lower()
-        mapping = {
-            "gps": ("GPS", "piM3.2", "continuous surface muon source"),
-            "ltf": ("LTF", "piM3.3", "continuous surface muon source"),
-            "gpd": ("GPD", "muE1", "continuous decay channel muon source"),
-            "dolly": ("DOLLY", "piE1", "continuous surface muon source"),
-            "alc": ("ALC", "piE3", "continuous surface muon source"),
-            "hifi": ("HIFI", "piE3", "continuous surface muon source"),
-            "flame": ("FLAME", "PSI", "continuous muon source"),
-        }
-        if "flame" in token:
-            return mapping["flame"]
-        for key, values in mapping.items():
-            if f"_{key}_" in token or token.startswith(f"{key}_") or token.endswith(f"_{key}"):
-                return values
-        # Also accept an instrument token directly abutting a run number with no
-        # separator (e.g. ``gps2923.bin`` / ``gpd0001``): the token at the start
-        # of the stem immediately followed by digits, or at the end immediately
-        # preceded by digits. Anchored + digit-bounded so a token appearing as a
-        # substring of an unrelated word (e.g. a sample name) is not matched.
-        # ``flame`` is deliberately excluded here — it keeps its broad substring
-        # match above and needs no digit-adjacent rule.
-        for key, values in mapping.items():
-            if key == "flame":
-                continue
-            if re.match(rf"^{key}\d", token) or re.search(rf"\d{key}$", token):
-                return values
+        """Resolve PSI filename conventions to instrument and beamline metadata.
+
+        PSI lists GPS at piM3.2 and GPD at muE1 on its instrument pages:
+        https://www.psi.ch/en/smus/gps and https://www.psi.ch/en/smus/gpd.
+        https://www.psi.ch/fr/smus/flame-project places FLAME at the former
+        LTF piM3.3 location; the filename API retains its less specific FLAME
+        beamline/source output. PSI HIFI filenames identify HAL-9500 at piE3:
+        https://www.psi.ch/en/smus/hal-9500. ISIS HiFi is a separate instrument.
+        """
+        stem = path.stem.lower()
+        if "flame" in stem:
+            return "FLAME", "PSI", "continuous muon source"
+        instruments = (
+            ("GPS", "piM3.2", "surface"),
+            ("LTF", "piM3.3", "surface"),
+            ("GPD", "muE1", "decay channel"),
+            ("DOLLY", "piE1", "surface"),
+            ("ALC", "piE3", "surface"),
+            ("HIFI", "piE3", "surface"),
+        )
+        for pattern in (r"(?:^|_){name}(?:_|$)", r"^{name}\d|\d{name}$"):
+            for instrument, beamline, source_type in instruments:
+                name = instrument.lower()
+                if stem != name and re.search(pattern.format(name=name), stem):
+                    return instrument, beamline, f"continuous {source_type} muon source"
         return "PSI", "n/a", "continuous muon source"
