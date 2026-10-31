@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import re
 import struct
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from itertools import chain, islice
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +41,7 @@ from asymmetry.core.utils.perf import perf_timer
 _MAX_PSI_HISTOGRAMS = 32
 _BIN_HEADER_SIZE = 1024
 _TEMPERATURE_FILE_EXT = ".mon"
-_TEMPERATURE_FILE_MAX_SEARCH_DEPTH = 3
+_TEMPERATURE_SEARCH_DEPTH_LIMIT = 3
 #: How far a sidecar's own start timestamp may fall outside the run's
 #: started..stopped window before the sidecar is treated as belonging to a
 #: different run. PSI run numbers restart every beam period, so a leftover
@@ -569,7 +571,7 @@ class PsiLoader(BaseLoader):
         started: str = "",
         stopped: str = "",
     ) -> tuple[_PsiTemperatureLogs | None, list[dict[str, str]]]:
-        """Read optional PSI ``.mon`` sidecars using Mantid-compatible rules.
+        """Read optional PSI ``.mon`` sidecars with shared channel naming rules.
 
         Returns the merged logs (or ``None``) plus a list of rejected sidecars.
         A sidecar is rejected when its own start timestamp is inconsistent with
@@ -624,29 +626,25 @@ class PsiLoader(BaseLoader):
         return self._unique_temperature_log_files(matches)
 
     def _find_temperature_log_files_recursively(self, path: Path, run_number: int) -> list[Path]:
-        """Fallback recursive search for less common PSI sidecar layouts."""
+        """Find run monitors within the bounded sidecar directory tree."""
+        pending = deque([(path.parent, 0)])
+        visited: set[Path] = set()
         matches: list[Path] = []
-        queue: list[tuple[Path, int]] = [(path.parent, 0)]
-        seen: set[Path] = set()
-        while queue:
-            directory, depth = queue.pop(0)
+        while pending:
+            directory, depth = pending.popleft()
             try:
                 resolved = directory.resolve()
-            except OSError:
-                resolved = directory
-            if resolved in seen:
-                continue
-            seen.add(resolved)
-            try:
-                children = sorted(directory.iterdir(), key=lambda child: child.name.lower())
+                if resolved in visited:
+                    continue
+                visited.add(resolved)
+                children = sorted(directory.iterdir(), key=lambda child: str(child).lower())
             except OSError:
                 continue
             for child in children:
-                if child.is_file():
-                    if self._is_temperature_log_file_for_run(child, run_number):
-                        matches.append(child)
-                elif child.is_dir() and depth < _TEMPERATURE_FILE_MAX_SEARCH_DEPTH:
-                    queue.append((child, depth + 1))
+                if child.is_file() and self._is_temperature_log_file_for_run(child, run_number):
+                    matches.append(child)
+                elif depth < _TEMPERATURE_SEARCH_DEPTH_LIMIT and child.is_dir():
+                    pending.append((child, depth + 1))
         return self._unique_temperature_log_files(matches)
 
     def _temperature_log_files_in_directory(self, directory: Path, run_number: int) -> list[Path]:
@@ -824,126 +822,100 @@ class PsiLoader(BaseLoader):
         )
 
     def _parse_temperature_log_file(self, path: Path) -> _PsiTemperatureLogs:
-        contents = path.read_text(encoding="latin-1", errors="ignore").splitlines()
-        title_groups: list[list[str]] = []
+        """Read named monitor channels and sidecar metadata shared with LoadPSIMuonBin."""
         equipment = ""
+        title_groups: list[list[str]] = []
         start_time = ""
-        data_start = 0
-
-        for line_no, line in enumerate(contents):
-            if not line.startswith("!"):
-                data_start = line_no
-                break
-            if "Equipment name:" in line:
-                equipment = self._parse_temperature_equipment(line)
-            if "Title" in line:
-                title_groups = self._parse_temperature_title_groups(line)
-            elif self._looks_like_psi_temperature_date(line):
-                start_time = self._parse_temperature_start_time(line)
-        else:
-            data_start = len(contents)
-
-        if not title_groups:
-            raise ValueError(f"PSI temperature log does not define channel titles: {path}")
-
-        series_data: dict[str, dict[str, list[float]]] = {}
-        for line in contents[data_start:]:
-            if not line.strip() or line.startswith("!"):
-                continue
-            for channel, time_value, value in self._parse_temperature_data_line(
-                line,
-                title_groups,
-                equipment,
-            ):
-                bucket = series_data.setdefault(channel, {"time": [], "values": []})
-                bucket["time"].append(time_value)
-                bucket["values"].append(value)
-
+        samples: dict[str, tuple[list[float], list[float]]] = {}
+        with path.open(encoding="latin-1") as stream:
+            for line in stream:
+                if not line.startswith("!"):
+                    break
+                if "Equipment name:" in line:
+                    equipment = self._parse_temperature_equipment(line)
+                if "Title" in line:
+                    title_groups = self._parse_temperature_title_groups(line)
+                if self._looks_like_psi_temperature_date(line):
+                    start_time = self._parse_temperature_start_time(line)
+            else:
+                line = ""
+            if not title_groups:
+                raise ValueError(f"PSI temperature log does not define channel titles: {path}")
+            for record in chain((line,), stream):
+                if not record.strip() or record.startswith("!"):
+                    continue
+                for channel, seconds, value in self._parse_temperature_data_line(
+                    record, title_groups, equipment
+                ):
+                    times, values = samples.setdefault(channel, ([], []))
+                    times.append(seconds)
+                    values.append(value)
+        if not samples:
+            raise ValueError(f"PSI temperature log does not contain numeric data: {path}")
         time_series: dict[str, dict[str, Any]] = {}
-        for channel, values in sorted(series_data.items()):
-            data_values = np.asarray(values["values"], dtype=np.float64)
-            if data_values.size == 0:
-                continue
+        for channel in sorted(samples):
+            times, values = samples[channel]
             series_path = self._psi_temperature_series_path(equipment, channel)
-            role = self._psi_temperature_channel_role(equipment, channel)
-            time_series[series_path] = {
+            series: dict[str, Any] = {
                 "path": series_path,
                 "units": "K",
-                "time": list(values["time"]),
-                "values": list(values["values"]),
-                "mean": float(np.mean(data_values)),
-                "min": float(np.min(data_values)),
-                "max": float(np.max(data_values)),
+                "time": times,
+                "values": values,
+                "mean": float(np.mean(values)),
+                "min": float(np.min(values)),
+                "max": float(np.max(values)),
                 "source_file": str(path),
                 "source_format": "PSI .mon",
                 "reader_provenance": "Mantid LoadPSIMuonBin-compatible",
             }
             if equipment:
-                time_series[series_path]["equipment"] = equipment
-            if role:
-                time_series[series_path].update(role)
-
-        if not time_series:
-            raise ValueError(f"PSI temperature log does not contain numeric data: {path}")
-
+                series["equipment"] = equipment
+            series.update(self._psi_temperature_channel_role(equipment, channel))
+            time_series[series_path] = series
         return _PsiTemperatureLogs(
             source_file=str(path),
             source_files=[str(path)],
             start_time=start_time,
-            channels=[key.removeprefix("psi_temperature/") for key in sorted(time_series)],
+            channels=[key.removeprefix("psi_temperature/") for key in time_series],
             time_series=time_series,
         )
 
     def _parse_temperature_equipment(self, line: str) -> str:
-        match = re.search(r"Equipment name:\s*(.+)$", line)
-        if match is None:
+        """Extract the monitor equipment identifier from its header label."""
+        label = "Equipment name:"
+        if label not in line:
             return ""
-        tokens = match.group(1).split()
-        return tokens[-1].strip() if tokens else ""
+        words = line.split(label, 1)[1].split()
+        return words[-1] if words else ""
 
     def _parse_temperature_title_groups(self, line: str) -> list[list[str]]:
-        _, _, title_text = line.partition(":")
-        title_text = title_text.strip()
-        groups: list[list[str]] = []
-        for group_text in title_text.split("\\"):
-            titles = [title.strip() for title in group_text.split() if title.strip()]
-            if titles:
-                groups.append(titles)
-        return groups
-
-    def _parse_temperature_titles(self, line: str) -> tuple[list[str], bool]:
-        """Return legacy title parsing for older private tests."""
-        groups = self._parse_temperature_title_groups(line)
-        if len(groups) > 1:
-            return [" ".join(group) for group in groups], True
-        return (groups[0] if groups else []), False
+        """Read whitespace-separated channel names in each backslash group."""
+        if ":" not in line:
+            return []
+        return [group.split() for group in line.split(":", 1)[1].split("\\") if group.split()]
 
     def _looks_like_psi_temperature_date(self, line: str) -> bool:
-        if len(line) >= 8 and line[5:8].upper() in _PSI_MONTHS:
-            return True
-        return bool(re.search(r"\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}:\d{2}", line))
+        """Recognise fixed-column month headers or embedded ISO-shaped timestamps."""
+        return line[5:8].upper() in _PSI_MONTHS or bool(
+            re.search(r"\d{4}-\d{1,2}-\d{1,2}\s+\d{1,2}:\d{2}:\d{2}", line)
+        )
 
     def _parse_temperature_start_time(self, line: str) -> str:
-        psi_match = re.search(
-            r"(\d{1,2})-([A-Za-z]{3})-(\d{2,4})\s+(\d{1,2}:\d{2}:\d{2})",
-            line,
-        )
-        if psi_match:
-            day, month, year, time_text = psi_match.groups()
-            year_int = int(year)
-            if year_int < 100:
-                year_int += 2000
-            month_number = _PSI_MONTHS.get(month.upper(), "01")
-            return f"{year_int:04d}-{month_number}-{int(day):02d}T{time_text}"
-
-        iso_match = re.search(
-            r"(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}:\d{2}:\d{2})",
-            line,
-        )
-        if iso_match:
-            year, month, day, time_text = iso_match.groups()
-            return f"{int(year):04d}-{int(month):02d}-{int(day):02d}T{time_text}"
-        return ""
+        """Format monitor date fields without imposing calendar validation."""
+        dated = re.search(r"(\d{1,2})-([A-Za-z]{3})-(\d{2,4})\s+(\d{1,2}:\d{2}:\d{2})", line)
+        if dated:
+            day, month_name, year, clock = dated.groups()
+            month = int(_PSI_MONTHS.get(month_name.upper(), "01"))
+        else:
+            dated = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}:\d{2}:\d{2})", line)
+            if not dated:
+                return ""
+            year, month_text, day, clock = dated.groups()
+            month = int(month_text)
+        year_number = int(year)
+        if year_number < 100:
+            year_number += 2000
+        return f"{year_number:04d}-{month:02d}-{int(day):02d}T{clock}"
 
     def _parse_temperature_data_line(
         self,
@@ -951,38 +923,29 @@ class PsiLoader(BaseLoader):
         title_groups: list[list[str]],
         equipment: str = "",
     ) -> list[tuple[str, float, float]]:
-        segments = line.split("\\")
-        if len(segments) < 4:
+        """Pair monitor title groups with their numeric blocks in record order."""
+        pieces = line.split("\\")
+        if len(pieces) < 4:
             raise ValueError(f"PSI temperature log data line is not backslash-delimited: {line}")
-
-        time_value = self._seconds_from_clock_string(segments[0])
-        num_values = int(segments[1])
-        value_blocks = [self._split_temperature_values(segment) for segment in segments[2:-1]]
-        if not value_blocks:
-            return []
-
-        rows: list[tuple[str, float, float]] = []
-        emitted: set[str] = set()
-        groups_to_parse = title_groups
-        blocks_to_parse = value_blocks
+        seconds = self._seconds_from_clock_string(pieces[0])
+        count = int(pieces[1])
+        blocks = [self._split_temperature_values(piece) for piece in pieces[2:-1]]
         if (
             len(title_groups) >= 2
-            and len(value_blocks) >= 2
+            and len(blocks) >= 2
             and title_groups[0] == title_groups[1]
-            and value_blocks[0] == value_blocks[1]
+            and blocks[0] == blocks[1]
         ):
-            groups_to_parse = [title_groups[0]]
-            blocks_to_parse = [value_blocks[0]]
-
-        for group, values in zip(groups_to_parse, blocks_to_parse, strict=False):
-            limit = min(num_values, len(group), len(values))
-            for idx in range(limit):
-                channel = self._psi_temperature_channel_name(group[idx], equipment)
-                if channel is None or channel in emitted:
-                    continue
-                emitted.add(channel)
-                rows.append((channel, time_value, values[idx]))
-        return rows
+            blocks = blocks[:1]
+        emitted: set[str] = set()
+        result: list[tuple[str, float, float]] = []
+        for titles, values in zip(title_groups, blocks):
+            for title, value in islice(zip(titles, values), max(0, count)):
+                channel = self._psi_temperature_channel_name(title, equipment)
+                if channel is not None and channel not in emitted:
+                    emitted.add(channel)
+                    result.append((channel, seconds, value))
+        return result
 
     def _psi_temperature_channel_name(self, title: str, equipment: str = "") -> str | None:
         channel = str(title).strip()
