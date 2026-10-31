@@ -12,13 +12,15 @@ and improve the harness whenever it gets stuck.
 
 Harness code is any repo-local artifact that improves agent reliability:
 
-- concise maps such as `AGENTS.md` and `docs/INDEX.md`
-- policy docs such as `docs/porting/README.md` that define repeatable agent workflows
+- `AGENTS.md`, the one binding guide for every agent (`CLAUDE.md` imports it and
+  `.github/copilot-instructions.md` points to it, so no rule lives in a
+  vendor-specific file; the harness caps its length and checks the import)
 - architecture docs that describe boundaries and intended dependencies
 - executable checks in `tools/harness.py`
 - CI jobs that run the same commands agents run locally
 - tests, examples, and smoke checks that turn product intent into feedback
-- quality notes and execution plans that preserve design decisions over time
+
+Plans and decisions live in GitHub issues and PR bodies, not here.
 
 ## Validation Ladder
 
@@ -92,18 +94,17 @@ CI validation uses the passing baseline: structural checks, Ruff, and pytest.
 
 When a local `.venv` exists, `tools/harness.py` re-executes itself with that
 interpreter. This keeps local agent runs on the project dependency set instead
-of the ambient Python environment.
+of the ambient Python environment, which matters for fitting: the project pins
+numpy 2.2.x and a working iminuit, and numpy ≥ 2.3 breaks fitting.
+
+A per-test timeout (`--timeout=120`) makes a hung test fail rather than stall
+the run.
 
 ## Agent Workflow
 
 1. Read `AGENTS.md`, then open only the docs relevant to the task.
 2. Identify the affected boundary: loader, transform, fitting, project schema,
    GUI panel, packaging, or documentation.
-3. If the task is a feature port from WiMDA, musrfit, Mantid, or another
-  reference program, complete the study pass in `docs/porting/<feature-slug>/`
-  before implementation. Record entry points, data flow, dependencies, edge
-  cases, test coverage, implementation differences, port seams, and comparison
-  data in stable, machine-readable paths.
 3. Write or update the smallest test or structural check that captures the
    desired behavior.
 4. Implement the change in the layer that owns the behavior.
@@ -111,35 +112,6 @@ of the ambient Python environment.
    before handing work back when feasible.
 6. If an issue repeats, add a harness rule or documentation note instead of
    relying on future memory.
-
-## Porting Workflow
-
-Feature ports are two-pass tasks.
-
-### Study pass
-
-Do not implement the feature yet. Create the study scaffold described in
-`docs/porting/README.md` and compare the reference implementations first.
-
-Required artifacts for each study:
-
-- `docs/porting/<feature-slug>/README.md`
-- `docs/porting/<feature-slug>/comparison.md`
-- `docs/porting/<feature-slug>/implementation-options.md`
-- `docs/porting/<feature-slug>/test-data.md`
-- `docs/porting/<feature-slug>/verification-plan.md`
-- `docs/porting/index.json`
-
-Optional study-pass scaffolding:
-
-- `tests/porting/<feature-slug>/`
-- `src/porting/<feature-slug>/`
-
-### Implementation pass
-
-Implement only after the study exists and the approach is chosen. Use the study
-docs as the source of truth, add verification tests against the reference
-programs, and update the study with the final decision and comparison outcome.
 
 ## Boundaries Worth Encoding
 

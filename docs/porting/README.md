@@ -1,5 +1,10 @@
 # Porting Workflow
 
+> **Retired.** Do not add to this directory or follow this workflow. See
+> `AGENTS.md`, "Other μSR programs": plans go in GitHub issues and comparisons go
+> in the public Sphinx docs. A `polish` issue moves what is worth keeping out of
+> here and deletes the rest.
+
 This directory defines the required study-first workflow for porting features
 into Asymmetry from reference programs such as WiMDA, musrfit, and Mantid.
 

@@ -18,8 +18,7 @@ section-comment markers in source):
   ``_build_add_field_menu``.
 - **Batched mutation** — ``batch_updates`` (context manager) /
   ``_flush_batch_updates``: wrap any loop that adds datasets in
-  ``batch_updates()`` to avoid an O(n^2) per-add table rebuild (see
-  ``AGENTS.md``).
+  ``batch_updates()`` to avoid an O(n^2) per-add table rebuild.
 - **Dataset and group lifecycle** — ``add_dataset``, ``create_data_group``,
   ``ungroup``, ``add_runs_to_group``/``remove_runs_from_group``,
   ``_rebuild_table`` (the full-table repaint driven by the above).

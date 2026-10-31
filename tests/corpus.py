@@ -1,7 +1,7 @@
 """The WiMDA muon-school corpus, for tests that read real instrument data.
 
 The corpus is never committed; ``ASYMMETRY_CORPUS_ROOT`` names the extracted
-release (see AGENTS.md § "Test Corpus"). Tests that need it skip when the
+release (see AGENTS.md § "Test corpus"). Tests that need it skip when the
 variable is unset, which is always the case on CI. Once it is set, a missing
 file is a configuration error (the wrong release, a renamed run), not a skip.
 """

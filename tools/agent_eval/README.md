@@ -36,6 +36,10 @@ On Windows, permission rules match paths in POSIX form with the drive as its
 own segment, so the data copy is granted as `Read(//c/Users/.../data/**)`;
 `_absolute_pattern` builds that from the staged path.
 
+Evaluations use Claude Sonnet when driven through Claude Code and `gpt-6-luna`
+when driven through Codex. Keep the host and model recorded with every result so
+scores from the two tracks are not conflated.
+
 This runner launches Claude Code, so its default remains Sonnet. When the same
 rubrics are evaluated through Codex, use the dedicated runner:
 
