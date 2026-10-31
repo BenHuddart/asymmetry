@@ -40,7 +40,7 @@ jobs:
               - 'tools/**'
               - 'pyproject.toml'
               - 'constraints.txt'
-              - '.github/workflows/ci.yml'
+              - '.github/workflows/**'
 
   # Fast lint + structural checks. Always run (cheap, and structural validates
   # repo shape such as the retired-docs baseline, which docs changes can touch).

@@ -4,13 +4,14 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   # Fail fast if the tag disagrees with the tree it points at, before paying
@@ -19,22 +20,21 @@ jobs:
   # stable release must have a rolled CHANGELOG heading. Prerelease tags
   # (containing "-") skip the changelog requirement.
   verify-version:
-    name: Verify tag matches version and changelog
+    name: Verify version and changelog
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Check tag against pyproject.toml and CHANGELOG.md
+      - name: Check version against tag and CHANGELOG.md
+        id: version
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-          PY_VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)"
-          if [ "${VERSION}" != "${PY_VERSION}" ]; then
-            echo "::error::Tag ${TAG} does not match pyproject.toml version" \
-              "${PY_VERSION}. Release via the 'Cut release' workflow (or fix" \
-              "the tag) so the packaged app reports the version it is labelled with."
+          VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${VERSION}."
             exit 1
           fi
           case "${VERSION}" in
@@ -47,6 +47,7 @@ jobs:
               fi
               ;;
           esac
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
   build-macos-arm:
     name: Build macOS DMG (arm64)
@@ -55,14 +56,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
-      - name: Extract version
-        id: meta
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -102,7 +95,7 @@ jobs:
           ASYMMETRY_DMG_BACKGROUND: ${{ github.workspace }}/build/dmg-bg.png
         shell: bash
         run: |
-          VERSION="${{ steps.meta.outputs.version }}"
+          VERSION="${{ needs.verify-version.outputs.version }}"
           DMG_PATH="dist/Asymmetry-${VERSION}-macos-arm64.dmg"
 
           test -d dist/Asymmetry.app
@@ -114,7 +107,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: asymmetry-macos-arm64
-          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-macos-arm64.dmg
+          path: dist/Asymmetry-${{ needs.verify-version.outputs.version }}-macos-arm64.dmg
           if-no-files-found: error
           # Build artifacts are only needed long enough for the release job to
           # download them; the "Delete workflow artifacts" step removes them on
@@ -129,14 +122,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
-      - name: Extract version
-        id: meta
-        shell: pwsh
-        run: |
-          $tag = $env:GITHUB_REF_NAME
-          $version = $tag.Substring(1)
-          "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -182,7 +167,7 @@ jobs:
       - name: Build EXE installer
         shell: pwsh
         run: |
-          $version = "${{ steps.meta.outputs.version }}"
+          $version = "${{ needs.verify-version.outputs.version }}"
           $appDir = "$env:GITHUB_WORKSPACE\dist\Asymmetry"
           $iconFile = "$env:GITHUB_WORKSPACE\build\icons\Asymmetry.ico"
           $outputDir = "$env:GITHUB_WORKSPACE\dist"
@@ -197,7 +182,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: asymmetry-windows-x64
-          path: dist/Asymmetry-${{ steps.meta.outputs.version }}-windows-x64-setup.exe
+          path: dist/Asymmetry-${{ needs.verify-version.outputs.version }}-windows-x64-setup.exe
           if-no-files-found: error
           # Build artifacts are only needed long enough for the release job to
           # download them; the "Delete workflow artifacts" step removes them on
@@ -205,10 +190,15 @@ jobs:
           # the release job never runs) instead of the 90-day default.
           retention-days: 1
 
+  validate:
+    uses: ./.github/workflows/full-suite.yml
+
   release:
+    if: github.event_name == 'push'
     name: Create GitHub release
     runs-on: ubuntu-latest
     needs:
+      - validate
       - build-macos-arm
       - build-windows
     permissions:
