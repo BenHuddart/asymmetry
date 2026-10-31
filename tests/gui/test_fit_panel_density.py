@@ -153,13 +153,13 @@ def test_model_row_wraps_instead_of_stacking(app):
         tab.deleteLater()
 
 
-def test_resting_parameter_table_does_not_scroll_sideways_in_the_dock(app):
+def test_resting_parameter_table_does_not_scroll_sideways_in_the_dock(tmp_path, app):
     """At rest the table shows Name·Value·Fix·Min·Max without a scrollbar.
 
     The tab's *minimum* width stays under ``char_width(40)`` — the fit-range
     row, not the table, is what the dock can never be narrower than.
     """
-    settings = QSettings("AsymmetryTest", "FitPanelDensity")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.clear()
     tab = SingleFitTab(settings=settings)
     try:
@@ -187,13 +187,13 @@ def test_resting_parameter_table_does_not_scroll_sideways_in_the_dock(app):
         settings.clear()
 
 
-def test_batch_tab_parameter_tables_do_not_scroll_sideways_in_the_dock(app):
+def test_batch_tab_parameter_tables_do_not_scroll_sideways_in_the_dock(tmp_path, app):
     """The Batch tab's tables fit the same dock as the Single tab's.
 
     Parameter · Seed · Type is what rests visible; the rail's ``Bounds`` chip is
     off, so Min and Max are not part of the resting budget.
     """
-    settings = QSettings("AsymmetryTest", "BatchPanelDensity")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.clear()
     tab = GlobalFitTab(member_kind="runs", settings=settings)
     try:

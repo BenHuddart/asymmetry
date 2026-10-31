@@ -703,7 +703,10 @@ While a project has unsaved changes, a timer (default every 5 minutes,
 ``0`` disables it — the ``QSettings`` key ``project/autosave_interval_minutes``)
 writes a crash-recovery snapshot to ``<name>.autosave.asymp`` beside a saved
 project, or to an ``untitled.autosave.asymp`` file under the platform's
-application-data directory for a session that has never been saved. A
+application-data directory for a session that has never been saved. Directory
+creation runs with the snapshot write in the background. If creation or writing
+fails, the snapshot is skipped and the log reports ``Autosave failed: …``.
+Closing an untouched window does not create an application-data directory. A
 successful save or a clean window close deletes it — including the
 ``untitled`` snapshot a session wrote before its first **Save As**. If you
 keep working while a save is writing, that work is not in the saved file:

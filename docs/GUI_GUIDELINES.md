@@ -166,6 +166,10 @@ structural harness.)
 Sizing/formatting helpers: `metrics` (above), `compile_gle`
 (`utils/export.py`), `format_param_label` (`utils/formatting.py`).
 
+`app_data_dir()` (`utils/app_data.py`) resolves the shared application-data
+location without creating it. File-writing workers create their destination
+folders; path queries and closing an untouched window do not.
+
 ## Threading
 
 Never run long work (file I/O, fits, transforms, reconstructions) on the GUI

@@ -242,11 +242,13 @@ def test_maxent_progress_uses_determinate_footer_bar(qapp: QApplication) -> None
     assert footer._progress_bar.maximum() == 0
 
 
-def test_maxent_panel_sections_collapse_persist_via_isolated_settings(qapp: QApplication) -> None:
+def test_maxent_panel_sections_collapse_persist_via_isolated_settings(
+    tmp_path, qapp: QApplication
+) -> None:
     """Collapsed/expanded state for the collapsible sections persists across
     panel instances via QSettings, isolated from the app's real settings scope
     (mirrors the PanelSection persistence pattern)."""
-    settings = QSettings("AsymmetryTest", "maxent_panel_sections_test")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.clear()
     try:
         panel = MaxEntPanel()
