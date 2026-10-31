@@ -5,10 +5,10 @@ sampled curve (an FFT/MaxEnt frequency spectrum, an ALC resonance), the position
 and height of a local maximum to better than the bin spacing.  The estimate is
 the vertex of the unique parabola through the peak bin and its two neighbours.
 
-This ports the behaviour of WiMDA's ``parabpkextrap`` (``Plot.pas``): a 3-point
+This has the same behaviour as WiMDA's ``parabpkextrap``: a 3-point
 parabolic extrapolation whose vertex is reported only when the parabola opens
 downward (a genuine maximum).  For exactly three points the least-squares
-parabola of the Pascal source reduces to the unique interpolating parabola, so
+parabola WiMDA uses reduces to the unique interpolating parabola, so
 the closed form here is exact and equivalent.
 """
 

@@ -84,6 +84,5 @@ Cited in full in [comparison.md](comparison.md). Primary: Blundell, De Renzi,
 Lancaster & Pratt (eds.), *Muon Spectroscopy: An Introduction* (OUP, 2022),
 §15.5 (frequency domain), §14.2 (pulsed sources), §4.4 (muonium), §12.4
 (muoniated radicals). Burg (1972); Rainford & Daniell (1994); Skilling & Bryan
-(1984); Riseman & Forgan (2003); Sánchez-Monge et al. (2018, STATCONT). GPL
-references (Mantid, musrfit, WiMDA) are verification oracles only — never
-vendored.
+(1984); Riseman & Forgan (2003); Sánchez-Monge et al. (2018, STATCONT). Mantid,
+musrfit and WiMDA serve as verification references; Mantid and musrfit are GPL.

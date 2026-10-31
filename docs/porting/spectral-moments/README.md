@@ -29,15 +29,13 @@ Reference physics: Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: An
 Introduction* (OUP, 2022) — "the textbook" below — particularly its treatment of
 the field distribution `p(B)` in the mixed state and its connection to `λ`.
 
-## WiMDA reference (the behavioural oracle)
+## WiMDA reference
 
 `$WIMDA_SRC/src/Moments.pas:152–423` (`TMoment.FormShow`, `parabpkextrap`,
 `Button1Click`). WiMDA computes moments of the **MaxEnt** spectrum only, in
 **Gauss**, over a user `[xmin, xmax]` window with an amplitude **cutoff as a
-percentage of the peak**. Full arithmetic transcription and our divergences are
-in [comparison.md](comparison.md). The unit `Moments.pas` is GPL; we use it as a
-*behavioural oracle* (transcribe the arithmetic, re-derive in our own idiom and
-tests), never as copied code.
+percentage of the peak**. Its definitions and our divergences are in
+[comparison.md](comparison.md).
 
 The moment set (WiMDA names → ours):
 
@@ -153,13 +151,13 @@ trend; a lineshape fit gives the interpreted physics. The user guide carries thi
 
 ## Study artifacts
 
-- [comparison.md](comparison.md) — WiMDA arithmetic transcription, our moment
+- [comparison.md](comparison.md) — WiMDA's moment definitions, our moment
   definitions, and every documented divergence (both behaviours shown).
 - [implementation-options.md](implementation-options.md) — core API, the five GUI
   integration seams (with file:line), and the open step-3 choices with
   recommendations.
 - [test-data.md](test-data.md) — synthetic distributions (closed-form), the
-  WiMDA shared-spectrum oracle, and the external-corpus gate.
+  fixed WiMDA reference values, and the external-corpus gate.
 - [verification-plan.md](verification-plan.md) — how each claim is checked.
 </content>
 </invoke>

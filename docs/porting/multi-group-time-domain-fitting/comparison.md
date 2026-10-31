@@ -68,7 +68,8 @@ Confirmed entry points:
 - In LF-sequence multifits that extra coordinate is the per-run field or delay
 	value, not a detector identifier.
 - In `Analyse.pas`, the `fgAll` fitting mode instead loops over all groups and
-	appends each group's trace into one fit vector with `x2[n] := g`.
+	appends each group's trace into one fit vector, with the group index in the
+	secondary x column.
 - `AsymFitFunction.pas` then interprets `x2` according to context:
 	- as the active group index when fitting all groups of one run
 	- as the active field or delay value for LF-sequence multifits
@@ -80,7 +81,7 @@ sequence" by reusing one function evaluator over one stacked data vector.
 
 - `Analyse.pas` constructs the fit data as lifetime-corrected counts:
 
-	`Y[n] = groupd[g, i] * exp(t * lam_mu) / nbin[i]`
+	Y = N_g(t)·e^{t/τ_µ} / n_bin, with N_g the grouped counts.
 
 	with propagated Poisson errors scaled by the same factor.
 - The group-parameter block stores four values per group:
@@ -90,9 +91,9 @@ sequence" by reusing one function evaluator over one stacked data vector.
 	- relative phase
 - In `AsymFitFunction.pas`, the single-pulse count model for `fgAll` is:
 
-	`c = (1 + a * af) * N0_g + exp(t / tau_mu) * BG_g`
+	c = (1 + a·a_f)·N₀,g + e^{t/τ_µ}·BG_g
 
-	where `af` is the per-group amplitude factor and `a` is the shared physics
+	where a_f is the per-group amplitude factor and `a` is the shared physics
 	function value.
 
 This is one of the most important behaviors to port: WiMDA does not throw away

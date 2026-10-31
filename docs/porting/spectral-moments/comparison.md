@@ -1,32 +1,20 @@
 # Spectral moments — WiMDA comparison
 
-Oracle: `$WIMDA_SRC/src/Moments.pas` (GPL; transcribed as a *behavioural*
-oracle — arithmetic re-derived in our own idiom, never copied). Cross-references
-to the field-resolution and default-level definitions are in
-`$WIMDA_SRC/src/MaxControl.pas`.
+Reference: `$WIMDA_SRC/src/Moments.pas`. The field-resolution and default-level
+definitions are in `$WIMDA_SRC/src/MaxControl.pas`.
 
-## 1. WiMDA's pipeline (`TMoment.FormShow`, lines 152–393)
+## 1. WiMDA's pipeline (`TMoment.FormShow`)
 
 WiMDA builds a **field** spectrum from the MaxEnt frequency spectrum and computes
 moments over a windowed, cutoff-thresholded subset.
 
-### 1.1 Build the field spectrum (lines 169–176)
+### 1.1 Build the field spectrum
 
-```pascal
-for i := nmin to nmax do begin
-  x^[np, 1] := (i - 1) * bres;     { field axis, Gauss }
-  x^[np, 2] := F[i] - DEF;         { amplitude, MaxEnt level less default }
-  inc(np)
-end;
-```
-
-- `bres := fres / 0.01355342` (`MaxControl.pas:271`) — field resolution in Gauss,
-  i.e. the frequency resolution divided by `γ_μ/2π = 0.01355342 MHz/G`. The field
-  axis is therefore `B = (i−1)·bres`.
-- `F[i]` is the MaxEnt spectral amplitude; `DEF` is the MaxEnt flat **default**
-  (prior) level, subtracted so the baseline sits at zero.
-- `nmin`/`nmax` are the index bounds of the user frequency window
-  (`MaxControl.pas:295,302`: `nmin := 1 + round(Fmin/bres)` etc.).
+For each frequency bin in the user window, WiMDA stores a field value and an
+amplitude equal to the MaxEnt level less the flat MaxEnt **default** (prior)
+level, so the baseline sits at zero. The field step is the frequency resolution
+divided by `γ_μ/2π = 0.01355342 MHz/G`, and the field axis starts from zero at
+the first frequency bin.
 
 **Our equivalent.** Asymmetry's spectra already carry a field/frequency axis
 (`FieldUnit`) and a baseline-subtracted amplitude (the Fourier conditioning
@@ -36,92 +24,76 @@ default handling of our own**; the W15 accessor hands the core the
 already-conditioned `(x, amplitude, errors, unit)`. The core treats `x` as the
 field/frequency axis in whatever unit the GUI passes (Gauss by default).
 
-### 1.2 Discrete peak (lines 178–188)
+### 1.2 Discrete peak
 
-```pascal
-ppk := 0; Bpk := 0; ipk := 0;
-for i := 1 to np do
-  if x^[i,2] > ppk then begin ppk := x^[i,2]; Bpk := x^[i,1]; ipk := i end;
-```
+WiMDA scans for the largest amplitude and keeps its value, index and field. This
+**discrete peak** is what the cutoff threshold is later measured against.
 
-`ppk` = peak amplitude, `ipk` = its index, `Bpk` = its field. **`ppk` is the
-discrete peak**, and it is what the cutoff threshold is later measured against.
+> **WiMDA indexing bug (divergence D1).** The spectrum is stored from index 0,
+> but the peak search starts at index 1 and runs through the stored count — it
+> **skips the first bin and reads one slot past the last stored point**
+> (stale/zero memory). The moment sums run over the stored range correctly. We
+> use the **consistent** `0 … n-1` range everywhere; on any spectrum whose true
+> peak is the first bin, or whose last+1 slot held a large stale value, WiMDA
+> could pick a different peak. Documented; we do not reproduce the bug.
 
-> **WiMDA indexing bug (divergence D1).** The spectrum is filled `np = 0,1,2,…`
-> (0-based; `inc(np)` after each store), but the peak search runs `for i := 1 to
-> np` — it **skips index 0 and reads index `np`**, one past the last stored
-> point (stale/zero memory). The moment sums below run `for i := 0 to np-1`
-> (correct 0-based). We use the **consistent** `0 … n-1` range everywhere; on any
-> spectrum whose true peak is the first bin, or whose last+1 slot held a large
-> stale value, WiMDA could pick a different peak. Documented; we do not
-> reproduce the bug.
+### 1.3 Parabolic peak refinement (`parabpkextrap`)
 
-### 1.3 Parabolic peak refinement (`parabpkextrap`, lines 87–147)
+A 5-point quadratic least-squares fit around the discrete peak, evaluated at its
+vertex: express each field as an offset from the peak in units of the local bin
+spacing, fit a parabola `a·u² + b·u + c` over the five points, and convert the
+vertex `u* = −b/(2a)` back to a field.
 
-A 5-point quadratic least-squares fit around `ipk`, evaluated at its vertex:
-
-- normalise `xx = (B[i] − B[ipk]) / Δ` with `Δ = B[ipk+1] − B[ipk]`, over
-  `i = ipk−2 … ipk+2`;
-- least-squares parabola `y = a·xx² + b·xx + c`;
-- vertex `xx* = −b/(2a)`, then `B_pk = xx*·Δ + B[ipk]`.
-
-Guarded by `(index < n − nexpts/2) and (index > nexpts/2)` (with `nexpts = 5`,
-`nexpts div 2 = 2`): **if the discrete peak is within 2 bins of either end, the
-parabolic step is skipped** and `B_pk` stays the discrete peak. We re-derive the
-closed-form normal-equation solution (the oracle keeps WiMDA's hand-unrolled
-`m1…m6` accumulators as an independent cross-check) with two deliberate
-divergences:
+**If the discrete peak is within 2 bins of either end, the parabolic step is
+skipped** and `B_pk` stays the discrete peak. We re-derive the closed-form
+normal-equation solution with two deliberate divergences:
 
 - **Edge guard (geometrically exact).** We require all five points to exist,
-  `2 ≤ ipk ≤ n−3` (0-based). WiMDA's 1-based `index > 2 … index < n−2` is one bin
-  stricter at the low edge; the difference only changes whether the *third* bin
-  refines or falls back to the discrete peak, and is folded into the
-  consistent-indexing divergence D1.
+  `2 ≤ ipk ≤ n−3` (0-based). WiMDA's guard is one bin stricter at the low edge;
+  the difference only changes whether the *third* bin refines or falls back to
+  the discrete peak, and is folded into the consistent-indexing divergence D1.
 - **Vertex clamp (D8).** A near-flat 5-point fit can place the parabolic vertex
   far outside the points it was fitted to — unphysical for a peak. We clamp the
   vertex to the fitted five-point span `[B[ipk−2], B[ipk+2]]`. WiMDA leaves it
   unclamped; on a clean peak the vertex is well inside the span and the two
-  agree, so the oracle test is unaffected.
+  agree, so the reference values are unaffected.
 
-### 1.4 Window + cutoff mask (lines 227–229, 258–260)
+### 1.4 Window + cutoff mask
 
 A point `i` contributes iff
 
 ```
-x[i,2] > cutoff·ppk    AND    xnmin ≤ x[i,1] ≤ xnmax
+aᵢ > c·a_pk    AND    B_min ≤ Bᵢ ≤ B_max
 ```
 
-with `cutoff = CutoffEdit/100` (a **percentage of the discrete peak amplitude**)
-and `[xnmin, xnmax]` the user field range. Strict `>` on the cutoff (so points
-exactly at threshold, and all negatives, are excluded; with `ppk>0` and
-`cutoff∈[0,1]` the threshold is positive). We match: `amplitude > cutoff_fraction
+with `c` the user's cutoff (a **percentage of the discrete peak amplitude**) and
+`[B_min, B_max]` the user field range. Strict `>` on the cutoff (so points exactly
+at threshold, and all negatives, are excluded; with a positive peak and
+`c ∈ [0,1]` the threshold is positive). We match: `amplitude > cutoff_fraction
 · peak_amplitude` and `x_range[0] ≤ x ≤ x_range[1]`.
-
 ### 1.5 Mean (first pass, lines 222–251)
+### 1.5 Mean
+
+The amplitude-weighted mean field over the masked points,
+`B̄ = Σ pᵢBᵢ / Σ pᵢ`. If the weights sum to zero (empty window) WiMDA blanks all
+labels and exits with `n_sample` reported. We return a result flagged
+`n_sample = 0` / `success`-style empty so the GUI can grey the readout.
+
+### 1.6 Central moments
+
+With `W = Σ pᵢ`, sums over the masked points:
 
 ```
-m0 = Σ p ;  m1 = Σ p·B ;  Bave = m1/m0
+m₂ = Σ p(B − B̄)²/W ,   m₃ = Σ p(B − B̄)³/W ,   m₂,pk = Σ p(B − B_pk)²/W
+α = sign(m₃)·|m₃|^{1/3}/√m₂        (skewness)
+β = (B̄ − B_pk)/√m₂,pk              (lineshape asymmetry)
 ```
 
-amplitude-weighted mean field over the masked points. If `m0 = 0` (empty window)
-WiMDA blanks all labels and exits with `n_sample` reported. We return a result
-flagged `n_sample = 0` / `success`-style empty so the GUI can grey the readout.
-
-### 1.6 Central moments (second pass, lines 253–281)
-
-```
-about Bave:  m2  = Σ p·(B−Bave)²/m0 ,  m3 = Σ p·(B−Bave)³/m0
-about Bpk:   m2pk = Σ p·(B−Bpk )²/m0
-√m₂   = sqrt(m2)            { Brms vs Bave }
-√m₂,pk = sqrt(m2pk)          { Brms vs Bpk  }
-α = power(abs(m3), 1/3)/√m₂ , negated if m3<0    { skewness }
-β = (Bave − Bpk)/√m₂,pk                           { lineshape asymmetry }
-```
+The RMS widths about the mean and about the peak are `√m₂` and `√m₂,pk`.
 
 Notes:
 
-- `m1` about `Bave` is computed but ≈0 by construction (first central moment) and
-  unused; we skip it.
+- The first central moment is ≈0 by construction and unused; we skip it.
 - **`α`'s cube-root normalisation is WiMDA's own convention.** The conventional
   dimensionless skewness is `γ₁ = m₃/m₂^{3/2}`. WiMDA instead reports `α =
   ∛|m₃|/√m₂` (sign of `m₃`). Dimensionally `∛|m₃| ∼ B` and `√m₂ ∼ B`, so `α` is
@@ -133,20 +105,19 @@ Notes:
   RMS — positive when the mean lies above the peak (long high-field tail, the
   vortex-lattice signature). Sign convention discussed in §3.
 
-### 1.7 Run-averaging accumulator (lines 297–387)
+### 1.7 Run-averaging accumulator
 
 When the moments window is visible and a *new* spectrum is shown, WiMDA folds the
-current run's seven moments into running sums `Σ` and `Σ²`, increments `nave`, and
-— **only once `nave > 2`** — reports, per moment, a mean and a **population**
-standard deviation:
+current run's seven moments into running sums of values `S₁` and squares `S₂`
+over `N` runs, and — **only once `N > 2`** — reports, per moment, a mean and a
+**population** standard deviation:
 
 ```
-mean = Σ/nave
-var  = Σ² − Σ²/nave ;  std = sqrt(var/nave) if var>0 else 0
+mean = S₁/N ,   std = √[(S₂ − S₁²/N)/N]   (0 if the bracket is not positive)
 ```
 
-A `Reset` button zeroes the accumulators. The export writes either the
-single-run row (`Button1`) or the averaged row (`Button3`).
+A Reset button zeroes the accumulators. The export writes either the
+single-run row or the averaged row.
 
 **Divergence D3 — we do not replicate the stateful accumulator.** Per Ben's
 decision, a selection of spectra becomes one computed `FitSeries` with one member
@@ -154,16 +125,13 @@ per spectrum; run-to-run averaging and its scatter error are handled by the
 existing parameter-trend layer (which already averages/fits a series and is the
 modern equivalent of WiMDA's fit-table export). This is strictly more capable:
 the trend layer keeps every member (not just running sums), can fit `B_rms(T)`,
-and round-trips through `.asymp`. We note WiMDA's `std = sqrt(var/nave)` is the
-*population* σ (divides by `nave`, not `nave−1`) and is only shown for `nave>2`.
+and round-trips through `.asymp`. We note WiMDA's standard deviation is the
+*population* σ (divides by `N`, not `N−1`) and is only shown for `N > 2`.
 
-### 1.8 Export row (`Button1Click`, lines 395–423)
+### 1.8 Export row (`Button1Click`)
 
-```
-! Run  Field  Temp   Bave   Bpk  Bave-Bpk  RMSa  RMSp  Alpha  Beta
-```
-
-i.e. run number, applied field, temperature, then the seven-moment row. Our
+A row holds the run number, applied field, temperature, then the seven-moment
+values. Our
 trend-series member carries exactly these as `parameters` (plus `run_number`,
 `run_label`, `field`, `temperature` in the frozen six-key row shape), so the
 fit-table export is reproduced as a first-class trendable series.
@@ -211,10 +179,10 @@ vortex-lattice-like lineshape in [verification-plan.md](verification-plan.md).
 
 | id | WiMDA | Asymmetry | rationale |
 |---|---|---|---|
-| D1 | peak search `for i:=1 to np` (skips bin 0, reads bin `np`) | consistent `0…n−1` over the stored window | WiMDA off-by-one over stale memory; physical correctness |
+| D1 | peak search skips bin 0 and reads one slot past the end | consistent `0…n−1` over the stored window | WiMDA off-by-one over stale memory; physical correctness |
 | D2 | reports only `α = sign(m₃)·∛\|m₃\|/√m₂` | reports `α` **and** textbook `γ₁ = m₃/m₂^{3/2}` | give the standard skewness alongside parity |
 | D3 | stateful run-average accumulator (running Σ, Σ², population σ, Reset) | per-spectrum members in one computed `FitSeries`; scatter → trend layer | modern, lossless, round-trips, fits trends |
-| D4 | single-spectrum moments carry **no** error (`errsread=false`) | real per-moment uncertainties (propagation/bootstrap, step-3) | "we should do better than WiMDA" |
+| D4 | single-spectrum moments carry **no** error | real per-moment uncertainties (propagation/bootstrap, step-3) | "we should do better than WiMDA" |
 | D5 | MaxEnt spectrum only | MaxEnt **and** phase-corrected real FFT (eligibility-gated) | both are lineshape-faithful; broadens applicability |
 | D6 | field axis hard-wired to Gauss | field-default Gauss + `G/T/MHz` selector, unit recorded | flexibility; `α`,`β` invariant, `B_*` rescale |
 | D7 | discrete peak over the whole MaxEnt spectrum | discrete peak (and cutoff reference) over the analysis *range* | keeps cutoff threshold + `B_pk` self-consistent with the windowed moments; an out-of-range line can't set the threshold |

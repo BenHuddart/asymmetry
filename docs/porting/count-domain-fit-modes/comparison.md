@@ -32,11 +32,11 @@ is the one on which Poisson statistics are exact.
 | `fgFB` | F: N₀·√α·(1 + A) + e^(t·λ_μ)·bg_F; B: N₀·(1/√α)·(1 − A) + e^(t·λ_μ)·bg_B | **α**, N₀, bg_F, bg_B | **Two-domain fit** with a √α tie across the shared N₀. One new ~12-line model wrapper. |
 | `fgFBAsym` | 100·A(t) — fit the *derived asymmetry* | — | **Already shipped** as Asymmetry's F-B asymmetry fit. Out of scope here. |
 
-`af_g` (`fgAll`) is `Parameters[GROUP_base + 4(g−1) + 2]`; the per-group
-relative phase is `…+3`. In `fgFB`, `ralp := sqrt(abs(Parameters[1]))` and the
-two backgrounds are `Parameters[GROUP_base+1]` (forward) and
-`Parameters[GROUP_base+5]` (backward) — i.e. group-1's and group-2's bg slots.
-There is **one** shared N₀ (`Parameters[GROUP_base]`), modulated by √α one way
+`af_g` (`fgAll`) and the per-group relative phase are adjacent entries in each
+group's block of the parameter array. In `fgFB`, √α comes from the absolute value
+of the balance parameter, and the two backgrounds are group 1's (forward) and
+group 2's (backward) background slots.
+There is **one** shared N₀, modulated by √α one way
 and 1/√α the other.
 
 ### Why α is √α, not α
@@ -54,7 +54,7 @@ therefore keep WiMDA's √α parameterization. See the reuse audit.
 | Feature | WiMDA | Asymmetry plan | Divergence |
 |---|---|---|---|
 | Interior exclude range | `SecondRange` toggle → `TimeFrom2/TimeTo2`; excluded bins dropped from the fit vector (`Analyse.pas:6878`) | Drop bins in [t_ex0, t_ex1] when building the count domain (extends the existing t_min/t_max mask) | None (functional parity). Also serves laser/RF artefact rejection. |
-| Fittable t₀ offset | t := X + `Parameters[BG_base+2]`/1000 (ns); shifts the whole model time axis (`musrfunc:1358`) | Optional global `t0` param; model evaluated at t + t₀ | None. Default fixed 0. |
+| Fittable t₀ offset | An offset parameter in ns is added to the data time; shifts the whole model time axis | Optional global `t0` param; model evaluated at t + t₀ | None. Default fixed 0. |
 | Baseline drift | Non-relaxing offset component p[3] multiplied by e^(−(λ_b·t)^β_b), `Analyse.pas:1291`; λ_b=`BG_base`, β_b=`BG_base+1` | Optional stretched-exp envelope on the polarization: A_eff(t) = A(t)·e^(−(λ_b·t)^β_b) | **Stated divergence.** WiMDA applies the envelope only to its built-in constant-offset term; Asymmetry has no single privileged offset parameter, so the envelope multiplies the whole polarization. Off by default; lower priority. Interacts with the deferred Set-BG workflow — we do not implement Set-BG, and the drift term is an independent optional knob. |
 
 ## Count loss / deadtime in the fit (Phase 3)

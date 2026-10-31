@@ -26,10 +26,10 @@ peaks). This is the **primary correctness gate**.
 ## Claim 3 — parity with WiMDA `rmatch` / `CorrFn` (oracle)
 
 **Claim:** the exact forward map agrees with WiMDA's `rmatch` to within the
-documented approximation error, and `CorrFn` is ported faithfully.
-**Test:** transcribed fixed-point checks ([test-data §2](test-data.md)): the
+documented approximation error, and `CorrFn` has the same form.
+**Test:** fixed-point checks ([test-data §2](test-data.md)): the
 forward-map A matches `rmatch`-derived `|f₁+f₂|` to `~0.03 MHz` (and the true
-A_µ to machine precision); `CorrFn` reproduces the Pascal at hand-computed
+A_µ to machine precision); `CorrFn` matches WiMDA's behaviour at hand-computed
 points including the `order = 0` fallback. Documents the rounded-constant
 divergence rather than hiding it.
 

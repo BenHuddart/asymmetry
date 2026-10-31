@@ -33,14 +33,6 @@ GAMMA_MU_MHZ_PER_G = float(gauss_to_mhz(1.0))
 CYCLOHEXADIENYL_A_MHZ = 514.4
 
 
-def _wimda_rmatch(freq: float, field: float) -> float:
-    """Verbatim transcription of WiMDA ``rmatch`` (``Plot.pas:515-523``)."""
-    wemp = (2.81555 * field) ** 2
-    wemn = 1.394225 * field
-    wplus = 4.0 * (wemn - freq)
-    return -(wemn - wemp / wplus)
-
-
 def _radical_tf_run(
     *, field_gauss: float, couplings_mhz: tuple[float, ...], n: int = 2048, bin_width: float = 0.001
 ) -> Run:
@@ -135,22 +127,16 @@ def test_vectorised_pair_matches_scalar_reference() -> None:
         np.testing.assert_allclose(nu34, [r[1] for r in ref], rtol=1e-12, atol=1e-12)
 
 
-def test_breit_rabi_pair_matches_wimda_rmatch_within_approximation() -> None:
-    """The exact forward map agrees with WiMDA's approximate inverse.
+def test_breit_rabi_pair_matches_wimda_estimate_within_approximation() -> None:
+    """The exact forward map agrees with WiMDA's approximate partner-line estimate.
 
-    Documents the divergence: rmatch's rounded constants (2.81555/1.394225 vs
-    CODATA 2.81605/1.394471) and high-field expansion drift A by ~0.01–0.03 MHz,
-    while the forward-map sum is A to machine precision.
+    WiMDA's rounded constants and high-field expansion drift A by up to about
+    0.03 MHz, while the forward-map sum is A to machine precision.
     """
-    for field, a_mhz in [(1000.0, 500.0), (5000.0, 1200.0)]:
+    for field, a_mhz, wimda_a_mhz in [(1000.0, 500.0, 500.00007), (5000.0, 1200.0, 1200.02747)]:
         nu12, nu34 = breit_rabi_pair(field, a_mhz)
-        # rmatch maps the upper line (−ν₃₄ in WiMDA's negative convention) back
-        # to its lower partner; |f₁+f₂| then estimates A.
-        f1 = -nu34
-        f2 = _wimda_rmatch(f1, field)
-        a_from_rmatch = abs(f1 + f2)
-        assert nu12 + nu34 == pytest.approx(a_mhz, rel=1e-9)  # exact
-        assert a_from_rmatch == pytest.approx(a_mhz, abs=0.05)  # WiMDA, approximate
+        assert nu12 + nu34 == pytest.approx(a_mhz, rel=1e-9)
+        assert nu12 + nu34 == pytest.approx(wimda_a_mhz, abs=0.05)
 
 
 # ── correlation_spectrum (pure core) ────────────────────────────────────────

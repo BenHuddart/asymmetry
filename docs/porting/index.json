@@ -183,7 +183,7 @@
       "tests_path": "tests/test_link_groups.py",
       "src_path": null,
       "updated": "2026-06-09",
-      "notes": "WiMDA link groups are equality-only (p[follower]:=p[main]); 4 groups; main=first non-fixed member; followers drop out of the free set. No offset/linear tie exists in WiMDA. The CdS docx 'Use Ties to keep the lines equally spaced' is loose wording: equal spacing comes either from the muonium model (ZFmuonium/TFMuonium: splitting is one parameter) or from three free frequencies recovered from the data. Chosen port: equality link groups + free frequencies (matches WiMDA, no offset ties), with the improvement that a follower reports the propagated (=main's) uncertainty. Follow-on: a MuoniumTriplet model component that enforces symmetry via a single splitting parameter."
+      "notes": "WiMDA link groups are equality-only (each follower takes its main's value); 4 groups; main=first non-fixed member; followers drop out of the free set. No offset/linear tie exists in WiMDA. The CdS docx 'Use Ties to keep the lines equally spaced' is loose wording: equal spacing comes either from the muonium model (ZFmuonium/TFMuonium: splitting is one parameter) or from three free frequencies recovered from the data. Chosen port: equality link groups + free frequencies (matches WiMDA, no offset ties), with the improvement that a follower reports the propagated (=main's) uncertainty. Follow-on: a MuoniumTriplet model component that enforces symmetry via a single splitting parameter."
     },
     {
       "slug": "deadtime-correction",
@@ -460,7 +460,7 @@
         "test_data": "docs/porting/spectral-moments/test-data.md",
         "verification_plan": "docs/porting/spectral-moments/verification-plan.md"
       },
-      "tests_path": "tests/porting/spectral-moments",
+      "tests_path": null,
       "src_path": "src/asymmetry/core/fourier/moments.py",
       "updated": "2026-06-12"
     },
@@ -1043,7 +1043,7 @@
         "verification_plan": "docs/porting/workflow-visualisation/verification-plan.md"
       },
       "updated": "2026-06-13",
-      "notes": "Wave C (alone \u2014 touches plot_panel/data_browser/mainwindow). Governing test: benefit to the established browser-centric Asymmetry workflow, NOT WiMDA mimicry; every item gets ADOPT/ADAPT/REJECT. Verdicts: ADOPT events columns (good-range MEv + events/frame + add-column UI; LogbookUnit.pas:595-626), B-from-log (mirror the temperature-from-log machinery; WiMDA_Main.pas:729-733), log-count diagnostic (log-y toggle on the #53 raw-counts view; Plot.pas:1542-1548). ADAPT data-only/ASCII export (strengthen the existing GLE .dat path, content switch, NO second button; WiMDA_Main.pas:1414-1869), snapped cursor readouts FULL SET (snap+S/N + windowed-avg via integrate_curve + 3-pt parabolic peak on the existing cursor signal; Plot.pas:106-186,1159-1228 \u2014 belongs to the spectrum-reading workflow), REJECT F,B balance overlay (checkpoint 2026-06-13: estimator suite + alpha-free fit already serve calibration). Checkpoint accepted 2026-06-13. REJECT run-stepping pattern-walker (browser + native arrow-key auto-load is a superset), F,B balance overlay, deadtime-file auto-discovery+staleness (estimate/calibrate/promote + project persistence is fresher), cosmetic basket (UI-polish territory). DESIGN-ONLY live current-run monitoring (refreshable-loader hook). No schema bumps; additive panel-state keys only; GPL oracle-only."
+      "notes": "Wave C (alone \u2014 touches plot_panel/data_browser/mainwindow). Governing test: benefit to the established browser-centric Asymmetry workflow, NOT WiMDA mimicry; every item gets ADOPT/ADAPT/REJECT. Verdicts: ADOPT events columns (good-range MEv + events/frame + add-column UI; LogbookUnit.pas:595-626), B-from-log (mirror the temperature-from-log machinery; WiMDA_Main.pas:729-733), log-count diagnostic (log-y toggle on the #53 raw-counts view; Plot.pas:1542-1548). ADAPT data-only/ASCII export (strengthen the existing GLE .dat path, content switch, NO second button; WiMDA_Main.pas:1414-1869), snapped cursor readouts FULL SET (snap+S/N + windowed-avg via integrate_curve + 3-pt parabolic peak on the existing cursor signal; Plot.pas:106-186,1159-1228 \u2014 belongs to the spectrum-reading workflow), REJECT F,B balance overlay (checkpoint 2026-06-13: estimator suite + alpha-free fit already serve calibration). Checkpoint accepted 2026-06-13. REJECT run-stepping pattern-walker (browser + native arrow-key auto-load is a superset), F,B balance overlay, deadtime-file auto-discovery+staleness (estimate/calibrate/promote + project persistence is fresher), cosmetic basket (UI-polish territory). DESIGN-ONLY live current-run monitoring (refreshable-loader hook). No schema bumps; additive panel-state keys only."
     },
     {
       "slug": "rf-musr-resonance-fit",

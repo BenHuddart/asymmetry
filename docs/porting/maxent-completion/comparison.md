@@ -46,9 +46,9 @@ deadtime all attach at this seam without touching the inner descent.
 snapshots the forward model `OPUS(F)` per group, then fills, per group `i`,
 channel `j`:
 
-`Timedom[i,j] = (model[i,j] + DATT[i,j] − DATUM[i,j]) / (fnorm · bunch)`
+(model + original data − working data) / (normalisation · bunching factor)
 
-where `DATT` is the original normalised data and `DATUM` the working data after
+where the original data are the normalised input and the working data are those after
 exponential-background and deadtime correction. So `DATT − DATUM` reinstates
 everything the reduction subtracted, and the `/(fnorm·bunch)` undoes the
 `1e7`-event normalisation and rebinning — the result is a per-group
@@ -86,7 +86,7 @@ frequency per bin `ω = 2π·fperchan·(i−1)`, proton-pulse half-width `w`
 (`PwidEdit`, ns→µs), double-pulse separation `s` (`PsepEdit`), pion lifetime
 `τ_π = 0.026 µs`, muon lifetime `τ_µ`:
 
-- Parabolic proton-pulse FT (`GW[1]=1` at DC):
+- Parabolic proton-pulse FT (unity at DC):
   `G(ω) = (3/w)·[ sin(ωw)/((wω)²·ω) − cos(ωw)/(w·ω²) ]`
 - Pion low-pass: `A(ω) = G(ω) / (1 + (ω·τ_π)²)`
 - Complex single/double-pulse response (`PULSE2T = 0` single, `= s` double):
@@ -125,14 +125,14 @@ relaxation with opposite phase and α-fixed relative efficiency. Phases are
 pinned (F=0°, B=180°) and the fit uses `MODAMP` (amplitudes only, not `MODAB`).
 Every fitted per-group scalar (exp-BG `D`, amplitude `Amp`, BG-change `c`) is
 α-tied by the identical idiom (`:404–408, 736–740, 797–801, 904–908`):
-`x[2] = (x[1]+x[2])/(1+α); x[1] = α·x[2]`, i.e. sum the two independent fits and
+x_B = (x_F + x_B)/(1 + α), x_F = α·x_B, i.e. sum the two independent fits and
 redistribute in ratio α:1. The tie is applied **after** the per-group
 least-squares, not as a constraint inside it.
 
 **SpecBG (`SpecBG.pas`, applied in `Plot.pas:2378–2400`).** Display-only
 zero-frequency lineshape subtraction for the field-distribution view: a
-pseudo-Voigt centred at zero, anchored to the spectrum value just below the
-window `a0 = spectrum[nmin−1]`:
+pseudo-Voigt centred at zero, anchored to the spectrum value a₀ just below the
+window:
 `Δ(x) = a0·[ (1−lfrac)·exp(−(x/(gwid·1.201))²) + lfrac/(1+(x/lwid)²) ]`,
 subtracted from each displayed bin. Widths in display units; the `×1.201`
 relates the edit's width to the Gaussian σ (empirical magic number).
@@ -246,7 +246,7 @@ units helper exists.
 **WiMDA — `MaxEdit.pas`, `PhaseTableUnit.pas`.** A per-group text table edits
 either phases (degrees) or deadtimes (`taud` units) in place. Phase exchange is
 a scratch buffer: `GetFromMaxent` pulls `phi[]` into the table, `SendToMaxent`
-pushes table phases into `phi[]` and sets `phasesfitted := true` (which makes
+pushes table phases into `phi[]` and sets the phases-fitted flag (which makes
 MaxEnt hold phases fixed). Matching is **by group index only**; there is **no
 provenance** (no "from fit"/"from MaxEnt" tag, no timestamp).
 
@@ -340,7 +340,7 @@ preserved (asserted).
 **ZF/LF mode (Phase 3).** Implemented as a `MaxEntConfig.mode` ("general" /
 "zf_lf"); `build_maxent_input` requires exactly two selected groups in zf_lf,
 pins their phases to 0/180, and reads α from the run grouping. `_fit_group_nuisance`
-skips phase fitting and applies the α-tie `x[B]=(x[F]+x[B])/(1+α); x[F]=α·x[B]`
+skips phase fitting and applies the α-tie x_B = (x_F + x_B)/(1 + α), x_F = α·x_B
 to amplitudes and backgrounds after the per-group least-squares (matching
 WiMDA's redistribute-after-fit order). Verified on a synthetic Kubo–Toyabe F/B
 run: phases stay 0/180, the amplitude ratio equals α exactly, the spectrum is
@@ -442,9 +442,9 @@ Mantid the **framework** is not importable (`import mantid` →
 probed standalone (follow-on resolved):
 
 - **`start.py` imports cleanly** standalone (exposes `START`, `np`, `math`; no
-  Mantid-framework imports). Its `PULSESHAPE_convol = convolr + i·convoli` is
-  exactly our pulse kernel with `convolr = P_cos`, `convoli = −P_sin`. With
-  `TZERO_fine = −τ_π` its internal `exp(i(TZERO+τ_π)ω)` time shift cancels,
+  Mantid-framework imports). Its pulse-shape kernel is
+  exactly ours, with real part `P_cos` and imaginary part `−P_sin`. With its fine
+  time zero set to `−τ_π` its internal time-shift phase cancels,
   giving a clean comparison. `tests/test_maxent_pulse_oracle.py` (skipif-guarded
   on a local `~/Source/mantid` checkout, so it skips in CI) confirms the match:
   **single pulse to machine precision** (no τ_µ dependence — the tanh

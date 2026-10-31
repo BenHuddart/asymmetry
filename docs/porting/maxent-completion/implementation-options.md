@@ -289,7 +289,7 @@ mode + SpecBG, and spectrum/log export.
      the run is blocked with a clear message if not exactly two groups.
    - In `_fit_group_nuisance`, when `mode == "zf_lf"`, after the per-group
      amplitude/background least-squares, apply the α-tie
-     `x[B] = (x[F]+x[B])/(1+α); x[F] = α·x[B]` to amplitudes and backgrounds
+     x_B = (x_F + x_B)/(1 + α), x_F = α·x_B to amplitudes and backgrounds
      (`comparison.md` §3), and hold phases at 0/180. Add `mode` to the signature.
    - **SpecBG**: new `core/maxent/specbg.py` `subtract_zero_frequency(spectrum,
      frequencies, *, gauss_width, lorentz_width, lorentz_fraction) -> spectrum`

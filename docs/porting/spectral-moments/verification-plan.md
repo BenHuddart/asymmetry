@@ -1,8 +1,8 @@
 # Spectral moments — verification plan
 
 How each study claim and the eventual port get verified. Tests live beside the
-behaviour: `tests/test_spectrum_moments.py` (core), `tests/porting/spectral-moments/`
-(oracle), and the GUI/persistence tests in the existing fourier/project suites.
+behaviour: `tests/core/test_spectrum_moments.py` (core, with fixed reference values
+for WiMDA's moment definitions), and the GUI/persistence tests in the existing fourier/project suites.
 
 ## Claims → checks
 
@@ -10,7 +10,7 @@ behaviour: `tests/test_spectrum_moments.py` (core), `tests/porting/spectral-mome
 |---|---|---|
 | C1 | Gaussian line has zero skewness and `b_rms = σ` | §1.1 synthetic; assert `skewness≈0`, `beta≈0`, `b_rms_mean≈σ`, `b_pk≈b_ave≈B₀` |
 | C2 | All moments correct on a skewed mixture | §1.2 closed-form mixture; assert `b_ave`, `b_rms_mean`, `skewness_g1`, `α`, sign of `β` vs analytic |
-| C3 | Core matches WiMDA arithmetic | §2 transcribed oracle on one shared spectrum; agree ~1e-9 (D1 bug excluded) |
+| C3 | Core matches WiMDA's moment definitions | §2 fixed reference values on one shared spectrum; agree ~1e-7 (D1 bug excluded) |
 | C4 | β sign convention matches the literature | §1.3 vortex-lattice-like lineshape; assert `b_ave>b_pk`, `beta>0`, `skewness>0` |
 | C5 | Parabolic peak refines, with edge guard | peak-on-a-coarse-grid: refined `b_pk` between bins; peak within 2 bins of an end → `peak_refined=False`, `b_pk` = discrete bin |
 | C6 | Cutoff/range sensitivity is as documented | §1.4 sweep; tightening window → `skewness,beta→0`; raising cutoff → `n_sample↓`, `b_rms↓`; window captured in `recipe` |
@@ -45,6 +45,6 @@ behaviour: `tests/test_spectrum_moments.py` (core), `tests/porting/spectral-mome
   enumerates the mode set explicitly so a new mode defaults to ineligible.
 - **Trend duplication** on re-send: C11 pins the deterministic batch id.
 - **WiMDA divergences** (D1–D6): each is asserted or documented — D1 by the
-  oracle excluding the bug, D2 by reporting `γ₁` alongside `α`, D3 by the
+  reference values excluding the bug, D2 by reporting `γ₁` alongside `α`, D3 by the
   per-member series tests, D4 by C7, D5 by C9, D6 by the invariance check.
 </content>

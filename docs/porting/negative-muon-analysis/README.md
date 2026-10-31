@@ -93,10 +93,10 @@ These were decided before/within this study and are binding on the plan.
 - `NegMuAnalyse.pas:243–425` — `Button3Click` builds the parameter `StringGrid`:
   5 element columns (each `Tau`, amplitude `N`/`NF`/`NB`) + a `Decay BG` column,
   per fit-group mode (`fgForward`/`fgBackward`/`fgFB`/`fgSelected`).
-- `NegMuAnalyse.pas:137–180` — `FitButtonClick`: sets `pp.Lifetime := 2197.03`
-  (ns) for the decay background and fits `musrfunc` over the StringGrid params.
-- `NegMuAnalyse.pas:455–620` — `RatioButtonClick`: amplitude ratios
-  `p[213+i]/p[213+j]` (forward) and `p[219+i]/p[219+j]` (backward).
+- `NegMuAnalyse.pas` — `FitButtonClick`: sets the decay-background lifetime to
+  2197.03 ns and fits `musrfunc` over the StringGrid params.
+- `NegMuAnalyse.pas` — `RatioButtonClick`: ratios between the fitted element
+  amplitudes, forward and backward.
 - `NegMuAnalyse.pas:185–225` — `SetBgButtonClick`: evaluates the fit function for
   the unwanted components and stores it for subtraction in the group window.
 - `Analyse.pas` "Muon Polarity" radio + `PlotPar.pas` μ⁻ lifetime in the

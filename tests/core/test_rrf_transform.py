@@ -159,8 +159,8 @@ class TestImageSuppression:
         assert leak_wimda > 10.0 * leak_fir
         assert leak_wimda > 0.01 * envelope.max()
 
-    def test_wimda_mode_matches_pascal_loop(self):
-        """Bin-for-bin fidelity against a direct transcription of Plot.pas."""
+    def test_wimda_mode_matches_box_mean_convention(self):
+        """Bin-for-bin agreement with the WiMDA display's box-mean convention."""
         rng = np.random.default_rng(7)
         n = 400
         dt = 0.016
@@ -169,25 +169,15 @@ class TestImageSuppression:
         err = rng.uniform(0.1, 0.5, n)
         nu0, phase_deg, box = 12.0, 30.0, 0.08
 
-        # Direct Pascal transcription (Plot.pas plotdata, RRF branch).
-        rrffreq = 2.0 * np.pi * nu0
-        rrfphase = np.deg2rad(phase_deg)
-        factor = 2.0 * np.cos(t * rrffreq + rrfphase)
-        dd = asym * factor
-        ee = err * np.abs(factor)
-        ii = int(box / dt) // 2
-        fd = np.zeros(n)
-        fe = np.zeros(n)
-        for i in range(n):
-            acc_v = acc_e = 0.0
-            count = 0
-            for i1 in range(i - ii, i + ii + 1):
-                if 0 <= i1 < n:
-                    acc_v += dd[i1]
-                    acc_e += ee[i1]
-                    count += 1
-            fd[i] = acc_v / count if ii <= i <= n - ii - 1 else 0.0
-            fe[i] = acc_e / count
+        # The documented convention: a centred box mean over in-range bins, with
+        # values zeroed within half a box of either edge and errors kept there.
+        factor = 2.0 * np.cos(2.0 * np.pi * nu0 * t + np.deg2rad(phase_deg))
+        half = int(box / dt) // 2
+        kernel = np.ones(2 * half + 1)
+        in_range = np.convolve(np.ones(n), kernel, mode="same")
+        fd = np.convolve(asym * factor, kernel, mode="same") / in_range
+        fd[:half] = fd[n - half :] = 0.0
+        fe = np.convolve(err * np.abs(factor), kernel, mode="same") / in_range
 
         curve = rrf_demodulate(
             t,

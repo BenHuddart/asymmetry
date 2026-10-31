@@ -66,8 +66,7 @@ unified 10-category taxonomy.
 
 - **User functions** — Dynamic C++ plugin: users inherit from
   `PUserFcnBase`, compile to a `.so` / `.dll`, load via ROOT's plugin
-  system. Signature is
-  `operator()(Double_t t, const std::vector<Double_t>& par)`.  
+  system. The function is called with the time and a parameter vector.  
   Flagship: `src/tests/userFcn/`.
   High friction (requires C++ + ROOT toolchain) but extremely
   flexible.

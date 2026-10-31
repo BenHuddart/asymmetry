@@ -1,6 +1,7 @@
 """Zero-field polarization functions for a muon dipolar-coupled to one nucleus.
 
-Ports of WiMDA's single-dipole user functions (``dipolarfunctions.dpr``):
+Covers WiMDA's single-dipole user functions, and :func:`dipolar_spin_j` follows
+WiMDA's ``ZFdipgen`` closely:
 ``Dipolar ZF PCR`` / ``Proton dip ZF PCR`` / ``Electron dip ZF PCR`` (all the
 Meier spin-1/2 pair polarization with different parameterisations of the
 dipolar frequency) and ``Dip gen ZF PCR`` (the Celio-Meier closed form for a

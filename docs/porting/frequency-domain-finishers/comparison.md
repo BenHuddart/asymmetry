@@ -18,10 +18,9 @@ A101 (2018) [STATCONT].
 
 ## 1. Field-axis display — VERIFY-ONLY (already built)
 
-**WiMDA.** `FFTPar.pas:210-213` computes the field axis maximum from the Nyquist
-frequency using the muon constant `gmu2 = 0.01355342` MHz/G
-(`Analyse.pas:566`): `bmax := fmax / 0.01355342`. A `field_in_tesla` global
-(`globals.pas:32`) exists but is an unused stub — WiMDA works in Gauss only.
+**WiMDA.** `FFTPar.pas` gets the field axis maximum by dividing the Nyquist
+frequency by the muon constant 0.01355342 MHz/G. A `field_in_tesla` global
+exists but is an unused stub — WiMDA works in Gauss only.
 
 **Asymmetry.** Already implemented and *more* complete. The frequency plot
 panel has a `Frequency (MHz) / Field (G) / Field (T)` combo
@@ -47,28 +46,14 @@ positions agree.
 
 ## 2. Frequency-range exclusions — WIRE EXISTING CORE
 
-**WiMDA.** Ten ranges, each a centre±halfwidth pair (`RangeMid[j]`,
-`RangeWid[j]`, j∈1..10). Applied in `Plot.pas:1993-2007`:
+**WiMDA.** Ten ranges, each a centre±halfwidth pair. When exclusion is enabled
+(`Plot.pas`), every frequency bin inside any range has its power, cosine and sine
+values set to zero.
 
-```pascal
-if FFTparams.ExcludeRange.checked then
-  for i := 1 to nf2 do begin
-    f1 := fmin + (i-1)*fint;
-    for j := 1 to 10 do
-      if (f1 >= RangeMid[j]-RangeWid[j]) and (f1 <= RangeMid[j]+RangeWid[j]) then
-        begin fd^[i-1]:=0; fc^[i-1]:=0; fs^[i-1]:=0 end;
-  end;
-```
-
-Range 1 is the **diamag slot** (UI label "Diamag", `FFTPar.pas:365-378`). The
-**PSI RF-harmonics preset** (`FFTPar.pas:327-358`) sets DC + 50.63 MHz ×{1..5}
-(plus a second DC entry), each with width `artwid = 2/FFTtau` (fallbacks
-`2/(tres·npts)`, ×4 in power mode):
-
-```
-RangeMid = [DC, 50.63, 101.26, 151.89, 202.52, 252.15, DC];  // MHz
-RangeWid = artwid (each)
-```
+Range 1 is the **diamag slot** (UI label "Diamag"). The **PSI RF-harmonics
+preset** (`FFTPar.pas`) sets centres at DC, 50.63, 101.26, 151.89, 202.52 and
+252.15 MHz plus a second DC entry, each with half-width 2/τ_FFT (falling back on
+the reciprocal of half the record length, ×4 in power mode).
 
 **Asymmetry.** `exclude_frequency_ranges(freqs, values, ranges)`
 ([`fft.py:422`](../../../src/asymmetry/core/fourier/fft.py)) already takes
@@ -90,19 +75,10 @@ for display). Documented.
 
 ## 3. Pulse frequency-response compensation — REUSE pulse.py, GUARDED
 
-**WiMDA** (`Plot.pas:1931-1944`): a Gaussian rolloff inverse,
-
-```pascal
-pw := pwid * pi / 1000;                 { Pwidth (ns) → π·τ(µs) }
-for i := 1 to nf2 do begin
-  fff := fmin + (i-1)*fint;
-  fcfactor := ex(sqr(fff*pw));          { = exp((π f τ)²) }
-  fd^[i-1]:=fd^[i-1]*fcfactor; fe^[..]:=..; fc^[..]:=..; fs^[..]:=.. end;
-```
-
-i.e. multiply every bin by `exp((π f τ)²)`, with τ from a user text box and
-**no high-frequency cap** — it grows without bound (overflow at IEEE limits).
-This models the pulse as a Gaussian whose transform is `exp(−(π f τ)²)`.
+**WiMDA** (`Plot.pas`): a Gaussian rolloff inverse. Every bin is multiplied by
+`exp((π f τ)²)`, with τ from a user text box (ns) and **no high-frequency cap** —
+it grows without bound (overflow at IEEE limits). This models the pulse as a
+Gaussian whose transform is `exp(−(π f τ)²)`.
 
 **Physical basis** (*Muon Spectroscopy* §15.5, §14.2; §17.3): at a pulsed
 source the finite muon-arrival pulse "suppresses higher frequencies before they
@@ -133,14 +109,10 @@ field. Documented as the headline divergence.
 
 ## 4. Spectrum baseline offset — ITERATIVE σ-CLIP (modern default)
 
-**WiMDA** (`Plot.pas:1959-1984`): a single-pass 2σ-clipped mean over the whole
-spectrum, subtracted from the power channel `fd` only:
-
-```pascal
-s := mean(fd); serr := rms_dev(fd);              { pass 1 }
-s := mean(fd where |fd-s| < 2*serr);             { pass 2, one iteration }
-fd := fd - s;
-```
+**WiMDA** (`Plot.pas`): a single-pass 2σ-clipped mean over the whole spectrum,
+subtracted from the power channel only. It takes the mean and RMS deviation,
+recomputes the mean over the points within 2σ of the first mean, and subtracts
+that.
 
 **Asymmetry.** The brief asks to "evaluate a modern robust-baseline alternative
 and pick with evidence." The literature-standard robust continuum estimator is

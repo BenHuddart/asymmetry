@@ -211,9 +211,9 @@ path would break all interactive and CLI usage.
 
 ### Finding 2: WiMDA has frequency-linear infrastructure but does not optimize the slope
 
-`Plot.pas` builds phase as `phi := phi0 + f * Tz` for all five display modes
-that honor the phase. `f` is the frequency of the current bin; `Tz` is
-sourced from `UseT0`/`DeltaT0` in the GUI. This is a genuine linear-in-frequency
+`Plot.pas` adds the bin frequency times a time-zero offset to the phase for all
+five display modes that honor the phase. The offset is sourced from
+`UseT0`/`DeltaT0` in the GUI. This is a genuine linear-in-frequency
 slope term. However:
 
 - `Tz` is always a user-supplied preset, never automatically searched.
@@ -364,8 +364,8 @@ background is meaningfully different from the signal-window mean.
 - WiMDA only enables manual phase entry, automatic phase estimation, and the
   phase-table toggle when `Phase` is selected. `Cos` and `Sin` instead force
   the effective phase to `0` and `90` degrees respectively.
-- The phase-corrected mode uses `phi0 = phase/360` and, when enabled, an added
-  `f * tz` time-zero term before applying `cos(2πphi)` / `-sin(2πphi)`.
+- The phase-corrected mode works with the phase in cycles and, when enabled, adds
+  a frequency-times-time-zero term before applying the cosine and negative sine.
 - This makes grouped FFT phase correction part of normal transform workflow,
   not a downstream plotting tweak.
 

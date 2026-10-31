@@ -3,8 +3,8 @@
 Synthetic-first (checkpoint-1 decision). No real muoniated-radical TF data is
 available in the corpus (`~/Documents/radical/` holds only the reference PDFs),
 and the method is verifiable end-to-end from first principles, so the gating
-tests are synthetic. A WiMDA-transcribed `rmatch`/`CorrFn` oracle anchors the
-parity claims.
+tests are synthetic. Fixed reference values for WiMDA's `rmatch`/`CorrFn`
+behaviour anchor the parity claims.
 
 ## 1. Synthetic radical TF run (primary gating fixture)
 
@@ -32,17 +32,16 @@ Variants for robustness:
   two couplings.
 - A **field sweep** of A_µ values (e.g. 200, 514, 700 MHz) — peak tracks A_µ.
 
-## 2. WiMDA `rmatch` / `CorrFn` numerical oracle
+## 2. WiMDA `rmatch` / `CorrFn` reference values
 
-Transcribed verbatim from the Pascal as fixed-input/fixed-output checks (these
-guard the *parity* claim and document the rounded-constant divergence):
+Fixed-input/fixed-output checks (these guard the *parity* claim and document the rounded-constant divergence):
 
-- `rmatch(freq, field)` (`Plot.pas:515-523`) at the table points in
+- `rmatch(freq, field)` at the table points in
   [comparison.md §2.2](comparison.md): e.g. `rmatch(−285.5759, 1000) ≈ −214.42`,
   giving `|f₁+f₂| ≈ 500.0001` for true A = 500. The Asymmetry exact forward map
   must agree with `rmatch` to **~0.03 MHz** (the documented WiMDA approximation
   error), and with the true A_µ to **machine precision**.
-- `CorrFn(y1, y2, order)` (`Plot.pas:1387-1394`): the order-weighting and the
+- `CorrFn(y1, y2, order)`: the order-weighting and the
   `order = 0 → |y1·y2|` fallback, at hand-computed points (e.g.
   `CorrFn(2, 2, 2) = 4`, `CorrFn(4, 1, 2) = 2·4/(16 + 1/16)`,
   `CorrFn(4, 1, 0) = 4`).

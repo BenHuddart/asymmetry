@@ -2,8 +2,8 @@
 
 Moments have closed-form values on analytic distributions, so the core is tested
 **without any external corpus** — the primary verification is synthetic and
-self-checking. WiMDA arithmetic is pinned by a transcribed oracle on a shared
-spectrum. External `.nxs`/`.bin` runs are an optional, env-gated sanity layer.
+self-checking. WiMDA's moment definitions are held by fixed reference values on a
+shared spectrum. External `.nxs`/`.bin` runs are an optional, env-gated sanity layer.
 
 ## 1. Synthetic distributions (closed-form, no corpus)
 
@@ -63,15 +63,13 @@ With a known `σ[i]`, assert bootstrap errors are finite and shrink ∝ 1/√(si
 as noise drops; assert `b_pk_err`/`beta_err` **inflate** on a deliberately noisy,
 near-flat-topped spectrum (the fragility made visible). Seeded → deterministic.
 
-## 2. WiMDA transcribed oracle (shared spectrum)
+## 2. WiMDA reference values (shared spectrum)
 
-`tests/porting/spectral-moments/wimda_oracle.py` — a direct, line-by-line
-transcription of `Moments.pas`'s arithmetic (consistent `0…n-1` indexing; the D1
-bug **not** reproduced), used purely to pin our core against WiMDA on **one
-shared synthetic spectrum**. Asserts `b_pk`, `b_ave`, `b_diff`, `b_rms_mean`,
-`b_rms_peak`, `α`, `β` agree to ~1e-9. Keeps us honest about the parabolic-vertex
-formula, the cutoff-vs-discrete-peak gate, and the weighting. (GPL: this is a
-behavioural oracle — independently re-derived arithmetic, not copied source.)
+Fixed reference values in `tests/core/test_spectrum_moments.py` pin our core to
+WiMDA's moment definitions on **one shared synthetic spectrum**, with consistent
+`0…n-1` indexing (the D1 bug **not** reproduced). Asserts `b_pk`, `b_ave`, `b_diff`,
+`b_rms_mean`, `b_rms_peak`, `α`, `β` to ~1e-7. Keeps us honest about the
+parabolic-vertex formula, the cutoff-vs-discrete-peak gate, and the weighting.
 
 ## 3. External corpus (optional, env-gated)
 

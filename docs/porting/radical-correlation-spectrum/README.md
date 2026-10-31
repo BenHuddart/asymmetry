@@ -31,13 +31,13 @@ route to identifying a radical and pinning its coupling.
    See [comparison.md §2](comparison.md).
 
 2. **Build it through the exact forward map, not WiMDA's `rmatch` inverse.**
-   `rmatch` (`Plot.pas:515-523`) is an *approximate* high-field inverse with
+   `rmatch` is an *approximate* high-field inverse with
    constants rounded at the 5th significant figure (`2.81555`/`1.394225` vs
    CODATA `2.81605`/`1.394471`), drifting A by ~0.01–0.03 MHz. Scanning the
    hyperfine axis A directly and getting the exact pair from `_tf_levels` (sum =
    A by construction) reuses `muonium.py`, needs no inversion, carries no rounded
-   constants, and is exact. `rmatch` is retained only as a transcribed test
-   oracle. **Decision (study, physical-correctness rule): exact forward map.**
+   constants, and is exact. The tests keep fixed reference values for
+   WiMDA's estimate. **Decision (study, physical-correctness rule): exact forward map.**
 
 3. **It folds in as one more derived display mode — like Burg.** The averaged
    FFT pipeline (`compute_average_group_spectrum`) already supports a derived
@@ -61,15 +61,15 @@ route to identifying a radical and pinning its coupling.
 ## Decisions taken at the pre-study checkpoint (Ben, 2026-06-11)
 
 - **Verification:** synthetic-first (a simulated radical TF run via
-  `core/simulate`; the correlation must peak at the known A_µ) plus a
-  WiMDA-transcribed `rmatch`/`CorrFn` numerical oracle. No real radical data is
+  `core/simulate`; the correlation must peak at the known A_µ) plus
+  fixed reference values for WiMDA's `rmatch`/`CorrFn` behaviour. No real radical data is
   required (none present in `~/Documents/radical/`).
 - **Worked example:** the cyclohexadienyl radical (Mu + benzene),
   A_µ = 514.4(1) MHz (textbook §19.4 Example 19.8; McKenzie *et al.* 2013).
 
 ## Documents
 
-- [comparison.md](comparison.md) — WiMDA-source transcription (`rmatch`, `w12`/
+- [comparison.md](comparison.md) — WiMDA behaviour (`rmatch`, `w12`/
   `w34`, `CorrFn`, the `Corr`/`AvCorr` loop, `FFTPar` controls), the three-source
   physics reconciliation, every divergence with both behaviours, the reused-API
   table, and out-of-scope items.
@@ -87,6 +87,5 @@ Lancaster & Pratt (eds.), *Muon Spectroscopy: An Introduction* (OUP, 2022),
 §4.4 (Breit–Rabi muonium), §12.4 (muoniated radicals), §19.4 (RF resonance /
 the high-field hyperfine method). I. McKenzie, *Annu. Rep. Prog. Chem. Sect. C*
 **109**, 65 (2013). F. L. Pratt, *Physica B* **289–290**, 710 (2000).
-S. J. Blundell *et al.*, *Nat. Rev. Methods Primers* **1**, 89 (2021). GPL
-references (WiMDA, Mantid, musrfit) are verification oracles only — never
-vendored.
+S. J. Blundell *et al.*, *Nat. Rev. Methods Primers* **1**, 89 (2021). WiMDA,
+Mantid and musrfit serve as verification references; Mantid and musrfit are GPL.

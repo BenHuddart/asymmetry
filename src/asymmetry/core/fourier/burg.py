@@ -21,9 +21,6 @@ and its FPE-optimal pole count hints at the number of lines, but it can
 spuriously split strong features and seed false baseline peaks, it offsets line
 positions slightly, and it carries no uncertainties.  It is never the
 quantitative result — frequency-domain fitting and MaxEnt are.
-
-The recursion is transcribed from WiMDA's ``MaxEnt.pas`` (``memcof``/``evlmem``/
-FPE scan), itself the *Numerical Recipes* ``memcof`` algorithm.
 """
 
 from __future__ import annotations
@@ -40,47 +37,34 @@ DEFAULT_ORDER_RANGE = (2, 40)
 def burg_coefficients(signal: ArrayLike, order: int) -> tuple[NDArray[np.float64], float]:
     """Return the order-*m* Burg AR coefficients ``a_k`` and the power ``P_m``.
 
-    Implements Burg's lattice recursion: the reflection coefficient is
-    ``κ_k = 2·Σ f·b / Σ(f² + b²)`` over the forward/backward residuals, the power
-    updates as ``P_k = P_{k-1}(1 − κ_k²)``, and the AR coefficients update by the
-    Levinson relation.  Returns ``(a_coeffs, P_m)`` with ``a_coeffs`` of length
-    ``order``.
+    The predictor is ``x[t] ≈ Σ aᵢ x[t−i]``.  From ``f = b = x`` and
+    ``P₀ = ⟨x²⟩``, each order *k* takes the reflection coefficient
+    ``κ = 2 Σ f[t] b[t−1] / Σ (f[t]² + b[t−1]²)`` over ``t = k…n−1`` (zero when the
+    denominator vanishes), then sets ``P_k = P_{k−1}(1 − κ²)``, updates the
+    coefficients by Levinson (``a_k = κ``, ``aᵢ −= κ a_{k−i}``) and the residuals by
+    ``f[t] −= κ b[t−1]``, ``b[t] = b[t−1] − κ f[t]``.  The order is clamped to
+    ``n − 1``; for ``n < 2`` or ``order < 1`` the coefficients are zero and the
+    power is ``⟨x²⟩``.
     """
     x = np.asarray(signal, dtype=np.float64)
-    n = x.size
     order = int(order)
+    n = x.size
     if n < 2 or order < 1:
-        return np.zeros(max(order, 0), dtype=np.float64), float(np.mean(x * x)) if n else 0.0
+        return np.zeros(max(order, 0), dtype=np.float64), float(np.mean(x**2)) if n else 0.0
+
     order = min(order, n - 1)
-
-    power = float(np.dot(x, x)) / n
-    wk1 = x[:-1].copy()  # forward residuals  (NR wk1[1..n-1])
-    wk2 = x[1:].copy()  # backward residuals (NR wk2[1..n-1])
-    d = np.zeros(order + 1, dtype=np.float64)  # 1-indexed AR coefficients
-    wkm = np.zeros(order + 1, dtype=np.float64)  # previous-order coefficients
-
-    for k in range(1, order + 1):
-        length = n - k
-        f = wk1[:length]
-        b = wk2[:length]
-        denom = float(np.dot(f, f) + np.dot(b, b))
-        reflection = (2.0 * float(np.dot(f, b)) / denom) if denom != 0.0 else 0.0
-        d[k] = reflection
-        power *= 1.0 - reflection * reflection
-        if k > 1:
-            # d[i] = wkm[i] − κ_k·wkm[k−i] for i = 1..k−1
-            d[1:k] = wkm[1:k] - reflection * wkm[k - 1 : 0 : -1]
-        if k == order:
-            break
-        wkm[1 : k + 1] = d[1 : k + 1]
-        next_len = n - k - 1
-        if next_len > 0:
-            old1 = wk1.copy()
-            old2 = wk2.copy()
-            wk1[:next_len] = old1[:next_len] - reflection * old2[:next_len]
-            wk2[:next_len] = old2[1 : next_len + 1] - reflection * old1[1 : next_len + 1]
-
-    return d[1 : order + 1].copy(), float(power)
+    a = np.zeros(order, dtype=np.float64)
+    power = float(np.mean(x**2))
+    # f[i] and b[i] are the residuals f[t] and b[t−1] for the same t, so they stay aligned.
+    f, b = x[1:], x[:-1]
+    for k in range(order):
+        denominator = np.dot(f, f) + np.dot(b, b)
+        kappa = 2.0 * np.dot(f, b) / denominator if denominator != 0.0 else 0.0
+        power *= 1.0 - kappa**2
+        a[:k] -= kappa * a[:k][::-1]
+        a[k] = kappa
+        f, b = (f - kappa * b)[1:], (b - kappa * f)[:-1]
+    return a, float(power)
 
 
 def ar_power_spectrum(

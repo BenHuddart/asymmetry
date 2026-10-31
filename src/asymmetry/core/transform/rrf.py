@@ -23,7 +23,7 @@ Two methods are provided:
     2·cos(2πν₀t + φ) and box-average over a time window (default one image
     period), zeroing the output within half a window of either edge and
     *linearly* averaging the scaled errors — including WiMDA's statistically
-    loose error treatment (``$WIMDA_SRC/src/Plot.pas``, ``plotdata``).
+    loose error treatment (its ``plotdata``).
 
 The demodulated curve is a **visualization**, not fit input: the low-pass
 correlates neighbouring bins over the filter support (and the textbook warns
@@ -412,7 +412,7 @@ def _demodulate_wimda(
 ) -> RRFCurve:
     """WiMDA's 2·cos demodulation + box smooth, bin-for-bin.
 
-    Mirrors ``$WIMDA_SRC/src/Plot.pas`` (``plotdata``): values scaled by
+    Mirrors WiMDA's ``plotdata``: values scaled by
     2·cos(2πν₀t + φ), errors by |2·cos|, box half-width ``(box/dt) div 2``,
     box values *and errors* divided by the in-range count (the linear error
     average of comparison-ledger item 1), and output zeroed within half a box
@@ -438,7 +438,7 @@ def _demodulate_wimda(
     else:
         taps = 2 * half + 1
         # Running in-bounds windowed sums via cumulative sums; the count is
-        # the number of in-bounds indices, exactly as the Pascal loop counts.
+        # the number of in-bounds indices, exactly as WiMDA's loop counts.
         cum_v = np.concatenate(([0.0], np.cumsum(values)))
         cum_e = np.concatenate(([0.0], np.cumsum(errors)))
         idx = np.arange(n)

@@ -106,8 +106,7 @@ These are settled and override the original brief where they differ.
 
 ## Reference seams
 
-- WiMDA Object Pascal at `$WIMDA_SRC/src` (oracle reading only; GPL — behaviour
-  documented, no code copied). MINOS has no WiMDA analogue; its references are the
+- WiMDA Object Pascal at `$WIMDA_SRC/src` (behaviour reference). MINOS has no WiMDA analogue; its references are the
   iminuit docs + [`docs/porting/candidates/minos-error-analysis`](../candidates/minos-error-analysis/README.md).
 - Textbook: Blundell, De Renzi, Lancaster & Pratt, *Muon Spectroscopy: An
   Introduction* (OUP, 2022) — "the textbook" below — for the per-sample

@@ -6,7 +6,7 @@ densifies the sampled points without adding independent information, so only
 moment uncertainties as if every sample were independent underestimates
 uncertainties by ``~√s``. ``error_oversampling=s`` on :meth:`FitEngine.fit`,
 :meth:`FitEngine.global_fit`, and :func:`spectrum_moments` applies the standard
-correction (WiMDA precedent: ``Analyse.pas:5228`` divides dof by the zero-pad
+correction (WiMDA precedent: it divides dof by the zero-pad
 factor; this implementation additionally scales χ² and the reported errors).
 
 These tests pin the exact relations documented in the engine/moments

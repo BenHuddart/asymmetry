@@ -27,7 +27,7 @@ transfer function sinc(πfW) (box width W): it has nulls at f = k/W, so its
 default W = 1/(ν₀ + ν_field) places the *first null exactly on the image*
 when ν₀ is tuned to the applied field — a genuinely clever default. But the
 null is a single point, and a conditional one: the *discretized* box
-(`trunc(RRFbin/tres) div 2` half-width) only realises it when an integer
+(its half-width is half the box size in whole bins) only realises it when an integer
 number of image periods fits the box, so even on-field the null depends on
 the bin width cooperating (demonstrated in `tests/test_rrf_transform.py`).
 Detune ν₀ off the field (the normal use — you detune to create a visible

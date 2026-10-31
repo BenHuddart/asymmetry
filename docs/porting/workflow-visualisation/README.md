@@ -67,7 +67,7 @@ None of this is advanced/niche enough to hide — it is mainstream browser-and-p
 workflow and belongs on the **primary** surfaces. The **Options → Advanced** gate
 (session ②) is reserved for genuine specialist toggles; nothing here qualifies.
 Per the standing rules: **no `schema_version` bumps**; panel-state keys are
-**additive only**; GPL sources are **oracle-only**.
+**additive only**.
 
 ## Documents
 

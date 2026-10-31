@@ -66,7 +66,7 @@ WiMDA (Object Pascal, `$WIMDA_SRC/src`, ignoring `__history`/`__recovery`):
 - `Plot.pas` `plotdata` (1652–1695): display demodulation
   `2·cos(RRFfreq·t + RRFphase)` with `RRFfreq = 2π·ν₀` and phase in radians
   (2532–2536), then a running box average of half-width
-  `trunc(RRFbin/tres) div 2`; output bins within half a box of either edge
+  half the box size in whole bins; output bins within half a box of either edge
   are zeroed. Errors are scaled by |2cos| and then *linearly averaged* over
   the box. 1712–1727: a single-group variant demodulates
   background-corrected, lifetime-unrolled counts by cos (no factor 2).

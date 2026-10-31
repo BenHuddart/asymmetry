@@ -15984,7 +15984,7 @@ class MainWindow(QMainWindow):
     def _on_refit_coadded_requested(self, run_numbers) -> None:
         """Combine the selected runs and re-fit them as one co-added member.
 
-        Mirrors WiMDA's right-click "co-add and re-fit" (``FitTableUnit.pas``):
+        Mirrors WiMDA's right-click "co-add and re-fit":
         the selected runs are summed at the raw-count level (``combine_runs``)
         and fitted off-thread with the active single-fit model, then recorded as
         a one-member computed trend series carrying ``combined_from`` provenance.

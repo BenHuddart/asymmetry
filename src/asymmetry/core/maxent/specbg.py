@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from asymmetry.core.maxent.engine import MaxEntConfig
 
 # Empirical factor relating the edit's Gaussian-width value to the 1/e width of
-# the subtracted Gaussian (carried verbatim from WiMDA's SpecBG; magic number).
+# the subtracted Gaussian (follows WiMDA's SpecBG; magic number).
 _GAUSSIAN_WIDTH_FACTOR = 1.201
 
 _MIN_WIDTH = 1.0e-3

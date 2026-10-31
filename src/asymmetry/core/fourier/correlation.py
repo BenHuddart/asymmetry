@@ -12,13 +12,13 @@ spectrum that collapses each genuine Breit--Rabi line-pair onto a single peak at
 the hyperfine-coupling value ``A_µ`` -- the standard frequency-domain route to
 identifying a radical and pinning its coupling.
 
-This is a faithful port of WiMDA's correlation analysis (``Plot.pas`` ``rmatch``
-515--523, ``CorrFn`` 1387--1394, the ``Corr``/``AvCorr`` generation loop
-2149--2230), with one deliberate, documented divergence: rather than
-transliterate WiMDA's approximate closed-form inverse ``rmatch`` (which carries
-constants rounded at the 5th significant figure and drifts ``A_µ`` by
-~0.01--0.03 MHz), we build the spectrum by the **exact Breit--Rabi forward
-map** -- scanning the hyperfine axis ``A`` directly and obtaining the exact pair
+The observable is WiMDA's ``Corr``/``AvCorr`` correlation spectrum, and only
+:func:`corr_fn` follows WiMDA's combiner (``CorrFn``) closely.  The scan differs:
+WiMDA searches for a partner per frequency through its approximate closed-form
+inverse ``rmatch`` (constants rounded at the 5th significant figure, drifting
+``A_µ`` by ~0.01--0.03 MHz), whereas this module walks the coupling with the
+**exact Breit--Rabi forward map** -- scanning the hyperfine axis ``A`` directly and
+obtaining the exact pair
 ``(ν₁₂, ν₃₄)`` from :func:`asymmetry.core.fitting.muonium._tf_levels`, for which
 ``ν₁₂ + ν₃₄ = A`` to machine precision (textbook eqn 4.65, high transverse
 field).  See ``docs/porting/radical-correlation-spectrum/comparison.md``.
@@ -35,12 +35,12 @@ from asymmetry.core.fitting.muonium import (
     _tf_levels,
 )
 
-#: WiMDA's ``CorrOrder`` default (``FFTPar.dfm:817``).
+#: WiMDA's ``CorrOrder`` default.
 DEFAULT_CORR_ORDER = 2
 
 
 def corr_fn(y1: ArrayLike, y2: ArrayLike, order: int = DEFAULT_CORR_ORDER) -> NDArray[np.float64]:
-    """Order-weighted line-pair combiner (WiMDA ``CorrFn``, ``Plot.pas:1387-1394``).
+    """Order-weighted line-pair combiner (follows WiMDA's ``CorrFn``).
 
     Returns the product ``|y₁·y₂|`` weighted by an order-``n`` ratio penalty
     ``2 / (rⁿ + r⁻ⁿ)`` with ``r = |y₁/y₂|``.  The penalty is 1 when the two
@@ -171,9 +171,9 @@ def correlation_spectrum(
     # line ν₁₂ has cleared the diamagnetic line (the upper line is always higher
     # still); below that the forward map just pairs the strong diamagnetic peak
     # with itself and raises a spurious low-A artifact. Requiring ν₁₂ above the
-    # diamagnetic line is the WiMDA-faithful behaviour (WiMDA scans candidate
-    # frequencies starting above the diamagnetic line, Plot.pas i0, on a spectrum
-    # whose diamagnetic line has been excluded) and also removes the ν₁₂ → 0 dip
+    # diamagnetic line matches WiMDA (which scans candidate frequencies starting
+    # above the diamagnetic line, on a spectrum whose diamagnetic line has been
+    # excluded) and also removes the ν₁₂ → 0 dip
     # (the lower line buried in DC/baseline).
     diamag_mhz = G_MU_MHZ_PER_G * field
     lower_floor = max(f_min, diamag_mhz + 2.0 * resolution)

@@ -2,28 +2,18 @@
 
 ## A. WiMDA link-group semantics (verified in source)
 
-`src/Analyse.pas`, `updatelinks` (~6514–6558) and `UpdatePars` (~4612):
-
-```pascal
-{ choose the main of each group: first member, unless a later member is "vary" }
-if (linkgroupmain[j] = 0) or pvar[i] then
-  linkgroupmain[j] := i;
-...
-{ enforce equality and demote followers }
-p[i] := p[linkgroupmain[j]];
-if i <> linkgroupmain[j] then
-begin
-  pvar[i] := false;   { follower is NOT a free fit parameter }
-  pfix[i] := false;
-end;
-```
+`updatelinks` and `UpdatePars` in `src/Analyse.pas` make two passes. The first
+picks each group's main: its first member, unless a later member is flagged
+*vary*. The second gives every member the main's value and clears the vary and
+fix flags on every member other than the main, so followers are not free fit
+parameters.
 
 | Property | WiMDA behaviour |
 | --- | --- |
-| Constraint type | **Equality only** — `p[follower] := p[main]`. No offset/ratio/linear tie exists anywhere. |
-| Group count | **4** (`linkgroupmain: array[1..4]`). |
+| Constraint type | **Equality only** — each follower takes its main's value. No offset/ratio/linear tie exists anywhere. |
+| Group count | **4**. |
 | Main selection | First member of the group, **unless** a later member is flagged *vary* — then that one becomes main. Ensures the free set always contains the group main. |
-| Followers & the free set | Followers get `pvar := false`: they **drop out of the free-fit parameter set**. Only the main is fitted. |
+| Followers & the free set | Followers have their vary flag cleared: they **drop out of the free-fit parameter set**. Only the main is fitted. |
 | Follower uncertainty | Not independently computed (follower ≡ main). |
 | Fit log | `"<param> linked to <main>"` printed per follower (~5212). |
 | UI | `LinkGroupForm`: click a parameter's coloured square → pick No-link / 1 / 2 / 3 / 4. |
@@ -47,18 +37,12 @@ parameter coupling is the equality link group above.
 
 WiMDA achieves equal spacing by one of two routes:
 
-1. **Muonium line-shape model** — `src/Extrafunctions/muoniumfunctions.dpr`,
-   `ZFmuonium` (~98–110):
+1. **Muonium line-shape model** — `ZFmuonium` in
+   `src/Extrafunctions/muoniumfunctions.dpr` sums three weighted cosines with a
+   shared phase, at f₁ = p₁ − p₂, f₂ = p₁ + p₂/2 and f₃ = (3/2)p₂.
 
-   ```pascal
-   f1 := (p1 - p2);     { centre − splitting }
-   f2 := (p1 + p2/2);
-   f3 := 3/2 * p2;
-   ZFmuonium := (a1*cos(2π(f1·t+ph)) + a2*cos(2π(f2·t+ph)) + a3*cos(2π(f3·t+ph)))/6;
-   ```
-
-   Three frequencies are **derived from two parameters** (centre `p1`, splitting
-   `p2`). Symmetry is hard-coded; the splitting is one free parameter.
+   Three frequencies are **derived from two parameters** (centre p₁, splitting
+   p₂). Symmetry is hard-coded; the splitting is one free parameter.
    `TFMuonium`/`LowTFMuonium` do the same for applied-field geometry.
 
 2. **Three free frequencies** — the user fits three independent oscillating
