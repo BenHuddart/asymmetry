@@ -125,6 +125,20 @@ asymmetry/
 3. Add to MainWindow
 4. Add GUI tests using `pytest-qt`
 
-## Questions?
+## Issues and planning
 
-Open an issue for discussion before starting major changes.
+Use the [issue forms](https://github.com/BenHuddart/Asymmetry/issues/new/choose)
+before starting major changes. **Implementation** records the problem, evidence,
+scope, decisions, acceptance criteria, validation, and documentation.
+**Instrument review** records a profile version, checked sections, evidence, and
+credit consent. Reviewers can choose **Do not name me**; the issue and GitHub
+account remain public, and a maintainer can file on a reviewer's behalf.
+
+The issue body's **Blocked by** list is authoritative. Start dependent work only
+when every listed issue is closed as completed; an open PR does not satisfy a
+prerequisite. For a two-PR issue, link the first with `Refs #n` and close the
+issue only in the final PR with `Closes #n`.
+
+When filing through `gh` or the API, use the chosen form's field labels as `###`
+headings, in order. Fill the issue form in the browser or supply the equivalent
+body explicitly with `gh issue create --body-file` or the API.
