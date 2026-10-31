@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib.util
-import json
 import os
 import re
 import subprocess
@@ -219,15 +218,18 @@ SANCTIONED_TEST_SUBPACKAGES = frozenset(
 )
 REQUIRED_KNOWLEDGE_FILES = (
     "AGENTS.md",
+    "CLAUDE.md",
     "README.md",
     "CONTRIBUTING.md",
-    "docs/INDEX.md",
+    "RELEASING.md",
+    "docs/README.md",
     "docs/ARCHITECTURE.md",
+    "docs/GUI_GUIDELINES.md",
     "docs/HARNESS.md",
-    "docs/porting/README.md",
-    "docs/porting/index.json",
-    "docs/QUALITY.md",
-    "docs/PLANS.md",
+    "docs/STYLE.md",
+    "docs/contributing.rst",
+    "docs/reference/index.rst",
+    "tests/README.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
     ".github/ISSUE_TEMPLATE/implementation.yml",
     ".github/ISSUE_TEMPLATE/instrument-review.yml",
@@ -242,21 +244,16 @@ AGENTS_MD_MAX_LINES = 150
 SKILL_MD = SRC_ROOT / "resources" / "skills" / "asymmetry-analysis" / "SKILL.md"
 SKILL_MD_MAX_LINES = 1706
 LINT_TARGETS = ("src", "tests", "tools")
-PORTING_REQUIRED_STUDY_FILES = (
-    "README.md",
-    "comparison.md",
-    "implementation-options.md",
-    "test-data.md",
-    "verification-plan.md",
+# Each retired file must stay listed until deletion; removed entries cannot return.
+RETIRED_DOC_PATHS = (
+    "docs/plans",
+    "docs/porting",
+    "docs/studies",
+    "docs/audit",
+    "docs/investigations",
+    "docs/PLANS.md",
 )
-PORTING_REQUIRED_CANDIDATE_FILES = (
-    "README.md",
-    "comparison.md",
-    "scoring.md",
-)
-# Subdirectories of docs/porting/ that hold reference or workflow docs, not study artifacts.
-PORTING_NON_STUDY_DIRS = frozenset({"practical-workflows", "reference"})
-PORTING_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+RETIRED_DOCS_BASELINE = Path("tools/baselines/retired_docs.txt")
 
 
 @dataclass(frozen=True)
@@ -943,250 +940,60 @@ def find_skill_growth_violations(
     ]
 
 
-def find_porting_policy_violations(root: Path = ROOT) -> list[HarnessFailure]:
-    """Return porting-study layout issues that break the study-first workflow."""
+def find_retired_doc_violations(root: Path = ROOT) -> list[HarnessFailure]:
+    """Reject new historical plans and require deletions to shrink their baseline."""
 
+    baseline = root / RETIRED_DOCS_BASELINE
+    if not baseline.is_file():
+        return [HarnessFailure(baseline, 0, "Missing retired-docs baseline.")]
     failures: list[HarnessFailure] = []
-    porting_root = root / "docs" / "porting"
-    index_path = porting_root / "index.json"
-
-    if not porting_root.is_dir():
-        failures.append(
-            HarnessFailure(
-                porting_root,
-                0,
-                "Missing `docs/porting/` directory for study-first feature ports.",
-            )
-        )
-        return failures
-
-    if not index_path.is_file():
-        failures.append(
-            HarnessFailure(
-                index_path,
-                0,
-                "Missing `docs/porting/index.json` machine-readable study index.",
-            )
-        )
-        return failures
-
-    try:
-        index_data = json.loads(index_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        failures.append(
-            HarnessFailure(index_path, exc.lineno, f"Invalid JSON: {exc.msg}"),
-        )
-        return failures
-
-    if not isinstance(index_data, dict):
-        failures.append(
-            HarnessFailure(index_path, 0, "Porting index must be a JSON object."),
-        )
-        return failures
-
-    version = index_data.get("version")
-    studies = index_data.get("studies")
-    if not isinstance(version, int) or version < 1:
-        failures.append(
-            HarnessFailure(index_path, 0, "Porting index must define an integer `version` >= 1."),
-        )
-    if not isinstance(studies, list):
-        failures.append(
-            HarnessFailure(index_path, 0, "Porting index must define a `studies` array."),
-        )
-        return failures
-
-    # Top-level dirs that hold documentation or candidate containers, not study artifacts.
-    _skip_dirs = PORTING_NON_STUDY_DIRS | {"candidates"}
-    study_dirs = {
-        path.name: path
-        for path in sorted(porting_root.iterdir())
-        if path.is_dir() and path.name not in _skip_dirs
-    }
-
-    candidates_root = porting_root / "candidates"
-    candidate_dirs = {
-        path.name: path
-        for path in (sorted(candidates_root.iterdir()) if candidates_root.is_dir() else [])
-        if path.is_dir()
-    }
-
-    indexed_study_slugs: dict[str, dict[str, object]] = {}
-    indexed_candidate_slugs: dict[str, dict[str, object]] = {}
-    all_indexed_slugs: set[str] = set()
-
-    for entry in studies:
-        if not isinstance(entry, dict):
-            failures.append(
-                HarnessFailure(index_path, 0, "Each porting study entry must be a JSON object."),
-            )
-            continue
-
-        slug = entry.get("slug")
-        feature_name = entry.get("feature_name")
-        status = entry.get("status")
-        path_value = entry.get("path")
-        references = entry.get("references")
-        docs = entry.get("docs")
-
-        if not isinstance(slug, str) or not PORTING_SLUG_RE.fullmatch(slug):
-            failures.append(
-                HarnessFailure(index_path, 0, "Each study entry needs a kebab-case `slug`."),
-            )
-            continue
-        if slug in all_indexed_slugs:
-            failures.append(
-                HarnessFailure(index_path, 0, f"Duplicate porting study slug `{slug}` in index."),
-            )
-            continue
-        all_indexed_slugs.add(slug)
-
-        is_candidate = status == "candidate"
-        if is_candidate:
-            indexed_candidate_slugs[slug] = entry
-        else:
-            indexed_study_slugs[slug] = entry
-
-        if not isinstance(feature_name, str) or not feature_name.strip():
-            failures.append(
-                HarnessFailure(
-                    index_path, 0, f"Porting study `{slug}` needs a non-empty `feature_name`."
-                ),
-            )
-        if not isinstance(status, str) or not status.strip():
-            failures.append(
-                HarnessFailure(
-                    index_path, 0, f"Porting study `{slug}` needs a non-empty `status`."
-                ),
-            )
-
-        if is_candidate:
-            expected_path = f"docs/porting/candidates/{slug}"
-            expected_docs: dict[str, str] = {
-                "readme": f"{expected_path}/README.md",
-                "comparison": f"{expected_path}/comparison.md",
-                "scoring": f"{expected_path}/scoring.md",
-            }
-        else:
-            expected_path = f"docs/porting/{slug}"
-            expected_docs = {
-                "readme": f"{expected_path}/README.md",
-                "comparison": f"{expected_path}/comparison.md",
-                "implementation_options": f"{expected_path}/implementation-options.md",
-                "test_data": f"{expected_path}/test-data.md",
-                "verification_plan": f"{expected_path}/verification-plan.md",
-            }
-
-        if path_value != expected_path:
-            failures.append(
-                HarnessFailure(
-                    index_path, 0, f"Porting study `{slug}` must use `path: {expected_path}`."
-                ),
-            )
-        if not isinstance(references, list) or not all(
-            isinstance(item, str) for item in references
+    entries: set[str] = set()
+    previous = ""
+    for line, relative in enumerate(baseline.read_text(encoding="utf-8").splitlines(), 1):
+        path = Path(relative)
+        if (
+            not relative
+            or relative != relative.strip()
+            or path.is_absolute()
+            or "\\" in relative
+            or ".." in path.parts
+            or path.as_posix() != relative
+            or not any(relative == p or relative.startswith(f"{p}/") for p in RETIRED_DOC_PATHS)
+            or relative <= previous
         ):
             failures.append(
                 HarnessFailure(
-                    index_path, 0, f"Porting study `{slug}` needs a string `references` list."
-                ),
+                    baseline,
+                    line,
+                    "Malformed retired-docs baseline entry; use strictly sorted, unique repo-relative POSIX file paths in retired locations.",
+                )
             )
-        if not isinstance(docs, dict):
-            failures.append(
-                HarnessFailure(index_path, 0, f"Porting study `{slug}` needs a `docs` object."),
-            )
-            continue
-
-        for key, expected_doc_path in expected_docs.items():
-            if docs.get(key) != expected_doc_path:
+        else:
+            entries.add(relative)
+            if not (root / relative).is_file():
                 failures.append(
                     HarnessFailure(
-                        index_path,
-                        0,
-                        f"Porting study `{slug}` must define `docs.{key}` as `{expected_doc_path}`.",
+                        baseline,
+                        line,
+                        f"Retired file {relative} is gone; delete line {line} from {RETIRED_DOCS_BASELINE} so it cannot return.",
                     )
                 )
-
-    for slug, study_dir in study_dirs.items():
-        if not PORTING_SLUG_RE.fullmatch(slug):
-            failures.append(
-                HarnessFailure(
-                    study_dir,
-                    0,
-                    "Porting study directories must use kebab-case feature slugs.",
-                )
-            )
-
-        for filename in PORTING_REQUIRED_STUDY_FILES:
-            file_path = study_dir / filename
-            if not file_path.is_file():
+        previous = relative
+    for relative in RETIRED_DOC_PATHS:
+        location = root / relative
+        paths = [location] if location.is_file() else sorted(location.rglob("*"))
+        for path in paths:
+            parts = path.relative_to(root).parts
+            if not path.is_file() or any(p.startswith(".") or p == "__pycache__" for p in parts):
+                continue
+            if path.relative_to(root).as_posix() not in entries:
                 failures.append(
                     HarnessFailure(
-                        file_path,
+                        path,
                         0,
-                        "Missing required study-pass artifact for feature port.",
+                        "New file in a retired planning location; plans go in a GitHub issue, lasting content in the owning Sphinx page, a regression test, or an invariant comment.",
                     )
                 )
-
-        if slug not in indexed_study_slugs:
-            failures.append(
-                HarnessFailure(
-                    study_dir,
-                    0,
-                    "Porting study directory is missing from `docs/porting/index.json`.",
-                )
-            )
-
-    for slug in indexed_study_slugs:
-        if slug not in study_dirs:
-            failures.append(
-                HarnessFailure(
-                    index_path,
-                    0,
-                    f"Porting index entry `{slug}` does not have a matching study directory.",
-                )
-            )
-
-    for slug, candidate_dir in candidate_dirs.items():
-        if not PORTING_SLUG_RE.fullmatch(slug):
-            failures.append(
-                HarnessFailure(
-                    candidate_dir,
-                    0,
-                    "Porting candidate directories must use kebab-case feature slugs.",
-                )
-            )
-
-        for filename in PORTING_REQUIRED_CANDIDATE_FILES:
-            file_path = candidate_dir / filename
-            if not file_path.is_file():
-                failures.append(
-                    HarnessFailure(
-                        file_path,
-                        0,
-                        "Missing required candidate artifact for feature port.",
-                    )
-                )
-
-        if slug not in indexed_candidate_slugs:
-            failures.append(
-                HarnessFailure(
-                    candidate_dir,
-                    0,
-                    "Porting candidate directory is missing from `docs/porting/index.json`.",
-                )
-            )
-
-    for slug in indexed_candidate_slugs:
-        if slug not in candidate_dirs:
-            failures.append(
-                HarnessFailure(
-                    index_path,
-                    0,
-                    f"Porting index candidate `{slug}` does not have a matching candidate directory.",
-                )
-            )
-
     return failures
 
 
@@ -1234,7 +1041,7 @@ def run_structural_checks() -> int:
         *find_knowledge_base_violations(),
         *find_agent_guide_violations(),
         *find_skill_growth_violations(),
-        *find_porting_policy_violations(),
+        *find_retired_doc_violations(),
         *find_dependency_boundary_violations(),
         *find_core_boundary_violations(),
         *find_duplicate_limit_field_violations(),
