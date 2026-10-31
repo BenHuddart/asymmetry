@@ -43,7 +43,7 @@ jobs:
               - '.github/workflows/ci.yml'
 
   # Fast lint + structural checks. Always run (cheap, and structural validates
-  # repo shape such as the porting policy index, which docs changes can touch).
+  # repo shape such as the retired-docs baseline, which docs changes can touch).
   checks:
     name: Lint & structural
     runs-on: ubuntu-latest

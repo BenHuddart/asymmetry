@@ -138,3 +138,18 @@ Add a new harness check when:
 Keep rules high signal. A harness that fails noisily for incidental style drift
 will stop being trusted; a harness that encodes real project invariants will
 compound.
+
+## Retired planning locations
+
+Plans and review decisions belong in GitHub issues. The structural check rejects
+new files under `docs/plans/`, `docs/porting/`, `docs/studies/`, `docs/audit/`,
+`docs/investigations/`, and at `docs/PLANS.md`. Existing files are frozen in
+`tools/baselines/retired_docs.txt`, one strictly sorted repository-relative POSIX
+file path per line. Editing an existing file is allowed while its supported
+content is rescued into the owning Sphinx page, a regression test, or an invariant
+comment.
+
+When deleting a retired file, delete its baseline line in the same change. A stale
+entry fails structural checks, and a file reintroduced after removal fails as a
+new plan. Emptying the baseline is allowed; no placeholder study or index entry
+is required. Hidden files and `__pycache__` directories are ignored.
