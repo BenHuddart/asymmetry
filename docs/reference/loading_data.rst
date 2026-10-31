@@ -198,6 +198,8 @@ extent, with zero padding for shorter histograms, so a longer later histogram
 retains its samples. M3 retains its final-bin omission. Contradictory
 settings and histogram records raise an error before count-array allocation;
 selected records must agree in histogram eligibility and bin bounds.
+The reader retains at most one histogram’s input samples alongside the
+returned count arrays; ignored trailing bytes are not loaded into memory.
 
 PSI filenames containing ``hifi`` (such as ``tdc_hifi_2014_00153.mdu``)
 identify `HAL-9500 <https://www.psi.ch/en/smus/hal-9500>`_ at piE3.

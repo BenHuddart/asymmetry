@@ -326,90 +326,97 @@ class PsiLoader(BaseLoader):
     # ------------------------------------------------------------------
 
     def _read_mdu(self, path: Path) -> _PsiRawRun:
-        data = path.read_bytes()
-        if len(data) < _FE_HEADER.size:
-            raise ValueError("PSI-MDU file is too small to contain a header")
-        header = self._parse_mdu_header(data[: _FE_HEADER.size])
-        if header.num_bytes_header != _FE_HEADER.size:
-            raise ValueError(f"Unsupported PSI-MDU header size: {header.num_bytes_header}")
-        if header.num_bytes_tag < 60:
-            raise ValueError(f"Unsupported PSI-MDU tag size: {header.num_bytes_tag}")
-
-        offset = _FE_HEADER.size
-        settings = data[offset : offset + header.num_bytes_settings]
-        if len(settings) < header.num_bytes_settings:
-            raise ValueError("PSI-MDU file ended while reading settings")
-        offset += header.num_bytes_settings
-        if len(data) - offset < header.num_bytes_statistics:
-            raise ValueError("PSI-MDU file ended while reading statistics")
-        offset += header.num_bytes_statistics
-        bin_width, scale, total_tags = self._mdu_resolution(header, settings)
-        selected = self._selected_mdu_tags(header.detector_number_list)
-        settings_tags = self._parse_mdu_settings_tags(header, settings)
-        length, expected = self._mdu_histogram_shape(header, settings_tags, selected, total_tags)
-        if length <= 0 or expected == 0:
-            raise ValueError("PSI-MDU file does not contain usable positron histograms")
-
-        records: list[tuple[_MduTag, bytes]] = []
-        for index in range(total_tags):
-            tag_data = data[offset : offset + header.num_bytes_tag]
-            if len(tag_data) < header.num_bytes_tag:
-                raise ValueError("PSI-MDU file ended while reading histogram tag records")
-            tag = self._parse_mdu_tag(tag_data)
-            offset += header.num_bytes_tag
-            eligible = tag.tag_type == _PTA_TAG_TYPE_POSITRON and tag.n_bins > 1
-            sample_bytes = tag.n_bins * 4 if eligible else 0
-            payload = data[offset : offset + sample_bytes]
-            if len(payload) < sample_bytes:
-                raise ValueError("PSI-MDU file ended while reading histogram data")
-            offset += sample_bytes
-            if header.fmt == "M3" and index not in selected:
-                continue
-            settings_tag = settings_tags[index]
-            if eligible != (
-                settings_tag.tag_type == _PTA_TAG_TYPE_POSITRON and settings_tag.n_bins > 1
+        with path.open("rb") as stream:
+            file_size = stream.seek(0, 2)
+            stream.seek(0)
+            header_data = stream.read(_FE_HEADER.size)
+            if len(header_data) < _FE_HEADER.size:
+                raise ValueError("PSI-MDU file is too small to contain a header")
+            header = self._parse_mdu_header(header_data)
+            if header.num_bytes_header != _FE_HEADER.size:
+                raise ValueError(f"Unsupported PSI-MDU header size: {header.num_bytes_header}")
+            if header.num_bytes_tag < 60:
+                raise ValueError(f"Unsupported PSI-MDU tag size: {header.num_bytes_tag}")
+            for name, size in (
+                ("settings", header.num_bytes_settings),
+                ("statistics", header.num_bytes_statistics),
             ):
-                raise ValueError(
-                    f"PSI-MDU settings and histogram eligibility disagree for tag {index}"
-                )
-            if not eligible:
-                continue
-            if (tag.histominb, tag.histomaxb) != (settings_tag.histominb, settings_tag.histomaxb):
-                raise ValueError(
-                    f"PSI-MDU settings and histogram bin ranges disagree for tag {index}"
-                )
-            records.append((tag, payload))
-        if len(records) != expected:
-            raise ValueError(
-                f"PSI-MDU histogram count mismatch: expected {expected}, got {len(records)}"
-            )
+                if size < 0:
+                    raise ValueError(f"Unsupported PSI-MDU {name} size: {size}")
+                if stream.tell() + size > file_size:
+                    raise ValueError(f"PSI-MDU file ended while reading {name}")
+                if name == "settings":
+                    settings_data = stream.read(size)
+                else:
+                    stream.seek(size, 1)
 
-        labels: list[str] = []
-        counts: list[np.ndarray] = []
-        t0_bins: list[int] = []
-        first_good_bins: list[int] = []
-        last_good_bins: list[int] = []
-        for tag, payload in records:
-            histogram = np.zeros(length, dtype=np.float64)
-            start = max(0, tag.histominb)
-            copied = min(tag.n_bins, max(0, length - start))
-            histogram[start : start + copied] = np.frombuffer(payload, dtype="<i4")[:copied]
-            counts.append(histogram)
-            labels.append(tag.label)
-            t0_bins.append((tag.t0b + 1) * scale - 1)
-            first_good_bins.append((tag.tfb + 1) * scale - 1)
-            last_good_bins.append(tag.tlb * scale)
+            bin_width_us, marker_scale, total_tags = self._mdu_resolution(header, settings_data)
+            settings_tags = self._parse_mdu_settings_tags(header, settings_data)
+            selected = self._selected_mdu_tags(header.detector_number_list)
+            common_length, expected = self._mdu_histogram_shape(
+                header, settings_tags, selected, total_tags
+            )
+            if common_length <= 0 or expected == 0:
+                raise ValueError("PSI-MDU file does not contain usable positron histograms")
+
+            records: list[tuple[_MduTag, int]] = []
+            for index, settings_tag in enumerate(settings_tags):
+                if stream.tell() + header.num_bytes_tag > file_size:
+                    raise ValueError("PSI-MDU file ended while reading histogram tag records")
+                tag = self._parse_mdu_tag(stream.read(60))
+                stream.seek(header.num_bytes_tag - 60, 1)
+                data_offset = stream.tell()
+                eligible = tag.tag_type == _PTA_TAG_TYPE_POSITRON and tag.n_bins > 1
+                if eligible:
+                    if data_offset + tag.n_bins * 4 > file_size:
+                        raise ValueError("PSI-MDU file ended while reading histogram data")
+                    stream.seek(tag.n_bins * 4, 1)
+                if header.fmt == "M3" and index not in selected:
+                    continue
+                settings_eligible = (
+                    settings_tag.tag_type == _PTA_TAG_TYPE_POSITRON and settings_tag.n_bins > 1
+                )
+                if eligible != settings_eligible:
+                    raise ValueError(
+                        f"PSI-MDU settings and histogram eligibility disagree for tag {index}"
+                    )
+                if eligible:
+                    if (tag.histominb, tag.histomaxb) != (
+                        settings_tag.histominb,
+                        settings_tag.histomaxb,
+                    ):
+                        raise ValueError(
+                            f"PSI-MDU settings and histogram bin ranges disagree for tag {index}"
+                        )
+                    records.append((tag, data_offset))
+            if len(records) != expected:
+                raise ValueError(
+                    f"PSI-MDU histogram count mismatch: expected {expected}, got {len(records)}"
+                )
+
+            # Every selected record's geometry and payload are valid before dense allocation.
+            counts: list[np.ndarray] = []
+            for tag, data_offset in records:
+                values = np.zeros(common_length, dtype=np.float64)
+                start = max(0, tag.histominb)
+                retained = min(tag.n_bins, max(0, common_length - start))
+                if retained:
+                    stream.seek(data_offset)
+                    values[start : start + retained] = np.fromfile(
+                        stream, dtype="<i4", count=retained
+                    )
+                counts.append(values)
 
         started = self._date_time(header.start_date, header.start_time)
         stopped = self._date_time(header.end_date, header.end_time)
+        temperature = self._parse_temperature(header.mean_temp)
+        title_temperature = self._parse_temperature(header.run_title[10:20])
+        if not header.mean_temp or (temperature == 0 and title_temperature != 0):
+            temperature = title_temperature
+        instrument, beamline, muon_source = self._guess_psi_instrument(path)
         temperature_logs, temperature_log_rejections = self._read_temperature_logs(
             path, header.run_number, started=started, stopped=stopped
         )
-        instrument, beamline, muon_source = self._guess_psi_instrument(path)
-        temperature = self._parse_temperature(header.mean_temp)
-        title_temperature = self._parse_temperature(header.run_title[10:20])
-        if not header.mean_temp.strip() or (temperature == 0 and title_temperature != 0):
-            temperature = title_temperature
         return _PsiRawRun(
             source_file=str(path),
             psi_format="psi-mdu",
@@ -423,12 +430,12 @@ class PsiLoader(BaseLoader):
             comment=header.run_subtitle,
             started=started,
             stopped=stopped,
-            bin_width_us=bin_width,
-            histogram_labels=labels,
+            bin_width_us=bin_width_us,
+            histogram_labels=[tag.label for tag, _ in records],
             counts=counts,
-            t0_bins=t0_bins,
-            first_good_bins=first_good_bins,
-            last_good_bins=last_good_bins,
+            t0_bins=[(tag.t0b + 1) * marker_scale - 1 for tag, _ in records],
+            first_good_bins=[(tag.tfb + 1) * marker_scale - 1 for tag, _ in records],
+            last_good_bins=[tag.tlb * marker_scale for tag, _ in records],
             instrument=instrument,
             beamline=beamline,
             muon_source=muon_source,

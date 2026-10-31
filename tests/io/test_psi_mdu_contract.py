@@ -346,6 +346,35 @@ def test_mdu_record_labels_and_markers_may_differ_from_settings(tmp_path):
     np.testing.assert_array_equal(run.counts[0], [1, 2, 3, 4, 5, 6])
 
 
+@pytest.mark.parametrize("truncated", [False, True])
+def test_mdu_closes_source_and_returns_independent_writable_counts(
+    tmp_path, monkeypatch, truncated
+):
+    path = tmp_path / "run.mdu"
+    data = mdu_bytes()
+    path.write_bytes(data[: _FE_HEADER.size + 1972 + 8 + 60 + 3] if truncated else data)
+    original_open = type(path).open
+    opened = []
+
+    def track_open(source, *args, **kwargs):
+        stream = original_open(source, *args, **kwargs)
+        opened.append(stream)
+        return stream
+
+    monkeypatch.setattr(type(path), "open", track_open)
+    if truncated:
+        with pytest.raises(ValueError, match="ended while reading histogram data"):
+            PsiLoader()._read_mdu(path)
+    else:
+        run = PsiLoader()._read_mdu(path)
+        path.unlink()
+        assert all(counts.flags.owndata and counts.flags.writeable for counts in run.counts)
+        run.counts[0][0] = -123
+        assert run.counts[1][0] == 1
+        np.testing.assert_array_equal(run.counts[0], [-123, 2, 3, 4, 5, 6])
+    assert opened and all(stream.closed for stream in opened)
+
+
 @pytest.mark.parametrize("fmt", ["M3", "T4", "T5"])
 def test_mdu_rejects_relocated_eligibility_before_allocation(tmp_path, monkeypatch, fmt):
     path = tmp_path / "run.mdu"
@@ -362,3 +391,23 @@ def test_mdu_rejects_relocated_eligibility_before_allocation(tmp_path, monkeypat
         ValueError, match="PSI-MDU settings and histogram eligibility disagree for tag 0"
     ):
         PsiLoader()._read_mdu(path)
+
+
+@pytest.mark.parametrize("trailing_bytes", [0, 16 * 1024**2])
+def test_mdu_peak_memory_is_close_to_returned_counts(tmp_path, trailing_bytes):
+    import gc
+    import tracemalloc
+
+    path = tmp_path / "run.mdu"
+    path.write_bytes(mdu_bytes(tags=[mdu_tag(str(index), high=65535) for index in range(32)]))
+    with path.open("ab") as stream:
+        stream.truncate(path.stat().st_size + trailing_bytes)
+    gc.collect()
+    tracemalloc.start()
+    try:
+        run = PsiLoader()._read_mdu(path)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    output_bytes = sum(counts.nbytes for counts in run.counts)
+    assert peak < output_bytes * 1.5

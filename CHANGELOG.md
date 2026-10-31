@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- PSI MDU loading retains longer later histograms, zero-pads shorter ones,
-  and rejects contradictory settings and histogram bounds before allocation.
+- PSI MDU loading retains longer histograms, pads shorter ones, and validates
+  record bounds before allocating counts with bounded temporary read buffers.
 
 ### Changed
 
