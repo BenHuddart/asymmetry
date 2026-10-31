@@ -106,119 +106,12 @@ def _bypass_unsaved_changes_prompt(request: pytest.FixtureRequest) -> Iterator[N
 
 
 @pytest.fixture
-def _cleanup_qt_widgets() -> Iterator[None]:
-    """Tear down all Qt state after every test to prevent cross-test bleed.
-
-    GUI tests historically created ``MainWindow`` (and other widgets) without
-    ever closing them. Under a shared ``QApplication`` the windows and their
-    parentless child widgets accumulated across a file (~58 top-level widgets
-    per ``MainWindow``). Because several construction steps scan every live
-    top-level widget, per-test setup time grew linearly with the number of
-    leaked windows — turning the file into an O(n^2) crawl (observed ~1s ->
-    45s ``MainWindow`` setup) and leaking state that made tests order-dependent.
-
-    The non-obvious part of the fix: ``deleteLater`` posts a ``DeferredDelete``
-    event that a bare ``processEvents()`` does NOT dispatch when there is no
-    running event loop (the test runner has none). Without explicitly flushing
-    those events the widgets are never actually destroyed. We therefore close
-    each top-level widget (firing real ``closeEvent`` handlers, where
-    ``MainWindow`` joins its MaxEnt thread), schedule deletion, then force the
-    ``DeferredDelete`` events through with ``sendPostedEvents`` — which drops
-    the live top-level count back to zero between tests and keeps setup flat.
-
-    The fixture depends on no other fixture (it queries
-    ``QApplication.instance()`` directly) so module-local ``qapp`` fixtures
-    cannot shadow it, and it is a no-op when PySide6 is absent or no
-    application has been created (pure-unit tests).
-    """
-    try:
-        from PySide6.QtCore import QEvent, QThread
-        from PySide6.QtWidgets import QApplication
-    except Exception:
-        yield
-        return
-
-    app = QApplication.instance()
-    if app is None:
-        yield
-        return
+def _cleanup_qt_widgets(qapp) -> Iterator[None]:
+    """Close widgets and flush deferred deletion; lifetime failures belong to this test."""
+    from tests._qt_helpers import dispose_qt_widgets
 
     yield
-
-    _deferred_delete = QEvent.Type.DeferredDelete.value
-
-    def _drain() -> None:
-        # Force-dispatch deferred deletions; a bare processEvents() will not
-        # flush DeferredDelete events outside a running event loop.
-        try:
-            app.sendPostedEvents(None, _deferred_delete)
-            app.processEvents()
-            app.sendPostedEvents(None, _deferred_delete)
-        except Exception:
-            pass
-
-    # Stop any QThread still running (e.g. a MaxEnt worker whose window was not
-    # closed by the test). Bounded wait; pytest-timeout is the hard ceiling.
-    try:
-        for thread in app.findChildren(QThread):
-            try:
-                if thread.isRunning():
-                    thread.quit()
-                    thread.wait(5000)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # Close every top-level widget (runs closeEvent handlers), then schedule
-    # and flush deletion so the C++ objects are gone before the next test.
-    # MainWindow's closeEvent now guards unsaved work with a modal Save/Discard/
-    # Cancel prompt (F4/P0-2). In an offscreen teardown that dialog would block
-    # forever, so force-clear the dirty flag first — this is a non-interactive
-    # force-close, the production guard is exercised by its own tests.
-    for widget in list(app.topLevelWidgets()):
-        clear_dirty = getattr(widget, "_clear_dirty", None)
-        if callable(clear_dirty):
-            try:
-                clear_dirty()
-            except Exception:
-                pass
-        try:
-            widget.close()
-        except Exception:
-            pass
-    for widget in list(app.topLevelWidgets()):
-        try:
-            widget.deleteLater()
-        except Exception:
-            pass
-    _drain()
-    # With no window left, drop the app sheet so the next test's MainWindow is
-    # built unstyled and styled once at the end (see UIManager.restore_settings);
-    # building under a live sheet re-polishes every reparented subtree.
-    app.setStyleSheet("")
-
-    # Join any worker thread orphaned this test: a panel GC'd without
-    # shutdown_workers(), or a shutdown() whose bounded wait timed out, hands its
-    # still-running QThread to the process-level reaper (destroying a running
-    # QThread aborts). The reaper keeps it running by design; left alone that
-    # lingering compute bleeds CPU into the next test and flakes GUI tests on the
-    # sharded 2-core CI runners. findChildren(QThread) above cannot reach these
-    # (they are unparented from their dying runner), so bounded-join them here.
-    try:
-        from asymmetry.gui.tasks import drain_orphan_threads
-
-        drain_orphan_threads()
-    except Exception:
-        pass
-
-    # Release any matplotlib figures embedded in the closed widgets.
-    try:
-        import matplotlib.pyplot as plt
-
-        plt.close("all")
-    except Exception:
-        pass
+    dispose_qt_widgets(qapp)
 
 
 @pytest.fixture(autouse=True)

@@ -17127,16 +17127,15 @@ class MainWindow(QMainWindow):
 
     def _delete_autosave_file(self) -> None:
         """Remove this session's autosave file, if one exists (D9)."""
-        Path(self._autosave_path()).unlink(missing_ok=True)
+        try:
+            Path(self._autosave_path()).unlink(missing_ok=True)
+        except OSError as exc:
+            self._log_panel.log(f"Could not remove autosave: {exc}")
 
     def _on_autosave_timeout(self) -> None:
-        """Write a crash-recovery snapshot while the project is dirty (D9).
+        """Collect state on the GUI thread and write the snapshot through the task runner.
 
-        Runs on the GUI thread, as the timer's own slot; ``collect_project_state``
-        must happen here, exactly as in :meth:`_write_project`. The write itself
-        goes to the shared ``_tasks`` runner and never touches
-        ``_current_project_path``, the recent-projects list, the window title,
-        or the dirty flag — only a real save does that.
+        Only a real save changes the project path, title, or dirty state.
         """
         if not self._dirty:
             return
@@ -17206,7 +17205,7 @@ class MainWindow(QMainWindow):
             if window is not None and stats is not None:
                 window._log_perf_event("memory_settle", started_at, **stats)
 
-        QTimer.singleShot(0, _run)
+        QTimer.singleShot(0, self, _run)
 
     def _resolve_open_source(self, path: str) -> tuple[str | None, bool]:
         """Pick which file :meth:`_open_project_file` reads for *path* (D9).
