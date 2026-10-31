@@ -50,8 +50,10 @@ boundary, touches shared behavior, or changes user-visible workflows.
   the pre-push gate and what CI runs. The GUI tests it adds each construct
   widgets (often a full `MainWindow`), so it takes ~2 min locally — run it once
   per task, not per iteration.
-- **`full`** — every test, including `slow`/`integration`. Runs on release tags
-  via the `Full test suite` workflow. It runs with reduced parallelism (`-n 2`
+- **`full`** — every test, including `slow`/`integration`. The reusable `Full test
+  suite` workflow runs inside the release workflow on the exact tagged commit
+  and gates publication alongside both platform builds. Manual dispatch can
+  validate other refs without publishing. It runs with reduced parallelism (`-n 2`
   and a raised per-test timeout) rather than `-n auto`: the exhaustive
   global-wizard harness test fans its own fits across a `cpu_count - 2` process
   pool, so a worker-per-core layout oversubscribes the runner and stalls
