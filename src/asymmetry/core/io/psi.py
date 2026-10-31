@@ -1596,7 +1596,8 @@ class PsiLoader(BaseLoader):
         https://www.psi.ch/en/smus/gps and https://www.psi.ch/en/smus/gpd.
         https://www.psi.ch/fr/smus/flame-project places FLAME at the former
         LTF piM3.3 location; the filename API retains its less specific FLAME
-        beamline/source output. HIFI's historical association is unverified.
+        beamline/source output. PSI HIFI filenames identify HAL-9500 at piE3:
+        https://www.psi.ch/en/smus/hal-9500. ISIS HiFi is a separate instrument.
         """
         stem = path.stem.lower()
         if "flame" in stem:

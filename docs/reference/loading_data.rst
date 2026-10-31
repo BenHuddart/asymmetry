@@ -199,6 +199,11 @@ retains its samples. M3 retains its final-bin omission. Contradictory
 settings and histogram records raise an error before count-array allocation;
 selected records must agree in histogram eligibility and bin bounds.
 
+PSI filenames containing ``hifi`` (such as ``tdc_hifi_2014_00153.mdu``)
+identify `HAL-9500 <https://www.psi.ch/en/smus/hal-9500>`_ at piE3.
+The raw metadata retains ``HIFI`` while the detector layout resolves to
+``HAL``. This is distinct from both ISIS HiFi and PSI FLAME.
+
 PSI files can store different ``t0`` values per detector. Asymmetry preserves
 those detector-specific offsets and aligns histograms by their own ``t0`` when
 regrouping.
