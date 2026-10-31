@@ -229,6 +229,8 @@ REQUIRED_KNOWLEDGE_FILES = (
     "docs/QUALITY.md",
     "docs/PLANS.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/ISSUE_TEMPLATE/implementation.yml",
+    ".github/ISSUE_TEMPLATE/instrument-review.yml",
     ".github/copilot-instructions.md",
 )
 # AGENTS.md costs context in every session of every agent, so it stays a short map:
