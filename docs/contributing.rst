@@ -79,14 +79,21 @@ Pull request process
 Reporting issues
 ----------------
 
-Report bugs and feature requests on the GitHub issue tracker.
+Use the `issue forms <https://github.com/BenHuddart/Asymmetry/issues/new/choose>`_
+to record work that can be implemented and checked independently.
+**Implementation** captures the outcome, evidence, scope, decisions, compatibility,
+acceptance criteria, validation, and documentation. List prerequisites under
+**Blocked by** and start dependent work only when each is closed as completed.
+For two PRs, the first references the issue and the final PR closes it.
 
-Please include:
+**Instrument review** captures the instrument, version reviewed, sections checked,
+findings, and supporting evidence. Choose **Do not name me** to withhold consent
+for naming you in the published review record. The issue and GitHub account remain
+public; a maintainer can file on a reviewer's behalf. Consent can be changed by
+commenting.
 
-* Description of the issue
-* Steps to reproduce
-* Expected vs actual behaviour
-* System information (OS, Python version)
+For issues filed through the CLI or API, use the form's field labels as
+third-level headings, in order.
 
 Code of Conduct
 ---------------

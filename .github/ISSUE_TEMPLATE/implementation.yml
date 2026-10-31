@@ -1,0 +1,70 @@
+name: Implementation
+description: Plan a bounded implementation with evidence and acceptance criteria.
+body:
+  - type: markdown
+    attributes:
+      value: AGENTS.md holds the rules; record only change-specific details here. This issue is public.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What should be possible when this issue is complete?
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and evidence
+      description: Link to code at a commit, reproductions, or measured results.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Blocked by
+      description: "List one Blocked by #n per line, or write None."
+  - type: dropdown
+    id: pr-split
+    attributes:
+      label: PR split
+      options:
+        - One PR
+        - Two PRs
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Change and scope
+      description: Include exclusions and, for two PRs, what each delivers.
+    validations:
+      required: true
+  - type: textarea
+    id: decisions
+    attributes:
+      label: Decisions taken
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility
+      description: Describe API, CLI, and saved-project implications.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation
+      description: Name the checks and independent scientific evidence needed.
+    validations:
+      required: true
+  - type: textarea
+    id: documentation
+    attributes:
+      label: Documentation
+      description: Name the owning pages and screenshot scenarios, or explain why none apply.
+    validations:
+      required: true

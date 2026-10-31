@@ -1,0 +1,81 @@
+name: Instrument review
+description: Check an instrument profile against spectrometer evidence.
+title: "Instrument review: "
+labels: [instrument-review]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        This issue and your GitHub account are public. Only your Credit choice
+        authorises Asymmetry to name you in its published review record.
+        A maintainer can file on a reviewer's behalf. Change consent by commenting.
+  - type: input
+    id: instrument
+    attributes:
+      label: Instrument
+      description: Facility and beamline.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version reviewed
+      description: Profile version shown on the page, or Asymmetry release checked.
+    validations:
+      required: true
+  - type: dropdown
+    id: sections
+    attributes:
+      label: Sections checked
+      multiple: true
+      options:
+        - Identity
+        - Source
+        - Recognition
+        - Detectors
+        - Grouping presets
+        - File quirks
+        - Defaults
+    validations:
+      required: true
+  - type: textarea
+    id: findings
+    attributes:
+      label: Findings
+      description: For each checked section, confirm the value or give a correction and source.
+      value: |
+        | Section | Value on page | Correct value or confirmed | Source |
+        | --- | --- | --- | --- |
+        | | | | |
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link evidence or cite a manual by title, version, and page if it cannot be attached.
+  - type: dropdown
+    id: overall
+    attributes:
+      label: Overall
+      options:
+        - Confirmed
+        - Corrections needed
+        - Partial
+    validations:
+      required: true
+  - type: dropdown
+    id: credit
+    attributes:
+      label: Credit
+      default: 0
+      options:
+        - Do not name me
+        - Publish the name and affiliation supplied below
+    validations:
+      required: true
+  - type: input
+    id: public-name
+    attributes:
+      label: Name and affiliation to publish
+      description: Optional; used only with explicit permission in Credit.
