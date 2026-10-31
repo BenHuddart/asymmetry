@@ -28,15 +28,6 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run  # noqa: E40
 from asymmetry.gui.panels.alc_panel import ALCScanView  # noqa: E402
 from asymmetry.gui.panels.plot_panel import PlotPanel  # noqa: E402
 
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 # ── synthetic data ──────────────────────────────────────────────────────────
 
 

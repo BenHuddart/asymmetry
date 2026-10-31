@@ -19,7 +19,7 @@ pytest.importorskip("PySide6")
 
 import numpy as np
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -36,8 +36,8 @@ _RUNS = [10, 11, 12]
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 def _new_window() -> MainWindow:

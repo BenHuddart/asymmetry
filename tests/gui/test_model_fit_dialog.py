@@ -38,14 +38,6 @@ from asymmetry.gui.panels.model_fit_dialog import (
 from asymmetry.gui.widgets.component_info_dialog import build_component_info_html
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def test_range_parameter_name_displays_units(qapp: QApplication) -> None:
     x = np.linspace(10.0, 100.0, 10)
     y = np.linspace(0.1, 0.2, 10)

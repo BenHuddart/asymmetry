@@ -37,8 +37,8 @@ _GAUSS = CompositeModel(["Gaussian", "Constant"], operators=["+"])
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 @pytest.fixture

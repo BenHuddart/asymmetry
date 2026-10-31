@@ -139,14 +139,6 @@ from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 BIN_WIDTH_US = 0.016
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
     settings = QSettings()

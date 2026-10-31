@@ -17,14 +17,6 @@ from asymmetry.core.fitting.composite_parameters import CompositeParameterDefini
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _ok_enabled(dialog: CompositeParameterDialog) -> bool:
     ok = dialog._buttons.button(QDialogButtonBox.StandardButton.Ok)
     return bool(ok is not None and ok.isEnabled())

@@ -30,11 +30,6 @@ _VECTOR_PROJECTIONS = [
 ]
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
     QSettings().setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)

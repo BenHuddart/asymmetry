@@ -10,17 +10,8 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.gui.widgets.elided_label import ElidedLabel
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def test_minimum_width_is_zero_regardless_of_text(qapp) -> None:

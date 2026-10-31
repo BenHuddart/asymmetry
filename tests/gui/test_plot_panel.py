@@ -217,15 +217,6 @@ class _FakeFigure:
                     f.write(f"{float(xv):.10g} {float(yv):.10g} {float(ev):.10g}\n")
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    """Ensure a QApplication exists for widget tests."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def panel(qapp: QApplication) -> PlotPanel:
     """Create a PlotPanel for testing."""

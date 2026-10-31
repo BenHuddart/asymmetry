@@ -15,14 +15,6 @@ from PySide6.QtWidgets import QApplication, QWidget
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def target(qapp):
     widget = QWidget()

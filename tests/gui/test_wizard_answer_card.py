@@ -30,14 +30,6 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.wizard_answer_card import WizardAnswerCard
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _fingerprint() -> SpectrumFingerprint:
     return SpectrumFingerprint(
         tail_estimate=0.01,

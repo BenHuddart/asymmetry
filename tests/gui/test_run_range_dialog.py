@@ -24,14 +24,6 @@ from asymmetry.core.io import run_range
 from asymmetry.gui.windows.run_range_dialog import RunRangeDialog
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _touch(folder: Path, name: str) -> None:
     (folder / name).write_bytes(b"")
 

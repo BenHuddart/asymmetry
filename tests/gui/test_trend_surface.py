@@ -20,7 +20,6 @@ pytest.importorskip("PySide6")
 
 import numpy as np
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
@@ -35,8 +34,8 @@ from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 @pytest.fixture

@@ -33,15 +33,6 @@ from asymmetry.gui.panels.plot_panel import PlotPanel
 BIN_WIDTH_US = 0.016
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    """Ensure a QApplication exists for widget tests."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
     """Create a mainwindow for testing."""

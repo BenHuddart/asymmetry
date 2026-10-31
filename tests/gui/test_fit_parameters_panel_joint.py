@@ -31,14 +31,6 @@ from asymmetry.gui.utils.formatting import format_param_label
 from tests.gui._trend_panel import select_params
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _row(run_number: int, field: float, **values: float) -> _FitRow:
     return _FitRow(
         run_number=run_number,

@@ -84,14 +84,6 @@ def _estimate_single_alpha(dialog, method: str | None = None) -> None:
     _wait_until(lambda: section._tasks.active_count == 0)
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _dataset_with_histograms() -> MuonDataset:
     h1 = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
     h2 = Histogram(counts=np.array([50.0, 50.0, 50.0, 50.0]), bin_width=0.01)

@@ -719,9 +719,6 @@ def find_missing_gui_marker_violations(tests_root: Path = TESTS_ROOT) -> list[Ha
     """Require a GUI marker wherever a test requests the qapp fixture."""
 
     failures: list[HarnessFailure] = []
-    if not tests_root.exists():
-        return failures
-
     func_pattern = re.compile(r"^def (test_\w+)\s*\(([^)]*)\)", re.MULTILINE)
     module_qapp_fixture = re.compile(r'pytestmark\s*=.*usefixtures\(\s*["\']qapp["\']')
     for path in sorted(tests_root.rglob("test_*.py")):
@@ -739,19 +736,12 @@ def find_missing_gui_marker_violations(tests_root: Path = TESTS_ROOT) -> list[Ha
         if not offenders and module_qapp_fixture.search(text):
             offenders = ["<module-level pytestmark>"]
         if offenders:
-            failures.append(
-                HarnessFailure(
-                    path,
-                    0,
-                    (
-                        f"{len(offenders)} test(s) request the `qapp` fixture (e.g. "
-                        f"`{offenders[0]}`) but the file carries no `pytest.mark.gui`, so "
-                        "they silently run in the non-GUI CI shard. Add "
-                        "`pytestmark = [pytest.mark.gui]` (or a per-function "
-                        "`@pytest.mark.gui` if the file also has pure tests)."
-                    ),
-                )
+            message = (
+                f"{len(offenders)} test(s) request `qapp` (e.g. `{offenders[0]}`) without "
+                "`pytest.mark.gui`. Add a module marker or mark each Qt test with "
+                "`@pytest.mark.gui` so it runs with GUI isolation."
             )
+            failures.append(HarnessFailure(path, 0, message))
     return failures
 
 
@@ -837,6 +827,19 @@ def find_user_location_violations(root: Path = ROOT) -> list[HarnessFailure]:
                 break
     for path in _iter_python_files(root / "tests"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if path != root / "tests/conftest.py" and (
+                isinstance(node, ast.FunctionDef)
+                and node.name == "qapp"
+                or isinstance(node, ast.Call)
+                and ast.unparse(node.func).split(".")[-1] == "QApplication"
+            ):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        node.lineno,
+                        "Request the root qapp fixture; do not duplicate QApplication construction or qapp fixtures.",
+                    )
+                )
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
@@ -988,12 +991,7 @@ def find_retired_doc_violations(root: Path = ROOT) -> list[HarnessFailure]:
 
 
 def _load_screenshot_capture_module():
-    """Load ``docs/screenshots/capture.py`` without importing the docs package.
-
-    The module's top-level imports are stdlib-only (Qt is deferred into the
-    capture path), so executing it here keeps `structural` free of third-party
-    packages and of any sys.path manipulation.
-    """
+    """Load the stdlib-only screenshot checks without importing the docs package."""
     capture_path = ROOT / "docs" / "screenshots" / "capture.py"
     spec = importlib.util.spec_from_file_location("asymmetry_screenshot_capture", capture_path)
     assert spec is not None and spec.loader is not None

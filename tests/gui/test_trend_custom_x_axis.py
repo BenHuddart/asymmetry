@@ -12,14 +12,8 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, _FitRow
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _row(run_number: int, custom: dict[str, str]) -> _FitRow:

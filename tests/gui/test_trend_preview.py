@@ -20,15 +20,6 @@ from asymmetry.gui.widgets.trend_preview import (
 pytestmark = [pytest.mark.gui]
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    """Ensure a QApplication exists for widget tests."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _series(mask_len: int = 5) -> PreviewSeries:
     x = np.linspace(0.0, 4.0, mask_len)
     y = np.linspace(1.0, 2.0, mask_len)

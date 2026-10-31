@@ -81,15 +81,6 @@ def _active_linear_fit(param: str, x_key: str = "field") -> ParameterModelFit:
     )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    """Ensure a QApplication exists for widget tests."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def panel(qapp: QApplication) -> FitParametersPanel:
     """Create a panel with predictable test data."""

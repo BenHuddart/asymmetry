@@ -52,14 +52,6 @@ from tests._qt_helpers import wait_for
 LF_DYNAMICS = WizardScope(physics=frozenset({PhysicsClass.DYNAMICS, PhysicsClass.MAGNETISM}))
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def datasets() -> list[MuonDataset]:
     time_axis = np.linspace(0.0, 8.0, 120)

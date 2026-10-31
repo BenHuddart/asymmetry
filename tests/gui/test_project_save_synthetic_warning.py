@@ -25,14 +25,6 @@ from asymmetry.gui.mainwindow import MainWindow
 from tests._qt_helpers import wait_for
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def win(qapp: QApplication) -> MainWindow:
     settings = QSettings()

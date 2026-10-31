@@ -25,11 +25,6 @@ from asymmetry.gui.windows.grouping.background_section import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
 def _candidates() -> list[BackgroundReferenceRunCandidate]:
     return [BackgroundReferenceRunCandidate(9001, "Run 9001 (run 9001)", "/tmp/x.nxs", 1000.0)]
 

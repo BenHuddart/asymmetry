@@ -31,14 +31,6 @@ from asymmetry.gui.utils.gle_editor import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture(autouse=True)
 def _close_stray_editors(qapp: QApplication) -> None:
     """Belt-and-braces: never let a failed assertion leak an editor window."""

@@ -12,14 +12,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget  # noqa: E402
+from PySide6.QtWidgets import QVBoxLayout, QWidget  # noqa: E402
 
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def test_default_construction_matches_fit_tab_style(qapp) -> None:

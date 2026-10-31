@@ -25,14 +25,6 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.mainwindow import MainWindow
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
     settings = QSettings()

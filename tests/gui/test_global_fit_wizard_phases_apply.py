@@ -21,7 +21,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -53,11 +52,10 @@ _MODEL = CompositeModel(["Exponential", "Constant"], operators=["+"])
 
 
 @pytest.fixture
-def mw():
+def mw(qapp):
     from asymmetry.gui.mainwindow import MainWindow
     from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
-    QApplication.instance() or QApplication([])
     QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
     window = MainWindow()
     for run_number, temperature in zip(_RUNS, _TEMPERATURES, strict=True):

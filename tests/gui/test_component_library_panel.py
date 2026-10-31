@@ -26,14 +26,6 @@ from asymmetry.gui.widgets.function_builder.library_panel import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _category_labels(panel: ComponentLibraryPanel) -> list[str]:
     root = panel._tree.invisibleRootItem()
     labels = []
@@ -420,7 +412,7 @@ def test_info_button_click_selects_row(qapp: QApplication) -> None:
     panel.close()
 
 
-def test_item_size_hint_width_covers_name_font_metrics() -> None:
+def test_item_size_hint_width_covers_name_font_metrics(qapp) -> None:
     """No-clip proxy: the item's natural size hint must fit its full name.
 
     The row widget elides on-screen when the column is too narrow (with the
@@ -428,7 +420,7 @@ def test_item_size_hint_width_covers_name_font_metrics() -> None:
     natural/unclipped width — must be at least as wide as the plain name
     text, so a wide-enough panel never clips or elides unnecessarily.
     """
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     panel = ComponentLibraryPanel(COMPONENTS)
     QApplication.processEvents()
 

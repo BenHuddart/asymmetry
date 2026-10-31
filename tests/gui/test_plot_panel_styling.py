@@ -17,16 +17,6 @@ from asymmetry.gui.styles import tokens
 
 
 @pytest.fixture
-def qapp():
-    from PySide6.QtWidgets import QApplication
-
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
-@pytest.fixture
 def panel(qapp):
     from asymmetry.gui.panels.plot_panel import PlotPanel
 

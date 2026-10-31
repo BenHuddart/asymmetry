@@ -29,14 +29,6 @@ from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView
 _A_MU, _A_P, _NU_RF = 515.0, 124.0, 218.5
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
     settings = QSettings()

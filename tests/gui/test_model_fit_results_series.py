@@ -33,11 +33,6 @@ from asymmetry.core.representation import RepresentationType  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
     settings = QSettings()

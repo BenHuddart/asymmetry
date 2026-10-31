@@ -59,10 +59,8 @@ def _activate_fft_spectrum(window: MainWindow, runs, *, display="phase_corrected
 
 
 @pytest.fixture
-def window():
-    from PySide6.QtWidgets import QApplication
+def window(qapp):
 
-    QApplication.instance() or QApplication([])
     win = MainWindow()
     yield win
     win.close()

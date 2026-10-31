@@ -24,14 +24,6 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _dataset(run_number: int, *, instrument: str = "MuSR", alpha: float = 1.0) -> MuonDataset:
     h1 = Histogram(counts=np.full(4, 100.0), bin_width=0.01)
     h2 = Histogram(counts=np.full(4, 50.0), bin_width=0.01)

@@ -11,7 +11,6 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QPoint
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.knight_shift import (
     REFERENCE_COMPONENT,
@@ -20,11 +19,6 @@ from asymmetry.core.fitting.knight_shift import (
     larmor_frequency_mhz,
 )
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _row(run: int, field: float, values: dict[str, float]) -> dict:

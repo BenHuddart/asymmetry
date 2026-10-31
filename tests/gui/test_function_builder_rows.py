@@ -18,14 +18,6 @@ from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.function_builder.model_rows import ModelRowList
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _rows(enable_fraction_groups: bool = True) -> ModelRowList:
     return ModelRowList(COMPONENTS, enable_fraction_groups=enable_fraction_groups)
 

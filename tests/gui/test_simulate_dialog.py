@@ -23,7 +23,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 pytest.importorskip("h5py")
 from PySide6.QtCore import QEventLoop, QTimer
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -35,14 +34,6 @@ from asymmetry.gui.windows.simulate_dialog import (
     MultiGroupSimulateDialog,
     SimulateDialog,
 )
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def _wait_until(predicate, timeout_ms: int = 30_000) -> None:

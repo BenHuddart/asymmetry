@@ -16,7 +16,6 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 from asymmetry.gui.panels.fit.global_tab import TRENDS_ACTION, GlobalFitTab  # noqa: E402
@@ -34,11 +33,6 @@ _ROWS = [
     }
     for run in (1, 2, 3)
 ]
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def test_trends_action_rests_disabled_until_a_batch_is_recorded(qapp) -> None:

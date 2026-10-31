@@ -63,15 +63,6 @@ def _wait_frequency_idle(window: MainWindow, timeout_s: float = 15.0) -> None:
     )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    """Ensure a QApplication exists for widget tests."""
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def mainwindow(qapp: QApplication) -> MainWindow:
     """Create a mainwindow for testing."""

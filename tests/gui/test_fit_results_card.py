@@ -31,14 +31,6 @@ _GOOD = (tokens.SUCCESS_BG, tokens.SUCCESS_BORDER, tokens.OK)
 _POOR = (tokens.ERROR_BG, tokens.ERROR, tokens.ERROR)
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _card() -> FitResultsCard:
     return FitResultsCard(actions=_ACTIONS)
 

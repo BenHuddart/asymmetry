@@ -16,14 +16,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 @pytest.fixture
-def mw():
+def mw(qapp):
     from PySide6.QtCore import QSettings
-    from PySide6.QtWidgets import QApplication
 
     from asymmetry.gui.mainwindow import MainWindow
     from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
-    QApplication.instance() or QApplication([])
     QSettings().setValue(UI_SCALE_SETTINGS_KEY, 1.0)
     return MainWindow()
 

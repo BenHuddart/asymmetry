@@ -15,14 +15,6 @@ from PySide6.QtWidgets import QApplication, QLabel, QScrollArea, QVBoxLayout, QW
 from asymmetry.gui.widgets.section_overflow_indicator import SectionOverflowIndicator
 
 
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _tall_scroll_area(section_height: int = 400, viewport_height: int = 300):
     """A short scroll area over a tall 3-section content widget.
 

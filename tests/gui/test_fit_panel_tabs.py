@@ -71,14 +71,6 @@ from asymmetry.gui.panels.fit_panel import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def dataset() -> MuonDataset:
     t = np.linspace(0.0, 4.0, 80)

@@ -22,14 +22,6 @@ from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.utils.waterfall import auto_waterfall_delta
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def time_panel(qapp: QApplication) -> PlotPanel:
     panel = PlotPanel(domain="time")

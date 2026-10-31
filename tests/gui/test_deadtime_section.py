@@ -26,11 +26,6 @@ from asymmetry.gui.windows.grouping.deadtime_section import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
 def _source_runs() -> list[DeadtimeSourceRun]:
     hists = [Histogram(counts=np.full(50, 100.0), bin_width=0.016) for _ in range(2)]
     return [

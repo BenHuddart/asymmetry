@@ -19,17 +19,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QComboBox
+from PySide6.QtWidgets import QComboBox
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.simulate import build_builtin_template, simulate_run
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _tf(t, A=20.0, f=1.5, phi=0.0):  # noqa: N803 (A is the asymmetry symbol)

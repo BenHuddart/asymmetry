@@ -18,18 +18,9 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def _state_with_missing_component() -> dict:

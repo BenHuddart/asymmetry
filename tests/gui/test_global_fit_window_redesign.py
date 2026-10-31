@@ -46,14 +46,6 @@ from asymmetry.gui.windows.global_parameter_fit_window import (  # noqa: E402
 from tests._qt_helpers import wait_for  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _wait_fit_curves(window: GlobalParameterFitWindow, timeout_s: float = 10.0) -> None:
     wait_for(
         lambda: not window._fit_curve_compute_active,

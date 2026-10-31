@@ -10,17 +10,11 @@ import pytest
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.gui.mainwindow import _RRF_ADVANCED_SETTINGS_KEY
 
 pytestmark = [pytest.mark.gui]
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

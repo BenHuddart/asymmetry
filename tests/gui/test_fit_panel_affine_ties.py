@@ -34,14 +34,6 @@ _TRIPLET = (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _row_of(tab: SingleFitTab, param_name: str) -> int:
     for i in range(tab._param_table.rowCount()):
         item = tab._param_table.item(i, 0)

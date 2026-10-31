@@ -44,8 +44,8 @@ def _groups() -> list[ParameterGroupData]:
     return [g0, g1]
 
 
-def test_cross_group_dialog_parameter_labels_include_units() -> None:
-    app = QApplication.instance() or QApplication([])
+def test_cross_group_dialog_parameter_labels_include_units(qapp) -> None:
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -70,8 +70,8 @@ def test_cross_group_dialog_parameter_labels_include_units() -> None:
     assert app is not None
 
 
-def test_use_fit_without_result_shows_feedback(monkeypatch) -> None:
-    app = QApplication.instance() or QApplication([])
+def test_use_fit_without_result_shows_feedback(qapp, monkeypatch) -> None:
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -96,8 +96,8 @@ def test_use_fit_without_result_shows_feedback(monkeypatch) -> None:
     assert app is not None
 
 
-def test_use_fit_failed_result_requires_confirmation(monkeypatch) -> None:
-    app = QApplication.instance() or QApplication([])
+def test_use_fit_failed_result_requires_confirmation(qapp, monkeypatch) -> None:
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -131,8 +131,8 @@ def test_use_fit_failed_result_requires_confirmation(monkeypatch) -> None:
     assert app is not None
 
 
-def test_cross_group_dialog_redfield_m_is_unitless() -> None:
-    app = QApplication.instance() or QApplication([])
+def test_cross_group_dialog_redfield_m_is_unitless(qapp) -> None:
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -156,8 +156,8 @@ def test_cross_group_dialog_redfield_m_is_unitless() -> None:
     assert app is not None
 
 
-def test_single_card_no_add_no_remove() -> None:
-    app = QApplication.instance() or QApplication([])
+def test_single_card_no_add_no_remove(qapp) -> None:
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -174,8 +174,8 @@ def test_single_card_no_add_no_remove() -> None:
     assert app is not None
 
 
-def test_cross_group_card_always_active() -> None:
-    app = QApplication.instance() or QApplication([])
+def test_cross_group_card_always_active(qapp) -> None:
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -189,8 +189,8 @@ def test_cross_group_card_always_active() -> None:
     assert app is not None
 
 
-def test_cross_group_card_title() -> None:
-    app = QApplication.instance() or QApplication([])
+def test_cross_group_card_title(qapp) -> None:
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -206,8 +206,8 @@ def test_cross_group_card_title() -> None:
     assert app is not None
 
 
-def test_cross_group_dialog_sc_shape_factor_a_defaults_to_fixed() -> None:
-    app = QApplication.instance() or QApplication([])
+def test_cross_group_dialog_sc_shape_factor_a_defaults_to_fixed(qapp) -> None:
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="temperature",
@@ -233,8 +233,8 @@ def test_cross_group_dialog_sc_shape_factor_a_defaults_to_fixed() -> None:
     assert app is not None
 
 
-def test_cross_group_dialog_shows_inherited_source_in_banner() -> None:
-    app = QApplication.instance() or QApplication([])
+def test_cross_group_dialog_shows_inherited_source_in_banner(qapp) -> None:
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -258,9 +258,9 @@ def test_cross_group_dialog_shows_inherited_source_in_banner() -> None:
     assert app is not None
 
 
-def test_cross_group_dialog_reads_renamed_trend_group_name() -> None:
+def test_cross_group_dialog_reads_renamed_trend_group_name(qapp) -> None:
     """The banner reads the renamed ``trend_group_name`` key (D8)."""
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -277,10 +277,10 @@ def test_cross_group_dialog_reads_renamed_trend_group_name() -> None:
     assert app is not None
 
 
-def test_cross_group_dialog_footer_slot_holds_suggest_roles_above_buttons() -> None:
+def test_cross_group_dialog_footer_slot_holds_suggest_roles_above_buttons(qapp) -> None:
     """The suggest-roles row + rationale panel sit in the footer slot, which the
     base dialog places directly above the OK/Cancel button box (contract C6)."""
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -312,8 +312,8 @@ def test_cross_group_dialog_footer_slot_holds_suggest_roles_above_buttons() -> N
     assert app is not None
 
 
-def test_cross_group_run_fit_sets_in_progress_state(monkeypatch) -> None:
-    app = QApplication.instance() or QApplication([])
+def test_cross_group_run_fit_sets_in_progress_state(qapp, monkeypatch) -> None:
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -373,12 +373,11 @@ def _param_groups_with_xerr() -> list[ParameterGroupData]:
     return [g0, g1]
 
 
-def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
+def test_cross_group_dialog_exposes_error_modes_and_windows(qapp) -> None:
     """global_fit_parameter_model now honours error modes and windows, so the
     inherited selector and 'Exclude region…' button are shown and wired. The
     effective-variance toggle is hidden for a run-level axis (field has no
     x-uncertainty), not because cross-group lacks backend support."""
-    QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -408,11 +407,10 @@ def test_cross_group_dialog_exposes_error_modes_and_windows() -> None:
     assert len(dlg._range_cards) == 1
 
 
-def test_cross_group_card_no_status_chip() -> None:
+def test_cross_group_card_no_status_chip(qapp) -> None:
     """A cross-group card shows no single-fit verdict chip: CrossGroupFitResult
     has no per-range χ²ᵣ/dof, so a "good/poor" chip would mislead (same reason
     the quality line is suppressed)."""
-    QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -427,11 +425,10 @@ def test_cross_group_card_no_status_chip() -> None:
     assert view.status_chip_html == ""
 
 
-def test_cross_group_dialog_offers_x_uncertainty_for_param_axis() -> None:
+def test_cross_group_dialog_offers_x_uncertainty_for_param_axis(qapp) -> None:
     """When the abscissa is a fitted parameter carrying σ_x, the cross-group
     dialog now exposes the effective-variance toggle (decision E retired); it is
     disabled under None/Scatter, whose unit y-weights have no scale for σ_x."""
-    QApplication.instance() or QApplication([])
     from asymmetry.core.fitting.parameter_models import ErrorMode
 
     dlg = CrossGroupFitDialog(
@@ -454,10 +451,9 @@ def test_cross_group_dialog_offers_x_uncertainty_for_param_axis() -> None:
     assert dlg._use_x_errors() is False
 
 
-def test_cross_group_dialog_x_uncertainty_config_roundtrips() -> None:
+def test_cross_group_dialog_x_uncertainty_config_roundtrips(qapp) -> None:
     """use_x_errors survives _collect_config → _apply_existing_config; legacy
     config (no key) loads as off."""
-    QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="param:nu",
@@ -491,11 +487,10 @@ def test_cross_group_dialog_x_uncertainty_config_roundtrips() -> None:
     assert legacy_dlg._use_x_errors() is False
 
 
-def test_local_param_error_cell_shows_per_group_values_not_just_group0() -> None:
+def test_local_param_error_cell_shows_per_group_values_not_just_group0(qapp) -> None:
     """Regression: a Local parameter has a distinct value/error per group, so
     the Error column must not silently report only the first group's number.
     It shows 'varies' with every group's value ± error in the tooltip."""
-    QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -773,8 +768,7 @@ def _linear_groups() -> list[ParameterGroupData]:
     return [g0, g1]
 
 
-def test_suggest_roles_applies_recommendation_and_shows_rationale() -> None:
-    QApplication.instance() or QApplication([])
+def test_suggest_roles_applies_recommendation_and_shows_rationale(qapp) -> None:
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -799,8 +793,7 @@ def test_suggest_roles_applies_recommendation_and_shows_rationale() -> None:
         assert combo.currentText() in {"Global", "Local", "Fixed"}
 
 
-def test_suggest_roles_renders_failed_candidate(monkeypatch) -> None:
-    QApplication.instance() or QApplication([])
+def test_suggest_roles_renders_failed_candidate(qapp, monkeypatch) -> None:
     from asymmetry.core.fitting.cross_group_roles import (
         CrossGroupCandidate,
         CrossGroupParameterRecommendation,
@@ -871,8 +864,7 @@ def test_suggest_roles_renders_failed_candidate(monkeypatch) -> None:
     assert "Sharing m is favoured" in text
 
 
-def test_suggest_roles_cancel_restores_button(monkeypatch) -> None:
-    QApplication.instance() or QApplication([])
+def test_suggest_roles_cancel_restores_button(qapp, monkeypatch) -> None:
     from asymmetry.core.fitting.cross_group_roles import CrossGroupRoleRecommendation
 
     gate = threading.Event()
@@ -945,6 +937,7 @@ class _FakeModelBuilder:
 
 
 def test_edit_model_appending_constant_carries_linear_and_seeds_constant(
+    qapp,
     monkeypatch,
 ) -> None:
     """Editing the shared range's model through the base dialog's _edit_model
@@ -952,7 +945,7 @@ def test_edit_model_appending_constant_carries_linear_and_seeds_constant(
     Linear component's m/b by identity and seeds the newly-added Constant's
     c from its own default -- the same carry-then-seed contract as the base
     ModelFitDialog, exercised through the cross-group host."""
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -986,12 +979,12 @@ def test_edit_model_appending_constant_carries_linear_and_seeds_constant(
     assert app is not None
 
 
-def test_edit_model_clears_stale_result_and_blocks_use_fit(monkeypatch) -> None:
+def test_edit_model_clears_stale_result_and_blocks_use_fit(qapp, monkeypatch) -> None:
     """Editing the range model after a successful run must drop the cached
     result/config so _on_use_fit refuses until the fit is re-run — otherwise a
     study could be saved with the NEW model but the OLD (now-mismatched)
     parameter_rows, which fails on the next refit."""
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -1035,10 +1028,10 @@ def test_edit_model_clears_stale_result_and_blocks_use_fit(monkeypatch) -> None:
     assert app is not None
 
 
-def test_edit_model_then_rerun_accepts_with_new_model_config(monkeypatch) -> None:
+def test_edit_model_then_rerun_accepts_with_new_model_config(qapp, monkeypatch) -> None:
     """After the invalidation above, re-running the (now edited) fit clears
     the block and output().config reflects the NEW model, not the stale one."""
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -1074,9 +1067,8 @@ def test_edit_model_then_rerun_accepts_with_new_model_config(monkeypatch) -> Non
     assert app is not None
 
 
-def test_preview_series_per_group() -> None:
+def test_preview_series_per_group(qapp) -> None:
     """The cross-group override returns one preview series per group."""
-    QApplication.instance() or QApplication([])
     groups = _groups()
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
@@ -1093,9 +1085,8 @@ def test_preview_series_per_group() -> None:
     np.testing.assert_allclose(series[0].y, groups[0].y)
 
 
-def test_exclude_region_single_range_carves() -> None:
+def test_exclude_region_single_range_carves(qapp) -> None:
     """A carve on the cross-group single pinned range yields a two-window union."""
-    QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -1118,10 +1109,9 @@ def test_exclude_region_single_range_carves() -> None:
     assert len(dlg._region_row_spins) == 2
 
 
-def test_cross_group_single_fit_region_one_interval() -> None:
+def test_cross_group_single_fit_region_one_interval(qapp) -> None:
     """The pinned single range renders one fit-region interval, Remove hidden,
     and the 'Exclude region…' action is available (carve-only control)."""
-    QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -1140,10 +1130,9 @@ def test_cross_group_single_fit_region_one_interval() -> None:
     assert dlg._exclude_region_btn.isEnabled()
 
 
-def test_cross_group_exclude_region_still_works() -> None:
+def test_cross_group_exclude_region_still_works(qapp) -> None:
     """The 'Exclude region…' button carves a default gap on the pinned range,
     splitting the fit region into two included intervals."""
-    QApplication.instance() or QApplication([])
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -1161,9 +1150,9 @@ def test_cross_group_exclude_region_still_works() -> None:
     assert len(dlg._region_row_spins) == 2
 
 
-def test_cross_group_success_no_modal(monkeypatch) -> None:
+def test_cross_group_success_no_modal(qapp, monkeypatch) -> None:
     """A successful cross-group fit tints the result box green with NO success modal."""
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     from asymmetry.gui.styles.widgets import RESULT_BOX_SUCCESS_STYLE
 
     dlg = CrossGroupFitDialog(
@@ -1203,7 +1192,7 @@ def test_cross_group_success_no_modal(monkeypatch) -> None:
     assert app is not None
 
 
-def test_formula_uses_break_points() -> None:
+def test_formula_uses_break_points(qapp) -> None:
     """The cross-group formula renders through the shared pan/zoom FormulaBox
     (set_formula -> insert_formula_break_points + re-measure), NOT the bare
     label. Deleting the subclass _set_formula_display override (Phase 5.c) made
@@ -1211,7 +1200,7 @@ def test_formula_uses_break_points() -> None:
     from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
     from asymmetry.gui.styles.widgets import FormulaBox
 
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
@@ -1244,11 +1233,11 @@ def test_formula_uses_break_points() -> None:
     assert app is not None
 
 
-def test_plot_add_select_inert_single_range() -> None:
+def test_plot_add_select_inert_single_range(qapp) -> None:
     """Cross-group pins one range: the plot's add/select gestures are left
     unconnected (no phantom range, no selection change), but right-drag exclude
     on the single range still carves a window (that signal stays wired)."""
-    app = QApplication.instance() or QApplication([])
+    app = qapp
     dlg = CrossGroupFitDialog(
         parameter_name="Lambda",
         x_key="field",
