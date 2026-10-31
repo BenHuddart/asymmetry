@@ -235,8 +235,8 @@ offers to apply that comment-derived value as the run field. This prompt is
 available for PSI BIN/MDU and MusrRoot/LEM ROOT files.
 
 PSI temperature metadata has two sources. The scalar run temperature is read
-from the BIN or MDU header using the musrfit-compatible offsets. Optional
-temperature-log sidecars use Mantid's ``LoadPSIMuonBin`` convention, and are
+from the BIN or MDU header. Optional temperature-log sidecars share channel
+naming and metadata conventions with Mantid's ``LoadPSIMuonBin``, and are
 read for both BIN and MDU runs: Asymmetry searches from the data file's
 directory, to three directory levels below it, for all ``.mon`` files whose
 filename carries the run number. The comparison is numeric, so the zero-padded
@@ -440,12 +440,9 @@ does not invent format rules:
 * Mantid's PSI-BIN loader can emit a deadtime table, but it fills the PSI-BIN
   table with zeros. Asymmetry therefore treats PSI deadtime as absent and uses
   ``File`` mode only when non-zero file values are actually present.
-* PSI ``.mon`` temperature sidecar loading follows Mantid ``LoadPSIMuonBin``
-  rather than musrfit, because musrfit was found to read embedded PSI
-  temperature fields but not these external log files. Asymmetry extends the
-  Mantid convention in two ways: MDU runs get the same sidecars as BIN runs,
-  and a sidecar whose start timestamp is inconsistent with the run's own
-  start/stop window is rejected rather than loaded.
+* PSI ``.mon`` temperature sidecars share channel naming and provenance
+  metadata with Mantid ``LoadPSIMuonBin``. Both BIN and MDU runs can load
+  sidecars; a sidecar with an inconsistent start timestamp is rejected.
 
 Grouping behaviour by format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

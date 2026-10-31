@@ -77,3 +77,9 @@ and `testpaths = ["tests"]` in `pyproject.toml` already match subdirectories
 recursively, so no CI or `pyproject.toml` pytest-config changes were needed
 for this reorganization (only the Ruff `per-file-ignores` keys, which are
 literal per-file paths, needed re-pathing).
+
+## Optional external comparisons
+
+Set `ASYMMETRY_MUSRFIT_DATA` to musrfit example data to enable PSI file checks.
+Set `ASYMMETRY_MANTID_SOURCE` to a Mantid source checkout to enable the standalone
+MaxEnt pulse-response comparison. These checks skip when their inputs are absent.

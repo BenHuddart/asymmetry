@@ -5,8 +5,8 @@ response we fold into the forward model.  It imports standalone (no Mantid
 framework), so when a local checkout is present we compare the two kernels at a
 documented tolerance.  Nothing is copied — this is a read-only verification.
 
-The checkout lives outside the repo (``~/Source/mantid``), so the test skips
-cleanly when it is absent (always the case in CI).  Constants differ slightly
+Set ``ASYMMETRY_MANTID_SOURCE`` to a Mantid checkout to enable this check;
+the test skips when it is unset or the standalone module is unavailable.  Constants differ slightly
 (Mantid truncates τ_µ = 2.19704 vs our CODATA 2.1969811), so the double-pulse
 case agrees to ~1e-3 rather than bit-exact; the single-pulse case has no τ_µ
 dependence (the tanh interference weight vanishes) and agrees to machine
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -25,15 +26,18 @@ import pytest
 from asymmetry.core.maxent import pulse_response
 from asymmetry.core.utils.constants import PION_LIFETIME_US
 
-_START_PATH = Path.home() / "Source" / "mantid" / "scripts" / "Muon" / "MaxentTools" / "start.py"
+_MANTID_SOURCE = os.environ.get("ASYMMETRY_MANTID_SOURCE", "")
 
 
 def _load_start():
     """Load Mantid's standalone ``START``, or return None if unavailable."""
-    if not _START_PATH.exists():
+    if not _MANTID_SOURCE:
+        return None
+    start_path = Path(_MANTID_SOURCE) / "scripts" / "Muon" / "MaxentTools" / "start.py"
+    if not start_path.exists():
         return None
     try:
-        spec = importlib.util.spec_from_file_location("_mantid_maxent_start", _START_PATH)
+        spec = importlib.util.spec_from_file_location("_mantid_maxent_start", start_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module.START

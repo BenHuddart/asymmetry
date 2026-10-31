@@ -1,10 +1,8 @@
 """Tests for the FermiStep transition-step trend model.
 
-The published forms the model must reproduce are transcribed as numerical
-oracles: Mantid's ``SmoothTransition`` (Framework/CurveFitting/src/Functions/
-SmoothTransition.cpp — the code, whose rst formula has a sign error), the
-Khasanov et al. PRB 102, 094504 (2020) wTF amplitude + background form, and
-the tanh form. See docs/porting/fermi-step-transition/.
+The numerical checks cover the decreasing logistic convention shared with
+Mantid's ``SmoothTransition``, the Khasanov et al. PRB 102, 094504 (2020)
+wTF amplitude + background form, and the equivalent tanh form.
 """
 
 from __future__ import annotations
