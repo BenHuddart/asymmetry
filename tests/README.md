@@ -83,3 +83,17 @@ literal per-file paths, needed re-pathing).
 Set `ASYMMETRY_MUSRFIT_DATA` to musrfit example data to enable PSI file checks.
 Set `ASYMMETRY_MANTID_SOURCE` to a Mantid source checkout to enable the standalone
 MaxEnt pulse-response comparison. These checks skip when their inputs are absent.
+
+## User-state isolation
+
+Only `gui`-marked tests activate Qt fixtures. They receive per-test temporary
+settings in both user and system scopes, a temporary app-data directory, and a
+fresh cached fit-time store. Every test receives an isolated plugin directory.
+These locations are also independent across xdist workers; no user's HOME is
+redirected for isolation.
+
+Request `qapp` for Qt access. Use `QSettings()` under the GUI fixture or an
+explicit temporary file with `IniFormat`; never construct settings from
+organisation/application names. App-data users call
+`gui.utils.app_data.app_data_dir()`, which tests patch once for all consumers.
+Core-only harness runs do not import Qt through autouse fixtures.

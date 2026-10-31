@@ -153,3 +153,17 @@ When deleting a retired file, delete its baseline line in the same change. A sta
 entry fails structural checks, and a file reintroduced after removal fails as a
 new plan. Emptying the baseline is allowed; no placeholder study or index entry
 is required. Hidden files and `__pycache__` directories are ignored.
+
+## Test user-state isolation
+
+The root fixtures load Qt and run window cleanup only for tests marked `gui`.
+A core-only run imports no Qt through fixtures and can run without PySide6.
+GUI settings (including system fallbacks), app data, and cached fit times use
+per-test temporary locations; plugin discovery is isolated for every test.
+The temporary roots are independent between xdist workers.
+
+`tests/tools/test_test_isolation.py` checks a core harness subprocess with Qt
+imports blocked. On Linux it also runs a GUI case with its subprocess home
+pointing at a regular file, which makes real user-config paths unwritable even
+for a privileged test process. Reproduce both checks with
+`python tools/harness.py test -- tests/tools/test_test_isolation.py`.

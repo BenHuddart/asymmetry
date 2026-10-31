@@ -21,8 +21,8 @@ from asymmetry.gui.fit_settings import (
 
 
 @pytest.fixture
-def settings():
-    s = QSettings("AsymmetryTest", "fit_settings_test")
+def settings(tmp_path):
+    s = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     s.clear()
     yield s
     s.clear()

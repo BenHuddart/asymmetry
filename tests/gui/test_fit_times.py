@@ -34,6 +34,7 @@ def test_a_saved_store_is_read_at_first_use() -> None:
 
 def test_a_corrupt_store_is_discarded_with_a_warning(caplog: pytest.LogCaptureFixture) -> None:
     path = fit_times.fit_times_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json", encoding="utf-8")
     with caplog.at_level(logging.WARNING, logger=fit_times.__name__):
         assert fit_times.shared_fit_time_store().samples == {}

@@ -376,16 +376,7 @@ def _enclosing_function_name(tree: ast.Module, lineno: int) -> str | None:
 
 
 def find_axis_limit_policy_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return `set_xlim(`/`set_ylim(` calls outside AxisLimitPolicy's resolve path.
-
-    A call inside a file listed in :data:`AXIS_LIMIT_POLICY_FUNCTIONS` is only
-    allowed inside one of that file's named functions (where the resolved
-    dict from `AxisLimitPolicy.resolve` is applied); a call in any other file
-    is only allowed when that file is on :data:`AXIS_LIMIT_SURFACE_ALLOWLIST`
-    (a surface that is not an axis-limit-policy plot). Anything else bypasses
-    the policy, so the fields, the axes and the policy could disagree. See
-    ``docs/plans/axis-limit-policy.md``.
-    """
+    """Return axis-limit calls outside the shared AxisLimitPolicy resolution path."""
 
     failures: list[HarnessFailure] = []
     for path in _iter_python_files(gui_root):
@@ -425,17 +416,7 @@ PROCESS_EVENTS_ALLOWLIST = frozenset({GUI_ROOT / "app.py"})
 
 
 def find_process_events_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return ``processEvents(`` calls outside the startup allowlist.
-
-    ``processEvents()`` in application code — classically inside a loop or a
-    progress callback — freezes between calls and invites re-entrancy while
-    *looking* responsive; the 2026-07 responsiveness programme removed every
-    such use. Long work belongs on a ``TaskRunner`` worker; widget-touching
-    loops go through the chunked progress runner
-    (``MainWindow._apply_items_with_progress``); completed-when-returned call
-    sites use a worker plus a nested ``QEventLoop``. See
-    ``docs/GUI_GUIDELINES.md`` § "Keeping the GUI responsive".
-    """
+    """Return event-loop pumping outside the startup allowlist; workers own long work."""
 
     failures: list[HarnessFailure] = []
     for path in _iter_python_files(gui_root):
@@ -535,16 +516,7 @@ def find_t0_alignment_violations(src_root: Path = SRC_ROOT) -> list[HarnessFailu
 
 
 def find_widget_screen_call_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return ``.screen()`` calls on widgets/windows outside the screen guard.
-
-    PySide's ``QWidget.screen()`` / ``QWindow.screen()`` bindings tie the
-    process-wide ``QScreen`` wrapper's lifetime to the receiver's wrapper
-    (shiboken parent link); a transient receiver collected by the cyclic GC
-    can then delete the live C++ ``QScreen`` while it is still in Qt's screen
-    list — the FB↔FFT crash. Resolve screens with
-    ``asymmetry.gui.screen_guard.screen_for`` instead. Comment text is
-    ignored so prose may reference the banned call.
-    """
+    """Return screen queries outside the guard that pins QScreen wrapper lifetimes."""
 
     failures: list[HarnessFailure] = []
     for path in _iter_python_files(gui_root):
@@ -569,12 +541,7 @@ def find_widget_screen_call_violations(gui_root: Path = GUI_ROOT) -> list[Harnes
 
 
 def find_bespoke_gle_export_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return GLE-export sequence fragments re-rolled outside the shared home.
-
-    Three signatures, one rule: `compile_gle(` calls, dynamic gleplot imports,
-    and `_show_gle_preview` definitions belong in `gui/utils/` — surfaces go
-    through `asymmetry.gui.utils.gle_export.run_gle_export`.
-    """
+    """Return GLE export sequences outside the shared export helper."""
 
     failures: list[HarnessFailure] = []
     for path in _iter_python_files(gui_root):
@@ -620,12 +587,7 @@ def find_bespoke_gle_export_violations(gui_root: Path = GUI_ROOT) -> list[Harnes
 
 
 def find_bespoke_section_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return bespoke titled/collapsible-section idioms outside the shared home.
-
-    A ``*CollapsibleSection`` class or a fresh import of the removed
-    ``collapsible_section`` module re-rolls the one titled-section primitive the
-    refresh consolidated onto ``PanelSection``.
-    """
+    """Return section chrome that bypasses the shared PanelSection foundation."""
 
     remediation = "Use `asymmetry.gui.widgets.panel_section.PanelSection`."
     failures: list[HarnessFailure] = []
@@ -693,13 +655,7 @@ def find_raw_hex_colour_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFai
 
 
 def find_literal_pixel_geometry_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
-    """Return fixed/minimum width/height set to a bare int literal >= threshold.
-
-    Literal-pixel geometry freezes a widget at a design size and drifts once the
-    font-driven UI zoom scales everything else. Sizes should derive from
-    `styles/metrics.py` helpers; genuine design floors are allowlisted per file
-    in :data:`PIXEL_GEOMETRY_ALLOWLIST`.
-    """
+    """Require font-derived geometry except allowlisted design floors."""
 
     failures: list[HarnessFailure] = []
     for path in _iter_python_files(gui_root):
@@ -760,28 +716,15 @@ def find_test_placement_violations(tests_root: Path = TESTS_ROOT) -> list[Harnes
 
 
 def find_missing_gui_marker_violations(tests_root: Path = TESTS_ROOT) -> list[HarnessFailure]:
-    """Return `tests/gui/` files that need `qapp` but carry no `pytest.mark.gui`.
+    """Require a GUI marker wherever a test requests the qapp fixture."""
 
-    `--subset gui`/`--subset non-gui` shard by pytest marker, not by directory
-    (see `tests/conftest.py`), so a `tests/gui/` file with no explicit marker
-    silently falls into the `unit` bucket and runs on the non-GUI CI runner —
-    exactly the drift that put a `FitParametersPanel`-constructing test on the
-    non-GUI shard (crashing an xdist worker there) before this check existed.
-    Flags any file that requests the `qapp` fixture (by parameter or by
-    `pytestmark = pytest.mark.usefixtures("qapp")`) without a `pytest.mark.gui`
-    anywhere in the file; files that mix pure and Qt-dependent tests are
-    expected to carry a per-function `@pytest.mark.gui` instead of a blanket
-    `pytestmark`, which this check accepts equally.
-    """
-
-    gui_root = tests_root / "gui"
     failures: list[HarnessFailure] = []
-    if not gui_root.exists():
+    if not tests_root.exists():
         return failures
 
     func_pattern = re.compile(r"^def (test_\w+)\s*\(([^)]*)\)", re.MULTILINE)
     module_qapp_fixture = re.compile(r'pytestmark\s*=.*usefixtures\(\s*["\']qapp["\']')
-    for path in sorted(gui_root.rglob("test_*.py")):
+    for path in sorted(tests_root.rglob("test_*.py")):
         if not path.is_file() or "__pycache__" in path.parts:
             continue
         text = path.read_text(encoding="utf-8")
@@ -865,6 +808,53 @@ def find_dependency_boundary_violations(
                     ),
                 )
             )
+    return failures
+
+
+def find_user_location_violations(root: Path = ROOT) -> list[HarnessFailure]:
+    """Keep app-data resolution in one seam and test settings out of native user stores."""
+    failures: list[HarnessFailure] = []
+    gui = root / "src/asymmetry/gui"
+    for path in _iter_python_files(gui):
+        if path == gui / "utils/app_data.py":
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.alias)
+                and node.name == "QStandardPaths"
+                or isinstance(node, ast.Attribute)
+                and node.attr == "QStandardPaths"
+                or isinstance(node, ast.Name)
+                and node.id == "QStandardPaths"
+            ):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        node.lineno,
+                        "Resolve app data through gui.utils.app_data.app_data_dir().",
+                    )
+                )
+                break
+    for path in _iter_python_files(root / "tests"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "QSettings"
+                and (node.args or node.keywords)
+                and not any(
+                    isinstance(arg, ast.Attribute)
+                    and arg.attr in ({"IniFormat"} if i == 0 else {"IniFormat", "NativeFormat"})
+                    for i, arg in enumerate(node.args[:2])
+                )
+            ):
+                failures.append(
+                    HarnessFailure(
+                        path,
+                        node.lineno,
+                        "Use QSettings() under the GUI fixture or an explicit temporary settings file, never organisation/application names.",
+                    )
+                )
     return failures
 
 
@@ -1057,6 +1047,7 @@ def run_structural_checks() -> int:
         *find_literal_pixel_geometry_violations(),
         *find_test_placement_violations(),
         *find_missing_gui_marker_violations(),
+        *find_user_location_violations(),
         *find_screenshot_reference_violations(),
     ]
     if not failures:

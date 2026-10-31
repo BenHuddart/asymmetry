@@ -27,9 +27,9 @@ from tests._qt_helpers import wait_for
 pytestmark = pytest.mark.gui
 
 
-def _scratch_panel() -> FourierPanel:
+def _scratch_panel(tmp_path) -> FourierPanel:
     """A FourierPanel over a scratch QSettings scope (isolated from the app's)."""
-    settings = QSettings("AsymmetryTest", "fourier_staleness_test")
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.clear()
     return FourierPanel(settings=settings)
 
@@ -37,8 +37,8 @@ def _scratch_panel() -> FourierPanel:
 # ── settings_changed: debounce ──────────────────────────────────────────
 
 
-def test_padding_change_emits_settings_changed_once_after_debounce(qapp) -> None:
-    panel = _scratch_panel()
+def test_padding_change_emits_settings_changed_once_after_debounce(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     calls: list[None] = []
     panel.settings_changed.connect(lambda: calls.append(None))
 
@@ -53,9 +53,9 @@ def test_padding_change_emits_settings_changed_once_after_debounce(qapp) -> None
     assert len(calls) == 1
 
 
-def test_rapid_edits_coalesce_to_one_emit(qapp) -> None:
+def test_rapid_edits_coalesce_to_one_emit(tmp_path, qapp) -> None:
     """Multiple edits before the timer fires still produce exactly one emit."""
-    panel = _scratch_panel()
+    panel = _scratch_panel(tmp_path)
     calls: list[None] = []
     panel.settings_changed.connect(lambda: calls.append(None))
 
@@ -72,8 +72,8 @@ def test_rapid_edits_coalesce_to_one_emit(qapp) -> None:
 # ── settings_changed: suppression during programmatic restores ─────────
 
 
-def test_restore_state_does_not_emit(qapp) -> None:
-    panel = _scratch_panel()
+def test_restore_state_does_not_emit(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     saved = panel.get_state()
     calls: list[None] = []
     panel.settings_changed.connect(lambda: calls.append(None))
@@ -84,8 +84,8 @@ def test_restore_state_does_not_emit(qapp) -> None:
     assert calls == []
 
 
-def test_set_group_definitions_does_not_emit(qapp) -> None:
-    panel = _scratch_panel()
+def test_set_group_definitions_does_not_emit(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     calls: list[None] = []
     panel.settings_changed.connect(lambda: calls.append(None))
 
@@ -95,8 +95,8 @@ def test_set_group_definitions_does_not_emit(qapp) -> None:
     assert calls == []
 
 
-def test_set_group_phases_does_not_emit(qapp) -> None:
-    panel = _scratch_panel()
+def test_set_group_phases_does_not_emit(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     panel.set_group_definitions({1: "Fwd", 2: "Bwd"})
     calls: list[None] = []
     panel.settings_changed.connect(lambda: calls.append(None))
@@ -107,8 +107,8 @@ def test_set_group_phases_does_not_emit(qapp) -> None:
     assert calls == []
 
 
-def test_set_group_enabled_does_not_emit(qapp) -> None:
-    panel = _scratch_panel()
+def test_set_group_enabled_does_not_emit(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     panel.set_group_definitions({1: "Fwd", 2: "Bwd"})
     calls: list[None] = []
     panel.settings_changed.connect(lambda: calls.append(None))
@@ -119,8 +119,8 @@ def test_set_group_enabled_does_not_emit(qapp) -> None:
     assert calls == []
 
 
-def test_restore_group_phase_state_does_not_emit(qapp) -> None:
-    panel = _scratch_panel()
+def test_restore_group_phase_state_does_not_emit(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     calls: list[None] = []
     panel.settings_changed.connect(lambda: calls.append(None))
 
@@ -136,10 +136,10 @@ def test_restore_group_phase_state_does_not_emit(qapp) -> None:
 # ── phase-table item edits: guarded vs. real user edits ─────────────────
 
 
-def test_phase_table_rebuild_does_not_emit_but_user_edit_does(qapp) -> None:
+def test_phase_table_rebuild_does_not_emit_but_user_edit_does(tmp_path, qapp) -> None:
     """A programmatic table rebuild must not schedule an emit; a simulated
     user edit to a phase cell must."""
-    panel = _scratch_panel()
+    panel = _scratch_panel(tmp_path)
     panel.set_group_definitions({1: "Fwd", 2: "Bwd"})
 
     calls: list[None] = []
@@ -160,10 +160,10 @@ def test_phase_table_rebuild_does_not_emit_but_user_edit_does(qapp) -> None:
     assert len(calls) == 1
 
 
-def test_apply_psi_harmonics_preset_is_a_user_action_and_emits(qapp) -> None:
+def test_apply_psi_harmonics_preset_is_a_user_action_and_emits(tmp_path, qapp) -> None:
     """The PSI-harmonics preset button is a user action; unlike the restore
     helpers it must schedule an emit (task explicitly calls this out)."""
-    panel = _scratch_panel()
+    panel = _scratch_panel(tmp_path)
     calls: list[None] = []
     panel.settings_changed.connect(lambda: calls.append(None))
 
@@ -177,13 +177,13 @@ def test_apply_psi_harmonics_preset_is_a_user_action_and_emits(qapp) -> None:
 # ── stale banner ─────────────────────────────────────────────────────────
 
 
-def test_banner_hidden_by_default(qapp) -> None:
-    panel = _scratch_panel()
+def test_banner_hidden_by_default(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     assert panel.is_stale() is False
 
 
-def test_set_stale_shows_exact_composed_text(qapp) -> None:
-    panel = _scratch_panel()
+def test_set_stale_shows_exact_composed_text(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     panel.set_stale("grouping changed")
 
     assert panel.is_stale() is True
@@ -193,8 +193,8 @@ def test_set_stale_shows_exact_composed_text(qapp) -> None:
     )
 
 
-def test_set_stale_none_hides_banner(qapp) -> None:
-    panel = _scratch_panel()
+def test_set_stale_none_hides_banner(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     panel.set_stale("grouping changed")
     assert panel.is_stale() is True
 
@@ -202,8 +202,8 @@ def test_set_stale_none_hides_banner(qapp) -> None:
     assert panel.is_stale() is False
 
 
-def test_set_stale_empty_string_hides_banner(qapp) -> None:
-    panel = _scratch_panel()
+def test_set_stale_empty_string_hides_banner(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     panel.set_stale("grouping changed")
     panel.set_stale("")
     assert panel.is_stale() is False
@@ -212,13 +212,13 @@ def test_set_stale_empty_string_hides_banner(qapp) -> None:
 # ── overlay-mismatch banner ───────────────────────────────────────────────
 
 
-def test_overlay_mismatch_banner_hidden_by_default(qapp) -> None:
-    panel = _scratch_panel()
+def test_overlay_mismatch_banner_hidden_by_default(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     assert panel.is_overlay_mismatched() is False
 
 
-def test_set_overlay_mismatch_shows_and_hides_banner(qapp) -> None:
-    panel = _scratch_panel()
+def test_set_overlay_mismatch_shows_and_hides_banner(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     panel.set_overlay_mismatch(True)
 
     assert panel.is_overlay_mismatched() is True
@@ -231,9 +231,9 @@ def test_set_overlay_mismatch_shows_and_hides_banner(qapp) -> None:
     assert panel.is_overlay_mismatched() is False
 
 
-def test_stale_and_overlay_mismatch_banners_are_independent(qapp) -> None:
+def test_stale_and_overlay_mismatch_banners_are_independent(tmp_path, qapp) -> None:
     """The two banners track different conditions and can show together."""
-    panel = _scratch_panel()
+    panel = _scratch_panel(tmp_path)
     panel.set_stale("grouping changed")
     panel.set_overlay_mismatch(True)
 
@@ -404,8 +404,8 @@ def test_run_switch_reevaluates_banner(window) -> None:
 # ── signal source (grouped average vs F−B asymmetry) ─────────────────────
 
 
-def test_signal_source_default_is_grouped_average(qapp) -> None:
-    panel = _scratch_panel()
+def test_signal_source_default_is_grouped_average(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     assert panel._current_signal_source() == "grouped_average"
     assert panel.get_state()["signal_source"] == "grouped_average"
     # The grouped radio is the checked default; the Groups controls are enabled.
@@ -413,28 +413,28 @@ def test_signal_source_default_is_grouped_average(qapp) -> None:
     assert panel._phase_table.isEnabled() is True
 
 
-def test_signal_source_get_restore_round_trip(qapp) -> None:
-    panel = _scratch_panel()
+def test_signal_source_get_restore_round_trip(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     panel._signal_fb_radio.setChecked(True)
     state = panel.get_state()
     assert state["signal_source"] == "fb_asymmetry"
 
-    other = _scratch_panel()
+    other = _scratch_panel(tmp_path)
     other.restore_state(state)
     assert other._current_signal_source() == "fb_asymmetry"
     assert other._signal_fb_radio.isChecked() is True
 
 
-def test_restore_state_missing_signal_source_defaults_grouped(qapp) -> None:
-    panel = _scratch_panel()
+def test_restore_state_missing_signal_source_defaults_grouped(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     panel._signal_fb_radio.setChecked(True)
     # An old .asymp project has no signal_source key.
     panel.restore_state({})
     assert panel._current_signal_source() == "grouped_average"
 
 
-def test_fb_mode_disables_groups_controls(qapp) -> None:
-    panel = _scratch_panel()
+def test_fb_mode_disables_groups_controls(tmp_path, qapp) -> None:
+    panel = _scratch_panel(tmp_path)
     panel._signal_fb_radio.setChecked(True)
     assert panel._phase_table.isEnabled() is False
     assert panel._use_phase_table_check.isEnabled() is False
