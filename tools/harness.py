@@ -907,12 +907,14 @@ def find_agent_guide_violations(
             )
         )
     claude_md = root / "CLAUDE.md"
-    if "@AGENTS.md" not in claude_md.read_text(encoding="utf-8"):
+    unfenced = re.sub(r"^```.*?^```", "", claude_md.read_text(encoding="utf-8"), flags=re.M | re.S)
+    if not re.search(r"^@AGENTS\.md\s*$", unfenced, flags=re.M):
         failures.append(
             HarnessFailure(
                 claude_md,
                 0,
-                "CLAUDE.md must import AGENTS.md (`@AGENTS.md`), or Claude Code loses the guide.",
+                "CLAUDE.md must import AGENTS.md (`@AGENTS.md` alone on a line, outside a code "
+                "block), or Claude Code loses the guide.",
             )
         )
     return failures
