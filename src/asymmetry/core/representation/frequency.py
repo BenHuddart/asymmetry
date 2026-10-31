@@ -101,14 +101,6 @@ class FrequencyFFT(Representation):
             self.result_metadata = {"fourier_phase_fit": spectrum.metadata["fourier_phase_fit"]}
         else:
             self.result_metadata = {}
-        config_dict.update(
-            phase_fit_min_mhz=config.phase_fit_min_mhz,
-            phase_fit_max_mhz=config.phase_fit_max_mhz,
-            phase_fit_tolerance_degrees=config.phase_fit_tolerance_degrees,
-        )
-        if fourier_mode_uses_phase_fit(config.display):
-            config_dict["normalisation"] = "asymmetry_percent"
-        self.recipe["fourier_config"] = config_dict
         return [spectrum]
 
 

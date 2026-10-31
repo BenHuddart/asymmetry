@@ -185,7 +185,11 @@ from asymmetry.core.fourier import (
 )
 from asymmetry.core.fourier.fft import fourier_mode_uses_phase_fit
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
-from asymmetry.core.fourier.phase_fit import PHASE_FIT_METHOD, PhaseFitCancelled
+from asymmetry.core.fourier.phase_fit import (
+    PHASE_FIT_METHOD,
+    PhaseFitCancelled,
+    PhaseFitRejectedError,
+)
 from asymmetry.core.fourier.units import FieldUnit, convert
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
@@ -8082,9 +8086,11 @@ class MainWindow(QMainWindow):
             )
             self._frequency_recompute_inflight.discard(key)
             self._finish_frequency_recompute_ui()
+            if not current:
+                self._release_superseded_frequency_recompute(run_number, rep_type)
+                return
             self._notify_frequency_recompute_done(key)
-            if current:
-                self._set_fourier_status(f"{name} computation cancelled.")
+            self._set_fourier_status(f"{name} computation cancelled.")
 
         self._tasks.start(
             _worker,
@@ -8114,6 +8120,14 @@ class MainWindow(QMainWindow):
             and representation.recipe == recipe
         )
 
+    def _release_superseded_frequency_recompute(self, run_number, rep_type) -> None:
+        """Waiters recompute a superseded run; otherwise a displayed one re-syncs itself."""
+        key = (run_number, rep_type)
+        awaited = any(key in pending for pending, _cb in self._frequency_recompute_waiters)
+        self._notify_frequency_recompute_done(key)
+        if self._frequency_display_key == key and not awaited:
+            self._sync_frequency_plot_for_run(run_number)
+
     def _on_frequency_recompute_finished(
         self,
         run_number: int,
@@ -8134,10 +8148,7 @@ class MainWindow(QMainWindow):
                 "lazy_spectrum_recompute", started_at, run=run_number, superseded=1
             )
             self._finish_frequency_recompute_ui()
-            awaited = any(key in pending for pending, _cb in self._frequency_recompute_waiters)
-            self._notify_frequency_recompute_done(key)
-            if self._frequency_display_key == key and not awaited:
-                self._sync_frequency_plot_for_run(run_number)
+            self._release_superseded_frequency_recompute(run_number, rep_type)
             return
         representation.cache_datasets(list(spectra) if spectra else [])
         if result_metadata is not None:
@@ -8211,7 +8222,7 @@ class MainWindow(QMainWindow):
             run_number, rep_type, representation, recipe_at_start
         ):
             self._finish_frequency_recompute_ui()
-            self._notify_frequency_recompute_done(key)
+            self._release_superseded_frequency_recompute(run_number, rep_type)
             return
         spectra = self._frequency_recompute_failed(run_number, rep_type, representation, message)
         self._finish_frequency_recompute_ui()
@@ -8281,44 +8292,64 @@ class MainWindow(QMainWindow):
             for number, snapshot, run in snapshots:
                 if worker.is_cancelled():
                     raise PhaseFitCancelled()
-                spectra = (
-                    snapshot.compute(run, context=worker.is_cancelled)
-                    if isinstance(snapshot, FrequencyFFT)
-                    else snapshot.compute(run)
-                )
-                results.append((number, spectra, snapshot.result_metadata))
+                if not isinstance(snapshot, FrequencyFFT):
+                    results.append((number, snapshot.compute(run), snapshot.result_metadata, None))
+                    continue
+                # A refusal belongs to its run alone; the other runs still publish.
+                try:
+                    spectra = snapshot.compute(run, context=worker.is_cancelled)
+                except PhaseFitRejectedError as exc:
+                    results.append((number, None, None, str(exc)))
+                    continue
+                results.append((number, spectra, snapshot.result_metadata, None))
             return results
 
         def _complete(current_count, message=None):
-            superseded = current_count != len(targets)
-            awaited = any(keys & pending for pending, _cb in self._frequency_recompute_waiters)
             for key in keys:
                 self._frequency_recompute_inflight.discard(key)
-            if superseded and explicit and not awaited:
-                self._fourier_compute_active = False
             self._finish_frequency_recompute_ui()
-            if not superseded:
+            if current_count == len(targets):
                 on_ready()
-            for key in keys:
-                self._notify_frequency_recompute_done(key)
-            if message is not None and not superseded:
+                for key in keys:
+                    self._notify_frequency_recompute_done(key)
+            else:
+                # Waiters claim superseded runs first; the re-entry then waits for
+                # or recomputes them before running the continuation once.
+                for key in keys:
+                    self._notify_frequency_recompute_done(key)
+                self._ensure_frequency_spectra_for_runs_async(
+                    requested, rep_type, on_ready, busy_message=busy_message, explicit=explicit
+                )
+            if message is not None:
                 self._set_fourier_status(message)
+
+        def _record_failure(number, rep):
+            self._lazy_recompute_failures.add((number, rep_type))
+            rep.invalidate()
+            rep.result_metadata = {}
+            self._frequency_cache(rep_type).pop(number, None)
 
         def _finished(results):
             if not self._frequency_recompute_context(inflight, keys):
                 return
             current_count = 0
-            for number, spectra, metadata in results:
+            refusals = []
+            for number, spectra, metadata, refusal in results:
                 rep = rep_by_run[number]
                 if not self._frequency_recompute_is_current(number, rep_type, rep, recipes[number]):
                     continue
                 current_count += 1
+                if refusal is not None:
+                    _record_failure(number, rep)
+                    refusals.append(f"run {number}: {refusal}")
+                    continue
                 rep.cache_datasets(list(spectra) if spectra else [])
                 rep.result_metadata = metadata
                 self._frequency_spectra_from_cache(number, rep_type)
                 self._lazy_recompute_failures.discard((number, rep_type))
             self._log_perf_event("batch_spectrum_recompute", started_at, runs=len(results))
-            _complete(current_count)
+            message = f"Could not compute {name} for {'; '.join(refusals)}" if refusals else None
+            _complete(current_count, message)
 
         def _unsuccessful(message):
             if not self._frequency_recompute_context(inflight, keys):
@@ -8329,11 +8360,8 @@ class MainWindow(QMainWindow):
                 if self._frequency_recompute_is_current(number, rep_type, rep, recipes[number])
             ]
             for number, rep in current:
-                self._lazy_recompute_failures.add((number, rep_type))
-                rep.invalidate()
-                rep.result_metadata = {}
-                self._frequency_cache(rep_type).pop(number, None)
-            _complete(len(current), message)
+                _record_failure(number, rep)
+            _complete(len(current), message if current else None)
 
         def _error(message):
             _unsuccessful(f"Could not recompute {name}: {message}")

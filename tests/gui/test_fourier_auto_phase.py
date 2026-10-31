@@ -302,7 +302,7 @@ def test_legacy_auto_snapshot_without_recipe_is_stale(window):
     assert reason == "phase estimation method changed"
 
 
-def test_batch_rejection_publishes_no_partial_results(window, qapp, monkeypatch):
+def test_batch_rejection_fails_only_the_refused_run(window, qapp, monkeypatch):
     from dataclasses import replace
 
     first = window._current_dataset
@@ -334,11 +334,16 @@ def test_batch_rejection_publishes_no_partial_results(window, qapp, monkeypatch)
     )
     wait_for(lambda: bool(ready), qapp)
     assert calls == [731, 732]
-    for number in (731, 732):
-        rep = window._project_model.representation(number, FFT)
-        assert rep.primary is None
-        assert rep.result_metadata == {}
-        assert window._cached_frequency_spectra(number, FFT) == []
+    accepted = window._project_model.representation(731, FFT)
+    assert accepted.result_metadata == REPORT
+    assert window._cached_frequency_spectra(731, FFT) == [accepted.primary]
+    refused = window._project_model.representation(732, FFT)
+    assert refused.primary is None
+    assert refused.result_metadata == {}
+    assert window._cached_frequency_spectra(732, FFT) == []
+    assert window._lazy_recompute_failures == {(732, FFT)}
+    status = window._fourier_panel._action_footer._status_label.text()
+    assert "run 732: Group 1: widen fit band" in status
 
 
 @pytest.mark.parametrize("dispatch", ["single", "batch"])
@@ -394,6 +399,9 @@ def test_superseded_failure_releases_queued_explicit_compute(
     wait_for(lambda: not window._fourier_compute_active, qapp)
     assert rep.result_metadata == REPORT
     assert window._cached_frequency_spectra(731, FFT) == [rep.primary]
+    if dispatch == "batch":
+        wait_for(lambda: bool(old_ready), qapp)
+        assert old_ready == [True]
 
 
 @pytest.mark.parametrize("cancelled", [False, True])
@@ -431,7 +439,7 @@ def test_superseded_batch_failure_preserves_new_result(
     finally:
         release.set()
     wait_for(lambda: not window._frequency_recompute_inflight, qapp)
-    assert old_ready == []
+    assert old_ready == [True]
     assert current.primary is spectrum
     assert current.result_metadata == REPORT
     assert window._cached_frequency_spectra(731, FFT) == [spectrum]
@@ -439,6 +447,35 @@ def test_superseded_batch_failure_preserves_new_result(
     assert (
         "New result remains current." in window._fourier_panel._action_footer._status_label.text()
     )
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_superseded_single_failure_resyncs_displayed_run(window, qapp, monkeypatch, cancelled):
+    entered, release = threading.Event(), threading.Event()
+    rep = window._project_model.ensure_dataset(731).ensure(FFT)
+    rep.recipe = {"fourier_config": {"display": "(Power)^1/2"}}
+    synced = []
+
+    def compute(snapshot, run, *, context=None):
+        entered.set()
+        assert release.wait(timeout=5)
+        if cancelled:
+            raise PhaseFitCancelled()
+        raise RuntimeError("obsolete worker failure")
+
+    monkeypatch.setattr(FrequencyFFT, "compute", compute)
+    monkeypatch.setattr(window, "_sync_frequency_plot_for_run", synced.append)
+    window._start_async_frequency_recompute(731, FFT, (rep, window._current_dataset.run))
+    try:
+        wait_for(entered.is_set, qapp)
+        window._frequency_display_key = (731, FFT)
+        rep.recipe = {"fourier_config": {"display": "Cos"}}
+    finally:
+        release.set()
+    wait_for(lambda: not window._frequency_recompute_inflight, qapp)
+    wait_for(lambda: bool(synced), qapp)
+    assert synced == [731]
+    assert (731, FFT) not in window._lazy_recompute_failures
 
 
 @pytest.mark.parametrize("dispatch", ["single", "batch"])

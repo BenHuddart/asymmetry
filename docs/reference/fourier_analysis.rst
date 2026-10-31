@@ -614,6 +614,13 @@ a different model or manual phasing. Acceptance concerns the recorded fit
 and observation bands; applying that phase elsewhere in the FFT relies on
 the common-phase assumption outside the fitted region.
 
+Auto Phase also refuses a group before fitting when its samples or
+uncertainties are not finite across the time window, or when ``Subtract
+average signal`` is off: the response model has no constant term, so an
+unsubtracted baseline would leak into the fitted bins. With several runs
+selected, a refusal affects only its own run; the others are computed and
+the status line names each refused run.
+
 The summary reports each group's phase, conditional standard error, and
 largest processing change. The statistical error propagates the supplied
 independent sample errors through mean subtraction, apodisation, and the

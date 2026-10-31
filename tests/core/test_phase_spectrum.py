@@ -156,6 +156,26 @@ def test_rejection_names_group_and_does_not_publish_partial_report(monkeypatch):
     assert rep.result_metadata == {"saved": "report"}
 
 
+@pytest.mark.parametrize(
+    ("reason", "change"),
+    [
+        ("mean_not_subtracted", {"subtract_average_signal": False}),
+        ("non_finite_samples", {}),
+    ],
+)
+def test_unsuitable_samples_are_typed_group_rejections(monkeypatch, reason, change):
+    run, signals, _, _ = _phase_run(monkeypatch)
+    if reason == "non_finite_samples":
+        signals[1].asymmetry[5] = np.nan
+    monkeypatch.setattr(
+        spectrum_module, "fit_fft_phase", lambda *args, **kwargs: pytest.fail("no fit expected")
+    )
+    config = GroupSpectrumConfig(display="phaseOptReal", **change)
+    with pytest.raises(PhaseFitRejectedError, match=r"Group 1 \(F\)") as caught:
+        compute_average_group_spectrum(run, config)
+    assert caught.value.report.reason == reason
+
+
 def test_cancellation_between_groups_and_context_forwarding(monkeypatch):
     run, _, phases, _ = _phase_run(monkeypatch)
     cancelled = False
@@ -205,8 +225,7 @@ def test_recipe_matches_direct_and_preserves_phase_report(monkeypatch):
             "time_start_us": pytest.approx(0.31),
             "sample_interval_us": pytest.approx(0.04),
         }
-    assert rep.recipe["fourier_config"]["phase_fit_min_mhz"] is None
-    assert rep.recipe["fourier_config"]["grouping_digest"] == "saved-grouping-digest"
+    assert rep.recipe == {"fourier_config": recipe}
     assert FrequencyFFT(recipe={"fourier_config": {"display": "Cos"}}).recompute_on_load
 
 
@@ -259,7 +278,7 @@ def test_auto_group_good_bins_preserve_declared_profile_t0_coordinates(
     run = Run(run_number=11, histograms=histograms, grouping=grouping)
     observed = []
 
-    def capture_phase_input(frequencies, spectrum, acquisition, config, **kwargs):
+    def capture_phase_input(acquisition, config, **kwargs):
         observed.append(acquisition)
         return _estimate(0.2)
 

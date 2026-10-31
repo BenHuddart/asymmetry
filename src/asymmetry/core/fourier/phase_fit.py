@@ -29,7 +29,11 @@ _UNCERTAINTY_SCOPE = (
 
 @dataclass(frozen=True)
 class PhaseAcquisition:
-    """Known sampling and preprocessing, with prepared samples before windowing."""
+    """Known sampling and preprocessing, with prepared samples before windowing.
+
+    ``mean_weights`` is ``None`` only for samples without a constant offset: the
+    response model has no zero-frequency term.
+    """
 
     time_start_us: float
     sample_interval_us: float
@@ -166,6 +170,25 @@ def _check_cancel(callback: CancelCallback) -> None:
         raise PhaseFitCancelled("Phase estimation cancelled")
 
 
+@dataclass
+class _ResponseTransforms:
+    """Zero-padded window and mean-weight transforms of one window, per lattice density."""
+
+    window: FloatArray
+    mean_weights: FloatArray | None
+    _by_density: dict[int, tuple[ComplexArray, ComplexArray | None]] = field(default_factory=dict)
+
+    def at(
+        self, density: int, callback: CancelCallback
+    ) -> tuple[ComplexArray, ComplexArray | None]:
+        if density not in self._by_density:
+            _check_cancel(callback)
+            size = density * len(self.window)
+            mean = None if self.mean_weights is None else np.fft.fft(self.mean_weights, n=size)
+            self._by_density[density] = (np.fft.fft(self.window, n=size), mean)
+        return self._by_density[density]
+
+
 @dataclass(frozen=True)
 class _PhaseSolution:
     phase: float
@@ -189,12 +212,12 @@ def _observation_bins(n: int, duration: float, band: tuple[float, float]) -> NDA
 
 def _sampled_response(
     acquisition: PhaseAcquisition,
-    window: FloatArray,
+    transforms: _ResponseTransforms,
     band: tuple[float, float],
     density: int,
     callback: CancelCallback = None,
 ) -> tuple[ComplexArray, ComplexArray, FloatArray, NDArray[np.int64]]:
-    n = len(window)
+    n = len(transforms.window)
     duration = n * acquisition.sample_interval_us
     bins = _observation_bins(n, duration, band)
     lattice = np.arange(
@@ -202,13 +225,11 @@ def _sampled_response(
         int(np.floor(band[1] * duration * density)) + 1,
     )
     centers = lattice / (density * duration)
-    _check_cancel(callback)
-    transform = np.fft.fft(window, n=density * n)
+    transform, mean_transform = transforms.at(density, callback)
     origin = np.exp(2j * np.pi * centers * acquisition.time_start_us)
     mean = np.zeros(len(centers), dtype=complex)
-    if acquisition.mean_weights is not None:
-        _check_cancel(callback)
-        mean = origin * np.fft.fft(acquisition.mean_weights, n=density * n)[-lattice]
+    if mean_transform is not None:
+        mean = origin * mean_transform[-lattice]
     carrier = transform[density * bins]
     positive = origin * transform[(density * bins[:, None] - lattice) % (density * n)]
     negative = origin.conj() * transform[(density * bins[:, None] + lattice) % (density * n)]
@@ -223,14 +244,14 @@ def _sampled_response(
 def _phase_search(
     data: ComplexArray,
     acquisition: PhaseAcquisition,
-    window: FloatArray,
+    transforms: _ResponseTransforms,
     band: tuple[float, float],
     density: int,
     callback: CancelCallback,
 ) -> _PhaseSolution:
     _check_cancel(callback)
     positive, negative, centers, bins = _sampled_response(
-        acquisition, window, band, density, callback
+        acquisition, transforms, band, density, callback
     )
     observed = np.concatenate((data[bins].real, data[bins].imag))
 
@@ -377,14 +398,12 @@ def _conditional_amplitude_standard_error(
 
 
 def fit_fft_phase(
-    frequency_mhz: FloatArray,
-    spectrum: ComplexArray,
     acquisition: PhaseAcquisition,
     config: PhaseFitConfig = PhaseFitConfig(),
     *,
     cancel_callback: CancelCallback = None,
 ) -> PhaseEstimate | PhaseRejection:
-    """Estimate phase using native bins and explicit acquisition-response fits.
+    """Estimate phase from the acquisition's native rFFT and explicit response fits.
 
     Suitability screens use conservative engineering thresholds, not calibrated
     confidence levels: conditional total-positive-amplitude SNR >= 8,
@@ -399,36 +418,11 @@ def fit_fft_phase(
     bins. Refinement is capped at 1025 centers and density 24.
     """
     _check_cancel(cancel_callback)
-    frequency = np.asarray(frequency_mhz, dtype=float)
-    supplied = np.asarray(spectrum, dtype=complex)
     n = len(acquisition.window_weights)
-    if frequency.ndim != 1 or supplied.shape != frequency.shape or len(frequency) < 2:
-        raise ValueError("Spectrum and frequency must be matching one-dimensional rFFT arrays")
-    if not np.all(np.isfinite(frequency)) or not np.all(np.isfinite(supplied)):
-        raise ValueError("Spectrum and frequencies must be finite")
-    padded = (
-        int(round(1 / ((frequency[1] - frequency[0]) * acquisition.sample_interval_us)))
-        if frequency[1] > frequency[0]
-        else 0
-    )
-    if padded < n or padded % n or len(frequency) != padded // 2 + 1:
-        raise ValueError("The spectrum must use an integer-padded rFFT grid for the acquisition")
-    if not np.allclose(
-        frequency, np.fft.rfftfreq(padded, acquisition.sample_interval_us), rtol=1e-10, atol=1e-12
-    ):
-        raise ValueError("Frequency values do not match the acquisition rFFT grid")
-    native = supplied[:: padded // n]
-    _check_cancel(cancel_callback)
-    expected = (
+    native = (
         np.fft.rfft(acquisition.unwindowed_signal * acquisition.window_weights)
         * acquisition.fft_scale
     )
-    if not np.allclose(
-        native, expected, rtol=1e-8, atol=max(float(np.max(np.abs(expected))) * 1e-10, 1e-300)
-    ):
-        raise ValueError(
-            "The supplied spectrum must match the prepared unwindowed samples and window"
-        )
     duration = n * acquisition.sample_interval_us
     resolution = 1 / duration
     nyquist = 0.5 / acquisition.sample_interval_us
@@ -487,9 +481,8 @@ def fit_fft_phase(
     )
     normalization = float(np.max(np.abs(native)))
     observed = native / normalization
-    base = _phase_search(
-        observed, acquisition, acquisition.window_weights, band, 3, cancel_callback
-    )
+    transforms = _ResponseTransforms(acquisition.window_weights, acquisition.mean_weights)
+    base = _phase_search(observed, acquisition, transforms, band, 3, cancel_callback)
     noise = max(
         np.sqrt(
             _noise_power(
@@ -498,9 +491,7 @@ def fit_fft_phase(
         ),
         np.finfo(float).eps * np.sqrt(2 * len(base.bins)),
     )
-    dense = _phase_search(
-        observed, acquisition, acquisition.window_weights, band, 6, cancel_callback
-    )
+    dense = _phase_search(observed, acquisition, transforms, band, 6, cancel_callback)
     solutions = [base, dense]
     solution, density = dense, 6
     ratio = float(np.linalg.norm(solution.residual) / noise)
@@ -517,7 +508,7 @@ def fit_fft_phase(
         solution = _phase_search(
             observed,
             acquisition,
-            acquisition.window_weights,
+            transforms,
             band,
             candidate_density,
             cancel_callback,
@@ -589,9 +580,7 @@ def fit_fft_phase(
     _check_cancel(cancel_callback)
     center = float(np.sum(solution.centers * solution.amplitudes) / amplitude_sum)
     narrow = (max(low, center - (high - low) / 3), min(high, center + (high - low) / 3))
-    narrowed = _phase_search(
-        observed, acquisition, acquisition.window_weights, narrow, density, cancel_callback
-    )
+    narrowed = _phase_search(observed, acquisition, transforms, narrow, density, cancel_callback)
     _check_cancel(cancel_callback)
     window = (
         np.ones(n)
@@ -602,7 +591,12 @@ def fit_fft_phase(
         np.fft.rfft(acquisition.unwindowed_signal * window) * acquisition.fft_scale / normalization
     )
     alternative = _phase_search(
-        alternative_data, acquisition, window, band, density, cancel_callback
+        alternative_data,
+        acquisition,
+        _ResponseTransforms(window, acquisition.mean_weights),
+        band,
+        density,
+        cancel_callback,
     )
     solutions.extend((narrowed, alternative))
     maximum_change = max(

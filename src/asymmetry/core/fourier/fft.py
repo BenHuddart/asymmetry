@@ -233,6 +233,11 @@ class PreparedFFTSignal:
         """Return the unpadded coherent gain used for percent calibration."""
         return float(np.sum(self.window_weights, dtype=np.float64))
 
+    @property
+    def percent_scale(self) -> float:
+        """Return ``100·2/Σw``: a cosine of fractional amplitude A peaks at 100·A."""
+        return 100.0 * 2.0 / self.window_sum
+
 
 def _clip_fft_window(
     time: NDArray[np.float64],
@@ -778,7 +783,7 @@ def fft_complex_prepared(
     # Nyquist bins strictly carry a 1/Σw one-sided gain rather than 2/Σw, but DC
     # is removed by the average subtraction and test tones avoid Nyquist.
     if amplitude_calibration and prepared.window_sum > 0.0:
-        spectrum = spectrum * (100.0 * 2.0 / prepared.window_sum)
+        spectrum = spectrum * prepared.percent_scale
 
     if phase_degrees or t0_offset_us:
         phase = np.deg2rad(float(phase_degrees)) + 2.0 * np.pi * freqs * float(t0_offset_us)

@@ -963,32 +963,48 @@ def compute_average_group_spectrum(
                 if group_id is None
                 else f"Group {group_id} ({names_by_group[group_id]})"
             )
-            if prepared.sample_errors is None:
-                report = PhaseRejection(
+            errors = prepared.sample_errors
+            unsuitable = (
+                (
+                    errors is None,
                     "missing_uncertainty",
                     "Supply finite sample uncertainties before Auto Phase.",
-                    None,
-                )
-                raise PhaseFitRejectedError(report, f"{group_label}: {report.message}")
-            if not is_fb_asymmetry and not prepared.fractional_applied:
-                report = PhaseRejection(
+                ),
+                (
+                    errors is not None
+                    and not (
+                        np.all(np.isfinite(errors))
+                        and np.all(np.isfinite(prepared.unwindowed_signal))
+                    ),
+                    "non_finite_samples",
+                    "Auto Phase needs finite samples and uncertainties across the time window.",
+                ),
+                (
+                    prepared.mean_weights is None,
+                    "mean_not_subtracted",
+                    "Enable average-signal subtraction; the phase model has no constant term.",
+                ),
+                (
+                    not is_fb_asymmetry and not prepared.fractional_applied,
                     "invalid_fractional_baseline",
                     "A positive fractional baseline is required; check the grouping and background.",
-                    None,
-                )
-                raise PhaseFitRejectedError(report, f"{group_label}: {report.message}")
+                ),
+            )
+            for failed, reason, message in unsuitable:
+                if failed:
+                    raise PhaseFitRejectedError(
+                        PhaseRejection(reason, message), f"{group_label}: {message}"
+                    )
             acquisition = PhaseAcquisition(
                 time_start_us=prepared.time_start_us,
                 sample_interval_us=prepared.dt,
                 window_weights=prepared.window_weights,
-                sample_errors=prepared.sample_errors,
+                sample_errors=errors,
                 mean_weights=prepared.mean_weights,
-                fft_scale=200.0 / prepared.window_sum,
+                fft_scale=prepared.percent_scale,
                 unwindowed_signal=prepared.unwindowed_signal,
             )
             report = fit_fft_phase(
-                freqs,
-                spectrum,
                 acquisition,
                 PhaseFitConfig(
                     minimum_frequency_mhz=config.phase_fit_min_mhz,
