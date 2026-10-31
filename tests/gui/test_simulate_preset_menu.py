@@ -19,14 +19,6 @@ from asymmetry.core.simulate_presets import ARCHETYPE_PRESETS
 from asymmetry.gui.mainwindow import MainWindow
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def win(qapp: QApplication) -> MainWindow:
     settings = QSettings()

@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QSettings  # noqa: E402
-from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
+from PySide6.QtWidgets import QPushButton  # noqa: E402
 
 from asymmetry.core.data.dataset import MuonDataset  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
@@ -38,11 +38,6 @@ from asymmetry.gui.windows.fit_results_window import FitResultsWindow  # noqa: E
 
 #: The inspector dock the Fit tabs are designed against, in characters (~320 px).
 _DOCK_CHARS = 46
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

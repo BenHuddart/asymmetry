@@ -57,3 +57,33 @@ def test_gui_marker_is_required_outside_the_gui_test_directory(tmp_path: Path) -
     path.write_text("def test_widget(qapp): pass\n", encoding="utf-8")
 
     assert [f.path for f in HARNESS["find_missing_gui_marker_violations"](tmp_path)] == [path]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "@pytest.fixture\ndef qapp(): return existing_app\n",
+        "app = QApplication([])\n",
+        "app = QtWidgets.QApplication([])\n",
+    ],
+)
+def test_duplicate_application_setup_is_rejected(tmp_path: Path, source: str) -> None:
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    path = tests / "test_example.py"
+    path.write_text(source, encoding="utf-8")
+
+    failures = HARNESS["find_user_location_violations"](tmp_path)
+
+    assert [failure.path for failure in failures] == [path]
+    assert "qapp" in failures[0].message
+
+
+def test_root_qapp_fixture_owns_application_construction(tmp_path: Path) -> None:
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "conftest.py").write_text(
+        "@pytest.fixture\ndef qapp(): return QApplication([])\n", encoding="utf-8"
+    )
+
+    assert HARNESS["find_user_location_violations"](tmp_path) == []

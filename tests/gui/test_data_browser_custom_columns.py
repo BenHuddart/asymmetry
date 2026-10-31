@@ -19,7 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QInputDialog
+from PySide6.QtWidgets import QInputDialog
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.data_browser import (
@@ -48,11 +48,6 @@ def _angle_cell_item(panel, row=0):
     visible = [c.id for c in panel._visible_extra_columns()]
     col_idx = len(panel._COLUMNS) + visible.index(ANGLE_COLUMN_ID)
     return panel._table.item(row, col_idx)
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _dataset(run_number: int) -> MuonDataset:

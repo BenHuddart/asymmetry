@@ -17,11 +17,6 @@ from PySide6.QtWidgets import QApplication, QLineEdit  # noqa: E402
 from asymmetry.gui.styles import metrics  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
 def test_char_width_monotonic_in_char_count(qapp) -> None:
     w5 = metrics.char_width(5)
     w10 = metrics.char_width(10)

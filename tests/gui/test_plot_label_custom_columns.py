@@ -12,15 +12,9 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.gui.panels.plot_panel import PlotPanel
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _dataset(run_number: int, custom: dict[str, str] | None = None) -> MuonDataset:

@@ -17,14 +17,6 @@ from PySide6.QtWidgets import QApplication, QPushButton, QWidget  # type: ignore
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _host(count: int = 4) -> tuple[QWidget, FlowLayout, list[QPushButton]]:
     host = QWidget()
     layout = FlowLayout(host)

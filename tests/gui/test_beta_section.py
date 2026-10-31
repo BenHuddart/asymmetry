@@ -122,14 +122,6 @@ def _configure_beta(section: BetaSectionWidget, datasets, *, applied_alpha=1.0) 
     )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _dataset(*, beta: float | None = None, run_number: int = 4101) -> MuonDataset:
     h1 = Histogram(counts=np.array([100.0, 100.0, 100.0, 100.0]), bin_width=0.01)
     h2 = Histogram(counts=np.array([50.0, 50.0, 50.0, 50.0]), bin_width=0.01)

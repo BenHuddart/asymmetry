@@ -19,20 +19,12 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QDoubleSpinBox
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QDoubleSpinBox
 
 from asymmetry.core.fitting.composite import COMPONENTS
 from asymmetry.core.fitting.parameter_models import PARAMETER_MODEL_COMPONENTS
 from asymmetry.core.fitting.user_function_authoring import generate_function_body
 from asymmetry.gui.windows.new_user_function_dialog import NewUserFunctionDialog
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 @pytest.fixture

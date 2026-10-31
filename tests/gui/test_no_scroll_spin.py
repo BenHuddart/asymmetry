@@ -18,21 +18,13 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QSpinBox
+from PySide6.QtWidgets import QSpinBox
 
 from asymmetry.gui.widgets.no_scroll_spin import (
     NoScrollComboBox,
     NoScrollDoubleSpinBox,
     NoScrollSpinBox,
 )
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def _wheel_event(widget) -> QWheelEvent:

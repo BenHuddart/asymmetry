@@ -25,7 +25,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.windows.global_fit_wizard_window as wizard_window_module
 from asymmetry.core.data.dataset import MuonDataset
@@ -66,14 +65,6 @@ _TEMPERATURES = (1.8, 8.0, 16.0, 22.0, 28.0, 40.0)
 _PHASE_I = _RUNS[0:3]
 _PHASE_II = _RUNS[3:5]
 _STUB = _RUNS[5]
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 @pytest.fixture

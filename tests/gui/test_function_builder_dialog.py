@@ -34,14 +34,6 @@ from asymmetry.gui.widgets.function_builder.dialog import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _fit_dialog(
     initial_expression: str = "Exponential + Constant",
     *,

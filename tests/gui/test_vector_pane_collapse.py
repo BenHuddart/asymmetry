@@ -37,8 +37,8 @@ from asymmetry.gui.panels.plot_panel import PlotPanel
 
 
 @pytest.fixture
-def app() -> QApplication:
-    return QApplication.instance() or QApplication([])
+def app(qapp) -> QApplication:
+    return qapp
 
 
 @pytest.fixture

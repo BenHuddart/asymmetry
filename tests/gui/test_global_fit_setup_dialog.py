@@ -24,11 +24,6 @@ from asymmetry.gui.panels.global_fit_setup_dialog import (  # noqa: E402
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
-
-
 def _data() -> GlobalFitSetupData:
     series = (
         GlobalFitSetupSeries(

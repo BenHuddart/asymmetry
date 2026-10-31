@@ -45,14 +45,6 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 class _ResolveCounter:
     """Call-counting wrapper around the real ``resolve_effective_grouping``.
 

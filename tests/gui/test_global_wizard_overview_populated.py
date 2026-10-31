@@ -24,15 +24,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 import numpy as np
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
 
 @pytest.fixture
-def app():
-    return QApplication.instance() or QApplication([])
+def app(qapp):
+    return qapp
 
 
 def _dataset(run_number: int, field: float, temperature: float) -> MuonDataset:

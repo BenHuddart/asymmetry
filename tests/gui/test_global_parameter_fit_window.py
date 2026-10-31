@@ -48,14 +48,6 @@ def _wait_fit_curves(window: GlobalParameterFitWindow, timeout_s: float = 10.0) 
     )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def test_refresh_plot_tolerates_missing_model_parameter_in_restored_result(
     qapp: QApplication,
 ) -> None:

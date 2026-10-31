@@ -10,7 +10,6 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.instrument import (
     INSTRUMENT_NAMES,
@@ -20,14 +19,6 @@ from asymmetry.core.instrument import (
     instrument_display_name,
 )
 from asymmetry.gui.windows.detector_layout_dialog import _MAX_GROUPS, DetectorLayoutDialog
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
 
 
 def _default_groups() -> dict[int, list[int]]:

@@ -101,14 +101,6 @@ def _recommendation_with_peaks(dataset: MuonDataset) -> FitWizardRecommendation:
     )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 @pytest.fixture
 def dataset() -> MuonDataset:
     t = np.linspace(0.0, 8.0, 120)

@@ -27,14 +27,6 @@ from asymmetry.gui.panels.data_browser import (
 )
 
 
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    return app
-
-
 def _dataset(run_number: int, t_shift: float = 0.0) -> MuonDataset:
     t = np.linspace(0.0 + t_shift, 5.0 + t_shift, 40)
     return MuonDataset(

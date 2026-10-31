@@ -17,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QHeaderView
+from PySide6.QtWidgets import QCheckBox, QComboBox, QHeaderView
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameters import AffineTie
@@ -26,11 +26,6 @@ from asymmetry.gui.panels.fit.tab_base import VALUE_COL_CHARS, table_content_wid
 from asymmetry.gui.panels.fit_panel import FitParameterTable
 from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
-
-
-@pytest.fixture(scope="module")
-def qapp() -> QApplication:
-    return QApplication.instance() or QApplication([])
 
 
 def _model() -> CompositeModel:

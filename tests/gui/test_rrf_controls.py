@@ -44,12 +44,6 @@ def _dataset(field_gauss: float = 2213.0, dt: float = 0.004) -> MuonDataset:
 
 
 @pytest.fixture
-def qapp() -> QApplication:
-    app = QApplication.instance() or QApplication([])
-    return app
-
-
-@pytest.fixture
 def panel(qapp: QApplication):
     widget = PlotPanel()
     if not widget._has_mpl:

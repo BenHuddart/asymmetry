@@ -92,7 +92,8 @@ fresh cached fit-time store. Every test receives an isolated plugin directory.
 These locations are also independent across xdist workers; no user's HOME is
 redirected for isolation.
 
-Request `qapp` for Qt access. Use `QSettings()` under the GUI fixture or an
+Request the root `qapp` fixture for Qt access. Module-local `qapp` fixtures and
+direct `QApplication` construction are rejected by structural checks. Use `QSettings()` under the GUI fixture or an
 explicit temporary file with `IniFormat`; never construct settings from
 organisation/application names. App-data users call
 `gui.utils.app_data.app_data_dir()`, which tests patch once for all consumers.
