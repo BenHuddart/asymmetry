@@ -366,9 +366,7 @@ def test_maxent_panel_settings_round_trip_unchanged_after_restructure(qapp: QApp
 
 
 def test_fourier_panel_group_order_matches_workflow(qapp: QApplication) -> None:
-    """The usage-tier restructure orders sections always-visible → conditional →
-    collapsed: FFT Phase Mode, Apodisation, Groups, FFT settings, then the
-    conditional Phase section, then the collapsed stack."""
+    """Mode-specific settings sit beside the selector before the shared workflow."""
     from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME
     from asymmetry.gui.widgets.panel_section import PanelSection
 
@@ -383,16 +381,22 @@ def test_fourier_panel_group_order_matches_workflow(qapp: QApplication) -> None:
         for label in panel.findChildren(QLabel)
         if label.objectName() == SECTION_HEADER_OBJECT_NAME and label not in advanced_labels
     ]
-    # make_section uppercases; assert the always-visible tier then the Phase gate.
-    assert titles[:5] == ["FFT PHASE MODE", "APODISATION", "GROUPS", "FFT SETTINGS", "PHASE"]
+    assert titles[:6] == [
+        "FFT PHASE MODE",
+        "AUTO PHASE SETTINGS",
+        "APODISATION",
+        "GROUPS",
+        "FFT SETTINGS",
+        "PHASE",
+    ]
 
-    # The four collapsed sections follow, each a collapsible PanelSection.
-    collapsed_titles = [
+    section_titles = [
         section.title()
         for section in panel.findChildren(PanelSection)
         if section is not panel._advanced_modes_group
     ]
-    assert collapsed_titles == [
+    assert section_titles == [
+        "Auto Phase settings",
         "Spectral moments",
         "Conditioning",
         "Diamagnetic correction",

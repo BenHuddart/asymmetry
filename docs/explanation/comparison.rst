@@ -261,6 +261,24 @@ resonance (:doc:`/reference/alc_mode`), Python user-function plugins
 (:doc:`/reference/user_functions`), and negative-muon analysis
 (:doc:`/reference/negative_muon_analysis`).
 
+Automatic FFT phase estimation
+------------------------------
+
+Asymmetry's **Auto Phase** estimates one physical phase per detector group
+using a nonnegative frequency distribution and the actual sampled FFT response.
+It preserves the rotated measured spectrum, includes windowing and known mean
+subtraction, and reports conditional uncertainty and processing sensitivity.
+Weak, incompatible, or unstable inputs are refused. It is distinct from fitting
+an entropy-plus-negativity objective or jointly subtracting a spectral baseline;
+see the published-method discussion and citations in
+:ref:`the Fourier reference <fourier-phase-estimation>`.
+
+This is an FFT projection, not a maximum-entropy reconstruction or a
+full-detector timing calibration. Numerical agreement with another program's
+automatic phase estimate depends on its objective, sampling conventions, band,
+and preprocessing. A comparison of mathematical formulations alone does not
+establish release-specific numerical agreement.
+
 Roadmap — the remaining gaps
 ----------------------------
 

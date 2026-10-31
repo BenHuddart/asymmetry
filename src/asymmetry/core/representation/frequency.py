@@ -14,9 +14,11 @@ per-group phases).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.fourier.fft import fourier_mode_uses_phase_fit
 from asymmetry.core.fourier.spectrum import (
     GroupSpectrumConfig,
     compute_average_group_spectrum,
@@ -71,6 +73,13 @@ class FrequencyFFT(Representation):
 
     rep_type = RepresentationType.FREQ_FFT
 
+    @property
+    def recompute_on_load(self) -> bool:
+        """Require explicit computation for the iterative automatic phase fit."""
+        return not fourier_mode_uses_phase_fit(
+            str(self.fourier_config().get("display", "(Power)^1/2"))
+        )
+
     def fourier_config(self) -> dict[str, Any]:
         """Return the raw ``fourier_config`` recipe block (possibly empty)."""
         config = self.recipe.get("fourier_config")
@@ -82,9 +91,24 @@ class FrequencyFFT(Representation):
         config_dict = self.fourier_config()
         config = GroupSpectrumConfig.from_dict(config_dict)
         config.selected_group_ids = _resolve_selected_group_ids(run, config_dict)
-        spectrum = compute_average_group_spectrum(run, config)
+        cancel_callback: Callable[[], bool] | None = context
+        if cancel_callback is not None and not callable(cancel_callback):
+            raise TypeError("FFT computation context must be a cancellation callback or None.")
+        spectrum = compute_average_group_spectrum(run, config, cancel_callback=cancel_callback)
         if spectrum is None:
             raise ValueError("FFT representation produced no spectrum (no enabled groups).")
+        if fourier_mode_uses_phase_fit(config.display):
+            self.result_metadata = {"fourier_phase_fit": spectrum.metadata["fourier_phase_fit"]}
+        else:
+            self.result_metadata = {}
+        config_dict.update(
+            phase_fit_min_mhz=config.phase_fit_min_mhz,
+            phase_fit_max_mhz=config.phase_fit_max_mhz,
+            phase_fit_tolerance_degrees=config.phase_fit_tolerance_degrees,
+        )
+        if fourier_mode_uses_phase_fit(config.display):
+            config_dict["normalisation"] = "asymmetry_percent"
+        self.recipe["fourier_config"] = config_dict
         return [spectrum]
 
 

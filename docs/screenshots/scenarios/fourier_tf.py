@@ -63,9 +63,7 @@ class FourierTfScenario(Scenario):
 
         window = MainWindow()
         window._on_fourier()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         dataset = make_ybco_vortex_lattice()
         window._data_browser.add_dataset(dataset)
@@ -140,3 +138,82 @@ class FourierTfScenario(Scenario):
 from ..data.archetypes import GAMMA_MU_MHZ_PER_G  # noqa: E402
 
 register(FourierTfScenario())
+
+
+class FourierAutoPhaseScenario(FourierTfScenario):
+    name = "fourier_auto_phase"
+    description = "Auto Phase sampled-response fit with explicit band and tolerance controls."
+
+    def build(self) -> QWidget:
+        from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+        from asymmetry.core.representation.base import RepresentationType
+        from asymmetry.core.utils.constants import MUON_LIFETIME_US
+        from asymmetry.gui.mainwindow import MainWindow
+
+        window = MainWindow()
+        window._on_fourier()
+        time = np.arange(512) * 0.025
+        counts = (
+            1e6
+            * np.exp(-time / MUON_LIFETIME_US)
+            * (
+                1.0
+                + 0.2
+                * np.exp(-0.5 * (2.0 * np.pi * 0.12 * time) ** 2)
+                * np.cos(2.0 * np.pi * 2.7 * time + 0.55)
+            )
+        )
+        run = Run(
+            run_number=701,
+            histograms=[Histogram(counts=counts, bin_width=0.025, t0_bin=0)],
+            grouping={
+                "groups": {1: [1]},
+                "group_names": {1: "Forward"},
+                "first_good_bin": 0,
+                "last_good_bin": len(time) - 1,
+                "deadtime_correction": False,
+            },
+        )
+        dataset = MuonDataset(
+            time=time,
+            asymmetry=np.zeros_like(time),
+            error=np.ones_like(time),
+            metadata={"run_number": run.run_number, "title": "Synthetic common-phase signal"},
+            run=run,
+        )
+        window._data_browser.add_dataset(dataset)
+        window._on_dataset_selected(dataset.run_number)
+        window._fourier_panel.restore_state(
+            {
+                "display": "phaseOptReal",
+                "window": "none",
+                "padding": 4,
+                "phase_fit_min_mhz": 2.0,
+                "phase_fit_max_mhz": 3.4,
+                "phase_fit_tolerance_degrees": 5.0,
+            }
+        )
+        window._on_compute_fourier()
+        for _ in range(100):
+            _process_events_for(milliseconds=100)
+            if not window._fourier_compute_active:
+                break
+        spectra = window._cached_frequency_spectra(run.run_number, RepresentationType.FREQ_FFT)
+        if not spectra:
+            message = window._fourier_panel._action_footer._status_label.text()
+            raise RuntimeError(f"Auto Phase screenshot computation failed: {message}")
+        peak = float(np.max(spectra[0].asymmetry))
+        window._frequency_plot_panel.set_view_limits(1.8, 3.6, -0.06 * peak, 1.1 * peak)
+        return window
+
+    def settle(self, widget: QWidget) -> None:
+        from PySide6.QtWidgets import QScrollArea
+
+        super().settle(widget)
+        widget._fourier_panel.findChild(QScrollArea).ensureWidgetVisible(
+            widget._fourier_panel._phase_fit_summary
+        )
+        _process_events_for(milliseconds=100)
+
+
+register(FourierAutoPhaseScenario())

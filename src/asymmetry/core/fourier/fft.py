@@ -57,13 +57,8 @@ def fourier_mode_uses_phase_correction(display: str) -> bool:
     return canonical_fourier_display_mode(display) == "phase_corrected"
 
 
-def fourier_mode_uses_entropy_optimizer(display: str) -> bool:
-    """Return whether *display* requires the entropy-based phase optimizer.
-
-    The ``phaseOptReal`` mode runs musrfit's ``PFTPhaseCorrection`` algorithm
-    (entropy + penalty minimisation) on the averaged complex spectrum rather
-    than consuming a manually supplied or table-driven phase correction.
-    """
+def fourier_mode_uses_phase_fit(display: str) -> bool:
+    """Return whether *display* estimates the physical phase automatically."""
     return canonical_fourier_display_mode(display) == "phase_opt_real"
 
 
@@ -75,31 +70,32 @@ def _normalize_phase_degrees(value: float) -> float:
     return wrapped
 
 
+def finite_bin_mean_weights(
+    signal: NDArray[np.float64],
+    error: NDArray[np.float64] | None = None,
+) -> NDArray[np.float64]:
+    """Return normalized finite-bin weights, using 1/error where available."""
+    values = np.asarray(signal, dtype=np.float64)
+    finite = np.isfinite(values)
+    weights = np.zeros_like(values)
+    if error is not None and error.shape == values.shape:
+        valid = finite & np.isfinite(error) & (error > 0.0)
+        weights[valid] = 1.0 / error[valid]
+    if not np.any(weights):
+        weights[finite] = 1.0
+    total = float(np.sum(weights))
+    return weights / total if total > 0.0 else weights
+
+
 def _weighted_average_signal(
     signal: NDArray[np.float64],
     error: NDArray[np.float64] | None = None,
 ) -> float:
-    """Return the WiMDA-style error-weighted mean of *signal* over finite bins.
-
-    WiMDA weights each bin by ``1 / error`` (proportional to counts) when usable
-    errors are available; otherwise it falls back to the finite arithmetic mean.
-    Returns NaN only when the signal has no finite samples at all.
-    """
+    """Return the finite-bin error-weighted mean, or NaN without finite bins."""
     values = np.asarray(signal, dtype=np.float64)
-    finite_mask = np.isfinite(values)
-    if not np.any(finite_mask):
-        return float("nan")
-
-    if error is not None:
-        err = np.asarray(error, dtype=np.float64)
-        if err.shape == values.shape:
-            weights = np.zeros_like(values, dtype=np.float64)
-            valid_weights = finite_mask & np.isfinite(err) & (err > 0.0)
-            weights[valid_weights] = 1.0 / err[valid_weights]
-            weight_sum = float(np.sum(weights[valid_weights], dtype=np.float64))
-            if weight_sum > 0.0:
-                return float(np.sum(weights * values, dtype=np.float64) / weight_sum)
-    return float(np.mean(values[finite_mask], dtype=np.float64))
+    weights = finite_bin_mean_weights(values, error)
+    finite = np.isfinite(values)
+    return float(np.sum(weights[finite] * values[finite])) if np.any(finite) else float("nan")
 
 
 def _subtract_average_signal(
@@ -216,22 +212,26 @@ def _resolve_baseline_removal(
 
 @dataclass
 class PreparedFFTSignal:
-    """Preprocessed FFT time-domain input plus the calibration it enables.
+    """One prepared input and the exact linear window/mean/noise operators."""
 
-    ``window_sum`` is the coherent gain of the apodisation actually applied over
-    the ``n`` populated (unpadded) samples — ``Σ wₙ`` — used by the amplitude
-    calibration (``2 / Σw``); with no apodisation it is exactly ``n``. When
-    fractional footing runs, ``fractional_baseline`` records the error-weighted
-    baseline ``N₀`` the signal was divided by, and ``fractional_applied`` is
-    true; the degenerate guard (non-positive/non-finite baseline) leaves the
-    signal on its raw footing with ``fractional_applied`` false.
-    """
-
-    signal: NDArray[np.float64]
+    unwindowed_signal: NDArray[np.float64]
+    window_weights: NDArray[np.float64]
+    sample_errors: NDArray[np.float64] | None
+    mean_weights: NDArray[np.float64] | None
+    time_start_us: float
     dt: float
-    window_sum: float
     fractional_baseline: float | None = None
     fractional_applied: bool = False
+
+    @property
+    def signal(self) -> NDArray[np.float64]:
+        """Return the measured signal with its actual window applied."""
+        return self.unwindowed_signal * self.window_weights
+
+    @property
+    def window_sum(self) -> float:
+        """Return the unpadded coherent gain used for percent calibration."""
+        return float(np.sum(self.window_weights, dtype=np.float64))
 
 
 def _clip_fft_window(
@@ -416,6 +416,7 @@ def _prepare_fft_core(
         # Degenerate baseline (empty/zero/negative mean): fall back to the raw
         # footing rather than dividing by ~0. The caller stamps a note.
 
+    mean_weights = finite_bin_mean_weights(signal, err) if subtract_average else None
     if subtract_average:
         signal = _subtract_average_signal(signal, err)
     elif detrend is not None:
@@ -433,13 +434,13 @@ def _prepare_fft_core(
     else:
         weights = apply_window(np.ones_like(signal), window_key)
     _warn_on_early_signal_suppression(times, signal, weights, err, window=window_key)
-    windowed = signal * weights
-
-    window_sum = float(np.sum(weights, dtype=np.float64))
     return PreparedFFTSignal(
-        signal=windowed,
+        unwindowed_signal=signal,
+        window_weights=weights,
+        sample_errors=err,
+        mean_weights=mean_weights,
+        time_start_us=float(times[0]) if times.size else 0.0,
         dt=float(dt),
-        window_sum=window_sum,
         fractional_baseline=fractional_baseline,
         fractional_applied=fractional_applied,
     )
@@ -735,7 +736,7 @@ def fft_complex_asymmetry(
         fractional=fractional,
         detrend=detrend,
     )
-    return _fft_complex_core(
+    return fft_complex_prepared(
         prepared,
         padding_factor=padding_factor,
         phase_degrees=phase_degrees,
@@ -745,14 +746,14 @@ def fft_complex_asymmetry(
     )
 
 
-def _fft_complex_core(
+def fft_complex_prepared(
     prepared: PreparedFFTSignal,
     *,
-    padding_factor: int,
-    phase_degrees: float,
-    t0_offset_us: float,
-    amplitude_calibration: bool,
-    diagnostics: dict | None,
+    padding_factor: int = 1,
+    phase_degrees: float = 0.0,
+    t0_offset_us: float = 0.0,
+    amplitude_calibration: bool = False,
+    diagnostics: dict | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
     """Transform an already-preprocessed signal into a calibrated complex spectrum.
 
@@ -895,7 +896,7 @@ def _fft_complex_arrays(
         fractional=fractional,
         detrend=detrend,
     )
-    return _fft_complex_core(
+    return fft_complex_prepared(
         prepared,
         padding_factor=padding_factor,
         phase_degrees=phase_degrees,
@@ -1117,115 +1118,12 @@ def estimate_fft_phase(
     )
 
 
-def optimize_phase_entropy(
-    spectrum: NDArray[np.complex128],
-    *,
-    min_bin: int = 1,
-    max_bin: int | None = None,
-    gamma: float = 1.0,
-) -> tuple[NDArray[np.float64], float, float]:
-    """Find the linear phase (c₀ + c₁·i/N) that maximises spectral compactness.
-
-    Implements musrfit's ``PFTPhaseCorrection`` algorithm: minimise an entropy
-    + penalty functional over the phase-corrected real spectrum using iminuit.
-
-    The phase model is ``φ(i) = c₀ + c₁ · (i − min_bin) / span`` where
-    ``span = max_bin − min_bin``.  The optimisation targets the bins in the
-    range ``[min_bin, max_bin]`` but the returned real spectrum covers all
-    input bins.
-
-    Parameters
-    ----------
-    spectrum
-        Complex FFT spectrum, **not** pre-rotated.
-    min_bin
-        First bin index to include in the optimisation (default 1 to skip DC).
-    max_bin
-        Last bin index to include (default: last bin).
-    gamma
-        Weight of the negativity penalty relative to the entropy term.
-
-    Returns
-    -------
-    real_values, c0_rad, c1_rad
-        Optimised real-valued display spectrum and the phase parameters in
-        radians.
-    """
-    values = np.asarray(spectrum, dtype=np.complex128)
-    n = values.size
-    if n == 0:
-        return np.zeros(0, dtype=np.float64), 0.0, 0.0
-
-    lo = max(0, int(min_bin))
-    hi = int(max_bin) if max_bin is not None else n - 1
-    hi = min(hi, n - 1)
-    span = float(max(1, hi - lo))
-
-    re = values.real
-    im = values.imag
-
-    def _apply(c0: float, c1: float) -> NDArray[np.float64]:
-        weights = (np.arange(n, dtype=np.float64) - lo) / span
-        angles = float(c0) + float(c1) * weights
-        return re * np.cos(angles) - im * np.sin(angles)
-
-    def _cost(c0: float, c1: float) -> float:
-        real_part = _apply(c0, c1)[lo : hi + 1]
-        delta = np.abs(np.diff(real_part))
-        total = float(np.sum(delta))
-        if total <= 0.0:
-            # Mirrors musrfit PFTPhaseCorrection: return a large cost for the
-            # trivial zero-spectrum solution so the optimizer avoids it.
-            return 1.0e10
-        p = delta / total
-        p_pos = p[p > 0.0]
-        entropy = float(-np.sum(p_pos * np.log(p_pos)))
-        neg = real_part[real_part < 0.0]
-        penalty = float(np.sum(neg * neg))
-        return entropy + float(gamma) * penalty
-
-    c0_opt = 0.0
-    c1_opt = 0.0
-    try:
-        from iminuit import Minuit  # noqa: PLC0415
-
-        # Coarse grid scan over c0 to find a good initial point before
-        # Minuit refines.  The entropy cost has a complex landscape, so a
-        # gradient-only start from c0=0 frequently misses the true minimum.
-        grid = np.linspace(-np.pi, np.pi, 37, endpoint=False)
-        best_c0 = 0.0
-        best_val = _cost(0.0, 0.0)
-        for c0_trial in grid:
-            val = _cost(float(c0_trial), 0.0)
-            if val < best_val:
-                best_val = val
-                best_c0 = float(c0_trial)
-
-        m = Minuit(_cost, c0=best_c0, c1=0.0)
-        m.errordef = 1.0
-        m.errors = (np.deg2rad(10.0), np.deg2rad(5.0))
-        m.migrad()
-        c0_opt = float(m.values["c0"])
-        c1_opt = float(m.values["c1"])
-    except Exception:
-        pass
-
-    return _apply(c0_opt, c1_opt).astype(np.float64), c0_opt, c1_opt
-
-
 def fourier_display_values(
     spectrum: NDArray[np.complex128],
     *,
     display: str = "Real",
 ) -> NDArray[np.float64]:
-    """Return one real-valued display channel derived from a complex spectrum.
-
-    For ``phaseOptReal`` mode the caller must first run
-    :func:`optimize_phase_entropy` and pass the resulting already-optimised
-    real spectrum wrapped in a complex array (imaginary part zero), or pass
-    the real array directly as a complex dtype.  The function simply returns
-    the real part in that case.
-    """
+    """Return a display channel, after any required physical phase correction."""
     values = np.asarray(spectrum, dtype=np.complex128)
     mode = canonical_fourier_display_mode(display)
     if mode in {"real", "cos", "phase_corrected", "phase_opt_real", "real_imag"}:
