@@ -23,7 +23,7 @@ __all__ = ["fit_result_summary", "parameters_at_bound"]
 #: narrow, and in muon practice χ²ᵣ ≈ 1.05–1.2 at large ν is excellent. At the
 #: WiMDA algorithm default R = 0.95 the band at ν ≈ 500 is only ~[0.88, 1.13], so
 #: a routine χ²ᵣ ≈ 1.2 was alarmed as "poor" in red (corpus finding #6). The band
-#: *math* (``assess_fit_quality``) is unchanged and WiMDA-faithful — this is the
+#: *math* (``assess_fit_quality``) is unchanged and follows WiMDA — this is the
 #: product default for the verdict shown, and it stays user-tunable in
 #: Options ▸ "Fit quality confidence". The ``confidence`` argument below threads
 #: the configured value through; the core helper keeps the 0.95 algorithm default.

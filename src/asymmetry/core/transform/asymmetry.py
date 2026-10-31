@@ -362,9 +362,9 @@ class AlphaEstimate:
 def _diamagnetic_objective(alpha: float, f: NDArray[np.float64], b: NDArray[np.float64]) -> float:
     """WiMDA's diamagnetic objective: Σ (A_i / σ_i)².
 
-    Transcribed from ``Group.pas EstimateButtonClick`` (method = diamag).
+    Follows WiMDA's ``EstimateButtonClick`` (method = diamag).
     The per-bin error is the exact Poisson propagation of the asymmetry,
-    σ = 2α√(fb(f+b)) / (f+αb)², written in the source as
+    σ = 2α√(fb(f+b)) / (f+αb)², written by WiMDA as
     ``2 a (f/b) sqrt(1/f + 1/b) / (f/b + a)²``. On a transverse-field run
     the oscillation is symmetric about zero exactly when alpha balances the
     detector efficiencies, which minimises this weighted asymmetry power.
@@ -384,7 +384,7 @@ def _general_two_window_alpha(
     The combination N(α) = (F/√α + B√α)·exp(t/τ_μ) is flat in time exactly
     when alpha equals the true efficiency ratio — the polarization term
     cancels for any P(t) — which is the principle of WiMDA's "general"
-    estimate (``Group.pas EstimateButtonClick``). WiMDA minimises a weighted
+    estimate (``EstimateButtonClick``). WiMDA minimises a weighted
     relative-scatter functional of N; that functional has no interior
     minimum at realistic statistics (study divergence D14), so Asymmetry
     solves the equivalent flatness condition in closed form instead.

@@ -1,4 +1,4 @@
-"""Muonium oscillation components (WiMDA TFMuonium/LowTFMuonium/ZFmuonium ports).
+"""Muonium oscillation components (following WiMDA's TFMuonium/LowTFMuonium/ZFmuonium).
 
 Physics checks are against the WiMDA arithmetic; the fit round-trip uses a
 self-consistent synthetic signal generated from the component itself (genuine

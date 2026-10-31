@@ -253,7 +253,7 @@ def test_high_tf_aniso_pair_frequencies_match_exact_hamiltonian() -> None:
     """The per-orientation pair frequencies must match the exact 4-level
     anisotropic-muonium Hamiltonian (axial hyperfine tensor at angle theta to
     the field) to first order in D — in particular the *direction* of the
-    nu_12 shift, which a literal port of WiMDA's ±d/2 convention gets wrong.
+    nu_12 shift, which WiMDA's ±d/2 convention gets wrong here.
     """
     from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
 
@@ -333,7 +333,7 @@ def test_muonium_lf_relaxation_matches_kadono_eq22() -> None:
         lambda = delta_ex^2 tau_c / (1 + (2 pi nu_12 tau_c)^2),
 
     with nu_12 from the exact Breit-Rabi levels and NO (1 - delta) prefactor.
-    The earlier WiMDA transcription multiplied by (1 - delta); confirm the
+    An earlier form, following WiMDA, multiplied by (1 - delta); confirm the
     shipped curve no longer carries it by checking lambda at tabulated fields.
     """
     delta_ex, tau_c = 0.5, 0.01

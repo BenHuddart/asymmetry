@@ -5971,7 +5971,7 @@ class PlotPanel(QWidget):
         (a 20 G line at 0.27 MHz sits below the 2 % DC cut of a ~30 MHz span).
         When the run carries an applied field, γ_μ·B says where to look —
         WiMDA frames its FFT plot around the reference field the same way
-        (``WiMDA_Main.pas`` ``UseShiftRange``). The 1.5× headroom puts the
+        (``UseShiftRange``). The 1.5× headroom puts the
         expected line at two-thirds of the axis. Skipped on the
         reference-relative axis, where the line sits at ~0 and an upper bound
         derived from it would collapse the window, and when the expected line

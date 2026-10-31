@@ -1466,7 +1466,7 @@ direct counterpart or a composite recipe. Parameter names map as follows:
        analytic ``RFresonanceMuPlusProton`` variant is intentionally not a
        separate component — it is inaccurate at low field). Parameters map
        A → A_mu, Ap → A_p, RF → nu_RF, ampl1/wid1/ampl2/wid2/BG identical.
-       WiMDA's bespoke ``Eigenuni.pas`` Hermitian eigensolver is replaced by
+       WiMDA's eigensolver is replaced by
        :func:`numpy.linalg.eigvalsh` (basis-independent spectrum, identical
        level differences).
 

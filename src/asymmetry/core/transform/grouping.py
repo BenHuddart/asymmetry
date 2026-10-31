@@ -180,7 +180,7 @@ def good_event_count(
 ) -> float | None:
     """Total raw counts in the good-bin range over the forward+backward groups.
 
-    Mirrors WiMDA's logbook "good events" (``LogbookUnit.pas``): the sum of
+    Mirrors WiMDA's logbook "good events": the sum of
     detector counts between ``first_good_bin`` and ``last_good_bin`` (inclusive)
     across the detectors of the forward and backward groups. Returns ``None``
     when the grouping lacks a good-bin range or named forward/backward groups
@@ -249,7 +249,7 @@ def excluded_detector_indices(grouping: dict | None) -> frozenset[int]:
     """0-based indices of detectors excluded by the grouping.
 
     The ``excluded_detectors`` grouping key holds 1-based detector ids
-    (WiMDA ``Group2.pas`` semantics). Exclusion is applied at grouping time
+    (WiMDA's detector-exclusion convention). Exclusion is applied at grouping time
     — excluded detectors are dropped from every group sum — so the raw
     histograms stay intact and no reload is needed (study divergence D10;
     WiMDA zeroes the counts in its file-read path instead).

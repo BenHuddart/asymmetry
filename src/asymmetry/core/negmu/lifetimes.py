@@ -22,7 +22,7 @@ A few entries marked WiMDA-provisional are from WiMDA's older table where
 Table C.1 has no value. WiMDA's table is NOT trusted for values (see the
 porting study, comparison.md §5).
 
-Provenance note: WiMDA's ``mystrings`` table (``NegMuAnalyse.pas:104–120``) was
+Provenance note: WiMDA's ``mystrings`` table was
 the workflow reference, **not** the value source. It has a 69-vs-67 length
 mismatch, the ``'Ti'``→``'Tl'`` symbol bug, and several value divergences
 (Ne 1.520→1.461, Zn 0.169→0.161, Sr 0.142→0.132, Ba 0.072→0.0949).

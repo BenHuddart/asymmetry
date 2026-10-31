@@ -12,8 +12,8 @@ without independent verification. This feature is deliberately NOT exposed in th
 GUI fit builders. Promotion trigger for a GUI: real ISIS μ⁻ data AND a user.
 
 Capture-ratio report: relative capture probabilities from fitted amplitude
-ratios amp_i/amp_ref, with covariance-aware uncertainties. Adapts WiMDA's
-RatioButtonClick (NegMuAnalyse.pas:455–620) as a derived-quantities function —
+ratios amp_i/amp_ref, with covariance-aware uncertainties. Same workflow as
+WiMDA's ``RatioButtonClick``, as a derived-quantities function —
 no new results framework.
 """
 

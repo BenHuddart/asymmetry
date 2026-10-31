@@ -1735,8 +1735,8 @@ class FitEngine:
             here; for time-domain or count fits this correction is meaningless
             and callers pass the default ``1.0``.
 
-            WiMDA's precedent (``Analyse.pas:5228``) is to divide the reported
-            dof by the zero-pad factor (``dof := n div zpad - nv``) but leaves χ²
+            WiMDA's precedent is to divide the reported
+            dof by the zero-pad factor but leaves χ²
             and the parameter errors untouched. This implementation is the fully
             consistent version: when ``error_oversampling`` (``s``) is greater
             than 1,

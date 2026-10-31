@@ -22,7 +22,7 @@ Two operations share one entry point, :func:`combine_runs`:
   add. A difference spectrum is no longer Poisson, so the per-detector
   propagated errors are carried on the run and consumed at reduction.
 
-WiMDA reference: ``$WIMDA_SRC/src/muondata.pas`` 2418–2491 (``cosign=-1``
+WiMDA reference: WiMDA's run co-add (``cosign=-1``
 subtraction, frame/spill + per-period accumulation, ACC ``tshift`` alignment).
 See ``docs/porting/run-arithmetic/`` for the full study and divergences.
 
@@ -297,16 +297,16 @@ def coadd_member_windows(
 ) -> list[list[int]]:
     """Index windows for in-batch co-add of successive batch-series members.
 
-    Mirrors WiMDA's ``BatchFit.pas`` sequential co-add (the "+ N runs" control):
+    Mirrors WiMDA's batch-fit sequential co-add (the "+ N runs" control):
     a window co-adds ``window`` successive members. The two stepping modes match
-    WiMDA's Smooth/Bin radio buttons (``$WIMDA_SRC/src/BatchFit.pas`` ~375):
+    WiMDA's Smooth/Bin radio buttons:
 
     * ``"smooth"`` — sliding window, **step 1**: windows
-      ``[0, W)``, ``[1, 1 + W)``, … (``inc(i)``). Yields ``n - W + 1`` windows.
+      ``[0, W)``, ``[1, 1 + W)``, …. Yields ``n - W + 1`` windows.
     * ``"bin"`` — non-overlapping, **step W**: windows ``[0, W)``, ``[W, 2W)``, …
-      (``i := i + jump + 1``). Yields ``n // W`` windows.
+      Yields ``n // W`` windows.
 
-    In both modes WiMDA's loop guard (``until i + jump > nff``) requires a *full*
+    In both modes, as in WiMDA, the loop requires a *full*
     window, so a trailing partial window is dropped — this matches that exactly.
 
     Parameters

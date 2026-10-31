@@ -305,7 +305,7 @@ def _apply_deadtime(
 ) -> NDArray[np.float64]:
     """Multiply true counts by the non-paralyzable count-loss factor ``1 - L``.
 
-    Transcribes WiMDA ``ArrayMusrFunc`` (``AsymFitFunction.pas``) with
+    Follows WiMDA's ``ArrayMusrFunc`` with
     ``qq = counts / frame_norm`` the per-frame, per-detector rate and ``evfr`` the
     group event fraction. An exact no-op when every coefficient is zero; the
     factor is clipped at 0 so a runaway trial cannot make counts negative.

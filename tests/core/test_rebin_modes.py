@@ -1,4 +1,4 @@
-"""Variable and constant-error binning modes (WiMDA Group.pas:1411–1418).
+"""Variable and constant-error binning modes (WiMDA's binning modes).
 
 The WiMDA formula oracle: width(t) = bin0·exp(λ_µ·t·0.22·ln(bin10/bin0)),
 whose rounded 0.22 makes it ≈ bin0·(bin10/bin0)^(t/10 µs); Asymmetry

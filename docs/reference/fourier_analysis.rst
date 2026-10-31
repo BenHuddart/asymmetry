@@ -1447,8 +1447,8 @@ uncertainties apply the **effective-sample-size correction** automatically:
 degrees of freedom count the independent samples, χ² is scaled to match, and
 parameter/moment uncertainties grow by √*n*. Fit results state the applied
 correction in their advisory row. (WiMDA applies the degrees-of-freedom part
-of this correction — ``dof := n div zpad`` — Asymmetry additionally corrects
-χ² and the uncertainties for full consistency.) With the statistics handled,
+of this correction, dividing the point count by the zero-pad factor; Asymmetry
+additionally corrects χ² and the uncertainties for full consistency.) With the statistics handled,
 the zero-pad factor is purely a display-density knob; the factor now goes up
 to 64. All of these are first-paint seeds only: your own zoom and settings
 are never overridden.

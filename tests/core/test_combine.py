@@ -172,8 +172,7 @@ def test_coadd_windows_off_returns_singletons():
 
 
 def test_coadd_windows_bin_steps_by_window_dropping_partial():
-    # Bin over 2N runs (W=2) -> N non-overlapping pairs; matches WiMDA's
-    # i := i + jump + 1 with the "until i + jump > nff" full-window guard.
+    # Bin over 2N runs (W=2) -> N non-overlapping pairs, full windows only, as in WiMDA.
     assert coadd_member_windows(6, mode="bin", window=2) == [[0, 1], [2, 3], [4, 5]]
     # A trailing partial window is dropped (run index 4 here).
     assert coadd_member_windows(5, mode="bin", window=2) == [[0, 1], [2, 3]]

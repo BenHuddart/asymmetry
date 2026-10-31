@@ -27,16 +27,16 @@ Both return **P_pol(t)** (the modulation depth × envelope × oscillation), not
 the full multiplier ``(1 + P_pol(t))``.  The composite model builder
 ``build_capture_count_model_with_polarisation`` wraps the multiplier.
 
-Parameterisation conventions confirmed against WiMDA ``Analyse.pas``
-``Polfunc()`` (RadioGroup1.itemindex = 2, lines 1322–1323):
+Parameterisation conventions confirmed against WiMDA's
+``Polfunc()`` (the ``LorGau`` form):
 
     LorGau forward: ``(1 + a0·exp(−λ·t)·cos(2π·freq·t + phase))``
 
 where ``freq`` is in MHz, ``t`` in µs, ``λ`` in µs⁻¹, and ``phase`` in
 radians.  Diamagnetic is the undamped (λ = 0) limit.  WiMDA's Diamagnetic
 RadioGroup mode (itemindex = 3) has no implementation in ``Polfunc`` (falls
-through with undefined result — a WiMDA bug), so the Asymmetry formula is
-derived from the textbook physics rather than the WiMDA source.
+through with undefined result — a WiMDA bug), so the Asymmetry formula is the
+textbook one.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Per-detector exclusion at grouping time (WiMDA Group2.pas semantics).
+"""Per-detector exclusion at grouping time (WiMDA's detector-exclusion convention).
 
 Exclusion is applied where groups are summed — raw histograms stay intact
 and no reload is needed (study divergence D10; WiMDA zeroes counts in its

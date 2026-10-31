@@ -706,7 +706,7 @@ def risch_kehr(t: NDArray, Gamma: float) -> NDArray:
     function), which is numerically stable for all ``Gamma t`` — no asymptotic
     branch switch is needed (WiMDA switches forms at ``Gamma t = 20``).
     ``Gamma`` is used as ``|Gamma|``; WiMDA's mirrored ``2 - G`` branch for
-    negative rates is an unphysical fitting convenience and is not ported.
+    negative rates is an unphysical fitting convenience and is omitted here.
 
     References
     ----------

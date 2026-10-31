@@ -332,7 +332,7 @@ def find_t0(
     """Estimate t0 for one histogram.
 
     Continuous: the maximum-count bin (prompt peak; first occurrence wins on
-    ties, matching WiMDA's descending strict-comparison scan). Pulsed: the
+    ties). Pulsed: the
     half-maximum crossing of the leading edge, linearly interpolated and
     rounded to the nearest bin — the pulse-centre convention.
 

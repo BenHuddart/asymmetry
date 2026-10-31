@@ -210,7 +210,7 @@ def test_benzene_rf_scan_recovers_paper_couplings() -> None:
     result = fit_rf_resonance(scan, nu_rf=218.5)
     assert result.success
     # Paper (McKenzie 2013, Table 1): A_µ = 514.78(4), A_p = 124.6(14) MHz; the
-    # core port recovers 516.0 / 125.4. Tolerances bracket both.
+    # core model recovers 516.0 / 125.4. Tolerances bracket both.
     assert result.parameters["A_mu"].value == pytest.approx(514.78, abs=3.0)
     assert result.parameters["A_p"].value == pytest.approx(124.6, abs=6.0)
     assert result.reduced_chi_squared < 5.0
