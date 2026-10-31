@@ -228,7 +228,12 @@ REQUIRED_KNOWLEDGE_FILES = (
     "docs/porting/index.json",
     "docs/QUALITY.md",
     "docs/PLANS.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/copilot-instructions.md",
 )
+# AGENTS.md costs context in every session of every agent, so it stays a short map:
+# a rule that does not fit replaces another, or becomes a check here.
+AGENTS_MD_MAX_LINES = 150
 # The packaged agent skill grows by accretion: each evaluation failure tempts a
 # new paragraph. Its line count is frozen here and may only fall, so a new rule
 # replaces or merges an old one. Lower the baseline whenever the file shrinks.
@@ -881,6 +886,40 @@ def find_knowledge_base_violations(root: Path = ROOT) -> list[HarnessFailure]:
     return failures
 
 
+def find_agent_guide_violations(
+    root: Path = ROOT, max_lines: int = AGENTS_MD_MAX_LINES
+) -> list[HarnessFailure]:
+    """Return failures when AGENTS.md outgrows its cap or CLAUDE.md stops importing it."""
+
+    failures: list[HarnessFailure] = []
+    agents_md = root / "AGENTS.md"
+    lines = len(agents_md.read_text(encoding="utf-8").splitlines())
+    if lines > max_lines:
+        failures.append(
+            HarnessFailure(
+                agents_md,
+                0,
+                (
+                    f"{lines} lines, above the cap of {max_lines} (AGENTS_MD_MAX_LINES in "
+                    "tools/harness.py). Merge or replace a rule, move detail to the linked "
+                    "docs, or turn the rule into a check here."
+                ),
+            )
+        )
+    claude_md = root / "CLAUDE.md"
+    unfenced = re.sub(r"^```.*?^```", "", claude_md.read_text(encoding="utf-8"), flags=re.M | re.S)
+    if not re.search(r"^@AGENTS\.md\s*$", unfenced, flags=re.M):
+        failures.append(
+            HarnessFailure(
+                claude_md,
+                0,
+                "CLAUDE.md must import AGENTS.md (`@AGENTS.md` alone on a line, outside a code "
+                "block), or Claude Code loses the guide.",
+            )
+        )
+    return failures
+
+
 def find_skill_growth_violations(
     skill_md: Path = SKILL_MD, max_lines: int = SKILL_MD_MAX_LINES
 ) -> list[HarnessFailure]:
@@ -1191,6 +1230,7 @@ def run_structural_checks() -> int:
 
     failures = [
         *find_knowledge_base_violations(),
+        *find_agent_guide_violations(),
         *find_skill_growth_violations(),
         *find_porting_policy_violations(),
         *find_dependency_boundary_violations(),

@@ -19,10 +19,8 @@ This directory contains all project documentation.
 - **[ARCHITECTURE.md](ARCHITECTURE.md)**: System design, architecture, and specifications
 - **[GUI_GUIDELINES.md](GUI_GUIDELINES.md)**: How to build GUI here — tokens, fonts, metrics, PanelSection/ActionFooter, the UI zoom, and what the harness enforces
 - **[HARNESS.md](HARNESS.md)**: Agent harness workflow and validation commands
-- **[porting/README.md](porting/README.md)**: Policy and required artifacts for study-first feature ports
-- **[studies/](studies/)**: Design studies for novel (non-ported) features
 - **[QUALITY.md](QUALITY.md)**: Current quality map, risk areas, and validation paths
-- **[PLANS.md](PLANS.md)**: Active and deferred execution plans for agents
+- **Retired, do not add to**: [porting/](porting/README.md), [studies/](studies/), [PLANS.md](PLANS.md). Planned work lives in GitHub issues.
 - **[contributing.rst](contributing.rst)**: Contributing guidelines (Sphinx format)
 
 ### Additional Resources
@@ -54,9 +52,7 @@ docs/
 ├── ARCHITECTURE.md        # System architecture and design principles
 ├── GUI_GUIDELINES.md      # How to build GUI here (tokens, fonts, metrics, panels, zoom)
 ├── HARNESS.md             # Agent harness workflow
-├── porting/               # Study-first porting workflow and feature studies
 ├── QUALITY.md             # Quality map and risk areas
-├── PLANS.md               # Agent-facing execution plans
 ├── index.rst              # Sphinx landing page (four doorways)
 ├── contributing.rst       # Contributing guide
 ├── STYLE.md               # Writing-voice and citation style guide
