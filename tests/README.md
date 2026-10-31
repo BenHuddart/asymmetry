@@ -97,4 +97,6 @@ direct `QApplication` construction are rejected by structural checks. Use `QSett
 explicit temporary file with `IniFormat`; never construct settings from
 organisation/application names. App-data users call
 `gui.utils.app_data.app_data_dir()`, which tests patch once for all consumers.
-Core-only harness runs do not import Qt through autouse fixtures.
+Core-only harness runs do not import Qt through autouse fixtures. GUI teardown
+asserts that no top-level widget survives after closing and deferred deletion;
+close errors fail the test that caused them.

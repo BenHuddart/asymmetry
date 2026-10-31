@@ -6808,18 +6808,14 @@ class TestPlotWorkspaceDomainPhase7:
         assert domain_emissions == []
 
     def test_state_round_trip(self, mainwindow: MainWindow) -> None:
-        """Workspace state serialises and restores correctly for each view."""
+        """Each workspace owns its panels during state restoration."""
         from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
 
         for view in ("fb_asymmetry", "frequency"):
             mainwindow._plot_workspace.set_active_view(view)
             state = mainwindow._plot_workspace.get_state()
             assert state["active_view"] == view
-
-            dummy_workspace = PlotWorkspacePanel(
-                time_panel=mainwindow._plot_panel,
-                frequency_panel=mainwindow._frequency_plot_panel,
-            )
+            dummy_workspace = PlotWorkspacePanel(time_panel=QWidget(), frequency_panel=QWidget())
             dummy_workspace.restore_state(state)
             assert dummy_workspace.active_view() == view
 
