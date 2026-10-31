@@ -183,7 +183,13 @@ from asymmetry.core.fourier import (
     fourier_mode_uses_phase_correction,
     suggest_matched_apodisation,
 )
+from asymmetry.core.fourier.fft import fourier_mode_uses_phase_fit
 from asymmetry.core.fourier.moments import moments_trend_row, spectrum_moments
+from asymmetry.core.fourier.phase_fit import (
+    PHASE_FIT_METHOD,
+    PhaseFitCancelled,
+    PhaseFitRejectedError,
+)
 from asymmetry.core.fourier.units import FieldUnit, convert
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
@@ -251,6 +257,7 @@ from asymmetry.core.representation import (
     joint_member_name,
     member_range,
 )
+from asymmetry.core.representation.frequency import FrequencyFFT
 from asymmetry.core.representation.global_fit_study import (
     GlobalFitStudy,
     compute_group_input_digest,
@@ -7706,18 +7713,10 @@ class MainWindow(QMainWindow):
         self,
         run_number: int | None,
         rep_type: RepresentationType,
+        *,
+        explicit: bool = False,
     ) -> tuple[object, object] | None:
-        """Return ``(representation, run)`` when a heavy recipe recompute is due.
-
-        Side-effect free, GUI-thread only. This is the single source of truth
-        for "would recomputing this run's spectrum run :meth:`compute`?", shared
-        by the synchronous :meth:`_ensure_frequency_spectra_for_run` and the
-        async view path in :meth:`_sync_frequency_plot_for_run` — so neither
-        recomputes when the other would not, and the view path can route the
-        work off-thread instead of blocking. Returns ``None`` for cache hits,
-        known failures, missing/opt-out representations, an already-computed
-        primary, or an unloaded run.
-        """
+        """Return ``(representation, run)`` when a heavy recipe recompute is due."""
         if run_number is None:
             return None
         run_number = int(run_number)
@@ -7734,7 +7733,7 @@ class MainWindow(QMainWindow):
             return None
         container = self._project_model.datasets.get(run_number)
         representation = container.get(rep_type) if container is not None else None
-        if representation is None or not representation.recompute_on_load:
+        if representation is None or (not explicit and not representation.recompute_on_load):
             return None
         if not representation.recipe:
             # No recipe means nothing to faithfully recompute from — e.g. a
@@ -7760,13 +7759,7 @@ class MainWindow(QMainWindow):
         run_number: int,
         rep_type: RepresentationType,
     ) -> list:
-        """Promote a freshly-computed primary into the cache and return spectra.
-
-        Called after :meth:`_frequency_recompute_target` declined (no heavy work
-        due) or after a recompute has populated ``representation.primary``. A
-        present primary supersedes any legacy snapshot and clears the pending
-        marker; otherwise the stored snapshot (or nothing) is returned.
-        """
+        """Promote a freshly-computed primary into the cache and return spectra."""
         cache = self._frequency_cache(rep_type)
         key = (run_number, rep_type)
         pending, _failures = self._ensure_recompute_tracking()
@@ -7778,7 +7771,7 @@ class MainWindow(QMainWindow):
             return list(cached)
         container = self._project_model.datasets.get(run_number)
         representation = container.get(rep_type) if container is not None else None
-        if representation is None or not representation.recompute_on_load:
+        if representation is None:
             pending.discard(key)
             return list(cache.get(run_number, []))
         if representation.primary is not None:
@@ -7978,6 +7971,11 @@ class MainWindow(QMainWindow):
         spectra: list,
     ) -> None:
         """Draw *spectra* (or clear + status when empty) on the frequency tab."""
+        if rep_type == RepresentationType.FREQ_FFT:
+            rep = self._project_model.representation(run_number, rep_type)
+            self._fourier_panel.set_phase_fit_summary(
+                rep.result_metadata if rep is not None else {}
+            )
         if not spectra:
             # Transient empty-spectrum render (e.g. a run whose recipe produced
             # nothing): the prompt is a blank canvas, which leaves the panel's
@@ -8041,37 +8039,65 @@ class MainWindow(QMainWindow):
         representation, run = target
         key = (run_number, rep_type)
         name = self._frequency_status_name(rep_type)
-        # Overlay + status reflect the just-requested run even if an earlier
-        # run's recompute is still finishing.
         self._frequency_overlay.show_message(f"Computing {name} for run {run_number}…")
         self._set_status_state(f"Computing {name}…")
         if key in self._frequency_recompute_inflight:
-            # This exact run/rep is already recomputing; the overlay + status
-            # above are enough.
             return
         self._frequency_recompute_inflight.add(key)
+        inflight = self._frequency_recompute_inflight
         started_at = time.perf_counter()
-        # What the worker is about to compute against. An explicit Compute FFT
-        # can re-recipe this representation while the worker runs; the
-        # completion compares against this snapshot and drops a superseded
-        # result instead of caching it under the new recipe.
-        recipe_at_start = copy.deepcopy(getattr(representation, "recipe", None))
-        # compute() is pure (returns curves; mutates nothing), so it is safe to
-        # run on the worker thread; the result is promoted into the shared
-        # representation back on the GUI thread in the completion handler.
-        self._tasks.start(
-            lambda _worker: representation.compute(run),
-            on_finished=lambda spectra: self._on_frequency_recompute_finished(
+        recipe_at_start = copy.deepcopy(representation.recipe)
+        snapshot = type(representation)(recipe=copy.deepcopy(recipe_at_start))
+
+        def _worker(worker):
+            spectra = (
+                snapshot.compute(run, context=worker.is_cancelled)
+                if isinstance(snapshot, FrequencyFFT)
+                else snapshot.compute(run)
+            )
+            return spectra, snapshot.result_metadata
+
+        def _finished(result):
+            if not self._frequency_recompute_context(inflight, {key}):
+                return
+            spectra, metadata = result
+            self._on_frequency_recompute_finished(
                 run_number,
                 rep_type,
                 representation,
                 spectra,
                 started_at,
                 recipe_at_start=recipe_at_start,
-            ),
-            on_error=lambda message: self._on_frequency_recompute_error(
-                run_number, rep_type, representation, message
-            ),
+                result_metadata=metadata,
+            )
+
+        def _error(message):
+            if not self._frequency_recompute_context(inflight, {key}):
+                return
+            self._on_frequency_recompute_error(
+                run_number, rep_type, representation, message, recipe_at_start=recipe_at_start
+            )
+
+        def _cancelled():
+            if not self._frequency_recompute_context(inflight, {key}):
+                return
+            current = self._frequency_recompute_is_current(
+                run_number, rep_type, representation, recipe_at_start
+            )
+            self._frequency_recompute_inflight.discard(key)
+            self._finish_frequency_recompute_ui()
+            if not current:
+                self._release_superseded_frequency_recompute(run_number, rep_type)
+                return
+            self._notify_frequency_recompute_done(key)
+            self._set_fourier_status(f"{name} computation cancelled.")
+
+        self._tasks.start(
+            _worker,
+            on_finished=_finished,
+            on_error=_error,
+            on_cancelled=_cancelled,
+            cancel_exceptions=(PhaseFitCancelled,),
         )
 
     def _finish_frequency_recompute_ui(self) -> None:
@@ -8079,6 +8105,28 @@ class MainWindow(QMainWindow):
         if not self._frequency_recompute_inflight:
             self._frequency_overlay.hide()
         self._clear_status_state_if_idle()
+
+    def _frequency_recompute_context(self, inflight, keys) -> bool:
+        """A retired project's task cannot clear its successor's tracking or waiters."""
+        if inflight is self._frequency_recompute_inflight:
+            return True
+        inflight.difference_update(keys)
+        return False
+
+    def _frequency_recompute_is_current(self, run_number, rep_type, representation, recipe) -> bool:
+        """Only the current representation and launch recipe may publish task outcomes."""
+        return (
+            self._project_model.representation(run_number, rep_type) is representation
+            and representation.recipe == recipe
+        )
+
+    def _release_superseded_frequency_recompute(self, run_number, rep_type) -> None:
+        """Waiters recompute a superseded run; otherwise a displayed one re-syncs itself."""
+        key = (run_number, rep_type)
+        awaited = any(key in pending for pending, _cb in self._frequency_recompute_waiters)
+        self._notify_frequency_recompute_done(key)
+        if self._frequency_display_key == key and not awaited:
+            self._sync_frequency_plot_for_run(run_number)
 
     def _on_frequency_recompute_finished(
         self,
@@ -8089,36 +8137,25 @@ class MainWindow(QMainWindow):
         started_at: float,
         *,
         recipe_at_start: object = None,
+        result_metadata: dict | None = None,
     ) -> None:
         key = (run_number, rep_type)
         self._frequency_recompute_inflight.discard(key)
-        if getattr(representation, "recipe", None) != recipe_at_start:
-            # Superseded: the recipe changed while the worker ran (an explicit
-            # Compute FFT re-recipes and invalidates the representation), so
-            # these curves describe settings nobody asked for any more. Drop
-            # them; whoever changed the recipe is waiting on this key (below)
-            # and re-enters the ensure path, which now recomputes afresh.
+        if not self._frequency_recompute_is_current(
+            run_number, rep_type, representation, recipe_at_start
+        ):
             self._log_perf_event(
                 "lazy_spectrum_recompute", started_at, run=run_number, superseded=1
             )
             self._finish_frequency_recompute_ui()
-            awaited = any(key in pending for pending, _cb in self._frequency_recompute_waiters)
-            self._notify_frequency_recompute_done(key)
-            if self._frequency_display_key == key and not awaited:
-                # Nobody is re-entering the ensure path for this run, yet it
-                # is on screen: re-sync so the fresh recipe gets computed.
-                self._sync_frequency_plot_for_run(run_number)
+            self._release_superseded_frequency_recompute(run_number, rep_type)
             return
-        # Promote the worker-computed curves into the shared representation on
-        # the GUI thread, then let the cache helper cache + clear pending.
         representation.cache_datasets(list(spectra) if spectra else [])
+        if result_metadata is not None:
+            representation.result_metadata = result_metadata
         resolved = self._frequency_spectra_from_cache(run_number, rep_type)
         self._lazy_recompute_failures.discard(key)
         if rep_type == RepresentationType.FREQ_FFT and spectra:
-            # The recipe just re-ran against the run's CURRENT grouping, so the
-            # displayed spectrum's provenance is now — not whatever grouping the
-            # recipe was originally recorded under. Re-stamp so the staleness
-            # check compares against reality.
             recipe = getattr(representation, "recipe", None)
             dataset = (
                 self._data_browser.get_dataset(run_number)
@@ -8135,14 +8172,9 @@ class MainWindow(QMainWindow):
                 )
         self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
         self._finish_frequency_recompute_ui()
-        # Only redraw if this exact (run, rep) is still displayed — a rapid run
-        # switch or representation toggle may have moved on while in flight.
         if self._frequency_display_key == key:
             self._render_frequency_spectra(run_number, rep_type, resolved)
             if resolved:
-                # An auto/lazy compute otherwise leaves whatever footer status
-                # preceded it (often the hidden-sync "No FFT computed for run
-                # N.") sitting under a freshly rendered spectrum.
                 self._set_fourier_status(
                     f"Computed {self._frequency_status_name(rep_type)} for run {run_number}.",
                     success=True,
@@ -8151,15 +8183,7 @@ class MainWindow(QMainWindow):
         self._notify_frequency_recompute_done(key)
 
     def _await_frequency_recomputes(self, keys, callback: Callable[[], None]) -> None:
-        """Run *callback* once every in-flight recompute in *keys* has landed.
-
-        Fires immediately when none of *keys* is in flight. Batch callers use
-        this so a run whose view-triggered recompute is still running is
-        *waited for* rather than reported ready — before this, an explicit
-        Compute FFT (or an overlay auto-compute) issued while a lazy recompute
-        was in flight for the same run declared itself done at once, and a
-        faster selection path made that race a routine occurrence.
-        """
+        """Run *callback* once every in-flight recompute in *keys* has landed."""
         pending = {key for key in keys if key in self._frequency_recompute_inflight}
         if not pending:
             callback()
@@ -8189,9 +8213,17 @@ class MainWindow(QMainWindow):
         rep_type: RepresentationType,
         representation: object,
         message: str,
+        *,
+        recipe_at_start: object = None,
     ) -> None:
         key = (run_number, rep_type)
         self._frequency_recompute_inflight.discard(key)
+        if not self._frequency_recompute_is_current(
+            run_number, rep_type, representation, recipe_at_start
+        ):
+            self._finish_frequency_recompute_ui()
+            self._release_superseded_frequency_recompute(run_number, rep_type)
+            return
         spectra = self._frequency_recompute_failed(run_number, rep_type, representation, message)
         self._finish_frequency_recompute_ui()
         if self._frequency_display_key == key:
@@ -8205,18 +8237,9 @@ class MainWindow(QMainWindow):
         on_ready,
         *,
         busy_message: str | None = None,
+        explicit: bool = False,
     ) -> None:
-        """Recompute any uncached spectra for *run_numbers* off-thread, then ``on_ready()``.
-
-        The multi-run counterpart of :meth:`_start_async_frequency_recompute`,
-        for batch callers (send-moments, global fit-dataset prep) that previously
-        recomputed each run synchronously on the GUI thread. Only recomputable,
-        uncached, not-already-inflight runs are computed (the pure ``compute()``
-        runs on one worker); results promote into the shared representations on
-        the GUI thread before ``on_ready`` runs there. Runs that are cached,
-        not recomputable, or in flight are left as-is, so ``on_ready`` always
-        runs (once) even when nothing was recomputed.
-        """
+        """Recompute any uncached spectra for *run_numbers* off-thread, then ``on_ready()``."""
         requested: list[int] = []
         for raw in run_numbers:
             try:
@@ -8229,20 +8252,16 @@ class MainWindow(QMainWindow):
             if (run_number, rep_type) in self._frequency_recompute_inflight
         ]
         if inflight:
-            # Some requested runs are already recomputing (the view path):
-            # wait for them, then re-enter — by then each is either cached
-            # (done) or, if its recipe changed meanwhile and the result was
-            # dropped as superseded, due for a fresh compute here.
             self._await_frequency_recomputes(
                 inflight,
                 lambda: self._ensure_frequency_spectra_for_runs_async(
-                    requested, rep_type, on_ready, busy_message=busy_message
+                    requested, rep_type, on_ready, busy_message=busy_message, explicit=explicit
                 ),
             )
             return
         targets: list[tuple[int, object, object]] = []
         for run_number in requested:
-            target = self._frequency_recompute_target(run_number, rep_type)
+            target = self._frequency_recompute_target(run_number, rep_type, explicit=explicit)
             if target is not None:
                 representation, run = target
                 targets.append((run_number, representation, run))
@@ -8250,6 +8269,8 @@ class MainWindow(QMainWindow):
             on_ready()
             return
 
+        inflight = self._frequency_recompute_inflight
+        keys = {(number, rep_type) for number, _rep, _run in targets}
         name = self._frequency_status_name(rep_type)
         for run_number, _rep, _run in targets:
             self._frequency_recompute_inflight.add((run_number, rep_type))
@@ -8260,39 +8281,101 @@ class MainWindow(QMainWindow):
         started_at = time.perf_counter()
         rep_by_run = {run_number: rep for (run_number, rep, _run) in targets}
 
-        def _worker(_worker_handle):
-            # compute() is pure (returns curves, mutates nothing) so the whole
-            # batch is safe off-thread; promotion happens in the completion.
-            return [(run_number, rep.compute(run)) for (run_number, rep, run) in targets]
+        recipes = {number: copy.deepcopy(rep.recipe) for number, rep, _run in targets}
+        snapshots = [
+            (number, type(rep)(recipe=copy.deepcopy(recipes[number])), run)
+            for number, rep, run in targets
+        ]
+
+        def _worker(worker):
+            results = []
+            for number, snapshot, run in snapshots:
+                if worker.is_cancelled():
+                    raise PhaseFitCancelled()
+                if not isinstance(snapshot, FrequencyFFT):
+                    results.append((number, snapshot.compute(run), snapshot.result_metadata, None))
+                    continue
+                # A refusal belongs to its run alone; the other runs still publish.
+                try:
+                    spectra = snapshot.compute(run, context=worker.is_cancelled)
+                except PhaseFitRejectedError as exc:
+                    results.append((number, None, None, str(exc)))
+                    continue
+                results.append((number, spectra, snapshot.result_metadata, None))
+            return results
+
+        def _complete(current_count, message=None):
+            for key in keys:
+                self._frequency_recompute_inflight.discard(key)
+            self._finish_frequency_recompute_ui()
+            if current_count == len(targets):
+                on_ready()
+                for key in keys:
+                    self._notify_frequency_recompute_done(key)
+            else:
+                # Waiters claim superseded runs first; the re-entry then waits for
+                # or recomputes them before running the continuation once.
+                for key in keys:
+                    self._notify_frequency_recompute_done(key)
+                self._ensure_frequency_spectra_for_runs_async(
+                    requested, rep_type, on_ready, busy_message=busy_message, explicit=explicit
+                )
+            if message is not None:
+                self._set_fourier_status(message)
+
+        def _record_failure(number, rep):
+            self._lazy_recompute_failures.add((number, rep_type))
+            rep.invalidate()
+            rep.result_metadata = {}
+            self._frequency_cache(rep_type).pop(number, None)
 
         def _finished(results):
-            for run_number, spectra in results:
-                self._frequency_recompute_inflight.discard((run_number, rep_type))
-                rep_by_run[run_number].cache_datasets(list(spectra) if spectra else [])
-                self._frequency_spectra_from_cache(run_number, rep_type)
-                self._lazy_recompute_failures.discard((run_number, rep_type))
-            self._finish_frequency_recompute_ui()
+            if not self._frequency_recompute_context(inflight, keys):
+                return
+            current_count = 0
+            refusals = []
+            for number, spectra, metadata, refusal in results:
+                rep = rep_by_run[number]
+                if not self._frequency_recompute_is_current(number, rep_type, rep, recipes[number]):
+                    continue
+                current_count += 1
+                if refusal is not None:
+                    _record_failure(number, rep)
+                    refusals.append(f"run {number}: {refusal}")
+                    continue
+                rep.cache_datasets(list(spectra) if spectra else [])
+                rep.result_metadata = metadata
+                self._frequency_spectra_from_cache(number, rep_type)
+                self._lazy_recompute_failures.discard((number, rep_type))
             self._log_perf_event("batch_spectrum_recompute", started_at, runs=len(results))
-            on_ready()
-            for run_number, _spectra in results:
-                self._notify_frequency_recompute_done((run_number, rep_type))
+            message = f"Could not compute {name} for {'; '.join(refusals)}" if refusals else None
+            _complete(current_count, message)
+
+        def _unsuccessful(message):
+            if not self._frequency_recompute_context(inflight, keys):
+                return
+            current = [
+                (number, rep)
+                for number, rep, _run in targets
+                if self._frequency_recompute_is_current(number, rep_type, rep, recipes[number])
+            ]
+            for number, rep in current:
+                _record_failure(number, rep)
+            _complete(len(current), message if current else None)
 
         def _error(message):
-            # The batch compute is one task, so a single bad recipe fails the
-            # lot; mark every target failed so the recompute is not retried in a
-            # loop (an explicit Compute FFT clears the marker). Runs are still
-            # recoverable manually.
-            for run_number, _rep, _run in targets:
-                self._frequency_recompute_inflight.discard((run_number, rep_type))
-                self._lazy_recompute_failures.add((run_number, rep_type))
-            self._finish_frequency_recompute_ui()
-            self._set_fourier_status(f"Could not recompute {name}: {message}")
-            # Proceed with whatever is cached; callers report still-missing runs.
-            on_ready()
-            for run_number, _rep, _run in targets:
-                self._notify_frequency_recompute_done((run_number, rep_type))
+            _unsuccessful(f"Could not recompute {name}: {message}")
 
-        self._tasks.start(_worker, on_finished=_finished, on_error=_error)
+        def _cancelled():
+            _unsuccessful(f"{name} computation cancelled.")
+
+        self._tasks.start(
+            _worker,
+            on_finished=_finished,
+            on_error=_error,
+            on_cancelled=_cancelled,
+            cancel_exceptions=(PhaseFitCancelled,),
+        )
 
     # ── spectral moments ───────────────────────────────────────────────────
 
@@ -9132,35 +9215,7 @@ class MainWindow(QMainWindow):
         panel.set_compute_scope(len(self._fourier_compute_targets()))
 
     def _on_compute_fourier(self) -> None:
-        """Compute FFTs for every Data-Browser-selected run from the LIVE panel settings.
-
-        THE Compute FFT handler: selection-scoped. The target set is the
-        Data-Browser selection unioned with the active dataset (the active run
-        alone when nothing else is selected), and the button's dynamic label
-        (``"Compute FFT (N runs)"``) shows that scope before the click. Each
-        target's config comes from :meth:`_candidate_fourier_config` — the
-        live panel state, with the live Groups table's ENABLED GROUPS applied
-        to every target (intersected with each run's own available groups; an
-        empty intersection skips-and-counts the run) while PHASES stay
-        per-run (the active run from the live table, others from their stored
-        per-run state or defaults) — and is stamped as the run's recipe with
-        its own grouping digest, the stored Groups-table inclusion updated to
-        match. The spectra themselves come from the shared
-        ``FrequencyFFT.compute`` (``compute_average_group_spectrum``), the
-        same core the recipe recompute uses, so an explicit compute and a
-        recipe recompute are identical by construction. The implicit
-        compute-on-view seeding and overlay auto-compute keep their per-run
-        stored inclusion — only this explicit action propagates the panel's.
-
-        Computation runs off the GUI thread through the shared batch machinery
-        (:meth:`_ensure_frequency_spectra_for_runs_async`) as one background
-        task — no wave cap; that throttle belongs to
-        :meth:`_render_frequency_overlay`'s *auto*-compute — and completion
-        (:meth:`_finish_compute_fourier`) re-renders the frequency view,
-        switches the workspace to it, and restores the single-run path's
-        S/N summary and diagnostics for the active run. Runs that cannot
-        compute (no data / no enabled groups) are skipped and counted.
-        """
+        """Compute FFTs for every Data-Browser-selected run from the LIVE panel settings."""
         if self._fourier_compute_active:
             # Clear the summary only when we actually start a fresh compute;
             # blanking it here would wipe the in-flight compute's S/N readout.
@@ -9173,13 +9228,6 @@ class MainWindow(QMainWindow):
             return
 
         if self._current_dataset is not None:
-            # Preserve any live panel edits across the cascaded re-sync below.
-            # The sync restores both tables from their per-run stores, so live
-            # edits the stores haven't captured yet (e.g. Include-column
-            # toggles, which do not fire a store) would otherwise be clobbered
-            # — re-checking groups the user just disabled. Snapshot the live
-            # state into the stores first so the re-sync is a no-op for those
-            # edits. (This also freshens the store other targets' configs read.)
             self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
             self._store_maxent_panel_state_for_dataset(self._current_dataset)
             self._sync_fourier_panel_for_dataset(self._current_dataset)
@@ -9241,6 +9289,7 @@ class MainWindow(QMainWindow):
             RepresentationType.FREQ_FFT,
             on_ready=lambda: self._finish_compute_fourier(run_numbers, skipped),
             busy_message=f"Computing FFT for {len(run_numbers)} run(s)…",
+            explicit=True,
         )
 
     def _fourier_config_from_state(
@@ -9252,13 +9301,7 @@ class MainWindow(QMainWindow):
         t_min_us: float | None,
         t_max_us: float | None,
     ) -> GroupSpectrumConfig:
-        """Build the concrete spectrum config for a panel-state snapshot.
-
-        Single chokepoint shared by the compute path and the staleness check
-        (:meth:`_candidate_fourier_config`), so "what would be computed now"
-        and "what was computed then" can never drift in how they read the
-        panel state.
-        """
+        """Build the concrete spectrum config for a panel-state snapshot."""
         return GroupSpectrumConfig(
             display=str(state.get("display", "Real")),
             signal_source=str(state.get("signal_source", "grouped_average")),
@@ -9268,6 +9311,9 @@ class MainWindow(QMainWindow):
             filter_start_us=float(state.get("filter_start_us", 0.0)),
             filter_time_constant_us=float(state.get("filter_time_constant_us", 1.5)),
             t0_offset_us=float(state.get("t0_offset_us", 0.0)),
+            phase_fit_min_mhz=state.get("phase_fit_min_mhz"),
+            phase_fit_max_mhz=state.get("phase_fit_max_mhz"),
+            phase_fit_tolerance_degrees=float(state.get("phase_fit_tolerance_degrees", 5.0)),
             subtract_average_signal=bool(state.get("subtract_average_signal", True)),
             estimate_average_error=bool(state.get("estimate_average_error", False)),
             t_min_us=t_min_us,
@@ -9424,22 +9470,8 @@ class MainWindow(QMainWindow):
         )
 
     def _seed_fft_recipe_for_view(self, run_number: int) -> tuple[object, object] | None:
-        """Create a first FFT recipe from the current settings for a never-computed run.
-
-        The frequency view is compute-on-view: entering the tab (or an overlay)
-        for a run with neither a cached spectrum nor a recipe synthesizes one
-        from the panel settings and the run's own grouping, then hands it to the
-        shared async recompute machinery. Returns the ``(representation, run)``
-        target, or ``None`` when the run cannot be auto-computed: not loaded,
-        no histograms/groups, no enabled groups, a remembered failure, or an
-        existing recipe (which is never clobbered here — the recompute path
-        owns it).
-        """
+        """Create a first FFT recipe from the current settings for a never-computed run."""
         if self._restoring_project:
-            # Mid-restore syncs run against a half-restored window; the
-            # restored recipes (or their absence) are authoritative, and a
-            # freshly opened project must not gain recipes it was saved
-            # without. See restore_project_state.
             return None
         run_number = int(run_number)
         key = (run_number, RepresentationType.FREQ_FFT)
@@ -9468,6 +9500,8 @@ class MainWindow(QMainWindow):
         if representation.recipe.get("fourier_config"):
             return None
         config = self._candidate_fourier_config(dataset)
+        if fourier_mode_uses_phase_fit(config.display):
+            return None
         # Group selection only gates the grouped-average source (fb transforms
         # the single F−B curve; the table is inert there).
         if not config.selected_group_ids and config.signal_source != "fb_asymmetry":
@@ -9479,25 +9513,30 @@ class MainWindow(QMainWindow):
         return representation, run
 
     def _fourier_staleness_for_current_run(self) -> tuple[bool, str]:
-        """Return ``(stale, reason)`` for the active run's displayed FFT.
-
-        Not stale when nothing is displayed (the empty prompt owns that state),
-        when only a legacy array snapshot exists (no recipe to compare), or when
-        the recipe predates the grouping digest (old project; grouping staleness
-        is then unknowable and a false alarm would be worse than silence).
-        """
+        """Return ``(stale, reason)`` for the active run's displayed FFT."""
         dataset = self._current_dataset
         if dataset is None or dataset.run is None:
             return False, ""
         run_number = int(dataset.run_number)
-        if not self._cached_frequency_spectra(run_number, RepresentationType.FREQ_FFT):
+        spectra = self._cached_frequency_spectra(run_number, RepresentationType.FREQ_FFT)
+        if not spectra:
             return False, ""
         representation = self._project_model.representation(run_number, RepresentationType.FREQ_FFT)
-        recipe = getattr(representation, "recipe", None) if representation is not None else None
-        if not isinstance(recipe, dict) or not recipe.get("fourier_config"):
-            return False, ""
+        recipe = representation.recipe if representation is not None else {}
+        metadata = representation.result_metadata if representation is not None else {}
+        config = recipe.get("fourier_config")
+        display = (
+            config.get("display", "") if config else spectra[0].metadata.get("fourier_display", "")
+        )
         reasons: list[str] = []
-        recorded = GroupSpectrumConfig.from_dict(recipe.get("fourier_config"))
+        if (
+            fourier_mode_uses_phase_fit(display)
+            and metadata.get("fourier_phase_fit", {}).get("method") != PHASE_FIT_METHOD
+        ):
+            reasons.append("phase estimation method changed")
+        if not config:
+            return bool(reasons), "; ".join(reasons)
+        recorded = GroupSpectrumConfig.from_dict(config)
         recorded_digest = recipe.get("grouping_digest")
         # Recompute the current digest under the RECORDED config's signal
         # source: the digest answers "did the run state THIS spectrum depended
@@ -9659,17 +9698,7 @@ class MainWindow(QMainWindow):
         }
 
     def _finish_compute_fourier(self, requested: list[int], skipped: int) -> None:
-        """Completion for :meth:`_on_compute_fourier` (GUI thread).
-
-        Carries the old single-run completion's user-visible behaviors over to
-        the batch path: the S/N summary and diamagnetic/Burg diagnostics for
-        the active run's fresh spectrum, the workspace switch to the frequency
-        view (only when the active run was among the targets — a mid-compute
-        navigation away must not steal the view), the Fourier dock raise, the
-        empty-correlation and diamag-skipped disclosures, plus the batch
-        path's own staleness/fit-availability refreshes and the
-        computed-vs-skipped status count.
-        """
+        """Completion for :meth:`_on_compute_fourier` (GUI thread)."""
         self._fourier_compute_active = False
         # The batch helper's own idle check ran while this flag was still True
         # (its _finished calls _finish_frequency_recompute_ui before on_ready),
@@ -9702,11 +9731,6 @@ class MainWindow(QMainWindow):
             self._report_fourier_diagnostics(active_spectrum)
 
         if active_run is not None and active_run in requested:
-            # The explicit compute lands on screen: sync the frequency plot
-            # (hidden syncs defer painting; the view switch below repaints),
-            # switch the central workspace to the frequency view, and raise
-            # the Fourier dock — the old single-run contract, applied for any
-            # N. Overlay mode with a multi-run selection renders the overlay.
             if (
                 self._frequency_overlay_enabled()
                 and len(self._selected_frequency_run_numbers()) > 1
@@ -9722,10 +9746,6 @@ class MainWindow(QMainWindow):
             self._sync_frequency_plot_for_current_dataset()
 
         self._refresh_fourier_staleness()
-        # Newly-cached spectra change both single- and batch-fit availability
-        # (F17): nothing else refreshes the Fit dock after this, so a compute
-        # selection used to leave "Run Batch Fit" stale-disabled until an
-        # unrelated browser-selection change happened to poke it.
         self._set_frequency_fit_datasets_for_selection()
         self._update_fit_block_state()
 

@@ -23,19 +23,21 @@ vortex lattice of a type-II superconductor in the mixed state
 view is also the standard way to choose a sensible seed frequency before
 attempting an oscillatory time-domain fit (:doc:`fit_functions/oscillation`).
 
-Apodisation is the key practical knob. A Lorentzian filter sharpens an
-exponentially damped line; a Gaussian filter is the natural choice for
-nuclear-dipolar broadening; ``None`` is appropriate only when the
+Apodisation trades frequency resolution for reduced leakage. An exponential
+(Lorentzian) window is matched to exponential relaxation, and a Gaussian
+window to Gaussian broadening; both broaden the Fourier line. ``None`` is
+appropriate when the
 signal-to-noise is high enough that the line broadening from apodisation
 would dominate the intrinsic widths. The panel starts with ``None``
 selected — choose the filter matched to the expected lineshape rather
-than leaving the default in place out of habit. Phase
-correction follows the same logic: the entropy-optimised auto-phase mode
-is robust for single-frequency signals; for multi-frequency or vortex
-data, the manual per-group phase table or a future optimised phase fit
-gives better control. Maximum entropy reconstruction (see `Maximum Entropy
-Method`_ below) is the alternative when an FFT line is too weak or the usable
-time window too short for the FFT to resolve it.
+than leaving the default in place out of habit. **Auto Phase** estimates a
+common phase through the actual sampling and apodisation of each detector
+group. It retains the measured FFT and refuses estimates that are weak,
+incompatible, or sensitive to processing choices. The manual per-group
+phase table remains appropriate when component phases are known or a common
+phase is not justified. Maximum entropy reconstruction (see `Maximum entropy
+method`_ below) is an alternative when the usable time window is too short
+for an FFT to resolve the required features.
 
 .. note::
 
@@ -520,53 +522,170 @@ The same estimate is shared between the time-domain reduction and the FFT
 input, so the value the grouping dialog previews is exactly what the transform
 subtracts.
 
+.. _fourier-phase-estimation:
+
 FFT phase modes
 ~~~~~~~~~~~~~~~
 
-The GUI computes one complex grouped FFT and then derives the displayed curve
-from that spectrum:
+A phase rotation separates the absorptive and dispersive quadratures of an
+oscillatory signal. The displayed channels are:
 
-* ``(Power)^1/2``: magnitude :math:`|F|`
-* ``Phase Spectrum``: raw spectral angle
-* ``Cos``: real / cosine component of the uncorrected FFT
-* ``Sin``: imaginary / sine component of the uncorrected FFT
-* ``Phase``: WiMDA-style phase-corrected real projection
-* ``phaseOptReal``: entropy-optimised real projection using musrfit's
-  two-parameter optimiser backend
+* ``(Power)^1/2``: magnitude :math:`|F|`.
+* ``Phase Spectrum``: raw spectral angle.
+* ``Cos`` and ``Sin``: the uncorrected real and imaginary quadratures.
+* ``Phase``: real projection using the manual phase and per-group phase table.
+* ``Auto Phase``: real projection after fitting a common physical phase to
+  each selected detector group separately.
 
-Only ``Phase`` uses the manual phase value, per-group phase table, and
-``t0 Offset (μs)`` entry. ``phaseOptReal`` ignores those manual controls and
-computes its own optimiser-driven correction instead.
+Only ``Phase`` uses the manual ``Phase (deg):`` field, the phase table, and
+``t0 offset (μs):``. ``Fill phases`` estimates manual table values using the
+peak-bin or power-weighted circular-mean method selected by ``Auto method:``.
+**Auto Phase settings** are separate from those manual estimates.
 
-The auto-phase estimators are named concisely: ``Fill Phase Estimates``
-projects each group's spectrum onto the real axis by either the **peak-bin
-phase** (the angle of the dominant frequency bin) or a **power-weighted
-circular-mean phase** across the selected band, chosen with ``Auto method``.
-The ``phaseOptReal`` mode instead runs musrfit's ``PFTPhaseCorrection``
-algorithm — a two-parameter linear phase ramp :math:`\varphi(\nu)=c_0+c_1\nu`
-found by minimising an entropy-plus-negativity-penalty functional over the
-phase-corrected real spectrum, which makes the corrected spectrum as compact
-and positive as possible without a supplied reference phase.
+Use **Auto Phase** for resolved oscillations whose spectral components share
+one initial phase and have nonnegative amplitudes. Complex spectral fitting
+[11]_ and separable least-squares optimisation [12]_ motivate the formulation;
+the sampled response and the suitability checks are adaptations for this
+workflow. The method does not assume that a broad magnetic distribution or
+an asymmetric vortex line consists of one or two Lorentzians.
 
-.. dropdown:: Derivation: the entropy phase-optimisation functional
+Select **Auto Phase**, then click **Compute FFT**. Each detector group is
+phased before the corrected measured real channels are averaged, so opposing
+detector phases do not cancel before estimation. The display has calibrated
+percent units. The fitted positive distribution is used to estimate phase;
+it does not replace the measured FFT or remove its noise and wings.
 
-   Writing the complex spectrum as :math:`S(\nu)=|S|e^{i\theta(\nu)}`, the
-   corrected real channel is :math:`R(\nu)=\mathrm{Re}\,[S(\nu)e^{-i\varphi(\nu)}]`
-   for the linear ramp :math:`\varphi(\nu)=c_0+c_1(\nu-\nu_\mathrm{min})/\Delta\nu`.
-   From the normalised bin-to-bin increments
-   :math:`p_k=|\Delta R_k| / \sum_k|\Delta R_k|` the cost is the Shannon
-   entropy of that distribution plus a penalty on the negative excursions,
+.. image:: /_generated/screenshots/fourier_auto_phase.png
+   :alt: Auto Phase settings and a completed phase-corrected FFT of synthetic detector counts
+   :width: 100%
+
+The **Auto Phase settings** controls are:
+
+* ``Fit band min (MHz):`` and ``Fit band max (MHz):`` bound the positive
+  frequency distribution used in the fit. ``Auto`` selects a neighbourhood
+  of the dominant resolved oscillatory peak. A supplied bound restricts that
+  search. Include the complete feature rather than clipping its shoulders.
+* ``Phase tolerance (deg):`` bounds the conditional standard error and the
+  change in estimated phase when the lattice, band, or window is varied.
+  Its default is 5°. It is an analysis tolerance, not a confidence level.
+
+The fit also uses measured native FFT bins outside the component band to
+constrain finite-record leakage: a guard of three band widths on each side,
+limited by DC and Nyquist. The report records both the component band and
+this observation band. A strong neighbouring line in a guard can invalidate
+a restricted component band; include it in the component band if it shares
+the phase, or use a manual correction. Very broad component bands are
+refused to keep the numerical work bounded.
+
+The scripted grouped-spectrum API uses the same settings and checks:
+
+.. code-block:: python
+
+   from asymmetry.core.fourier.spectrum import (
+       GroupSpectrumConfig, compute_average_group_spectrum,
+   )
+
+   config = GroupSpectrumConfig(
+       display="phaseOptReal",  # Recipe identifier for Auto Phase.
+       window="lorentzian", t_max_us=6.0,
+   )
+   spectrum = compute_average_group_spectrum(run, config)
+   report = spectrum.metadata["fourier_phase_fit"]
+
+The run supplies the current grouping, timing, and background assumptions.
+The report retains the actual populated sample count, first sample time,
+sample interval, component and observation bands, and each accepted estimate.
+
+Signal significance is the total fitted positive amplitude divided by its
+conditional standard error, including covariance with the estimated phase.
+The engineering threshold is eight; it is not a calibrated false-positive
+probability after model selection. This contrast avoids diluting the signal
+merely by adding empty observation guards.
+
+The method also checks resolved oscillations, fitted edge mass, model
+residuals, competing phase solutions, numerical conditioning, and
+sensitivity to processing. Finite lattice resolution can also prevent a
+noise-compatible fit. A rejection explains how to inspect the band or
+signal model; it does not substitute an uncorrected curve or silently omit
+a detector group. A small residual alone is insufficient evidence for a
+meaningful phase. Weak relaxation signals, unresolved low frequencies,
+signed components, and components with different initial phases can require
+a different model or manual phasing. Acceptance concerns the recorded fit
+and observation bands; applying that phase elsewhere in the FFT relies on
+the common-phase assumption outside the fitted region.
+
+Auto Phase also refuses a group before fitting when its samples or
+uncertainties are not finite across the time window, or when ``Subtract
+average signal`` is off: the response model has no constant term, so an
+unsubtracted baseline would leak into the fitted bins. With several runs
+selected, a refusal affects only its own run; the others are computed and
+the status line names each refused run.
+
+The summary reports each group's phase, conditional standard error, and
+largest processing change. The statistical error propagates the supplied
+independent sample errors through mean subtraction, apodisation, and the
+FFT, retaining the resulting spectral correlations. It is a local
+approximation conditional on the fitted positive distribution. It excludes
+changes in the active coefficients, model misspecification, and systematic
+uncertainty in timing or background subtraction; it is not a complete
+confidence interval.
+
+Estimation runs in the cancellable FFT worker. Saved automatic-phase recipes
+retain their settings and result diagnostics; **Compute FFT** explicitly
+regenerates the measured spectrum. Opening a project or changing plot views
+does not start an expensive phase fit. Zero padding changes the displayed
+interpolation; estimation uses the native Fourier grid.
+
+.. dropdown:: Derivation: a common phase through the sampled response
+
+   Write the real oscillation as
 
    .. math::
 
-      C(c_0,c_1) = -\sum_k p_k\ln p_k
-      + \gamma\!\!\sum_{R(\nu)<0}\! R^2(\nu).
+      y(t_k)=\sum_j a_j\cos(2\pi\nu_jt_k+\phi),\qquad a_j\geq0.
 
-   Minimising :math:`C` (a coarse grid scan over :math:`c_0` followed by an
-   iminuit refinement) yields the phase ramp that best projects the line onto
-   the real axis. This reproduces musrfit's ``PFTPhaseCorrection``; the
-   trivial zero-spectrum solution is given a large cost so the optimiser
-   avoids it.
+   The sample times :math:`t_k=t_s+k\Delta t`, window :math:`w_k`, and
+   normalised mean-subtraction weights :math:`u_k` are recorded from the
+   actual FFT preparation. Let :math:`m_j=\sum_k u_k e^{2\pi i\nu_jt_k}`
+   (zero when mean subtraction is disabled), and define the relative-time
+   window transform
+   :math:`W(\nu)=\sum_k w_k e^{-2\pi i\nu k\Delta t}`. The complex response
+   of one positive component is
+
+   .. math::
+
+      H_j(\nu,\phi)=\tfrac12\left[
+      e^{i\phi}\left(e^{2\pi i\nu_jt_s}W(\nu-\nu_j)-m_jW(\nu)\right)
+      +e^{-i\phi}\left(e^{-2\pi i\nu_jt_s}W(\nu+\nu_j)-m_j^*W(\nu)\right)
+      \right].
+
+   Both sidebands and the known constant subtraction therefore enter the
+   fit. Nonnegative least squares eliminates :math:`a_j` for each trial
+   :math:`\phi`; a deterministic circular search estimates the common phase.
+   The component lattice is refined within a fixed work bound, and the
+   component-band and window variants test its sensitivity. The displayed
+   channel is the measured relative-time FFT :math:`S` rotated as
+
+   .. math::
+
+      R(\nu)=\operatorname{Re}\left[
+      S(\nu)e^{-i(\phi+2\pi\nu t_s)}\right].
+
+   The known sample-origin term is separate from the estimated phase;
+   there is no freely fitted timing ramp or spectral baseline.
+
+Compared with other programs
+++++++++++++++++++++++++++++
+
+Automatic phase methods need not optimise the same physical or numerical
+criterion. The entropy method of Chen *et al.* [14]_ minimises a derivative
+entropy with a negativity penalty. Sawall *et al.* [13]_ combine phase and
+baseline estimation with a normalised multi-objective criterion.
+**Auto Phase** fits the measured complex response with one common phase,
+explicit sampling, and nonnegative component amplitudes. These are
+comparisons of published formulations; they do not establish numerical
+agreement with a particular release of another program. Manual phase-table
+and maximum-entropy workflows remain separate analyses.
 
 Normalisation
 ~~~~~~~~~~~~~
@@ -577,7 +696,7 @@ magnitude spectrum. The calibration makes the peak height a physical quantity,
 invariant to counting statistics, the length of the time window, the choice of
 apodisation, and zero padding. Two steps produce it, applied to every canonical
 display channel (``(Power)^1/2``, ``Cos``, ``Sin``, ``Phase``, magnitude, real,
-imaginary; ``Power`` is their square, in :math:`\%^2`):
+imaginary, and ``Auto Phase``; ``Power`` is their square, in :math:`\%^2`):
 
 * **Fractional footing.** Each detector group's lifetime-corrected count signal
   :math:`N_0\,(1 + A\cos\dots)` is divided by its error-weighted baseline
@@ -1719,6 +1838,17 @@ References
 .. [10] B. M. Huddart, T. Lancaster, S. J. Blundell, Z. Guguchia, H. Taniguchi,
    S. J. Clark, and F. L. Pratt, Phys. Rev. Research **5**, 013015 (2023).
 
-The ``phaseOptReal`` entropy phase optimiser reproduces the
-``PFTPhaseCorrection`` routine of musrfit (A. Suter and B. M. Wojek,
-Phys. Procedia **30**, 69 (2012)).
+.. [11] K. S. Isaac, P. M. Le, T. Street, A. Wijerathna-Yapa, and S. Sokolenko,
+   J. Magn. Reson. **381**, 107991 (2025).
+   `doi:10.1016/j.jmr.2025.107991 <https://doi.org/10.1016/j.jmr.2025.107991>`_.
+
+.. [12] G. Golub and V. Pereyra, Inverse Problems **19**, R1 (2003).
+   `doi:10.1088/0266-5611/19/2/201 <https://doi.org/10.1088/0266-5611/19/2/201>`_.
+
+.. [13] M. Sawall, E. von Harbou, A. Moog, R. Behrens, H. Schröder,
+   J. Simoneau, E. Steimers, and K. Neymeyr, J. Magn. Reson. **289**, 132 (2018).
+   `doi:10.1016/j.jmr.2018.02.012 <https://doi.org/10.1016/j.jmr.2018.02.012>`_.
+
+.. [14] L. Chen, Z. Weng, L. Y. Goh, and M. Garland,
+   J. Magn. Reson. **158**, 164 (2002).
+   `doi:10.1016/S1090-7807(02)00069-1 <https://doi.org/10.1016/S1090-7807(02)00069-1>`_.

@@ -24,6 +24,16 @@ FFT
    :members:
    :undoc-members:
 
+Automatic phase estimation
+--------------------------
+
+The ``GroupSpectrumConfig`` recipe identifier ``phaseOptReal`` selects the
+GUI's **Auto Phase** display. Direct estimators use the typed acquisition
+and result objects below.
+
+.. automodule:: asymmetry.core.fourier.phase_fit
+   :members: PhaseAcquisition, PhaseFitConfig, PhaseEstimate, PhaseRejection, PhaseFitCancelled, PhaseFitRejectedError, fit_fft_phase
+
 Apodisation
 -----------
 

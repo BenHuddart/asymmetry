@@ -15,8 +15,8 @@ The scenario:
    grouping) and switches the workspace to the **Frequency** domain.
 2. Selects the **Phase** display (the phase-corrected real FFT) and fills the
    per-group phases from the data, so the spectrum is the lineshape-faithful
-   absorption line the moments require — power/magnitude/phaseOptReal modes are
-   squared or dispersive and are greyed out for moments.
+   absorption line the moments require; the magnitude and power channels
+   do not preserve the same signed line shape.
 3. Computes the FFT, drags a **range** over the line and sets a **cutoff**, and
    opens the **Spectral moments** section so its live readout is on screen: the
    peak field B_pk ≈ 1987 G (≈ 26.9 MHz, γ_μ = 0.01355 MHz/G), the mean B_ave
@@ -71,20 +71,15 @@ class SpectralMomentsReadoutScenario(Scenario):
 
         window = MainWindow()
         window._on_fourier()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         dataset = make_ybco_vortex_lattice()
         window._data_browser.add_dataset(dataset)
         window._on_dataset_selected(dataset.run_number)
         _process_events_for(milliseconds=120)
 
-        # Moments need a lineshape-faithful spectrum: the phase-corrected real
-        # FFT. Select the "Phase" display and fill the per-group phases from the
-        # data so the real projection is the clean absorption line (the
-        # entropy-optimised phaseOptReal is dispersive for this signal, and the
-        # default (Power)^1/2 is squared and moment-ineligible).
+        # Moments use the phase-corrected real channel, with table phases
+        # estimated independently for each detector group.
         fourier = window._fourier_panel
         fourier._set_display_mode("Phase")
         fourier._auto_phase_btn.click()

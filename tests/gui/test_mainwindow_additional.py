@@ -1000,10 +1000,10 @@ class TestMainWindowFourier:
         rep = mainwindow._project_model.representation(8827, RepresentationType.FREQ_FFT)
         assert rep is not None
 
-        def _boom(run, **kwargs):
+        def _boom(self, run, **kwargs):
             raise RuntimeError("recipe no longer reproduces")
 
-        monkeypatch.setattr(rep, "compute", _boom)
+        monkeypatch.setattr(type(rep), "compute", _boom)
 
         mainwindow._sync_frequency_plot_for_run(8827)
         _wait_frequency_idle(mainwindow)
@@ -1835,19 +1835,25 @@ class TestMainWindowFourier:
 
         calls: list[tuple[float | None, float | None]] = []
 
-        def _fake_fft_complex_asymmetry(
-            _dataset: MuonDataset, **kwargs: object
-        ) -> tuple[np.ndarray, np.ndarray]:
-            calls.append((kwargs.get("t_min"), kwargs.get("t_max")))
-            return np.array([0.0, 1.0]), np.array([0.0 + 0.0j, 1.0 + 0.0j])
+        from asymmetry.core.representation.frequency import FrequencyFFT
 
-        # The averaged-FFT maths now lives in the shared spectrum core; patch
-        # the symbol where it is actually called.
-        monkeypatch.setattr(spectrum_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
+        def _compute(snapshot, run, *, context=None):
+            config = snapshot.fourier_config()
+            calls.append((config["t_min_us"], config["t_max_us"]))
+            return [
+                MuonDataset(
+                    time=np.array([0.0, 1.0]),
+                    asymmetry=np.array([0.0, 1.0]),
+                    error=np.zeros(2),
+                    metadata={"run_number": run.run_number},
+                )
+            ]
+
+        monkeypatch.setattr(FrequencyFFT, "compute", _compute)
 
         _compute_fourier_sync(mainwindow)
 
-        assert calls == [(1.0, 4.0), (1.0, 4.0)]
+        assert calls == [(1.0, 4.0)]
 
     def test_compute_group_fourier_reuses_precomputed_group_inputs(
         self,
@@ -1877,16 +1883,9 @@ class TestMainWindowFourier:
                 run=run,
             )
 
-        def _fake_fft_complex_asymmetry(
-            _dataset: MuonDataset,
-            **_kwargs: object,
-        ) -> tuple[np.ndarray, np.ndarray]:
-            return np.array([0.0, 1.0]), np.array([1.0 + 0.0j, 0.5 + 0.0j])
-
         monkeypatch.setattr(
             spectrum_module, "build_group_signal_dataset", _fake_build_group_signal_dataset
         )
-        monkeypatch.setattr(spectrum_module, "fft_complex_asymmetry", _fake_fft_complex_asymmetry)
 
         _compute_fourier_sync(mainwindow)
 

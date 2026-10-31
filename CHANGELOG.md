@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Auto Phase** estimates each detector group's common phase through the sampled
+  FFT response, preserves the measured spectrum on the percent scale, and refuses
+  weak or unstable estimates with an explanation and conditional diagnostics.
+
 - **``recipe --run`` starts each line where the run shows it.** At the recipe's
   frequencies and rates, every precessing term's amplitude and phase (and a
   single background) are solved by linear least squares against the run, so a

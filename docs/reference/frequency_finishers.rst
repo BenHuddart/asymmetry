@@ -102,14 +102,15 @@ do not remove signal next to the artefact.
 Real + imaginary view
 ---------------------
 
-The **Real+Imag** display mode overlays the cosine (real) and sine (imaginary)
-quadratures of the averaged spectrum on one axis. A correctly phased absorption
-line is purely real with a flat imaginary part; residual structure in the
-imaginary channel is the visual signature of an imperfect phase correction.
+The **Real+Imag** display mode overlays the uncorrected real and imaginary
+quadratures of the averaged spectrum. A causal oscillatory signal generally
+has both absorptive and dispersive structure even at the correct phase;
+a nonzero imaginary channel alone does not establish a phase error.
 
-*When to use this.* Reach for it while tuning the phase — manual, per-group, or
-the entropy optimiser — to see at a glance whether the real channel carries all
-the line. For a final quantitative spectrum, switch back to a single channel.
+Use this view to inspect the complex line shape. Apply a manual correction
+with **Phase**, or estimate a common phase with **Auto Phase**, when an
+absorptive real projection is needed. Their phase conventions and suitability
+checks are described in :doc:`fourier_analysis`.
 
 Signal-to-noise readout
 -----------------------

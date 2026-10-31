@@ -1,23 +1,12 @@
-"""Averaged grouped-FFT spectrum generation (shared core).
-
-This is the single implementation of "turn a grouped run + a Fourier
-configuration into one averaged frequency spectrum".  Both the GUI Fourier
-panel and the :class:`~asymmetry.core.representation.frequency.FrequencyFFT`
-representation call :func:`compute_average_group_spectrum`, so a generated
-spectrum and a recipe-recomputed spectrum are identical by construction.
-
-The configuration carries **concrete** values only.  Automatic phase estimation
-(which depends on transient GUI view state) is resolved by the caller into
-per-group ``group_phase_degrees`` before calling here, so recompute-on-load is
-deterministic and faithful to what was originally generated.
-"""
+"""Average measured grouped FFTs with shared preparation and persisted phase provenance."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import math
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -30,14 +19,22 @@ from asymmetry.core.fourier.fft import (
     average_fourier_display_values,
     canonical_fourier_display_mode,
     exclude_frequency_ranges,
-    fft_complex_asymmetry,
+    fft_complex_prepared,
     fourier_display_values,
-    fourier_mode_uses_entropy_optimizer,
     fourier_mode_uses_phase_correction,
-    optimize_phase_entropy,
+    fourier_mode_uses_phase_fit,
     prepare_fft_time_signal,
 )
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
+from asymmetry.core.fourier.phase_fit import (
+    PHASE_FIT_METHOD,
+    PhaseAcquisition,
+    PhaseFitCancelled,
+    PhaseFitConfig,
+    PhaseFitRejectedError,
+    PhaseRejection,
+    fit_fft_phase,
+)
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.background import resolve_background_mode
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
@@ -52,17 +49,12 @@ from asymmetry.core.utils.coerce import optional_float
 #: Minimum applied field (Gauss) for a diamagnetic fit to be attempted.
 _MIN_DIAMAG_FIELD_GAUSS = 5.0
 
-# Calibrated modes read as a fractional asymmetry amplitude in percent (a pure
-# cosine of amplitude A peaks at 100·A); Power is that amplitude squared (%²).
-# The derived modes (phaseOptReal, Burg, correlation) keep their arbitrary-unit
-# footing — the amplitude calibration is not applied to them (see
-# ``compute_average_group_spectrum``); the phase spectrum stays in degrees.
 _YLABELS: dict[str, str] = {
     "cos": "FFT Cos (%)",
     "imaginary": "FFT Imaginary (%)",
     "magnitude": "FFT Magnitude (%)",
     "phase_corrected": "FFT Phase-Corrected (%)",
-    "phase_opt_real": "FFT phaseOptReal (a.u.)",
+    "phase_opt_real": "FFT auto phase (%)",
     "phase_spectrum": "FFT Phase Spectrum (deg)",
     "power": "FFT Power (%²)",
     "power_sqrt": "FFT (Power)^1/2 (%)",
@@ -110,6 +102,9 @@ class GroupSpectrumConfig:
     filter_start_us: float = 0.0
     filter_time_constant_us: float = 1.5
     t0_offset_us: float = 0.0
+    phase_fit_min_mhz: float | None = None
+    phase_fit_max_mhz: float | None = None
+    phase_fit_tolerance_degrees: float = 5.0
     subtract_average_signal: bool = True
     estimate_average_error: bool = False
     t_min_us: float | None = None
@@ -159,6 +154,9 @@ class GroupSpectrumConfig:
             "filter_start_us": self.filter_start_us,
             "filter_time_constant_us": self.filter_time_constant_us,
             "t0_offset_us": self.t0_offset_us,
+            "phase_fit_min_mhz": self.phase_fit_min_mhz,
+            "phase_fit_max_mhz": self.phase_fit_max_mhz,
+            "phase_fit_tolerance_degrees": self.phase_fit_tolerance_degrees,
             "subtract_average_signal": self.subtract_average_signal,
             "estimate_average_error": self.estimate_average_error,
             "t_min_us": self.t_min_us,
@@ -198,21 +196,17 @@ class GroupSpectrumConfig:
         )
         return cls(
             display=str(data.get("display", "(Power)^1/2")),
-            # A missing key is an old grouped-average recipe: default it to
-            # "grouped_average" (not a stale sentinel — pre-fb recipes ARE
-            # grouped-average and must not flag against a fresh default config).
             signal_source=str(data.get("signal_source", "grouped_average")),
             window=str(data.get("window", "none")),
             padding=max(1, int(data.get("padding", 1))),
-            # A missing key is a pre-calibration recipe: map it to the "raw"
-            # sentinel so it differs from a freshly-built config's
-            # "asymmetry_percent" default and trips the staleness banner,
-            # inviting a recompute onto the new calibrated scale.
             normalisation=str(data.get("normalisation", "raw")),
             display_normalisation=str(data.get("display_normalisation", "calibrated")),
             filter_start_us=float(data.get("filter_start_us", 0.0)),
             filter_time_constant_us=float(data.get("filter_time_constant_us", 1.5)),
             t0_offset_us=float(data.get("t0_offset_us", 0.0)),
+            phase_fit_min_mhz=optional_float(data.get("phase_fit_min_mhz")),
+            phase_fit_max_mhz=optional_float(data.get("phase_fit_max_mhz")),
+            phase_fit_tolerance_degrees=float(data.get("phase_fit_tolerance_degrees", 5.0)),
             subtract_average_signal=bool(data.get("subtract_average_signal", True)),
             estimate_average_error=bool(data.get("estimate_average_error", False)),
             t_min_us=optional_float(data.get("t_min_us")),
@@ -396,10 +390,6 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
     background_correction = bool(grouping.get("background_correction", False))
     payload["background_correction"] = background_correction
     if background_correction:
-        # Digest the RESOLVED mode, not a raw key: the consumer selects its
-        # behaviour via resolve_background_mode (explicit ``background_mode``
-        # with inference from the pre-existing keys), and ``background_method``
-        # is a GUI-hint key the FFT input never reads.
         payload["background_mode"] = resolve_background_mode(grouping)
         for key in (
             "background_values",
@@ -422,10 +412,6 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         if parsed is not None:
             payload[key] = parsed
 
-    # The exact t0 (D4) moves every time stamp by a sub-bin amount without
-    # moving ``t0_bin``, so a policy change that only shifts it would otherwise
-    # hand back a stale cached reduction. ``t0_source`` rides along: a
-    # "missing" run resolves its t0 by search, which changes the values too.
     t0_time_us = grouping.get("t0_time_us")
     if t0_time_us is not None:
         payload["t0_time_us"] = float(t0_time_us)
@@ -434,10 +420,6 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         payload["t0_source"] = str(t0_source)
 
     if signal_source == "fb_asymmetry":
-        # The forward−backward reduction consumes run state the grouped path
-        # never reads (see the docstring); fold in exactly those keys, with the
-        # consumers' own defaults/normalisation so a missing key digests the
-        # same as its explicit default.
         payload["signal_source"] = "fb_asymmetry"
         forward_group = _digest_int(grouping.get("forward_group"))
         backward_group = _digest_int(grouping.get("backward_group"))
@@ -514,39 +496,12 @@ def _phase_ids(config: GroupSpectrumConfig) -> set[int]:
 
 
 def _fb_effective_phase_degrees(config: GroupSpectrumConfig) -> float:
-    """Return the global phase (degrees) an fb-asymmetry transform applies.
-
-    fb-asymmetry mode has no per-group id: the phase table is inert, but the
-    GUI writes the manual (global) phase identically onto every group entry,
-    so any recorded entry carries that shared value. Single source of truth
-    shared by the compute branch and :func:`config_differences`, so "what
-    phase would be applied" and "did the effective phase change" can never
-    drift.
-
-    The "first entry" is dict insertion order (Python guarantees it, and
-    ``to_dict``/``from_dict`` preserve it): the GUI always writes one uniform
-    value so any entry is equivalent, but a *scripted* config with divergent
-    ``group_phase_degrees`` entries gets its first-inserted value — the rest
-    are ignored, exactly as the compute branch ignores them.
-    """
+    """Use the first stored manual phase for the single forward-backward signal."""
     return float(next(iter(config.group_phase_degrees.values()), 0.0))
 
 
 def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConfig) -> list[str]:
-    """Return human-readable labels of effective differences between two configs.
-
-    "Effective" means a difference that could change the resulting spectrum:
-    a parameter that is inert in ``current``'s active display/filter mode (a
-    filter time constant while apodisation is "none", say) is not reported even
-    if its raw value differs, because recomputing with either value would
-    produce the same spectrum. Labels are returned most-significant first
-    (display mode, then time window, then the remaining checks in a fixed
-    order) and each label appears at most once.
-
-    Intended to drive a GUI "displayed FFT is out of sync with the current
-    grouping/config" indicator: an empty list means the two configs would
-    produce the same spectrum.
-    """
+    """Return unique labels for effective spectrum changes in significance order."""
     labels: list[str] = []
 
     def emit(label: str) -> None:
@@ -556,10 +511,6 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
     if current.signal_source != recorded.signal_source:
         emit("signal source")
 
-    # In fb-asymmetry mode group inclusion is inert and the per-group phase
-    # table reduces to one effective global phase (a single F−B curve is
-    # transformed), so when BOTH configs are fb-source only that effective
-    # phase — not the table's per-group detail — can change the spectrum.
     both_fb = current.signal_source == "fb_asymmetry" and recorded.signal_source == "fb_asymmetry"
 
     # Canonical compare so a legacy display alias (e.g. "power" for
@@ -568,6 +519,18 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
         recorded.display
     ):
         emit("display mode")
+
+    uses_phase_fit = fourier_mode_uses_phase_fit(current.display) or fourier_mode_uses_phase_fit(
+        recorded.display
+    )
+    if uses_phase_fit:
+        for name, label in (
+            ("phase_fit_min_mhz", "auto-phase minimum frequency"),
+            ("phase_fit_max_mhz", "auto-phase maximum frequency"),
+            ("phase_fit_tolerance_degrees", "auto-phase tolerance"),
+        ):
+            if not _floats_equal(getattr(current, name), getattr(recorded, name)):
+                emit(label)
 
     if current.normalisation != recorded.normalisation:
         emit("amplitude normalisation")
@@ -609,11 +572,6 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
         if not _floats_equal(current.t0_offset_us, recorded.t0_offset_us):
             emit("t0 offset")
         if both_fb:
-            # In fb-asymmetry mode the transform applies one EFFECTIVE global
-            # phase (see _fb_effective_phase_degrees). Compare that instead of
-            # the per-group table: a global-phase change genuinely changes the
-            # spectrum and must flag, while table differences beyond it are
-            # inert and stay suppressed.
             if not _floats_equal(
                 _fb_effective_phase_degrees(current), _fb_effective_phase_degrees(recorded)
             ):
@@ -630,39 +588,45 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
             if phases_differ:
                 emit("group phases")
 
-    if current.pulse_compensation != recorded.pulse_compensation:
-        emit("pulse compensation")
+    both_auto_phase = fourier_mode_uses_phase_fit(current.display) and fourier_mode_uses_phase_fit(
+        recorded.display
+    )
+    if not both_auto_phase:
+        if current.pulse_compensation != recorded.pulse_compensation:
+            emit("pulse compensation")
 
-    pulse_active = current.pulse_compensation or recorded.pulse_compensation
-    if pulse_active and (
-        not _floats_equal(current.pulse_half_width_us, recorded.pulse_half_width_us)
-        or not _floats_equal(current.pulse_separation_us, recorded.pulse_separation_us)
-        or current.pulse_n_pulses != recorded.pulse_n_pulses
-        or not _floats_equal(current.pulse_max_gain, recorded.pulse_max_gain)
-    ):
-        emit("pulse settings")
+        pulse_active = current.pulse_compensation or recorded.pulse_compensation
+        if pulse_active and (
+            not _floats_equal(current.pulse_half_width_us, recorded.pulse_half_width_us)
+            or not _floats_equal(current.pulse_separation_us, recorded.pulse_separation_us)
+            or current.pulse_n_pulses != recorded.pulse_n_pulses
+            or not _floats_equal(current.pulse_max_gain, recorded.pulse_max_gain)
+        ):
+            emit("pulse settings")
 
-    if current.baseline_mode != recorded.baseline_mode:
-        emit("baseline offset")
-    baseline_active = current.baseline_mode != "none" or recorded.baseline_mode != "none"
-    if baseline_active and not _floats_equal(current.baseline_kappa, recorded.baseline_kappa):
-        emit("baseline offset")
+        if current.baseline_mode != recorded.baseline_mode:
+            emit("baseline offset")
+        baseline_active = current.baseline_mode != "none" or recorded.baseline_mode != "none"
+        if baseline_active and not _floats_equal(current.baseline_kappa, recorded.baseline_kappa):
+            emit("baseline offset")
 
-    if current.exclude_enabled != recorded.exclude_enabled:
-        emit("frequency exclusions")
-    exclusions_active = current.exclude_enabled or recorded.exclude_enabled
-    if exclusions_active and not _ranges_equal(current.exclusion_ranges, recorded.exclusion_ranges):
-        emit("frequency exclusions")
+        if current.exclude_enabled != recorded.exclude_enabled:
+            emit("frequency exclusions")
+        exclusions_active = current.exclude_enabled or recorded.exclude_enabled
+        if exclusions_active and not _ranges_equal(
+            current.exclusion_ranges, recorded.exclusion_ranges
+        ):
+            emit("frequency exclusions")
 
-    if current.remove_diamag != recorded.remove_diamag or current.diamag_exclusion != (
-        recorded.diamag_exclusion
-    ):
-        emit("diamagnetic handling")
-    diamag_active = current.diamag_exclusion or recorded.diamag_exclusion
-    if diamag_active and not _floats_equal(
-        current.diamag_half_width_mhz, recorded.diamag_half_width_mhz
-    ):
-        emit("diamagnetic handling")
+        if current.remove_diamag != recorded.remove_diamag or current.diamag_exclusion != (
+            recorded.diamag_exclusion
+        ):
+            emit("diamagnetic handling")
+        diamag_active = current.diamag_exclusion or recorded.diamag_exclusion
+        if diamag_active and not _floats_equal(
+            current.diamag_half_width_mhz, recorded.diamag_half_width_mhz
+        ):
+            emit("diamagnetic handling")
 
     if canonical_fourier_display_mode(current.display) == "burg" and (
         current.burg_order_min != recorded.burg_order_min
@@ -800,14 +764,11 @@ def compute_average_group_spectrum(
     *,
     prepared_histograms: list[Histogram] | None = None,
     reference_t0_bin: int | None = None,
+    cancel_callback: Callable[[], bool] | None = None,
 ) -> MuonDataset | None:
-    """Return the averaged grouped-FFT spectrum for *run*, or ``None``.
-
-    Reproduces the GUI's averaged grouped-FFT pipeline: build each selected
-    group's lifetime-corrected signal, FFT it (with the resolved per-group
-    phase), and average the display channels (or, for entropy mode, average the
-    complex spectra then run the entropy optimiser).
-    """
+    """Return the selected groups' measured display channels, averaged after correction."""
+    if cancel_callback is not None and cancel_callback():
+        raise PhaseFitCancelled("FFT phase fitting cancelled.")
     names_by_group = group_names(run)
     if not names_by_group:
         return None
@@ -830,25 +791,15 @@ def compute_average_group_spectrum(
 
     display = config.display
     apply_phase = fourier_mode_uses_phase_correction(display)
-    is_entropy = fourier_mode_uses_entropy_optimizer(display)
+    is_auto_phase = fourier_mode_uses_phase_fit(display)
     canonical = canonical_fourier_display_mode(display)
     is_real_imag = canonical == "real_imag"
     is_burg = canonical == "burg"
     is_correlation = canonical == "correlation"
-    # "Derived" modes replace or bypass the standard averaged complex spectrum
-    # (entropy optimiser output, Burg all-poles, the correlation transform) and
-    # therefore skip post-FFT conditioning, which only makes sense on the
-    # canonical averaged frequency spectrum.  New derived modes opt in here.
-    is_derived_mode = is_entropy or is_burg or is_correlation
-    # The amplitude calibration (fractional footing + 2/Σw + percent) applies to
-    # the canonical averaged spectrum only.  The derived modes keep their own
-    # footing: entropy's negativity penalty would be silently reweighted, Burg's
-    # AR spectrum has no coherent-gain meaning, and correlation consumes a raw
-    # amplitude channel before its Breit–Rabi transform.
-    calibrate = not is_derived_mode
-    # The correlation spectrum is built from a real amplitude channel sampled at
-    # the Breit–Rabi pair frequencies; feed the FFT averaging an amplitude
-    # display internally, then transform it after averaging.
+    # Auto phase uses calibrated observed FFTs and bypasses optional conditioning.
+    is_derived_mode = is_auto_phase or is_burg or is_correlation
+    calibrate = not (is_burg or is_correlation)
+    apply_diamag = config.remove_diamag and not is_auto_phase
     value_display = "(Power)^1/2" if is_correlation else display
 
     if prepared_histograms is None or reference_t0_bin is None:
@@ -856,14 +807,11 @@ def compute_average_group_spectrum(
 
     averaged_values: list[np.ndarray] = []
     imag_values: list[np.ndarray] = []
-    complex_spectra: list[np.ndarray] = []
+    phase_reports: dict[str, dict] = {}
     burg_orders: list[int] = []
     burg_hit_boundary = False
     diamag_fields: list[float] = []
     diamag_fit_curve: tuple[np.ndarray, np.ndarray] | None = None
-    # Track the diamag-subtract outcome so a silent no-op (no transverse field,
-    # or a fit that did not converge) is disclosed rather than passing as a
-    # successful subtraction.
     diamag_seed_fields: list[float | None] = []
     diamag_fit_failed = False
     # When calibrating, count groups whose fractional footing hit the degenerate
@@ -876,13 +824,6 @@ def compute_average_group_spectrum(
     # prepares once, not once per group.
     background_reference_cache: dict = {}
 
-    # Build the list of (group_id, base time-domain dataset) to transform. In the
-    # default grouped-average mode this is one lifetime-corrected signal per
-    # selected group; in fb-asymmetry mode it is the single forward−backward
-    # asymmetry curve the time-domain plot shows (group_id is ``None`` — the
-    # per-group phase table is inert there). Both are fractional signals, so the
-    # same per-signal machinery (projection, apodisation, calibration,
-    # conditioning) applies unchanged.
     signal_inputs: list[tuple[int | None, MuonDataset]] = []
     if is_fb_asymmetry:
         # Imported lazily: simulate imports widely, so a module-level import here
@@ -892,18 +833,33 @@ def compute_average_group_spectrum(
         try:
             fb_dataset = reduce_run_to_dataset(run)
         except ValueError:
-            # No valid forward/backward pair (single-group run, empty groups,
-            # no histograms): a degenerate input returns None like the grouped
-            # paths do, rather than raising — one bad run must not poison a
-            # batch compute.
             return None
         signal_inputs.append((None, fb_dataset))
     else:
+        input_run = run
+        declared_t0 = run.grouping.get("t0_bin")
+        if (
+            is_auto_phase
+            and isinstance(declared_t0, (int, np.integer))
+            and reference_t0_bin is not None
+        ):
+            # Good bins describe (bin - declared_t0)*dt; aligned histograms use
+            # the shared reference, so endpoints and exact t0 translate together.
+            offset = reference_t0_bin - int(declared_t0)
+            grouping = dict(run.grouping)
+            for key in ("first_good_bin", "last_good_bin"):
+                bound = grouping.get(key)
+                if isinstance(bound, (int, np.integer)) and bound >= 0:
+                    grouping[key] = int(bound) + offset
+            exact_t0_us = grouping.get("t0_time_us")
+            if exact_t0_us is not None:
+                grouping["t0_time_us"] = float(exact_t0_us) + offset * run.histograms[0].bin_width
+            input_run = replace(run, grouping=grouping)
         signal_inputs = [
             (
                 group_id,
                 build_group_signal_dataset(
-                    run,
+                    input_run,
                     group_id,
                     center_signal=False,
                     reference_t0_bin=reference_t0_bin,
@@ -915,12 +871,11 @@ def compute_average_group_spectrum(
         ]
 
     for group_id, group_dataset in signal_inputs:
-        if config.remove_diamag:
+        if cancel_callback is not None and cancel_callback():
+            raise PhaseFitCancelled("FFT phase fitting cancelled.")
+        if apply_diamag:
             seed_field = reference_field_gauss(run, group_dataset)
             diamag_seed_fields.append(seed_field)
-            # Diamagnetic precession only exists in a transverse field; skip the
-            # fit at (near-)zero field, where a bounded fit would otherwise lock
-            # onto a spurious low frequency.
             if seed_field is not None and abs(seed_field) > _MIN_DIAMAG_FIELD_GAUSS:
                 group_dataset, diamag_fit = fit_and_subtract_diamagnetic(
                     group_dataset, seed_field_gauss=seed_field
@@ -970,51 +925,124 @@ def compute_average_group_spectrum(
         group_t0_offset_us = 0.0
         if apply_phase:
             if group_id is None:
-                # fb-asymmetry mode: the per-group table is inert, but the
-                # shared global phase and the t0 offset still apply (see
-                # _fb_effective_phase_degrees, also used by config_differences).
                 phase_degrees = _fb_effective_phase_degrees(config)
             else:
                 phase_degrees = float(config.group_phase_degrees.get(group_id, 0.0))
             group_t0_offset_us = config.t0_offset_us
 
-        fft_diagnostics: dict = {}
-        freqs, spectrum = fft_complex_asymmetry(
+        # F-B datasets already carry percent asymmetry; grouped signals carry counts.
+        if is_auto_phase and is_fb_asymmetry:
+            group_dataset = MuonDataset(
+                time=group_dataset.time,
+                asymmetry=group_dataset.asymmetry / 100.0,
+                error=group_dataset.error / 100.0 if group_dataset.error is not None else None,
+                metadata=group_dataset.metadata,
+                run=group_dataset.run,
+            )
+        prepared = prepare_fft_time_signal(
             group_dataset,
             window=config.window,
-            padding_factor=config.padding,
             t_min=config.t_min_us,
             t_max=config.t_max_us,
-            phase_degrees=phase_degrees,
-            t0_offset_us=group_t0_offset_us,
             subtract_average_signal=config.subtract_average_signal,
             filter_start_us=config.filter_start_us,
             filter_time_constant_us=config.filter_time_constant_us,
-            fractional=calibrate,
-            amplitude_calibration=calibrate,
-            diagnostics=fft_diagnostics,
+            fractional=calibrate and not (is_auto_phase and is_fb_asymmetry),
         )
-        if calibrate and not fft_diagnostics.get("fractional_applied", False):
+        freqs, spectrum = fft_complex_prepared(
+            prepared,
+            padding_factor=config.padding,
+            phase_degrees=phase_degrees,
+            t0_offset_us=group_t0_offset_us,
+            amplitude_calibration=calibrate,
+        )
+        if is_auto_phase:
+            group_key = "asymmetry" if group_id is None else str(group_id)
+            group_label = (
+                "Forward-backward asymmetry"
+                if group_id is None
+                else f"Group {group_id} ({names_by_group[group_id]})"
+            )
+            errors = prepared.sample_errors
+            unsuitable = (
+                (
+                    errors is None,
+                    "missing_uncertainty",
+                    "Supply finite sample uncertainties before Auto Phase.",
+                ),
+                (
+                    errors is not None
+                    and not (
+                        np.all(np.isfinite(errors))
+                        and np.all(np.isfinite(prepared.unwindowed_signal))
+                    ),
+                    "non_finite_samples",
+                    "Auto Phase needs finite samples and uncertainties across the time window.",
+                ),
+                (
+                    prepared.mean_weights is None,
+                    "mean_not_subtracted",
+                    "Enable average-signal subtraction; the phase model has no constant term.",
+                ),
+                (
+                    not is_fb_asymmetry and not prepared.fractional_applied,
+                    "invalid_fractional_baseline",
+                    "A positive fractional baseline is required; check the grouping and background.",
+                ),
+            )
+            for failed, reason, message in unsuitable:
+                if failed:
+                    raise PhaseFitRejectedError(
+                        PhaseRejection(reason, message), f"{group_label}: {message}"
+                    )
+            acquisition = PhaseAcquisition(
+                time_start_us=prepared.time_start_us,
+                sample_interval_us=prepared.dt,
+                window_weights=prepared.window_weights,
+                sample_errors=errors,
+                mean_weights=prepared.mean_weights,
+                fft_scale=prepared.percent_scale,
+                unwindowed_signal=prepared.unwindowed_signal,
+            )
+            report = fit_fft_phase(
+                acquisition,
+                PhaseFitConfig(
+                    minimum_frequency_mhz=config.phase_fit_min_mhz,
+                    maximum_frequency_mhz=config.phase_fit_max_mhz,
+                    tolerance_degrees=config.phase_fit_tolerance_degrees,
+                ),
+                cancel_callback=cancel_callback,
+            )
+            if isinstance(report, PhaseRejection):
+                raise PhaseFitRejectedError(report, f"{group_label}: {report.message}")
+            phase_reports[group_key] = {
+                **report.to_dict(),
+                "acquisition": {
+                    "sample_count": len(prepared.unwindowed_signal),
+                    "time_start_us": prepared.time_start_us,
+                    "sample_interval_us": prepared.dt,
+                },
+            }
+            spectrum = spectrum * np.exp(
+                -1j * (report.phase_radians + 2.0 * np.pi * freqs * prepared.time_start_us)
+            )
+        elif calibrate and not prepared.fractional_applied:
             fractional_guard_hits += 1
         if average_freqs is None:
             average_freqs = freqs
-        if is_entropy:
-            complex_spectra.append(spectrum)
-        elif is_real_imag:
+        if is_real_imag:
             averaged_values.append(fourier_display_values(spectrum, display="Cos"))
             imag_values.append(fourier_display_values(spectrum, display="Sin"))
         else:
             averaged_values.append(fourier_display_values(spectrum, display=value_display))
 
+    if cancel_callback is not None and cancel_callback():
+        raise PhaseFitCancelled("FFT phase fitting cancelled.")
     if average_freqs is None:
         return None
 
     averaged_imag: np.ndarray | None = None
-    if is_entropy and complex_spectra:
-        avg_complex = np.mean(np.vstack([s[np.newaxis, :] for s in complex_spectra]), axis=0)
-        averaged_display, _c0, _c1 = optimize_phase_entropy(avg_complex)
-        averaged_error = np.zeros_like(averaged_display)
-    elif averaged_values:
+    if averaged_values:
         averaged_display, averaged_error = average_fourier_display_values(
             averaged_values,
             # Correlation discards the averaged error below (it carries no
@@ -1026,10 +1054,6 @@ def compute_average_group_spectrum(
     else:
         return None
 
-    # ── muoniated-radical correlation spectrum ──────────────────────────
-    # Transform the averaged amplitude spectrum onto a hyperfine-coupling (A_µ)
-    # axis via the exact Breit–Rabi forward map (correlate-the-averaged-spectrum;
-    # see comparison.md §4.1).  Replaces the frequency axis with the A_µ axis.
     correlation_field: float | None = None
     if is_correlation:
         correlation_field = config.correlation_reference_field_gauss
@@ -1045,11 +1069,6 @@ def compute_average_group_spectrum(
         averaged_display = corr
         averaged_error = np.zeros_like(corr)
 
-    # ── post-FFT conditioning (compensation → baseline → exclusions) ────
-    # Operates on the canonical MHz axis; the plot panel converts to the
-    # display unit.  Derived modes (entropy optimiser output, Burg all-poles, the
-    # correlation transform) are not post-conditioned: each replaces or bypasses
-    # the standard averaged complex spectrum this stage expects.
     conditioning = None
     if not is_derived_mode:
         reference_mhz = _reference_frequency_mhz(run, first_group_dataset)
@@ -1084,11 +1103,6 @@ def compute_average_group_spectrum(
                     average_freqs, averaged_imag, exclusion_ranges
                 )
 
-    # ── optional unit-area (field-distribution p(ν)) display normalisation ──
-    # The last display step, on the calibrated magnitude-family spectrum only:
-    # fit and subtract the noise floor, then normalise the residual to unit area
-    # so the curve reads as a field distribution.  Refused (with a stamped note)
-    # for phase/real displays or when the signal is not significant above noise.
     unit_area_applied = False
     unit_area_skipped_note = ""
     want_unit_area = str(config.display_normalisation).lower() == "unit_area"
@@ -1134,14 +1148,8 @@ def compute_average_group_spectrum(
             # Which time-domain signal was transformed (both modes stamp it).
             "fourier_signal_source": str(config.signal_source),
             "group_ids": list(selected),
-            # Record the apodisation the spectrum was computed with, so
-            # downstream readings (spectral moments) can caveat filtered
-            # linewidths. Additive; "none" when no filter was applied.
             "fourier_window": str(config.window or "none"),
             "fourier_filter_time_constant_us": float(config.filter_time_constant_us),
-            # Zero-padding factor: sinc-interpolated points are correlated, so
-            # downstream statistics (fit error scaling, moment uncertainties)
-            # read this to correct for the reduced effective sample size.
             "fourier_padding": int(config.padding),
         }
     )
@@ -1160,6 +1168,13 @@ def compute_average_group_spectrum(
         metadata["y_label"] = UNIT_AREA_YLABEL
     elif want_unit_area and unit_area_skipped_note:
         metadata["fourier_unit_area_skipped"] = unit_area_skipped_note
+    if is_auto_phase:
+        metadata["fourier_phase_fit"] = {
+            "method": PHASE_FIT_METHOD,
+            "groups": phase_reports,
+            "group_ids": list(selected),
+            "signal_source": config.signal_source,
+        }
     if is_correlation:
         # A_µ is a hyperfine coupling, not γ_µ·B — label it distinctly and flag
         # it so the frequency-plot field-unit selector (MHz/G/T) does not apply.
@@ -1174,7 +1189,7 @@ def compute_average_group_spectrum(
         metadata["fourier_burg_order"] = int(max(burg_orders))
         metadata["fourier_burg_hit_boundary"] = bool(burg_hit_boundary)
         metadata["fourier_diagnostic"] = True
-    if config.remove_diamag:
+    if apply_diamag:
         n_requested = len(diamag_seed_fields)
         n_subtracted = len(diamag_fields)
         if diamag_fields:
@@ -1182,9 +1197,6 @@ def compute_average_group_spectrum(
             if diamag_fit_curve is not None:
                 metadata["fourier_diamag_fit_time_us"] = diamag_fit_curve[0].tolist()
                 metadata["fourier_diamag_fit_signal"] = diamag_fit_curve[1].tolist()
-        # Disclose any group the subtraction silently skipped (no transverse
-        # field, or a fit that did not converge) so a fully- or partly-
-        # unsubtracted spectrum is not mistaken for a clean removal.
         if n_subtracted < n_requested:
             if n_subtracted > 0:
                 metadata["fourier_diamag_skipped"] = (
