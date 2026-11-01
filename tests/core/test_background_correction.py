@@ -10,6 +10,7 @@ from asymmetry.core.transform.background import (
     resolve_facility,
     supports_background_correction,
 )
+from asymmetry.core.transform.fb_counts import linear_combination_variance
 
 
 def test_estimated_background_subtracts_mean_range() -> None:
@@ -28,12 +29,14 @@ def test_estimated_background_subtracts_mean_range() -> None:
     assert result.method == "estimated"
     assert result.values == pytest.approx((12.0, 21.0))
     assert result.ranges == ((0, 1), (0, 1))
-    np.testing.assert_allclose(result.forward, [-2.0, 2.0, 88.0, 92.0])
-    np.testing.assert_allclose(result.backward, [-1.0, 1.0, 59.0, 61.0])
-    assert result.forward_error is not None
-    assert result.backward_error is not None
-    np.testing.assert_allclose(result.forward_error, np.sqrt([16.0, 20.0, 106.0, 110.0]))
-    np.testing.assert_allclose(result.backward_error, np.sqrt([30.5, 32.5, 90.5, 92.5]))
+    np.testing.assert_allclose(result.forward.counts, [-2.0, 2.0, 88.0, 92.0])
+    np.testing.assert_allclose(result.backward.counts, [-1.0, 1.0, 59.0, 61.0])
+    np.testing.assert_allclose(
+        linear_combination_variance(result.forward, np.arange(5)), [6.0, 6.0, 106.0, 110.0]
+    )
+    np.testing.assert_allclose(
+        linear_combination_variance(result.backward, np.arange(5)), [10.5, 10.5, 90.5, 92.5]
+    )
 
 
 def test_fixed_background_subtracts_forward_and_backward_values() -> None:
@@ -48,12 +51,11 @@ def test_fixed_background_subtracts_forward_and_backward_values() -> None:
     assert result.applied is True
     assert result.method == "fixed"
     assert result.values == pytest.approx((1.5, 2.0))
-    np.testing.assert_allclose(result.forward, [8.5, 10.5])
-    np.testing.assert_allclose(result.backward, [6.0, 7.0])
-    assert result.forward_error is not None
-    assert result.backward_error is not None
-    np.testing.assert_allclose(result.forward_error, np.sqrt([10.0, 12.0]))
-    np.testing.assert_allclose(result.backward_error, np.sqrt([8.0, 9.0]))
+    np.testing.assert_allclose(result.forward.counts, [8.5, 10.5])
+    np.testing.assert_allclose(result.backward.counts, [6.0, 7.0])
+    np.testing.assert_allclose(result.forward.variance, [10.0, 12.0])
+    np.testing.assert_allclose(result.backward.variance, [8.0, 9.0])
+    assert result.forward.shared == result.backward.shared == ()
 
 
 def test_default_range_follows_musrfit_t0_fraction() -> None:
@@ -87,10 +89,10 @@ def test_invalid_background_range_leaves_counts_unchanged() -> None:
 
     assert result.applied is False
     assert result.method == "invalid_range"
-    assert result.forward_error is None
-    assert result.backward_error is None
-    np.testing.assert_allclose(result.forward, forward)
-    np.testing.assert_allclose(result.backward, backward)
+    assert result.forward.variance is None
+    assert result.backward.variance is None
+    np.testing.assert_allclose(result.forward.counts, forward)
+    np.testing.assert_allclose(result.backward.counts, backward)
 
 
 # --- facility resolution and the accelerator-period trimming -----------------

@@ -24,6 +24,7 @@ from asymmetry.core.transform.asymmetry import (
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
 )
+from asymmetry.core.transform.fb_counts import GroupCounts
 from asymmetry.core.transform.integral import build_field_scan, integrate_asymmetry, integrate_run
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin
 from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
@@ -125,7 +126,7 @@ def test_binned_fb_asymmetry_returns_a_fraction() -> None:
 @pytest.mark.parametrize("method", ["integral", "differential"])
 def test_integrate_asymmetry_returns_a_fraction(method: str) -> None:
     forward, backward = _counts()
-    value, _ = integrate_asymmetry(forward, backward, method=method)
+    value, _ = integrate_asymmetry(GroupCounts(forward), GroupCounts(backward), method=method)
     assert value == pytest.approx(EXPECTED_FRACTION)
 
 

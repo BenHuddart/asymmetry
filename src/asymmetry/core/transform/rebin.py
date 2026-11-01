@@ -32,10 +32,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.transform.asymmetry import (
-    compute_asymmetry,
     compute_asymmetry_with_count_errors,
 )
-from asymmetry.core.transform.fb_counts import ForwardBackwardCounts
+from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, linear_combination_variance
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 BINNING_MODES = ("fixed", "variable", "constant_error")
@@ -241,16 +240,12 @@ def binned_fb_asymmetry(
     starts = edges[:-1]
     f_out = np.add.reduceat(f, starts)
     b_out = np.add.reduceat(b, starts)
-    if counts.forward.variance is not None:
-        vf = counts.forward.variance[window.slice][: f.size]
-        vb = counts.backward.variance[window.slice][: f.size]
-        ef_out = np.sqrt(np.add.reduceat(vf, starts))
-        eb_out = np.sqrt(np.add.reduceat(vb, starts))
-        asymmetry, error = compute_asymmetry_with_count_errors(
-            f_out, b_out, ef_out, eb_out, alpha=alpha, beta=beta
-        )
-    else:
-        asymmetry, error = compute_asymmetry(f_out, b_out, alpha=alpha, beta=beta)
+    absolute_edges = edges + window.first
+    vf = linear_combination_variance(counts.forward, absolute_edges)
+    vb = linear_combination_variance(counts.backward, absolute_edges)
+    asymmetry, error = compute_asymmetry_with_count_errors(
+        f_out, b_out, np.sqrt(vf), np.sqrt(vb), alpha=alpha, beta=beta
+    )
     # Mean of the merged raw bins' stamps: for the slice [e0, e1) that is
     # t_start + ((e0 + e1 − 1)/2)·w — matching the fixed-mode path, where
     # rebin() averages the same per-bin stamps.

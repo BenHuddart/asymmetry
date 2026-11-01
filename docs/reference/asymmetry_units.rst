@@ -41,6 +41,12 @@ which carries counts, variances, the good-bin window and the time grid.
 Its result remains fraction-scale; validation does not rescale the counts
 or the resulting asymmetry.
 
+The integral primitive and detailed α estimator accept two
+:class:`~asymmetry.core.transform.fb_counts.GroupCounts` values, including
+independent variances and shared correction components. For example,
+``integrate_asymmetry(corrected.forward, corrected.backward)`` returns one
+fractional asymmetry and its marginal error.
+
 Naming a scale in code
 ----------------------
 

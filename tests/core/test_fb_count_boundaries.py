@@ -12,6 +12,7 @@ from asymmetry.core.transform.asymmetry import (
     estimate_alpha_detailed,
 )
 from asymmetry.core.transform.background import subtract_scaled_counts
+from asymmetry.core.transform.fb_counts import GroupCounts
 from asymmetry.core.transform.integral import integrate_asymmetry
 
 
@@ -21,8 +22,8 @@ from asymmetry.core.transform.integral import integrate_asymmetry
         lambda f, b: compute_asymmetry(f, b),
         lambda f, b: compute_asymmetry_with_count_errors(f, b, np.sqrt(f), np.sqrt(b)),
         lambda f, b: estimate_alpha(f, b),
-        lambda f, b: estimate_alpha_detailed(f, b, method="ratio"),
-        lambda f, b: integrate_asymmetry(f, b),
+        lambda f, b: estimate_alpha_detailed(GroupCounts(f), GroupCounts(b), method="ratio"),
+        lambda f, b: integrate_asymmetry(GroupCounts(f), GroupCounts(b)),
         lambda f, b: subtract_scaled_counts(f, b, 1.0),
     ],
     ids=["asymmetry", "count-errors", "alpha", "detailed-alpha", "integral", "reference"],
@@ -42,8 +43,8 @@ def test_count_errors_must_have_the_count_shape() -> None:
 def test_alpha_time_axis_must_have_the_count_shape() -> None:
     with pytest.raises(ValueError, match="shape"):
         estimate_alpha_detailed(
-            np.array([10.0, 20.0]),
-            np.array([5.0, 8.0]),
+            GroupCounts(np.array([10.0, 20.0])),
+            GroupCounts(np.array([5.0, 8.0])),
             time_us=np.array([0.0]),
             method="ratio",
         )

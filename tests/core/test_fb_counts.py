@@ -10,6 +10,7 @@ from asymmetry.core.transform.fb_counts import (
     BinWindow,
     ForwardBackwardCounts,
     GroupCounts,
+    SharedComponent,
     good_window,
 )
 
@@ -94,15 +95,33 @@ def test_window_and_alignment_match_the_array_extent() -> None:
 
 
 def test_background_provenance_has_one_source_for_levels_and_errors() -> None:
-    state = {"method": "range", "values": [10.0, 8.0], "value_errors": [1.0, 2.0]}
-    counts = _counts(background_state=state)
+    state = {"method": "range", "values": [10.0, 8.0]}
+    groups = [
+        GroupCounts(
+            np.ones(10),
+            np.ones(10),
+            shared=(
+                SharedComponent(
+                    "background",
+                    variance,
+                    -np.ones(10),
+                    np.zeros(10),
+                ),
+            ),
+        )
+        for variance in (1.0, 4.0)
+    ]
+    counts = _counts(forward=groups[0], backward=groups[1], background_state=state)
     state["values"][0] = 999.0
     assert counts.background_level == (10.0, 8.0)
     with pytest.raises(TypeError):
         counts.background_state["values"] = (999.0, 8.0)
-    background = counts.subtracted_background()
-    assert (background.forward, background.backward) == (10.0, 8.0)
-    assert (background.forward_error, background.backward_error) == (1.0, 2.0)
+    assert "value_errors" not in counts.background_state
+    exported = counts.background_metadata()
+    assert exported["values"] == [10.0, 8.0]
+    assert exported["value_errors"] == [1.0, 2.0]
+    exported["values"][0] = 999.0
+    assert counts.background_level == (10.0, 8.0)
 
 
 def test_ragged_detector_alignment_records_the_terminal_crop() -> None:
@@ -212,14 +231,13 @@ def test_saved_window_loads_unchanged_and_is_checked_at_reduction(tmp_path, wind
 @pytest.mark.parametrize(
     "state",
     [
-        {"values": [1.0, 2.0]},
         {"value_errors": [1.0, 2.0]},
-        {"values": None, "value_errors": None},
-        {"values": [1.0, 2.0], "value_errors": [1.0, -1.0]},
-        {"values": [1.0], "value_errors": [1.0]},
-        {"values": [1.0, np.nan], "value_errors": [1.0, 1.0]},
+        {"values": None},
+        {"values": [1.0]},
+        {"values": [1.0, np.nan]},
+        {"values": [1.0, 2.0], "value_errors": [1.0, 2.0]},
     ],
 )
-def test_constant_background_provenance_requires_complete_finite_pairs(state) -> None:
+def test_background_provenance_requires_finite_levels_and_derived_errors(state) -> None:
     with pytest.raises(ValueError):
         _counts(background_state=state)
