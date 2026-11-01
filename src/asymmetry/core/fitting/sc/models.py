@@ -9,6 +9,10 @@ This module provides two layers:
 Conventions
 -----------
 
+Temperature-law width parameters inherit the convention of the trended sigma;
+these laws do not convert widths. Brandt field models return the second-moment
+width of exp(-sigma^2*t^2/2).
+
 Additive convention:
 
 .. math::
@@ -39,7 +43,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core.fitting.sc import gaps
 from asymmetry.core.fitting.sc.bcs import delta_generalized, resolve_gap_ratio
-from asymmetry.core.fitting.sc.constants import lambda_nm_to_sigma_us
+from asymmetry.core.fitting.sc.constants import GaussianWidth, lambda_nm_to_sigma_us
 from asymmetry.core.fitting.sc.kernel import superfluid_density, superfluid_density_3d
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA
 
@@ -673,7 +677,7 @@ def brandt_field_width_sigma(
 ) -> ArrayLikeFloat:
     r"""Brandt field-dependent vortex-lattice line width :math:`\sigma(B_0)`.
 
-    Returns the Gaussian muon depolarisation rate of a type-II superconductor
+    Returns the second-moment width of a type-II superconductor
     as a function of applied transverse field, from which the magnetic
     penetration depth is extracted:
 
@@ -703,7 +707,7 @@ def brandt_field_width_sigma(
     Bc2
         Upper critical field :math:`B_{c2}` in **tesla**.
     sigma_bg
-        Optional field-independent (e.g. nuclear) Gaussian rate in
+        Optional field-independent (e.g. nuclear) second-moment width in
         :math:`\mu s^{-1}`, added in quadrature
         :math:`\sigma=\sqrt{\sigma_{VL}^2+\sigma_{bg}^2}` (Pratt et al.,
         PRB 79, 052508 (2009), Eq. (2)). Default ``0``.
@@ -715,7 +719,7 @@ def brandt_field_width_sigma(
     Returns
     -------
     numpy.ndarray
-        :math:`\sigma(B_0)` in :math:`\mu s^{-1}`.
+        Second-moment :math:`\sigma(B_0)` in :math:`\mu s^{-1}`, for exp(-sigma^2*t^2/2).
 
     References
     ----------
@@ -729,7 +733,7 @@ def brandt_field_width_sigma(
     if powder:
         effective_lambda *= _POWDER_LAMBDA_FACTOR
 
-    sigma_0 = lambda_nm_to_sigma_us(effective_lambda)
+    sigma_0 = lambda_nm_to_sigma_us(effective_lambda, width=GaussianWidth.SECOND_MOMENT)
     sigma_vl = np.asarray(sigma_0 * brandt_field_factor(b), dtype=float)
     return np.hypot(sigma_vl, float(sigma_bg))
 
