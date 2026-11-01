@@ -67,6 +67,8 @@ removing a duplicate requires lowering its count or removing its entry.
   global-wizard harness test fans its own fits across a `cpu_count - 2` process
   pool, so a worker-per-core layout oversubscribes the runner and stalls
   neighbour fits past the timeout (historically crashing the release-tag run).
+  The full-tier workflow logs each test's identity and stops on the first worker
+  crash, retaining the failing test in the log instead of restarting workers.
   All tiers also pin the numeric backends to one thread each (`*_NUM_THREADS=1`)
   so xdist's process-per-core parallelism isn't multiplied by per-process BLAS
   threads.
