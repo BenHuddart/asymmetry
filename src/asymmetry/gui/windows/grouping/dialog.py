@@ -97,6 +97,7 @@ from asymmetry.core.transform import (
     resolve_binning_mode,
     resolve_facility,
 )
+from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
@@ -313,6 +314,7 @@ class GroupingDialog(QDialog):
     ) -> None:
         """Create a grouping profile editor for project datasets."""
         super().__init__(parent)
+        self._background_run_cache: dict[str, object] = {}
         self._datasets = [ds for ds in datasets if ds.run is not None]
         self._project_profiles = list(profiles or [])
         self._overridden_run_numbers = {int(v) for v in (overridden_run_numbers or [])}
@@ -5236,35 +5238,24 @@ class GroupingDialog(QDialog):
 
     def _calibration_reference_resolver(
         self, grouping: dict[str, Any]
-    ) -> tuple[list, float] | None:
-        """Resolve a ``reference_run`` background for the alpha calibration.
+    ) -> BackgroundReference | None:
+        """Resolve calibration reference counts and their frame exposure.
 
-        Reuses an already-loaded reference run from the fingerprint's datasets (or
-        loads the recorded source file, cached per path), returning the reference
-        histograms and the good-frame scale. ``None`` on any failure, so the
-        estimate degrades to no reference subtraction (and the dialog says so).
+        Input and I/O failures propagate to the calibration error display.
         """
         payload = grouping.get("background_run")
         if not isinstance(payload, dict):
             return None
-        cache = getattr(self, "_background_run_cache", None)
-        if cache is None:
-            cache = {}
-            self._background_run_cache = cache
         try:
             sample_frames = float(grouping.get("good_frames", 0.0)) or None
         except (TypeError, ValueError):
             sample_frames = None
-        try:
-            reference = resolve_background_reference(
-                payload,
-                sample_good_frames=sample_frames,
-                datasets=self._fingerprint_datasets(),
-                cache=cache,
-            )
-        except (ValueError, OSError):
-            return None
-        return reference.histograms, reference.scale
+        return resolve_background_reference(
+            payload,
+            sample_good_frames=sample_frames,
+            datasets=self._fingerprint_datasets(),
+            cache=self._background_run_cache,
+        )
 
     def _calibration_facility(self) -> str:
         """Facility label for the alpha dialog's background tail-fit shortening."""

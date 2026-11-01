@@ -25,10 +25,10 @@ def test_estimated_background_subtracts_mean_range() -> None:
         bin_width_us=0.01,
     )
 
-    assert result.applied is True
-    assert result.method == "estimated"
-    assert result.values == pytest.approx((12.0, 21.0))
-    assert result.ranges == ((0, 1), (0, 1))
+    assert result.outcome.status == "applied"
+    assert result.outcome.effective["method"] == "estimated"
+    assert result.outcome.effective["values"] == pytest.approx((12.0, 21.0))
+    assert result.outcome.effective["ranges"] == ((0, 1), (0, 1))
     np.testing.assert_allclose(result.forward.counts, [-2.0, 2.0, 88.0, 92.0])
     np.testing.assert_allclose(result.backward.counts, [-1.0, 1.0, 59.0, 61.0])
     np.testing.assert_allclose(
@@ -48,9 +48,9 @@ def test_fixed_background_subtracts_forward_and_backward_values() -> None:
         bin_width_us=0.01,
     )
 
-    assert result.applied is True
-    assert result.method == "fixed"
-    assert result.values == pytest.approx((1.5, 2.0))
+    assert result.outcome.status == "applied"
+    assert result.outcome.effective["method"] == "fixed"
+    assert result.outcome.effective["values"] == pytest.approx((1.5, 2.0))
     np.testing.assert_allclose(result.forward.counts, [8.5, 10.5])
     np.testing.assert_allclose(result.backward.counts, [6.0, 7.0])
     np.testing.assert_allclose(result.forward.variance, [10.0, 12.0])
@@ -70,13 +70,13 @@ def test_default_range_follows_musrfit_t0_fraction() -> None:
         bin_width_us=0.01,
     )
 
-    assert result.applied is True
-    assert result.ranges == ((1, 6), (1, 6))
-    assert result.values == pytest.approx((3.5, 13.5))
+    assert result.outcome.status == "applied"
+    assert result.outcome.effective["ranges"] == ((1, 6), (1, 6))
+    assert result.outcome.effective["values"] == pytest.approx((3.5, 13.5))
 
 
 def test_invalid_background_range_is_rejected() -> None:
-    with pytest.raises(ValueError, match="window.*outside 2 bins"):
+    with pytest.raises(ValueError, match="background range.*outside 2 bins"):
         apply_grouped_background_correction(
             np.array([10.0, 12.0]),
             np.array([8.0, 9.0]),
@@ -107,8 +107,8 @@ def _range_window(**kwargs):
         bin_width_us=0.005,
         **kwargs,
     )
-    assert result.applied
-    return result.ranges[0]
+    assert result.outcome.status == "applied"
+    return result.outcome.effective["ranges"][0]
 
 
 def test_facility_resolution_prefers_metadata_then_instrument_then_grouping() -> None:

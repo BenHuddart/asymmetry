@@ -1,10 +1,4 @@
-"""Grouped time-domain fitting helpers.
-
-This module adapts WiMDA-style multi-group count fitting onto Asymmetry's
-existing simultaneous-fit engine. The first slice intentionally keeps the
-engine unchanged and expresses each included group as one temporary fitting
-domain.
-"""
+"""Fit detector groups as simultaneous time-domain count datasets."""
 
 from __future__ import annotations
 
@@ -41,6 +35,7 @@ from asymmetry.core.transform.grouping import (
     effective_group_indices,
 )
 from asymmetry.core.transform.rebin import rebin_counts
+from asymmetry.core.transform.reduce import corrected_grouped_counts, correction_flags_from_grouping
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
@@ -288,6 +283,17 @@ def _count_group_context(
         grouping,
         apply_deadtime,
     )
+    if correction_flags_from_grouping(grouping).use_background:
+        corrected_grouped_counts(
+            histograms=prepared_histograms,
+            grouping=grouping,
+            forward_idx=group_specs[0][1],
+            backward_idx=group_specs[-1][1],
+            use_deadtime=False,
+            deadtime_mode="off",
+            use_background=True,
+            metadata=run.metadata,
+        )
     detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
     common_t0 = common_t0_for_groups(
         prepared_histograms,
@@ -456,18 +462,10 @@ def build_count_groups(
     lifetime_corrected: bool = True,
     exclude: tuple[float, float] | None = None,
 ) -> list[GroupedTimeDomainGroup]:
-    """Build several named detector groups sharing ONE t0 alignment.
+    """Build requested groups in order, on one detector-aligned time axis.
 
-    All requested groups go through a single context, so the common t0 (and
-    good-bin window, bunching, deadtime preparation) is computed over the union
-    of their detectors and every trace lands on one time axis. The
-    forward/backward count fit needs this: building the two banks separately
-    would give them independent ``common_t0`` values and misalign the shared
-    physics whenever the F and B detectors carry different ``t0_bin``.
-
-    Unlike :func:`build_grouped_time_domain_groups` this does not require the
-    groups to be in the ``included_groups`` map. Returns one group per id, in the
-    requested order.
+    Common t0 is computed over the detector union so F/B models compare the
+    same time coordinates, even when detectors carry different t0 bins.
     """
     run, grouping, _groups_raw, _included = _count_group_setup(dataset)
     specs: list[tuple[int, list[int]]] = []

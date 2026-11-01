@@ -85,3 +85,24 @@ def test_version_flag_exits_with_version(capsys) -> None:
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert f"asymmetry {cli.__version__}" in out
+
+
+def test_reduce_refuses_requested_file_deadtime_without_a_table(workflow_folder, tmp_path, capsys):
+    with pytest.raises(SystemExit) as error:
+        cli.main(
+            [
+                "reduce",
+                str(workflow_folder),
+                "--runs",
+                "101",
+                "--deadtime",
+                "from_file",
+                "--workdir",
+                str(tmp_path / "workdir"),
+            ]
+        )
+    assert error.value.code == 1
+    assert capsys.readouterr().err.strip() == (
+        "asymmetry: Run 101: deadtime correction requested (from_file) but not applied: "
+        "the file has no non-zero per-detector deadtime table."
+    )

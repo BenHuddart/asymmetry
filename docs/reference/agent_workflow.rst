@@ -206,7 +206,9 @@ and each is printed on the line under the command's table:
   transverse pair of a five-histogram PSI GPS file, whose default pair is
   Back/Forw. ``info`` lists each file's groups and its default pair.
 - ``--deadtime from_file`` applies each file's own per-detector deadtimes
-  (default ``off``, the GUI's fresh-run default).
+  (default ``off``, the GUI's fresh-run default). A file without a complete,
+  non-zero per-detector table is an error. For example:
+  ``asymmetry: Run 101: deadtime correction requested (from_file) but not applied: the file has no non-zero per-detector deadtime table.``
 - ``--background tail_fit`` fits a flat rate under the late-time decay and
   subtracts it (pulsed sources); ``--background range`` subtracts the mean
   over a pre-t0 bin range, ``0.1·t0``–``0.6·t0`` unless a range is given as

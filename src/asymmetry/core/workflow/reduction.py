@@ -353,12 +353,8 @@ def _reduce_period(run: Run, settings: ReductionSettings) -> MuonDataset:
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
         metadata=run.metadata,
+        context=f"Run {source_run_of(run)}",
     )
-    if settings.background != "none" and "values" not in result.background_state:
-        raise ValueError(
-            f"Run {source_run_of(run)}: the {settings.background} background could not be "
-            f"subtracted ({result.background_state})."
-        )
     return MuonDataset(
         time=result.time,
         asymmetry=result.asymmetry,

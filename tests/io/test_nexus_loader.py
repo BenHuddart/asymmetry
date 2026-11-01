@@ -719,7 +719,7 @@ def test_load_v1_good_frames_from_beam_keeps_deadtime_stable(tmp_path, loader: N
     histograms = ds.run.histograms
     raw_total = float(sum(np.sum(h.counts) for h in histograms))
     corrected, applied = prepare_histograms_with_deadtime(histograms, ds.run.grouping, True)
-    assert applied
+    assert applied.status == "applied"
     corrected_total = float(sum(np.sum(h.counts) for h in corrected))
     # Stable correction: a few percent, emphatically not the ~1000x blow-up
     # the good_frames=1.0 default produced.
