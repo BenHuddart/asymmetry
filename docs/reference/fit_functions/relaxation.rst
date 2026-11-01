@@ -186,7 +186,13 @@ The Gaussian-to-exponential crossover function: a Gaussian static width
 exponential). It is the classic model for extracting a hop or correlation
 rate from a transverse-field line shape — the textbook example being the
 Gaussian-to-Lorentzian change of the Cu line shape as muon diffusion sets in
-on warming. Evaluated in closed form (machine precision).
+on warming. Numerically, the exponent is evaluated as
+:math:`\Delta^2|t|^2\varphi_2(-\nu|t|)`, where
+:math:`\varphi_2(z)=(e^z-1-z)/z^2` and :math:`\varphi_2(0)=1/2`
+(Hochbruck and Ostermann, 2010). A Taylor expansion around the origin avoids
+cancellation without substituting a static function below an absolute rate.
+The rate must be finite and non-negative; negative or non-finite values raise
+``ValueError``.
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
@@ -200,6 +206,8 @@ Name       Symbol           Unit   Description
 
 - A. Abragam, *The Principles of Nuclear Magnetism* (Oxford University
   Press, Oxford, 1961), Ch. X.
+- M. Hochbruck and A. Ostermann, Acta Numerica **19**, 209 (2010),
+  https://doi.org/10.1017/S0962492910000048.
 
 .. _fit-keren:
 
@@ -214,15 +222,30 @@ Keren
    +(\omega_0^2-\nu^2)(1-e^{-\nu t}\cos\omega_0 t)
    -2\nu\omega_0 e^{-\nu t}\sin\omega_0 t\Big]
 
-with :math:`\omega_0 = \gamma_\mu B_L`. Keren's analytic generalisation of
-the Abragam function to a longitudinal field: an accurate strong-collision
-result in the fast/intermediate fluctuation regime (:math:`\nu \gtrsim
-\Delta`) that avoids the numerical convolution of the full dynamic
-Kubo–Toyabe. It is the standard model for longitudinal-field decoupling
-analyses (e.g. ionic diffusion) and reduces to the Abragam function at
-:math:`B_L = 0`. Prefer the full :ref:`fit-dynamic-gaussian-kt` when
-fluctuations are slow (:math:`\nu \lesssim \Delta`) or the static :math:`1/3`
-tail matters. Evaluated in closed form (machine precision).
+with :math:`\omega_0 = \gamma_\mu B_L`. This is the exponent
+:math:`\Gamma(t)t` in Keren's Eq. (4). His perturbative generalisation of the
+Abragam function is an expansion in :math:`\Delta/\nu`, expected to approximate
+the dynamic result when :math:`\Delta/\nu<1`, or at sufficiently early times.
+It does not reproduce the static Kubo–Toyabe recovery. Prefer the full
+:ref:`fit-dynamic-gaussian-kt` for slow fluctuations or a static :math:`1/3` tail.
+At :math:`B_L=0`, its exponent is **twice** the transverse-field Abragam
+exponent, because both transverse field components contribute in longitudinal
+geometry.
+
+The numerically equivalent expression is
+:math:`\Gamma(t)=2\Delta^2|t|^2\operatorname{Re}\varphi_2[-(\nu+i\omega_0)|t|]`.
+It remains continuous at zero rate and field and is even in time and field.
+At :math:`\nu=B_L=0` it gives :math:`\exp(-\Delta^2t^2)`; at zero rate with
+finite field it gives
+:math:`\exp[-2\Delta^2(1-\cos\omega_0t)/\omega_0^2]`.
+These numerical limits do not extend the perturbative model's physical validity.
+Negative or non-finite rates raise ``ValueError``.
+
+For unit amplitude, independent 70-digit exponential/trigonometric checks give
+absolute polarisation differences below :math:`10^{-14}` on a grid spanning rates from zero
+to :math:`10^4` μs⁻¹, widths 0.04–4 μs⁻¹, fields from zero to 100 G, and times
+0–8 μs, including rates immediately around :math:`10^{-9}` μs⁻¹. These are
+analytic checks, rather than measured agreement with another program.
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
@@ -235,7 +258,10 @@ Name       Symbol           Unit   Description
 
 **References**
 
-- A. Keren, Phys. Rev. B **50**, 10039 (1994).
+- A. Keren, Phys. Rev. B **50**, 10039 (1994), Eq. (4),
+  https://doi.org/10.1103/PhysRevB.50.10039.
+- M. Hochbruck and A. Ostermann, Acta Numerica **19**, 209 (2010),
+  https://doi.org/10.1017/S0962492910000048.
 
 .. _fit-risch-kehr:
 
