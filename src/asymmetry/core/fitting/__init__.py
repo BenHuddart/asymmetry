@@ -41,10 +41,12 @@ from asymmetry.core.fitting.engine import (
 )
 from asymmetry.core.fitting.field_scan import (
     ScanBaselineResult,
+    ScanPeakFit,
     as_composite_model,
     fit_rf_resonance,
     fit_scan_baseline,
     fit_scan_model,
+    fit_scan_peaks,
     parameter_set_for_model,
 )
 from asymmetry.core.fitting.fit_log import FitLog, enrich_summary_provenance
@@ -306,11 +308,13 @@ __all__ = [
     "evaluate_parameter_model_fit",
     "component_names_for_x",
     "fit_scan_baseline",
+    "fit_scan_peaks",
     "fit_scan_model",
     "fit_rf_resonance",
     "parameter_set_for_model",
     "as_composite_model",
     "ScanBaselineResult",
+    "ScanPeakFit",
     "ParamInfo",
     "get_param_info",
     "Parameter",
