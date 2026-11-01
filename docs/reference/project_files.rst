@@ -597,6 +597,12 @@ fit-report exports refuse while the run is incomplete. A successful **Apply**
 clears the error. The project stores the request, rather than a second copy of
 the effective correction outcome.
 
+``deadtime_errors_us``
+    Optional per-detector standard errors in microseconds from a promoted
+    calibration. ``null`` means unknown, including a nonzero applied base whose
+    covariance with a count-fit increment is unavailable. The total table is
+    saved as a run override, with ``deadtime_reference_run`` naming its source.
+
 ``background_correction``
     Boolean; whether grouped-count background subtraction is active.
 

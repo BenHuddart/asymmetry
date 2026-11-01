@@ -232,13 +232,11 @@ class MultiGroupFitWindow(QWidget):
         self._promote_btn = QPushButton("Promote DT₀")
         self._promote_btn.setToolTip("Promote the fitted deadtime DT₀ → grouping correction")
         self._promote_btn.clicked.connect(self._on_promote_deadtime)
-        self._promote_additive = QCheckBox("accumulate")
         promote_row = QWidget()
         promote_layout = QVBoxLayout(promote_row)
         promote_layout.setContentsMargins(0, 0, 0, 0)
         promote_layout.setSpacing(2)
         promote_layout.addWidget(self._promote_btn)
-        promote_layout.addWidget(self._promote_additive)
         self._promote_label = QLabel("Deadtime")
         calibration_form.addRow(self._promote_label, promote_row)
 
@@ -285,7 +283,7 @@ class MultiGroupFitWindow(QWidget):
 
     def _on_promote_deadtime(self) -> None:
         """Promote the active surface's last fitted deadtime to the grouping."""
-        self._active_tab().promote_count_deadtime(additive=self._promote_additive.isChecked())
+        self._active_tab().promote_count_deadtime()
 
     def _sync_count_fit_target(self, *_args) -> None:
         """Push the selector state down to both grouped surfaces."""
@@ -312,7 +310,6 @@ class MultiGroupFitWindow(QWidget):
             self._dpsep_fit_check,
             self._dpsep_label,
             self._promote_btn,
-            self._promote_additive,
             self._promote_label,
             self._promote_alpha_btn,
             self._promote_t0_btn,

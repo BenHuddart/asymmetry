@@ -1,10 +1,4 @@
-"""GUI: the MaxEnt apply-deadtime handler writes the grouping via the chokepoint.
-
-The first test pins the observable key writes of ``_on_maxent_apply_deadtime``
-*before* it was rerouted through :func:`promote_deadtime_to_grouping` (F6), so
-the reroute is provably behaviour-preserving. The later tests assert the gains
-the reroute brings: a before/after display and the "Re-reduce" message.
-"""
+"""MaxEnt promotes a validated total deadtime table with its source run."""
 
 from __future__ import annotations
 
@@ -23,6 +17,7 @@ from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform.deadtime import DeadtimeCalibration
 from asymmetry.gui.mainwindow import MainWindow
 
 
@@ -61,8 +56,9 @@ def _dataset(run_number: int = 7) -> MuonDataset:
 def test_maxent_apply_deadtime_writes_grouping_keys(win, qapp) -> None:
     """Pin the grouping keys written by the MaxEnt apply-deadtime handler."""
     ds = _dataset(run_number=7)
+    win._data_browser.add_dataset(ds)
     win._current_dataset = ds
-    win._maxent_fitted_deadtime = (7, [0.012, 0.018])
+    win._maxent_fitted_deadtime = DeadtimeCalibration((0.012, 0.018), (None, None), "maxent_fit", 7)
 
     win._on_maxent_apply_deadtime()
 
@@ -70,6 +66,11 @@ def test_maxent_apply_deadtime_writes_grouping_keys(win, qapp) -> None:
     assert grouping["dead_time_us"] == [0.012, 0.018]
     assert grouping["deadtime_method"] == "maxent_fit"
     assert grouping["deadtime_correction"] is True
+    assert ds.metadata["grouping_overrides"]
+    saved = win.collect_project_state()["datasets"][0]["grouping_overrides"]
+    assert saved["dead_time_us"] == [0.012, 0.018]
+    assert saved["deadtime_method"] == "maxent_fit"
+    assert saved["deadtime_errors_us"] == [None, None]
 
 
 def test_maxent_apply_deadtime_shows_before_after_and_reduce_message(win, qapp) -> None:
@@ -77,7 +78,7 @@ def test_maxent_apply_deadtime_shows_before_after_and_reduce_message(win, qapp) 
     ds = _dataset(run_number=7)
     ds.run.grouping["dead_time_us"] = [0.0, 0.0]
     win._current_dataset = ds
-    win._maxent_fitted_deadtime = (7, [0.012, 0.018])
+    win._maxent_fitted_deadtime = DeadtimeCalibration((0.012, 0.018), (None, None), "maxent_fit", 7)
 
     captured: dict[str, object] = {}
     win._maxent_panel.set_deadtime_text = (  # type: ignore[method-assign]
@@ -98,7 +99,7 @@ def test_maxent_apply_deadtime_summarises_across_detectors(win, qapp) -> None:
     win._current_dataset = ds
     # Detector 0 fits ~0, detector 1 fits a real value — a det-0 readout would
     # wrongly say "0.00 → 0.00".
-    win._maxent_fitted_deadtime = (7, [0.0, 0.018])
+    win._maxent_fitted_deadtime = DeadtimeCalibration((0.0, 0.018), (None, None), "maxent_fit", 7)
 
     captured: dict[str, object] = {}
     win._maxent_panel.set_deadtime_text = (  # type: ignore[method-assign]
@@ -115,8 +116,24 @@ def test_maxent_apply_deadtime_requires_matching_run(win, qapp) -> None:
     """A fitted deadtime for a different run must not touch the grouping."""
     ds = _dataset(run_number=7)
     win._current_dataset = ds
-    win._maxent_fitted_deadtime = (9, [0.012, 0.018])
+    win._maxent_fitted_deadtime = DeadtimeCalibration((0.012, 0.018), (None, None), "maxent_fit", 9)
 
     win._on_maxent_apply_deadtime()
 
     assert "dead_time_us" not in ds.run.grouping
+
+
+def test_obsolete_calibration_completions_do_not_change_the_panel(win, monkeypatch):
+    win._current_dataset = _dataset(7)
+    win._maxent_deadtime_generation = 2
+    messages = []
+    monkeypatch.setattr(
+        win._maxent_panel, "set_deadtime_text", lambda *args, **kwargs: messages.append(args)
+    )
+    obsolete = DeadtimeCalibration((0.01, 0.02), (None, None), "maxent_fit", 7)
+    win._on_maxent_deadtime_fitted(obsolete, generation=1, source_run=7)
+    win._on_maxent_deadtime_error("obsolete", generation=1, source_run=7)
+    win._on_maxent_deadtime_fitted(None, generation=2, source_run=9)
+    win._on_maxent_deadtime_error("other run", generation=2, source_run=9)
+    assert win._maxent_fitted_deadtime is None
+    assert messages == []

@@ -1,10 +1,4 @@
-"""GUI wiring for the count-domain fit-target selector in the Multi-Group window.
-
-These tests exercise the routing only — the count-fit numerics are covered by
-``tests/test_count_domain_fits.py``. The detector-balance α is recovered here
-even with the default model because it is fixed by the forward/backward count
-ratio, independent of the oscillation model.
-"""
+"""Count fitting, calibration promotion, and grouped-fit panel controls."""
 
 from __future__ import annotations
 
@@ -281,7 +275,7 @@ def test_promote_after_deadtime_fit_writes_grouping(qapp, fb_dataset):
     tab = window._single_fit_tab
     tab._run_count_domain_fit()
     assert tab.wait_for_fit()
-    assert tab._last_count_dt0 is not None
+    assert tab._last_count_deadtime is not None
     window._on_promote_deadtime()
     grouping = fb_dataset.run.grouping
     assert grouping.get("deadtime_correction") is True

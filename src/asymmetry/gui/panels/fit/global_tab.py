@@ -592,8 +592,8 @@ class GlobalFitTab(FitTabBase):
         self._count_deadtime = False
         self._count_dpsep = 0.0  # µs; > 0 switches on the double-pulse model
         self._count_dpsep_fit = False  # locate dpsep by a coarse->fine scan
-        self._last_count_dt0: float | None = None
-        self._last_count_group: int | None = None
+        self._last_count_deadtime: FitResult | None = None
+        self._last_count_group: str | None = None
         # Fitted calibrations captured for the α/t0/background promote paths
         # (siblings of the deadtime DT0 promote). Each is suggest-only.
         self._last_count_alpha: tuple[float, float | None] | None = None
@@ -3517,39 +3517,30 @@ class GlobalFitTab(FitTabBase):
         """Toggle locating dpsep by a coarse->fine scan rather than fixing it."""
         self._count_dpsep_fit = bool(enabled)
 
-    def promote_count_deadtime(self, *, additive: bool = False) -> None:
-        """Promote the last fitted deadtime DT0 into the grouping (WiMDA Send-to-Group)."""
+    def promote_count_deadtime(self) -> None:
+        """Promote the captured applied base plus the fitted residual coefficient."""
         from asymmetry.core.transform.deadtime import promote_deadtime_to_grouping
-        from asymmetry.core.transform.grouping import effective_group_indices
 
         dataset = self._current_dataset
-        if self._last_count_dt0 is None or self._last_count_group is None:
+        result = self._last_count_deadtime
+        if result is None or result.deadtime_calibration is None:
             self._results_card.set_message(
                 "Run a deadtime count fit first, then promote DT0.", tag="Error", tone="error"
             )
             return
         if dataset is None or dataset.run is None or not dataset.run.histograms:
             self._results_card.set_message(
-                "Promote needs the active run with detector histograms.",
-                tag="Error",
-                tone="error",
+                "Promote needs the active run with detector histograms.", tag="Error", tone="error"
             )
             return
-        grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
-        indices = effective_group_indices(grouping, int(self._last_count_group))
-        change = promote_deadtime_to_grouping(
-            grouping,
-            float(self._last_count_dt0),
-            n_histograms=len(dataset.run.histograms),
-            detector_indices=indices or None,
-            additive=additive,
-        )
-        before = next(iter(change["before"].values()), 0.0)
-        after = next(iter(change["after"].values()), 0.0)
+        calibration = result.deadtime_calibration
+        if calibration.source_run != dataset.run_number:
+            raise ValueError("deadtime promotion must target the run used by the fit")
+        promote_deadtime_to_grouping(dataset.run.grouping, calibration)
+        dataset.metadata["grouping_overrides"] = True
         self._results_card.set_message(
-            f"Group {self._last_count_group} detectors: "
-            f"{before:.5g} → {after:.5g} µs ({'added' if additive else 'replaced'}). "
-            "Re-reduce the run to apply.",
+            f"Group {self._last_count_group} detectors: DT₀ {result.parameters['DT0'].value:+.4g} µs "
+            "added to the applied correction. Re-reduce the run to apply.",
             tag="Deadtime promoted",
             tone="ok",
         )
@@ -3657,7 +3648,7 @@ class GlobalFitTab(FitTabBase):
             # beta held fixed at 1 (simple exponential); free beta is unstable.
             params.add(Parameter(name="beta_base", value=1.0, min=0.2, max=3.0, fixed=True))
         if self._count_deadtime:
-            params.add(Parameter(name="DT0", value=0.005, min=0.0, max=0.5))
+            params.add(Parameter(name="DT0", value=0.005))
         if self._count_dpsep > 0.0:
             if self._count_dpsep_fit:
                 # Free dpsep: a coarse->fine scan refines it around the instrument
@@ -3786,7 +3777,7 @@ class GlobalFitTab(FitTabBase):
             )
             return
         fwd = result.group_results[forward]
-        self._store_count_deadtime(fwd, forward)
+        self._store_count_deadtime(fwd, f"{forward}/{backward}")
         self._store_count_fb_extras(dataset, result, forward, backward)
         alpha = fwd.parameters["alpha"].value
         alpha_err = fwd.uncertainties.get("alpha")
@@ -3886,18 +3877,16 @@ class GlobalFitTab(FitTabBase):
         except ValueError:
             return {}
 
-    def _store_count_deadtime(self, fit_result, group_id: int) -> None:
-        """Remember a converged DT0 so it can be promoted to the grouping."""
-        if "DT0" in fit_result.parameters.names:
-            self._last_count_dt0 = float(fit_result.parameters["DT0"].value)
-            self._last_count_group = int(group_id)
-        else:
-            self._last_count_dt0 = None
-            self._last_count_group = None
+    def _store_count_deadtime(self, fit_result: FitResult, group_id: int | str) -> None:
+        """Retain the fitted result's immutable total table for explicit promotion."""
+        self._last_count_deadtime = (
+            fit_result if fit_result.deadtime_calibration is not None else None
+        )
+        self._last_count_group = str(group_id) if self._last_count_deadtime is not None else None
 
     def _clear_count_calibrations(self) -> None:
         """Drop every captured count-fit calibration (DT0/α/t0/background)."""
-        self._last_count_dt0 = None
+        self._last_count_deadtime = None
         self._last_count_group = None
         self._last_count_alpha = None
         self._last_count_t0_us = None

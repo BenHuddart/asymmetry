@@ -28,7 +28,11 @@ from asymmetry.core.fitting.member_quality import MemberQuality, assess_member_q
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
 from asymmetry.core.fitting.process_pool import map_when_a_pool_pays, open_spawn_pool
 from asymmetry.core.fitting.series_seeding import recommend_series_seeding
-from asymmetry.core.transform.corrections import require_complete_dataset
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcome,
+    CorrectionStatus,
+    require_complete_dataset,
+)
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
@@ -58,13 +62,9 @@ def validate_grouped_model_contract(
     model_values: dict[str, float],
     fixed_params: set[str] | list[str] | tuple[str, ...],
 ) -> None:
-    """Reject grouped-model parameter ownership that conflicts with group nuisances.
+    """Require unit physics amplitudes and zero physics backgrounds.
 
-    Grouped time-domain fits reserve the overall scale and constant background for
-    the per-group nuisance block. The shared model is therefore interpreted as a
-    normalized polarization-like function: model amplitude parameters must be
-    fixed at ``1`` and model background parameters must be fixed at ``0``.
-    Fraction parameters remain free and are not treated as amplitude conflicts.
+    Group nuisances own the count scale and constant background.
     """
     fixed = {str(name) for name in fixed_params}
 
@@ -101,11 +101,7 @@ def normalize_to_grouped_contract(
     model: CompositeModel,
     base_values: dict[str, float] | None = None,
 ) -> dict[str, float]:
-    """Fix physics amplitudes to one and backgrounds to zero for grouped fits.
-
-    The per-group nuisance block owns the count scale and constant background.
-    Return a copy of the supplied values with those model kinds normalised.
-    """
+    """Fix physics amplitudes to one and backgrounds to zero; group nuisances own them."""
     values = dict(base_values or {})
     for name, kind in model.parameter_kinds().items():
         if kind is ParameterKind.AMPLITUDE:
@@ -127,6 +123,8 @@ class GroupedTimeDomainGroup:
     source_run_number: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     detector_counts: NDArray[np.float64] | None = None
+    deadtime: CorrectionOutcome = CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
+    detector_indices: tuple[int, ...] = ()
 
 
 @dataclass
@@ -214,24 +212,22 @@ class _CountGroupContext:
 
     run: Any
     prepared_histograms: list[Any]
+    deadtime: CorrectionOutcome
     common_t0: int
-    #: Per-detector t0 bins every alignment in this context uses (D10): the
-    #: policy-resolved override when the grouping carries one, else each
-    #: histogram's own file t0.
+    #: Per-detector alignment bins after applying the t0 policy.
     detector_t0_bins: list[int]
     first_good: int
     last_good: int
     bunch_factor: int
     bin_width: float
     axis_start: float
-    #: Sub-bin offset of the exact t0 from the centre of ``common_t0``, added to
-    #: every stamp (D4). Exactly 0.0 when the run carries no exact t0.
+    #: Exact-t0 residual from the common bin centre, in µs.
     t0_residual_us: float
     group_names: dict[Any, Any]
 
 
 def _count_group_setup(dataset: MuonDataset) -> tuple[Any, dict, dict, dict]:
-    """Validate a dataset and return ``(run, grouping, groups_raw, included_groups)``."""
+    """Require histograms and a grouping at the count-fit input boundary."""
     run = dataset.run
     if run is None:
         raise ValueError("Grouped time-domain fitting requires a dataset with a source run")
@@ -274,7 +270,7 @@ def _count_group_context(
     """Prepare the shared count-build context over the given detector groups."""
     require_complete_dataset(dataset)
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
-    prepared_histograms, _ = prepare_histograms_with_deadtime(
+    prepared_histograms, deadtime = prepare_histograms_with_deadtime(
         list(run.histograms),
         grouping,
         apply_deadtime,
@@ -321,6 +317,7 @@ def _count_group_context(
     return _CountGroupContext(
         run=run,
         prepared_histograms=prepared_histograms,
+        deadtime=deadtime,
         common_t0=common_t0,
         detector_t0_bins=detector_t0_bins,
         first_good=first_good,
@@ -408,6 +405,8 @@ def _build_one_count_group(
         counts=np.asarray(out_counts[mask], dtype=float).copy(),
         error=np.asarray(errors[mask], dtype=float).copy(),
         detector_counts=detector_counts[:, mask].copy(),
+        deadtime=ctx.deadtime,
+        detector_indices=tuple(indices),
         source_run_number=int(run.run_number),
         metadata=metadata,
     )

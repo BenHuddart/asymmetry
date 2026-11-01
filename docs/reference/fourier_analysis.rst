@@ -1722,3 +1722,14 @@ References
 The ``phaseOptReal`` entropy phase optimiser reproduces the
 ``PFTPhaseCorrection`` routine of musrfit (A. Suter and B. M. Wojek,
 Phys. Procedia **30**, 69 (2012)).
+
+Deadtime calibration tasks
+--------------------------
+
+The MaxEnt deadtime calibration fits a signed rational coefficient for each
+detector in a background task. While it runs, the panel displays
+"Fitting deadtime…". A finite positive good-frame count is required. Applying
+a calibration writes its total table in Manual mode with the ``maxent_fit``
+method and source run. A result for another run, or an obsolete fit request,
+cannot replace the active calibration. See :doc:`detector_grouping` for the
+mean model and its domain.

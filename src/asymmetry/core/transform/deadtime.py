@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from concurrent.futures import CancelledError
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.optimize import curve_fit
+from iminuit import Minuit
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.corrections import (
@@ -30,12 +32,12 @@ class DeadtimeCorrectionError(ValueError):
 
 def _deadtime_number(value, name, *, detector=None, positive=False) -> float:
     """Parse a finite calibration or normalisation scalar at an input boundary."""
+    requirement = "finite and > 0" if positive else "finite"
     try:
         number = float(value)
     except (TypeError, ValueError, OverflowError):
-        raise DeadtimeCorrectionError(f"{name} must be finite", detector=detector) from None
+        raise DeadtimeCorrectionError(f"{name} must be {requirement}", detector=detector) from None
     if isinstance(value, (bool, np.bool_)) or not np.isfinite(number) or (positive and number <= 0):
-        requirement = "finite and > 0" if positive else "finite"
         raise DeadtimeCorrectionError(f"{name} must be {requirement}", detector=detector)
     return number
 
@@ -125,14 +127,13 @@ def estimate_deadtime_from_histograms(
     *,
     t_good_offset: int = 0,
     last_good_bin: int | None = None,
-    num_good_frames: float = 1.0,
+    num_good_frames: float,
     max_bins: int = 400,
     detector_t0_bins: list[int] | None = None,
 ) -> float | None:
     """Estimate a uniform deadtime value from early-time detector counts.
 
-    The fit mirrors WiMDA's ``countfit`` workflow: average the early-time count
-    rate per detector and fit a muon-lifetime decay with a deadtime-loss term.
+    Average the independently fitted rational-model coefficients across detectors.
     The returned value is a single detector deadtime in microseconds that can be
     broadcast across grouped histograms.
     """
@@ -154,106 +155,181 @@ def calibrate_deadtime_from_histograms(
     *,
     t_good_offset: int = 0,
     last_good_bin: int | None = None,
-    num_good_frames: float = 1.0,
+    num_good_frames: float,
     max_bins: int = 400,
     detector_t0_bins: list[int] | None = None,
 ) -> list[float] | None:
-    """Calibrate per-detector deadtime values from early-time count data.
+    """Return per-detector coefficients in µs from the rational decay model."""
+    result = fit_deadtime_calibration(
+        histograms,
+        num_good_frames=num_good_frames,
+        t_good_offset=t_good_offset,
+        last_good_bin=last_good_bin,
+        max_bins=max_bins,
+        detector_t0_bins=detector_t0_bins,
+    )
+    return None if result is None else list(result.tau_us)
 
-    This mirrors WiMDA's ``Cal`` button behavior: fit each detector histogram
-    independently using the same ``countfit`` model and return one deadtime
-    value per detector in microseconds.
 
-    ``detector_t0_bins`` optionally overrides each detector's alignment t0
-    (D10) so a Manual/Auto-detect t0 policy moves the calibration window with
-    it; ``None`` uses each histogram's own file ``t0_bin``.
+@dataclass(frozen=True)
+class DeadtimeCalibration:
+    """Total per-detector coefficients and uncertainties in µs, ready for promotion."""
+
+    tau_us: tuple[float, ...]
+    errors_us: tuple[float | None, ...]
+    method: str
+    source_run: int | None
+
+    def __post_init__(self):
+        if not self.tau_us or len(self.errors_us) != len(self.tau_us):
+            raise ValueError("a calibration requires one coefficient and error per detector")
+        if self.method not in {"count_fit", "calibrate", "estimate", "maxent_fit"}:
+            raise ValueError("unknown deadtime calibration method")
+        if self.source_run is not None and (
+            not isinstance(self.source_run, (int, np.integer))
+            or isinstance(self.source_run, (bool, np.bool_))
+        ):
+            raise ValueError("deadtime calibration source run must be an integer")
+        coefficients = tuple(
+            _deadtime_number(v, "deadtime coefficient (µs)", detector=i)
+            for i, v in enumerate(self.tau_us)
+        )
+        errors = tuple(
+            None if v is None else _deadtime_number(v, "deadtime error (µs)")
+            for v in self.errors_us
+        )
+        if any(v is not None and v < 0 for v in errors):
+            raise ValueError("deadtime calibration errors must be non-negative")
+        object.__setattr__(self, "tau_us", coefficients)
+        object.__setattr__(self, "errors_us", errors)
+        if self.source_run is not None:
+            object.__setattr__(self, "source_run", int(self.source_run))
+
+    @classmethod
+    def from_increment(
+        cls,
+        base: CorrectionOutcome,
+        increment_us: float,
+        *,
+        n_histograms: int,
+        detector_indices: list[int],
+        error_us: float | None,
+        source_run: int,
+    ):
+        """Compose the fitted residual with the exact table applied to its data."""
+        CorrectionOutcomes(deadtime=base).require_complete()
+        values = (
+            list(base.effective["tau_us"])
+            if base.status == CorrectionStatus.APPLIED
+            else [0.0] * n_histograms
+        )
+        if len(values) != n_histograms or not detector_indices:
+            raise ValueError(
+                "deadtime calibration requires a complete base table and fitted detectors"
+            )
+        errors = [None] * n_histograms
+        delta = _deadtime_number(increment_us, "deadtime increment (µs)")
+        if len(set(detector_indices)) != len(detector_indices):
+            raise ValueError("fitted deadtime detector indices must be unique")
+        for i in detector_indices:
+            if not 0 <= i < n_histograms:
+                raise ValueError("fitted deadtime detector is outside the run")
+            # A nonzero base has no recorded covariance with the residual fit.
+            errors[i] = error_us if values[i] == 0 else None
+            values[i] += delta
+        return cls(tuple(values), tuple(errors), "count_fit", source_run)
+
+
+def fit_deadtime_calibration(
+    histograms: list[Histogram],
+    *,
+    num_good_frames: float,
+    t_good_offset: int = 0,
+    last_good_bin: int | None = None,
+    max_bins: int = 400,
+    detector_t0_bins: list[int] | None = None,
+    source_run: int | None = None,
+    method: str = "calibrate",
+    cancel_callback: Callable[[], bool] | None = None,
+) -> DeadtimeCalibration | None:
+    """Fit independent signed coefficients using RUMDA (RAL-94-080), §4's mean.
+
+    M = N/(1 + N d/(Δt F)); d and Δt are in µs, F is dimensionless.
+    This nonlinear weighted fit uses raw-count Poisson standard deviations;
+    the published transformed regression supplies a signed starting point.
     """
+    frames = _deadtime_number(num_good_frames, "good frames", positive=True)
     if not histograms:
         return None
-
-    try:
-        frame_scale = float(num_good_frames) * float(histograms[0].bin_width)
-    except (TypeError, ValueError):
-        return None
-    if frame_scale <= 0.0:
-        return None
-
-    try:
-        offset = max(0, int(t_good_offset))
-        window_limit = max(1, int(max_bins))
-    except (TypeError, ValueError):
-        return None
-
-    calibrated: list[float] = []
-    for i, histogram in enumerate(histograms):
-        counts = np.asarray(histogram.counts, dtype=np.float64)
-        if counts.size <= 0:
-            return None
-
-        t0_bin = int(detector_t0_bins[i]) if detector_t0_bins is not None else int(histogram.t0_bin)
-        start = max(0, t0_bin + offset)
-        end = counts.size - 1
-        if last_good_bin is not None:
-            try:
-                end = min(end, int(last_good_bin))
-            except (TypeError, ValueError):
-                pass
-        if start > end:
-            return None
-
-        n_fit = min(window_limit, end - start + 1)
-        if n_fit < 3:
-            return None
-
-        observed = counts[start : start + n_fit]
-        sigma = np.sqrt(np.clip(observed, 1.0, None))
-        times_us = (np.arange(n_fit, dtype=np.float64) + 1.0) * float(histogram.bin_width)
-        tau_us = _fit_deadtime_tau(times_us, observed, sigma, frame_scale)
-        if tau_us is None:
-            return None
-        calibrated.append(tau_us)
-
-    return calibrated
-
-
-def _fit_deadtime_tau(
-    times_us: np.ndarray,
-    observed: np.ndarray,
-    sigma: np.ndarray,
-    frame_scale: float,
-) -> float | None:
-    """Fit the WiMDA deadtime model and return deadtime in microseconds."""
-    if observed.size < 3:
-        return None
-
-    def _countfit(time_us, amplitude, tau_us):
-        cc = amplitude * np.exp(-time_us / MUON_LIFETIME_US)
-        n_rate = cc / frame_scale
-        return cc * (1.0 - n_rate * MUON_LIFETIME_US * (1.0 - np.exp(-tau_us / MUON_LIFETIME_US)))
-
-    guess_amplitude = max(float(observed[0]), 1.0)
-    tau_upper = max(0.5, 10.0 * float(times_us[0]))
-    try:
-        params, _ = curve_fit(
-            _countfit,
-            times_us,
-            observed,
-            p0=(guess_amplitude, 0.01),
-            sigma=sigma,
-            absolute_sigma=True,
-            bounds=((0.0, 0.0), (np.inf, tau_upper)),
-            maxfev=10000,
+    offset, window_limit = int(t_good_offset), int(max_bins)
+    if offset < 0 or window_limit < 3:
+        raise ValueError(
+            "deadtime calibration requires a non-negative offset and at least three bins"
         )
-    except (RuntimeError, ValueError, TypeError):
-        return None
+    if detector_t0_bins is not None and len(detector_t0_bins) != len(histograms):
+        raise ValueError("deadtime calibration requires one t0 per detector")
+    coefficients, errors = [], []
+    for i, histogram in enumerate(histograms):
+        if cancel_callback is not None and cancel_callback():
+            raise CancelledError
+        width = _deadtime_number(histogram.bin_width, "bin width (µs)", positive=True)
+        counts = np.asarray(histogram.counts, dtype=float)
+        if not np.all(np.isfinite(counts)) or np.any(counts < 0):
+            raise DeadtimeCorrectionError(
+                "calibration counts must be finite and non-negative", detector=i
+            )
+        t0 = histogram.t0_bin if detector_t0_bins is None else detector_t0_bins[i]
+        start = max(0, int(t0) + offset)
+        end = counts.size if last_good_bin is None else min(counts.size, int(last_good_bin) + 1)
+        observed = counts[start : min(end, start + window_limit)]
+        if observed.size < 3 or np.count_nonzero(observed) < 3:
+            return None
+        times = np.arange(observed.size, dtype=float) * width
+        fitted = _fit_deadtime_tau(
+            times,
+            observed,
+            np.sqrt(np.maximum(observed, 1.0)),
+            frames * width,
+            cancel_callback=cancel_callback,
+        )
+        if fitted is None:
+            return None
+        coefficient, error = fitted
+        coefficients.append(coefficient)
+        errors.append(error)
+    if method == "estimate":
+        mean = float(np.mean(coefficients))
+        error = float(np.sqrt(np.sum(np.square(errors))) / len(errors))
+        coefficients = [mean] * len(coefficients)
+        errors = [error] * len(errors)
+    return DeadtimeCalibration(tuple(coefficients), tuple(errors), method, source_run)
 
-    try:
-        tau_us = float(params[1])
-    except (TypeError, ValueError, IndexError):
+
+def _fit_deadtime_tau(times_us, observed, sigma, frame_scale, *, cancel_callback=None):
+    """Fit the rational mean without a sign bound; invalid trial means cost infinity."""
+    decay = np.exp(-times_us / MUON_LIFETIME_US)
+    slope, amplitude = np.polyfit(observed, observed / decay, 1)
+    coefficient = -slope * frame_scale / amplitude if amplitude > 0 else 0.0
+    amplitude = amplitude if amplitude > 0 else float(np.max(observed))
+
+    def objective(amplitude, tau_us):
+        if cancel_callback is not None and cancel_callback():
+            raise CancelledError
+        true = amplitude * decay
+        denominator = 1 + true * tau_us / frame_scale
+        if np.any(denominator <= 0) or not np.all(np.isfinite(denominator)):
+            return np.inf
+        return float(np.sum(((observed - true / denominator) / sigma) ** 2))
+
+    fit = Minuit(objective, amplitude=amplitude, tau_us=coefficient)
+    fit.errordef = Minuit.LEAST_SQUARES
+    fit.limits["amplitude"] = (0, None)
+    fit.tol = 1e-8
+    fit.migrad()
+    fit.hesse()
+    if not fit.valid or not np.isfinite(fit.values["tau_us"]):
         return None
-    if not np.isfinite(tau_us):
-        return None
-    return max(0.0, tau_us)
+    return float(fit.values["tau_us"]), float(fit.errors["tau_us"])
 
 
 def parse_deadtime_calibration_text(text: str, *, n_histograms: int | None = None) -> list[float]:
@@ -333,80 +409,21 @@ def parse_deadtime_calibration_text(text: str, *, n_histograms: int | None = Non
     ]
 
 
-def promote_deadtime_to_grouping(
-    grouping: dict,
-    dead_time_us_value: float | list[float] | tuple[float, ...] | np.ndarray,
-    *,
-    n_histograms: int,
-    detector_indices: list[int] | None = None,
-    additive: bool = False,
-    method: str = "value",
-) -> dict[str, dict[int, float]]:
-    """Write a fitted deadtime (µs) into the grouping correction (WiMDA Send-to-Group).
-
-    Mirrors WiMDA's ``SendToGroupClick``: a deadtime obtained from a count fit is
-    promoted into the grouping's per-detector ``dead_time_us`` so the next
-    reduction applies it. ``additive`` accumulates onto the existing value
-    (WiMDA's ``DTmodelChanges``) instead of replacing it; ``detector_indices``
-    restricts the write to the fitted group's detectors (default: all). The
-    correction is enabled and the ``deadtime_method`` marked ``value`` by
-    default; pass ``method`` to record a different provenance label (e.g.
-    ``"maxent_fit"`` for the MaxEnt calibration route).
-
-    ``dead_time_us_value`` is either a single deadtime broadcast to every target
-    detector (the count-fit DT₀ case) or a per-detector sequence — one value per
-    detector index — for calibrators that fit each detector independently (the
-    MaxEnt route). A per-detector sequence aligns to detector index ``i``;
-    targets beyond its length get ``0.0``.
-
-    Returns ``{"before": {idx: value}, "after": {idx: value}}`` for the affected
-    detectors, so the GUI can show the change before/after.
-    """
-    n = max(0, int(n_histograms))
-    values = [0.0] * n
-    existing = grouping.get("dead_time_us")
-    if isinstance(existing, list):
-        for i in range(min(len(existing), n)):
-            values[i] = _deadtime_number(existing[i], "deadtime coefficient (µs)", detector=i)
-
-    if detector_indices is None:
-        targets = list(range(n))
-    else:
-        targets = [int(i) for i in detector_indices if 0 <= int(i) < n]
-
-    incoming = _coerce_deadtime_value(dead_time_us_value, n)
-    before = {i: values[i] for i in targets}
-    for i in targets:
-        dt = incoming[i]
-        values[i] = _deadtime_number(
-            values[i] + dt if additive else dt, "deadtime coefficient (µs)", detector=i
-        )
-    after = {i: values[i] for i in targets}
-
-    grouping["dead_time_us"] = values
-    grouping["deadtime_correction"] = True
-    grouping["deadtime_method"] = str(method)
-
-    return {"before": before, "after": after}
-
-
-def _coerce_deadtime_value(
-    dead_time_us_value: float | list[float] | tuple[float, ...] | np.ndarray,
-    n: int,
-) -> list[float]:
-    """Return one deadtime per detector index in ``[0, n)``.
-
-    A scalar is broadcast to every detector; a sequence aligns by index and
-    pads short tails with ``0.0`` so per-detector calibrations (MaxEnt) and the
-    scalar count-fit DT₀ share one write path.
-    """
-    if isinstance(dead_time_us_value, (list, tuple, np.ndarray)):
-        seq = list(dead_time_us_value)
-        result = [0.0] * n
-        for i in range(min(len(seq), n)):
-            result[i] = _deadtime_number(seq[i], "deadtime coefficient (µs)", detector=i)
-        return result
-    return [_deadtime_number(dead_time_us_value, "deadtime coefficient (µs)")] * n
+def promote_deadtime_to_grouping(grouping: dict, calibration: DeadtimeCalibration) -> dict:
+    """Write one validated total table atomically, enabling its manual correction."""
+    old = grouping.get("dead_time_us", [])
+    before = {i: old[i] if i < len(old) else 0.0 for i in range(len(calibration.tau_us))}
+    grouping.update(
+        {
+            "dead_time_us": list(calibration.tau_us),
+            "deadtime_correction": True,
+            "deadtime_mode": "manual",
+            "deadtime_method": calibration.method,
+            "deadtime_errors_us": list(calibration.errors_us),
+            "deadtime_reference_run": calibration.source_run,
+        }
+    )
+    return {"before": before, "after": dict(enumerate(calibration.tau_us))}
 
 
 def resolve_deadtime(

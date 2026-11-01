@@ -190,11 +190,20 @@ Count loss and double pulse
   propagate uncertainty in the estimated shares or establish an acquisition
   variance model for deadtime losses.
 
-  **Promote DT₀ → grouping** writes the fitted value into the per-detector
-  correction and reports the before/after values. Re-reduce the run to apply
-  it. If the fitted counts already include a deadtime correction, DT₀ is a
-  residual coefficient: tick **accumulate** to add it to the applied table.
-  Replacement is appropriate only when the fit used uncorrected counts.
+  **Promote DT₀** adds the fitted increment to the table actually applied to
+  the fitted counts. This composition is exact for the rational model:
+  :math:`f_a(f_b(N))=f_{a+b}(N)`. The captured total table is independent of
+  later edits to the live grouping. A forward/backward fit promotes both banks;
+  a single-group fit adds its increment only to that group's detectors.
+  For example: "Group 1 detectors: DT₀ +0.0012 µs added to the applied correction.
+  Re-reduce the run to apply." The correction is enabled in Manual mode and
+  records the ``count_fit`` method and source run. Promotion writes the captured
+  total, so repeating it does not add the increment a second time.
+
+  ``FitResult.deadtime_calibration`` holds the immutable total coefficients,
+  errors in µs, method and source run. An error is unknown when a nonzero
+  applied base has no recorded covariance with the residual fit; promotion
+  does not invent a total uncertainty.
 
 * **Double pulse (μs)** — set the pulse separation for an ISIS double-pulse
   source; 0 leaves the single-pulse model. The two pulses each carry the
@@ -274,3 +283,23 @@ References
 
 .. [Knoll] G. F. Knoll, *Radiation Detection and Measurement*, 4th ed.
    (Wiley, 2010), Chapter 4, “Dead Time”.
+
+Compared with other programs
+----------------------------
+
+Asymmetry's per-detector Estimate/Cal mean is algebraically equivalent to the
+published ISIS regression :math:`M\exp(t/\tau_\mu)=N_0-N_0Md/(\Delta t F)`
+(Kilcoyne, RAL-94-080, §4). It fits the rational mean to raw counts with
+Poisson standard deviations; it does not fit the transformed correlated
+observables.
+
+A recorded Mantid 6.16.1 ``CalMuonDeadTime`` v1 binary check used noiseless
+coefficients −0.02, 0 and +0.02 µs, :math:`N_0=10000` counts/bin, lifetime
+2.1969811 µs, one million frames, 0.016 µs bins with edges
+:math:`0.496+k\times0.016` µs (:math:`k=0,\ldots,282`), and fit range
+0.5–5 µs. Mantid recovered each coefficient within :math:`2\times10^{-12}` µs;
+Asymmetry agrees within :math:`10^{-9}` µs. The weighting conventions differ
+for noisy data, so this check establishes agreement on the noiseless mean,
+not statistical equivalence of the estimators. See
+:doc:`detector_grouping` for the primary ISIS report and
+:doc:`/explanation/comparison` for the bounds of the program comparisons.

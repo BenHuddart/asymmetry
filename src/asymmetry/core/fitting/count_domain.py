@@ -1,24 +1,8 @@
-"""Raw-count-domain fitting: single-histogram and forward/backward (alpha-free).
+"""Fit raw single-group or forward/backward counts with Gaussian or Cash costs.
 
-These are WiMDA's ``fgForward``/``fgBackward``/``fgSelected`` (single histogram)
-and ``fgFB`` (simultaneous forward+backward with the detector balance ``alpha``
-free) modes. Both fit **raw** detector counts to
-
-    N(t) = N0 * exp(-t / tau_mu) * (1 + s * A * P(t)) + bg
-
-with a selectable cost:
-
-- ``"poisson"`` (default) — the Cash statistic C = 2*sum(mu - n + n*ln(n/mu)),
-  the correct treatment for the low-count late-time and continuous-source bins
-  these modes target;
-- ``"gaussian"`` — sqrt(N) least squares, matching WiMDA's weighting, for parity
-  and speed.
-
-The model is reused, not rebuilt: the raw count model is the existing
-lifetime-corrected builder (:func:`build_grouped_count_model` /
-:func:`build_fb_count_model`) multiplied by ``exp(-t / tau_mu)``. This module
-owns only the count-space statistics and a small iminuit driver. The multi-group
-``fgAll`` path stays on :meth:`FitEngine.global_fit`.
+The mean is N₀ exp(-t/τμ) (1 + s A P(t)) + background; times are in µs,
+physics asymmetries are percent. DT₀ is a rational count-loss increment on the
+applied correction. Detector shares are inferred at each trial coefficient.
 """
 
 from __future__ import annotations
@@ -47,7 +31,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     build_grouped_count_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.transform.deadtime import _deadtime_number
+from asymmetry.core.transform.deadtime import DeadtimeCalibration, _deadtime_number
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 #: Selectable count-fit cost functions.
@@ -359,16 +343,7 @@ def _solve(
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
 ):
-    """Minimise ``total_cost`` over the free parameters and return the Minuit object.
-
-    When ``minos`` is true, the shared :func:`drive_minuit` seam runs ``m.minos()``
-    after migrad + explicit HESSE; the asymmetric intervals live on ``m.merrors`` and
-    are read back by :func:`_result_from_minuit`. This is the count-domain end of the
-    one-helper-three-sites MINOS contract (α especially, with its α–amplitude
-    correlation context). A ``cancel_callback`` aborts the fit cooperatively from the
-    cost function (raising :class:`FitCancelledError`); a cancelled fit returns no
-    result, so callers must let it propagate.
-    """
+    """Minimise with cooperative cancellation and optional MINOS intervals."""
     from iminuit import Minuit
 
     guard = _make_cancel_guard(cancel_callback)
@@ -470,6 +445,19 @@ def _result_from_minuit(
         dof=ndata - nfree,
         minos_errors=minos_errors or None,
     )
+
+
+def _record_deadtime_calibration(result, dataset, groups):
+    """Capture the applied base and fitted detectors before mutable GUI edits."""
+    if result.success and "DT0" in result.parameters:
+        result.deadtime_calibration = DeadtimeCalibration.from_increment(
+            groups[0].deadtime,
+            result.parameters["DT0"].value,
+            n_histograms=len(dataset.run.histograms),
+            detector_indices=sorted({i for group in groups for i in group.detector_indices}),
+            error_us=result.uncertainties.get("DT0"),
+            source_run=dataset.run_number,
+        )
 
 
 # --- dpsep refinement -------------------------------------------------------
@@ -681,7 +669,7 @@ def fit_single_histogram(
 
     m = _solve(free, total_cost, minos=minos, cancel_callback=cancel_callback)
     model_values = predict([m.values[i] for i in range(len(free_names))])
-    return _result_from_minuit(
+    result = _result_from_minuit(
         m,
         params,
         free_names,
@@ -692,6 +680,8 @@ def fit_single_histogram(
         success_message="Single-histogram count fit successful",
         failure_prefix="Single-histogram count fit failed",
     )
+    _record_deadtime_calibration(result, dataset, [group])
+    return result
 
 
 # --- forward/backward with free alpha --------------------------------------
@@ -911,14 +901,12 @@ def fit_fb_alpha(
     fitted = [m.values[i] for i in range(len(free_names))]
     model_f = predict_f(fitted)
     model_b = predict_b(fitted)
-    # Each side reports its OWN cost, not the joint m.fval (which is cost_f + cost_b).
     chi2_f = _cost_value(counts_f, model_f, cost)
     chi2_b = _cost_value(counts_b, model_b, cost)
 
-    # Forward result keeps the shared params + the forward background; backward
-    # keeps the shared params + its own background. alpha (shared) appears in both.
-    fwd_keep = shared_keys + ["background"]
-    bwd_keep = shared_keys + ["background_b"]
+    # Both sides retain shared parameters and their own background.
+    fwd_keep = [p.name for p in params if p.name != "background_b"]
+    bwd_keep = [p.name for p in params if p.name != "background"]
     result_f = _result_from_minuit(
         m,
         params,
@@ -945,6 +933,9 @@ def fit_fb_alpha(
         success_message="Forward/backward count fit successful",
         failure_prefix="Forward/backward count fit failed",
     )
+
+    for result in (result_f, result_b):
+        _record_deadtime_calibration(result, dataset, [g_fwd, g_bwd])
 
     shared_parameters = ParameterSet()
     # Every free parameter except the two per-side backgrounds is shared: the

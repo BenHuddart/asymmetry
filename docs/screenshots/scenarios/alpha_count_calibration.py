@@ -1,40 +1,8 @@
-"""α from a TF calibration run — the count-domain forward/backward free-α fit.
+"""Forward/backward count calibration with explicit promotion controls.
 
-The count-domain fitting page's headline workflow: recover the detector-balance
-α from a transverse-field calibration run by fitting the forward and backward
-count histograms jointly with α free, rather than reading it off a grid
-estimator. This is the statistically proper route — the joint fit reports α
-together with its uncertainty and its correlation with the signal amplitude.
-
-The scenario drives the real :class:`MultiGroupFitWindow` (the count-domain
-grouped-fit surface that hosts the page's *Fit target*, *Count-fit options* and
-*Calibration* controls):
-
-1. Synthesises a high-statistics pulsed TF calibration run (``ideal_pulsed_fb``
-   template) with a known detector balance α = 1.25 and a clean single-frequency
-   precession asymmetry cos(2π·1.5·t + 0.3), via the same ``core.simulate``
-   builder the count-domain unit tests use.
-2. Selects **Fit target → F + B (free α)** and expands the collapsed
-   **Count-fit options** (Cost / Skip / Nuisances / Double pulse) and
-   **Calibration** (Promote DT₀ / α / t₀ / background) sections so their real
-   controls are on screen — these are exactly the surfaces the page documents.
-3. Chooses the matching single-``Oscillatory`` model (``A·cos(2πft + φ)``) and
-   seeds its frequency/phase to the run's own values so the fit model matches
-   the generator's signal shape, then runs the real forward/backward count fit.
-
-Because the model matches the signal, the fit converges to χ²ᵣ ≈ 1 and
-recovers α = 1.250(1) — the worked-example balance the page quotes.
-
-The synthesised signal uses a realistic (~20 %) transverse-field asymmetry
-amplitude. The grouped fit surface normalises the shared model amplitude to
-unity for the asymmetry-domain fit (the real amplitude lives in its per-group
-nuisance there), but the count-fit seed frees and refits that amplitude
-directly, so the count fit recovers it honestly at any scale rather than
-being pinned to the asymmetry-domain's unity reference.
-
-Marked ``requires_fit = True`` because it runs a real iminuit count-domain fit
-(``asymmetry.core.fitting.count_domain.fit_fb_alpha``), which trips on
-numpy ≥ 2.3 in dev environments; CI keeps numpy < 2.3.
+A pulsed TF simulation has α = 1.25 and A cos(2π f t + φ), with f in MHz
+and A in percent. The matched Oscillatory fit reports α and its uncertainty.
+The Calibration section shows Promote DT₀, which writes a captured total table.
 """
 
 from __future__ import annotations
