@@ -69,6 +69,9 @@ class AlcFieldScanScenario(Scenario):
         _process_events_for(milliseconds=120)
         view.peaks_fit_requested.emit()
         _process_events_for(milliseconds=300)
+        summary = view._peaks_results.text()
+        assert summary.count("±") == 3
+        assert "Uncertainties include the fitted baseline." in summary
         return window
 
 

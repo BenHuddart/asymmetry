@@ -210,7 +210,15 @@ Below the peaks table, a summary line reports, for each peak, the resonance
 field :math:`B_0` with its uncertainty, the full width at half maximum, and the
 amplitude — for example::
 
-   Peak 1 (Gaussian): B₀ = 3104 ± 1.7 G, FWHM = 553.3 G, amp = -3.32 %
+   Peak 1 (Gaussian): B₀ = 3104 ± 0.11 G, FWHM = 563.4 ± 0.21 G, amp = -8.96 ± 0.0038 %
+   Uncertainties include the fitted baseline.
+
+The position, FWHM, and amplitude uncertainties include the fitted baseline
+through first-order covariance propagation. The baseline model and its fitting
+regions are held fixed; uncertainty in their choice is excluded. The regions
+must exclude resonance signal, since peak tails can bias the estimated baseline.
+For a Lorentzian, the remaining depth at a distance of :math:`k` widths is
+:math:`1/(1+k^2)` of its central depth.
 
 The FWHM is derived from the fitted width per shape
 (:math:`\mathrm{FWHM} = 2\sqrt{2\ln 2}\,B_\mathrm{wid} \approx 2.355\,B_\mathrm{wid}`
@@ -235,6 +243,17 @@ background to the raw scan in a single call. The ``model`` argument is flexible:
 * ``initial`` is an override dict (``{name: value}``) layered on the model's
   defaults; ``parameters`` is a full :class:`~asymmetry.core.fitting.ParameterSet`.
   The two are mutually exclusive — pass one or the other, not both.
+
+The ``integral-scan --baseline`` CLI workflow uses the same propagation. Its
+JSON fit payload records ``uncertainty_basis="baseline_propagated"``, the
+reported ``uncertainties`` and full ``covariance``, and
+``conditional_uncertainties`` from the fixed-baseline fit. Fits without baseline
+subtraction record ``uncertainty_basis="joint_fit"``; their baseline and peaks,
+when included in the expression, are fitted together. The parameter table prints
+``uncertainty basis: baseline_propagated`` or ``uncertainty basis: joint_fit``.
+A stored result without this field prints ``uncertainty basis: unrecorded``.
+CLI errors are scaled by :math:`\sqrt{\max(\chi^2_\mathrm{red},1)}`; the
+baseline-first reduced statistic uses the effective residual degrees of freedom.
 
 For baseline-first inference in scripts, retain the baseline result and pass it
 to :func:`~asymmetry.core.fitting.fit_scan_peaks`:
