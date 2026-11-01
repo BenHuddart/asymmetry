@@ -51,6 +51,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     RunResidualDiagnostic,
 )
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit import global_tab as global_tab_module
 from asymmetry.gui.panels.fit import single_tab as single_tab_module
@@ -107,6 +108,7 @@ def _single_wizard_payload(
     )
     curve = model.function(dataset.time, A_1=0.2, Lambda=0.4, A_bg=0.01)
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=5.0,
         reduced_chi_squared=0.1,
@@ -410,6 +412,7 @@ def _global_wizard_recommendation_for_dataset(
     fit_results = {}
     for run_number, lambda_value in ((int(dataset.run_number), 0.4), (102, 0.6)):
         fit_results[run_number] = FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=5.0,
             reduced_chi_squared=0.1,

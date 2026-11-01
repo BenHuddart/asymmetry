@@ -55,7 +55,14 @@ def test_trial_beyond_forward_pole_is_infinite_cost(cost):
     model = _apply_deadtime(
         np.array([100.0]), -1.1, frame_norm=100.0, detector_counts=np.array([[20.0]])
     )
-    assert _cost_value(np.array([20.0]), model, cost) == float("inf")
+    from asymmetry.core.fitting.likelihood import CountSource, GaussianObservations, PoissonCounts
+
+    observations = (
+        GaussianObservations([0.0], [20.0], [np.sqrt(20)])
+        if cost == "gaussian"
+        else PoissonCounts([0.0], [20.0], CountSource.RAW)
+    )
+    assert _cost_value(observations, model) == float("inf")
 
 
 def _polarisation(time, A=20.0):  # noqa: N803

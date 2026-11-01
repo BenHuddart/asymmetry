@@ -39,6 +39,7 @@ from asymmetry.core.fitting.information_criteria import (
     ranking_value,
 )
 from asymmetry.core.fitting.legacy_product_amplitudes import fold_legacy_product_amplitude_set
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.model_comparison import bound_side
 from asymmetry.core.fitting.models import field_decoupling_threshold_gauss
 from asymmetry.core.fitting.parameters import (
@@ -456,25 +457,13 @@ class FitWizardRecommendation:
     #: resolved (``scope=None`` in :func:`build_fit_wizard_recommendation`).
     #: Additive — old payloads default to ``""``. GUI-facing.
     scope_note: str = ""
-    #: Value-rebinning factor applied to the record before any candidate was
-    #: fitted (``1`` = the record itself). Peak detection and the fingerprint
-    #: always run on the full record; only the fits are rebinned, and only when
-    #: the record exceeds ``_FIT_SAMPLE_BUDGET`` points. Additive — old payloads
-    #: default to ``1``.
+    #: Value rebinning affects fits; peaks and fingerprints use the full record.
     rebin_factor: int = 1
-    #: Number of points every fit, χ², AIC/AICc/BIC and residual diagnostic in
-    #: this recommendation refers to — the analysed (possibly rebinned) record,
-    #: not ``dataset.n_points``. Information criteria are only comparable
-    #: between recommendations with the same value. Additive — old payloads
-    #: default to ``0`` (unknown).
+    #: Fitted points for this recommendation, including any analysis rebinning.
+    #: Comparisons require the same resolution; zero denotes an unknown count.
     analysed_points: int = 0
-    #: The question this recommendation answers: the scope and the user-declared
-    #: frequencies :func:`build_fit_wizard_recommendation` was asked for, encoded
-    #: by :func:`single_fit_build_signature`. Empty on every payload that did not
-    #: come from that full single-run path (an explicit-template table, a
-    #: completed global-wizard screening row, an old persisted payload), so a
-    #: caller can tell a reusable single-run analysis from a derived table
-    #: without inspecting its contents.
+    #: Scope and declared frequencies encoded by single_fit_build_signature.
+    #: Empty for derived tables that cannot be reused as a full single analysis.
     build_signature: str = ""
 
     @property
@@ -3984,6 +3973,7 @@ def _deserialize_fit_result(payload: object) -> FitResult | None:
         except (TypeError, ValueError):
             residuals = None
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=bool(payload.get("success", False)),
         chi_squared=float(payload.get("chi_squared", 0.0)),
         reduced_chi_squared=float(payload.get("reduced_chi_squared", 0.0)),
@@ -4400,7 +4390,9 @@ def _assess_candidate_template(
         _run_attempts(deferred_rungs)
 
     if best_result is None:
-        best_result = FitResult(success=False, message="No fit attempt was created.")
+        best_result = FitResult(
+            objective=Objective.GAUSSIAN, success=False, message="No fit attempt was created."
+        )
         best_parameters = ParameterSet()
 
     n_points = int(dataset.n_points)
@@ -5730,6 +5722,7 @@ def _scipy_fit_fallback(
         from scipy.optimize import least_squares
     except ImportError:
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=False,
             message="SciPy fallback unavailable and iminuit fit backend could not be imported.",
         )
@@ -5806,6 +5799,7 @@ def _scipy_fit_fallback(
     chi_squared = float(np.sum(np.square(residuals / safe_errors)))
     reduced_chi_squared = chi_squared / max(len(dataset.time) - len(free), 1)
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=bool(result.success),
         chi_squared=chi_squared,
         reduced_chi_squared=reduced_chi_squared,

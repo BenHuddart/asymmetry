@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit.global_tab import FitLaunch
 from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
@@ -39,6 +40,7 @@ def _dataset(run_number: int = 1) -> MuonDataset:
 def _result_with_warning(model, *, warning: str = _WARNING) -> FitResult:
     names = list(model.param_names)
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=190.0,
         reduced_chi_squared=1.0,

@@ -39,7 +39,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.engine import FitEngine, FitResult, _dataset_observations
 from asymmetry.core.fitting.parameters import ParameterSet
 
 
@@ -150,21 +150,6 @@ def _duplicates(names: Sequence[str]) -> set[str]:
     return dups
 
 
-def _validate_errors(key: Hashable, dataset: MuonDataset) -> None:
-    """Reject datasets whose per-point errors are absent, non-finite, or non-positive."""
-    error = np.asarray(dataset.error, dtype=float)
-    if error.size == 0:
-        raise ValueError(f"Dataset {key!r} has no data points to fit")
-    if error.shape != np.asarray(dataset.asymmetry, dtype=float).shape:
-        raise ValueError(f"Dataset {key!r} error and asymmetry arrays have mismatched shapes")
-    if not np.all(np.isfinite(error)) or np.any(error <= 0.0):
-        raise ValueError(
-            f"Dataset {key!r} has non-finite or non-positive asymmetry errors; "
-            "global asymmetry-domain fitting weights each point by 1/σ² and requires "
-            "finite, positive σ on every point"
-        )
-
-
 def _count_in_range(dataset: MuonDataset, t_min: float | None, t_max: float | None) -> int:
     """Number of points that survive the optional ``[t_min, t_max]`` clip."""
     clipped = dataset.time_range(t_min, t_max) if (t_min or t_max) else dataset
@@ -270,8 +255,6 @@ def fit_global(
     initial_by_key = _resolve_initial_params(initial_params, keys)
 
     _validate_parameter_partition(global_params, local_params, initial_by_key)
-    for key, ds in pairs:
-        _validate_errors(key, ds)
 
     # The engine keys datasets by run_number and requires those to be unique. The
     # caller's datasets may share (or default to) a run_number, so we wrap each in
@@ -281,8 +264,10 @@ def fit_global(
     synthetic_to_key: dict[int, Hashable] = {}
     engine_datasets: list[MuonDataset] = []
     engine_initial: dict[int, ParameterSet] = {}
+    observations = {}
     for index, (key, ds) in enumerate(pairs):
         synthetic_run = index
+        observations[index] = _dataset_observations(ds, t_min, t_max)
         synthetic_to_key[synthetic_run] = key
         metadata = {**dict(ds.metadata), "run_number": synthetic_run}
         engine_datasets.append(
@@ -300,6 +285,7 @@ def fit_global(
     internal_results, fitted_global = engine.global_fit(
         engine_datasets,
         model_fn,
+        observations=observations,
         global_params=list(global_params),
         local_params=list(local_params),
         initial_params=engine_initial,

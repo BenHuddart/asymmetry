@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Single, global and joint Gaussian fits reject invalid uncertainties with run
+  and point context; Poisson fits reject negative, non-integer and corrected counts.
+
 - Core wizard and role-search rankings exclude unavailable AICc without substituting
   AIC; series screening criteria use totals and unit-weight trends profile variance.
 
@@ -54,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 
 ### Changed
+
+- In-memory fit results require an explicit Gaussian or Poisson objective;
+  Poisson engine calls take validated raw-count observations.
 
 - Wizard caches record sample counts instead of redundant criteria and selected scores;
   project caches migrate and older work-directory entries must be regenerated.

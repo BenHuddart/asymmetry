@@ -15,6 +15,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
 from asymmetry.core.fitting.global_search.surrogate import metric_penalty
 from asymmetry.core.fitting.global_search.types import ModelScore
 from asymmetry.core.fitting.information_criteria import InformationCriteria, SelectionMetric
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import AffineTie, Parameter, ParameterSet
 
 
@@ -25,7 +26,9 @@ def _single_statistic(statistic, k, n):
     )
     return CandidateAssessment(
         template=CandidateTemplate("criteria", "Criteria", "General", "", model),
-        fit_result=FitResult(success=True, chi_squared=statistic, parameters=parameters),
+        fit_result=FitResult(
+            objective=Objective.GAUSSIAN, success=True, chi_squared=statistic, parameters=parameters
+        ),
         sample_count=n,
         residual_rms=0.0,
         runs_z_score=0.0,

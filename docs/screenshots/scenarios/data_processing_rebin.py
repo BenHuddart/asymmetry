@@ -79,7 +79,10 @@ def _grab_plot(dataset: MuonDataset, *, caption: str) -> QPixmap:
     painter.setFont(font)
     painter.setPen(QColor("#0f172a"))
     painter.drawText(
-        0, 0, pix.width(), 40,
+        0,
+        0,
+        pix.width(),
+        40,
         Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
         caption,
     )

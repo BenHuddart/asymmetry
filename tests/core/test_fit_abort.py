@@ -18,6 +18,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     GroupedTimeDomainGroup,
     fit_grouped_series,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
@@ -111,6 +112,7 @@ def test_between_member_abort_records_no_partial_result(monkeypatch):
             success=True,
             group_results={
                 g.group_id: FitResult(
+                    objective=Objective.GAUSSIAN,
                     success=True,
                     chi_squared=1.0,
                     reduced_chi_squared=0.1,

@@ -17,12 +17,17 @@ from asymmetry.core.fitting.component_tags import ParameterKind
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import (
     COST_FACTORIES,
-    POISSON_COST,
     CostFactory,
     FitCancelledError,
     FitEngine,
     FitResult,
     _reject_affine_ties,
+)
+from asymmetry.core.fitting.likelihood import (
+    CountSource,
+    GaussianObservations,
+    Objective,
+    PoissonCounts,
 )
 from asymmetry.core.fitting.member_quality import MemberQuality, assess_member_quality
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
@@ -125,6 +130,14 @@ class GroupedTimeDomainGroup:
     detector_counts: NDArray[np.float64] | None = None
     deadtime: CorrectionOutcome = CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
     detector_indices: tuple[int, ...] = ()
+
+    @property
+    def count_source(self) -> CountSource:
+        if self.deadtime.status is CorrectionStatus.APPLIED:
+            return CountSource.DEADTIME_CORRECTED
+        if self.metadata.get("grouped_time_domain_lifetime_corrected", False):
+            return CountSource.LIFETIME_CORRECTED
+        return CountSource.RAW
 
 
 @dataclass
@@ -532,51 +545,22 @@ def _raw_count_model(model_fn):
     return raw
 
 
-def _raw_group_counts(
-    time: NDArray[np.float64],
-    counts: NDArray[np.float64],
-    metadata: dict,
-) -> NDArray[np.float64]:
-    """Invert the lifetime correction on a trace to recover raw Poisson counts.
-
-    ``_build_one_count_group`` records whether it applied the ``e^(t/τ_μ)``
-    correction; when it did, ``raw = corrected · e^(−t/τ_μ)`` restores the
-    Poisson-distributed (rebinned) counts. An already-raw trace passes through.
-    """
-    if not bool(metadata.get("grouped_time_domain_lifetime_corrected", True)):
-        return np.asarray(counts, dtype=float)
-    return np.asarray(counts, dtype=float) * np.exp(
-        -np.asarray(time, dtype=float) / float(MUON_LIFETIME_US)
-    )
-
-
-def _resolve_grouped_cost(cost: str):
-    """Validate a grouped-fit cost name and return ``(use_poisson, cost_factory)``.
-
-    Shared by the single-run and global-series grouped fitters so the cost
-    contract (valid names, the Poisson→raw-count routing) lives in one place.
-    """
-    if cost not in COST_FACTORIES:
-        raise ValueError(
-            f"Unknown grouped fit cost {cost!r}; expected one of {sorted(COST_FACTORIES)}"
+def group_observations(
+    group: GroupedTimeDomainGroup, objective: Objective, *, t_min=None, t_max=None
+):
+    """Validate grouped count data under the requested likelihood once."""
+    if objective is Objective.POISSON:
+        return PoissonCounts(
+            group.time,
+            group.counts,
+            group.count_source,
+            group.source_run_number,
+            t_min=t_min,
+            t_max=t_max,
         )
-    use_poisson = cost == "poisson"
-    return use_poisson, (POISSON_COST if use_poisson else None)
-
-
-def _raw_count_dataset_fields(time, counts, metadata):
-    """Return (raw_counts, poisson_error, metadata) for a Poisson grouped fit.
-
-    Inverts the lifetime correction to recover the raw Poisson counts and floors
-    a Poisson √N error (unused by Cash, but ``global_fit`` rejects zero errors);
-    the returned metadata records the trace is no longer lifetime-corrected so it
-    cannot be double-corrected downstream.
-    """
-    raw = _raw_group_counts(time, counts, metadata)
-    error = np.sqrt(np.clip(raw, 1.0, None))
-    fixed_metadata = dict(metadata)
-    fixed_metadata["grouped_time_domain_lifetime_corrected"] = False
-    return raw, error, fixed_metadata
+    return GaussianObservations(
+        group.time, group.counts, group.error, group.source_run_number, t_min=t_min, t_max=t_max
+    )
 
 
 def fit_grouped_time_domain(
@@ -608,7 +592,7 @@ def fit_grouped_time_domain(
     convention:
 
     - ``"poisson"`` (default) — the Cash statistic on the **raw** Poisson
-      counts (the lifetime correction is inverted and the model is multiplied
+      counts (built without a lifetime correction; the model is multiplied
       by ``e^(−t/τ_μ)`` to predict raw counts). This is the statistically
       faithful objective: at low counts the √N-Gaussian weight biases the fit,
       and Cash removes that bias. Reported ``chi_squared`` is the Cash value
@@ -669,12 +653,15 @@ def fit_grouped_time_domain(
     # Poisson (Cash) fits the raw counts against a raw-count expectation, so the
     # objective sees true Poisson statistics; Gaussian keeps the historical
     # lifetime-corrected √N least squares (cost_factory=None → byte-identical).
-    use_poisson, cost_factory = _resolve_grouped_cost(cost)
+    objective = Objective(cost)
+    use_poisson = objective is Objective.POISSON
+    cost_factory = COST_FACTORIES[objective] if use_poisson else None
     base_model_fn = build_grouped_count_model(polarization_model_fn)
     model_fn = _raw_count_model(base_model_fn) if use_poisson else base_model_fn
 
     engine = fit_engine or FitEngine()
     temporary_datasets: list[MuonDataset] = []
+    observations = {}
     temporary_initial_params: dict[int, ParameterSet] = {}
     internal_to_group: dict[int, Hashable] = {}
 
@@ -689,8 +676,7 @@ def fit_grouped_time_domain(
                 f"Grouped time-domain arrays for {group.group_id!r} must share one shape"
             )
         metadata = dict(group.metadata)
-        if use_poisson:
-            counts, error, metadata = _raw_count_dataset_fields(time, counts, metadata)
+        observations[internal_id] = group_observations(group, objective, t_min=t_min, t_max=t_max)
         metadata.update(
             {
                 "run_number": internal_id,
@@ -713,6 +699,7 @@ def fit_grouped_time_domain(
     internal_results, shared_parameters = engine.global_fit(
         temporary_datasets,
         model_fn,
+        observations=observations,
         global_params=global_params,
         local_params=local_params,
         initial_params=temporary_initial_params,
@@ -1407,8 +1394,11 @@ def _fit_grouped_series_global(
     rather than one monolithic Minuit fit; otherwise the monolithic path runs.
     """
     cross_run_local = set(cross_run_local_params or [])
-    use_poisson, cost_factory = _resolve_grouped_cost(cost)
+    objective = Objective(cost)
+    use_poisson = objective is Objective.POISSON
+    cost_factory = COST_FACTORIES[objective] if use_poisson else None
     temporary_datasets: list[MuonDataset] = []
+    observations = {}
     temporary_initial: dict[int, ParameterSet] = {}
     member_source_run: dict[int, int] = {}
     member_group_id: dict[int, Hashable] = {}
@@ -1440,8 +1430,7 @@ def _fit_grouped_series_global(
                     "must share one shape"
                 )
             metadata = dict(group.metadata)
-            if use_poisson:
-                counts, error, metadata = _raw_count_dataset_fields(time, counts, metadata)
+            observations[key] = group_observations(group, objective, t_min=t_min, t_max=t_max)
             metadata.update(
                 {
                     "run_number": key,
@@ -1506,6 +1495,7 @@ def _fit_grouped_series_global(
             nuisances=list(local_params),
             initial_params=initial_params,
             temporary_datasets=temporary_datasets,
+            observations=observations,
             temporary_initial=temporary_initial,
             member_source_run=member_source_run,
             member_group_id=member_group_id,
@@ -1525,6 +1515,7 @@ def _fit_grouped_series_global(
     internal_results, shared_parameters = engine.global_fit(
         temporary_datasets,
         model_fn,
+        observations=observations,
         global_params=engine_global,
         local_params=engine_local,
         initial_params=temporary_initial,
@@ -1805,6 +1796,7 @@ def _blockwise_run_rounds(
     run_seeds: dict[int, dict[Hashable, ParameterSet]],
     shared_values: dict[str, float],
     temporary_datasets: list[MuonDataset],
+    observations: dict,
     member_source_run: dict[int, int],
     member_group_id: dict[int, Hashable],
     model_fn,
@@ -1889,6 +1881,7 @@ def _blockwise_run_rounds(
         outer_results, outer_shared = engine.global_fit(
             temporary_datasets,
             model_fn,
+            observations=observations,
             global_params=list(truly_global),
             local_params=list(nuisances) + list(per_run_physics),
             initial_params=outer_initial,
@@ -1931,6 +1924,7 @@ def _fit_grouped_series_global_blockwise(
     nuisances: list[str],
     initial_params: dict[int, dict[Hashable, ParameterSet]],
     temporary_datasets: list[MuonDataset],
+    observations: dict,
     temporary_initial: dict[int, ParameterSet],
     member_source_run: dict[int, int],
     member_group_id: dict[int, Hashable],
@@ -1997,6 +1991,7 @@ def _fit_grouped_series_global_blockwise(
             run_seeds=run_seeds,
             shared_values=shared_values,
             temporary_datasets=temporary_datasets,
+            observations=observations,
             member_source_run=member_source_run,
             member_group_id=member_group_id,
             model_fn=model_fn,

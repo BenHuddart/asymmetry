@@ -71,9 +71,7 @@ class SpectralMomentsReadoutScenario(Scenario):
 
         window = MainWindow()
         window._on_fourier()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         dataset = make_ybco_vortex_lattice()
         window._data_browser.add_dataset(dataset)

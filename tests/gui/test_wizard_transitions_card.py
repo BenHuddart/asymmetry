@@ -50,6 +50,7 @@ from asymmetry.core.fitting.global_search.trend_objective import (
     CandidateRung,
     SelectionObjective,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.trend_quality import CandidateTrend, TraceQuality
 from asymmetry.gui.utils.phase_colors import EXCLUDED_PHASE_HATCH_COLOR, phase_color
@@ -118,6 +119,7 @@ def _assessment(
         dataset = by_run[run_number]
         curve = template.model.function(dataset.time, A_1=0.2, Lambda=0.3, A_bg=0.01)
         fit_results[run_number] = FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=52.0,
             reduced_chi_squared=1.04,

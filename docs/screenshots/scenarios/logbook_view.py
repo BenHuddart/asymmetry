@@ -63,9 +63,7 @@ class LogbookViewScenario(Scenario):
         # Pump the event loop first so MainWindow's own pass completes, then
         # override it with the wide browser dock this scenario needs.
         _process_events_for(milliseconds=50)
-        widget.resizeDocks(
-            [widget._dock_data_browser], [620], Qt.Orientation.Horizontal
-        )
+        widget.resizeDocks([widget._dock_data_browser], [620], Qt.Orientation.Horizontal)
         super().settle(widget)
 
 

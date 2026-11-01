@@ -37,6 +37,7 @@ from asymmetry.core.fitting.global_search.partition import (
     Segment,
 )
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.utils.phase_colors import phase_color
 
@@ -102,6 +103,7 @@ def _assessment(runs: tuple[int, ...], title: str) -> GlobalCandidateAssessment:
     curve = np.array([0.1, 0.09, 0.08, 0.07])
     fit_results = {
         run: FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=51.5,
             reduced_chi_squared=1.03,

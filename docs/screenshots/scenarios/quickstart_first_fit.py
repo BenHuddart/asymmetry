@@ -28,9 +28,7 @@ from ._base import Scenario, _process_events_for, register
 
 class QuickstartFirstFitScenario(Scenario):
     name = "quickstart_first_fit"
-    description = (
-        "Quickstart's first fit: converged StaticGKT_ZF + Constant on the ZF Ag preset."
-    )
+    description = "Quickstart's first fit: converged StaticGKT_ZF + Constant on the ZF Ag preset."
     size = (1500, 920)
     requires_fit = True
 
@@ -41,9 +39,7 @@ class QuickstartFirstFitScenario(Scenario):
         window = MainWindow()
         # Surface the fit dock so the full WiMDA-style layout is visible.
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         dataset = make_ag_zf_gkt()
         window._data_browser.add_dataset(dataset)

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import FitPanel
 
@@ -54,7 +55,9 @@ def _dataset(run_number: int) -> MuonDataset:
 def _fit_result() -> FitResult:
     ps = ParameterSet()
     ps.add(Parameter(name="A_1", value=0.2))
-    return FitResult(success=True, reduced_chi_squared=1.0, parameters=ps)
+    return FitResult(
+        objective=Objective.GAUSSIAN, success=True, reduced_chi_squared=1.0, parameters=ps
+    )
 
 
 def test_first_ever_selection_shows_no_badge(qapp: QApplication) -> None:

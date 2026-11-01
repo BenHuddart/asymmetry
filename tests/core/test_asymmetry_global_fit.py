@@ -327,7 +327,7 @@ def test_non_finite_errors_rejected():
         asymmetry=ds.asymmetry,
         error=np.zeros_like(ds.error),  # non-positive σ
     )
-    with pytest.raises(ValueError, match="non-finite or non-positive"):
+    with pytest.raises(ValueError, match="Gaussian fits need finite positive errors"):
         fit_global(
             [ds, bad],
             _model,

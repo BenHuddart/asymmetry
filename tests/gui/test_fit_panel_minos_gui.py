@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab, _ValueUncertaintyDelegate
 
@@ -31,6 +32,7 @@ def test_single_fit_minos_toggle_threads_and_populates_role(qapp: QApplication) 
         captured["minos"] = minos
         names = list(model.param_names)
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=190.0,
             reduced_chi_squared=1.0,
@@ -68,6 +70,7 @@ def test_single_fit_minos_off_clears_role(qapp: QApplication) -> None:
     def _fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
         names = list(model.param_names)
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=190.0,
             reduced_chi_squared=1.0,

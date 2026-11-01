@@ -25,6 +25,7 @@ from asymmetry.core.fitting.fit_wizard import (
     SelectionMetric,
     SpectrumFingerprint,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.wizard_answer_card import WizardAnswerCard
@@ -64,6 +65,7 @@ def _assessment(
     pset = ParameterSet([Parameter(n, value=0.1, min=0.0, max=5.0) for n in names])
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=5.0,
         reduced_chi_squared=0.05,
