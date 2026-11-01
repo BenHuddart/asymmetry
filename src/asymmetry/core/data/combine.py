@@ -45,7 +45,7 @@ from asymmetry.core.transform.asymmetry import (
 )
 from asymmetry.core.transform.background import subtract_scaled_counts
 from asymmetry.core.transform.grouping import good_frames, group_forward_backward
-from asymmetry.core.transform.t0 import common_t0_time_us, run_t0_time_us
+from asymmetry.core.transform.t0 import run_t0_time_us
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from numpy.typing import NDArray
@@ -231,12 +231,11 @@ def reduce_combined_run(run: Run) -> MuonDataset:
 
     fb = group_forward_backward(run.histograms, grouping)
     var_fb = group_forward_backward(variance_hists, grouping)
-    n = min(fb.forward.size, fb.backward.size, var_fb.forward.size, var_fb.backward.size)
     asymmetry, error = compute_asymmetry_with_count_errors(
-        fb.forward[:n],
-        fb.backward[:n],
-        np.sqrt(np.maximum(var_fb.forward[:n], 0.0)),
-        np.sqrt(np.maximum(var_fb.backward[:n], 0.0)),
+        fb.forward,
+        fb.backward,
+        np.sqrt(np.maximum(var_fb.forward, 0.0)),
+        np.sqrt(np.maximum(var_fb.backward, 0.0)),
         fb.alpha,
         fb.beta,
     )
@@ -246,10 +245,10 @@ def reduce_combined_run(run: Run) -> MuonDataset:
     time, asymmetry, error = slice_to_good_window(
         asymmetry,
         error,
-        grouping,
+        fb.counts.window,
         common_t0=fb.common_t0,
-        bin_width=float(run.histograms[0].bin_width),
-        t0_time_us=common_t0_time_us(run.histograms, grouping, fb.common_t0),
+        bin_width=fb.counts.bin_width_us,
+        t0_time_us=fb.counts.t0_time_us,
     )
 
     metadata = dict(run.metadata)

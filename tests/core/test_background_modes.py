@@ -130,10 +130,9 @@ def test_subtract_scaled_counts_self_subtraction():
     assert errors == pytest.approx(np.sqrt(2.0 * counts))
 
 
-def test_subtract_scaled_counts_truncates_to_common_length():
-    corrected, errors = subtract_scaled_counts(np.ones(5), np.ones(3), 1.0)
-    assert corrected.shape == (3,)
-    assert errors.shape == (3,)
+def test_subtract_scaled_counts_rejects_different_shapes():
+    with pytest.raises(ValueError, match="equal shape"):
+        subtract_scaled_counts(np.ones(5), np.ones(3), 1.0)
 
 
 # --- mode gating and resolution -------------------------------------------------

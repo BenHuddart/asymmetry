@@ -87,7 +87,7 @@ def test_raw_counts_bias_the_estimate_but_subtraction_recovers_true_alpha():
         use_background=False,
     )
     raw_alpha = estimate_alpha(
-        raw.forward, raw.backward, first_good_bin=0, last_good_bin=N_BINS - 1
+        raw.forward.counts, raw.backward.counts, first_good_bin=0, last_good_bin=N_BINS - 1
     )
 
     grouping = _base_grouping()
@@ -104,7 +104,10 @@ def test_raw_counts_bias_the_estimate_but_subtraction_recovers_true_alpha():
         use_background=True,
     )
     corrected_alpha = estimate_alpha(
-        corrected.forward, corrected.backward, first_good_bin=0, last_good_bin=N_BINS - 1
+        corrected.forward.counts,
+        corrected.backward.counts,
+        first_good_bin=0,
+        last_good_bin=N_BINS - 1,
     )
 
     # The flat pedestal biases the raw estimate toward 1; subtracting it recovers
@@ -131,8 +134,8 @@ def test_corrected_counts_match_the_reductions_pre_asymmetry_counts():
         use_background=True,
     )
     # Background-subtracted single-detector groups equal the pure decay signal.
-    np.testing.assert_allclose(corrected.forward, A_TRUE * _decay(), rtol=1e-9)
-    np.testing.assert_allclose(corrected.backward, _decay(), rtol=1e-9)
+    np.testing.assert_allclose(corrected.forward.counts, A_TRUE * _decay(), rtol=1e-9)
+    np.testing.assert_allclose(corrected.backward.counts, _decay(), rtol=1e-9)
 
     # And the reduction runs without error on the same grouping (shared pipeline).
     reduction = reduce_grouped_asymmetry(

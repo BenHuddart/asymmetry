@@ -12,7 +12,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, Run
-from asymmetry.core.transform.t0 import effective_detector_t0_bins
+from asymmetry.core.transform.fb_counts import (
+    AlignmentCrop,
+    ForwardBackwardCounts,
+    GroupCounts,
+    good_window,
+)
+from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
 from asymmetry.core.utils.perf import perf_timer
 
 
@@ -24,35 +30,6 @@ def _present_indices(group_indices: list[int], n_histograms: int) -> list[int]:
     the summing helpers from indexing past the histogram list.
     """
     return [i for i in group_indices if 0 <= i < n_histograms]
-
-
-def apply_grouping(
-    histograms: list[Histogram],
-    group_indices: list[int],
-) -> NDArray[np.float64]:
-    """Sum the counts of the listed histograms into a single group array.
-
-    Parameters
-    ----------
-    histograms
-        All histograms from the run.
-    group_indices
-        0-based indices of the histograms to include in this group.
-
-    Returns
-    -------
-    NDArray
-        Summed counts array.
-    """
-    arrays = [histograms[i].counts for i in _present_indices(group_indices, len(histograms))]
-    if not arrays:
-        return np.array([], dtype=np.float64)
-    # Truncate to shortest length in case of mismatch
-    min_len = min(len(a) for a in arrays)
-    total = np.zeros(min_len, dtype=np.float64)
-    for a in arrays:
-        total += a[:min_len]
-    return total
 
 
 def _detector_t0(
@@ -84,8 +61,8 @@ def apply_grouping_aligned(
 ) -> NDArray[np.float64]:
     """Sum detector counts after aligning each detector's own ``t0_bin``.
 
-    ISIS NeXus files normally provide one common ``t0`` for every detector, so
-    :func:`apply_grouping` is sufficient. PSI BIN/MDU data can carry different
+    ISIS NeXus files normally provide one common ``t0`` for every detector.
+    PSI BIN/MDU data can carry different
     ``t0`` values per detector. This helper shifts each selected detector so
     that its local ``t0_bin`` lands on ``common_t0_bin`` before summing.
 
@@ -155,6 +132,55 @@ def common_t0_for_groups(
             return 0
         return _detector_t0(histograms, 0, detector_t0_bins)
     return max(0, max(_detector_t0(histograms, idx, detector_t0_bins) for idx in indices))
+
+
+def align_forward_backward(
+    histograms: list[Histogram],
+    forward_indices: list[int],
+    backward_indices: list[int],
+    detector_t0_bins: list[int] | None = None,
+    *,
+    common_t0_bin: int | None = None,
+    sample_length: int | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], AlignmentCrop]:
+    """Align detector t0 bins, then crop both sums to their common terminal bin.
+
+    Each group ends at its shortest shifted detector. The pair then ends at
+    the shorter group, recording the original group lengths and every shift.
+    An explicit common t0 and sample length align and crop a reference onto
+    the sample's grid; the reference must cover the full sample record.
+    """
+    common = (
+        common_t0_bin
+        if common_t0_bin is not None
+        else common_t0_for_groups(
+            histograms, forward_indices, backward_indices, detector_t0_bins=detector_t0_bins
+        )
+    )
+    forward, backward = (
+        apply_grouping_aligned(
+            histograms, indices, common_t0_bin=common, detector_t0_bins=detector_t0_bins
+        )
+        for indices in (forward_indices, backward_indices)
+    )
+    lengths = (forward.size, backward.size)
+    available = min(lengths)
+    if sample_length is not None and sample_length > available:
+        raise ValueError(
+            f"reference run has {available} aligned bins; sample requires {sample_length}."
+        )
+    length = available if sample_length is None else sample_length
+    selected = sorted(set(_present_indices(forward_indices + backward_indices, len(histograms))))
+    crop = AlignmentCrop(
+        common,
+        tuple(
+            (index, common - _detector_t0(histograms, index, detector_t0_bins))
+            for index in selected
+        ),
+        lengths,
+        length,
+    )
+    return forward[:length], backward[:length], crop
 
 
 def good_frames(grouping: dict | None, default: float = 1.0) -> float:
@@ -477,13 +503,23 @@ def group_names(run: Run) -> dict[int, str]:
 class GroupedForwardBackward:
     """Forward/backward grouped counts plus the metadata to reduce them."""
 
-    forward: NDArray[np.float64]
-    backward: NDArray[np.float64]
-    common_t0: int
+    counts: ForwardBackwardCounts
     alpha: float
     forward_gid: int
     backward_gid: int
     beta: float = 1.0
+
+    @property
+    def forward(self) -> NDArray[np.float64]:
+        return self.counts.forward.counts
+
+    @property
+    def backward(self) -> NDArray[np.float64]:
+        return self.counts.backward.counts
+
+    @property
+    def common_t0(self) -> int:
+        return self.counts.common_t0_bin
 
 
 def group_forward_backward(
@@ -497,8 +533,8 @@ def group_forward_backward(
     detector indices, aligns each detector to a common ``t0``, sums the groups,
     and reads the balances ``alpha`` and ``beta`` (leniently, defaulting to
     ``1.0``).  Callers
-    own the good-bin window, the time axis, ``compute_asymmetry``, and any
-    rebinning, so the two reductions agree on grouping by construction.
+    consume the validated window and time grid in ``counts`` for asymmetry
+    and rebinning, so reductions share the same aligned coordinates.
 
     Raises :class:`ValueError` when the grouping lacks a ``groups`` definition or
     the forward/backward groups reference no detectors.
@@ -537,19 +573,20 @@ def group_forward_backward(
         beta = 1.0
 
     detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
-    common_t0 = common_t0_for_groups(
-        histograms, forward_indices, backward_indices, detector_t0_bins=detector_t0_bins
+    forward, backward, crop = align_forward_backward(
+        histograms, forward_indices, backward_indices, detector_t0_bins
     )
-    forward = apply_grouping_aligned(
-        histograms, forward_indices, common_t0_bin=common_t0, detector_t0_bins=detector_t0_bins
-    )
-    backward = apply_grouping_aligned(
-        histograms, backward_indices, common_t0_bin=common_t0, detector_t0_bins=detector_t0_bins
+    width = float(histograms[0].bin_width)
+    counts = ForwardBackwardCounts(
+        GroupCounts(forward),
+        GroupCounts(backward),
+        common_t0_time_us(histograms, grouping, crop.common_t0_bin),
+        width,
+        good_window(grouping, crop.length),
+        crop,
     )
     return GroupedForwardBackward(
-        forward=forward,
-        backward=backward,
-        common_t0=int(common_t0),
+        counts=counts,
         alpha=alpha,
         forward_gid=forward_gid,
         backward_gid=backward_gid,

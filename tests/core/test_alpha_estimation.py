@@ -15,7 +15,6 @@ from scipy.optimize import brentq
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform import estimate_alpha, estimate_alpha_detailed
 from asymmetry.core.transform.asymmetry import (
-    SubtractedBackground,
     _alpha_window,
     _diamagnetic_objective,
     _general_flatness,
@@ -24,6 +23,7 @@ from asymmetry.core.transform.asymmetry import (
     _positive_mask,
 )
 from asymmetry.core.transform.reduce import corrected_grouped_counts
+from asymmetry.core.transform.fb_counts import SubtractedBackground
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 ALPHA_TRUE = 1.37

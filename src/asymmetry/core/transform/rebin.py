@@ -35,6 +35,7 @@ from asymmetry.core.transform.asymmetry import (
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
 )
+from asymmetry.core.transform.fb_counts import ForwardBackwardCounts
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 BINNING_MODES = ("fixed", "variable", "constant_error")
@@ -172,19 +173,11 @@ def binning_slice_edges(
 
 
 def binned_fb_asymmetry(
-    forward: NDArray[np.float64],
-    backward: NDArray[np.float64],
+    counts: ForwardBackwardCounts,
     *,
     grouping: dict[str, Any] | None,
-    common_t0: int,
-    bin_width_us: float,
     alpha: float,
-    first_good_bin: int,
-    last_good_bin: int,
-    forward_error: NDArray[np.float64] | None = None,
-    backward_error: NDArray[np.float64] | None = None,
     beta: float = 1.0,
-    t0_time_us: float | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Reduce grouped counts to a binned asymmetry curve (all binning modes).
 
@@ -201,11 +194,8 @@ def binned_fb_asymmetry(
     :func:`rebin` uses, so switching binning modes never shifts the time axis.
 
     Raw bin ``k`` is stamped at its **centre** measured from the run's exact t0,
-    ``(k + 0.5)·w − t0_time_us`` (D4). ``t0_time_us`` defaults to the centre of
-    ``common_t0``, which collapses the stamp to the integer-bin axis
-    ``(k − common_t0)·w`` — today's values, bit for bit. Callers that can resolve
-    the run's exact t0 pass
-    :func:`~asymmetry.core.transform.t0.common_t0_time_us`.
+    ``(k + 0.5)·w − t0_time_us``. The validated counts carry the exact t0
+    and inclusive aligned-bin window.
 
     Returns
     -------
@@ -218,24 +208,12 @@ def binned_fb_asymmetry(
         reduction that does, and its output is percent.
     """
     mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
-    f = np.asarray(forward, dtype=np.float64)
-    b = np.asarray(backward, dtype=np.float64)
-    n = min(f.size, b.size)
-    lo = max(0, int(first_good_bin))
-    hi = min(n - 1, int(last_good_bin))
-    if lo > hi:
-        lo, hi = 0, n - 1
-    f = f[lo : hi + 1]
-    b = b[lo : hi + 1]
-    # Sub-bin residual of the exact t0 against the centre of the common t0 bin:
-    # exactly 0.0 for the bin-centre default, so the integer-bin stamps below
-    # are untouched to the last bit.
-    residual_us = (
-        0.0
-        if t0_time_us is None
-        else (int(common_t0) + 0.5) * float(bin_width_us) - float(t0_time_us)
-    )
-    t_start = (lo - int(common_t0)) * float(bin_width_us) + residual_us
+    window = counts.window
+    f = counts.forward.counts[window.slice]
+    b = counts.backward.counts[window.slice]
+    bin_width_us = counts.bin_width_us
+    residual_us = (counts.common_t0_bin + 0.5) * bin_width_us - counts.t0_time_us
+    t_start = (window.first - counts.common_t0_bin) * bin_width_us + residual_us
 
     if mode == "fixed":
         try:
@@ -263,11 +241,11 @@ def binned_fb_asymmetry(
     starts = edges[:-1]
     f_out = np.add.reduceat(f, starts)
     b_out = np.add.reduceat(b, starts)
-    if forward_error is not None and backward_error is not None:
-        ef = np.asarray(forward_error, dtype=np.float64)[lo : hi + 1][: f.size]
-        eb = np.asarray(backward_error, dtype=np.float64)[lo : hi + 1][: f.size]
-        ef_out = np.sqrt(np.add.reduceat(ef * ef, starts))
-        eb_out = np.sqrt(np.add.reduceat(eb * eb, starts))
+    if counts.forward.variance is not None:
+        vf = counts.forward.variance[window.slice][: f.size]
+        vb = counts.backward.variance[window.slice][: f.size]
+        ef_out = np.sqrt(np.add.reduceat(vf, starts))
+        eb_out = np.sqrt(np.add.reduceat(vb, starts))
         asymmetry, error = compute_asymmetry_with_count_errors(
             f_out, b_out, ef_out, eb_out, alpha=alpha, beta=beta
         )
