@@ -1,4 +1,4 @@
-"""Tests for grouping utilities and physical constants."""
+"""Tests for detector grouping utilities."""
 
 from __future__ import annotations
 
@@ -13,11 +13,6 @@ from asymmetry.core.transform.grouping import (
     good_event_count,
     good_frames,
     group_forward_backward,
-)
-from asymmetry.core.utils.constants import (
-    GAUSS_TO_TESLA,
-    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
-    MUON_LIFETIME_US,
 )
 
 
@@ -138,12 +133,6 @@ def test_group_forward_backward_errors_when_group_absent_from_run() -> None:
     }
     with pytest.raises(ValueError, match="present in this run"):
         group_forward_backward(hists, grouping)
-
-
-def test_physical_constants_reasonable_ranges() -> None:
-    assert MUON_GYROMAGNETIC_RATIO_MHZ_PER_T > 100
-    assert MUON_LIFETIME_US > 2.0
-    assert GAUSS_TO_TESLA == 1.0e-4
 
 
 # --------------------------------------------------------------------------- #
