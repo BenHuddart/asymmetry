@@ -19,6 +19,8 @@ import asymmetry.core.fourier.spectrum as spectrum_module
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting import CompositeModel
+from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ParameterCompositeModel,
@@ -2911,27 +2913,7 @@ class TestApodisationSuggestion:
     def _make_damped_fourier_ready_dataset(
         self, run_number: int, *, with_grouping: bool = True
     ) -> MuonDataset:
-        """A damped variant of ``_make_fourier_ready_dataset`` (rate 0.5 us^-1).
-
-        The plain helper's undamped cosines are resolution-limited (no physical
-        linewidth to match), so the estimator correctly returns None for them.
-        This variant multiplies the oscillating term by exp(-0.5 * t) so the
-        dominant line has a real Lorentzian width to recover (expected tau ~ 2
-        us, loosely — the grouped pipeline's own decay correction and noise make
-        the recovered value approximate).
-
-        Unlike the plain helper, the counts here also carry the real muon-decay
-        envelope exp(-t / MUON_LIFETIME_US): ``build_group_signal_dataset``
-        (the actual pipeline ``_on_suggest_apodisation`` runs through) always
-        applies a lifetime correction ``exp(t / tau_mu)`` before the FFT. Without
-        a matching decay baked into the counts, that correction amplifies the
-        plain helper's already-flat baseline into a huge low-frequency leakage
-        that swamps the injected line — fine for the other Fourier tests (which
-        never inspect the line shape), but it leaves nothing for a matched-filter
-        estimator to find. Baking in the real decay cancels the correction and
-        leaves a clean baseline + damped-cosine signal, as real detector counts
-        would.
-        """
+        """A damped variant of ``_make_fourier_ready_dataset`` (rate 0.5 us^-1)."""
         time = np.arange(256, dtype=float) * 0.05
         frequency = 12.0 / (time.size * 0.05)
         phase_a = np.deg2rad(32.0)
@@ -5019,13 +5001,12 @@ class TestMainWindowBasic:
     # ── per-projection single-fit storage (Step 3 part 2) ─────────────────
 
     @staticmethod
-    def _single_fit_result() -> SimpleNamespace:
-        return SimpleNamespace(
+    def _single_fit_result() -> FitResult:
+        return FitResult(
             success=True,
+            objective=Objective.GAUSSIAN,
             chi_squared=10.0,
             reduced_chi_squared=0.5,
-            parameters=None,
-            uncertainties={},
         )
 
     def test_single_fit_slot_recorded_under_active_projection(

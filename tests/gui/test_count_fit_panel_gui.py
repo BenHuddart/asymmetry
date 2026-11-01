@@ -94,10 +94,11 @@ def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
     assert result.success
     alpha = result.group_results[1].parameters["alpha"].value
     assert alpha == pytest.approx(1.25, abs=0.05)
-    # The χ² band behind the read-out's verdict chip hovers over the body line.
+    # Sparse tail bins suppress the χ² verdict without hiding the deviance.
     card = window._single_fit_tab._results_card
     assert card.tag_text() == "Fit ✓"
-    assert "band" in card._detail.toolTip()
+    assert "Poisson deviance/ν" in card._detail.text()
+    assert "fitted expected count is below 5" in card._detail.toolTip()
 
 
 def test_fb_count_fit_recovers_realistic_amplitude(qapp, fb_dataset):

@@ -182,7 +182,10 @@ lifetime_corrected=False)``. The fitter never reconstructs raw counts by
 inverting a lifetime correction. Poisson inputs reject applied deadtime
 correction; use the raw-count DT₀ model or Gaussian weighting as described in
 :doc:`count_domain_fitting`. Invalid Gaussian errors use the shared
-:doc:`fitting` input requirements.
+:doc:`fitting` input requirements. Result cards and completion logs name
+**Poisson deviance/ν** or **χ²/ν** from the recorded objective. Sparse Poisson
+fits retain their statistic without a χ² quality verdict; see
+:doc:`assessing_a_fit`.
 
 The ``relationship`` argument selects the sharing mode. The valid values are
 ``GROUPED_SERIES_RELATIONSHIPS`` — ``("individual", "batch", "global")``:

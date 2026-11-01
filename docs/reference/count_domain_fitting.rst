@@ -98,8 +98,12 @@ The Poisson statistic is the deviance
 Invalid trial expectations receive a restoring penalty; a reported optimum
 outside the Poisson domain fails and identifies the affected bins. Positive
 observations require positive expectations; zero observations permit zero.
-The deviance per degree of freedom is not a calibrated goodness-of-fit test for
-sparse counts. Gaussian and Poisson fits approach agreement at high counts.
+The result is labelled **Poisson deviance/ν**, including the detailed results
+window. A χ² quality verdict is shown only when every fitted expected count is
+at least five; sparse fits show the reason in the tooltip. This display
+threshold is an approximation, not a calibrated goodness-of-fit test.
+**Fit ✓** reports convergence. See :doc:`assessing_a_fit` for the assumptions.
+Gaussian and Poisson fits approach agreement at high counts.
 
 Seeding N₀, and the spurious minimum
 ------------------------------------

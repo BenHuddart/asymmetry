@@ -58,6 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Saved fit summaries record their objective; count fits display Poisson deviance
+  and suppress χ² verdicts for sparse or unrecorded expected counts.
+
 - In-memory fit results require an explicit Gaussian or Poisson objective;
   Poisson engine calls take validated raw-count observations.
 

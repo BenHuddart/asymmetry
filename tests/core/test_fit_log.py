@@ -8,6 +8,7 @@ from asymmetry.core.fitting.fit_log import FitLog, enrich_summary_provenance
 def _record() -> dict:
     return {
         "success": True,
+        "objective": "gaussian",
         "chi_squared": 118.0,
         "reduced_chi_squared": 1.0,
         "parameters": {"A0": 0.19811, "sig": 0.05134},
@@ -68,3 +69,16 @@ def test_format_report_joins_multiple_records():
     assert "=== Run A ===" in report
     assert "=== Run B ===" in report
     assert report.endswith("\n")
+
+
+def test_poisson_log_uses_recorded_objective_and_unknown_has_no_verdict():
+    record = _record()
+    record.update(objective="poisson", quality=None, quality_reason="Sparse Poisson counts.")
+    text = FitLog().format_record(record)
+    assert "Poisson deviance/nu = 1.0000" in text
+    assert "Sparse Poisson counts." in text
+    record["objective"] = None
+    record["quality"] = {"verdict": "good"}
+    text = FitLog().format_record(record)
+    assert "Fit statistic/nu = 1.0000" in text
+    assert "[good" not in text
