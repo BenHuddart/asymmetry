@@ -18,14 +18,15 @@ Larmor relation
 
 .. math::
 
-   \nu = \frac{\gamma_\mu}{2\pi}\,B, \qquad \frac{\gamma_\mu}{2\pi} = 135.538817\ \text{MHz T}^{-1},
+   \nu = \frac{\gamma_\mu}{2\pi}\,B, \qquad \frac{\gamma_\mu}{2\pi} = 135.5388095\ \text{MHz T}^{-1},
 
-so a transverse-field spectrum can be displayed against frequency or field
+This ratio follows CODATA 2018 (see :ref:`physical-constants-api`), so a
+transverse-field spectrum can be displayed against frequency or field
 interchangeably. The unit selector above the frequency plot switches between
 **Frequency (MHz)**, **Field (G)**, and **Field (T)**; the FFT and the maximum-
 entropy reconstruction share one axis, so the same run peaks at the same field
 in either view. For a transverse field of 200 G the Larmor line sits at
-:math:`27.1` MHz, equivalently 200 G — the field axis simply relabels it.
+:math:`2.71` MHz, equivalently 200 G — the field axis simply relabels it.
 
 *When to use this.* Switch to Gauss or Tesla whenever the physics is a field —
 vortex-lattice internal-field distributions, knight shifts, applied-field

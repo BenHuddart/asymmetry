@@ -56,7 +56,6 @@ from asymmetry.core.fitting.muon_fluorine.polarization import (
     mu_f_polarization,
 )
 from asymmetry.core.fitting.muonium import (
-    VACUUM_MUONIUM_A_HF_MHZ,
     high_tf_muonium,
     high_tf_muonium_aniso,
     low_tf_muonium,
@@ -81,16 +80,13 @@ from asymmetry.core.fitting.sc.lineshape import (
     vortex_lattice_component,
     vortex_lattice_powder_component,
 )
-from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+from asymmetry.core.utils.constants import (
+    GAUSS_TO_TESLA,
+    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+    MUONIUM_VACUUM_HYPERFINE_MHZ,
+)
 
-#: MODELS keys that have no COMPONENTS entry of the same name but DO map to a
-#: component under a different (expression) name. Fit *expressions* take
-#: COMPONENTS names; these are the standalone names in
-#: :data:`asymmetry.core.fitting.models.MODELS`. Mapping each to its expression
-#: name lets the parser point a mis-typed expression at the right token — the
-#: single most-repeated discoverability miss in clean-room API testing
-#: (e.g. ``GaussianRelaxation`` used in an expression where ``Gaussian`` is
-#: required). Drift is guarded by ``tests/test_composite_unknown_component_hint``.
+#: Standalone model names mapped to expression components for parser diagnostics.
 _MODEL_NAME_TO_COMPONENT: dict[str, str] = {
     "GaussianRelaxation": "Gaussian",
     "ExponentialRelaxation": "Exponential",
@@ -1080,7 +1076,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_defaults={
             "A": 25.0,
             "field": 3000.0,
-            "A_hf": VACUUM_MUONIUM_A_HF_MHZ,
+            "A_hf": MUONIUM_VACUUM_HYPERFINE_MHZ,
             "phase": 0.0,
         },
         param_info={
@@ -1115,7 +1111,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         param_defaults={
             "A": 25.0,
             "field": 3000.0,
-            "A_hf": VACUUM_MUONIUM_A_HF_MHZ,
+            "A_hf": MUONIUM_VACUUM_HYPERFINE_MHZ,
             "D_mu": 10.0,
             "phase": 0.0,
         },
@@ -1156,7 +1152,7 @@ COMPONENTS: dict[str, ComponentDefinition] = {
             "delta_ex": 0.5,
             "tau_c": 0.1,
             "B_L": 10.0,
-            "A_hf": VACUUM_MUONIUM_A_HF_MHZ,
+            "A_hf": MUONIUM_VACUUM_HYPERFINE_MHZ,
         },
         param_info={
             "A": get_param_info("A"),

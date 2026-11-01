@@ -59,12 +59,12 @@ def test_magnetic_constants_match_codata_2018() -> None:
 
 
 def test_muon_frequency_and_field_units_match_codata_precision() -> None:
-    # The retained muon approximation differs from 2|mu_mu|/h by less than 6e-8.
+    # CODATA 2018 moment converted to cycles per microsecond per tesla.
     reference = 2 * 4.49044830e-26 / 6.62607015e-34 * 1e-6
-    assert MUON_GYROMAGNETIC_RATIO_MHZ_PER_T == pytest.approx(reference, rel=6e-8)
+    assert MUON_GYROMAGNETIC_RATIO_MHZ_PER_T == pytest.approx(reference, rel=1e-9)
     assert GAUSS_TO_TESLA == 1e-4
     assert MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA == pytest.approx(
-        0.01355388095, rel=6e-8
+        0.01355388095, rel=1e-9
     )
 
 
@@ -73,6 +73,40 @@ def test_lifetimes_match_pdg_2024_with_documented_pion_rounding() -> None:
     assert PION_LIFETIME_US == round(0.026033, 3)
 
 
-def test_muonium_default_is_a_truncation_of_the_measured_interval() -> None:
+def test_muonium_default_matches_the_measured_interval() -> None:
     # Liu et al., Phys. Rev. Lett. 82, 711 (1999): 4,463,302,765(53) Hz.
-    assert MUONIUM_VACUUM_HYPERFINE_MHZ == pytest.approx(4463.302765, abs=0.001, rel=0)
+    assert MUONIUM_VACUUM_HYPERFINE_MHZ == pytest.approx(4463.302765, rel=1e-12)
+
+
+def test_non_dipolar_consumer_values_follow_independent_references() -> None:
+    from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G
+    from asymmetry.core.fitting.sc.bcs import gap_ratio_from_mev
+    from asymmetry.core.fitting.sc.constants import lambda_nm_to_sigma_us
+
+    # London-limit conversion with independent CODATA 2018 and revised SI values.
+    gamma_mu = 2 * 4.49044830e-26 / (6.62607015e-34 / (2 * pi))
+    flux_quantum = 6.62607015e-34 / (2 * 1.602176634e-19)
+    sigma = 0.0609 * gamma_mu * flux_quantum / (200e-9) ** 2 * 1e-6
+    assert lambda_nm_to_sigma_us(200.0) == pytest.approx(sigma, rel=1e-9)
+    assert G_E_MHZ_PER_G == pytest.approx(2.802495142420715, rel=1e-12)
+    assert gap_ratio_from_mev(1.0, 10.0) == pytest.approx(
+        1.602176634e-19 / (1.380649e-23 * 1e3 * 10), rel=1e-12
+    )
+
+
+def test_mu_f_dipolar_frequencies_follow_independent_moments() -> None:
+    from asymmetry.core.fitting.muon_fluorine.dipolar import (
+        omega_d_f_f_rad_per_us,
+        omega_d_mu_f_rad_per_us,
+    )
+
+    # Stone, INDC(NDS)-0794 (2019), p. 14; CODATA 2018 h, μ_N and μ_μ.
+    h = 6.62607015e-34
+    hbar = h / (2 * pi)
+    gamma_mu = 2 * 4.49044830e-26 / hbar
+    gamma_f = 2 * 2.628321 * 5.0507837461e-27 / hbar
+    mu0_over_4pi = 1.00000000055e-7
+    expected_mu_f = mu0_over_4pi * hbar * gamma_mu * gamma_f / (1.17e-10) ** 3 * 1e-6
+    expected_f_f = mu0_over_4pi * hbar * gamma_f**2 / (2.34e-10) ** 3 * 1e-6
+    assert omega_d_mu_f_rad_per_us(1.17) == pytest.approx(expected_mu_f, rel=1e-9)
+    assert omega_d_f_f_rad_per_us(2.34) == pytest.approx(expected_f_f, rel=1e-9)

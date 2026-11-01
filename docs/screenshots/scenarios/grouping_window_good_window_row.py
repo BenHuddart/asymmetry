@@ -21,6 +21,7 @@ from PySide6.QtCore import QEventLoop, QPoint, QRect, Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 from ._base import CaptureContext, Scenario, _optimize_png, register
 
@@ -30,7 +31,6 @@ _T0_BIN = 10
 _PEAK_COUNTS = 6000.0
 _BASELINE_COUNTS = 40.0
 _N0 = 400.0
-_LIFETIME_US = 2.19703
 #: The file's own good window: offset 3 bins from t0, closing at bin 32 —
 #: distinct from the Manual offset (below) so the provenance line's "File: …"
 #: half reads differently from its "≈ … after t0" half.
@@ -54,7 +54,7 @@ def _make_two_detector_run(seed: int = 2026) -> MuonDataset:
     bins = np.arange(_N_BINS)
     tail = np.where(
         bins > _T0_BIN,
-        _N0 * np.exp(-(bins - _T0_BIN) * _BIN_WIDTH_US / _LIFETIME_US),
+        _N0 * np.exp(-(bins - _T0_BIN) * _BIN_WIDTH_US / MUON_LIFETIME_US),
         0.0,
     )
     clean = np.full(_N_BINS, _BASELINE_COUNTS, dtype=float)

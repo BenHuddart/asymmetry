@@ -18,10 +18,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.component_tags import (
-    ComputationalCost,
-    FieldGeometry,
-)
+from asymmetry.core.fitting.component_tags import ComputationalCost, FieldGeometry
 from asymmetry.core.fitting.composite import (
     COMPONENTS,
     CompositeModel,
@@ -37,7 +34,6 @@ from asymmetry.core.fitting.envelope_match import match_envelope_banks
 from asymmetry.core.fitting.legacy_product_amplitudes import fold_legacy_product_amplitude_set
 from asymmetry.core.fitting.model_comparison import bound_side
 from asymmetry.core.fitting.models import field_decoupling_threshold_gauss
-from asymmetry.core.fitting.muonium import VACUUM_MUONIUM_A_HF_MHZ
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
@@ -83,6 +79,7 @@ from asymmetry.core.fitting.wizard_scope import (
 from asymmetry.core.fitting.wizard_timing import WizardStageProgress, stage_timer
 from asymmetry.core.fourier.apodisation import ApodisationEarlySignalWarning
 from asymmetry.core.fourier.fft import fft_arrays
+from asymmetry.core.utils.constants import MUONIUM_VACUUM_HYPERFINE_MHZ
 
 # ``ComputationalCost`` is a ``str``-Enum, so ``max()``/``<`` compares members
 # alphabetically ("cheap" < "expensive" < "moderate") — wrong. Rank explicitly.
@@ -5177,7 +5174,7 @@ def _initial_parameters_for_template(
         match = (
             seed_context.best_match(("muonium_low_tf", "muonium_high_tf")) if seed_context else None
         )
-        a_hf = (match.derived("a_hf_mhz") if match else None) or VACUUM_MUONIUM_A_HF_MHZ
+        a_hf = (match.derived("a_hf_mhz") if match else None) or MUONIUM_VACUUM_HYPERFINE_MHZ
         overrides = {
             "A": amplitude,
             "A_hf": a_hf,

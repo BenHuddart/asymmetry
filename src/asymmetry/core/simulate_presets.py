@@ -28,15 +28,10 @@ from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.simulate import build_builtin_template, simulate_run
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
-# Shared rounded textbook constants — the single public authority for the
-# archetype tables. ``docs/screenshots/data/archetypes.py`` imports these so
-# the gallery presets and the documentation screenshots agree by construction.
-# They are DELIBERATELY rounded for clean textbook values and are distinct from
-# the CODATA constants in ``core/utils/constants.py`` (e.g.
-# ``MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.538817``); the unification is within
-# the rounded table, not across it.
-GAMMA_MU_MHZ_PER_G = 0.01355  # γ_μ / 2π in MHz/G
+# Rounded frequencies preserve the textbook examples' field scale in MHz/G.
+GAMMA_MU_MHZ_PER_G = round(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA, 5)
 DELTA_AG_PER_US = 0.39  # Ag nuclear dipolar width, Ch. 5
 TC_EUO_K = 69.0  # EuO Curie temperature, Ch. 6
 R_MUF_ANG = 1.17  # F-μ-F equilibrium separation, Ch. 4

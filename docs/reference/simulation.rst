@@ -52,7 +52,8 @@ Each detector in the forward group accumulates expected counts
 
 with the backward group seeing :math:`1 - a(t)`, where :math:`a(t)` is the
 chosen model (the dialog works in percent, matching the fit panel),
-:math:`\tau_\mu = 2.1969811` μs, and :math:`b` is an optional flat
+:math:`\tau_\mu = 2.1969811` μs (PDG 2024; see
+:ref:`physical-constants-api`), and :math:`b` is an optional flat
 background per bin. The α balance enters as the relative efficiency of the
 two groups — forward detectors are weighted by :math:`2\alpha/(1+\alpha)`
 and backward by :math:`2/(1+\alpha)` — so the reduction

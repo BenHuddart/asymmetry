@@ -13,7 +13,6 @@ import sys
 import sysconfig
 import tempfile
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -256,21 +255,18 @@ RETIRED_DOC_PATHS = (
 RETIRED_DOCS_BASELINE = Path("tools/baselines/retired_docs.txt")
 
 
-@dataclass(frozen=True)
-class HarnessFailure:
-    """A structural harness failure with a location and remediation hint."""
-
-    path: Path
-    line: int
-    message: str
-
-    def format(self) -> str:
-        try:
-            relpath = self.path.relative_to(ROOT)
-        except ValueError:
-            relpath = self.path
-        location = f"{relpath}:{self.line}" if self.line else str(relpath)
-        return f"{location}: {self.message}"
+# Load the stdlib-only rule module for both the script and import-by-path callers.
+_CONSTANT_SPEC = importlib.util.spec_from_file_location(
+    "asymmetry_harness_constants", ROOT / "tools" / "harness_constants.py"
+)
+assert _CONSTANT_SPEC is not None and _CONSTANT_SPEC.loader is not None
+_constant_checks = importlib.util.module_from_spec(_CONSTANT_SPEC)
+sys.modules[_CONSTANT_SPEC.name] = _constant_checks
+_CONSTANT_SPEC.loader.exec_module(_constant_checks)
+HarnessFailure = _constant_checks.HarnessFailure
+find_physical_constant_duplicate_violations = (
+    _constant_checks.find_physical_constant_duplicate_violations
+)
 
 
 def _module_matches(module: str, banned: str) -> bool:
@@ -1032,6 +1028,7 @@ def run_structural_checks() -> int:
         *find_retired_doc_violations(),
         *find_dependency_boundary_violations(),
         *find_core_boundary_violations(),
+        *find_physical_constant_duplicate_violations(),
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
         *find_axis_limit_policy_violations(),

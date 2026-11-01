@@ -54,15 +54,15 @@ from functools import lru_cache
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.signal import czt
+from scipy.signal import zoom_fft
 
-from asymmetry.core.fitting.sc.constants import FLUX_QUANTUM_WB
 from asymmetry.core.fitting.sc.models import (
     _POWDER_LAMBDA_FACTOR,
     brandt_field_width_sigma,
 )
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
+    MAGNETIC_FLUX_QUANTUM_WB,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
 )
 
@@ -116,9 +116,9 @@ def _centered_field_offsets(
             "reciprocal-lattice aliasing in the FFT field-map evaluation."
         )
     lam = lambda_eff_nm * 1.0e-9
-    xi = np.sqrt(FLUX_QUANTUM_WB / (2.0 * np.pi * Bc2_tesla))
+    xi = np.sqrt(MAGNETIC_FLUX_QUANTUM_WB / (2.0 * np.pi * Bc2_tesla))
     # Triangular FLL: area per vortex = Phi0/B0 = (sqrt(3)/2) a^2.
-    a = np.sqrt(2.0 * FLUX_QUANTUM_WB / (np.sqrt(3.0) * B0_tesla))
+    a = np.sqrt(2.0 * MAGNETIC_FLUX_QUANTUM_WB / (np.sqrt(3.0) * B0_tesla))
     a1 = np.array([a, 0.0])
     a2 = np.array([0.5 * a, np.sqrt(3.0) / 2.0 * a])
     cell = abs(a1[0] * a2[1] - a1[1] * a2[0])
@@ -293,16 +293,14 @@ def _characteristic_function(
         S_j = \sum_k w_k A^k W^{jk}, \qquad
         A = e^{i\gamma\Delta t_0}, \quad W = e^{i\gamma\Delta\,\delta t},
 
-    which is exactly a chirp z-transform of the weight vector. SciPy evaluates
-    ``X[j] = Σ_k x_k z_j^{-k}`` at ``z_j = a·w^{-j}``, i.e. ``X[j] = Σ_k x_k
-    a^{-k} w^{jk}``; matching term by term gives ``w = W = exp(+iγΔ·δt)`` and
-    ``a = A⁻¹ = exp(-iγΔ·t₀)`` — the ``t₀`` offset is absorbed entirely into the
-    czt starting point ``a``, and the ``e^{iγc₀t}`` carrier is applied afterwards
-    using the *caller's* ``t`` (not a reconstructed one), so a t-axis that is
-    uniform only to floating-point round-off stays exact in the carrier.
-    Note the ``+`` in ``w``: the physics convention here is ``e^{+iγBt}`` while
-    SciPy's z-transform convention carries the inverse power, and the two signs
-    cancel. Cost is ``O((n_bins + N_t) log(n_bins + N_t))``.
+    which is a chirp z-transform on the unit circle. SciPy's ``zoom_fft``
+    evaluates its quadratic phase directly, keeping the points on that circle;
+    repeatedly powering a rounded complex ``W`` would accumulate a radial
+    error along long time axes. The frequency interval is ``[-γΔt₀, -γΔtₙ]``
+    with sampling frequency ``2π``, because the Fourier transform uses
+    ``exp(-iωk)`` and the polarisation uses ``exp(+iγBt)``. The carrier is
+    evaluated on the caller's time axis. Cost remains
+    ``O((n_bins + N_t) log(n_bins + N_t))``.
 
     Tier 2 is used only when ``t`` is a 1-D vector of at least two points that is
     uniform within :data:`_UNIFORM_T_RTOL`, and the histogram has at least
@@ -345,8 +343,11 @@ def _horner_inner_sum(
 def _czt_inner_sum(
     weights: ArrayLikeFloat, t: ArrayLikeFloat, delta: float
 ) -> NDArray[np.complex128] | None:
-    """``Σ_k w_k z_j^k`` via ``scipy.signal.czt`` (Tier 2), or ``None`` when the
-    axis is not uniform or the transform would not pay for itself."""
+    """Evaluate the unit-circle chirp transform, or decline an unsuitable time axis.
+
+    ``scipy.signal.ZoomFFT`` avoids accumulated radial error in a rounded complex
+    step: https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.CZT.html
+    """
     n_t = t.size
     # ndim: the transform is over a single axis, and a (N, 1)-shaped ``t`` would
     # otherwise broadcast the flat czt result against the 2-D carrier into a
@@ -360,7 +361,7 @@ def _czt_inner_sum(
         return None
     phase = _TWO_PI_GAMMA * delta
     return np.asarray(
-        czt(weights, n_t, np.exp(1j * phase * step), np.exp(-1j * phase * t0)),
+        zoom_fft(weights, [-phase * t0, -phase * float(t[-1])], n_t, fs=2 * np.pi, endpoint=True),
         dtype=np.complex128,
     )
 

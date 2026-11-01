@@ -8,10 +8,10 @@ from numpy.typing import NDArray
 from asymmetry.core.utils.constants import (
     FLUORINE_19_GYROMAGNETIC_RATIO_MHZ_PER_T,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+    REDUCED_PLANCK_CONSTANT_J_S,
+    VACUUM_PERMEABILITY_OVER_4PI_H_PER_M,
 )
 
-MU_0_OVER_4PI = 1.0e-7
-HBAR_J_S = 1.054_571_817e-34
 ANGSTROM_TO_M = 1.0e-10
 RAD_PER_S_TO_RAD_PER_US = 1.0e-6
 
@@ -91,7 +91,13 @@ def omega_dipolar_rad_per_us(
 
     gamma_i = _gamma_rad_per_s_per_t(gamma_i_mhz_per_t)
     gamma_j = _gamma_rad_per_s_per_t(gamma_j_mhz_per_t)
-    omega_rad_per_s = MU_0_OVER_4PI * gamma_i * gamma_j * HBAR_J_S / (r_m**3)
+    omega_rad_per_s = (
+        VACUUM_PERMEABILITY_OVER_4PI_H_PER_M
+        * gamma_i
+        * gamma_j
+        * REDUCED_PLANCK_CONSTANT_J_S
+        / (r_m**3)
+    )
     return omega_rad_per_s * RAD_PER_S_TO_RAD_PER_US
 
 

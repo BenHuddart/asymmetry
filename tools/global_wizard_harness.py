@@ -66,6 +66,8 @@ from typing import Any
 
 import numpy as np
 
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
+
 # --------------------------------------------------------------------------- #
 # Paths / provenance
 # --------------------------------------------------------------------------- #
@@ -73,17 +75,12 @@ import numpy as np
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _BASELINE_DIR = _REPO_ROOT / "docs" / "porting" / "global-fit-wizard-efficiency" / "baseline"
 _BASELINE_PATH = _BASELINE_DIR / "exhaustive_baseline.json"
-#: Each objective's frozen verdicts. The statistical ones are the exhaustive
-#: referee's; the trend ones are the sharing ladders' own, frozen as a
-#: regression record of what the trend objective recommends on its cases.
+#: Frozen verdict files for the statistical and trend objectives.
 OBJECTIVES = ("statistical", "trend")
 _BASELINE_PATHS = {
     "statistical": _BASELINE_PATH,
     "trend": _BASELINE_DIR / "trend_baseline.json",
 }
-#: Muon lifetime (µs): counting errors grow as ``exp(t / 2τ)``.
-_MUON_LIFETIME_US = 2.197
-
 #: Schema version for the frozen baseline artifact. Bump on breaking changes.
 BASELINE_SCHEMA_VERSION = 1
 
@@ -440,7 +437,7 @@ def _build_case_datasets(case: SyntheticCase) -> list[Any]:
     time_axis = np.linspace(0.0, case.t_max, case.n_points)
     error = np.full_like(time_axis, case.noise_level)
     if case.decaying_statistics:
-        error = error * np.exp(time_axis / (2.0 * _MUON_LIFETIME_US))
+        error = error * np.exp(time_axis / (2.0 * round(MUON_LIFETIME_US, 3)))
     datasets: list[Any] = []
     for group_index in range(case.n_groups):
         params: dict[str, float] = dict(case.global_values)

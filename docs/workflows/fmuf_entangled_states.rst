@@ -40,10 +40,15 @@ single dipolar frequency
 
 .. math::
 
-   \nu_d = \frac{\mu_0\,\gamma_\mu\gamma_F\hbar}{16\pi^2\,r_{\mu F}^{3}},
+   \nu_d = \frac{\mu_0\,\gamma_\mu\gamma_F\hbar}{8\pi^2\,r_{\mu F}^{3}},
 
 which depends on nothing but the muon–fluorine distance :math:`r_{\mu F}`
-(:math:`\gamma_\mu/2\pi = 135.5` MHz T⁻¹, :math:`\gamma_F/2\pi = 40.05` MHz T⁻¹).
+(:math:`\gamma_\mu/2\pi = 135.5388095` MHz T⁻¹,
+:math:`\gamma_F/2\pi \approx 40.06924` MHz T⁻¹).
+The fluorine ratio uses the nuclear moment recommended by N. J. Stone,
+INDC(NDS)-0794 (2019), p. 14, `doi:10.61092/iaea.yjpc-cns6
+<https://doi.org/10.61092/iaea.yjpc-cns6>`_; the other constants follow
+CODATA 2018 and the revised SI (:ref:`physical-constants-api`).
 Because :math:`\nu_d \propto r_{\mu F}^{-3}`, fitting the beat frequency returns
 the bond length directly. That is the deliverable of the classic muon-school
 exercise on this dataset: *fit the F–µ–F relaxation function and derive the
