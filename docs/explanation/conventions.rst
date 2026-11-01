@@ -40,6 +40,23 @@ interface, the fitted parameters, and the exported data:
 The muon gyromagnetic ratio is taken as
 :math:`\gamma_\mu / 2\pi = 135.539` MHz/T.
 
+Physical constants
+------------------
+
+The :ref:`physical constants API <physical-constants-api>` gives
+values, units, uncertainties, and sources. Exact defining values follow the
+2019 SI; magnetic constants follow CODATA 2018, lifetimes follow PDG 2024,
+and the vacuum muonium hyperfine starting value approximates Liu et al. (1999).
+Derived SI constants use the defining values directly. This fixed reference set
+keeps calculations independent of the SciPy version installed.
+
+Approximations are labelled in the API. The muon gyromagnetic ratio retains an
+unverified approximation within six parts in a hundred million of CODATA 2018;
+the fluorine-19 ratio has an unverified source and shielding convention. The
+pion lifetime is rounded to three decimal places in μs, and the proton ratio and
+muonium interval are truncated. These precisions must be considered when
+comparing inferred fields, distances, and hyperfine intervals.
+
 .. _gaussian-width-conventions:
 
 Gaussian widths

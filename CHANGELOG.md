@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The physical constants API documents units, sources, uncertainties, and approximations,
+  and provides SI-derived constants for scripted analysis.
+
 - **``recipe --run`` starts each line where the run shows it.** At the recipe's
   frequencies and rates, every precessing term's amplitude and phase (and a
   single background) are solved by linear least squares against the run, so a
