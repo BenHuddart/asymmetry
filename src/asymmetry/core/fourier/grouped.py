@@ -254,7 +254,7 @@ def _apply_group_background_correction(
         last_good_bin=last_good_bin,
     )
     background_value = correction.values[0] if correction.values is not None else None
-    return correction.forward, bool(correction.applied), background_value
+    return correction.forward.counts, bool(correction.applied), background_value
 
 
 def build_group_signal_dataset(

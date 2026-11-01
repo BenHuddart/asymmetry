@@ -34,7 +34,9 @@ from asymmetry.core.transform.fb_counts import (
     BinWindow,
     ForwardBackwardCounts,
     GroupCounts,
+    SharedComponent,
     good_window,
+    linear_combination_variance,
 )
 from asymmetry.core.transform.grouping import (
     GroupedForwardBackward,
@@ -184,6 +186,8 @@ __all__ = [
     "resolve_binning_mode",
     "ForwardBackwardCounts",
     "GroupCounts",
+    "SharedComponent",
+    "linear_combination_variance",
     "AlignmentCrop",
     "BinWindow",
     "good_window",

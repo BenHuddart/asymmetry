@@ -22,7 +22,7 @@ from asymmetry.core.transform.asymmetry import (
     _pack_for_estimation,
     _positive_mask,
 )
-from asymmetry.core.transform.fb_counts import SubtractedBackground
+from asymmetry.core.transform.fb_counts import GroupCounts, SharedComponent
 from asymmetry.core.transform.reduce import corrected_grouped_counts
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -64,14 +64,16 @@ def test_diamagnetic_lands_on_the_minimum_of_its_objective():
     f, b, _ = _prepared_bins(forward, backward)
     grid = np.arange(0.5, 2.0, 5e-4)
     scan_minimum = grid[np.argmin([_diamagnetic_objective(a, f, b) for a in grid])]
-    ours = estimate_alpha_detailed(forward, backward, method="diamagnetic", n_bootstrap=0)
+    ours = estimate_alpha_detailed(
+        GroupCounts(forward), GroupCounts(backward), method="diamagnetic", n_bootstrap=0
+    )
     assert ours.ok
     assert abs(ours.alpha - scan_minimum) < 1.5e-3
 
 
 def test_diamagnetic_recovers_truth_on_tf_data():
     forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=3)
-    est = estimate_alpha_detailed(forward, backward, method="diamagnetic")
+    est = estimate_alpha_detailed(GroupCounts(forward), GroupCounts(backward), method="diamagnetic")
     assert est.ok
     assert est.alpha_error is not None
     # Known ~0.3% low bias inherited from WiMDA's σ(α) formula — allow for it.
@@ -83,7 +85,7 @@ def test_diamagnetic_recovers_truth_on_tf_data():
 def test_diamagnetic_profile_error_matches_bootstrap():
     """Δχ² = 1 profile width ≈ bootstrap σ (the O1 cross-check)."""
     forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=7)
-    est = estimate_alpha_detailed(forward, backward, method="diamagnetic")
+    est = estimate_alpha_detailed(GroupCounts(forward), GroupCounts(backward), method="diamagnetic")
     assert est.ok and est.alpha_error is not None
     f, b, _ = _prepared_bins(forward, backward)
     s_min = _diamagnetic_objective(est.alpha, f, b)
@@ -98,14 +100,18 @@ def test_diamagnetic_profile_error_matches_bootstrap():
 def test_diamagnetic_independent_of_display_binning_choices():
     """Packing is internal: the estimate is set by the data, not bunching."""
     forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=11)
-    base = estimate_alpha_detailed(forward, backward, method="diamagnetic", n_bootstrap=0)
+    base = estimate_alpha_detailed(
+        GroupCounts(forward), GroupCounts(backward), method="diamagnetic", n_bootstrap=0
+    )
     # Pre-bunching the input by small integer factors mimics WiMDA's coupling
     # to display bins; the estimate should barely move.
     for factor in (2, 5):
         m = (len(forward) // factor) * factor
         fb = forward[:m].reshape(-1, factor).sum(axis=1)
         bb = backward[:m].reshape(-1, factor).sum(axis=1)
-        est = estimate_alpha_detailed(fb, bb, method="diamagnetic", n_bootstrap=0)
+        est = estimate_alpha_detailed(
+            GroupCounts(fb), GroupCounts(bb), method="diamagnetic", n_bootstrap=0
+        )
         assert est.alpha == pytest.approx(base.alpha, abs=0.01)
 
 
@@ -114,7 +120,9 @@ def test_diamagnetic_independent_of_display_binning_choices():
 
 def test_general_recovers_truth_on_relaxing_lf_data():
     forward, backward = _synthetic_counts(600.0, _lf_polarization(), seed=5)
-    est = estimate_alpha_detailed(forward, backward, method="general", time_us=TIME_US)
+    est = estimate_alpha_detailed(
+        GroupCounts(forward), GroupCounts(backward), method="general", time_us=TIME_US
+    )
     assert est.ok
     assert est.alpha_error is not None
     assert est.alpha == pytest.approx(ALPHA_TRUE, abs=3 * est.alpha_error)
@@ -125,7 +133,11 @@ def test_general_unbiased_across_seeds():
     for seed in range(20):
         forward, backward = _synthetic_counts(600.0, _lf_polarization(), seed=seed)
         est = estimate_alpha_detailed(
-            forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+            GroupCounts(forward),
+            GroupCounts(backward),
+            method="general",
+            time_us=TIME_US,
+            n_bootstrap=0,
         )
         assert est.ok
         estimates.append(est.alpha)
@@ -138,7 +150,9 @@ def test_general_recovers_truth_at_realistic_statistics():
     """Divergence D14: WiMDA's scatter functional has no interior minimum at
     these statistics; the two-window flatness estimator recovers the truth."""
     forward, backward = _synthetic_counts(600.0, _lf_polarization(), seed=8)
-    est = estimate_alpha_detailed(forward, backward, method="general", time_us=TIME_US)
+    est = estimate_alpha_detailed(
+        GroupCounts(forward), GroupCounts(backward), method="general", time_us=TIME_US
+    )
     assert est.ok
     assert est.alpha == pytest.approx(ALPHA_TRUE, abs=3 * (est.alpha_error or 0.2))
 
@@ -147,14 +161,20 @@ def test_general_agrees_with_wimda_reference_at_high_statistics():
     forward, backward = _synthetic_counts(6000.0, _lf_polarization(), seed=9)
     wimda_general_alpha = 1.388  # scatter-functional minimum for this seeded run
     est = estimate_alpha_detailed(
-        forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+        GroupCounts(forward),
+        GroupCounts(backward),
+        method="general",
+        time_us=TIME_US,
+        n_bootstrap=0,
     )
     assert est.alpha == pytest.approx(wimda_general_alpha, abs=0.15)
 
 
 def test_general_fails_informatively_without_relaxation():
     forward, backward = _synthetic_counts(600.0, np.full(N_BINS, 0.8), seed=2)
-    est = estimate_alpha_detailed(forward, backward, method="general", time_us=TIME_US)
+    est = estimate_alpha_detailed(
+        GroupCounts(forward), GroupCounts(backward), method="general", time_us=TIME_US
+    )
     assert not est.ok
     assert "contrast" in est.message.lower() or "relax" in est.message.lower()
 
@@ -162,7 +182,7 @@ def test_general_fails_informatively_without_relaxation():
 def test_general_requires_time_axis():
     forward, backward = _synthetic_counts(600.0, _lf_polarization(), seed=1)
     with pytest.raises(ValueError, match="time_us"):
-        estimate_alpha_detailed(forward, backward, method="general")
+        estimate_alpha_detailed(GroupCounts(forward), GroupCounts(backward), method="general")
 
 
 # --- general: goodness gate on the lifetime assumption ------------------------
@@ -196,7 +216,11 @@ def test_general_populates_flatness_objective():
     carries the flatness chi-square of the lifetime-corrected balanced count."""
     forward, backward = _synthetic_counts(600.0, _lf_polarization(), seed=5)
     est = estimate_alpha_detailed(
-        forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+        GroupCounts(forward),
+        GroupCounts(backward),
+        method="general",
+        time_us=TIME_US,
+        n_bootstrap=0,
     )
     assert est.objective_value is not None
     assert est.objective_value > 0.0
@@ -207,7 +231,11 @@ def test_general_flatness_gate_flags_a_lifetime_mismatch():
     estimate ~10% wrong and used to come back ok=True."""
     forward, backward = _mismatched_lifetime_counts(60000.0, -0.005, seed=11)
     est = estimate_alpha_detailed(
-        forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+        GroupCounts(forward),
+        GroupCounts(backward),
+        method="general",
+        time_us=TIME_US,
+        n_bootstrap=0,
     )
     # The estimate really is wrong; the fix is that it stops claiming otherwise.
     assert abs(est.alpha / ALPHA_TRUE - 1.0) > 0.05
@@ -221,7 +249,11 @@ def test_general_flatness_gate_flags_a_mismatch_on_weak_contrast():
     by tens of per cent, which is the regime the gate exists for."""
     forward, backward = _mismatched_lifetime_counts(60000.0, -0.005, seed=17, amplitude=0.05)
     est = estimate_alpha_detailed(
-        forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+        GroupCounts(forward),
+        GroupCounts(backward),
+        method="general",
+        time_us=TIME_US,
+        n_bootstrap=0,
     )
     assert abs(est.alpha / ALPHA_TRUE - 1.0) > 0.3
     assert not est.ok
@@ -235,7 +267,11 @@ def test_general_flatness_gate_measures_the_injected_deviation():
         for seed in range(12, 17):
             forward, backward = _mismatched_lifetime_counts(60000.0, tau_fraction, seed=seed)
             est = estimate_alpha_detailed(
-                forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+                GroupCounts(forward),
+                GroupCounts(backward),
+                method="general",
+                time_us=TIME_US,
+                n_bootstrap=0,
             )
             f, b, t = _alpha_window(forward, backward, TIME_US, None, None)
             flatness = _general_flatness(f, b, t, est.alpha)
@@ -254,7 +290,11 @@ def test_general_flatness_gate_detection_rate_pins_the_tolerance():
         for seed in range(20):
             forward, backward = _mismatched_lifetime_counts(60000.0, tau_fraction, seed=seed)
             est = estimate_alpha_detailed(
-                forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+                GroupCounts(forward),
+                GroupCounts(backward),
+                method="general",
+                time_us=TIME_US,
+                n_bootstrap=0,
             )
             count += int(not est.ok)
         return count
@@ -264,7 +304,10 @@ def test_general_flatness_gate_detection_rate_pins_the_tolerance():
     clean = sum(
         int(
             not estimate_alpha_detailed(
-                *_synthetic_counts(60000.0, _lf_polarization(), seed=seed),
+                *(
+                    GroupCounts(values)
+                    for values in _synthetic_counts(60000.0, _lf_polarization(), seed=seed)
+                ),
                 method="general",
                 time_us=TIME_US,
                 n_bootstrap=0,
@@ -280,7 +323,11 @@ def test_general_flatness_gate_passes_clean_data_at_every_statistics_level():
     for rate in (60.0, 600.0, 6000.0, 60000.0):
         forward, backward = _synthetic_counts(rate, _lf_polarization(), seed=13)
         est = estimate_alpha_detailed(
-            forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+            GroupCounts(forward),
+            GroupCounts(backward),
+            method="general",
+            time_us=TIME_US,
+            n_bootstrap=0,
         )
         assert est.ok, f"clean data flagged at rate={rate}: {est.message}"
 
@@ -292,7 +339,11 @@ def test_general_flatness_gate_leaves_the_estimate_untouched():
         _mismatched_lifetime_counts(60000.0, -0.005, seed=14),
     ):
         est = estimate_alpha_detailed(
-            forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+            GroupCounts(forward),
+            GroupCounts(backward),
+            method="general",
+            time_us=TIME_US,
+            n_bootstrap=0,
         )
         f, b, t = _alpha_window(forward, backward, TIME_US, None, None)
         assert est.alpha == pytest.approx(_general_two_window_alpha(f, b, t), rel=1e-12)
@@ -303,8 +354,8 @@ def test_general_flatness_gate_says_so_when_it_cannot_run():
     than gate on noise — or, as before, say nothing at all."""
     forward, backward = _synthetic_counts(600.0, _lf_polarization(), seed=15)
     est = estimate_alpha_detailed(
-        forward,
-        backward,
+        GroupCounts(forward),
+        GroupCounts(backward),
         method="general",
         time_us=TIME_US,
         first_good_bin=0,
@@ -322,8 +373,8 @@ def test_general_flatness_gate_says_so_when_it_cannot_run():
 def test_ratio_matches_legacy_estimate_alpha():
     forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=4)
     est = estimate_alpha_detailed(
-        forward,
-        backward,
+        GroupCounts(forward),
+        GroupCounts(backward),
         method="ratio",
         first_good_bin=10,
         last_good_bin=1500,
@@ -339,9 +390,15 @@ def test_ratio_is_biased_on_relaxing_data_where_general_is_not():
     """The documented reason the General method exists: ΣF/ΣB absorbs a
     non-zero-mean polarization into alpha."""
     forward, backward = _synthetic_counts(600.0, _lf_polarization(), seed=6)
-    ratio = estimate_alpha_detailed(forward, backward, method="ratio", n_bootstrap=0)
+    ratio = estimate_alpha_detailed(
+        GroupCounts(forward), GroupCounts(backward), method="ratio", n_bootstrap=0
+    )
     general = estimate_alpha_detailed(
-        forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+        GroupCounts(forward),
+        GroupCounts(backward),
+        method="general",
+        time_us=TIME_US,
+        n_bootstrap=0,
     )
     assert abs(ratio.alpha - ALPHA_TRUE) > 0.3  # ≈ +a0·⟨P⟩ bias
     assert abs(general.alpha - ALPHA_TRUE) < 0.25
@@ -356,7 +413,11 @@ def test_bootstrap_sigma_is_calibrated():
     for seed in range(15):
         forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=seed)
         est = estimate_alpha_detailed(
-            forward, backward, method="diamagnetic", n_bootstrap=100, seed=seed
+            GroupCounts(forward),
+            GroupCounts(backward),
+            method="diamagnetic",
+            n_bootstrap=100,
+            seed=seed,
         )
         assert est.ok and est.alpha_error is not None
         values.append(est.alpha)
@@ -368,16 +429,24 @@ def test_bootstrap_sigma_is_calibrated():
 
 def test_bootstrap_is_seeded_and_reproducible():
     forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=12)
-    first = estimate_alpha_detailed(forward, backward, method="diamagnetic", seed=42)
-    second = estimate_alpha_detailed(forward, backward, method="diamagnetic", seed=42)
-    other = estimate_alpha_detailed(forward, backward, method="diamagnetic", seed=43)
+    first = estimate_alpha_detailed(
+        GroupCounts(forward), GroupCounts(backward), method="diamagnetic", seed=42
+    )
+    second = estimate_alpha_detailed(
+        GroupCounts(forward), GroupCounts(backward), method="diamagnetic", seed=42
+    )
+    other = estimate_alpha_detailed(
+        GroupCounts(forward), GroupCounts(backward), method="diamagnetic", seed=43
+    )
     assert first.alpha_error == second.alpha_error
     assert first.alpha_error != other.alpha_error
 
 
 def test_bootstrap_disabled_gives_no_error():
     forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=12)
-    est = estimate_alpha_detailed(forward, backward, method="diamagnetic", n_bootstrap=0)
+    est = estimate_alpha_detailed(
+        GroupCounts(forward), GroupCounts(backward), method="diamagnetic", n_bootstrap=0
+    )
     assert est.ok
     assert est.alpha_error is None
 
@@ -387,7 +456,9 @@ def test_bootstrap_disabled_gives_no_error():
 
 def test_unknown_method_raises():
     with pytest.raises(ValueError, match="method"):
-        estimate_alpha_detailed(np.ones(10), np.ones(10), method="nonsense")
+        estimate_alpha_detailed(
+            GroupCounts(np.ones(10)), GroupCounts(np.ones(10)), method="nonsense"
+        )
 
 
 @pytest.mark.parametrize("method", ["diamagnetic", "general", "ratio"])
@@ -397,8 +468,8 @@ def test_empty_and_zero_inputs_fail_cleanly(method):
         (np.zeros(50), np.zeros(50)),
     ):
         est = estimate_alpha_detailed(
-            forward,
-            backward,
+            GroupCounts(forward),
+            GroupCounts(backward),
             method=method,
             time_us=np.arange(len(forward), dtype=float) * 0.016,
         )
@@ -414,16 +485,16 @@ def test_good_bin_window_is_respected():
     forward_poisoned[:10] = 1e9
     forward_poisoned[1801:] = 1e9
     clean = estimate_alpha_detailed(
-        forward,
-        backward,
+        GroupCounts(forward),
+        GroupCounts(backward),
         method="diamagnetic",
         first_good_bin=10,
         last_good_bin=1800,
         n_bootstrap=0,
     )
     poisoned = estimate_alpha_detailed(
-        forward_poisoned,
-        backward,
+        GroupCounts(forward_poisoned),
+        GroupCounts(backward),
         method="diamagnetic",
         first_good_bin=10,
         last_good_bin=1800,
@@ -445,52 +516,45 @@ RATIO_ALPHA_TRUE = 1.42
 
 
 def _late_window_counts(seed: int, *, n_bkg_bins: int = 120):
-    """Late-window F/B counts with a pre-t0 baseline estimated and subtracted.
-
-    Both groups share one signal shape, so ΣF_signal/ΣB_signal is exactly
-    ``RATIO_ALPHA_TRUE`` and the ratio estimator is unbiased by construction —
-    any coverage failure is the *uncertainty*, not the value. Counts per bin are
-    small and the flat background is a sizeable fraction of them, which is the
-    regime where the two missing terms dominate.
-    """
+    """Independent background measurements and a known common signal shape."""
     rng = np.random.default_rng(seed)
     n_bins = 200
     signal_backward = np.full(n_bins, 9.0)
-    level_forward, level_backward = 6.0, 5.0
+    groups = []
+    for signal, level in ((RATIO_ALPHA_TRUE * signal_backward, 6.0), (signal_backward, 5.0)):
+        raw = rng.poisson(signal + level).astype(float)
+        background = rng.poisson(level, n_bkg_bins).astype(float)
+        estimated = float(np.mean(background))
+        variance = float(np.sum(background)) / n_bkg_bins**2
+        groups.append(
+            GroupCounts(
+                raw - estimated,
+                raw,
+                shared=(
+                    SharedComponent(
+                        "background",
+                        variance,
+                        -np.ones(n_bins),
+                        np.zeros(n_bins),
+                    ),
+                ),
+            )
+        )
+    return tuple(groups)
 
-    raw_forward = rng.poisson(RATIO_ALPHA_TRUE * signal_backward + level_forward)
-    raw_backward = rng.poisson(signal_backward + level_backward)
 
-    # The baseline is *estimated* from a separate pre-t0 window, exactly as the
-    # reduction does — so it carries its own uncertainty.
-    bkg_forward = rng.poisson(level_forward, n_bkg_bins).astype(np.float64)
-    bkg_backward = rng.poisson(level_backward, n_bkg_bins).astype(np.float64)
-    k_forward = float(np.mean(bkg_forward))
-    k_backward = float(np.mean(bkg_backward))
-
-    background = SubtractedBackground(
-        forward=k_forward,
-        backward=k_backward,
-        forward_error=float(np.sqrt(np.sum(bkg_forward)) / n_bkg_bins),
-        backward_error=float(np.sqrt(np.sum(bkg_backward)) / n_bkg_bins),
-    )
-    return (
-        raw_forward.astype(np.float64) - k_forward,
-        raw_backward.astype(np.float64) - k_backward,
-        background,
-    )
+def _signal_only_poisson(group: GroupCounts) -> GroupCounts:
+    """Deliberately miss the raw pedestal and its shared uncertainty for comparison."""
+    return GroupCounts(group.counts, np.clip(group.counts, 0.0, None))
 
 
 def _ratio_coverage(*, with_background: bool, realizations: int = 400) -> float:
     inside = 0
     for seed in range(realizations):
-        forward, backward, background = _late_window_counts(seed)
-        est = estimate_alpha_detailed(
-            forward,
-            backward,
-            method="ratio",
-            subtracted_background=background if with_background else None,
-        )
+        forward, backward = _late_window_counts(seed)
+        if not with_background:
+            forward, backward = _signal_only_poisson(forward), _signal_only_poisson(backward)
+        est = estimate_alpha_detailed(forward, backward, method="ratio")
         assert est.ok and est.alpha_error is not None
         if abs(est.alpha - RATIO_ALPHA_TRUE) <= est.alpha_error:
             inside += 1
@@ -498,13 +562,6 @@ def _ratio_coverage(*, with_background: bool, realizations: int = 400) -> float:
 
 
 def test_ratio_error_ignoring_the_subtracted_background_under_covers():
-    """Without the background terms the interval is far too narrow.
-
-    This is the reported defect, kept as an executable statement of it: the
-    nominal 68.3 % interval covers well under 60 % of realizations because both
-    the subtracted counts' Poisson variance and the baseline's own (fully
-    correlated) uncertainty are missing.
-    """
     assert _ratio_coverage(with_background=False) < 0.58
 
 
@@ -513,106 +570,67 @@ def test_ratio_error_with_the_subtracted_background_is_calibrated():
 
 
 def test_ratio_error_grows_when_the_background_is_declared():
-    forward, backward, background = _late_window_counts(seed=99)
-    naive = estimate_alpha_detailed(forward, backward, method="ratio")
-    aware = estimate_alpha_detailed(
-        forward, backward, method="ratio", subtracted_background=background
+    forward, backward = _late_window_counts(seed=99)
+    naive = estimate_alpha_detailed(
+        _signal_only_poisson(forward), _signal_only_poisson(backward), method="ratio"
     )
+    aware = estimate_alpha_detailed(forward, backward, method="ratio")
     assert naive.alpha == pytest.approx(aware.alpha, rel=1e-12)
-    assert aware.alpha_error is not None and naive.alpha_error is not None
     assert aware.alpha_error > 1.5 * naive.alpha_error
 
 
 def test_ratio_error_matches_the_closed_form_propagation():
-    """Pin the algebra: Poisson window sums plus the correlated baseline term."""
-    forward, backward, background = _late_window_counts(seed=7)
-    est = estimate_alpha_detailed(
-        forward, backward, method="ratio", subtracted_background=background
+    forward, backward = _late_window_counts(seed=7)
+    est = estimate_alpha_detailed(forward, backward, method="ratio")
+    n = forward.counts.size
+    expected_relative = sum(
+        (np.sum(group.variance) + n**2 * group.shared[0].variance) / np.sum(group.counts) ** 2
+        for group in (forward, backward)
     )
-
-    n_window = float(forward.size)
-    sum_f = float(np.sum(forward))
-    sum_b = float(np.sum(backward))
-    raw_f = sum_f + n_window * background.forward
-    raw_b = sum_b + n_window * background.backward
-    expected = est.alpha * np.sqrt(
-        raw_f / sum_f**2
-        + raw_b / sum_b**2
-        + (n_window * background.forward_error / sum_f) ** 2
-        + (n_window * background.backward_error / sum_b) ** 2
-    )
-    assert est.alpha_error == pytest.approx(expected, rel=1e-12)
+    assert est.alpha_error == pytest.approx(est.alpha * np.sqrt(expected_relative), rel=1e-12)
 
 
 def test_ratio_error_without_a_background_is_the_plain_poisson_form():
-    """The no-background answer is unchanged (α·√(1/ΣF + 1/ΣB))."""
     forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=4)
     est = estimate_alpha_detailed(
-        forward, backward, method="ratio", first_good_bin=10, last_good_bin=1500
+        GroupCounts(forward),
+        GroupCounts(backward),
+        method="ratio",
+        first_good_bin=10,
+        last_good_bin=1500,
     )
-    window_f = forward[10:1501]
-    window_b = backward[10:1501]
-    expected = est.alpha * np.sqrt(1.0 / np.sum(window_f) + 1.0 / np.sum(window_b))
+    expected = est.alpha * np.sqrt(1 / np.sum(forward[10:1501]) + 1 / np.sum(backward[10:1501]))
     assert est.alpha_error == pytest.approx(expected, rel=1e-12)
 
 
-def test_subtracted_background_is_ratio_only():
-    forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=4)
-    background = SubtractedBackground(1.0, 1.0, 0.1, 0.1)
-    with pytest.raises(ValueError, match="ratio"):
-        estimate_alpha_detailed(
-            forward, backward, method="diamagnetic", subtracted_background=background
-        )
-
-
 def test_ratio_error_is_suppressed_when_bootstrap_is_disabled():
-    forward, backward, background = _late_window_counts(seed=3)
-    est = estimate_alpha_detailed(
-        forward,
-        backward,
-        method="ratio",
-        n_bootstrap=0,
-        subtracted_background=background,
-    )
-    assert est.ok
-    assert est.alpha_error is None
+    forward, backward = _late_window_counts(seed=3)
+    est = estimate_alpha_detailed(forward, backward, method="ratio", n_bootstrap=0)
+    assert est.ok and est.alpha_error is None
 
 
-def test_corrected_counts_expose_the_subtracted_background() -> None:
-    """The reduction hands the estimator what it cannot infer from the arrays."""
-    n_bins = 400
-    t0_bin = 150
+def test_corrected_counts_carry_the_subtracted_background_uncertainty() -> None:
+    n_bins, t0_bin = 400, 150
     rng = np.random.default_rng(5)
     histograms = [
-        Histogram(
-            counts=rng.poisson(40.0, n_bins).astype(np.float64),
-            bin_width=0.016,
-            t0_bin=t0_bin,
-        )
-        for _index in range(2)
+        Histogram(rng.poisson(40.0, n_bins).astype(float), bin_width=0.016, t0_bin=t0_bin)
+        for _ in range(2)
     ]
-    grouping = {
-        "background_correction": True,
-        "background_mode": "range",
-        "background_ranges": [[10, 120], [10, 120]],
-    }
-
     corrected = corrected_grouped_counts(
         histograms=histograms,
-        grouping=grouping,
+        grouping={"background_mode": "range", "background_ranges": [[10, 120], [10, 120]]},
         forward_idx=[0],
         backward_idx=[1],
         use_deadtime=False,
         deadtime_mode="off",
         use_background=True,
     )
-
-    background = corrected.subtracted_background()
-    assert background is not None
-    assert background.forward == pytest.approx(35.0, abs=15.0)
-    # σ on a mean of n Poisson bins: √(total)/n — small but not negligible.
-    assert background.forward_error == pytest.approx(np.sqrt(background.forward / 111), rel=0.05)
-    assert background.backward_error > 0.0
+    for group, raw in zip((corrected.forward, corrected.backward), histograms):
+        expected = np.sum(raw.counts[10:121]) / 111**2
+        assert group.shared[0].variance == pytest.approx(expected, rel=1e-12)
+        np.testing.assert_allclose(
+            group.shared[0].count_covariance[10:121], raw.counts[10:121] / 111
+        )
 
 
 # --- diamagnetic systematics vs precession frequency --------------------------
@@ -640,8 +658,8 @@ def _diamagnetic_bias(
         forward = rng.poisson(alpha_true * 30.0 * decay * (1.0 + amplitude * polarization))
         backward = rng.poisson(30.0 * decay * (1.0 - amplitude * polarization))
         est = estimate_alpha_detailed(
-            forward.astype(np.float64),
-            backward.astype(np.float64),
+            GroupCounts(forward.astype(np.float64)),
+            GroupCounts(backward.astype(np.float64)),
             method="diamagnetic",
             n_bootstrap=0,
         )

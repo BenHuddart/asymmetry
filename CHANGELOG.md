@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Background-subtracted error bars scale the background-estimate uncertainty with
+  the number of merged bins and account for overlap with the estimation window.
+
 - Mismatched count arrays and reversed or out-of-range good-bin windows raise an
   error instead of being truncated or replaced by the full range.
 
@@ -23,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record bounds before allocating counts with bounded temporary read buffers.
 
 ### Changed
+
+- Integral asymmetry and detailed alpha estimation accept `GroupCounts` with shared
+  uncertainty components; reference-count subtraction returns a variance.
 
 - The grouped-count API uses validated `ForwardBackwardCounts`; `binned_fb_asymmetry`
   accepts that value with its window, variances and time grid.

@@ -76,7 +76,7 @@ class GroupingWindowCountsViewScenario(Scenario):
         # redraw of the same result, never a recompute — and flush the
         # debounced preview request the mode change above just queued.
         dialog._set_compare_stage("background")
-        dialog._preview_pane.set_view("counts")
+        dialog._preview_view_buttons["counts"].click()
         dialog._preview_pane.flush()
         _pump_events(1500)
 

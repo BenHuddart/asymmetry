@@ -29,13 +29,13 @@ selected detectors and records their shifts and terminal crop in an
 :class:`~asymmetry.core.transform.fb_counts.AlignmentCrop`.
 :func:`~asymmetry.core.transform.reduce.corrected_grouped_counts` returns a
 :class:`~asymmetry.core.transform.fb_counts.ForwardBackwardCounts` containing
-both groups, their optional independent variances, an inclusive
+both groups, their independent variances and shared components, an inclusive
 :class:`~asymmetry.core.transform.fb_counts.BinWindow`, and the time grid.
 Count arrays are owned, read-only snapshots. Background provenance records
-constant levels and their standard errors together.
+constant levels; exported standard errors derive from the shared components.
 
 .. automodule:: asymmetry.core.transform.fb_counts
-   :members: BinWindow, GroupCounts, AlignmentCrop, ForwardBackwardCounts, good_window
+   :members: BinWindow, GroupCounts, SharedComponent, AlignmentCrop, ForwardBackwardCounts, good_window, linear_combination_variance
 
 .. code-block:: python
 

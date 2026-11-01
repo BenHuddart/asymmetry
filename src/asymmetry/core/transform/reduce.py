@@ -243,8 +243,8 @@ def corrected_grouped_counts(
                 reference_backward=reference_backward,
                 reference_scale=reference_scale,
             )
-            forward = bkg_result.forward
-            backward = bkg_result.backward
+            forward_counts = bkg_result.forward
+            backward_counts = bkg_result.backward
             background_state = {"method": bkg_result.method}
             if reference_crop is not None:
                 background_state["reference_alignment"] = asdict(reference_crop)
@@ -254,8 +254,6 @@ def corrected_grouped_counts(
                         float(bkg_result.values[0]),
                         float(bkg_result.values[1]),
                     ]
-                if bkg_result.value_errors is not None:
-                    background_state["value_errors"] = list(bkg_result.value_errors)
                 if bkg_result.ranges is not None:
                     background_state["ranges"] = [
                         [int(v) for v in bkg_result.ranges[0]],
@@ -266,18 +264,9 @@ def corrected_grouped_counts(
 
         bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
         t0_time_us = common_t0_time_us(working_histograms, grouping, common_t0)
-        # Errors are only usable when background subtraction supplied both — the
-        # asymmetry's error path treats them both-or-neither.
-        forward_error = None
-        backward_error = None
-        if (
-            bkg_result is not None
-            and bkg_result.applied
-            and bkg_result.forward_error is not None
-            and bkg_result.backward_error is not None
-        ):
-            forward_error = bkg_result.forward_error
-            backward_error = bkg_result.backward_error
+        if not use_background:
+            forward_counts = GroupCounts(forward)
+            backward_counts = GroupCounts(backward)
 
         perf.detail(
             bins=n_grouped,
@@ -285,8 +274,8 @@ def corrected_grouped_counts(
             background_applied=bool(background_state),
         )
         return ForwardBackwardCounts(
-            forward=GroupCounts(forward, None if forward_error is None else forward_error**2),
-            backward=GroupCounts(backward, None if backward_error is None else backward_error**2),
+            forward=forward_counts,
+            backward=backward_counts,
             alignment=crop,
             window=window,
             bin_width_us=bin_width,

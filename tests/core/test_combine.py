@@ -401,14 +401,7 @@ def test_signed_subtract_three_runs_difference_and_variance():
 
 
 def test_two_run_reference_matches_chokepoint_all_bins():
-    """The 2-run reference path equals a direct subtract_scaled_counts, all bins.
-
-    Guards the refactor that unified the subtract loop: the sample-plus-one-
-    reference case must still produce the chokepoint's difference (exact) and
-    variance (the refactor stores the variance directly rather than the old
-    ``error*error`` √-round-trip, so they agree to floating-point), including the
-    empty-bin 1.0 sentinel — checked on *all* bins, not just populated ones.
-    """
+    """Independent reference variances agree in every bin, including empty ones."""
     from asymmetry.core.transform.background import subtract_scaled_counts
 
     a = simulate_run(_template(), _cos, total_events=3e5, seed=11)
@@ -416,23 +409,17 @@ def test_two_run_reference_matches_chokepoint_all_bins():
     scale = 0.7
     d = combine_runs([a, b], sign=-1, scales=[1.0, scale])
     for det in range(2):
-        diff, error = subtract_scaled_counts(
+        diff, variance = subtract_scaled_counts(
             a.histograms[det].counts, b.histograms[det].counts, scale
         )
         np.testing.assert_array_equal(d.histograms[det].counts, diff)
         np.testing.assert_allclose(
-            d.metadata["combination"]["detector_variance"][det], error * error, rtol=1e-12
+            d.metadata["combination"]["detector_variance"][det], variance, rtol=1e-12
         )
 
 
 def test_signed_subtract_extra_reference_empty_bin_no_sentinel():
-    """An empty reference bin adds 0 variance, not the chokepoint's 1.0 sentinel.
-
-    For runs[k>=2] the variance is taken as scaleₖ²·counts directly; reading it
-    off ``subtract_scaled_counts``'s error would fold in the empty-bin 1.0
-    sentinel for every extra reference, over-stating the variance where the
-    reference is zero.
-    """
+    """An empty extra reference contributes exactly zero Poisson variance."""
     a = simulate_run(_template(), _cos, total_events=3e5, seed=11)
     b = simulate_run(_template(), _cos, total_events=3e5, seed=22)
     c = simulate_run(_template(), _cos, total_events=3e5, seed=33)

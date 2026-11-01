@@ -94,9 +94,45 @@ def count_timing(
     return width, float(t0_time_us)
 
 
+def _count_snapshot(value: NDArray[np.float64]) -> NDArray[np.float64]:
+    owned = np.array(value, dtype=np.float64, copy=True, order="C")
+    owned.setflags(write=False)
+    return owned
+
+
+@dataclass(frozen=True)
+class SharedComponent:
+    """One shared parameter's variance, sensitivity and raw-count covariance.
+
+    For corrected counts c = r + g(θ̂ − θ), ``sensitivity`` is g and
+    ``count_covariance`` is cov(r, θ̂). Components in a group must describe
+    mutually independent parameters; all arrays use its acquisition bins.
+    """
+
+    name: str
+    variance: float
+    sensitivity: NDArray[np.float64]
+    count_covariance: NDArray[np.float64]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not self.name:
+            raise ValueError("shared count components require a name.")
+        if (
+            isinstance(self.variance, bool)
+            or not isinstance(self.variance, Real)
+            or not np.isfinite(self.variance)
+            or self.variance < 0
+        ):
+            raise ValueError("shared parameter variance must be finite and non-negative.")
+        sensitivity, covariance = validated_count_arrays(self.sensitivity, self.count_covariance)
+        object.__setattr__(self, "variance", float(self.variance))
+        object.__setattr__(self, "sensitivity", _count_snapshot(sensitivity))
+        object.__setattr__(self, "count_covariance", _count_snapshot(covariance))
+
+
 @dataclass(frozen=True)
 class GroupCounts:
-    """One grouped count record with optional independent per-bin variance.
+    """Grouped counts with independent variance and shared parameter components.
 
     ``variance=None`` denotes the Poisson count model. Arrays are copied and
     read-only, so changing an input buffer cannot invalidate the checked shape.
@@ -104,16 +140,99 @@ class GroupCounts:
 
     counts: NDArray[np.float64]
     variance: NDArray[np.float64] | None = None
+    shared: tuple[SharedComponent, ...] = ()
 
     def __post_init__(self) -> None:
         arrays = (self.counts,) if self.variance is None else (self.counts, self.variance)
         values = validated_count_arrays(*arrays)
         if self.variance is not None and np.any(values[1] < 0):
             raise ValueError("count variance must be non-negative.")
+        shared = tuple(self.shared)
+        if self.variance is None and shared:
+            raise ValueError("shared corrections require explicit independent count variance.")
+        if any(not isinstance(component, SharedComponent) for component in shared):
+            raise ValueError("shared count corrections require SharedComponent values.")
+        if any(component.sensitivity.shape != values[0].shape for component in shared):
+            raise ValueError("shared count components must have the count shape.")
+        if len({component.name for component in shared}) != len(shared):
+            raise ValueError("shared count components must have distinct names.")
+        if shared:
+            positive = values[1] > 0
+            normalized = []
+            for component in shared:
+                covariance = component.count_covariance
+                if np.any(covariance[~positive] != 0) or (
+                    component.variance == 0 and np.any(covariance != 0)
+                ):
+                    raise ValueError("shared count covariance requires non-zero source variance.")
+                if component.variance > 0:
+                    normalized.append(
+                        covariance[positive]
+                        / np.sqrt(values[1][positive])
+                        / np.sqrt(component.variance)
+                    )
+            if normalized:
+                influence = np.column_stack(normalized)
+                # Normalising by each parameter's σ makes the joint covariance
+                # test invariant to the units chosen for counts or parameters.
+                residual = np.eye(len(normalized)) - influence.T @ influence
+                if not np.all(np.isfinite(residual)) or np.linalg.eigvalsh(residual)[0] < (
+                    -64 * np.finfo(float).eps * len(normalized)
+                ):
+                    raise ValueError(
+                        "shared components require a positive-semidefinite joint covariance."
+                    )
         for name, value in zip(("counts", "variance"), values):
-            owned = np.array(value, dtype=np.float64, copy=True, order="C")
-            owned.setflags(write=False)
-            object.__setattr__(self, name, owned)
+            object.__setattr__(self, name, _count_snapshot(value))
+        object.__setattr__(self, "shared", shared)
+
+
+def linear_combination_variance(
+    group: GroupCounts, edges: ArrayLike, weights: ArrayLike | None = None
+) -> NDArray[np.float64]:
+    """Variance of each weighted bin sum, including estimation-window overlap.
+
+    For coefficients a, each shared parameter adds (Σag)² var(θ̂) +
+    2(Σag)(Σa cov(r, θ̂)) to the independent Poisson term Σa²v. Edges
+    select half-open acquisition-bin intervals; weights cover the whole group.
+    """
+    bounds = np.asarray(edges)
+    if (
+        bounds.ndim != 1
+        or bounds.dtype.kind not in "iu"
+        or bounds.size < 2
+        or bounds[0] < 0
+        or bounds[-1] > group.counts.size
+        or np.any(bounds[1:] <= bounds[:-1])
+    ):
+        raise ValueError("variance edges must be increasing integer bounds within the count shape.")
+    coefficients = np.ones(group.counts.size) if weights is None else np.asarray(weights)
+    if coefficients.shape != group.counts.shape:
+        raise ValueError("variance weights must have the count shape.")
+    (coefficients,) = validated_count_arrays(coefficients)
+    bounds = np.asarray(bounds, dtype=np.intp)
+    window = slice(int(bounds[0]), int(bounds[-1]))
+    starts = bounds[:-1] - bounds[0]
+    v = group.counts if group.variance is None else group.variance
+    if np.any(v < 0):
+        raise ValueError(
+            "Poisson count variance requires non-negative counts or explicit variance."
+        )
+    result = np.add.reduceat((coefficients**2 * v)[window], starts)
+    magnitude = result.copy()
+    for component in group.shared:
+        sensitivity = np.add.reduceat((coefficients * component.sensitivity)[window], starts)
+        covariance = np.add.reduceat((coefficients * component.count_covariance)[window], starts)
+        shared_variance = sensitivity**2 * component.variance
+        overlap = 2 * sensitivity * covariance
+        result += shared_variance + overlap
+        magnitude += shared_variance + np.abs(overlap)
+    tolerance = 32 * np.finfo(np.float64).eps * magnitude
+    if not np.all(np.isfinite(result)):
+        raise ValueError("count linear-combination variance is not finite.")
+    if np.any(result < -tolerance):
+        raise ValueError("count covariance gives a negative linear-combination variance.")
+    return np.maximum(result, 0.0)
 
 
 @dataclass(frozen=True)
@@ -146,22 +265,12 @@ class AlignmentCrop:
 
 
 @dataclass(frozen=True)
-class SubtractedBackground:
-    """Subtracted constant count levels and their standard errors per raw bin."""
-
-    forward: float
-    backward: float
-    forward_error: float
-    backward_error: float
-
-
-@dataclass(frozen=True)
 class ForwardBackwardCounts:
     """Aligned forward/backward counts with one validated window and time grid.
 
     ``alignment`` owns the common t0 bin; ``t0_time_us`` preserves any sub-bin
-    residual. Background provenance is a snapshot, with its constant levels and
-    standard errors stored once under ``values`` and ``value_errors``.
+    residual. Background provenance stores its constant levels; standard errors
+    are exported from the shared count components.
     """
 
     forward: GroupCounts
@@ -193,16 +302,13 @@ class ForwardBackwardCounts:
         object.__setattr__(self, "t0_time_us", t0)
         state = None if self.background_state is None else deepcopy(dict(self.background_state))
         if state is not None:
-            if ("values" in state) != ("value_errors" in state):
-                raise ValueError("constant background levels and errors must be present together.")
+            if "value_errors" in state:
+                raise ValueError("background standard errors derive from shared count components.")
             if "values" in state:
-                levels, uncertainty = validated_count_arrays(state["values"], state["value_errors"])
-                if levels.size != 2 or np.any(uncertainty < 0):
-                    raise ValueError(
-                        "background provenance requires two levels and non-negative errors."
-                    )
+                (levels,) = validated_count_arrays(state["values"])
+                if levels.size != 2:
+                    raise ValueError("background provenance requires two constant levels.")
                 state["values"] = tuple(float(value) for value in levels)
-                state["value_errors"] = tuple(float(value) for value in uncertainty)
         object.__setattr__(
             self, "background_state", None if state is None else MappingProxyType(state)
         )
@@ -214,7 +320,18 @@ class ForwardBackwardCounts:
         state = deepcopy(dict(self.background_state))
         if "values" in state:
             state["values"] = list(state["values"])
-            state["value_errors"] = list(state["value_errors"])
+            state["value_errors"] = [
+                float(
+                    np.sqrt(
+                        sum(
+                            component.variance
+                            for component in group.shared
+                            if component.name == "background"
+                        )
+                    )
+                )
+                for group in (self.forward, self.backward)
+            ]
         return state
 
     @property
@@ -227,11 +344,3 @@ class ForwardBackwardCounts:
             return None
         forward, backward = self.background_state["values"]
         return float(forward), float(backward)
-
-    def subtracted_background(self) -> SubtractedBackground | None:
-        """Read the constant background needed by integral and α uncertainty propagation."""
-        if self.background_level is None:
-            return None
-        forward, backward = self.background_level
-        forward_error, backward_error = self.background_state["value_errors"]
-        return SubtractedBackground(forward, backward, float(forward_error), float(backward_error))

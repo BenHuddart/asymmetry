@@ -23,8 +23,6 @@ import threading
 import numpy as np
 import pytest
 
-from tests.counts import aligned_counts
-
 pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -35,6 +33,10 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.project.profiles import GroupingProfile, ProfileFingerprint
 from asymmetry.core.transform import (
+    AlignmentCrop,
+    BinWindow,
+    ForwardBackwardCounts,
+    GroupCounts,
     apply_grouped_background_correction,
     apply_grouping_aligned,
     binned_fb_asymmetry,
@@ -406,36 +408,30 @@ def _replay_reduction(
     backward = apply_grouping_aligned(working, backward_idx, common_t0_bin=common_t0)
     n = min(len(forward), len(backward))
     forward, backward = forward[:n], backward[:n]
-    f_err = b_err = None
-    bw = float(working[0].bin_width)
+    width = float(working[0].bin_width)
+    first_good = max(0, int(grouping.get("first_good_bin", 0)))
     last_good = int(grouping.get("last_good_bin", n - 1))
+    f_counts, b_counts = GroupCounts(forward), GroupCounts(backward)
     if use_background:
-        res = apply_grouped_background_correction(
+        result = apply_grouped_background_correction(
             forward,
             backward,
             grouping=grouping,
             t0_bin=common_t0,
-            bin_width_us=bw,
+            bin_width_us=width,
             facility=facility,
             last_good_bin=last_good,
         )
-        forward, backward = res.forward, res.backward
-        if res.applied and res.forward_error is not None and res.backward_error is not None:
-            f_err, b_err = res.forward_error, res.backward_error
-    t, a, e = binned_fb_asymmetry(
-        aligned_counts(
-            forward,
-            backward,
-            common_t0=common_t0,
-            bin_width_us=bw,
-            first_good_bin=max(0, int(grouping.get("first_good_bin", 0))),
-            last_good_bin=last_good,
-            forward_error=f_err,
-            backward_error=b_err,
-        ),
-        grouping=grouping,
-        alpha=alpha,
+        f_counts, b_counts = result.forward, result.backward
+    counts = ForwardBackwardCounts(
+        f_counts,
+        b_counts,
+        (common_t0 + 0.5) * width,
+        width,
+        BinWindow(first_good, last_good),
+        AlignmentCrop(common_t0, (), (n, n), n),
     )
+    t, a, e = binned_fb_asymmetry(counts, grouping=grouping, alpha=alpha)
     return t, a * 100.0, e * 100.0
 
 

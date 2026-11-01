@@ -118,16 +118,16 @@ def test_tail_fit_explicit_window():
 def test_subtract_scaled_counts_algebra():
     counts = np.array([100.0, 50.0, 10.0])
     reference = np.array([20.0, 10.0, 4.0])
-    corrected, errors = subtract_scaled_counts(counts, reference, 2.0)
+    corrected, variance = subtract_scaled_counts(counts, reference, 2.0)
     assert corrected == pytest.approx([60.0, 30.0, 2.0])
-    assert errors == pytest.approx(np.sqrt([180.0, 90.0, 26.0]))
+    assert variance == pytest.approx([180.0, 90.0, 26.0])
 
 
 def test_subtract_scaled_counts_self_subtraction():
     counts = np.array([100.0, 50.0, 10.0])
-    corrected, errors = subtract_scaled_counts(counts, counts, 1.0)
+    corrected, variance = subtract_scaled_counts(counts, counts, 1.0)
     assert corrected == pytest.approx([0.0, 0.0, 0.0])
-    assert errors == pytest.approx(np.sqrt(2.0 * counts))
+    assert variance == pytest.approx(2.0 * counts)
 
 
 def test_subtract_scaled_counts_rejects_different_shapes():
@@ -169,7 +169,7 @@ def test_dispatch_tail_fit_populates_details():
     )
     assert result.applied
     assert result.method == "tail_fit"
-    assert result.forward_error is not None
+    assert result.forward.shared
     assert result.details is not None
     assert result.details["forward_rate_per_us"] == pytest.approx(
         result.details["backward_rate_per_us"]
@@ -193,7 +193,7 @@ def test_dispatch_reference_run():
     )
     assert result.applied
     assert result.method == "reference_run"
-    assert result.forward == pytest.approx([60.0, 30.0, 2.0])
+    assert result.forward.counts == pytest.approx([60.0, 30.0, 2.0])
     assert result.details == {"scale": 2.0}
 
 
@@ -232,7 +232,7 @@ def test_legacy_fixed_and_range_paths_unchanged():
         bin_width_us=BIN_WIDTH_US,
     )
     assert fixed.applied and fixed.method == "fixed"
-    assert fixed.forward == pytest.approx(counts - 5.0)
+    assert fixed.forward.counts == pytest.approx(counts - 5.0)
 
     ranged = apply_grouped_background_correction(
         counts,
@@ -274,7 +274,7 @@ def test_explicit_fixed_mode_without_values_does_not_fall_through_to_range():
     )
     assert not result.applied
     assert result.method == "missing_fixed_values"
-    np.testing.assert_array_equal(result.forward, counts)
+    np.testing.assert_array_equal(result.forward.counts, counts)
 
 
 def test_fourier_group_path_honours_injected_values_under_explicit_range_mode():
