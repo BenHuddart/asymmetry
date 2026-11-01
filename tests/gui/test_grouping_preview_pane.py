@@ -1,19 +1,4 @@
-"""Live asymmetry preview pane for the grouping editor.
-
-Covers the pane's behaviour end-to-end: it populates for a synthetic run, an
-edit (and specifically an alpha change) recomputes and visibly changes the curve
-data, the reduction error path is muted rather than crashing, and a
-histogram-less dataset hides the pane with a note. Also pins that the core
-reduction the pane shares with MainWindow (:func:`reduce_grouped_asymmetry`) is
-bit-identical to a from-scratch replay of the documented counts-then-ratio
-pipeline, so the extraction never forks the numerics.
-
-The TaskRunner-based flow is driven deterministically the same way
-``test_gui_tasks.py`` does: a real nested event loop is pumped until the
-background reduction lands (``QTest.qWait`` / a ``QEventLoop`` guarded by a
-timeout, both fine offscreen). The pane's ``flush()`` bypasses the 300 ms
-debounce so tests do not wait on wall-clock.
-"""
+"""Preview numerics, worker isolation, and interactive view preservation."""
 
 from __future__ import annotations
 
@@ -482,7 +467,7 @@ def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication)
     try:
         dataset = _histogram_dataset()
         grouping = dataset.run.grouping
-        mw_time, mw_asym, mw_err, mw_dt, _bkg = window._reduce_grouped_histograms_to_asymmetry(
+        mw_time, mw_asym, mw_err, mw_corrections = window._reduce_grouped_histograms_to_asymmetry(
             histograms=dataset.run.histograms,
             grouping=grouping,
             dataset=dataset,
@@ -508,7 +493,7 @@ def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication)
         np.testing.assert_array_equal(mw_time, core.time)
         np.testing.assert_array_equal(mw_asym, core.asymmetry)
         np.testing.assert_array_equal(mw_err, core.error)
-        assert mw_dt == (core.corrections.deadtime.status == "applied")
+        assert mw_corrections == core.corrections
     finally:
         window.close()
 
@@ -544,9 +529,9 @@ def test_profile_request_resolves_on_worker_thread_only(
         call_threads: list[int] = []
         real_resolve = preview_pane_module.resolve_effective_grouping
 
-        def spy(profile: GroupingProfile, run: Run) -> dict:
+        def spy(profile: GroupingProfile, run: Run, **kwargs) -> dict:
             call_threads.append(threading.get_ident())
-            return real_resolve(profile, run)
+            return real_resolve(profile, run, **kwargs)
 
         monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
         pane.request_preview_from_profile(profile=_draft_profile(), run=dataset.run, facts=_facts())
@@ -570,9 +555,9 @@ def test_profile_is_snapshotted_against_later_edits(
         seen_profiles: list[GroupingProfile] = []
         real_resolve = preview_pane_module.resolve_effective_grouping
 
-        def spy(profile: GroupingProfile, run: Run) -> dict:
+        def spy(profile: GroupingProfile, run: Run, **kwargs) -> dict:
             seen_profiles.append(profile)
-            return real_resolve(profile, run)
+            return real_resolve(profile, run, **kwargs)
 
         monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
         draft = _draft_profile()
@@ -599,10 +584,10 @@ def test_profile_request_burst_coalesces_resolves(
         call_count = 0
         real_resolve = preview_pane_module.resolve_effective_grouping
 
-        def spy(profile: GroupingProfile, run: Run) -> dict:
+        def spy(profile: GroupingProfile, run: Run, **kwargs) -> dict:
             nonlocal call_count
             call_count += 1
-            return real_resolve(profile, run)
+            return real_resolve(profile, run, **kwargs)
 
         monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
         for _ in range(10):
@@ -1165,7 +1150,7 @@ def test_view_switch_redraws_without_dispatching_the_worker(
     pane = GroupingPreviewPane()
     try:
         result = _draw_result(pane)
-        pane._last_result = result
+        pane._state = result
         started: list[object] = []
         monkeypatch.setattr(pane._tasks, "start", lambda *a, **k: started.append(a))
 
@@ -1186,7 +1171,7 @@ def test_view_switch_drops_the_user_view(qapp: QApplication) -> None:
     pane = GroupingPreviewPane()
     try:
         result = _draw_result(pane)
-        pane._last_result = result
+        pane._state = result
         pane._user_view = ((0.2, 0.4), (-0.5, 0.5))
 
         pane.set_view("counts")
@@ -1505,7 +1490,7 @@ def test_user_view_survives_redraw_until_home(qapp: QApplication) -> None:
         assert pane._axes.get_xlim() == pytest.approx((0.2, 0.4))
         assert pane._axes.get_ylim() == pytest.approx((-0.5, 0.5))
 
-        pane._last_result = result
+        pane._state = result
         pane._on_home_triggered()
         assert pane._user_view is None
         assert pane._axes.get_ylim() == pytest.approx(auto_ylim)

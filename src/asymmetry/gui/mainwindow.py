@@ -280,7 +280,9 @@ from asymmetry.core.transform import (
 )
 from asymmetry.core.transform.corrections import (
     BackgroundReference,
+    CorrectionOutcomes,
     CorrectionStatus,
+    background_grouping_metadata,
 )
 from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
@@ -4731,7 +4733,7 @@ class MainWindow(QMainWindow):
             if run_numbers is not None and int(dataset.run_number) not in run_numbers:
                 continue
             try:
-                applied, dt_applied = self._apply_grouping_settings_to_dataset(
+                applied, outcomes = self._apply_grouping_settings_to_dataset(
                     dataset, grouping_result
                 )
             except (ValueError, OSError) as exc:
@@ -4750,21 +4752,16 @@ class MainWindow(QMainWindow):
             if profile_result is not None:
                 # The run follows the profile just saved: record the assignment.
                 self._assign_dataset_profile(dataset, profile_result["profile"].name)
-            if use_deadtime and not dt_applied:
-                deadtime_missing += 1
-            if dt_applied:
-                deadtime_applied += 1
-            if use_background:
-                grouping = dataset.run.grouping if dataset.run is not None else {}
-                if isinstance(grouping, dict) and grouping.get("background_method") in {
-                    "estimated",
-                    "fixed",
-                    "tail_fit",
-                    "reference_run",
-                }:
-                    background_applied += 1
-                else:
-                    background_missing += 1
+            dt_applied = all(
+                item.deadtime.status == CorrectionStatus.APPLIED for item in outcomes.values()
+            )
+            deadtime_applied += int(dt_applied)
+            deadtime_missing += int(use_deadtime and not dt_applied)
+            bg_applied = all(
+                item.background.status == CorrectionStatus.APPLIED for item in outcomes.values()
+            )
+            background_applied += int(use_background and bg_applied)
+            background_missing += int(use_background and not bg_applied)
 
             if dataset is self._current_dataset:
                 self._fit_panel.set_dataset(self._single_fit_dataset(dataset))
@@ -5607,17 +5604,11 @@ class MainWindow(QMainWindow):
 
     def _apply_grouping_settings_to_dataset(
         self, dataset, grouping_result: dict
-    ) -> tuple[bool, bool]:
-        """Apply grouping settings to one dataset and recompute asymmetry.
-
-        Returns
-        -------
-        tuple[bool, bool]
-            ``(applied, deadtime_applied)``.
-        """
+    ) -> tuple[bool, dict[str, CorrectionOutcomes]]:
+        """Apply atomically, returning success and each period's correction outcomes."""
         run = dataset.run
         if run is None:
-            return False, False
+            return False, {}
         # Grouping is about to be (re)written for this run; drop its cached
         # reductions up front. The recipe key already embeds the digest (so a
         # stale entry can never hit), but this removes the dead entries early —
@@ -5644,7 +5635,7 @@ class MainWindow(QMainWindow):
             forward_gid = int(grouping_result.get("forward_group", 1))
             backward_gid = int(grouping_result.get("backward_group", 2))
         except (TypeError, ValueError):
-            return False, False
+            return False, {}
 
         group_names_for_axis = grouping_result.get("group_names")
         if not isinstance(group_names_for_axis, dict) and isinstance(existing_grouping, dict):
@@ -5895,15 +5886,16 @@ class MainWindow(QMainWindow):
             else:
                 run.grouping.pop("instrument", None)
             self._preserve_per_run_normalisers(run.grouping, existing_grouping, grouping_result)
-            return True, False
+            dataset.metadata.pop("correction_error", None)
+            return True, {str(period_mode): CorrectionOutcomes()}
 
         if not groups:
-            return False, False
+            return False, {}
         # Empty after filtering to present, non-excluded detectors: the group
         # contributes no counts, so an F-B asymmetry cannot be formed (e.g. a
         # Longitudinal preset's backward ring on a forward-ring-only file).
         if not forward_idx or not backward_idx:
-            return False, False
+            return False, {}
 
         grouping = dict(existing_grouping)
 
@@ -6024,8 +6016,7 @@ class MainWindow(QMainWindow):
             and len(reduction_grouping.get("period_histograms", [])) == 2
         )
 
-        background_state: dict[str, object] | None = None
-        dt_applied = False
+        outcomes: dict[str, CorrectionOutcomes] = {}
         time_axis: np.ndarray
         asymmetry: np.ndarray
         error: np.ndarray
@@ -6044,7 +6035,7 @@ class MainWindow(QMainWindow):
                 reduction_grouping,
                 period_index=1,
             )
-            red_time, red_asym, red_err, red_dt, red_background = (
+            red_time, red_asym, red_err, red_corrections = (
                 self._reduce_grouped_histograms_to_asymmetry(
                     histograms=red_histograms,
                     grouping=red_grouping,
@@ -6058,7 +6049,7 @@ class MainWindow(QMainWindow):
                     use_background=use_background,
                 )
             )
-            green_time, green_asym, green_err, green_dt, green_background = (
+            green_time, green_asym, green_err, green_corrections = (
                 self._reduce_grouped_histograms_to_asymmetry(
                     histograms=green_histograms,
                     grouping=green_grouping,
@@ -6082,19 +6073,8 @@ class MainWindow(QMainWindow):
                 period_mode,
             )
             if len(time_axis) == 0:
-                return False, bool(red_dt and green_dt)
-            dt_applied = bool(red_dt and green_dt)
-            if use_background:
-                if red_background == green_background:
-                    background_state = red_background
-                else:
-                    method = None
-                    for state in (green_background, red_background):
-                        if isinstance(state, dict) and isinstance(state.get("method"), str):
-                            method = str(state.get("method"))
-                            break
-                    if method:
-                        background_state = {"method": method}
+                return False, {}
+            outcomes = {"red": red_corrections, "green": green_corrections}
         else:
             period_index = 1 if period_mode == str(PeriodMode.GREEN) else 0
             selected_histograms, selected_grouping = self._period_histograms_for_mode(
@@ -6102,20 +6082,19 @@ class MainWindow(QMainWindow):
                 reduction_grouping,
                 period_index=period_index,
             )
-            time_axis, asymmetry, error, dt_applied, background_state = (
-                self._reduce_grouped_histograms_to_asymmetry(
-                    histograms=selected_histograms,
-                    grouping=selected_grouping,
-                    dataset=dataset,
-                    run=run,
-                    forward_idx=forward_idx,
-                    backward_idx=backward_idx,
-                    alpha=run_alpha,
-                    use_deadtime=use_deadtime,
-                    deadtime_mode=deadtime_mode,
-                    use_background=use_background,
-                )
+            time_axis, asymmetry, error, corrections = self._reduce_grouped_histograms_to_asymmetry(
+                histograms=selected_histograms,
+                grouping=selected_grouping,
+                dataset=dataset,
+                run=run,
+                forward_idx=forward_idx,
+                backward_idx=backward_idx,
+                alpha=run_alpha,
+                use_deadtime=use_deadtime,
+                deadtime_mode=deadtime_mode,
+                use_background=use_background,
             )
+            outcomes = {str(period_mode): corrections}
             if has_two_period_histograms and period_mode in {
                 str(PeriodMode.RED),
                 str(PeriodMode.GREEN),
@@ -6125,52 +6104,9 @@ class MainWindow(QMainWindow):
                 if isinstance(selected_grouping.get("dead_time_us"), list):
                     grouping["dead_time_us"] = list(selected_grouping.get("dead_time_us", []))
 
-        if use_background:
-            if isinstance(background_state, dict) and isinstance(
-                background_state.get("method"), str
-            ):
-                grouping["background_method"] = str(background_state.get("method"))
-            else:
-                grouping.pop("background_method", None)
-            values = background_state.get("values") if isinstance(background_state, dict) else None
-            if isinstance(values, list) and len(values) == 2:
-                grouping["background_values"] = [float(values[0]), float(values[1])]
-            else:
-                grouping.pop("background_values", None)
-            ranges = background_state.get("ranges") if isinstance(background_state, dict) else None
-            if isinstance(ranges, list) and len(ranges) == 2:
-                grouping["background_ranges"] = [
-                    [int(v) for v in ranges[0]],
-                    [int(v) for v in ranges[1]],
-                ]
-            details = (
-                background_state.get("details") if isinstance(background_state, dict) else None
-            )
-            if isinstance(details, dict) and details:
-                grouping["background_details"] = dict(details)
-            else:
-                grouping.pop("background_details", None)
-            method = (
-                str(background_state.get("method", ""))
-                if isinstance(background_state, dict)
-                else ""
-            )
-            if method in {
-                "missing_reference",
-                "missing_fixed_values",
-                "tail_fit_failed",
-                "invalid_range",
-                "none",
-            }:
-                self.statusBar().showMessage(
-                    f"Background correction NOT applied to run {run.run_number} "
-                    f"({method.replace('_', ' ')}).",
-                    8000,
-                )
-        else:
-            grouping.pop("background_method", None)
-            grouping.pop("background_values", None)
-            grouping.pop("background_details", None)
+        for key in ("background_method", "background_values", "background_details"):
+            grouping.pop(key, None)
+        grouping.update(background_grouping_metadata(outcomes))
 
         # binned_fb_asymmetry already applied the good window and the
         # binning (fixed bunching included) inside the reduction.
@@ -6229,7 +6165,8 @@ class MainWindow(QMainWindow):
         else:
             grouping.pop("instrument", None)
         run.grouping = grouping
-        return True, dt_applied
+        dataset.metadata.pop("correction_error", None)
+        return True, outcomes
 
     def _period_histograms_for_mode(
         self,
@@ -6259,7 +6196,7 @@ class MainWindow(QMainWindow):
         use_deadtime: bool,
         deadtime_mode: str,
         use_background: bool,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool, dict[str, object] | None]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, CorrectionOutcomes]:
         """Return reduced grouped asymmetry arrays for one histogram source.
 
         Thin GUI wrapper over the Qt-free
@@ -6300,8 +6237,7 @@ class MainWindow(QMainWindow):
             result.time,
             result.asymmetry,
             result.error,
-            result.corrections.deadtime.status == CorrectionStatus.APPLIED,
-            result.corrections.background.to_dict()["effective"],
+            result.corrections,
         )
 
     def _counts_first_rebunched_arrays(
@@ -6421,7 +6357,7 @@ class MainWindow(QMainWindow):
                 reduction_grouping,
                 period_index=period_index,
             )
-            time_axis, asymmetry, error, _dt_applied, _background_state = (
+            time_axis, asymmetry, error, _corrections = (
                 self._reduce_grouped_histograms_to_asymmetry(
                     histograms=selected_histograms,
                     grouping=selected_grouping,
@@ -6640,6 +6576,14 @@ class MainWindow(QMainWindow):
 
     def _on_export_fit_report(self) -> None:
         """Write a human-readable report of every dataset's latest fit to a file."""
+        errors = [
+            f"Run {dataset.run_number}: {dataset.metadata['correction_error']}"
+            for dataset in self._data_browser.get_all_datasets()
+            if dataset.metadata.get("correction_error")
+        ]
+        if errors:
+            QMessageBox.warning(self, "Corrections incomplete", "\n".join(errors))
+            return
         records = self._collect_latest_fit_records()
         if not records:
             self._log_panel.log("No fits to export.")
@@ -16484,7 +16428,7 @@ class MainWindow(QMainWindow):
         the crop's own ``fit_range`` stamp (see ``PlotPanel.get_fit_dataset``)
         re-applied afterwards, since the source dataset never carries it.
         """
-        if dataset is None:
+        if dataset is None or dataset.metadata.get("correction_error") is not None:
             return None
         snapshot = self._frame_snapshot(dataset) if projection in ROTATED_PROJECTIONS else None
         if projection in ROTATED_PROJECTIONS and snapshot is None:
@@ -17883,8 +17827,12 @@ class MainWindow(QMainWindow):
                     # ``profile``. A dataset with neither — or whose assigned
                     # name no longer resolves — follows the default profile of
                     # its fingerprint, if any.
+                    requested_grouping = ds_info.get("grouping_overrides")
+                    if not isinstance(requested_grouping, dict):
+                        requested_grouping = None
+                    requested_profile_name = ds_info.get("profile")
                     try:
-                        profile_name = ds_info.get("profile")
+                        profile_name = requested_profile_name
                         grouping_overrides = ds_info.get("grouping_overrides")
                         if isinstance(grouping_overrides, dict):
                             # Heal the persisted per-run override against the fresh run
@@ -17895,7 +17843,8 @@ class MainWindow(QMainWindow):
                             )
                             if heal_note:
                                 self._log_panel.log(heal_note, tag="grouping")
-                            self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
+                            requested_grouping = grouping_overrides
+                            self._apply_grouping_settings_to_dataset(dataset, requested_grouping)
                             dataset.metadata["grouping_overrides"] = True
                             if profile_name:
                                 self._assign_dataset_profile(dataset, str(profile_name))
@@ -17906,8 +17855,9 @@ class MainWindow(QMainWindow):
                                     str(profile_name), dataset.run
                                 )
                                 if resolved_grouping is not None:
+                                    requested_grouping = resolved_grouping
                                     self._apply_grouping_settings_to_dataset(
-                                        dataset, resolved_grouping
+                                        dataset, requested_grouping
                                     )
                                     followed_name = str(profile_name)
                             if followed_name is None:
@@ -17916,6 +17866,7 @@ class MainWindow(QMainWindow):
                                 )
                                 if inherited is not None:
                                     run = dataset.run
+                                    requested_profile_name = inherited.name
                                     resolved_grouping = resolve_effective_grouping(
                                         inherited,
                                         run,
@@ -17923,8 +17874,9 @@ class MainWindow(QMainWindow):
                                             self._resolve_background_reference(g, r)
                                         ),
                                     )
+                                    requested_grouping = resolved_grouping
                                     self._apply_grouping_settings_to_dataset(
-                                        dataset, resolved_grouping
+                                        dataset, requested_grouping
                                     )
                                     followed_name = inherited.name
                             if followed_name is not None:
@@ -17932,8 +17884,17 @@ class MainWindow(QMainWindow):
                                 self._assign_dataset_profile(dataset, followed_name)
 
                     except (ValueError, OSError) as exc:
-                        dataset.run.grouping["deadtime_correction"] = False
-                        self._log_panel.log(f"Run {dataset.run_number}: {exc}", tag="grouping")
+                        if requested_grouping is not None and dataset.run is not None:
+                            dataset.run.grouping = dict(dataset.run.grouping) | requested_grouping
+                        if isinstance(ds_info.get("grouping_overrides"), dict):
+                            dataset.metadata["grouping_overrides"] = True
+                        if requested_profile_name is not None:
+                            self._assign_dataset_profile(dataset, str(requested_profile_name))
+                        dataset.metadata["correction_error"] = str(exc)
+                        self._log_panel.log(
+                            f"Run {dataset.run_number}: Corrections incomplete: {exc}",
+                            tag="grouping",
+                        )
 
                     self._data_browser.add_dataset(dataset)
                     loaded_run_numbers.add(dataset.run_number)

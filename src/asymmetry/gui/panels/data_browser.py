@@ -1,64 +1,6 @@
-"""Data browser / logbook panel with dataset grouping support.
+"""Display runs and logbook fields over ProjectModel's group membership.
 
-Navigation map
---------------
-~4.4k lines. Small support classes precede the main panel:
-``NumericTableWidgetItem`` (numeric-aware sort ordering), ``ExtraColumn``
-(dataclass backing user-added-column state), ``FilterDialog`` (per-column value
-filter popup), and ``_RowHighlightDelegate`` (two-line comment/period-note cell
-rendering and series highlight painting). Data-group state is no longer a
-GUI-local dataclass: the canonical registry lives in
-:class:`~asymmetry.core.representation.project_model.ProjectModel.data_groups`
-(D6) and the panel is a view/controller over it (``collapsed`` stays panel-local
-view state). The bulk of the module is
-``DataBrowserPanel(QWidget)``, whose methods cluster thematically (no
-section-comment markers in source):
-
-- **Construction / layout** — ``__init__``, ``_build_add_field_rail``,
-  ``_build_add_field_menu``.
-- **Batched mutation** — ``batch_updates`` (context manager) /
-  ``_flush_batch_updates``: wrap any loop that adds datasets in
-  ``batch_updates()`` to avoid an O(n^2) per-add table rebuild.
-- **Dataset and group lifecycle** — ``add_dataset``, ``create_data_group``,
-  ``ungroup``, ``add_runs_to_group``/``remove_runs_from_group``,
-  ``_rebuild_table`` (the full-table repaint driven by the above).
-- **Extra / custom columns** — ``add_extra_column``, ``add_custom_column``,
-  ``add_angle_column``, ``rename_extra_column``, ``remove_extra_column``, and
-  the value resolution helpers (``_value_for_extra_column``,
-  ``_raw_value_for_column``, ``_resolve_run_info_value``).
-- **Temperature/field-from-log resolution** — ``set_use_temperature_from_log``,
-  ``_temperature_for_display``/``_field_for_display`` and their
-  per-dataset-override counterparts; these back the browser's log-derived
-  vs. manual T/B display toggle.
-- **Selection and lookup** — ``select_runs``, ``get_selected_datasets``,
-  ``get_current_dataset``, ``get_group_member_run_numbers``,
-  ``displayed_coordinate`` (resolves the active x-axis coordinate for a run).
-- **Table chrome** — column resize/fit (``_resize_columns_to_content``,
-  ``_fit_title_column``), sorting (``_sort_table``,
-  ``sort_by_run_number_if_unordered``), filtering (``_open_filter_dialog``,
-  ``_row_visible_by_filters``/``_apply_row_visibility``), and context menus
-  (``_create_table_context_menu``, ``_open_header_context_menu``).
-- **Run arithmetic** — co-add (``_coadd_selected``/``_coadd_datasets``),
-  reference subtraction (``_subtract_reference_run``/``_subtract_datasets``),
-  and signed subtraction (``_signed_subtract_selected``/
-  ``_signed_subtract_datasets``), each producing a derived dataset tracked via
-  ``_store_combined_reduction``/``_separate_combined``. The interactive
-  actions run the heavy combine+reduce on a background ``TaskRunner``
-  (``_start_combine``, single-flight, shut down via ``shutdown_workers``);
-  the programmatic paths (``add_combined_dataset``,
-  ``rebuild_combined_dataset``) stay synchronous — project restore depends
-  on completed-when-returned semantics.
-- **Logbook export** — ``render_logbook_tsv``/``export_logbook_tsv`` and the
-  RTF equivalents (``render_logbook_rtf``/``export_logbook_rtf``).
-- **State I/O** — ``get_state``/``restore_state`` at the end serialize the
-  panel-local view state (group ``collapsed`` flags + display order, extra
-  columns, per-dataset log-source overrides). Group *definitions* (name,
-  members, kind, order) round-trip through ``ProjectModel.data_groups``, not
-  ``browser_state``.
-
-Entry points GUI callers use most: ``add_dataset``/``batch_updates`` to
-populate, ``get_selected_datasets``/``get_current_dataset`` to read
-selection, ``get_state``/``restore_state`` for project persistence.
+Collapsed rows are local view state.
 """
 
 from __future__ import annotations
@@ -521,11 +463,7 @@ class _RowHighlightDelegate(QStyledItemDelegate):
 
     @classmethod
     def _cell_second_line(cls, index) -> str:
-        """Return the Title cell's muted second line: badge, comment, period cue.
-
-        The badge leads: it states what the row *is* (an excluded run, D2),
-        which outranks the run's own comment when the cell has to elide.
-        """
+        """Put the state badge before comments and period cues when eliding."""
         parts = [
             part
             for part in (
@@ -2050,8 +1988,7 @@ class DataBrowserPanel(QWidget):
         comment = str(meta.get("comment", ""))
         title_item = QTableWidgetItem(title)
         title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        # The comment and a multi-period cue render as the cell's second line
-        # (see _RowHighlightDelegate); a buried 2nd period is otherwise invisible.
+        # State, comments, and period cues share the Title cell's second line.
         title_item.setData(_COMMENT_ROLE, comment)
         period_note = self._period_note(dataset)
         period_tip = (
@@ -2060,15 +1997,24 @@ class DataBrowserPanel(QWidget):
             if period_note is not None
             else ""
         )
-        tooltip_parts = [part for part in (title, comment, period_tip) if part]
+        correction_error = meta.get("correction_error")
+        tooltip_parts = [part for part in (title, comment, period_tip, correction_error) if part]
         if period_note is not None:
             title_item.setData(_PERIOD_ROLE, period_note)
-        if excluded:
-            title_item.setData(_BADGE_ROLE, _EXCLUDED_BADGE)
+        badge = " · ".join(
+            part
+            for part in (
+                _EXCLUDED_BADGE if excluded else "",
+                "Corrections incomplete" if correction_error else "",
+            )
+            if part
+        )
+        if badge:
+            title_item.setData(_BADGE_ROLE, badge)
         if tooltip_parts:
             title_item.setToolTip("\n".join(tooltip_parts))
         self._table.setItem(row, 1, title_item)
-        if comment.strip() or period_note is not None or excluded:
+        if comment.strip() or period_note is not None or badge:
             self._table.setRowHeight(row, self._two_line_row_height())
 
         provenance_tip = self._derived_run_tooltip(meta)

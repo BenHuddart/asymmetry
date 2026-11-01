@@ -590,15 +590,21 @@ is preserved without re-running the Grouping dialog.
     Optional per-detector deadtime values in microseconds, read from formats
     that provide NeXus-style deadtime metadata.
 
+On restore, correction outcomes are recomputed from the saved request. A run
+whose requested correction cannot be applied stays in the project with its
+request intact and a "Corrections incomplete" badge. Fits and data, plot and
+fit-report exports refuse while the run is incomplete. A successful **Apply**
+clears the error. The project stores the request, rather than a second copy of
+the effective correction outcome.
+
 ``background_correction``
     Boolean; whether grouped-count background subtraction is active.
 
 ``background_method``
     Optional string set after grouping is applied. ``"fixed"`` means explicit
     forward/backward background values were used. ``"estimated"`` means the
-    values were calculated from background bin ranges. ``"invalid_range"``
-    means background correction was requested but not applied because the range
-    was outside the grouped data.
+    values were calculated from background bin ranges. Unavailable or failed
+    corrections prevent Apply; invalid ranges raise an input error.
 
 ``background_ranges``
     Optional inclusive background-bin ranges for forward and backward grouped

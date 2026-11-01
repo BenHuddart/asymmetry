@@ -1345,6 +1345,7 @@ class GroupingDialog(QDialog):
         self._apply_btn.setAutoDefault(False)
         self._apply_btn.setDefault(False)
         self._apply_btn.clicked.connect(self._on_apply)
+        self._preview_pane.preview_changed.connect(self._update_apply_enabled)
 
         bottom_bar = QHBoxLayout()
         bottom_bar.addStretch()
@@ -3737,6 +3738,11 @@ class GroupingDialog(QDialog):
 
     def _on_apply(self) -> None:
         """Validate form values before accepting the dialog."""
+        if not self._preview_pane.corrections_complete:
+            QMessageBox.warning(
+                self, "Corrections incomplete", self._preview_pane._incomplete_banner.text()
+            )
+            return
         t0_bin, t_good_offset, first_good_bin, last_good_bin = (
             self._resolve_good_bin_limits_from_controls()
         )
@@ -4241,26 +4247,8 @@ class GroupingDialog(QDialog):
         return False
 
     def _refresh_preview(self, *args: object) -> None:
-        """Recompute the live asymmetry preview for the draft + preview run.
-
-        Builds a throwaway draft profile from the live form payload (cheap
-        widget reads, without mutating ``self._draft`` or its dirty state) and
-        hands it to the pane, which debounces, then resolves it against the
-        preview run AND reduces on its worker thread. Resolution — a full
-        per-detector t0 scan under an ``auto_detect`` policy, group sums under a
-        per-run alpha estimate — must never run here: this slot fires per
-        keystroke/click from nearly every form control. Any error is swallowed
-        or surfaced as a muted status message rather than a popup — the preview
-        is advisory. Datasets without raw histograms (co-added curves) make the
-        pane hide itself with a note.
-        """
-        # The detected line reads the live analysis groups (its file baseline
-        # moves with them), so it rides the same per-edit seam. It is a cache
-        # read plus an O(detectors) assessment — the scan itself is debounced
-        # onto a worker.
+        """Snapshot form inputs; profile resolution and reduction run on the worker."""
         self._refresh_t0_line()
-        # Same seam, same cost class: the good-window line reads the two spins
-        # and the run's good-bin tables.
         self._refresh_good_window_line()
         pane = getattr(self, "_preview_pane", None)
         if pane is None:
@@ -4276,8 +4264,18 @@ class GroupingDialog(QDialog):
             profile = profile_from_form_payload(
                 payload, name=self._draft_name, fingerprint=self._fingerprint, active=True
             )
-        except Exception:  # noqa: BLE001 — advisory preview, never crash the dialog
-            pane.show_unavailable()
+            reference = None
+            if payload.get("background_mode") == "reference_run" and isinstance(
+                payload.get("background_run"), dict
+            ):
+                reference = resolve_background_reference(
+                    payload["background_run"],
+                    sample_good_frames=good_frames(run.grouping, default=0.0) or None,
+                    datasets=self._fingerprint_datasets(),
+                    allow_file=False,
+                )
+        except (ValueError, OSError) as exc:
+            pane.show_error(str(exc))
             return
         metadata: dict[str, Any] = {}
         metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
@@ -4297,6 +4295,7 @@ class GroupingDialog(QDialog):
             facility=facility,
             facts=self._preview_facts(payload),
             compare_stage=self._compare_stage,
+            resolved_reference=reference,
         )
 
     def _preview_facts(self, payload: dict[str, Any]) -> PreviewFacts:
@@ -4349,24 +4348,23 @@ class GroupingDialog(QDialog):
         return self._current_default_name() != self._stored_default_name()
 
     def _update_apply_enabled(self) -> None:
-        """Enable/label Apply, showing the blast radius of everything dirty.
-
-        Apply commits the profile to every run following it plus each dirty
-        override to its own run. The label shows the pending override count when
-        any override is dirty ("Apply (profile + 2 overrides)"). Apply is
-        disabled only when there is nothing to commit: no run follows the
-        profile, no override has pending edits, and no structural change
-        (reassignment, rename, deletion, new profile, moved default) waits.
-        """
+        """Apply requires pending changes and a complete preview."""
         followers = self._scope_panel.runs_following(self._draft_name)
         pending = self._pending_override_runs()
-        enabled = bool(followers) or bool(pending) or self._has_structural_changes()
+        enabled = (
+            bool(followers) or bool(pending) or self._has_structural_changes()
+        ) and self._preview_pane.corrections_complete
         self._apply_btn.setEnabled(enabled)
         if pending:
             noun = "override" if len(pending) == 1 else "overrides"
             self._apply_btn.setText(f"Apply (profile + {len(pending)} {noun})")
         else:
             self._apply_btn.setText("Apply")
+        if not self._preview_pane.corrections_complete:
+            self._apply_btn.setToolTip(
+                "Corrections incomplete: resolve the preview error before applying."
+            )
+            return
         if not enabled:
             self._apply_btn.setToolTip(
                 "No run of this instrument follows this profile (all released "

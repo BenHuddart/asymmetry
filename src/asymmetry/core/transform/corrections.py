@@ -11,7 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.data.dataset import Histogram, MuonDataset
 
 
 class CorrectionStatus(StrEnum):
@@ -158,3 +158,36 @@ class BackgroundReference:
         object.__setattr__(self, "source_file", Path(self.source_file).name)
         if not isfinite(self.scale) or self.scale <= 0:
             raise ValueError("reference background scale must be finite and positive")
+
+
+def require_complete_dataset(dataset: MuonDataset) -> None:
+    """Reject arrays whose requested correction could not be restored or applied."""
+    reason = dataset.metadata.get("correction_error")
+    if reason is not None:
+        raise CorrectionUnavailableError(
+            f"Run {dataset.run_number}: Corrections incomplete: {reason}"
+        )
+
+
+def background_grouping_metadata(outcomes: Mapping[str, CorrectionOutcomes]) -> dict[str, Any]:
+    """Derive legacy background display values without changing request settings."""
+    applied = {
+        period: item.background.to_dict()["effective"]
+        for period, item in outcomes.items()
+        if item.background.status == CorrectionStatus.APPLIED
+    }
+    if not applied:
+        return {}
+    methods = {item["method"] for item in applied.values()}
+    result = {"background_method": next(iter(methods)) if len(methods) == 1 else "per_period"}
+    records = list(applied.values())
+    levels = records[0].get("values")
+    if levels is not None and all(item.get("values") == levels for item in records):
+        result["background_values"] = levels
+    if len(records) == 1:
+        details = records[0].get("details", {})
+        if details:
+            result["background_details"] = details
+    else:
+        result["background_details"] = {"periods": applied}
+    return result

@@ -29,6 +29,7 @@ from asymmetry.core.project import load_project, save_project
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
 from asymmetry.core.transform.asymmetry import compute_asymmetry
+from asymmetry.core.transform.corrections import CorrectionOutcomes
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.styles import tokens
@@ -3833,10 +3834,11 @@ class TestMainWindowBasic:
         applied, dt_applied = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert applied is True
-        assert dt_applied is False
+        assert all(item.deadtime.status == "off" for item in dt_applied.values())
         assert dataset.run.grouping["background_method"] == "estimated"
         assert dataset.run.grouping["background_values"] == pytest.approx([10.0, 20.0])
-        assert dataset.run.grouping["background_ranges"] == [[0, 1], [0, 1]]
+        assert dataset.run.grouping["background_range"] == [0, 1]
+        assert "background_ranges" not in dataset.run.grouping
         np.testing.assert_allclose(dataset.asymmetry, [20.0, 20.0])
         expected_error = (
             2.0
@@ -4807,7 +4809,7 @@ class TestMainWindowBasic:
         applied, deadtime_applied = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert applied is True
-        assert deadtime_applied is True
+        assert all(item.deadtime.status == "applied" for item in deadtime_applied.values())
         assert dataset.run is not None
         assert dataset.run.grouping["deadtime_correction"] is True
         assert dataset.run.grouping["deadtime_mode"] == "manual"
@@ -5005,7 +5007,7 @@ class TestMainWindowBasic:
 
         def _unexpected_apply(*_args, **_kwargs):
             calls["apply"] += 1
-            return True, False
+            return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _unexpected_apply)
 
@@ -5662,7 +5664,7 @@ class TestMainWindowBasic:
         def _stub_apply(dataset, payload):
             assert int(dataset.run_number) == 7002
             applied_payloads.append(payload)
-            return True, False
+            return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
 
@@ -5699,7 +5701,7 @@ class TestMainWindowBasic:
         def _stub_apply(dataset, payload):
             assert int(dataset.run_number) == 7004
             applied_payloads.append(payload)
-            return True, False
+            return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
 
@@ -5750,7 +5752,7 @@ class TestMainWindowBasic:
 
         def _stub_apply(dataset, payload):
             applied_payloads.append(payload)
-            return True, False
+            return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
 
@@ -5776,7 +5778,7 @@ class TestMainWindowBasic:
 
         def _stub_apply(_dataset, _payload):
             call_count["n"] += 1
-            return True, False
+            return True, {"red": CorrectionOutcomes()}
 
         monkeypatch.setattr(mainwindow, "_apply_grouping_settings_to_dataset", _stub_apply)
 
@@ -5956,10 +5958,8 @@ class TestMainWindowBasic:
         mainwindow._data_browser.add_dataset(ds1)
         mainwindow._data_browser.add_dataset(ds2)
         mainwindow._current_dataset = ds1
-        if hasattr(mainwindow._plot_panel, "is_overlay_enabled"):
-            mainwindow._plot_panel.is_overlay_enabled = lambda: True
-        if hasattr(mainwindow._plot_panel, "get_current_polarization_axis"):
-            mainwindow._plot_panel.get_current_polarization_axis = lambda: None
+        mainwindow._plot_panel.is_overlay_enabled = lambda: True
+        mainwindow._plot_panel.get_current_polarization_axis = lambda: None
 
         class _StubGroupingDialog:
             class DialogCode:
@@ -5989,7 +5989,7 @@ class TestMainWindowBasic:
         monkeypatch.setattr(
             mainwindow,
             "_apply_grouping_settings_to_dataset",
-            lambda _dataset, _payload: (True, False),
+            lambda _dataset, _payload: (True, {"red": CorrectionOutcomes()}),
         )
         monkeypatch.setattr(mainwindow._data_browser, "_rebuild_table", lambda: None)
         monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
@@ -6494,7 +6494,7 @@ class TestPerRunGoodFramesNormaliser:
         )
 
         assert applied is True
-        assert deadtime_applied is True
+        assert all(item.deadtime.status == "applied" for item in deadtime_applied.values())
         assert dataset.run is not None
         # The run keeps its own normaliser, not the template's.
         assert dataset.run.grouping["good_frames"] == pytest.approx(1_395_561.0)
@@ -6918,8 +6918,7 @@ class TestBackgroundModesReduction:
 
 
 class TestReductionSettingsPersistence:
-    """Review fix: the new grouping keys survive non-dialog apply flows and
-    round-trip through the project extractor."""
+    """Reduction requests survive non-dialog apply and project extraction."""
 
     NEW_KEYS = {
         "background_mode": "tail_fit",

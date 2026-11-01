@@ -28,6 +28,7 @@ from asymmetry.core.fitting.member_quality import MemberQuality, assess_member_q
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
 from asymmetry.core.fitting.process_pool import map_when_a_pool_pays, open_spawn_pool
 from asymmetry.core.fitting.series_seeding import recommend_series_seeding
+from asymmetry.core.transform.corrections import require_complete_dataset
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
@@ -100,16 +101,10 @@ def normalize_to_grouped_contract(
     model: CompositeModel,
     base_values: dict[str, float] | None = None,
 ) -> dict[str, float]:
-    """Force a model's parameters to the normalised-polarisation contract.
+    """Fix physics amplitudes to one and backgrounds to zero for grouped fits.
 
-    The grouped time-domain fit (and the multi-group *simulation* that mirrors
-    it) reserve the overall scale for the per-group amplitude and the constant
-    background for the per-group ``N0``, so the shared model must be a
-    unit-amplitude, zero-baseline polarisation: amplitude parameters fixed at
-    ``1`` and background parameters fixed at ``0``. Returns ``base_values`` (a
-    copy, defaulting to ``{}``) with those parameters overridden — the single
-    definition of the contract, used by both the fit seed cache and the
-    multi-group simulate dialog.
+    The per-group nuisance block owns the count scale and constant background.
+    Return a copy of the supplied values with those model kinds normalised.
     """
     values = dict(base_values or {})
     for name, kind in model.parameter_kinds().items():
@@ -277,6 +272,7 @@ def _count_group_context(
     group_specs: list[tuple[int, list[int]]],
 ) -> _CountGroupContext:
     """Prepare the shared count-build context over the given detector groups."""
+    require_complete_dataset(dataset)
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
     prepared_histograms, _ = prepare_histograms_with_deadtime(
         list(run.histograms),
