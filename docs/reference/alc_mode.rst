@@ -236,6 +236,57 @@ background to the raw scan in a single call. The ``model`` argument is flexible:
   defaults; ``parameters`` is a full :class:`~asymmetry.core.fitting.ParameterSet`.
   The two are mutually exclusive — pass one or the other, not both.
 
+For baseline-first inference in scripts, retain the baseline result and pass it
+to :func:`~asymmetry.core.fitting.fit_scan_peaks`:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import fit_scan_baseline, fit_scan_peaks
+
+   baseline = fit_scan_baseline(scan, [(0, 25), (75, 100)], model="Linear")
+   peaks = fit_scan_peaks(baseline, "GaussianLCR",
+                          initial={"f": -0.02, "B0": 50, "Bwid": 4})
+   amplitude_error = peaks.uncertainties["f"]
+
+``baseline.corrected.error`` contains the marginal propagated standard
+uncertainties. Its points are correlated: the complete matrix is
+``baseline.corrected_covariance``. Fitting that curve with diagonal errors alone
+does not propagate the baseline correctly. ``peaks.fit`` retains the conditional
+Minuit result; ``peaks.covariance`` and ``peaks.uncertainties`` include the baseline.
+``peaks.effective_dof`` is the expected residual sum of squares under the
+linearised model, used by ``peaks.reduced_chi_squared``.
+
+.. dropdown:: Baseline-first covariance in the API
+
+   Write the source covariance as :math:`\Sigma=\operatorname{diag}(\sigma_i^2)`.
+   With baseline Jacobian :math:`X`, fitted covariance :math:`V_b`, region
+   selection :math:`S`, and baseline weights :math:`W_S`, the correction is
+   :math:`R=I-XV_bX_S^T W_S S`. The corrected covariance is
+   :math:`C=R\Sigma R^T`. This includes correlation with observations used to
+   estimate the baseline; overlap can reduce marginal uncertainties.
+
+   For peak Jacobian :math:`J`, weights :math:`W`, and
+   :math:`L=(J^TWJ)^{-1}J^TW`, the reported covariance is
+   :math:`V=V_c+L(C-\Sigma)L^T`, where :math:`V_c` is the conditional Minuit
+   covariance. This additive correction preserves Minuit's covariance when the
+   baseline is fixed. It is the linear two-stage estimating-equation correction
+   [Murphy1985]_ [Stefanski2002]_; nonlinear peak fits use first-order propagation.
+   Rank-deficient peak Jacobians, missing fit covariances, or non-positive-
+   semidefinite propagated covariances raise an explicit error.
+
+   Parameter-model fits apply a floor of half the median positive point error
+   when constructing weights. Propagation uses those same weights, with the
+   stated source errors in :math:`\Sigma`. When the floor is active, the
+   conditional Minuit covariance is an approximation to sampling uncertainty.
+
+   The expected residual statistic is
+   :math:`\operatorname{tr}(WM\Sigma M^T)` with :math:`M=(I-JL)R`.
+   It need not equal the number of points minus the number of peak parameters.
+   The baseline model and regions are held fixed. The baseline must describe the
+   signal across the peak and its fitting regions must exclude resonance signal;
+   covariance propagation cannot remove bias from peak tails in those regions.
+   Calibration uncertainty and uncertainty in baseline-model choice are excluded.
+
 Single resonance:
 
 .. code-block:: python
@@ -501,8 +552,13 @@ Common pitfalls
   dragging a handle marks the fit stale on purpose; press **Fit baseline** (and
   then **Fit peaks**) again.
 
-Further reading
----------------
+References
+----------
+
+.. [Murphy1985] K. M. Murphy and R. H. Topel, J. Bus. Econ. Stat. **3**, 370 (1985),
+   https://doi.org/10.1080/07350015.1985.10509471.
+.. [Stefanski2002] L. A. Stefanski and D. D. Boos, Am. Stat. **56**, 29 (2002),
+   https://doi.org/10.1198/000313002753631330.
 
 * F. L. Pratt, WiMDA: a muon data analysis program for the Windows PC,
   Physica B **289–290**, 710 (2000). — the count-integral ALC this mode follows.

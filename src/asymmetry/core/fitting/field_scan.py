@@ -6,15 +6,8 @@ parameter-model machinery — the same `fit_parameter_model` /
 `ParameterCompositeModel` engine the trending panel uses — so no new fitter is
 introduced.
 
-This module provides the two-step ALC workflow chosen for the GUI port (see
-``docs/porting/time-integral-asymmetry/implementation-options.md``):
-
-1. :func:`fit_scan_baseline` — fit a baseline (Linear/Constant/…) over the
-   user-marked **non-resonant regions**, then subtract it to yield a corrected
-   scan. This mirrors Mantid's "Baseline modelling" step.
-2. :func:`fit_scan_model` — fit a peak (e.g. ``GaussianLCR``, centred at the
-   resonance field) to the corrected scan, reading off the resonance position
-   and width. This mirrors Mantid's "Peak fitting" step.
+The baseline-first workflow fits non-resonant regions, subtracts the fitted
+baseline, and propagates its uncertainty into subsequent peak inference.
 
 Scale: a :class:`FieldScan`'s ``value``/``error`` are the integral asymmetry **as
 a fraction** (``A ∈ [-1, 1]`` — see its ``units`` field), *not* the percent of a
@@ -40,7 +33,7 @@ whatever component is supplied.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from numpy.typing import NDArray
@@ -49,6 +42,7 @@ from asymmetry.core.fitting.parameter_models import (
     ParameterCompositeModel,
     ParameterModelFitResult,
     fit_parameter_model,
+    stabilized_point_errors,
     suggest_model_seeds,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -59,6 +53,8 @@ __all__ = [
     "as_composite_model",
     "fit_scan_model",
     "fit_scan_baseline",
+    "fit_scan_peaks",
+    "ScanPeakFit",
     "fit_rf_resonance",
     "rf_resonance_seeds",
     "ScanBaselineResult",
@@ -219,20 +215,149 @@ def fit_rf_resonance(
     )
 
 
-@dataclass
+@dataclass(frozen=True)
 class ScanBaselineResult:
-    """Outcome of fitting + subtracting a baseline from a field scan."""
+    """Baseline estimate and first-order correction of independent scan errors.
 
-    baseline: NDArray[np.float64]
-    corrected: FieldScan
+    The correction operator includes the covariance between the baseline
+    estimate and observations in its fitting regions. Marginal errors alone
+    do not describe the correlations in ``corrected_covariance``.
+    """
+
+    scan: FieldScan
     model: ParameterCompositeModel
-    regions: list[tuple[float, float]]
+    regions: tuple[tuple[float, float], ...]
     fit: ParameterModelFitResult
-    n_points: int
 
     @property
     def success(self) -> bool:
         return bool(self.fit.success)
+
+    @property
+    def selection(self) -> NDArray[np.bool_]:
+        mask = np.zeros(self.scan.x.size, dtype=bool)
+        for lo, hi in self.regions:
+            mask |= (self.scan.x >= lo) & (self.scan.x <= hi)
+        return (
+            mask
+            & np.isfinite(self.scan.value)
+            & np.isfinite(self.scan.error)
+            & (self.scan.error > 0)
+        )
+
+    @property
+    def n_points(self) -> int:
+        return int(np.count_nonzero(self.selection))
+
+    @property
+    def baseline(self) -> NDArray[np.float64]:
+        return _evaluate_model(self.model, self.fit.parameters, self.scan.x)
+
+    @property
+    def correction_operator(self) -> NDArray[np.float64]:
+        names, covariance = _fit_covariance(self.fit)
+        design = _model_jacobian(self.model, self.fit.parameters, self.scan.x, names, covariance)
+        mask = self.selection
+        weights = stabilized_point_errors(self.scan.error[mask]) ** -2
+        operator = np.eye(self.scan.x.size)
+        operator[:, mask] -= design @ covariance @ (design[mask].T * weights)
+        return operator
+
+    @property
+    def corrected_covariance(self) -> NDArray[np.float64]:
+        residual = self.correction_operator * self.scan.error
+        return residual @ residual.T
+
+    @property
+    def corrected(self) -> FieldScan:
+        return replace(
+            self.scan,
+            value=self.scan.value - self.baseline,
+            error=np.sqrt(np.diag(self.corrected_covariance)),
+            y_label=self.scan.y_label.removesuffix(" (baseline-subtracted)")
+            + " (baseline-subtracted)",
+        )
+
+
+@dataclass(frozen=True)
+class ScanPeakFit:
+    """Two-stage peak estimator with baseline-propagated covariance.
+
+    ``fit`` retains the conditional Minuit result, weighted by source errors.
+    The propagated covariance is first order, conditional on the chosen
+    baseline model and regions; it does not account for peak leakage or bias.
+    """
+
+    fit: ParameterModelFitResult
+    covariance: tuple[list[str], list[list[float]]]
+    effective_dof: float
+
+    @property
+    def uncertainties(self) -> dict[str, float]:
+        names, matrix = self.covariance
+        return dict(zip(names, np.sqrt(np.diag(matrix)), strict=True))
+
+    @property
+    def reduced_chi_squared(self) -> float:
+        return self.fit.chi_squared / self.effective_dof if self.effective_dof > 0 else float("nan")
+
+
+def fit_scan_peaks(
+    baseline: ScanBaselineResult,
+    model: str | list[str] | ParameterCompositeModel,
+    *,
+    parameters: ParameterSet | None = None,
+    initial: dict[str, float] | None = None,
+    extra_starts: int = 0,
+) -> ScanPeakFit:
+    """Fit peaks after subtraction, propagating the estimated baseline.
+
+    Uses independent source scan errors for Gaussian least squares. Following
+    two-stage estimating-equation propagation (Murphy & Topel, JBES 3, 370,
+    1985), the covariance adds the baseline correction to the conditional
+    Minuit covariance. The fixed-baseline limit preserves that covariance.
+    """
+    scan = baseline.scan
+    if not (
+        np.all(np.isfinite(scan.x))
+        and np.all(np.isfinite(scan.value))
+        and np.all(np.isfinite(scan.error))
+        and np.all(scan.error > 0)
+    ):
+        raise ValueError(
+            "Peak propagation requires finite observations and positive source errors."
+        )
+    composite = as_composite_model(model)
+    corrected = replace(scan, value=scan.value - baseline.baseline)
+    fit = fit_scan_model(
+        corrected, composite, parameters=parameters, initial=initial, extra_starts=extra_starts
+    )
+    names, conditional = _fit_covariance(fit)
+    jacobian = _model_jacobian(composite, fit.parameters, scan.x, names, conditional)
+    errors = stabilized_point_errors(scan.error)
+    weighted = jacobian / errors[:, None]
+    # Column scaling keeps polynomial/peak parameters with different units
+    # numerically comparable when solving the normal equations.
+    scales = np.linalg.norm(weighted, axis=0)
+    if np.any(scales == 0):
+        raise ValueError("Peak Jacobian must have full column rank.")
+    normalised = weighted / scales
+    if np.linalg.matrix_rank(normalised) != len(names):
+        raise ValueError("Peak Jacobian must have full column rank.")
+    influence = np.linalg.solve(normalised.T @ normalised, normalised.T)
+    influence = influence / scales[:, None] / errors
+    corrected_covariance = baseline.corrected_covariance
+    covariance = (
+        conditional + influence @ (corrected_covariance - np.diag(scan.error**2)) @ influence.T
+    )
+    covariance = (covariance + covariance.T) / 2
+    if not np.all(np.isfinite(covariance)) or np.linalg.eigvalsh(covariance).min() < 0:
+        raise ValueError("Baseline-propagated peak covariance must be positive semidefinite.")
+    residual = np.eye(scan.x.size) - jacobian @ influence
+    effective_dof = float(
+        np.trace((residual @ corrected_covariance @ residual.T) / errors[:, None] ** 2)
+    )
+    return ScanPeakFit(fit, (names, covariance.tolist()), effective_dof)
 
 
 def fit_scan_baseline(
@@ -251,8 +376,7 @@ def fit_scan_baseline(
         The field scan to correct.
     regions
         Inclusive ``(x_lo, x_hi)`` windows on the scan's x-axis marking the
-        non-resonant baseline regions (their union is fitted). Mantid's
-        "Sections".
+        non-resonant baseline regions (their union is fitted).
     model
         Baseline model — ``"Linear"`` (default), ``"Constant"``, or any
         component/expression.
@@ -263,7 +387,7 @@ def fit_scan_baseline(
     -------
     ScanBaselineResult
         The fitted baseline sampled over **all** scan points, a corrected
-        :class:`FieldScan` (``value − baseline``, errors preserved), and the fit.
+        :class:`FieldScan` (``value − baseline``, marginal propagated errors), and the fit.
 
     Raises
     ------
@@ -296,6 +420,8 @@ def fit_scan_baseline(
     if parameters is None:
         parameters = parameter_set_for_model(composite)
     n_free = len(parameters.free_parameters)
+    if n_free == 0:
+        raise ValueError("Baseline fit needs at least one free parameter.")
     if n_sel < n_free:
         raise ValueError(
             f"Baseline fit needs at least {n_free} usable point(s) in the regions, got {n_sel}."
@@ -307,16 +433,18 @@ def fit_scan_baseline(
     if not fit.success:
         raise ValueError(f"Baseline fit did not converge: {fit.message or 'unknown error'}")
 
-    baseline = _evaluate_model(composite, fit.parameters, x)
-    corrected = _subtract_baseline(scan, baseline)
-    return ScanBaselineResult(
-        baseline=baseline,
-        corrected=corrected,
-        model=composite,
-        regions=clean_regions,
-        fit=fit,
-        n_points=n_sel,
+    _fit_covariance(fit)
+    snapshot = replace(
+        scan,
+        x=x.copy(),
+        value=value.copy(),
+        error=error.copy(),
+        run_numbers=list(scan.run_numbers),
+        excluded=list(scan.excluded),
     )
+    for array in (snapshot.x, snapshot.value, snapshot.error):
+        array.setflags(write=False)
+    return ScanBaselineResult(scan=snapshot, model=composite, regions=tuple(clean_regions), fit=fit)
 
 
 # --- internal -----------------------------------------------------------------
@@ -342,38 +470,38 @@ def _evaluate_model(
     parameters: ParameterSet,
     x: NDArray[np.float64],
 ) -> NDArray[np.float64]:
-    # On the success path `parameters` already holds every model parameter; the
-    # defaults merge is belt-and-suspenders so a partial set can never reach
-    # model.function() (which would KeyError) — callers reach here only after a
-    # converged fit.
-    values = dict(model.param_defaults)
-    for param in parameters:
-        if param.name in values:
-            values[param.name] = float(param.value)
+    values = {param.name: float(param.value) for param in parameters}
     return np.asarray(model.function(x, **values), dtype=np.float64)
 
 
-def _subtract_baseline(scan: FieldScan, baseline: NDArray[np.float64]) -> FieldScan:
-    # Errors carry through unchanged: the baseline fit's covariance is
-    # intentionally not propagated into the corrected curve (matching Mantid's
-    # ALC baseline subtraction). Downstream peak-fit error bars are therefore
-    # mildly optimistic where the baseline is extrapolated outside its regions.
-    corrected_value = np.asarray(scan.value, dtype=np.float64) - baseline
-    y_label = scan.y_label
-    suffix = " (baseline-subtracted)"
-    if not y_label.endswith(suffix):
-        y_label = f"{y_label}{suffix}"
-    return FieldScan(
-        x=np.asarray(scan.x, dtype=np.float64).copy(),
-        value=corrected_value,
-        error=np.asarray(scan.error, dtype=np.float64).copy(),
-        run_numbers=list(scan.run_numbers),
-        order_key=scan.order_key,
-        method=scan.method,
-        derivative=scan.derivative,
-        x_label=scan.x_label,
-        y_label=y_label,
-        excluded=list(scan.excluded),
-        # Subtracting a baseline fitted on the same values is scale-preserving.
-        units=scan.units,
-    )
+def _model_jacobian(model, parameters, x, names, covariance) -> NDArray[np.float64]:
+    """Five-point derivatives in parameter coordinates at the fitted model."""
+    values = {param.name: float(param.value) for param in parameters}
+    columns = []
+    for name, variance in zip(names, np.diag(covariance), strict=True):
+        value = values[name]
+        scale = np.sqrt(variance) if variance > 0 else (abs(value) or 1.0)
+        step = max(np.finfo(float).eps ** 0.2 * scale, 10 * np.spacing(abs(value)))
+        samples = [
+            np.asarray(model.function(x, **{**values, name: value + k * step}))
+            for k in (-2, -1, 1, 2)
+        ]
+        columns.append((samples[0] - 8 * samples[1] + 8 * samples[2] - samples[3]) / (12 * step))
+    return np.column_stack(columns)
+
+
+def _fit_covariance(fit) -> tuple[list[str], NDArray[np.float64]]:
+    """Require a converged fit with finite positive-semidefinite covariance."""
+    if not fit.success or fit.covariance is None:
+        raise ValueError("Baseline propagation requires a converged fit with covariance.")
+    names, matrix = fit.covariance
+    covariance = np.asarray(matrix, dtype=float)
+    if (
+        not names
+        or covariance.shape != (len(names), len(names))
+        or not np.all(np.isfinite(covariance))
+        or not np.allclose(covariance, covariance.T)
+        or np.linalg.eigvalsh(covariance).min() < 0
+    ):
+        raise ValueError("Fit covariance must be finite and positive semidefinite.")
+    return names, covariance
