@@ -42,8 +42,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -c constraints.txt -e ".[gui,hdf5,root,dev]"
 
+      - name: Record memory counters
+        run: |
+          awk '$1 == "oom_kill" { print }' /proc/vmstat
+          free -h
+
       - name: Run full test suite
         env:
           QT_QPA_PLATFORM: offscreen
           ASYMMETRY_FAULTHANDLER_TIMEOUT: "600"
         run: python tools/harness.py test --tier=${{ inputs.tier || 'full' }} -- -vv --max-worker-restart=0
+
+      - name: Report memory counters
+        if: always()
+        run: |
+          awk '$1 == "oom_kill" { print }' /proc/vmstat
+          free -h

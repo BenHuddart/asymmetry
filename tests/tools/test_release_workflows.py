@@ -48,6 +48,11 @@ def test_no_status_function_bypasses_the_gate(filename: str) -> None:
     for job in _workflow(filename)["jobs"].values():
         for entry in [job, *job.get("steps", [])]:
             assert "continue-on-error" not in entry
+            if entry.get("name") == "Report memory counters":
+                assert filename == "full-suite.yml" and entry is not job
+                assert entry["if"] == "always()"
+                assert entry["run"] == "awk '$1 == \"oom_kill\" { print }' /proc/vmstat\nfree -h\n"
+                continue
             assert not re.search(r"\b(always|cancelled|failure)\s*\(", str(entry.get("if", "")))
 
 
@@ -178,3 +183,15 @@ def test_full_tier_reports_a_worker_crash_without_restarting(tmp_path: Path) -> 
     assert result.returncode != 0
     assert "test_requested_worker_exit" in output.partition("node down:")[0]
     assert "replacing crashed worker" not in output
+
+
+def test_full_tier_records_memory_counters_around_the_tests() -> None:
+    steps = _workflow("full-suite.yml")["jobs"]["full-suite"]["steps"]
+    names = [step["name"] for step in steps]
+    before = names.index("Record memory counters")
+    tests = names.index("Run full test suite")
+    after = names.index("Report memory counters")
+    assert before < tests < after
+    assert "if" not in steps[before]
+    assert steps[before]["run"] == steps[after]["run"]
+    assert steps[after]["if"] == "always()"
