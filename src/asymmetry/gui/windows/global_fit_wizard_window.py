@@ -1,23 +1,8 @@
-"""Non-modal guided fit wizard for ordered global-fit dataset series.
+"""Ordered-series wizard with Scope, Screen, Compare, Phases and Apply views.
 
-A :class:`WizardStepper` runs across the top of a ``QStackedWidget`` of five
-step views, Scope → Screen → Compare → Phases → Apply (design:
-``docs/plans/global-wizard-stepper.md``). The window is built on
-:class:`~asymmetry.gui.windows.wizard_base.WizardWindowBase` through the
-``_build_central()`` hook, so ``self._tabs`` stays ``None``.
-
-* **Scope** — the series overview, the model family picker, *Guide the search
-  (optional)*, the search settings and *Run screening*.
-* **Screen** — the family leaderboard, ticked for the shortlist, beside a
-  preview of the selected family's per-run fits.
-* **Compare** — the optimised role splits, A against B.
-* **Phases** — the transitions penalty path and a fit overlay coloured by phase.
-* **Apply** — what will be handed to the global fit tab, and the apply action.
-
-A running analysis shows its :class:`RunProgress` inside the step it feeds
-(D2). The external surface (``set_analysis_context``,
-``set_cached_recommendation``, ``current_recommendation``, the signals and the
-seven-key ``_analysis_signature``) is unchanged for ``global_tab.py``.
+Core recommendations supply screening, role partitions and phase boundaries.
+Each step owns its progress display, with shared criterion cells and model
+comparison panels for the fitted candidates.
 """
 
 from __future__ import annotations
@@ -104,6 +89,7 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.utils.fit_times import record_fit_times, shared_fit_time_store
 from asymmetry.gui.utils.formatting import format_param_label
+from asymmetry.gui.utils.information_criteria import criterion_item
 from asymmetry.gui.utils.phase_colors import (
     EXCLUDED_PHASE_HATCH_COLOR,
     format_axis_range,
@@ -2507,20 +2493,24 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._screening_table.setRowCount(len(assessments))
         for row, assessment in enumerate(assessments):
             self._screening_table.setItem(row, 0, QTableWidgetItem(assessment.template.title))
-            self._screening_table.setItem(
-                row, 1, _numeric_item(assessment.metric_value(recommendation.metric))
-            )
-            self._screening_table.setItem(row, 2, _numeric_item(assessment.aic))
-            self._screening_table.setItem(
-                row,
-                3,
+            for column, metric in enumerate(
                 (
-                    _numeric_item(assessment.aicc)
-                    if assessment.aicc is not None
-                    else QTableWidgetItem("AIC")
+                    recommendation.metric,
+                    SelectionMetric.AIC,
+                    SelectionMetric.AICC,
+                    SelectionMetric.BIC,
                 ),
-            )
-            self._screening_table.setItem(row, 4, _numeric_item(assessment.bic))
+                start=1,
+            ):
+                self._screening_table.setItem(
+                    row,
+                    column,
+                    criterion_item(
+                        assessment.criteria,
+                        metric,
+                        unavailable_reason=assessment.unavailable_reason(metric),
+                    ),
+                )
             self._screening_table.setItem(
                 row,
                 5,
@@ -2551,18 +2541,24 @@ class GlobalFitWizardWindow(WizardWindowBase):
             if assessment.selection_key == recommendation.recommended_key:
                 title_item.setFont(_bold_font(title_item.font()))
             self._optimised_table.setItem(row, 0, title_item)
-            self._optimised_table.setItem(
-                row, 1, _numeric_item(assessment.metric_value(recommendation.metric))
-            )
-            self._optimised_table.setItem(row, 2, _numeric_item(assessment.aic))
-            self._optimised_table.setItem(
-                row,
-                3,
-                _numeric_item(assessment.aicc)
-                if assessment.aicc is not None
-                else QTableWidgetItem("AIC"),
-            )
-            self._optimised_table.setItem(row, 4, _numeric_item(assessment.bic))
+            for column, metric in enumerate(
+                (
+                    recommendation.metric,
+                    SelectionMetric.AIC,
+                    SelectionMetric.AICC,
+                    SelectionMetric.BIC,
+                ),
+                start=1,
+            ):
+                self._optimised_table.setItem(
+                    row,
+                    column,
+                    criterion_item(
+                        assessment.criteria,
+                        metric,
+                        unavailable_reason=assessment.unavailable_reason(metric),
+                    ),
+                )
             self._optimised_table.setItem(
                 row,
                 5,
