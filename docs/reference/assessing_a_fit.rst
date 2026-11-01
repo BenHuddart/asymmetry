@@ -101,3 +101,8 @@ series totals and partition BIC.
 .. [pdg_statistics] G. Cowan and L. Lista, "Statistics", Particle Data Group
    (2025), sections 40.2 and 40.3.3.1,
    `Statistics review <https://pdg.lbl.gov/2025/reviews/rpp2025-rev-statistics.pdf>`_.
+
+Saved-fit information-criterion comparisons require both the same recorded
+data selection and the same recorded objective. Gaussian and Poisson fits
+rank in separate groups; a fit without a recorded objective receives no
+comparison delta or weight.

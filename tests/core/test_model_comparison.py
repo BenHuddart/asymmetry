@@ -728,6 +728,7 @@ def _saved(
             {"name": "A_bg", "value": 1.0, "min": "-inf", "max": "inf", "fixed": fixed_bg},
         ],
         result={
+            "objective": "gaussian",
             "chi_squared": chi_squared,
             "reduced_chi_squared": chi_squared / (81 - npar),
             "parameters": {"A_1": 20.0, "Lambda": 0.2, "A_bg": 1.0},
@@ -747,8 +748,10 @@ def _summarise_saved(*slots: FitSlot, first: str = "a", metric=SelectionMetric.A
     )
 
 
-def test_saved_fits_on_the_same_data_rank_by_the_criterion_best_first() -> None:
+@pytest.mark.parametrize("objective", ["gaussian", "poisson"])
+def test_saved_fits_on_the_same_data_rank_by_the_criterion_best_first(objective) -> None:
     a, b = _saved("a", chi_squared=90.0), _saved("b", chi_squared=80.0)
+    a.result["objective"] = b.result["objective"] = objective
     summaries = _summarise_saved(a, b)
     assert [summary.key for summary in summaries] == ["b", "a"]
     assert [summary.delta for summary in summaries] == pytest.approx([0.0, 10.0])
@@ -830,3 +833,16 @@ def test_a_saved_fit_with_no_model_or_values_has_no_curve() -> None:
     assert saved_fit_model(no_model) is None
     assert saved_fit_model(short_table) is None
     assert saved_fit_curves(no_model, _dataset(701)) is None
+
+
+@pytest.mark.parametrize(
+    "first_objective,objective", [("gaussian", "poisson"), ("gaussian", None), (None, None)]
+)
+def test_saved_fits_with_different_or_unknown_objectives_do_not_rank_together(
+    first_objective, objective
+):
+    a, b = _saved("a", chi_squared=80.0), _saved("b", chi_squared=82.0)
+    a.result["objective"] = first_objective
+    b.result["objective"] = objective
+    summaries = _summarise_saved(a, b)
+    assert all(math.isinf(row.delta) and row.weight == 0.0 for row in summaries)

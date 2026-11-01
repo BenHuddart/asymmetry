@@ -413,6 +413,9 @@ trend quality, and a table with every run's own :math:`\chi^2_\nu` and
 **Cost (σ)**. The **Note** column marks a run that is "exempt: keeps its own
 amplitude" and one that is "over the 2σ tolerance" on its own.
 
+Unavailable criterion cells show "—" with a tooltip explaining the reason and
+recorded point and free-parameter counts. AICc never falls back to AIC.
+
 Best statistical fit: the role splits
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 

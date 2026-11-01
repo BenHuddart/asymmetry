@@ -85,6 +85,9 @@ __all__ = [
     "CrossGroupParameterRecommendation",
     "CrossGroupRoleRecommendation",
     "suggest_cross_group_roles",
+    "cross_group_information_criteria",
+    "cross_group_criteria_unavailable_reason",
+    "cross_group_free_parameter_count",
 ]
 
 # Criterion improvement (in criterion units) a Local flip must clear before it
@@ -97,6 +100,50 @@ _ROLE_DELTA_THRESHOLD = 2.0
 # Beam width for the greedy accumulation phase. Width 2 keeps a runner-up
 # branch alive when the budget allows, without exploding toward ``3^k``.
 _BEAM_WIDTH = 2
+
+
+def cross_group_free_parameter_count(result: CrossGroupFitResult) -> int:
+    """Count independent fitted columns across the coupled groups."""
+    return len(result.global_parameters.free_parameters) + sum(
+        len(parameters.free_parameters) for parameters in result.local_parameters.values()
+    )
+
+
+def cross_group_information_criteria(result: CrossGroupFitResult) -> InformationCriteria | None:
+    """Map the recorded cross-group objective to its likelihood criteria."""
+    if (
+        not result.success
+        or not math.isfinite(result.chi_squared)
+        or result.uses_effective_variance
+    ):
+        return None
+    statistic, k, n = (
+        result.chi_squared,
+        cross_group_free_parameter_count(result),
+        result.n_points or None,
+    )
+    if ErrorMode(result.error_mode) in {ErrorMode.NONE, ErrorMode.SCATTER}:
+        if n is None or statistic <= 0:
+            return None
+        statistic = n * math.log(statistic / n)
+        k += 1
+    return InformationCriteria(statistic, k, n)
+
+
+def cross_group_criteria_unavailable_reason(
+    result: CrossGroupFitResult, metric: SelectionMetric | str
+) -> str | None:
+    """Explain exclusions using the same likelihood mapping as role ranking."""
+    if not result.success or not math.isfinite(result.chi_squared):
+        return "fit failed"
+    if result.uses_effective_variance:
+        return "effective-variance objective omits its likelihood normalization"
+    if ErrorMode(result.error_mode) in {ErrorMode.NONE, ErrorMode.SCATTER}:
+        if result.n_points < 1:
+            return "sample count not recorded"
+        if result.chi_squared <= 0:
+            return "unknown-variance likelihood is unbounded at zero residual variance"
+    return cross_group_information_criteria(result).unavailable_reason(metric)
 
 
 @dataclass
@@ -122,41 +169,18 @@ class CrossGroupCandidate:
 
     @property
     def n_free(self) -> int:
-        return len(self.result.global_parameters.free_parameters) + sum(
-            len(parameters.free_parameters) for parameters in self.result.local_parameters.values()
-        )
+        return cross_group_free_parameter_count(self.result)
 
     @property
     def n_points(self) -> int:
         return self.result.n_points
 
     def unavailable_reason(self, metric: SelectionMetric | str) -> str | None:
-        if not self.success or not math.isfinite(self.chi_squared):
-            return "fit failed"
-        if self.result.uses_effective_variance:
-            return "effective-variance objective omits its likelihood normalization"
-        if ErrorMode(self.result.error_mode) in {ErrorMode.NONE, ErrorMode.SCATTER}:
-            if self.n_points < 1:
-                return "sample count not recorded"
-            if self.chi_squared <= 0:
-                return "unknown-variance likelihood is unbounded at zero residual variance"
-        return self.criteria.unavailable_reason(metric)
+        return cross_group_criteria_unavailable_reason(self.result, metric)
 
     @property
     def criteria(self) -> InformationCriteria | None:
-        if (
-            not self.success
-            or not math.isfinite(self.chi_squared)
-            or self.result.uses_effective_variance
-        ):
-            return None
-        statistic, k, n = self.chi_squared, self.n_free, self.n_points or None
-        if ErrorMode(self.result.error_mode) in {ErrorMode.NONE, ErrorMode.SCATTER}:
-            if n is None or statistic <= 0:
-                return None
-            statistic = n * math.log(statistic / n)
-            k += 1
-        return InformationCriteria(statistic, k, n)
+        return cross_group_information_criteria(self.result)
 
     @property
     def aic(self) -> float:

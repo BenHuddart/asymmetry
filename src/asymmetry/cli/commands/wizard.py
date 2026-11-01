@@ -415,7 +415,7 @@ def _render(
             candidate.key,
             candidate.title,
             candidate.category,
-            format_number(candidate.aicc, 1),
+            "n/a" if candidate.aicc is None else format_number(candidate.aicc, 1),
             format_number(candidate.chi2_red, 3),
             str(candidate.parameter_count),
         ]

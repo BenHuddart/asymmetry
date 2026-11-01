@@ -186,6 +186,7 @@ class ScreenCandidate:
     title: str
     category: str
     aicc: float | None
+    aicc_unavailable: str | None
     chi2_red: float
     parameter_count: int
     is_recommended: bool
@@ -198,6 +199,7 @@ class ScreenCandidate:
             "title": self.title,
             "category": self.category,
             "aicc": self.aicc,
+            "aicc_unavailable": self.aicc_unavailable,
             "chi2_red": self.chi2_red,
             "parameter_count": self.parameter_count,
             "is_recommended": self.is_recommended,
@@ -320,6 +322,7 @@ def screen_run(
             title=assessment.template.title,
             category=assessment.template.category,
             aicc=None if assessment.aicc is None else float(assessment.aicc),
+            aicc_unavailable=assessment.unavailable_reason("AICc"),
             chi2_red=float(assessment.fit_result.reduced_chi_squared),
             parameter_count=int(assessment.parameter_count),
             is_recommended=assessment.template.key == recommendation.recommended_key,

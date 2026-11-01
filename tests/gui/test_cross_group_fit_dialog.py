@@ -53,12 +53,12 @@ def test_cross_group_dialog_parameter_labels_include_units(qapp) -> None:
         parent=None,
     )
 
-    # Default model is Linear -> params m and b.
+    # Default Linear coefficients carry the trend axis units.
     labels = [dlg._param_table.item(row, 0).text() for row in range(dlg._param_table.rowCount())]
     assert any("[us^-1 / G]" in label for label in labels)
     assert any("[us^-1]" in label for label in labels)
 
-    # Canonical parameter names used by fitting are preserved in UserRole.
+    # Display labels preserve canonical fitting names in UserRole.
     canonical = [
         dlg._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         for row in range(dlg._param_table.rowCount())
@@ -66,7 +66,6 @@ def test_cross_group_dialog_parameter_labels_include_units(qapp) -> None:
     assert "m" in canonical
     assert "b" in canonical
 
-    # Keep app referenced so Qt objects are valid through assertions.
     assert app is not None
 
 
@@ -140,11 +139,6 @@ def test_cross_group_dialog_redfield_m_is_unitless(qapp) -> None:
         parent=None,
     )
 
-    # Redfield is a brand-new component here (not a continuation of whatever
-    # the dialog's bootstrap range held), so its "m" has no predecessor to
-    # carry from and takes the component's own default (2.0) -- exercising
-    # the identity-keyed replacement for the deleted name-based Redfield
-    # special case.
     old_model = dlg._model
     dlg._model = ParameterCompositeModel(["Redfield"], [])
     dlg._rebuild_param_table(old_model, (None,))
@@ -165,9 +159,7 @@ def test_single_card_no_add_no_remove(qapp) -> None:
         parent=None,
     )
 
-    # Cross-group mode pins exactly one shared range: "Add Range" is hidden
-    # (adding a second range is meaningless here) and the single card's view
-    # reports can_remove=False (no Remove action available).
+    # A single shared range has no Add or Remove action.
     assert dlg._add_range_btn.isVisible() is False
     assert len(dlg._range_cards) == 1
     assert dlg._range_cards[0]._view.can_remove is False
@@ -780,7 +772,6 @@ def test_suggest_roles_applies_recommendation_and_shows_rationale(qapp) -> None:
     _suggest_wait(dlg)
 
     assert dlg._suggest_recommendation is not None
-    # A recommendation was applied to the role combos and the rationale is shown.
     assert dlg._rationale_panel.isVisibleTo(dlg)
     text = dlg._rationale_panel.toPlainText()
     assert "Per-parameter recommendation" in text
@@ -794,6 +785,8 @@ def test_suggest_roles_applies_recommendation_and_shows_rationale(qapp) -> None:
 
 
 def test_suggest_roles_renders_failed_candidate(qapp, monkeypatch) -> None:
+    from dataclasses import replace
+
     from asymmetry.core.fitting.cross_group_roles import (
         CrossGroupCandidate,
         CrossGroupParameterRecommendation,
@@ -821,7 +814,7 @@ def test_suggest_roles_renders_failed_candidate(qapp, monkeypatch) -> None:
         ),
     )
     rec = CrossGroupRoleRecommendation(
-        candidates=[good, bad],
+        candidates=[good, bad, replace(good, result=replace(good.result, n_points=3))],
         recommended=good,
         parameters=[
             CrossGroupParameterRecommendation(
@@ -852,7 +845,10 @@ def test_suggest_roles_renders_failed_candidate(qapp, monkeypatch) -> None:
     _suggest_wait(dlg)
 
     text = dlg._rationale_panel.toPlainText()
-    assert "did not converge" in text
+    assert "Not ranked (AICc):" in text
+    assert "fit failed" in text
+    assert "n − k − 1 = 0" in text
+    assert "inf" not in text
     assert "Sharing m is favoured" in text
 
 
@@ -862,7 +858,6 @@ def test_suggest_roles_cancel_restores_button(qapp, monkeypatch) -> None:
     gate = threading.Event()
 
     def _slow_suggest(*_a, cancel_callback=None, **_k):
-        # Wait until the test flips cancel, then honour it like the real engine.
         gate.wait(timeout=2.0)
         return CrossGroupRoleRecommendation(criterion="aicc", message="cancelled")
 

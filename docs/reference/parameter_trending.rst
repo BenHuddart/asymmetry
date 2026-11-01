@@ -1948,3 +1948,9 @@ partition under AICc and never substitutes AIC. See :doc:`fit_wizard` for the
 formulas, assumptions and primary references. If no converged candidate has
 a defined AICc, the message is "No candidate can be ranked by AICC; roles left
 unchanged."
+
+The rationale panel lists excluded partitions under "Not ranked (AICc):"
+(or the selected metric) with each reason. The two-study comparison uses the
+same likelihood calculation. Undefined criteria show "—" with a reason in
+the tooltip, and their differences also show "—". Differences require the
+same fitted data snapshot, point count and error mode.
