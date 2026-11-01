@@ -82,11 +82,6 @@ def test_anisotropic_s_nodes_depend_on_a_parameter() -> None:
     assert np.min(np.abs(g_nodal)) < 5e-3
 
 
-def test_energy_integral_zero_gap_limit() -> None:
-    vals = kernel.energy_integral(np.array([0.0, 0.0]), t_reduced=0.2, n_energy=80)
-    np.testing.assert_allclose(vals, [-0.5, -0.5], atol=2e-3)
-
-
 def test_superfluid_density_limit_values() -> None:
     tc = 20.0
     temp_arr = np.array([0.0, 2.0, 5.0, 10.0, 19.0, 20.0, 22.0])
@@ -124,14 +119,13 @@ def test_s_wave_retains_carrington_manzano_gap_amplitude() -> None:
     temps = np.array([2.0, 8.0, 16.0])
     ratio = 1.764
 
-    rho_model = models.rho_s_wave(temps, Tc=tc, gap_ratio=ratio, n_phi=96, n_energy=80)
+    rho_model = models.rho_s_wave(temps, Tc=tc, gap_ratio=ratio, n_phi=96)
     rho_legacy = kernel.superfluid_density(
         temps,
         tc=tc,
         gap_ratio=ratio,
         gap_function=gaps.isotropic_s,
         n_phi=96,
-        n_energy=80,
     )
 
     np.testing.assert_allclose(rho_model, rho_legacy, atol=1e-10)
@@ -142,14 +136,13 @@ def test_d_wave_uses_generalized_gap_amplitude() -> None:
     temps = np.array([16.0])
     ratio = 2.14
 
-    rho_model = models.rho_d_wave(temps, Tc=tc, gap_ratio=ratio, n_phi=96, n_energy=80)
+    rho_model = models.rho_d_wave(temps, Tc=tc, gap_ratio=ratio, n_phi=96)
     rho_expected = kernel.superfluid_density(
         temps,
         tc=tc,
         gap_ratio=ratio,
         gap_function=gaps.d_wave,
         n_phi=96,
-        n_energy=80,
         reduced_gap_function=lambda t_reduced: bcs.delta_generalized(
             t_reduced,
             gap_ratio=ratio,
@@ -162,7 +155,6 @@ def test_d_wave_uses_generalized_gap_amplitude() -> None:
         gap_ratio=ratio,
         gap_function=gaps.d_wave,
         n_phi=96,
-        n_energy=80,
     )
 
     np.testing.assert_allclose(rho_model, rho_expected, atol=1e-10)
@@ -174,7 +166,7 @@ def test_extended_s_uses_generalized_gap_amplitude() -> None:
     temps = np.array([16.0])
     ratio = 2.14
 
-    rho_model = models.rho_extended_s(temps, Tc=tc, gap_ratio=ratio, n_phi=96, n_energy=80)
+    rho_model = models.rho_extended_s(temps, Tc=tc, gap_ratio=ratio, n_phi=96)
     rho_expected = kernel.superfluid_density(
         temps,
         tc=tc,
@@ -182,7 +174,6 @@ def test_extended_s_uses_generalized_gap_amplitude() -> None:
         gap_function=gaps.extended_s,
         gap_params={"signed": False},
         n_phi=96,
-        n_energy=80,
         reduced_gap_function=lambda t_reduced: bcs.delta_generalized(
             t_reduced,
             gap_ratio=ratio,
@@ -196,7 +187,6 @@ def test_extended_s_uses_generalized_gap_amplitude() -> None:
         gap_function=gaps.extended_s,
         gap_params={"signed": False},
         n_phi=96,
-        n_energy=80,
     )
 
     np.testing.assert_allclose(rho_model, rho_expected, atol=1e-10)
@@ -207,8 +197,8 @@ def test_extended_s_signed_flag_does_not_change_rho_kernel_result() -> None:
     tc = 24.0
     temps = np.array([2.0, 8.0, 16.0])
 
-    rho_unsigned = models.rho_extended_s(temps, Tc=tc, signed=False, n_phi=96, n_energy=80)
-    rho_signed = models.rho_extended_s(temps, Tc=tc, signed=True, n_phi=96, n_energy=80)
+    rho_unsigned = models.rho_extended_s(temps, Tc=tc, signed=False, n_phi=96)
+    rho_signed = models.rho_extended_s(temps, Tc=tc, signed=True, n_phi=96)
 
     np.testing.assert_allclose(rho_unsigned, rho_signed, atol=1e-12)
 
@@ -223,7 +213,6 @@ def test_anisotropic_s_shape_factor_a_zero_retains_carrington_manzano() -> None:
         a_anis=0.3,
         shape_factor_a=0.0,
         n_phi=96,
-        n_energy=80,
     )
     rho_legacy = kernel.superfluid_density(
         temps,
@@ -232,7 +221,6 @@ def test_anisotropic_s_shape_factor_a_zero_retains_carrington_manzano() -> None:
         gap_function=gaps.anisotropic_s_cos4,
         gap_params={"a_anis": 0.3},
         n_phi=96,
-        n_energy=80,
     )
 
     np.testing.assert_allclose(rho_model, rho_legacy, atol=1e-10)
@@ -250,7 +238,6 @@ def test_anisotropic_s_positive_shape_factor_a_uses_generalized_gap_amplitude() 
         a_anis=0.3,
         shape_factor_a=1.7,
         n_phi=96,
-        n_energy=80,
     )
     rho_expected = kernel.superfluid_density(
         temps,
@@ -259,7 +246,6 @@ def test_anisotropic_s_positive_shape_factor_a_uses_generalized_gap_amplitude() 
         gap_function=gaps.anisotropic_s_cos4,
         gap_params={"a_anis": 0.3},
         n_phi=96,
-        n_energy=80,
         reduced_gap_function=lambda t_reduced: bcs.delta_generalized(
             t_reduced,
             gap_ratio=ratio,
@@ -273,7 +259,6 @@ def test_anisotropic_s_positive_shape_factor_a_uses_generalized_gap_amplitude() 
         gap_function=gaps.anisotropic_s_cos4,
         gap_params={"a_anis": 0.3},
         n_phi=96,
-        n_energy=80,
     )
 
     np.testing.assert_allclose(rho_model, rho_expected, atol=1e-10)
@@ -284,14 +269,13 @@ def test_p_wave_axial_shape_factor_a_zero_retains_carrington_manzano() -> None:
     tc = 18.0
     temps = np.array([2.0, 6.0, 12.0])
 
-    rho_model = models.rho_p_wave_axial(temps, Tc=tc, shape_factor_a=0.0, n_phi=96, n_energy=80)
+    rho_model = models.rho_p_wave_axial(temps, Tc=tc, shape_factor_a=0.0, n_phi=96)
     rho_legacy = kernel.superfluid_density(
         temps,
         tc=tc,
         gap_ratio=2.0,
         gap_function=gaps.p_wave_axial_2d,
         n_phi=96,
-        n_energy=80,
     )
 
     np.testing.assert_allclose(rho_model, rho_legacy, atol=1e-10)
@@ -308,7 +292,6 @@ def test_p_wave_axial_positive_shape_factor_a_uses_generalized_gap_amplitude() -
         gap_ratio=ratio,
         shape_factor_a=1.3,
         n_phi=96,
-        n_energy=80,
     )
     rho_expected = kernel.superfluid_density(
         temps,
@@ -316,7 +299,6 @@ def test_p_wave_axial_positive_shape_factor_a_uses_generalized_gap_amplitude() -
         gap_ratio=ratio,
         gap_function=gaps.p_wave_axial_2d,
         n_phi=96,
-        n_energy=80,
         reduced_gap_function=lambda t_reduced: bcs.delta_generalized(
             t_reduced,
             gap_ratio=ratio,
@@ -329,7 +311,6 @@ def test_p_wave_axial_positive_shape_factor_a_uses_generalized_gap_amplitude() -
         gap_ratio=ratio,
         gap_function=gaps.p_wave_axial_2d,
         n_phi=96,
-        n_energy=80,
     )
 
     np.testing.assert_allclose(rho_model, rho_expected, atol=1e-10)
@@ -341,9 +322,7 @@ def test_s_plus_g_uses_generalized_gap_amplitude() -> None:
     temps = np.array([16.0])
     ratio = 2.77
 
-    rho_model = models.rho_s_plus_g(
-        temps, Tc=tc, gap_ratio=ratio, n_theta=32, n_phi=64, n_energy=80
-    )
+    rho_model = models.rho_s_plus_g(temps, Tc=tc, gap_ratio=ratio, n_theta=32, n_phi=64)
     rho_expected = kernel.superfluid_density_3d(
         temps,
         tc=tc,
@@ -351,7 +330,6 @@ def test_s_plus_g_uses_generalized_gap_amplitude() -> None:
         gap_function=gaps.s_plus_g,
         n_theta=32,
         n_phi=64,
-        n_energy=80,
         reduced_gap_function=lambda t_reduced: bcs.delta_generalized(
             t_reduced,
             gap_ratio=ratio,
@@ -365,7 +343,6 @@ def test_s_plus_g_uses_generalized_gap_amplitude() -> None:
         gap_function=gaps.s_plus_g,
         n_theta=32,
         n_phi=64,
-        n_energy=80,
     )
 
     np.testing.assert_allclose(rho_model, rho_expected, atol=1e-10)

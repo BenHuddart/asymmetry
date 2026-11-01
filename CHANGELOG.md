@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Superconducting density laws use a nonsingular thermal integral with controlled
+  quadrature error, correcting biases in the default s-wave curve and gap fits.
+
 - Superconducting docs and component help distinguish second-moment widths from
   the `Gaussian` width when inferring penetration depth.
 
@@ -72,6 +75,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 
 ### Changed
+
+- The superconducting kernel exposes `thermal_integral(gap_over_temperature)`
+  in place of `energy_integral`; `rho_*` helpers no longer accept `n_energy`.
 
 - `sigma_to_lambda_nm` and `lambda_nm_to_sigma_us` require an explicit `width=` convention.
 
