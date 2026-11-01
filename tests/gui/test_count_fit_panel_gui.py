@@ -41,6 +41,7 @@ def fb_dataset() -> MuonDataset:
     run = simulate_run(
         template, _tf, {"A": 20.0, "f": 1.5, "phi": 0.3}, total_events=40e6, alpha=1.25, seed=1
     )
+    run.grouping["good_frames"] = 1.0e6
     return MuonDataset(
         time=np.array([]), asymmetry=np.array([]), error=np.array([]), metadata={}, run=run
     )

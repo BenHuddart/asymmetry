@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- DT₀ count fits use the exact forward form of the reduction correction,
+  accounting for unequal detector rates and the effective bunched bin width.
+
 - Deadtime correction preserves finite signed coefficients and rejects singular
   corrections or invalid counts, bin widths and frame metadata with a clear error.
 
@@ -30,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deferred memory cleanup is cancelled when its window is destroyed.
 - PSI MDU loading retains longer histograms, pads shorter ones, and validates
   record bounds before allocating counts with bounded temporary read buffers.
+
+### Removed
+
+- Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 
 ### Changed
 
