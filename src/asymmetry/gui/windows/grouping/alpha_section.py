@@ -201,11 +201,8 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
     corrected = build_corrected(
         request.histograms, request.grouping, request.resolved_reference, request.facility
     )
-    forward, backward, common_t0 = (
-        corrected.forward.counts,
-        corrected.backward.counts,
-        int(corrected.common_t0_bin),
-    )
+    forward = corrected.forward.counts
+    common_t0 = corrected.common_t0_bin
     bin_width = float(corrected.bin_width_us)
 
     time_us = None
@@ -220,18 +217,12 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
     if worker.is_cancelled():
         raise TaskCancelledError
     estimate = estimate_alpha_detailed(
-        forward,
-        backward,
+        corrected.forward,
+        corrected.backward,
         method=request.method,
         time_us=time_us,
         first_good_bin=request.first_good_bin,
         last_good_bin=request.last_good_bin,
-        # Ratio-only, and only meaningful when a constant background was
-        # actually removed — without it the reported σ omits the subtraction
-        # entirely and reads far too small on a late, low-counts window.
-        subtracted_background=(
-            corrected.subtracted_background() if request.method == "ratio" else None
-        ),
     )
     note_text, note_warn = correction_note(request.grouping, corrected)
     return AlphaEstimateResult(

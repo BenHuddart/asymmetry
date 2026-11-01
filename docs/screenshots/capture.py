@@ -312,6 +312,7 @@ def _import_scenarios() -> None:
         alpha_calibration_dialog,
         alpha_count_calibration,
         apodisation_comparison,
+        background_binned_uncertainty,
         batch_tab_group_binding,
         batch_tab_series_menu,
         beta_calibration_dialog,

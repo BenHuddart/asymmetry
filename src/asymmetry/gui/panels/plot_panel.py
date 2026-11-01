@@ -6657,15 +6657,7 @@ class PlotPanel(QWidget):
                 source_dataset=reference_dataset,
                 analysis_dataset=dataset,
             )
-        n_grouped = min(len(fb.forward), len(fb.backward))
-        if n_grouped == 0:
-            return self._project_source_mask_to_analysis_dataset(
-                source_mask=saturated,
-                source_dataset=reference_dataset,
-                analysis_dataset=dataset,
-            )
-        forward = fb.forward[:n_grouped]
-        backward = fb.backward[:n_grouped]
+        forward, backward = fb.forward, fb.backward
         alpha = fb.alpha
         common_t0 = fb.common_t0
 
@@ -6697,8 +6689,8 @@ class PlotPanel(QWidget):
                     facility=facility,
                 )
                 if bkg_result.applied:
-                    forward = bkg_result.forward
-                    backward = bkg_result.backward
+                    forward = bkg_result.forward.counts
+                    backward = bkg_result.backward.counts
 
         denominator = np.asarray(forward + alpha * backward, dtype=float)
         if denominator.size == 0:

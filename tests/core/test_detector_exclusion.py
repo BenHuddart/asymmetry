@@ -23,6 +23,7 @@ from asymmetry.core.transform import (
     parse_detector_list,
     parse_group_detectors,
 )
+from asymmetry.core.transform.fb_counts import GroupCounts
 
 
 def _histograms(values: list[float], n_bins: int = 20) -> list[Histogram]:
@@ -191,8 +192,12 @@ def test_alpha_estimate_sees_exclusion_through_grouped_counts():
     histograms = _histograms([10.0, 20.0, 30.0, 40.0], n_bins=200)
     full = group_forward_backward(histograms, _grouping())
     excl = group_forward_backward(histograms, _grouping(excluded_detectors=[2]))
-    alpha_full = estimate_alpha_detailed(full.forward, full.backward, method="ratio", n_bootstrap=0)
-    alpha_excl = estimate_alpha_detailed(excl.forward, excl.backward, method="ratio", n_bootstrap=0)
+    alpha_full = estimate_alpha_detailed(
+        GroupCounts(full.forward), GroupCounts(full.backward), method="ratio", n_bootstrap=0
+    )
+    alpha_excl = estimate_alpha_detailed(
+        GroupCounts(excl.forward), GroupCounts(excl.backward), method="ratio", n_bootstrap=0
+    )
     assert alpha_full.alpha == pytest.approx(30.0 / 70.0)
     assert alpha_excl.alpha == pytest.approx(10.0 / 70.0)
 

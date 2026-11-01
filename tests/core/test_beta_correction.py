@@ -29,6 +29,7 @@ from asymmetry.core.transform.asymmetry import (
     compute_asymmetry_with_count_errors,
     estimate_alpha,
 )
+from asymmetry.core.transform.fb_counts import GroupCounts
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.integral import integrate_asymmetry
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
@@ -205,7 +206,7 @@ class TestBetaAlphaIndependence:
 class TestBetaIntegral:
     def test_integral_matches_summed_counts_formula(self):
         _, f, b, alpha, beta = _synthetic_counts()
-        value, error = integrate_asymmetry(f, b, alpha=alpha, beta=beta)
+        value, error = integrate_asymmetry(GroupCounts(f), GroupCounts(b), alpha=alpha, beta=beta)
         ref_a, ref_e = compute_asymmetry(np.array([np.sum(f)]), np.array([np.sum(b)]), alpha, beta)
         assert value == pytest.approx(float(ref_a[0]))
         assert error == pytest.approx(float(ref_e[0]))
@@ -214,7 +215,7 @@ class TestBetaIntegral:
         f = np.ones(8)
         b = np.ones(8)
         with pytest.raises(ValueError, match="beta"):
-            integrate_asymmetry(f, b, alpha=1.0, beta=0.0)
+            integrate_asymmetry(GroupCounts(f), GroupCounts(b), alpha=1.0, beta=0.0)
 
 
 # --------------------------------------------------------------------------- #

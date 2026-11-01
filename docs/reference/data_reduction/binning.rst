@@ -49,6 +49,16 @@ mismatch raises ``count arrays must have equal shape.`` Supplied count
 variances must match that shape and be finite and non-negative; the
 acquisition-bin width must be finite and positive.
 
+Uncertainty of merged counts
+----------------------------
+
+An estimated background level is shared by every raw bin. Merging m bins
+therefore contributes m² times its level variance, together with the
+covariance term for overlap with its estimation window. All binning modes
+propagate these terms before forming the asymmetry ratio. Summing per-bin
+error squares alone loses the shared contribution. See
+:ref:`background-count-uncertainty` for the complete noise model.
+
 Fixed
 -----
 

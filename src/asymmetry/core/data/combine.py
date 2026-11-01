@@ -431,19 +431,10 @@ def _combine_histograms_subtract(
     Returns the difference histograms, the per-detector variances (error²) so
     the reduction can propagate them, and the count of negative difference bins
     (the unphysical-counts guard, RA5). ``runs[0]`` is the sample at unit Poisson
-    variance ``clip(sample)``; each reference ``runs[k≥1]`` contributes
-    ``scaleₖ·counts`` to the difference (through the ``subtract_scaled_counts``
-    seam, F9) and ``scaleₖ²·clip(counts)`` to the variance. The empty-bin ``1.0``
-    sentinel (a zero-variance guard for the reduction) is applied **once** to the
-    final summed variance — not per reference, which would over-state the
-    variance of an N-run difference wherever any single term's bin is zero.
-
-    For the two-run reference case this matches a single
-    ``subtract_scaled_counts(sample, reference, scale₁)`` call: an exact
-    difference ``sample − scale₁·ref₁`` and variance
-    ``clip(sample) + scale₁²·clip(ref₁)`` with the same final zero→1.0 sentinel
-    (stored directly rather than as ``error*error``, so it agrees to
-    floating-point — the reduction takes its √ regardless).
+    variance ``clip(sample)``; each reference contributes ``scale·counts``
+    to the difference and ``scale²·clip(counts)`` to its variance. Zero variance
+    stays zero in the count domain; asymmetry formation handles degenerate
+    first-order uncertainties.
     """
     sample = runs[0]
     n_detectors = len(sample.histograms)
@@ -456,19 +447,16 @@ def _combine_histograms_subtract(
         aligned, common_t0 = _aligned_detector_arrays(arrays, t0s)
         s_counts = aligned[0]
         diff = s_counts.copy()
-        # Sample's Poisson variance; references add scaleₖ²·counts. The sentinel
-        # is deferred to the full sum below.
+        # Independent Poisson references add their scaled count variances.
         variance = np.clip(s_counts, 0.0, None)
         for ref_counts, ref_scale in zip(aligned[1:], scales[1:], strict=True):
             # The count-level subtraction routes through the chokepoint (F9); the
             # difference is no longer Poisson, so its variance is summed here.
-            contrib, _contrib_error = subtract_scaled_counts(
+            contrib, contrib_variance = subtract_scaled_counts(
                 np.zeros_like(ref_counts), ref_counts, ref_scale
             )
             diff = diff + contrib
-            variance = variance + ref_scale * ref_scale * np.clip(ref_counts, 0.0, None)
-        # Zero-variance guard once, matching subtract_scaled_counts' 1.0 sentinel.
-        variance = np.where(variance > 0.0, variance, 1.0)
+            variance = variance + contrib_variance
         negative_bins += int(np.count_nonzero(diff < 0.0))
         det_t0_us = run_t0_time_us([run.histograms[det] for run in runs], common_t0)
         out.append(_clone_geometry(sample.histograms[det], diff, common_t0, det_t0_us))

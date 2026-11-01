@@ -6,24 +6,19 @@ import pytest
 from asymmetry.core.transform import background as bg
 
 
-@pytest.mark.parametrize(
-    "values,fixed,estimated,level",
-    [
-        ([], [], [], 0.0),
-        ([-2.0, 0.0, 9.0], [0.0, 1.0, 3.0], [1.0, 1.0, 3.1622776601683795], 0.8819171036881969),
-        (
-            [4.0, 5.0, 0.0],
-            [2.0, 2.23606797749979, 1.0],
-            [2.23606797749979, 2.449489742783178, 1.0],
-            1.0,
-        ),
-    ],
-)
-def test_count_error_values(values, fixed, estimated, level):
-    arr = np.array(values)
-    np.testing.assert_allclose(bg._fixed_background_error(arr), fixed)
-    np.testing.assert_allclose(bg._estimated_background_count_error(arr, 1.0), estimated)
-    assert bg._estimated_background_error(arr) == pytest.approx(level)
+@pytest.mark.parametrize("values", [[0.0, 0.0, 9.0], [4.0, 5.0, 0.0]])
+def test_count_noise_stays_independent_of_the_exact_fixed_level(values):
+    counts = np.array(values)
+    result = bg.apply_grouped_background_correction(
+        counts,
+        counts,
+        grouping={"background_mode": "fixed", "background_fixed_values": [1.0, 2.0]},
+        t0_bin=0,
+        bin_width_us=0.01,
+    )
+    np.testing.assert_array_equal(result.forward.variance, counts)
+    np.testing.assert_array_equal(result.backward.variance, counts)
+    assert result.forward.shared == result.backward.shared == ()
 
 
 @pytest.mark.parametrize(
@@ -60,16 +55,14 @@ def test_range_input_values(grouping, t0, expected):
 
 
 @pytest.mark.parametrize(
-    "counts,expected",
-    [
-        ([np.nan], np.nan),
-        ([1.0, np.nan], np.nan),
-        ([np.inf], np.inf),
-        ([2.0, np.inf], np.inf),
-        ([-np.inf], 0.0),
-        ([2.0, -np.inf], 0.0),
-    ],
+    "counts", [[np.nan], [1.0, np.nan], [np.inf], [2.0, np.inf], [-np.inf], [2.0, -np.inf]]
 )
-def test_estimated_background_uncertainty_propagates_nonfinite_counts(counts, expected):
-    uncertainty = bg._estimated_background_error(np.array(counts))
-    np.testing.assert_equal(uncertainty, expected)
+def test_background_boundary_rejects_nonfinite_counts(counts):
+    with pytest.raises(ValueError, match="finite"):
+        bg.apply_grouped_background_correction(
+            np.array(counts),
+            np.array(counts),
+            grouping={"background_mode": "fixed", "background_fixed_values": [0.0, 0.0]},
+            t0_bin=0,
+            bin_width_us=0.01,
+        )

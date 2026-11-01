@@ -149,27 +149,30 @@ is the detector-layout **Backward** group, and the analysis **Backward Group**
 is the detector-layout **Forward** group. ISIS data keep the instrument
 forward/backward convention already used by their detector layouts.
 
-Asymmetry and uncertainty handling follows Mantid-style behaviour:
+Asymmetry and uncertainty handling uses the following convention:
 
 * If :math:`F + \alpha B = 0`, asymmetry is set to 0 for that bin.
 * The default uncertainty for that bin is 1.0 (fractional), i.e. 100% in the
   GUI percentage display.
-* For non-zero denominator, uncertainty is computed as:
+* For a non-zero denominator and positive propagated variance, the Poisson
+  uncertainty at β = 1 is:
 
 .. math::
 
-   \sigma_A = \frac{\sqrt{(F + \alpha^2 B)\left(1 + \left(\frac{F-\alpha B}{F+\alpha B}\right)^2\right)}}{|F+\alpha B|}
+   \sigma_A = \frac{2|\alpha|\sqrt{FB(F+B)}}{(F+\alpha B)^2}
 
 In low-count late-time tails, this naturally produces large fluctuations and
 large uncertainties.
 
-For musrfit-style PSI background correction, the background is subtracted from
-the grouped count histograms before this pair formula is evaluated. The
-asymmetry value still uses the same alpha convention above, but uncertainty is
-propagated from the corrected count histograms using musrfit-style count
-errors: fixed-background subtraction keeps Poisson errors from the raw counts,
-while estimated-background subtraction adds the uncertainty of the estimated
-constant background before propagating through the pair formula.
+Background is subtracted from the grouped count histograms before the pair
+formula is evaluated. The value retains the same alpha convention. Error
+propagation uses raw independent count variances, the shared background-level
+variance and its covariance with any overlapping signal bins. A merged block
+of m bins carries the shared level variance multiplied by m². Fixed levels
+are exact by declaration, and independent background-run spectra add their
+frame-scaled variances. See :ref:`background-count-uncertainty` for the formula
+and the tail-fit approximation. Degenerate first-order asymmetry variance
+uses the unit error sentinel.
 
 In vector-polarisation mode, axis-specific alpha values (``alpha_x``,
 ``alpha_y``, ``alpha_z``) are used for ``P_x``, ``P_y``, and ``P_z``

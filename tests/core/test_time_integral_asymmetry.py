@@ -26,6 +26,7 @@ from asymmetry.core.transform import (
     integrate_curve,
     integrate_run,
 )
+from asymmetry.core.transform.fb_counts import GroupCounts
 
 # --- fixtures ----------------------------------------------------------------
 
@@ -80,7 +81,9 @@ def test_integral_matches_wimda_count_asymmetry_at_alpha_one():
     # WiMDA ALC: A = (F_int - B_int) / (F_int + B_int), alpha = 1.
     forward = np.full(5, 100.0)
     backward = np.full(5, 50.0)
-    value, _ = integrate_asymmetry(forward, backward, alpha=1.0, method="integral")
+    value, _ = integrate_asymmetry(
+        GroupCounts(forward), GroupCounts(backward), alpha=1.0, method="integral"
+    )
     assert value == pytest.approx((500.0 - 250.0) / (500.0 + 250.0))  # 1/3
 
 
@@ -88,7 +91,9 @@ def test_integral_shares_compute_asymmetry_error_model():
     forward = np.array([90.0, 100.0, 110.0])
     backward = np.array([50.0, 50.0, 50.0])
     alpha = 1.3
-    value, error = integrate_asymmetry(forward, backward, alpha=alpha, method="integral")
+    value, error = integrate_asymmetry(
+        GroupCounts(forward), GroupCounts(backward), alpha=alpha, method="integral"
+    )
 
     f_int = np.array([forward.sum()])
     b_int = np.array([backward.sum()])
@@ -101,7 +106,9 @@ def test_integral_applies_alpha():
     forward = np.full(4, 100.0)
     backward = np.full(4, 100.0)
     # alpha != 1 breaks the F == B balance.
-    value, _ = integrate_asymmetry(forward, backward, alpha=2.0, method="integral")
+    value, _ = integrate_asymmetry(
+        GroupCounts(forward), GroupCounts(backward), alpha=2.0, method="integral"
+    )
     assert value == pytest.approx((400.0 - 2.0 * 400.0) / (400.0 + 2.0 * 400.0))
 
 
@@ -111,16 +118,24 @@ def test_integral_applies_alpha():
 def test_methods_agree_for_flat_asymmetry():
     forward = np.full(6, 120.0)
     backward = np.full(6, 60.0)
-    integral, _ = integrate_asymmetry(forward, backward, method="integral")
-    differential, _ = integrate_asymmetry(forward, backward, method="differential")
+    integral, _ = integrate_asymmetry(
+        GroupCounts(forward), GroupCounts(backward), method="integral"
+    )
+    differential, _ = integrate_asymmetry(
+        GroupCounts(forward), GroupCounts(backward), method="differential"
+    )
     assert integral == pytest.approx(differential)
 
 
 def test_methods_differ_for_non_flat_asymmetry():
     forward = np.array([90.0, 100.0, 110.0])
     backward = np.array([50.0, 50.0, 50.0])
-    integral, _ = integrate_asymmetry(forward, backward, method="integral")
-    differential, _ = integrate_asymmetry(forward, backward, method="differential")
+    integral, _ = integrate_asymmetry(
+        GroupCounts(forward), GroupCounts(backward), method="integral"
+    )
+    differential, _ = integrate_asymmetry(
+        GroupCounts(forward), GroupCounts(backward), method="differential"
+    )
     # Differential is the mean of per-bin asymmetries; integral sums counts first.
     per_bin, _ = compute_asymmetry(forward, backward, 1.0)
     assert differential == pytest.approx(float(np.mean(per_bin)))
@@ -132,7 +147,9 @@ def test_differential_excludes_zero_denominator_bins():
     # (0, 1.0) sentinel there. It must not pollute the differential mean/error.
     forward = np.array([100.0, 0.0, 110.0])
     backward = np.array([50.0, 0.0, 55.0])
-    value, error = integrate_asymmetry(forward, backward, method="differential")
+    value, error = integrate_asymmetry(
+        GroupCounts(forward), GroupCounts(backward), method="differential"
+    )
     per_bin, errs = compute_asymmetry(forward, backward, 1.0)
     assert value == pytest.approx((per_bin[0] + per_bin[2]) / 2.0)
     assert error == pytest.approx(np.hypot(errs[0], errs[2]) / 2.0)
@@ -140,7 +157,9 @@ def test_differential_excludes_zero_denominator_bins():
 
 def test_differential_all_zero_counts_rejected():
     with pytest.raises(ValueError, match="non-zero counts"):
-        integrate_asymmetry(np.zeros(3), np.zeros(3), method="differential")
+        integrate_asymmetry(
+            GroupCounts(np.zeros(3)), GroupCounts(np.zeros(3)), method="differential"
+        )
 
 
 # --- window selection --------------------------------------------------------
@@ -152,14 +171,21 @@ def test_window_restricts_integration():
     time = np.arange(5) * 0.1  # 0.0 .. 0.4
     # Window 0.1 .. 0.3 selects the three central, balanced bins.
     value, _ = integrate_asymmetry(
-        forward, backward, time=time, t_min=0.1, t_max=0.3, method="integral"
+        GroupCounts(forward),
+        GroupCounts(backward),
+        time=time,
+        t_min=0.1,
+        t_max=0.3,
+        method="integral",
     )
     assert value == pytest.approx((300.0 - 150.0) / (300.0 + 150.0))  # 1/3
 
 
 def test_window_requires_time_axis():
     with pytest.raises(ValueError, match="time axis is required"):
-        integrate_asymmetry(np.ones(3), np.ones(3), t_min=0.1, method="integral")
+        integrate_asymmetry(
+            GroupCounts(np.ones(3)), GroupCounts(np.ones(3)), t_min=0.1, method="integral"
+        )
 
 
 # --- integrate_curve ---------------------------------------------------------
@@ -258,19 +284,21 @@ def test_integrate_run_dataset_without_run():
 
 def test_invalid_method_rejected():
     with pytest.raises(ValueError, match="method must be one of"):
-        integrate_asymmetry(np.ones(3), np.ones(3), method="bogus")
+        integrate_asymmetry(GroupCounts(np.ones(3)), GroupCounts(np.ones(3)), method="bogus")
 
 
 @pytest.mark.parametrize("bad_alpha", [0.0, -1.0, float("nan")])
 def test_non_positive_alpha_rejected(bad_alpha):
     with pytest.raises(ValueError, match="alpha must be"):
-        integrate_asymmetry(np.ones(3), np.ones(3), alpha=bad_alpha)
+        integrate_asymmetry(GroupCounts(np.ones(3)), GroupCounts(np.ones(3)), alpha=bad_alpha)
 
 
 def test_inverted_window_rejected():
     time = np.arange(3) * 0.1
     with pytest.raises(ValueError, match="t_min must be"):
-        integrate_asymmetry(np.ones(3), np.ones(3), time=time, t_min=0.2, t_max=0.1)
+        integrate_asymmetry(
+            GroupCounts(np.ones(3)), GroupCounts(np.ones(3)), time=time, t_min=0.2, t_max=0.1
+        )
 
 
 def test_equal_window_selects_single_bin():
@@ -279,7 +307,12 @@ def test_equal_window_selects_single_bin():
     backward = np.array([50.0, 50.0, 50.0])
     time = np.array([0.0, 0.1, 0.2])
     value, _ = integrate_asymmetry(
-        forward, backward, time=time, t_min=0.1, t_max=0.1, method="integral"
+        GroupCounts(forward),
+        GroupCounts(backward),
+        time=time,
+        t_min=0.1,
+        t_max=0.1,
+        method="integral",
     )
     assert value == pytest.approx((200.0 - 50.0) / (200.0 + 50.0))
 
@@ -293,7 +326,7 @@ def test_integrate_run_single_good_bin():
 
 def test_empty_counts_rejected():
     with pytest.raises(ValueError, match="non-empty"):
-        integrate_asymmetry(np.array([]), np.array([]))
+        integrate_asymmetry(GroupCounts(np.array([])), GroupCounts(np.array([])))
 
 
 def test_passing_period_list_is_typeerror():
