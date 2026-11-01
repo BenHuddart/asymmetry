@@ -88,13 +88,14 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting import (
     FitLog,
+    ScanBaselineResult,
     as_composite_model,
     build_grouped_time_domain_datasets,
     enrich_summary_provenance,
     fit_result_summary,
     fit_rf_resonance,
     fit_scan_baseline,
-    fit_scan_model,
+    fit_scan_peaks,
     grouped_time_domain_available,
 )
 from asymmetry.core.fitting.component_tags import FieldGeometry
@@ -941,10 +942,8 @@ class MainWindow(QMainWindow):
         self._alc_rf_mode = False
         #: True once an RF-resonance fit has been applied to the current scan.
         self._alc_rf_fitted = False
-        #: Baseline-corrected scan from the last baseline fit (basis for peaks).
-        self._alc_corrected_scan: FieldScan | None = None
-        #: The fitted baseline curve (display units), for the total-fit overlay.
-        self._alc_baseline_curve: object | None = None
+        #: Source snapshot and fitted baseline used for propagated peak errors.
+        self._alc_baseline: ScanBaselineResult | None = None
         #: True while restoring a project, to silence ALC fit dialogs.
         self._alc_loading = False
         self._frequency_spectra_by_run: dict[int, list[MuonDataset]] = {}
@@ -12881,8 +12880,7 @@ class MainWindow(QMainWindow):
         """
         # Any re-render (rebuild or x-axis/derivative change) invalidates a
         # previously-fitted baseline (it was tied to the old axis) and the RF fit.
-        self._alc_corrected_scan = None
-        self._alc_baseline_curve = None
+        self._alc_baseline = None
         self._alc_rf_fitted = False
         if not self._alc_scan_points:
             self._alc_scan_view.clear()
@@ -13137,8 +13135,7 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             self._alc_notify("Baseline", str(exc), warning=True)
             return
-        self._alc_corrected_scan = result.corrected
-        self._alc_baseline_curve = result.baseline
+        self._alc_baseline = result
         # Baseline/peaks and the RF fit share one overlay slot; a baseline fit
         # supersedes any RF fit so the persisted "rf_fitted" flag stays accurate.
         self._alc_rf_fitted = False
@@ -13151,13 +13148,12 @@ class MainWindow(QMainWindow):
         Prevents a later peak fit from running against a baseline-corrected scan
         that no longer matches the regions the user now sees.
         """
-        self._alc_corrected_scan = None
-        self._alc_baseline_curve = None
+        self._alc_baseline = None
 
     def _on_fit_peaks(self) -> None:
         """Fit the peak composite to the baseline-corrected scan; overlay + read off."""
-        corrected = self._alc_corrected_scan
-        if corrected is None:
+        baseline = self._alc_baseline
+        if baseline is None:
             self._alc_notify(
                 "Peaks", "Fit a baseline first; peaks are fitted on the corrected curve."
             )
@@ -13180,14 +13176,11 @@ class MainWindow(QMainWindow):
                 initial[model.component_param_name(i, local)] = spec[local]
 
         try:
-            fit = fit_scan_model(corrected, model, initial=initial)
+            peaks = fit_scan_peaks(baseline, model, initial=initial)
+            fit = peaks.fit
         except (ValueError, TypeError) as exc:
             self._alc_notify("Peaks", f"Could not fit peaks: {exc}", warning=True)
             return
-        if not fit.success:
-            self._alc_notify("Peaks", f"Peak fit did not converge: {fit.message}", warning=True)
-            return
-
         fitted_values = {name: fit.parameters[name].value for name in model.param_names}
         results: list[dict] = []
         summary_lines: list[str] = []
@@ -13196,25 +13189,25 @@ class MainWindow(QMainWindow):
             f_val = fitted_values[model.component_param_name(i, "f")]
             b0_val = fitted_values[b0_name]
             bwid_val = abs(fitted_values[model.component_param_name(i, "Bwid")])
-            b0_err = fit.uncertainties.get(b0_name, 0.0)
+            b0_err = peaks.uncertainties[b0_name]
+            amp_err = peaks.uncertainties[model.component_param_name(i, "f")]
+            width_err = peaks.uncertainties[model.component_param_name(i, "Bwid")]
             factor = model.components[i].fwhm_factor
-            fwhm = factor * bwid_val if factor is not None else float("nan")
+            assert factor is not None, "ALC peak models must define an FWHM factor"
+            fwhm = factor * bwid_val
             results.append({"f": f_val, "B0": b0_val, "Bwid": bwid_val})
             summary_lines.append(
                 f"Peak {i + 1} ({spec['label']}): B₀ = {b0_val:.4g} ± {b0_err:.2g} G, "
-                f"FWHM = {fwhm:.4g} G, amp = {f_val:.3g} %"
+                f"FWHM = {fwhm:.4g} ± {factor * width_err:.2g} G, amp = {f_val:.3g} ± {amp_err:.2g} %"
             )
 
         # Overlay the total fit = baseline + peaks on the raw scan.
-        peak_curve = np.asarray(model.function(corrected.x, **fitted_values), dtype=float)
-        total = peak_curve
-        if self._alc_baseline_curve is not None:
-            baseline = np.asarray(self._alc_baseline_curve, dtype=float)
-            if baseline.shape == peak_curve.shape:
-                total = baseline + peak_curve
+        peak_curve = np.asarray(model.function(baseline.scan.x, **fitted_values), dtype=float)
+        total = baseline.baseline + peak_curve
+        summary_lines.append("Uncertainties include the fitted baseline.")
         self._alc_rf_fitted = False  # a peaks fit supersedes any RF fit overlay
         self._alc_scan_view.set_peak_results(results, "\n".join(summary_lines))
-        self._alc_scan_view.show_fit_overlay(corrected.x, total)
+        self._alc_scan_view.show_fit_overlay(baseline.scan.x, total)
         self._log_panel.log(f"Fitted {len(specs)} peak(s): " + "; ".join(summary_lines))
 
     def _on_fit_rf(self) -> None:
@@ -17492,7 +17485,7 @@ class MainWindow(QMainWindow):
                 self._on_fit_rf()
             elif series.extra.get("baseline_fitted"):
                 self._on_fit_baseline()
-                if self._alc_corrected_scan is None:
+                if self._alc_baseline is None:
                     self._log_panel.log(
                         "ALC: the saved baseline could not be re-fitted on load "
                         "(some runs may be missing the scan's x-axis log)."

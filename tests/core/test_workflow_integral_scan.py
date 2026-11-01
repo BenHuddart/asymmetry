@@ -516,3 +516,34 @@ def test_stored_scan_restores_units_errors_and_exclusions() -> None:
     assert restored.units == scan.units
     assert restored.run_numbers == scan.run_numbers
     assert restored.excluded == scan.excluded
+
+
+def test_baseline_peak_payload_records_propagated_covariance():
+    from asymmetry.core.fitting import fit_scan_baseline
+
+    source = _scan()
+    regions = [(2000.0, 2600.0), (4400.0, 5000.0)]
+    fitted, payload = fit_integral_scan(
+        source, "LorentzianLCR", baseline_model="Constant", baseline_regions=regions
+    )
+    baseline = fit_scan_baseline(source, regions, model="Constant")
+    assert payload["uncertainty_basis"] == "baseline_propagated"
+    assert payload["conditional_uncertainties"] is not None
+    assert payload["covariance"][0] == ["f", "B0", "Bwid"]
+    names, matrix = payload["covariance"]
+    for name, variance in zip(names, np.diag(matrix), strict=True):
+        assert payload["uncertainties"][name] == pytest.approx(np.sqrt(variance))
+    np.testing.assert_allclose(fitted.error, baseline.corrected.error)
+    assert payload["reduced_chi_squared"] == pytest.approx(
+        payload["chi_squared"] / payload["effective_dof"]
+    )
+    values = payload["parameters"]
+    curve = values["f"] / (1 + ((fitted.x - values["B0"]) / values["Bwid"]) ** 2)
+    expected = np.sum(((fitted.value - curve) / source.error) ** 2)
+    assert payload["chi_squared"] == pytest.approx(expected, rel=1e-9)
+
+
+def test_joint_fit_payload_names_its_uncertainty_basis():
+    _, payload = fit_integral_scan(_scan(), "LorentzianLCR + Linear")
+    assert payload["uncertainty_basis"] == "joint_fit"
+    assert payload["conditional_uncertainties"] is None
