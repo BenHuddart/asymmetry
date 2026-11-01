@@ -149,6 +149,9 @@ class ParameterTrendingMgb2Scenario(Scenario):
             ),
             timeout_ms=20000,
         )
+        assert (
+            not widget._trend_curve_compute_active and widget._precomputed_trend_curves is not None
+        )
         _process_events_for(milliseconds=200)
 
 

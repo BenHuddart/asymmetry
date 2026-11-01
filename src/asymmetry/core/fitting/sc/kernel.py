@@ -14,9 +14,8 @@ with :math:`\Delta(T,k)=\Delta_0\,\delta(T/T_c)\,g(k)`.
 Numerical strategy
 ------------------
 
-- Energy and angular integrals use Gauss-Legendre quadrature.
-- The lower-bound singularity in the energy integral is handled by variable
-    substitution and finite-precision safeguards.
+- The thermal integral uses a nonsingular momentum variable in units of k_B T.
+- Angular integrals use Gauss-Legendre quadrature.
 - Limiting values are imposed for stability: ``rho_s(0)=1`` and ``rho_s(T>=Tc)=0``.
 """
 
@@ -28,6 +27,7 @@ from functools import lru_cache
 import numpy as np
 from numpy.polynomial.legendre import leggauss
 from numpy.typing import NDArray
+from scipy.special import expit
 
 from asymmetry.core.fitting.sc.bcs import delta_bcs
 
@@ -35,15 +35,11 @@ ArrayLikeFloat = NDArray[np.float64]
 ReducedGapFunction = Callable[[ArrayLikeFloat], ArrayLikeFloat]
 
 
-@lru_cache(maxsize=16)
-def _energy_nodes(n_energy: int) -> tuple[ArrayLikeFloat, ArrayLikeFloat]:
-    """Return transformed quadrature nodes for x in [0, 1)."""
-    n = max(int(n_energy), 8)
-    nodes, weights = leggauss(n)
-    # Map from [-1, 1] to [0, 1]. Endpoints are excluded by Gauss-Legendre.
-    x = 0.5 * (nodes + 1.0)
-    w = 0.5 * weights
-    return np.asarray(x, dtype=float), np.asarray(w, dtype=float)
+# u = sqrt(E²-Delta²)/(k_B T) is dimensionless. Analyticity up to |Im u| = π
+# gives trapezoid error < 2e-15 at h=1/2; truncating at u=36 adds < 2.4e-16.
+_THERMAL_STEP = 0.5
+_THERMAL_NODES = np.arange(0.0, 36.0 + _THERMAL_STEP, _THERMAL_STEP)
+_THERMAL_NODES.setflags(write=False)
 
 
 @lru_cache(maxsize=32)
@@ -81,58 +77,25 @@ def _angular_grid_3d(
     )
 
 
-def _fermi_derivative(e_reduced: ArrayLikeFloat, t_reduced: float) -> ArrayLikeFloat:
-    """Return d f / dE in reduced units with E normalized by k_B Tc."""
-    t = max(float(t_reduced), 1e-12)
-    arg = np.clip(e_reduced / (2.0 * t), -80.0, 80.0)
-    sech2 = 1.0 / np.cosh(arg) ** 2
-    return np.asarray(-0.25 * sech2 / t, dtype=float)
-
-
-def energy_integral(
-    delta_reduced: NDArray[np.float64] | list[float] | float,
-    t_reduced: float,
-    *,
-    n_energy: int = 96,
+def thermal_integral(
+    gap_over_temperature: NDArray[np.float64] | list[float] | float,
 ) -> ArrayLikeFloat:
-    r"""Evaluate the reduced thermal integral for one temperature.
+    r"""Evaluate I(d) = -∫ f(sqrt(u²+d²)) [1-f(sqrt(u²+d²))] du.
 
-    .. math::
-
-       I(\Delta,t)=\int_{\Delta}^{\infty}
-       \frac{\partial f}{\partial E}
-       \frac{E\,dE}{\sqrt{E^2-\Delta^2}}
-
-    where energies are expressed in units of :math:`k_B T_c`.
-
-    The integral is transformed to x in [0, 1) via E = delta + x/(1-x).
+    Here d = Delta/(k_B T), u = sqrt(E²-Delta²)/(k_B T), and f(x) = expit(-x).
+    The substitution removes the density-of-states endpoint singularity from
+    the thermal response (Prozorov & Giannetta, SST 19, R41, 2006, Eq. (16)).
+    The fixed trapezoid is exponentially convergent; I(0) = -1/2 follows without
+    a zero-gap branch. Scalar, empty, and N-dimensional shapes are preserved.
     """
-    deltas = np.maximum(np.asarray(delta_reduced, dtype=float), 0.0)
-    t = float(t_reduced)
-
-    out = np.zeros_like(deltas, dtype=float)
-    if t <= 0.0:
-        return out
-
-    zero_mask = deltas <= 1e-12
-    out[zero_mask] = -0.5
-
-    nonzero = ~zero_mask
-    if not np.any(nonzero):
-        return out
-
-    x, w = _energy_nodes(int(n_energy))
-    tail = x / np.maximum(1.0 - x, 1e-15)
-    jac = 1.0 / np.maximum((1.0 - x) ** 2, 1e-30)
-
-    delta_nz = deltas[nonzero]
-    e = delta_nz[:, None] + tail[None, :]
-    denom = np.sqrt(np.maximum(e * e - delta_nz[:, None] ** 2, 1e-300))
-    dfd_e = _fermi_derivative(e, t)
-
-    integrand = dfd_e * e / denom * jac[None, :]
-    out[nonzero] = np.sum(integrand * w[None, :], axis=1)
-    return np.asarray(out, dtype=float)
+    d = np.asarray(gap_over_temperature, dtype=float)
+    occupation = expit(-np.hypot(d[..., None], _THERMAL_NODES))
+    integrand = occupation * (1.0 - occupation)
+    return np.asarray(
+        -_THERMAL_STEP
+        * (np.sum(integrand, axis=-1) - 0.5 * (integrand[..., 0] + integrand[..., -1])),
+        dtype=float,
+    )
 
 
 def average_2d(
@@ -188,7 +151,6 @@ def superfluid_density_2d(
     gap_function: Callable[..., ArrayLikeFloat],
     gap_params: dict[str, float] | None = None,
     n_phi: int = 128,
-    n_energy: int = 96,
     reduced_gap_function: ReducedGapFunction | None = None,
     normalize_g: bool = False,
     normalization: str = "rms",
@@ -246,12 +208,12 @@ def superfluid_density_2d(
     rho_vals: list[float] = []
     for tt, dt in zip(t_reduced[mask], delta_t, strict=True):
         delta_angles = dt * g_eff
-        integral_vals = energy_integral(delta_angles, float(tt), n_energy=int(n_energy))
+        integral_vals = thermal_integral(delta_angles / float(tt))
         fs_avg = float(np.sum(w_phi * integral_vals))
         rho_vals.append(1.0 + 2.0 * fs_avg)
 
     rho_mask = np.asarray(rho_vals, dtype=float)
-    rho[mask] = np.clip(rho_mask, 0.0, 1.0)
+    rho[mask] = rho_mask
     return rho
 
 
@@ -264,7 +226,6 @@ def superfluid_density_3d(
     gap_params: dict[str, float] | None = None,
     n_theta: int = 32,
     n_phi: int = 64,
-    n_energy: int = 96,
     reduced_gap_function: ReducedGapFunction | None = None,
     normalize_g: bool = False,
     normalization: str = "rms",
@@ -287,8 +248,6 @@ def superfluid_density_3d(
         Number of Gauss-Legendre nodes in polar angle.
     n_phi
         Number of Gauss-Legendre nodes in azimuthal angle.
-    n_energy
-        Number of Gauss-Legendre nodes used in the thermal energy integral.
     reduced_gap_function
         Optional helper returning the reduced temperature dependence
         :math:`\delta(T/T_c)`. Defaults to :func:`asymmetry.core.fitting.sc.bcs.delta_bcs`.
@@ -300,7 +259,7 @@ def superfluid_density_3d(
     Returns
     -------
     numpy.ndarray
-        Normalized superfluid density clipped to ``[0, 1]`` with limiting values
+        Normalized superfluid density, bounded by ``[0, 1]`` up to round-off, with
         ``rho_s(0)=1`` and ``rho_s(T>=Tc)=0`` imposed for numerical stability.
     """
     tc_value = float(tc)
@@ -337,12 +296,12 @@ def superfluid_density_3d(
     rho_vals: list[float] = []
     for tt, dt in zip(t_reduced[mask], delta_t, strict=True):
         delta_angles = dt * g_eff
-        integral_vals = energy_integral(delta_angles, float(tt), n_energy=int(n_energy))
+        integral_vals = thermal_integral(delta_angles / float(tt))
         fs_avg = float(np.sum(w_flat * integral_vals))
         rho_vals.append(1.0 + 2.0 * fs_avg)
 
     rho_mask = np.asarray(rho_vals, dtype=float)
-    rho[mask] = np.clip(rho_mask, 0.0, 1.0)
+    rho[mask] = rho_mask
     return rho
 
 
@@ -354,7 +313,6 @@ def superfluid_density(
     gap_function: Callable[..., ArrayLikeFloat],
     gap_params: dict[str, float] | None = None,
     n_phi: int = 128,
-    n_energy: int = 96,
     reduced_gap_function: ReducedGapFunction | None = None,
     normalize_g: bool = False,
     normalization: str = "rms",
@@ -371,7 +329,6 @@ def superfluid_density(
         gap_function=gap_function,
         gap_params=gap_params,
         n_phi=n_phi,
-        n_energy=n_energy,
         reduced_gap_function=reduced_gap_function,
         normalize_g=normalize_g,
         normalization=normalization,

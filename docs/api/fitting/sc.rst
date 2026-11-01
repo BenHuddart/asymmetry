@@ -17,7 +17,7 @@ Kernel and gap helpers
 
 Thermal kernel and angular averaging:
 
-.. autofunction:: asymmetry.core.fitting.sc.kernel.energy_integral
+.. autofunction:: asymmetry.core.fitting.sc.kernel.thermal_integral
 
 .. autofunction:: asymmetry.core.fitting.sc.kernel.superfluid_density_2d
 
