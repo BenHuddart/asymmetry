@@ -62,9 +62,9 @@ def test_nonzero_coefficients_require_declared_frames(coefficient):
 def test_zero_table_needs_no_frame_normalisation():
     histogram = Histogram(np.array([1.0, 2.0]), bin_width=1)
     histograms, applied = deadtime.prepare_histograms_with_deadtime(
-        [histogram], {"dead_time_us": [0.0]}, True
+        [histogram], {"dead_time_us": [0.0]}, True, mode="manual"
     )
-    assert not applied
+    assert applied.status == "applied"
     np.testing.assert_array_equal(histograms[0].counts, histogram.counts)
 
 
@@ -102,7 +102,6 @@ def test_promotion_preserves_sign_and_rejects_nonfinite_results_atomically():
 @pytest.mark.parametrize("value", [np.nan, "bad", np.inf])
 def test_invalid_resolved_table_is_not_treated_as_absent(value):
     grouping = {"dead_time_us": [value], "good_frames": 10}
-    assert deadtime.has_resolved_deadtime(grouping, 1)
     with pytest.raises(deadtime.DeadtimeCorrectionError, match="detector 1"):
         deadtime.prepare_histograms_with_deadtime(
             [Histogram(np.ones(2), bin_width=1)], grouping, True

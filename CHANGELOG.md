@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Final reduction and calibration reject unavailable deadtime or background
+  corrections instead of returning an uncorrected spectrum as corrected.
+- Reference-background deadtime correction uses the reference's own frame exposure.
+
 - DT₀ count fits use the exact forward form of the reduction correction,
   accounting for unequal detector rates and the effective bunched bin width.
 
@@ -39,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 
 ### Changed
+
+- Grouped reduction results expose immutable `corrections` outcomes in place of
+  `deadtime_applied` and `background_state`; CLI work directories require a new survey.
 
 - The standalone deadtime correction requires an explicit `num_good_frames` value.
 

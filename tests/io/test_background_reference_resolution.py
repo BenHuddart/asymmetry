@@ -123,6 +123,9 @@ def test_resolve_does_not_mix_live_reference_with_stale_sample_snapshot():
     )
     # Snapshot ratio 800/400 = 2.0 — NOT 800/1000 (mixed) or any live/stale mix.
     assert result.scale == pytest.approx(2.0)
+    assert result.good_frames_sample == 800.0
+    assert result.good_frames_reference == 400.0
+    assert result.scale_source == "saved_frames"
 
 
 def test_resolve_cache_short_circuits_registry_scan(monkeypatch):
@@ -147,6 +150,7 @@ def test_resolve_cache_short_circuits_registry_scan(monkeypatch):
         cache=cache,
     )
     assert result.scale == pytest.approx(2.0)
+    assert result.source_file == "ref.nxs"
 
 
 @pytest.mark.parametrize("reference_length", [40, 80])
@@ -250,3 +254,41 @@ def test_fourier_grouped_path_satisfies_reference_run(monkeypatch):
         np.full(n, 8.0),
         atol=1e-9,
     )
+
+
+@pytest.mark.parametrize("scale", [0, -1, float("nan"), "invalid"])
+def test_invalid_reference_scale_does_not_become_unity(scale):
+    reference = _run(42, good_frames=1000.0, level=3.0)
+    with pytest.raises(ValueError, match="scale must be finite and positive"):
+        resolve_background_reference(
+            {"run_number": 42, "scale": scale},
+            sample_good_frames=None,
+            datasets=[_dataset(reference)],
+        )
+
+
+def test_fourier_reference_deadtime_uses_reference_frames(monkeypatch):
+    from asymmetry.core.fourier.grouped import _resolve_group_reference_counts
+
+    reference = BackgroundReference(
+        [Histogram(np.array([20 / 1.4]), 1.0)],
+        2.0,
+        good_frames_sample=10.0,
+        good_frames_reference=5.0,
+    )
+    monkeypatch.setattr("asymmetry.core.io.resolve_background_reference", lambda *a, **k: reference)
+    counts, scale = _resolve_group_reference_counts(
+        {
+            "background_correction": True,
+            "background_mode": "reference_run",
+            "deadtime_mode": "manual",
+            "dead_time_us": [0.1],
+            "good_frames": 10.0,
+        },
+        group_indices=[0],
+        common_t0=0,
+        apply_deadtime=True,
+        detector_t0_bins=[0],
+    )
+    np.testing.assert_allclose(counts, [20.0], rtol=1e-12)
+    assert scale == 2.0

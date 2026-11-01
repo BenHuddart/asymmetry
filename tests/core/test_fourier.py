@@ -503,8 +503,8 @@ def test_fourier_tail_fit_matches_grouping_side_fit() -> None:
         bin_width_us=bin_width,
         last_good_bin=int(grouping["last_good_bin"]),
     )
-    assert reduction.method == "tail_fit"
-    assert fourier_value == pytest.approx(reduction.values[0], rel=1e-9)
+    assert reduction.outcome.effective["method"] == "tail_fit"
+    assert fourier_value == pytest.approx(reduction.outcome.effective["values"][0], rel=1e-9)
 
 
 def test_fourier_tail_fit_improves_baseline() -> None:

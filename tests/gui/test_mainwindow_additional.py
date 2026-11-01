@@ -6904,7 +6904,7 @@ class TestBackgroundModesReduction:
         good = slice(8, 600)
         np.testing.assert_allclose(sample.asymmetry[good], 0.0)
 
-    def test_reference_run_mode_without_resolvable_reference_skips(
+    def test_reference_run_mode_without_resolvable_reference_refuses_apply(
         self, mainwindow: MainWindow
     ) -> None:
         dataset = self._long_run_dataset(8104)
@@ -6913,11 +6913,8 @@ class TestBackgroundModesReduction:
             background_run={"run_number": 999999, "source_file": ""},
         )
 
-        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
-
-        assert applied is True
-        # Reduction proceeds without subtraction; method records the miss.
-        assert dataset.run.grouping.get("background_method") == "missing_reference"
+        with pytest.raises(ValueError, match="reference is not loaded"):
+            mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
 
 class TestReductionSettingsPersistence:
@@ -6941,7 +6938,7 @@ class TestReductionSettingsPersistence:
         dataset.run.histograms = [Histogram(counts=counts.copy(), bin_width=0.01) for _ in range(4)]
         dataset.run.grouping["groups"] = {1: [1, 2], 2: [3, 4]}
         dataset.run.grouping.update(self.NEW_KEYS)
-        dataset.run.grouping["background_correction"] = True
+        dataset.run.grouping["background_correction"] = False
         dataset.run.grouping["background_run"] = {"run_number": 9002, "source_file": "/x.nxs"}
         dataset.run.grouping["period_mapping"] = {"1": "red", "2": "green"}
         return dataset

@@ -658,7 +658,7 @@ def _reduce_run_to_fb(
     if flags.use_background and counts.background_level is None:
         raise ValueError(
             "The grouping's background left no constant subtracted level "
-            f"({counts.background_state}); the integral takes a constant background only."
+            f"({counts.corrections.background.to_dict()}); the integral takes a constant background only."
         )
 
     n = counts.forward.counts.size

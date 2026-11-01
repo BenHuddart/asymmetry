@@ -27,6 +27,30 @@ modes that cannot apply to the data type are greyed out. The correction is
 applied to the grouped forward/backward counts before the asymmetry ratio,
 with the subtraction's shared uncertainty propagated through the merged counts.
 
+Correction outcomes
+-------------------
+
+A requested correction must be available before final reduction, calibration,
+or fitting can use the run. A missing reference, absent fixed values, or a
+failed tail fit raises an error; it does not produce an unsubtracted spectrum
+labelled as corrected. Malformed fixed values and invalid background ranges
+raise input errors, as do invalid reference scales or frame counts. Disabling the correction is an explicit valid choice.
+
+The core API returns ``corrections`` on grouped counts and grouped asymmetry
+results. Each ``CorrectionOutcome`` records its name, requested mode, status
+(``off``, ``applied``, ``unavailable``, or ``failed``), and any failure reason.
+Applied outcomes carry the effective settings and uncertainty convention:
+levels and errors, effective estimation ranges, tail-fit diagnostics, or the
+reference identity, frame counts, scale, and detector alignment. Reference
+scaling records whether it uses live frame counts, saved frame counts, an
+explicit scale, or a unity assumption when exposure metadata is absent. These records
+are immutable; ``CorrectionOutcomes.to_dict()`` exports an independent JSON
+snapshot. ``require_complete()`` rejects unavailable or failed corrections.
+
+A preview may request ``allow_incomplete=True`` and inspect the outcome.
+Such arrays are incomplete diagnostic results and must not be promoted as a
+corrected analysis. Final reduction requires complete outcomes by default.
+
 Choosing a mode
 ---------------
 
@@ -134,8 +158,9 @@ the data, scaled by the ratio of good frames:
 Good frames measure beam exposure, so the ratio puts both runs on the same
 exposure footing. The reference is chosen from the loaded datasets (or
 browsed from disk), recorded with the grouping, and re-resolved when the
-project is reopened. Both runs receive identical deadtime treatment before
-the subtraction, and each run's own time zero is used for alignment.
+project is reopened. Both runs receive the same per-detector deadtime
+coefficients, with each run's own frame exposure used for the correction.
+Each run's own time zero is used for alignment.
 
 *When to use this.* Separating holder/mount signal when its *shape* (not
 just a flat rate) must be removed — the reference subtraction removes the

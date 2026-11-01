@@ -255,7 +255,7 @@ def test_tail_fit_cross_covariance_matches_seeded_refits() -> None:
             bin_width_us=0.05,
             last_good_bin=299,
         )
-        assert result.applied
+        assert result.outcome.status == "applied"
         values.append([result.forward.counts[150:180].sum(), result.forward.counts[270:300].sum()])
         variances.append(linear_combination_variance(result.forward, edges)[[0, 2]])
     empirical = np.var(values, axis=0, ddof=1)

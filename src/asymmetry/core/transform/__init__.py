@@ -20,6 +20,12 @@ from asymmetry.core.transform.background import (
     subtract_scaled_counts,
     supports_background_correction,
 )
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcome,
+    CorrectionOutcomes,
+    CorrectionStatus,
+    CorrectionUnavailableError,
+)
 from asymmetry.core.transform.deadtime import (
     DeadtimeCorrection,
     DeadtimeCorrectionError,
@@ -27,10 +33,9 @@ from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
     deadtime_occupancy,
     estimate_deadtime_from_histograms,
-    has_file_deadtime,
-    has_resolved_deadtime,
     parse_deadtime_calibration_text,
     prepare_histograms_with_deadtime,
+    resolve_deadtime,
 )
 from asymmetry.core.transform.fb_counts import (
     AlignmentCrop,
@@ -125,6 +130,10 @@ from asymmetry.core.transform.units import (
 )
 
 __all__ = [
+    "CorrectionOutcome",
+    "CorrectionOutcomes",
+    "CorrectionStatus",
+    "CorrectionUnavailableError",
     "ASYMMETRY_FRACTION",
     "ASYMMETRY_PERCENT",
     "PERCENT_PER_FRACTION",
@@ -145,10 +154,9 @@ __all__ = [
     "deadtime_occupancy",
     "calibrate_deadtime_from_histograms",
     "estimate_deadtime_from_histograms",
-    "has_file_deadtime",
-    "has_resolved_deadtime",
     "parse_deadtime_calibration_text",
     "prepare_histograms_with_deadtime",
+    "resolve_deadtime",
     "promote_alpha_to_grouping",
     "promote_background_to_grouping",
     "promote_t0_to_grouping",

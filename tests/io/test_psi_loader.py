@@ -1106,24 +1106,10 @@ def test_prepare_deadtime_does_not_estimate_when_file_values_are_absent() -> Non
     observed = np.array([100.0, 95.0, 90.0], dtype=float)
     grouping = {}
 
-    corrected, applied = prepare_histograms_with_deadtime(
-        [
-            Histogram(
-                observed.astype(float),
-                bin_width=0.02,
-                t0_bin=0,
-                good_bin_start=0,
-                good_bin_end=2,
-            )
-        ],
-        grouping,
-        use_deadtime=True,
-    )
-
-    assert applied is False
+    with pytest.raises(ValueError, match="table"):
+        prepare_histograms_with_deadtime([Histogram(observed, bin_width=0.02)], grouping, True)
     assert "deadtime_method" not in grouping
     assert "estimated_dead_time_factors" not in grouping
-    assert corrected[0].counts == pytest.approx(observed)
 
 
 # --- t0 provenance and the analysis-group good window ------------------------

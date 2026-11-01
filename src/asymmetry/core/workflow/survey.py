@@ -42,6 +42,8 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.io.nexus import active_series_mean
+from asymmetry.core.transform.corrections import CorrectionStatus
+from asymmetry.core.transform.deadtime import resolve_deadtime
 from asymmetry.core.transform.grouping import group_names
 from asymmetry.core.workflow.reduction import (
     ReductionSettings,
@@ -382,22 +384,11 @@ def run_facility(metadata: dict[str, Any]) -> str:
 
 
 def has_file_deadtime(run: Run) -> bool:
-    """Whether this run's file carries usable per-detector deadtime values.
-
-    The same source and test the grouping window's ``from_file`` deadtime mode
-    uses: a ``dead_time_us`` table (the loaders' key; ``deadtime_loaded_us`` is
-    its legacy alias) that covers every detector and is not all zeros. A file
-    that records the table but leaves it at zero carries no deadtime.
-    """
-    grouping = run.grouping
-    values = grouping.get("dead_time_us")
-    if not isinstance(values, (list, tuple)):
-        values = grouping.get("deadtime_loaded_us")
-    if not isinstance(values, (list, tuple)):
-        return False
-    if len(values) < max(1, len(run.histograms)):
-        return False
-    return any(float(value) != 0.0 for value in values)
+    """Whether a file correction is available under the shared correction contract."""
+    return (
+        resolve_deadtime(run.grouping, len(run.histograms), True, "from_file").status
+        == CorrectionStatus.APPLIED
+    )
 
 
 @dataclass(frozen=True)

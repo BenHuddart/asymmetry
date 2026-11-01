@@ -5,12 +5,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.transform.fb_counts import (
     AlignmentCrop,
     BinWindow,
     ForwardBackwardCounts,
     GroupCounts,
-    SharedComponent,
     good_window,
 )
 
@@ -94,31 +94,19 @@ def test_window_and_alignment_match_the_array_extent() -> None:
         _counts(alignment=AlignmentCrop(0, (), (10, 10), 9))
 
 
-def test_background_provenance_has_one_source_for_levels_and_errors() -> None:
-    state = {"method": "range", "values": [10.0, 8.0]}
-    groups = [
-        GroupCounts(
-            np.ones(10),
-            np.ones(10),
-            shared=(
-                SharedComponent(
-                    "background",
-                    variance,
-                    -np.ones(10),
-                    np.zeros(10),
-                ),
-            ),
-        )
-        for variance in (1.0, 4.0)
-    ]
-    counts = _counts(forward=groups[0], backward=groups[1], background_state=state)
+def test_background_provenance_is_an_owned_snapshot() -> None:
+    from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionOutcomes
+
+    state = {"method": "range", "values": [10.0, 8.0], "value_errors": [1.0, 2.0]}
+    outcome = CorrectionOutcome(
+        "background", "range", "applied", effective=state, uncertainty="shared estimated levels"
+    )
+    counts = _counts(corrections=CorrectionOutcomes(background=outcome))
     state["values"][0] = 999.0
     assert counts.background_level == (10.0, 8.0)
     with pytest.raises(TypeError):
-        counts.background_state["values"] = (999.0, 8.0)
-    assert "value_errors" not in counts.background_state
-    exported = counts.background_metadata()
-    assert exported["values"] == [10.0, 8.0]
+        counts.corrections.background.effective["values"] = (999.0, 8.0)
+    exported = counts.corrections.background.to_dict()["effective"]
     assert exported["value_errors"] == [1.0, 2.0]
     exported["values"][0] = 999.0
     assert counts.background_level == (10.0, 8.0)
@@ -176,7 +164,7 @@ def test_reference_must_cover_the_sample_aligned_grid(reference_length: int) -> 
         use_deadtime=False,
         deadtime_mode="off",
         use_background=True,
-        reference_resolver=lambda _grouping: (reference, 2.0),
+        reference_resolver=lambda _grouping: BackgroundReference(reference, 2.0),
     )
     if reference_length < 10:
         with pytest.raises(
@@ -188,7 +176,7 @@ def test_reference_must_cover_the_sample_aligned_grid(reference_length: int) -> 
         np.testing.assert_array_equal(result.forward.counts, np.full(10, 16.0))
         np.testing.assert_array_equal(result.backward.counts, np.full(10, 16.0))
         assert result.alignment.length == 10
-        reference_alignment = result.background_state["reference_alignment"]
+        reference_alignment = result.corrections.background.effective["reference_alignment"]
         assert reference_alignment["group_lengths"] == (reference_length, reference_length)
         assert reference_alignment["length"] == 10
 
@@ -226,18 +214,3 @@ def test_saved_window_loads_unchanged_and_is_checked_at_reduction(tmp_path, wind
     else:
         with pytest.raises(ValueError, match="good-bin window"):
             reduce_grouped_asymmetry(**kwargs)
-
-
-@pytest.mark.parametrize(
-    "state",
-    [
-        {"value_errors": [1.0, 2.0]},
-        {"values": None},
-        {"values": [1.0]},
-        {"values": [1.0, np.nan]},
-        {"values": [1.0, 2.0], "value_errors": [1.0, 2.0]},
-    ],
-)
-def test_background_provenance_requires_finite_levels_and_derived_errors(state) -> None:
-    with pytest.raises(ValueError):
-        _counts(background_state=state)

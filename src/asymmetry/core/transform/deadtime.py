@@ -8,6 +8,11 @@ import numpy as np
 from scipy.optimize import curve_fit
 
 from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcome,
+    CorrectionOutcomes,
+    CorrectionStatus,
+)
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
 
@@ -404,79 +409,116 @@ def _coerce_deadtime_value(
     return [_deadtime_number(dead_time_us_value, "deadtime coefficient (µs)")] * n
 
 
-def has_file_deadtime(grouping: dict, n_histograms: int = 0) -> bool:
-    """Return ``True`` when grouping metadata contains file deadtime values."""
-    if not isinstance(grouping, dict):
-        return False
-    method = str(grouping.get("deadtime_method", "")).strip().lower()
-    if method not in {"", "file"}:
-        return False
-    return has_resolved_deadtime(grouping, n_histograms)
-
-
-def has_resolved_deadtime(grouping: dict, n_histograms: int = 0) -> bool:
-    """Return whether a complete non-zero table is present, pending domain validation."""
-    if not isinstance(grouping, dict):
-        return False
-    dead_time_us = grouping.get("dead_time_us")
-    if not isinstance(dead_time_us, list):
-        return False
-    required = max(1, int(n_histograms))
-    return len(dead_time_us) >= required and any(value != 0 for value in dead_time_us)
+def resolve_deadtime(
+    grouping: dict, n_histograms: int, use: bool, mode: str | None = None
+) -> CorrectionOutcome:
+    """Resolve one request without mutating its table or coefficient provenance."""
+    if not use:
+        return CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
+    raw_mode = (
+        str(
+            mode
+            if mode is not None
+            else grouping.get("deadtime_mode", grouping.get("deadtime_method", "file"))
+        )
+        .strip()
+        .lower()
+    )
+    modes = {
+        "file": "from_file",
+        "from_file": "from_file",
+        "manual": "manual",
+        "load": "manual",
+        "value": "manual",
+        "estimate": "estimate",
+        "calibrate": "manual",
+        "count_fit": "manual",
+        "maxent_fit": "manual",
+        "off": "off",
+        "none": "off",
+        "": "from_file",
+    }
+    if raw_mode not in modes:
+        raise ValueError(f"unknown deadtime correction mode {raw_mode!r}")
+    requested = modes[raw_mode]
+    if requested == "off":
+        return CorrectionOutcome("deadtime", "off", CorrectionStatus.OFF)
+    table = grouping.get("dead_time_us", grouping.get("deadtime_loaded_us"))
+    reason = None
+    if not isinstance(table, (list, tuple)) or len(table) < n_histograms:
+        reason = "a complete per-detector deadtime table is unavailable."
+    elif requested == "from_file" and str(
+        grouping.get("deadtime_method", "")
+    ).strip().lower() not in {
+        "",
+        "file",
+        "from_file",
+    }:
+        reason = "the deadtime table is not from the file."
+    if reason is not None:
+        return CorrectionOutcome("deadtime", requested, CorrectionStatus.UNAVAILABLE, reason)
+    if any(value != 0 for value in table[:n_histograms]) and grouping.get("good_frames") is None:
+        return CorrectionOutcome(
+            "deadtime",
+            requested,
+            CorrectionStatus.UNAVAILABLE,
+            "good frames must be finite and > 0; acquisition normalisation is unavailable",
+        )
+    correction = DeadtimeCorrection(tuple(table[:n_histograms]), grouping.get("good_frames"))
+    if requested == "from_file" and not any(correction.tau_us):
+        return CorrectionOutcome(
+            "deadtime",
+            requested,
+            CorrectionStatus.UNAVAILABLE,
+            "the file has no non-zero per-detector deadtime table.",
+        )
+    return CorrectionOutcome(
+        "deadtime",
+        requested,
+        CorrectionStatus.APPLIED,
+        effective={
+            "tau_us": correction.tau_us,
+            "good_frames": correction.good_frames if any(correction.tau_us) else None,
+            "source": str(grouping.get("deadtime_method") or requested).strip().lower(),
+        },
+        uncertainty="Poisson; deadtime derivative and coefficient uncertainty not propagated",
+    )
 
 
 def prepare_histograms_with_deadtime(
     histograms: list[Histogram],
     grouping: dict,
     use_deadtime: bool,
-) -> tuple[list[Histogram], bool]:
-    """Return histograms with optional deadtime correction applied."""
+    *,
+    mode: str | None = None,
+    allow_incomplete: bool = False,
+) -> tuple[list[Histogram], CorrectionOutcome]:
+    """Return prepared histograms and the exact requested/effective correction."""
     with perf_timer(
-        "core.deadtime.prepare",
-        n_detectors=len(histograms),
-        use_deadtime=use_deadtime,
+        "core.deadtime.prepare", n_detectors=len(histograms), use_deadtime=use_deadtime
     ) as perf:
-        if not use_deadtime:
-            perf.detail(applied=False)
-            return list(histograms), False
-
-        dead_time_us = grouping.get("dead_time_us") if isinstance(grouping, dict) else None
-        if isinstance(dead_time_us, list) and len(dead_time_us) >= len(histograms):
-            correction = DeadtimeCorrection.from_grouping(grouping, len(histograms))
-            corrected, applied = _prepare_histograms_with_resolved_deadtime(
-                histograms, grouping, correction
+        outcome = resolve_deadtime(grouping, len(histograms), use_deadtime, mode)
+        if not allow_incomplete:
+            CorrectionOutcomes(deadtime=outcome).require_complete()
+        perf.detail(applied=outcome.status == CorrectionStatus.APPLIED)
+        if outcome.status != CorrectionStatus.APPLIED or not any(outcome.effective["tau_us"]):
+            return list(histograms), outcome
+        corrected = [
+            _copy_histogram_with_counts(
+                hist,
+                apply_deadtime_correction(
+                    hist.counts,
+                    tau_us,
+                    hist.bin_width,
+                    num_good_frames=outcome.effective["good_frames"],
+                    detector=i,
+                ),
             )
-            perf.detail(applied=applied)
-            return corrected, applied
-
-        perf.detail(applied=False)
-        return list(histograms), False
-
-
-def _prepare_histograms_with_resolved_deadtime(
-    histograms: list[Histogram],
-    grouping: dict,
-    correction: DeadtimeCorrection,
-) -> tuple[list[Histogram], bool]:
-    applied_any = any(value != 0 for value in correction.tau_us)
-    if not applied_any:
-        return list(histograms), False
-    corrected: list[Histogram] = []
-    for i, hist in enumerate(histograms):
-        tau_us = correction.tau_us[i]
-        counts = apply_deadtime_correction(
-            hist.counts,
-            tau_us,
-            hist.bin_width,
-            num_good_frames=correction.good_frames,
-            detector=i,
-        )
-
-        corrected.append(_copy_histogram_with_counts(hist, counts))
-
-    method = str(grouping.get("deadtime_method", "")).strip().lower()
-    grouping["deadtime_method"] = method or "file"
-    return corrected, True
+            for i, (hist, tau_us) in enumerate(
+                zip(histograms, outcome.effective["tau_us"], strict=True)
+            )
+        ]
+        return corrected, outcome
 
 
 def _copy_histogram_with_counts(histogram: Histogram, counts) -> Histogram:

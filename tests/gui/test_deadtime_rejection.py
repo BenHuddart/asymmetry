@@ -105,7 +105,7 @@ def test_alpha_estimate_surfaces_invalid_deadtime_without_blocking(qapp, dataset
     )
     dialog._alpha_section._on_estimate()
     wait_for(lambda: bool(messages), qapp)
-    assert "Deadtime correction rejected: good frames" in messages[0]
+    assert "deadtime correction requested (manual) but not applied: good frames" in messages[0]
     dialog._clear_dirty()
 
 

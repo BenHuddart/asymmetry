@@ -10,7 +10,8 @@ from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.io import load
 from asymmetry.core.io.nexus_writer import write_nexus_v1
 from asymmetry.core.io.periods import combine_mapped_periods, select_period_histograms
-from asymmetry.core.transform import DeadtimeCorrectionError, reduce_grouped_asymmetry
+from asymmetry.core.transform import reduce_grouped_asymmetry
+from asymmetry.core.transform.corrections import CorrectionUnavailableError
 
 h5py = pytest.importorskip("h5py")
 
@@ -47,7 +48,7 @@ def test_nexus_does_not_invent_missing_or_invalid_frames(signed_file, frames):
             handle["run/good_frames"] = frames
     run = load(signed_file).run
     assert "good_frames" not in run.grouping
-    with pytest.raises(DeadtimeCorrectionError, match="good frames"):
+    with pytest.raises(CorrectionUnavailableError, match="good frames"):
         reduce_grouped_asymmetry(
             histograms=run.histograms,
             grouping=run.grouping,
@@ -76,7 +77,7 @@ def test_negative_file_table_reaches_the_reduction(signed_file):
     forward = np.array([100 / 21, 50 / 3])
     backward = np.array([100 / 9, 25])
     np.testing.assert_allclose(result.asymmetry, 100 * (forward - backward) / (forward + backward))
-    assert result.deadtime_applied
+    assert result.corrections.deadtime.status == "applied"
 
 
 def test_writer_preserves_absent_frames(signed_file, tmp_path):
@@ -100,7 +101,7 @@ def test_period_selection_does_not_inherit_another_periods_frames(signed_file, s
         mapped.run.grouping["period_good_frames"] = [10]
     histograms, grouping = select_period_histograms(mapped.run.histograms, mapped.run.grouping, 1)
     assert "good_frames" not in grouping
-    with pytest.raises(DeadtimeCorrectionError, match="good frames"):
+    with pytest.raises(CorrectionUnavailableError, match="good frames"):
         reduce_grouped_asymmetry(
             histograms=histograms,
             grouping=grouping,

@@ -269,7 +269,9 @@ def test_a_tail_fit_background_is_subtracted_or_the_reduction_says_why() -> None
     assert np.mean(subtracted.asymmetry[:50]) > np.mean(plain.asymmetry[:50])
 
     flat = simulate_run(template, lambda t: 0.0 * t, total_events=1.0e3, seed=5, run_number=9)
-    with pytest.raises(ValueError, match="tail_fit background could not be subtracted"):
+    with pytest.raises(
+        ValueError, match=r"background correction requested \(tail_fit\) but not applied"
+    ):
         reduce_run(flat, settings)
 
 
@@ -340,7 +342,7 @@ def test_the_background_error_names_the_source_run_of_a_period_selection() -> No
     )
     red = period_run(flat_run, 0)
     settings = ReductionSettings(background="tail_fit", period="red")
-    with pytest.raises(ValueError, match=r"^Run 44: the tail_fit background"):
+    with pytest.raises(ValueError, match=r"^Run 44: background correction requested"):
         reduce_run(red, settings)
 
 

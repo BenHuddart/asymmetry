@@ -33,7 +33,7 @@ def test_profile_file_window_rejects_invalid_declared_bounds(window):
 def test_grouped_fourier_rejects_a_reversed_background_window():
     from asymmetry.core.fourier.grouped import _apply_group_background_correction
 
-    with pytest.raises(ValueError, match="window.*reversed"):
+    with pytest.raises(ValueError, match="background range.*reversed"):
         _apply_group_background_correction(
             np.ones(8),
             grouping={

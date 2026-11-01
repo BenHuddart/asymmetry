@@ -26,6 +26,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import minimize
 
+from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionStatus
 from asymmetry.core.transform.fb_counts import (
     BinWindow,
     GroupCounts,
@@ -50,11 +51,7 @@ class BackgroundCorrectionResult:
 
     forward: GroupCounts
     backward: GroupCounts
-    applied: bool
-    method: str
-    values: tuple[float, float] | None = None
-    ranges: tuple[tuple[int, int], tuple[int, int]] | None = None
-    details: dict[str, Any] | None = None
+    outcome: CorrectionOutcome
 
 
 @dataclass(frozen=True)
@@ -388,7 +385,7 @@ def apply_grouped_background_correction(
     mode = resolve_background_mode(grouping)
 
     if mode == "none":
-        return BackgroundCorrectionResult(GroupCounts(f), GroupCounts(b), False, "none")
+        return _background_result(GroupCounts(f), GroupCounts(b), mode, status=CorrectionStatus.OFF)
 
     if mode == "tail_fit":
         forward_fit = fit_tail_background(
@@ -404,15 +401,12 @@ def apply_grouped_background_correction(
             last_good_bin=last_good_bin,
         )
         if not forward_fit.ok or not backward_fit.ok:
-            return BackgroundCorrectionResult(
+            return _background_result(
                 GroupCounts(f),
                 GroupCounts(b),
-                False,
-                "tail_fit_failed",
-                details={
-                    "forward_message": forward_fit.message,
-                    "backward_message": backward_fit.message,
-                },
+                mode,
+                status=CorrectionStatus.FAILED,
+                reason=f"{forward_fit.message}; {backward_fit.message}",
             )
         f_value = forward_fit.rate_per_us * bin_width_us
         b_value = backward_fit.rate_per_us * bin_width_us
@@ -432,11 +426,10 @@ def apply_grouped_background_correction(
                     poisson_variance,
                 )
             )
-        return BackgroundCorrectionResult(
+        return _background_result(
             forward=corrected[0],
             backward=corrected[1],
-            applied=True,
-            method="tail_fit",
+            mode=mode,
             values=(f_value, b_value),
             ranges=(forward_fit.window, backward_fit.window),
             details={
@@ -451,39 +444,45 @@ def apply_grouped_background_correction(
 
     if mode == "reference_run":
         if reference_forward is None or reference_backward is None or reference_scale is None:
-            return BackgroundCorrectionResult(
-                GroupCounts(f), GroupCounts(b), False, "missing_reference"
+            return _background_result(
+                GroupCounts(f),
+                GroupCounts(b),
+                mode,
+                status=CorrectionStatus.UNAVAILABLE,
+                reason="reference run is not loaded",
             )
         f_corr, f_var = subtract_scaled_counts(f, reference_forward, reference_scale)
         b_corr, b_var = subtract_scaled_counts(b, reference_backward, reference_scale)
-        return BackgroundCorrectionResult(
+        return _background_result(
             forward=GroupCounts(f_corr, f_var),
             backward=GroupCounts(b_corr, b_var),
-            applied=True,
-            method="reference_run",
+            mode=mode,
             details={"scale": float(reference_scale)},
         )
 
-    fixed = _fixed_background_values(grouping)
     if mode == "fixed":
+        fixed = _fixed_background_values(grouping)
         if fixed is None:
             # An explicit fixed mode without usable values must not silently
             # degrade to a range estimate the user never asked for.
-            return BackgroundCorrectionResult(
-                GroupCounts(f), GroupCounts(b), False, "missing_fixed_values"
+            return _background_result(
+                GroupCounts(f),
+                GroupCounts(b),
+                mode,
+                status=CorrectionStatus.UNAVAILABLE,
+                reason="fixed background values are unavailable",
             )
-        return BackgroundCorrectionResult(
+        return _background_result(
             forward=GroupCounts(f - fixed[0], f),
             backward=GroupCounts(b - fixed[1], b),
-            applied=True,
-            method="fixed",
+            mode=mode,
             values=fixed,
             ranges=None,
         )
 
     ranges = _background_ranges(grouping, int(t0_bin))
-    ranges[0].validate_length(f.size)
-    ranges[1].validate_length(b.size)
+    ranges[0].validate_length(f.size, label="background range")
+    ranges[1].validate_length(b.size, label="background range")
     f_range = _adjust_range_for_beam_period(
         ranges[0],
         bin_width_us=bin_width_us,
@@ -514,13 +513,66 @@ def apply_grouped_background_correction(
                 raw,
             )
         )
-    return BackgroundCorrectionResult(
+    return _background_result(
         forward=corrected[0],
         backward=corrected[1],
-        applied=True,
-        method="estimated",
+        mode=mode,
         values=(f_value, b_value),
         ranges=((f_range.first, f_range.last), (b_range.first, b_range.last)),
+    )
+
+
+def _background_result(
+    forward,
+    backward,
+    mode,
+    *,
+    status=CorrectionStatus.APPLIED,
+    reason=None,
+    values=None,
+    ranges=None,
+    details=None,
+):
+    """Record the estimation inputs and uncertainty carried by the corrected counts."""
+    effective = None
+    uncertainty = None
+    if status == CorrectionStatus.APPLIED:
+        effective = {"method": "estimated" if mode == "range" else mode}
+        if values is not None:
+            effective["values"] = values
+            effective["value_errors"] = [
+                float(
+                    np.sqrt(
+                        sum(
+                            component.variance
+                            for component in group.shared
+                            if component.name == "background"
+                        )
+                    )
+                )
+                for group in (forward, backward)
+            ]
+        if ranges is not None:
+            effective["ranges"] = ranges
+        if details is not None:
+            effective["details"] = details
+        uncertainty = {
+            "fixed": "fixed background values treated as exact",
+            "reference_run": "independent Poisson sample and reference counts",
+            "range": "shared estimated levels with count-estimator covariance",
+            "tail_fit": "shared fitted levels with Poisson information and count-estimator covariance",
+        }[mode]
+    return BackgroundCorrectionResult(
+        forward,
+        backward,
+        CorrectionOutcome(
+            "background",
+            mode,
+            status,
+            reason,
+            effective,
+            uncertainty,
+        ),
     )
 
 
@@ -549,11 +601,16 @@ def _estimated_background_group(
 def _fixed_background_values(grouping: dict[str, Any]) -> tuple[float, float] | None:
     for key in ("background_fixed_values", "background_fix", "bkg_fix"):
         candidate = grouping.get(key)
-        if isinstance(candidate, (list, tuple)) and len(candidate) >= 2:
+        if isinstance(candidate, (list, tuple)) and len(candidate) == 2:
             try:
-                return float(candidate[0]), float(candidate[1])
+                values = float(candidate[0]), float(candidate[1])
             except (TypeError, ValueError):
-                return None
+                raise ValueError("fixed background values must be two finite numbers") from None
+            if not np.all(np.isfinite(values)):
+                raise ValueError("fixed background values must be two finite numbers")
+            return values
+        if candidate is not None:
+            raise ValueError("fixed background values must be two finite numbers")
     return None
 
 
@@ -561,7 +618,7 @@ def background_window(value: object) -> BinWindow:
     """Validate two inclusive acquisition-bin endpoints at the input boundary."""
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         raise ValueError("background range requires two integer bin indices.")
-    return BinWindow(*value)
+    return BinWindow(*value, label="background range")
 
 
 def _background_ranges(grouping: dict[str, Any], t0_bin: int) -> tuple[BinWindow, BinWindow]:

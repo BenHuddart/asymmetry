@@ -9,10 +9,9 @@ from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
     estimate_deadtime_from_histograms,
-    has_file_deadtime,
-    has_resolved_deadtime,
     parse_deadtime_calibration_text,
     prepare_histograms_with_deadtime,
+    resolve_deadtime,
 )
 
 
@@ -26,26 +25,16 @@ def test_prepare_deadtime_uses_file_values_only() -> None:
         use_deadtime=True,
     )
 
-    assert applied is True
-    assert grouping["deadtime_method"] == "file"
-    assert corrected[0].counts[0] == pytest.approx(100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0))))
-    assert has_file_deadtime(grouping, 1) is True
-
-
-def test_prepare_deadtime_without_file_values_is_noop() -> None:
-    histogram = Histogram(np.array([100.0, 200.0]), bin_width=0.02)
-    grouping = {}
-
-    corrected, applied = prepare_histograms_with_deadtime(
-        [histogram],
-        grouping,
-        use_deadtime=True,
-    )
-
-    assert applied is False
+    assert applied.status == "applied"
     assert "deadtime_method" not in grouping
-    np.testing.assert_allclose(corrected[0].counts, histogram.counts)
-    assert has_file_deadtime(grouping, 1) is False
+    assert corrected[0].counts[0] == pytest.approx(100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0))))
+    assert resolve_deadtime(grouping, 1, True, "from_file").status == "applied"
+
+
+def test_prepare_deadtime_without_file_values_refuses_final_analysis() -> None:
+    histogram = Histogram(np.array([100.0, 200.0]), bin_width=0.02)
+    with pytest.raises(ValueError, match="table"):
+        prepare_histograms_with_deadtime([histogram], {}, use_deadtime=True)
 
 
 def test_prepare_deadtime_preserves_non_file_method_for_resolved_payload() -> None:
@@ -62,10 +51,10 @@ def test_prepare_deadtime_preserves_non_file_method_for_resolved_payload() -> No
         use_deadtime=True,
     )
 
-    assert applied is True
+    assert applied.status == "applied"
     assert grouping["deadtime_method"] == "estimate"
-    assert has_resolved_deadtime(grouping, 1) is True
-    assert has_file_deadtime(grouping, 1) is False
+    assert resolve_deadtime(grouping, 1, True, "manual").status == "applied"
+    assert resolve_deadtime(grouping, 1, True, "from_file").status == "unavailable"
     assert corrected[0].counts[0] > histogram.counts[0]
 
 

@@ -167,15 +167,17 @@ def test_dispatch_tail_fit_populates_details():
         bin_width_us=BIN_WIDTH_US,
         last_good_bin=N_BINS - 1,
     )
-    assert result.applied
-    assert result.method == "tail_fit"
+    assert result.outcome.status == "applied"
+    assert result.outcome.effective["method"] == "tail_fit"
     assert result.forward.shared
-    assert result.details is not None
-    assert result.details["forward_rate_per_us"] == pytest.approx(
-        result.details["backward_rate_per_us"]
+    assert result.outcome.effective["details"] is not None
+    assert result.outcome.effective["details"]["forward_rate_per_us"] == pytest.approx(
+        result.outcome.effective["details"]["backward_rate_per_us"]
     )
     # values are the per-bin counts subtracted
-    assert result.values[0] == pytest.approx(result.details["forward_rate_per_us"] * BIN_WIDTH_US)
+    assert result.outcome.effective["values"][0] == pytest.approx(
+        result.outcome.effective["details"]["forward_rate_per_us"] * BIN_WIDTH_US
+    )
 
 
 def test_dispatch_reference_run():
@@ -191,10 +193,10 @@ def test_dispatch_reference_run():
         reference_backward=reference,
         reference_scale=2.0,
     )
-    assert result.applied
-    assert result.method == "reference_run"
+    assert result.outcome.status == "applied"
+    assert result.outcome.effective["method"] == "reference_run"
     assert result.forward.counts == pytest.approx([60.0, 30.0, 2.0])
-    assert result.details == {"scale": 2.0}
+    assert result.outcome.effective["details"] == {"scale": 2.0}
 
 
 def test_dispatch_reference_run_without_reference_reports_missing():
@@ -206,8 +208,9 @@ def test_dispatch_reference_run_without_reference_reports_missing():
         t0_bin=1,
         bin_width_us=BIN_WIDTH_US,
     )
-    assert not result.applied
-    assert result.method == "missing_reference"
+    assert result.outcome.status != "applied"
+    assert result.outcome.status == "unavailable"
+    assert "reference" in result.outcome.reason
 
 
 def test_dispatch_none_mode():
@@ -219,7 +222,7 @@ def test_dispatch_none_mode():
         t0_bin=1,
         bin_width_us=BIN_WIDTH_US,
     )
-    assert not result.applied
+    assert result.outcome.status != "applied"
 
 
 def test_legacy_fixed_and_range_paths_unchanged():
@@ -231,7 +234,7 @@ def test_legacy_fixed_and_range_paths_unchanged():
         t0_bin=20,
         bin_width_us=BIN_WIDTH_US,
     )
-    assert fixed.applied and fixed.method == "fixed"
+    assert fixed.outcome.status == "applied" and fixed.outcome.effective["method"] == "fixed"
     assert fixed.forward.counts == pytest.approx(counts - 5.0)
 
     ranged = apply_grouped_background_correction(
@@ -241,7 +244,7 @@ def test_legacy_fixed_and_range_paths_unchanged():
         t0_bin=20,
         bin_width_us=BIN_WIDTH_US,
     )
-    assert ranged.applied and ranged.method == "estimated"
+    assert ranged.outcome.status == "applied" and ranged.outcome.effective["method"] == "estimated"
 
 
 def test_explicit_range_mode_ignores_fixed_values():
@@ -257,8 +260,8 @@ def test_explicit_range_mode_ignores_fixed_values():
         t0_bin=20,
         bin_width_us=BIN_WIDTH_US,
     )
-    assert result.applied
-    assert result.method == "estimated"
+    assert result.outcome.status == "applied"
+    assert result.outcome.effective["method"] == "estimated"
 
 
 def test_explicit_fixed_mode_without_values_does_not_fall_through_to_range():
@@ -272,8 +275,9 @@ def test_explicit_fixed_mode_without_values_does_not_fall_through_to_range():
         t0_bin=20,
         bin_width_us=BIN_WIDTH_US,
     )
-    assert not result.applied
-    assert result.method == "missing_fixed_values"
+    assert result.outcome.status != "applied"
+    assert result.outcome.status == "unavailable"
+    assert "fixed" in result.outcome.reason
     np.testing.assert_array_equal(result.forward.counts, counts)
 
 
@@ -330,18 +334,16 @@ def test_fourier_group_path_applies_tail_fit_on_pulsed_data():
     assert float(np.sum(corrected)) < float(np.sum(counts))
 
 
-def test_fourier_group_path_skips_reference_run_mode_without_correcting():
+def test_fourier_group_path_refuses_missing_reference():
     from asymmetry.core.fourier.grouped import _apply_group_background_correction
 
-    counts = np.full(50, 80.0)
-    corrected, applied, _ = _apply_group_background_correction(
-        counts,
-        grouping={"background_correction": True, "background_mode": "reference_run"},
-        group_id=1,
-        t0_bin=5,
-        bin_width=BIN_WIDTH_US,
-        metadata={"facility": "ISIS"},
-        source_file="run.nxs",
-    )
-    assert not applied
-    np.testing.assert_array_equal(corrected, counts)
+    with pytest.raises(ValueError, match="reference run is not loaded"):
+        _apply_group_background_correction(
+            np.array([100.0, 50.0, 10.0]),
+            grouping={"background_correction": True, "background_mode": "reference_run"},
+            group_id=1,
+            t0_bin=1,
+            bin_width=BIN_WIDTH_US,
+            metadata={},
+            source_file="",
+        )
