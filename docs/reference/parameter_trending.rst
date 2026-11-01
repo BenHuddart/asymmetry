@@ -1928,3 +1928,23 @@ muonium reaction kinetics from relaxation rates linear in reactant
 concentration, see :doc:`muonium_kinetics`; and for the field-dependent
 transport models fitted to :math:`\lambda(B_\mathrm{LF})`, see
 :doc:`diffusion_ballistic_lf`.
+
+Information criteria for role suggestions
+-----------------------------------------
+
+**Suggest roles…** compares the Global/Local partitions on the same data and
+under the same weighting convention. Column, Absolute and Percent errors use
+:math:`\chi^2` as :math:`-2\ln L` up to a data-only constant. None and Scatter
+profile a common unknown variance, using :math:`n\ln(\mathrm{RSS}/n)` and one
+additional fitted parameter for that variance. Scaling all ordinates by a
+common factor therefore preserves the criterion differences between models.
+A zero residual variance gives an unbounded unknown-variance likelihood and
+cannot be ranked by a finite criterion.
+
+Effective-variance fits with x errors omit a parameter-dependent likelihood
+normalization term, so information criteria are unavailable for those fits.
+AICc is unavailable when :math:`n-k-1\leq0`; the role search excludes that
+partition under AICc and never substitutes AIC. See :doc:`fit_wizard` for the
+formulas, assumptions and primary references. If no converged candidate has
+a defined AICc, the message is "No candidate can be ranked by AICC; roles left
+unchanged."

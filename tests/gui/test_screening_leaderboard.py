@@ -41,7 +41,9 @@ _METRIC = "ΔAICc from best"
 def _summaries(count: int = 3, **overrides) -> tuple[CandidateSummary, ...]:
     return summarise_candidates(
         [
-            _assessment(f"family{index}", aicc=100.0 + 7.5 * index, prescreen=True, **overrides)
+            _assessment(
+                f"family{index}", statistic=100.0 + 7.5 * index, prescreen=True, **overrides
+            )
             for index in range(count)
         ],
         _datasets(),

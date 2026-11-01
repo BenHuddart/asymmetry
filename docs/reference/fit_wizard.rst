@@ -284,7 +284,26 @@ template. The three available metrics are:
 Here :math:`k` is the number of free parameters and :math:`n` is the number of
 fitted points. Smaller values are preferred. ``AICc`` is the default because
 it adds a small-sample correction when :math:`n` is not large compared with
-:math:`k` (falling back to ``AIC`` when the correction would not be valid).
+:math:`k`. It is unavailable when :math:`n-k-1\leq0` or the fitted point
+count is unknown; such a candidate is excluded from ranking under AICc. Another
+metric is never substituted. Fixed parameters, link followers and tie followers
+do not count toward :math:`k`; free auxiliary tie parameters do. If no row is
+rankable, the message is "No candidate could be ranked by AICc; inspect
+unavailable criteria and fit diagnostics before applying a model."
+
+The correction is derived for linear Gaussian models with an estimated variance
+and is used here as the conventional small-sample correction [aicc_primary]_.
+Comparisons require the same data and likelihood; a data-only additive
+likelihood constant cancels only under that condition. AIC is due to Akaike
+[aic_primary]_ and BIC to Schwarz [bic_primary]_.
+
+The scriptable ``InformationCriteria`` value records only the finite
+:math:`-2\ln L`, free-column count and fitted sample count. Its ``value`` and
+``unavailable_reason`` methods expose availability; ``rank`` returns both the
+ranked and excluded candidates, with reasons. A saved wizard recommendation
+recomputes its criteria from its fit statistics and cannot publish an undefined
+score as its recommendation.
+
 ``BIC`` applies a stronger penalty to model complexity and therefore usually
 favours simpler descriptions.
 
@@ -817,3 +836,12 @@ The wizard should be treated as a decision aid rather than a replacement for
 physical judgement. Inspect the fit overlay, residuals, and parameter values
 before accepting the recommendation, especially when two candidates score
 similarly.
+
+.. [aic_primary] H. Akaike, IEEE Trans. Autom. Control **19**, 716–723 (1974),
+   `doi:10.1109/TAC.1974.1100705 <https://doi.org/10.1109/TAC.1974.1100705>`_.
+.. [aicc_primary] C. M. Hurvich and C.-L. Tsai, Biometrika **76**, 297–307 (1989),
+   `doi:10.1093/biomet/76.2.297 <https://doi.org/10.1093/biomet/76.2.297>`_;
+   N. Sugiura, Commun. Stat. Theory Methods **7**, 13–26 (1978),
+   `doi:10.1080/03610927808827599 <https://doi.org/10.1080/03610927808827599>`_.
+.. [bic_primary] G. Schwarz, Ann. Statist. **6**, 461–464 (1978),
+   `doi:10.1214/aos/1176344136 <https://doi.org/10.1214/aos/1176344136>`_.

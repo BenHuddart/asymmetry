@@ -185,10 +185,7 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
     exp_assessment = CandidateAssessment(
         template=exp_template,
         fit_result=exp_result,
-        aic=8.0,
-        aicc=8.2,
-        bic=10.0,
-        selected_score=8.2,
+        sample_count=1000,
         residual_rms=0.9,
         runs_z_score=0.2,
         max_abs_autocorrelation=0.1,
@@ -208,10 +205,7 @@ def _fake_recommendation(dataset: MuonDataset) -> FitWizardRecommendation:
     gauss_assessment = CandidateAssessment(
         template=gauss_template,
         fit_result=gauss_result,
-        aic=12.0,
-        aicc=12.2,
-        bic=14.0,
-        selected_score=12.2,
+        sample_count=1000,
         residual_rms=1.5,
         runs_z_score=2.5,
         max_abs_autocorrelation=0.4,

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.core.criteria_fixtures import with_aicc
+
 pytestmark = [pytest.mark.integration]
 
 import threading
@@ -179,10 +181,7 @@ def _assessment_with_diagnostics(
         parameter_recommendations=(),
         run_diagnostics=tuple(diagnostics),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.0,
-        bic=12.0,
-        selected_score=10.0,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )
@@ -1286,10 +1285,7 @@ def _scored_assessment(
             parameters=ParameterSet([Parameter("A_1", value=0.2)]),
             message="ok",
         ),
-        aic=criterion,
-        aicc=criterion,
-        bic=criterion,
-        selected_score=criterion,
+        sample_count=1000,
         residual_rms=0.001,
         runs_z_score=0.1,
         max_abs_autocorrelation=0.1,
@@ -1617,25 +1613,23 @@ def test_merge_global_fit_wizard_recommendations_keeps_all_optimized_variants() 
         prescreen_only=True,
         global_parameters=ParameterSet(),
     )
-    local_variant = replace(
-        _assessment_with_diagnostics(datasets, diagnostics),
-        global_param_names=("A_1", "A_bg"),
-        local_param_names=("Lambda",),
-        aic=8.0,
-        aicc=8.0,
-        bic=10.0,
-        selected_score=8.0,
-        assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
+    local_variant = with_aicc(
+        replace(
+            _assessment_with_diagnostics(datasets, diagnostics),
+            global_param_names=("A_1", "A_bg"),
+            local_param_names=("Lambda",),
+            assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
+        ),
+        108.0,
     )
-    shared_variant = replace(
-        _assessment_with_diagnostics(datasets, diagnostics),
-        global_param_names=("A_1", "Lambda", "A_bg"),
-        local_param_names=(),
-        aic=9.0,
-        aicc=9.0,
-        bic=11.0,
-        selected_score=9.0,
-        assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+    shared_variant = with_aicc(
+        replace(
+            _assessment_with_diagnostics(datasets, diagnostics),
+            global_param_names=("A_1", "Lambda", "A_bg"),
+            local_param_names=(),
+            assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+        ),
+        109.0,
     )
     screening = GlobalFitWizardRecommendation(
         series_axis_key="field",
@@ -1706,25 +1700,23 @@ def test_merge_global_fit_wizard_recommendations_prefers_simpler_comparable_vari
         prescreen_only=True,
         global_parameters=ParameterSet(),
     )
-    local_variant = replace(
-        _assessment_with_diagnostics(datasets, diagnostics),
-        global_param_names=("A_1", "A_bg"),
-        local_param_names=("Lambda",),
-        aic=8.0,
-        aicc=8.0,
-        bic=10.0,
-        selected_score=8.0,
-        assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
+    local_variant = with_aicc(
+        replace(
+            _assessment_with_diagnostics(datasets, diagnostics),
+            global_param_names=("A_1", "A_bg"),
+            local_param_names=("Lambda",),
+            assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
+        ),
+        108.0,
     )
-    shared_variant = replace(
-        _assessment_with_diagnostics(datasets, diagnostics),
-        global_param_names=("A_1", "Lambda", "A_bg"),
-        local_param_names=(),
-        aic=9.0,
-        aicc=9.0,
-        bic=11.0,
-        selected_score=9.0,
-        assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+    shared_variant = with_aicc(
+        replace(
+            _assessment_with_diagnostics(datasets, diagnostics),
+            global_param_names=("A_1", "Lambda", "A_bg"),
+            local_param_names=(),
+            assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+        ),
+        109.0,
     )
     screening = GlobalFitWizardRecommendation(
         series_axis_key="field",
@@ -1867,10 +1859,6 @@ def test_global_fit_wizard_screening_completes_a_failed_cell_from_a_sibling(
                         parameters=assessment.fit_result.parameters,
                         message="forced single-fit failure",
                     ),
-                    aic=float("inf"),
-                    aicc=None,
-                    bic=float("inf"),
-                    selected_score=float("inf"),
                 )
                 if assessment.template.key == "exp_constant"
                 else assessment
@@ -2048,10 +2036,7 @@ def test_warm_start_parameter_sets_reuses_cache() -> None:
         parameter_recommendations=(),
         run_diagnostics=(),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.0,
-        bic=10.0,
-        selected_score=10.0,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )
@@ -2160,28 +2145,28 @@ def test_cache_derived_role_recommendations_reuse_wavefront_assignments() -> Non
             )
             for idx, dataset in enumerate(datasets, start=1)
         }
-        return GlobalCandidateAssessment(
-            template=template,
-            fit_results_by_run=fit_results,
-            global_parameters=next(iter(fit_results.values())).parameters,
-            global_param_names=tuple(
-                name for name in template.model.param_names if name not in set(local)
+        return with_aicc(
+            GlobalCandidateAssessment(
+                template=template,
+                fit_results_by_run=fit_results,
+                global_parameters=next(iter(fit_results.values())).parameters,
+                global_param_names=tuple(
+                    name for name in template.model.param_names if name not in set(local)
+                ),
+                local_param_names=local,
+                fixed_param_names=(),
+                parameter_recommendations=(),
+                run_diagnostics=diagnostics,
+                series_warnings=(),
+                sample_count=1000,
+                fitted_curves_by_run={},
+                component_curves_by_run={},
             ),
-            local_param_names=local,
-            fixed_param_names=(),
-            parameter_recommendations=(),
-            run_diagnostics=diagnostics,
-            series_warnings=(),
-            aic=score,
-            aicc=score,
-            bic=score,
-            selected_score=score,
-            fitted_curves_by_run={},
-            component_curves_by_run={},
+            score,
         )
 
-    local_assessment = _make_assessment(local=("Lambda",), score=10.0)
-    shared_assessment = _make_assessment(local=(), score=16.0)
+    local_assessment = _make_assessment(local=("Lambda",), score=110.0)
+    shared_assessment = _make_assessment(local=(), score=116.0)
     recommendations = _build_parameter_recommendations_from_exact_cache(
         local_assessment,
         template=template,
@@ -2202,8 +2187,8 @@ def test_cache_derived_role_recommendations_reuse_wavefront_assignments() -> Non
 
     by_name = {recommendation.name: recommendation for recommendation in recommendations}
     assert by_name["Lambda"].recommended_role == "Local"
-    assert by_name["Lambda"].local_score == pytest.approx(10.0)
-    assert by_name["Lambda"].global_score == pytest.approx(16.0)
+    assert by_name["Lambda"].local_score == pytest.approx(110.0)
+    assert by_name["Lambda"].global_score == pytest.approx(116.0)
     assert "penalized score" in by_name["Lambda"].rationale
 
 
@@ -2806,23 +2791,12 @@ def test_staged_multi_local_assignment_succeeds_for_large_exp_double_gaussian_se
     [SelectionMetric.AIC, SelectionMetric.AICC, SelectionMetric.BIC],
 )
 def test_metric_penalty_matches_information_criteria(metric) -> None:
-    """The layer-bound penalty (technique A/B) must equal IC - chi2 exactly.
-
-    The bound's admissibility rests on penalty(k) being the *same* additive term
-    the winning assessment's IC uses. Verify _metric_penalty reproduces
-    compute_information_criteria's penalty for a range of (k, n), including the
-    AICc small-sample-correction boundary (n <= k + 1 falls back to AIC).
-    """
-    from asymmetry.core.fitting.fit_wizard import compute_information_criteria
+    """Unavailable layer scores have infinite bounds, never another criterion's penalty."""
+    from asymmetry.core.fitting.information_criteria import InformationCriteria, ranking_value
 
     for k in (1, 2, 5, 12, 40):
         for n in (3, 6, 50, 500):
-            aic, aicc, bic = compute_information_criteria(0.0, k, n)
-            expected = {
-                SelectionMetric.AIC: aic,
-                SelectionMetric.BIC: bic,
-                SelectionMetric.AICC: aicc if aicc is not None else aic,
-            }[metric]
+            expected = ranking_value(InformationCriteria(0.0, k, n), metric)
             assert _metric_penalty(k, sample_count=n, metric=metric) == pytest.approx(expected)
 
 
@@ -3385,10 +3359,7 @@ def test_identifiability_demotion_flags_highly_correlated_covariance() -> None:
         parameter_recommendations=(),
         run_diagnostics=(),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.0,
-        bic=12.0,
-        selected_score=10.0,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )
@@ -3429,10 +3400,7 @@ def test_identifiability_demotion_ignores_well_conditioned_covariance() -> None:
         parameter_recommendations=(),
         run_diagnostics=(),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.0,
-        bic=12.0,
-        selected_score=10.0,
+        sample_count=1000,
         fitted_curves_by_run={},
         component_curves_by_run={},
     )

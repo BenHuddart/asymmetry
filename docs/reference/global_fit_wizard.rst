@@ -853,7 +853,16 @@ criteria as the single-spectrum wizard:
 
 Here :math:`k` is the total number of free global parameters plus the
 run-specific local parameters, and :math:`n` is the total number of fitted
-points across the selected datasets. ``AICc`` is the default; ``BIC`` applies a
+points across the selected datasets. Screening rows and coupled rows both
+aggregate the objective, free columns and samples over the series before
+computing the criterion. A shared column counts once and a local column once
+per run; fixed and constrained followers do not count. AICc is unavailable when
+:math:`n-k-1\leq0` or the sample count is unknown. Unavailable rows are excluded
+under that metric; AIC is never substituted. If every fitted row is excluded,
+the message is "No fitted candidate can be ranked by AICc."
+
+``AICc`` is the conventional small-sample correction, with the Gaussian
+assumptions described in :doc:`fit_wizard`. ``AICc`` is the default; ``BIC`` applies a
 stronger complexity penalty and usually favours simpler descriptions. Changing
 the metric reranks the already-computed rows without rerunning the analysis —
 rebuilding the screening table is only required if the selected datasets, model,
@@ -967,8 +976,11 @@ or scored comparable, is never dropped this way.
 
 Every remaining run is then scored against every candidate at one common
 rebinning factor — the smallest any run's own analysis chose — so the
-information criteria of two runs, or of two candidates, may be summed and
-compared. The cells a run's own analysis already holds at that factor are kept;
+fit costs and point counts can be aggregated before applying a criterion's
+penalty. The separately named partition BIC charges each shared column
+:math:`\ln N` for the phase's total samples, and each local column
+:math:`\ln n_r` for its run. With all columns local this equals the sum of the
+per-run BICs; it differs from the series-total BIC used by the leaderboard. The cells a run's own analysis already holds at that factor are kept;
 the rest are fitted, warm-started from that run's or a sibling run's values. A
 cell started from **that run's own** values for the same model at another
 binning is the same data and the same model at a different sampling — the same

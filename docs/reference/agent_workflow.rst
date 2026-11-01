@@ -1903,9 +1903,10 @@ always visible. Bounds and large errors are assessed per parameter: an
 unconstrained nuisance damping term does not invalidate a precise amplitude,
 frequency or Gaussian width. Trend rows retain ``params_at_bound`` in JSON;
 whole-fit failures, unresolved frequencies, spurious reseeds and unphysical
-amplitudes still qualify the entire fit. The stored work-directory schema is
-now 5; older reduced caches and series must be regenerated rather than read
-without this diagnostic metadata.
+amplitudes still qualify the entire fit. Work-directory entries record their
+schema. Reduced caches, wizard results and series under an older schema must
+be regenerated so their statistics and diagnostic metadata match the analysis
+contract.
 
 Temperature endpoints print the coldest-minus-next difference and its combined
 error. Values within two combined errors are described as consistent; a

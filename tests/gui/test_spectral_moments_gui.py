@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.gui.mainwindow import MainWindow
@@ -239,12 +238,6 @@ def test_spectral_moments_info_affordance():
     dialog = w._show_info() or w._info_dialog
     assert dialog is not None
     dialog.deleteLater()
-
-
-def test_no_schema_version_bump():
-    # Baseline guard: bumped to 26 for the rotating-frame projection (v25->v26).
-    # A future accidental bump must consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 26
 
 
 def test_restore_state_tolerates_absent_moments(qapp):

@@ -804,29 +804,21 @@ def test_suggest_roles_renders_failed_candidate(qapp, monkeypatch) -> None:
         global_params=("m", "b"),
         local_params=(),
         fixed_params=(),
-        success=True,
-        chi_squared=1.0,
-        reduced_chi_squared=1.0,
-        n_free=2,
-        n_points=16,
-        aic=5.0,
-        aicc=6.0,
-        bic=7.0,
-        result=CrossGroupFitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0),
+        result=CrossGroupFitResult(
+            success=True,
+            chi_squared=1.0,
+            reduced_chi_squared=1.0,
+            n_points=16,
+            global_parameters=ParameterSet([Parameter("m", 1.0), Parameter("b", 0.0)]),
+        ),
     )
     bad = CrossGroupCandidate(
         global_params=("m",),
         local_params=("b",),
         fixed_params=(),
-        success=False,
-        chi_squared=float("inf"),
-        reduced_chi_squared=float("inf"),
-        n_free=3,
-        n_points=16,
-        aic=float("inf"),
-        aicc=float("inf"),
-        bic=float("inf"),
-        result=None,
+        result=CrossGroupFitResult(
+            success=False, chi_squared=float("inf"), reduced_chi_squared=float("inf"), n_points=16
+        ),
     )
     rec = CrossGroupRoleRecommendation(
         candidates=[good, bad],

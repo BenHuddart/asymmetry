@@ -1,275 +1,7 @@
-"""Project file schema, validation, and migration for Asymmetry project files.
+"""Versioned project-state migrations and atomic JSON persistence.
 
-Schema versioning is independent of the package version.  The ``schema_version``
-field is the contract between project files and the reader.  The
-``created_with_app_version`` field is stored for diagnostics only.
-
-Compatibility policy
---------------------
-* Releases must be able to read all schema versions within the supported window.
-* Only the latest schema is written.
-* Migration functions are one-per-step and retained for at least one major schema revision.
-* Unknown top-level fields in a valid schema are preserved on load/save cycles.
-
-Current schema (version 26)
----------------------------
-
-Version 26 adds an optional ``rotating_frame`` on a dataset entry: the run's
-serialized :class:`~asymmetry.core.transform.rotating_frame.RotatingFrame`
-(docs/plans/rotating-frame-projection.md). A single fit on a rotated
-projection (P′_x, P′_y) carries the ``frame_snapshot`` it was fitted in, and a
-series on one names its ``projection`` and keeps each member's snapshot in
-``member_frames``. Additive: a pre-v26 project has no rotating frames, no
-rotated fits and no rotated series. See :func:`_migrate_v25_to_v26`.
-
-Version 25 makes each projection's single fit one of a set of saved single
-fits (``single_fits``); see :func:`_migrate_v24_to_v25`.
-
-Version 24 gives every persisted Global Fit Wizard recommendation an
-``objective`` and each of its candidate assessments a ``rung`` (the sharing
-ladder data of docs/plans/global-wizard-trend-objective.md), and drops the
-``total_variation``/``roughness`` entries of its parameter recommendations.
-A recommendation stored before v24 was ranked statistically and has no rungs.
-See :func:`_migrate_v23_to_v24`.
-
-Version 23 rewrites every persisted fit-wizard scope from the version-1 preset
-payload (``{"version": 1, "preset", "include", "exclude"}``, where a preset
-fixed both a geometry and a set of physics classes) to the version-2 physics
-payload (``{"version": 2, "physics", "include", "exclude", "skip_slow"}``;
-docs/plans/model-family-picker.md D2). Scopes live in the fit-panel wizard
-caches, as a cache signature's ``"scope"`` and inside a single-run
-recommendation's ``build_signature`` JSON string. See :func:`_migrate_v22_to_v23`.
-
-A dataset's ``metadata_overrides`` may also carry ``field_direction`` with
-``field_direction_source: "user"``: a direction the user answered for a run
-whose file records none (docs/plans/model-family-picker.md D4). The keys are
-optional, so an older project simply lacks them and needs no migration.
-
-Version 22 adds a top-level ``joint_fits`` list (docs/plans/joint-fit.md D13):
-each entry is a serialized
-:class:`~asymmetry.core.representation.joint_fit.JointFit` — a joint fit's
-member series, its shared-parameter table, and its last run's summary result.
-A joint run stamps ``joint_fit_id``/``shared_params`` onto each member entry
-in ``batches``; both are additive and default to unstamped (``null``/``{}``)
-on a series that carries neither. Purely additive like the v12->v13
-``global_fit_studies`` list: a pre-v22 project has no joint fits, so it
-migrates with an empty registry and every series unstamped. See
-:func:`_migrate_v21_to_v22`.
-
-Version 21 renames a grouping profile's manual ``t0_policy.value`` (an absolute
-bin index) to ``legacy_value``. Manual t0 is now an *offset* from each run's own
-file t0 (``offset_bins``, decision D3), and converting an absolute bin into one
-needs the reference run's file t0 — which the schema layer does not have. The
-rename makes the unconverted state explicit and unresolvable: project open does
-the conversion via ``T0Policy.from_legacy_value``. See
-:func:`_migrate_v20_to_v21`.
-
-Version 20 makes the Batch tab a series editor (D1-D5). Each entry in
-``batches`` gains ``recipe`` — the setup that produced it: ``parameters`` (the
-Batch tab's table rows), ``fit_range`` (``{"min", "max"}``, the domain unit
-implied by ``rep_type``), ``seeding`` and ``coadd`` — plus
-``trend_excluded_runs``, the members the user dropped from *this* series'
-trend. Every per-run fit slot is the Single tab's fit alone: ``batch_id``,
-``diverged`` and ``include_in_trend`` are gone, and slots recorded as series
-members (``provenance`` ``"batch"``/``"global"``) are dropped, their results
-already being held by the series. A new top-level ``active_series`` maps each
-representation type to the one series the plot overlays and the Batch tab
-opens. Series identity is now the recipe plus the member set
-(``FitSeries.recipe_identity``): an identical re-run replaces its results in
-place, anything else records a new series, and the old signature-based
-superseding is gone. Tolerant: a malformed series or slot is skipped, never
-raised on. See :func:`_migrate_v19_to_v20`.
-
-Version 19 adds nested *phase* data groups (Global Fit Wizard transitions,
-D1): a phase is a ``data_groups`` entry whose ``parent_group_id`` names the
-series group it partitions — the run-membered temperature/field scan a
-transition splits into contiguous segments, each with its own fit template
-and global/local assignment. Every existing ``data_groups`` entry gains the
-additive phase fields, all defaulting to "not a phase group": ``parent_group_id``
-(``null``), ``phase_ordinal`` (``null``), ``phase_range`` (``null``),
-``phase_boundaries`` (``{"lower": null, "upper": null}``), ``phase_color``
-(``null``), and ``phase_provenance`` (``{}``). Additive and tolerant like the
-v14->v15 migration below: a project with no ``data_groups`` block or junk
-entries migrates cleanly. See :func:`_migrate_v18_to_v19`.
-
-Version 18 replaces the plot panels' scattered view-limit state — ``x_min``,
-``x_max``, ``y_min``, ``y_max``, ``auto_x_enabled``, ``auto_y_enabled``,
-``y_limits_by_polarization`` and the frequency panel's
-``frequency_x_limits_by_unit`` — with a single ``axis_limits`` block: one
-per-axis Auto/Hold record keyed by axis id (``"x"``, ``"y"``, and one
-``"y:<projection>"`` per stacked subplot). Each record is ``{"auto": bool,
-"held": [lo, hi] | null, "quantity": str | null}``. Lives inside ``plot_state``
-and its nested ``frequency_plot_state``; see :func:`_migrate_v17_to_v18`.
-
-Version 17 makes the run→profile link explicit so multiple grouping profiles
-can be in concurrent use (e.g. one per sample). Every resolvable dataset
-records the profile it is *assigned* to: an inheriting dataset's ``profile``
-key is now its explicit assignment, and a *released* dataset carries **both**
-its ``grouping_overrides`` payload (authoritative for resolution, as before)
-and a ``profile`` naming the base profile it was released from — the reattach
-target. A profile's ``active`` flag is reinterpreted as "default profile for
-newly loaded runs" of its fingerprint (still exactly one per fingerprint);
-the serialized shape is unchanged. See :func:`_migrate_v16_to_v17`.
-
-Version 16 replaces the frequency panel's boolean reference-relative axis flag
-with ``frequency_axis_mode`` (``"absolute"``/``"shift"``/``"relative_ppm"``)
-plus ``frequency_reference_mode`` (``"run"``/``"common"``) inside
-``plot_state`` and its nested ``frequency_plot_state``; see
-:func:`_migrate_v15_to_v16`.
-
-Version 15 unifies ``DataGroup`` and ``FitSeries`` (D1/D7/D9). Each top-level
-``data_groups`` entry gains ``kind`` (``"user"``/``"auto"``, default
-``"user"``). Each run-membered series in ``batches`` gains a structural
-``group_id`` (resolved from its legacy ``source_group_id`` when that id names a
-live group in the project's ``data_groups`` block, else ``null`` — a *frozen*
-legacy analysis; old projects must not sprout groups the user never made),
-``excluded_run_numbers`` (default empty), and ``last_fitted_members`` (seeded
-from ``member_run_numbers`` so a loaded series is not spuriously stale).
-Detector-group series (``member_kind == "groups"``) get only the additive
-defaults and are never group-resolved. Additive and tolerant: a project with
-no ``data_groups`` block, no ``batches``, or junk entries migrates cleanly. See
-:func:`_migrate_v14_to_v15`.
-
-Version 14 adds a per-plot-panel ``waterfall`` block — ``{"enabled": bool,
-"offset": float | null}`` (null offset = automatic spacing) — inside
-``plot_state`` and its nested ``frequency_plot_state``, recording the
-single-axis overlay waterfall stack. Additive: absent/default (disabled, auto)
-in older files; see :func:`_migrate_v13_to_v14`.
-
-Version 13 adds a top-level ``global_fit_studies`` list: each entry is a
-serialized :class:`~asymmetry.core.representation.global_fit_study.GlobalFitStudy`
-(the persisted, named cross-group global parameter fit — "study" — that
-replaces the single-slot ``last_cross_group_fit`` the trend panel used to
-keep in its own panel state). Absent/empty in older files, mirroring the
-pattern used for other optional top-level lists (e.g. ``grouping_profiles``
-below); see :func:`_migrate_v12_to_v13`.
-
-Version 12 adds project-level named **grouping profiles**. The project carries a
-top-level ``grouping_profiles`` list (serialized
-:class:`~asymmetry.core.project.profiles.GroupingProfile` dicts, each with
-``active: true`` for its fingerprint). Each dataset either names a ``profile``
-(inheriting that profile's settings), carries a per-run ``grouping_overrides``
-payload (released from any profile, as before), or has neither (inheriting the
-active profile for its fingerprint). See
-:func:`_migrate_v11_to_v12` for the v11->v12 collapse rules and
-:mod:`asymmetry.core.project.profiles` for resolution.
-
-Version 11 schema
------------------
-::
-
-    {
-        "schema_version": 1,
-        "created_with_app_version": "0.1.0",
-        "datasets": [
-            {
-                "run_number": 3077,
-                "source_file": "/abs/path/to/file.nxs",
-                "metadata_overrides": {
-                    "field": 150.0,
-                    "custom_fields": {"custom:ab12cd34": "annealed"},
-                    "field_direction": "Longitudinal",
-                    "field_direction_source": "user"
-                }
-            }
-        ],
-        "combined_datasets": [
-            {
-                "combined_run_number": -1,
-                "source_run_numbers": [3077, 3078]
-            }
-        ],
-        "browser_state": {
-            "sort_column": 0,
-            "sort_order": "ascending",
-            "filters": {"3": ["150.0"]},
-            "selected_run_numbers": [3077],
-            "selected_group_ids": [],
-            # GUI display state (name/members/collapsed) for the data browser's
-            # group headers. Distinct from the top-level "data_groups" block
-            # (Phase 7/D1, not shown in this pre-v6 illustrative example): that
-            # one is the core DataGroup registry (no "collapsed"), mirrored from
-            # this block at load/save so FitSeries.source_group_id provenance
-            # can resolve without a GUI dependency.
-            "data_groups": [],
-            "extra_columns": [
-                {"id": "nexus_fields.sample.shape", "label": "Orientation",
-                 "kind": "metadata", "source_key": "nexus_fields.sample.shape"},
-                {"id": "custom:ab12cd34", "label": "Anneal", "kind": "custom"}
-            ]
-        },
-        "plot_state": {
-            "current_run_number": 3077,
-            "bunch_factor": 1,
-            "axis_limits": {
-                "axes": {
-                    "x": {"auto": false, "held": [0.0, 10.0], "quantity": null},
-                    "y": {"auto": false, "held": [-30.0, 30.0], "quantity": null}
-                }
-            },
-            "waterfall": {"enabled": false, "offset": null},
-            "workspace_state": {
-                "active_domain": "time"
-            },
-            "frequency_plot_state": {
-                "plot_panel_domain": "frequency",
-                "axis_limits": {
-                    "axes": {
-                        "x": {"auto": false, "held": [0.0, 100.0],
-                              "quantity": "frequency_mhz:absolute"},
-                        "y": {"auto": false, "held": [-1.0, 10.0], "quantity": null}
-                    }
-                },
-                "frequency_x_unit": "frequency_mhz",
-                "frequency_axis_mode": "absolute",
-                "frequency_reference_mode": "run",
-                "waterfall": {"enabled": false, "offset": null}
-            },
-            "fit_curve": null,
-            "fit_curves": {}
-        },
-        "fit_states": {
-            "time": {
-                "domain": "time",
-                "single_fit_state": {
-                    "model_name": "ExponentialRelaxation",
-                    "parameters": [
-                        {"name": "A0", "value": 0.2, "fixed": false,
-                         "min": "-inf", "max": "inf"}
-                    ]
-                },
-                "global_fit_state": {
-                    "model_name": "ExponentialRelaxation",
-                    "parameters": [
-                        {"name": "A0", "value": 0.2, "type": "Global",
-                         "bounds": "-inf, inf"}
-                    ]
-                },
-                "fit_ui_state": {}
-            },
-            "frequency": {
-                "domain": "frequency",
-                "single_fit_state": {},
-                "global_fit_state": {},
-                "fit_ui_state": {}
-            }
-        },
-        "fourier_state": {
-            "window": "none",
-            "filter_start_us": 0.0,
-            "filter_time_constant_us": 1.5,
-            "padding": 1,
-            "phase_degrees": 0.0,
-            "t0_offset_us": 0.0,
-            "display": "(Power)^1/2",
-            "auto_phase": false,
-            "auto_phase_method": "Peak",
-            "use_phase_table": false,
-            "estimate_average_error": false,
-            "group_enabled_table": {},
-            "group_phase_table": {}
-        }
-    }
+Each migration owns one schema transition; runtime readers use current names.
+Non-finite scientific values have explicit JSON wrappers and round-trip intact.
 """
 
 from __future__ import annotations
@@ -279,17 +11,17 @@ import math
 import os
 import re
 import shutil
+import sys
 import tempfile
 import uuid
+from numbers import Integral, Real
 from pathlib import Path
 
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 26
+CURRENT_SCHEMA_VERSION: int = 27
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26}
-)
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -429,7 +161,74 @@ def migrate_to_current(data: dict) -> dict:
         version = 25
     if version == 25:
         migrated = _migrate_v25_to_v26(migrated)
+        version = 26
+    if version == 26:
+        migrated = _migrate_v26_to_v27(migrated)
     return migrated
+
+
+def _wizard_sample_count(row: dict, recorded: int | None) -> int | None:
+    """Recover n from recorded points or the v26 BIC identity χ² + k ln(n)."""
+    if row.get("prescreen_only"):
+        return None
+    if recorded is not None:
+        return recorded
+    result = row.get("fit_result")
+    if isinstance(result, dict):
+        statistic = result.get("chi_squared")
+    else:
+        results = row.get("fit_results_by_run")
+        if not isinstance(results, dict) or not results:
+            return None
+        values = [
+            result.get("chi_squared") for result in results.values() if isinstance(result, dict)
+        ]
+        if len(values) != len(results) or not all(
+            isinstance(value, Real) and math.isfinite(value) for value in values
+        ):
+            return None
+        statistic = math.fsum(values)
+    aic, bic = row.get("aic"), row.get("bic")
+    if not all(isinstance(value, Real) and math.isfinite(value) for value in (statistic, aic, bic)):
+        return None
+    free = (aic - statistic) / 2
+    if not math.isfinite(free):
+        return None
+    k = round(free)
+    if k <= 0 or not math.isclose(free, k, abs_tol=1e-8):
+        return None
+    exponent = (bic - statistic) / k
+    if exponent > math.log(sys.float_info.max):
+        return None
+    n = round(math.exp(exponent))
+    return n if n >= 1 else None
+
+
+def _migrate_v26_to_v27(data: dict) -> dict:
+    """Replace cached wizard criteria with their independent sample count."""
+
+    def walk(value, recorded=None):
+        if isinstance(value, list):
+            return [walk(item, recorded) for item in value]
+        if not isinstance(value, dict):
+            return value
+        fingerprint = value.get("fingerprint")
+        points = value.get(
+            "analysed_points",
+            fingerprint.get("analysed_points") if isinstance(fingerprint, dict) else None,
+        )
+        if isinstance(points, Integral) and not isinstance(points, bool) and points > 0:
+            recorded = int(points)
+        result = {key: walk(item, recorded) for key, item in value.items()}
+        if ("fit_result" in value or "fit_results_by_run" in value) and any(
+            key in value for key in ("aic", "aicc", "bic", "selected_score")
+        ):
+            for key in ("aic", "aicc", "bic", "selected_score"):
+                result.pop(key, None)
+            result["sample_count"] = _wizard_sample_count(value, recorded)
+        return result
+
+    return walk(data) | {"schema_version": 27}
 
 
 def _migrate_v25_to_v26(data: dict) -> dict:

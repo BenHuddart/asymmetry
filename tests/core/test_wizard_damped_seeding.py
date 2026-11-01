@@ -1127,10 +1127,7 @@ def _ranked_assessment(key: str, aicc: float, *, success: bool) -> CandidateAsse
             parameters=ParameterSet([Parameter(name="Lambda", value=1.0)]),
             message="" if success else "Fit failed: call limit reached",
         ),
-        aic=aicc,
-        aicc=aicc,
-        bic=aicc,
-        selected_score=aicc,
+        sample_count=1000,
         residual_rms=1.0,
         runs_z_score=0.0,
         max_abs_autocorrelation=0.0,
@@ -1198,7 +1195,9 @@ def test_a_refined_fit_that_still_fails_leaves_the_original_assessment(
     monkeypatch.setattr(
         fit_wizard_module,
         "_run_template_assessments",
-        lambda tasks, **_kwargs: (replace(leader, aicc=95.0),),
+        lambda tasks, **_kwargs: (
+            replace(leader, fit_result=replace(leader.fit_result, chi_squared=95.0)),
+        ),
     )
 
     (updated,) = fit_wizard_module._refine_top_candidates(

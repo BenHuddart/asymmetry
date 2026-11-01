@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Core wizard and role-search rankings exclude unavailable AICc without substituting
+  AIC; series screening criteria use totals and unit-weight trends profile variance.
+
 - Estimate/Cal fit the exact rational deadtime model with signed coefficients;
   count-fit promotion adds the fitted increment to the applied base table.
 
@@ -51,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 
 ### Changed
+
+- Wizard caches record sample counts instead of redundant criteria and selected scores;
+  project caches migrate and older work-directory entries must be regenerated.
 
 - Grouped reduction results expose immutable `corrections` outcomes in place of
   `deadtime_applied` and `background_state`; CLI work directories require a new survey.
