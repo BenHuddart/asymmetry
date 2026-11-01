@@ -81,7 +81,10 @@ def test_project_restore_keeps_a_run_with_rejected_deadtime(qapp, dataset, monke
     restored.restore_project_state(state, str(tmp_path / "project.asymp"))
     loaded = restored._data_browser.get_dataset(1)
     assert loaded is fresh
-    assert not loaded.run.grouping["deadtime_correction"]
+    assert loaded.run.grouping["deadtime_correction"]
+    assert loaded.run.grouping["dead_time_us"] == [0.1, 0.1]
+    assert "detector 1" in loaded.metadata["correction_error"]
+    assert restored._get_fit_dataset(loaded) is None
     np.testing.assert_array_equal(loaded.asymmetry, np.zeros(3))
     assert any("Deadtime correction rejected for detector 1" in message for message in messages)
 
@@ -141,3 +144,44 @@ def test_signed_tables_survive_editor_and_profile_roundtrip(qapp, dataset, mode)
     )
     restored = GroupingProfile.from_dict(profile.to_dict())
     assert resolve_effective_grouping(restored, dataset.run)["dead_time_us"] == values
+
+
+@pytest.mark.parametrize("export", ["export_plotted_data_as_text", "export_plots_to_gle"])
+def test_incomplete_run_cannot_be_exported(qapp, dataset, monkeypatch, export):
+    from PySide6.QtWidgets import QMessageBox
+
+    from asymmetry.gui.panels.plot_panel import PlotPanel
+
+    panel = PlotPanel()
+    dataset.metadata["correction_error"] = "reference run is not loaded"
+    panel.plot_dataset(dataset)
+    messages = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda _parent, title, message: messages.append((title, message))
+    )
+    getattr(panel, export)()
+    assert messages == [("Corrections incomplete", "Run 1: reference run is not loaded")]
+
+
+def test_incomplete_run_is_refused_by_the_core_fit_engine(dataset):
+    from asymmetry.core.fitting.engine import FitEngine
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+    from asymmetry.core.transform.corrections import CorrectionUnavailableError
+
+    dataset.metadata["correction_error"] = "reference run is not loaded"
+    with pytest.raises(CorrectionUnavailableError, match="Corrections incomplete"):
+        FitEngine().fit(
+            dataset,
+            lambda t, level: np.full_like(t, level),
+            ParameterSet([Parameter("level", 0.0)]),
+        )
+
+
+def test_successful_apply_clears_the_restoration_error(qapp, dataset):
+    window = MainWindow()
+    dataset.metadata["correction_error"] = "a correction request failed on restore"
+    payload = dict(dataset.run.grouping, deadtime_correction=False, deadtime_mode="off")
+    applied, outcomes = window._apply_grouping_settings_to_dataset(dataset, payload)
+    assert applied and all(item.complete for item in outcomes.values())
+    assert "correction_error" not in dataset.metadata
+    assert window._get_fit_dataset(dataset) is not None

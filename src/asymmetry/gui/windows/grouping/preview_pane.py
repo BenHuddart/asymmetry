@@ -1,45 +1,8 @@
-"""Live forward/backward asymmetry preview for the grouping editor.
+"""Preview count reductions without modifying runs.
 
-The grouping dialog edits an in-memory *draft* grouping profile; without a
-preview, the effect of a grouping / alpha / binning / exclusion / deadtime /
-background change is only visible after Apply. :class:`GroupingPreviewPane`
-closes that loop: it reduces the *preview run* under the *current draft* and
-draws the resulting asymmetry curve, updating (debounced) as the user edits.
-
-Threading contract (see ``AGENTS.md`` and ``gui/tasks.py``): the reduction — the
-only expensive step — runs on a :class:`~asymmetry.gui.tasks.TaskRunner` worker
-thread and never on the GUI thread. Edits are debounced with a ~300 ms timer;
-each computation carries a generation counter so a result from a superseded edit
-is dropped on arrival. Results cross back as plain numpy arrays through the
-TaskRunner's GUI-thread relay (never a bare lambda touching widgets). The runner
-is shut down in :meth:`shutdown`, called from the dialog's ``closeEvent``.
-
-Resolution happens on the worker thread too: :meth:`request_preview_from_profile`
-takes the *unresolved* draft profile plus the preview run, and the worker calls
-:func:`resolve_effective_grouping` before reducing. That call can be expensive —
-an ``auto_detect`` t0 policy scans every detector's full histogram and a
-``per_run_estimate`` alpha policy sums whole groups — so it must never run on
-the GUI thread per edit. The profile is deep-copied at request time so later
-form edits cannot race the worker; the run is shared read-only (the dialog does
-not mutate it while open). Vector-mode drafts are previewed on their primary
-forward/backward pair (the resolved ``forward_group`` / ``backward_group``; for
-canonical EMU that is the P_z axis).
-
-Drawing contract (see :meth:`GroupingPreviewPane._draw`): the solid curve is
-always the full configured reduction and alone sets the y-limits; a compare
-ghost is drawn just beneath it — the as-reduced curve stays on top, so where a
-small correction leaves the two nearly coincident it is the reduction the eye
-follows — and a fixed caption in the axes' top-left names both curves (no legend — the pager label and the focused correction card name
-the same comparison). Colour means "with this correction": while a stage is
-focused the *solid* wears that stage's identity colour and the ghost is grey
-(D11 of ``docs/plans/grouping-preview.md``).
-
-One reduction serves two views (D7/D8 of ``docs/plans/grouping-preview.md``):
-the asymmetry over the good window, and the count-domain view of the corrected
-F/B group spectra over the *full* histogram with t0, the good window and the
-subtracted background level marked. Both are drawn from the same
-:class:`_PreviewResult`, so :meth:`GroupingPreviewPane.set_view` is a redraw and
-never dispatches the worker.
+Resolution and reduction run in TaskRunner; the GUI snapshots inputs and draws.
+Time axes are in µs and asymmetry is in percent. Generation ids discard obsolete
+outputs. One result supplies both views; incomplete corrections remain labelled.
 """
 
 from __future__ import annotations
@@ -50,7 +13,7 @@ from html import escape
 from typing import Any, NamedTuple
 
 import numpy as np
-from PySide6.QtCore import QSize, QTimer
+from PySide6.QtCore import QSize, QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -71,7 +34,13 @@ from asymmetry.core.transform import (
     resolve_background_mode,
     resolve_facility,
 )
+from asymmetry.core.transform.corrections import (
+    BackgroundReference,
+    CorrectionOutcomes,
+    CorrectionStatus,
+)
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles.widgets import make_warning_banner
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
 from asymmetry.gui.utils.plot_decimation import decimate_for_preview as _decimate_for_preview
 from asymmetry.gui.utils.plot_decimation import preview_stride as _preview_stride
@@ -237,19 +206,14 @@ class _PreviewRequest:
     #: touches the persisted reduction, and it never degrades the solid, so the α
     #: residual ⟨A⟩ is always read off the fully-corrected curve.
     compare_stage: str | None = None
+    resolved_reference: BackgroundReference | None = None
 
 
 @dataclass(frozen=True)
 class CountsCurves:
-    """The count-domain view of one reduction (D8): spectra plus their markers.
+    """Full grouped spectra on shared decimated bin-centre times in µs.
 
-    ``forward``/``backward`` are the *corrected* group counts — deadtime
-    corrected, grouped, background subtracted — over the **full** histogram from
-    bin 0, not the good window the asymmetry is formed on. They and ``time`` are
-    decimated on one shared stride, so a drawn sample keeps its partner sample.
-    ``time`` stamps each drawn bin's *centre* relative to t0, matching the
-    asymmetry axis' convention; the bin *edges* the window markers sit on come
-    from :meth:`bin_edge_time`.
+    Marker edges retain the undecimated acquisition-bin coordinates.
     """
 
     #: Bin-centre times of the drawn bins, in µs after t0.
@@ -310,6 +274,7 @@ class _PreviewResult:
     #: and ``None`` when no point of the curve is finite. One field, because a
     #: mean without its error is not a state this can be in.
     centre: tuple[float, float] | None = None
+    corrections: CorrectionOutcomes = CorrectionOutcomes()
 
 
 class GroupingPreviewPane(QWidget):
@@ -321,6 +286,8 @@ class GroupingPreviewPane(QWidget):
     message in the status strip — never a popup or a crash.
     """
 
+    preview_changed = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         """Build the canvas, status strip, and debounce/worker plumbing."""
         super().__init__(parent)
@@ -329,6 +296,9 @@ class GroupingPreviewPane(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 4, 0, 0)
         layout.setSpacing(2)
+        self._incomplete_banner = make_warning_banner(severity="strong")
+        self._incomplete_banner.hide()
+        layout.addWidget(self._incomplete_banner)
 
         self._status = QLabel("")
         self._status.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
@@ -358,7 +328,7 @@ class GroupingPreviewPane(QWidget):
         self._view = "asymmetry"
         #: Last drawn result, retained so Home can redraw with fresh autoscale
         #: without a recompute.
-        self._last_result: _PreviewResult | None = None
+        self._state: _PreviewResult | str | None = None
         #: The user's chosen ``(xlim, ylim)`` once a pan/zoom drag actually moved
         #: the view, or ``None`` while the solid-only autoscale owns it. Stored
         #: explicitly — never re-read from the axes at draw time, because error
@@ -425,16 +395,9 @@ class GroupingPreviewPane(QWidget):
         facts: PreviewFacts,
         facility: str = "",
         compare_stage: str | None = None,
+        resolved_reference: BackgroundReference | None = None,
     ) -> None:
-        """Queue a (debounced) recompute of the preview for the current draft.
-
-        *grouping* is the draft resolved against the preview run — i.e. exactly
-        the ``run.grouping`` shape the reduction consumes. When the dataset has no
-        histograms (co-added curves) the pane hides itself with a note; nothing is
-        scheduled. *facts* is what the status strip states about this preview;
-        *compare_stage* draws one stage's before/after ghost. Both are
-        preview-only and never touch the persisted reduction.
-        """
+        """Queue a resolved draft and its reference snapshot for worker reduction."""
         if not histograms:
             self.show_unavailable()
             return
@@ -450,6 +413,7 @@ class GroupingPreviewPane(QWidget):
                 facility=str(facility or "") or resolve_facility(grouping=grouping),
                 facts=facts,
                 compare_stage=compare_stage,
+                resolved_reference=resolved_reference,
             )
         )
 
@@ -461,16 +425,9 @@ class GroupingPreviewPane(QWidget):
         facts: PreviewFacts,
         facility: str = "",
         compare_stage: str | None = None,
+        resolved_reference: BackgroundReference | None = None,
     ) -> None:
-        """Queue a (debounced) resolve + recompute for an unresolved draft.
-
-        Unlike :meth:`request_preview`, resolution against the run —
-        :func:`resolve_effective_grouping`, which may scan every detector for an
-        ``auto_detect`` t0 policy or sum whole groups for a per-run alpha
-        estimate — happens on the worker thread. *profile* is deep-copied here
-        so subsequent form edits cannot race the in-flight worker; *run* is
-        shared read-only.
-        """
+        """Queue worker resolution of a copied profile and a read-only run snapshot."""
         histograms = list(run.histograms) if run is not None and run.histograms else []
         if not histograms:
             self.show_unavailable()
@@ -488,8 +445,26 @@ class GroupingPreviewPane(QWidget):
                 facility=str(facility or ""),
                 facts=facts,
                 compare_stage=compare_stage,
+                resolved_reference=resolved_reference,
             )
         )
+
+    @property
+    def _last_result(self) -> _PreviewResult | None:
+        return self._state if isinstance(self._state, _PreviewResult) else None
+
+    @property
+    def corrections_complete(self) -> bool:
+        return not isinstance(self._state, str) and (
+            self._last_result is None or self._last_result.corrections.complete
+        )
+
+    def show_error(self, message: str) -> None:
+        self._state = message
+        self._incomplete_banner.setText(f"Incomplete preview — {message}")
+        self._incomplete_banner.show()
+        self._set_error(message)
+        self.preview_changed.emit()
 
     def set_view(self, view: str) -> None:
         """Draw the last result as *view* (``"asymmetry"`` / ``"counts"``).
@@ -538,9 +513,6 @@ class GroupingPreviewPane(QWidget):
         request = self._pending
         self._pending = None
         self._in_flight = True
-        # A ``reference_run`` background needs the loaded-dataset registry the
-        # dialog does not own; the preview simply skips that subtraction (the
-        # resolver returns None) so the curve still renders.
         self._tasks.start(
             lambda worker: _run_reduction(worker, request),
             on_finished=self._on_finished,
@@ -558,7 +530,15 @@ class GroupingPreviewPane(QWidget):
             return
         if result.generation != self._generation:
             return  # superseded by a newer edit
-        self._last_result = result
+        self._state = result
+        missing = [
+            f"{item.name} ({item.reason})"
+            for item in (result.corrections.deadtime, result.corrections.background)
+            if item.status in {CorrectionStatus.UNAVAILABLE, CorrectionStatus.FAILED}
+        ]
+        self._incomplete_banner.setText("Incomplete preview — not applied: " + ", ".join(missing))
+        self._incomplete_banner.setVisible(bool(missing))
+        self.preview_changed.emit()
         self._draw(result)
 
     # -- pan/zoom --------------------------------------------------------
@@ -601,7 +581,7 @@ class GroupingPreviewPane(QWidget):
 
     def _on_error(self, message: str) -> None:
         self._dispatch_next_after_completion()
-        self._set_error(f"Preview unavailable: {message}")
+        self.show_error(f"Preview unavailable: {message}")
 
     # -- drawing ---------------------------------------------------------
 
@@ -1015,26 +995,24 @@ class GroupingPreviewPane(QWidget):
 
     def show_unavailable(self) -> None:
         """Hide the pane with a note: this dataset has no histograms to reduce."""
+        self._generation += 1
+        self._state = None
+        self._incomplete_banner.hide()
         self.setVisible(False)
         self._status.setText("Preview needs raw detector histograms (none loaded).")
+        self.preview_changed.emit()
 
 
 def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResult:
-    """Resolve (if needed) and reduce one preview request off the GUI thread.
-
-    Pure numpy work: it touches no widgets and returns plain arrays, so the
-    TaskRunner relay can marshal the result back safely. Cooperative cancellation
-    is honoured up front (``worker.is_cancelled()``) so a shutdown mid-flight
-    stops promptly; a merely *superseded* result is dropped later by generation
-    in :meth:`GroupingPreviewPane._on_finished`. Raised errors (including the
-    no-detectors case) surface through the pane's error status strip.
-    """
+    """Reduce immutable request snapshots off-thread, with cooperative cancellation."""
     if worker.is_cancelled():
         raise TaskCancelledError
     if request.profile is not None:
         # The expensive step for auto-t0 / per-run-alpha policies; must stay
         # off the GUI thread. The profile is the pane's private deep copy.
-        grouping = resolve_effective_grouping(request.profile, request.run)
+        grouping = resolve_effective_grouping(
+            request.profile, request.run, reference_resolver=lambda _: request.resolved_reference
+        )
     else:
         grouping = request.grouping or {}
 
@@ -1068,7 +1046,8 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             deadtime_mode=flags.deadtime_mode,
             use_background=bg,
             facility=facility,
-            reference_resolver=None,
+            reference_resolver=lambda _: request.resolved_reference,
+            allow_incomplete=True,
         )
 
     corrected = _reduce(use_deadtime, use_background)
@@ -1129,6 +1108,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         baseline=baseline,
         compare_stage=compare,
         centre=centre,
+        corrections=corrected.corrections,
     )
 
 

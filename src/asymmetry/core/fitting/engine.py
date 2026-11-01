@@ -1,8 +1,4 @@
-"""Fit driver: single-run and global (simultaneous) fitting.
-
-Uses :mod:`iminuit` as the fitting back-end, providing robust minimization
-without scipy dependencies (important for Python 3.13+ compatibility).
-"""
+"""Minimise single-run and simultaneous fitting objectives."""
 
 from __future__ import annotations
 
@@ -18,6 +14,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.transform.corrections import require_complete_dataset
 
 
 class AsymmetryScaleWarning(UserWarning):
@@ -1703,11 +1700,8 @@ class FitEngine:
             Minimization method (``"migrad"`` for gradient-based,
             ``"simplex"`` for Nelder-Mead).
         cost_factory : CostFactory, optional
-            Selectable fit objective (:data:`GAUSSIAN_COST` / :data:`POISSON_COST`).
-            ``None`` keeps the historical √-weighted least squares, byte-for-byte.
-            With :data:`POISSON_COST` the ``chi_squared``/``reduced_chi_squared``
-            report the Cash statistic (asymptotically χ²-distributed), and the
-            data must be raw Poisson counts with a count-expectation model.
+            Gaussian least squares by default. :data:`POISSON_COST` requires raw
+            counts and an expected-count model; its reported statistic is Cash.
         migrad_kwargs : dict, optional
             Forwarded to ``m.migrad``/``m.simplex`` via the shared
             :func:`drive_minuit` seam (e.g. ``ncall`` to cap iterations for a
@@ -1762,6 +1756,7 @@ class FitEngine:
         FitResult
             Container with fit results including χ², parameters, and uncertainties.
         """
+        require_complete_dataset(dataset)
         time, asymmetry, error = _clip_time_window(
             dataset.time, dataset.asymmetry, dataset.error, t_min, t_max
         )
@@ -2349,6 +2344,8 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         -----
         Fixed parameters (where param.fixed=True) are held constant during fitting.
         """
+        for dataset in datasets:
+            require_complete_dataset(dataset)
         if not datasets:
             raise ValueError("No datasets provided for global fitting")
         if strategy not in ("joint", "profiled", "least_squares"):

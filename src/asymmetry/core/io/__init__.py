@@ -148,7 +148,8 @@ def resolve_background_reference(
     sample_good_frames: float | None = None,
     datasets: Iterable[MuonDataset] = (),
     cache: dict[str, object] | None = None,
-) -> BackgroundReference:
+    allow_file: bool = True,
+) -> BackgroundReference | None:
     """Resolve a ``background_run`` grouping payload to a :class:`BackgroundReference`.
 
     This is the single home for reference-run resolution so the same logic
@@ -161,7 +162,8 @@ def resolve_background_reference(
     ``source_file`` (cached per source path in ``cache`` when provided, so a
     batch apply loads the reference **once**, not once per sample dataset). The
     scale is sample/reference good frames, falling back to the payload snapshots
-    and finally ``1.0``.
+    and finally ``1.0``. With ``allow_file=False``, an unloaded reference returns
+    ``None`` without disk I/O, for advisory previews.
 
     Raises
     ------
@@ -194,6 +196,8 @@ def resolve_background_reference(
                 break
 
     if reference_run is None:
+        if not allow_file:
+            return None
         if not source_file:
             raise ValueError("the reference is not loaded and no source file is recorded")
         # Cache only loader-loaded references (an in-registry run is reused live
