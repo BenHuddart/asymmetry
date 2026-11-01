@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -60,7 +62,10 @@ def test_validation_runs_full_tier_when_called() -> None:
     assert not _triggers(workflow)["workflow_call"]
     job = workflow["jobs"]["full-suite"]
     run = next(step["run"] for step in job["steps"] if step["name"] == "Run full test suite")
-    assert run == "python tools/harness.py test --tier=${{ inputs.tier || 'full' }}"
+    assert (
+        run.partition(" -- ")[0]
+        == "python tools/harness.py test --tier=${{ inputs.tier || 'full' }}"
+    )
     assert "github.event.inputs" not in yaml.safe_dump(workflow)
     assert _triggers(workflow)["workflow_dispatch"]["inputs"]["tier"]["default"] == "full"
 
@@ -145,3 +150,31 @@ def test_version_guard_in_tag_and_rehearsal_contexts(
     assert (result.returncode == 0) is succeeds, result.stdout + result.stderr
     if succeeds:
         assert output.read_text(encoding="utf-8").strip() == f"version={version}"
+
+
+@pytest.mark.io
+def test_full_tier_reports_a_worker_crash_without_restarting(tmp_path: Path) -> None:
+    case = tmp_path / "test_worker_crash.py"
+    case.write_text("import os\ndef test_requested_worker_exit():\n    os._exit(9)\n")
+    job = _workflow("full-suite.yml")["jobs"]["full-suite"]
+    run = next(step["run"] for step in job["steps"] if step["name"] == "Run full test suite")
+    pytest_args = shlex.split(run.partition(" -- ")[2])
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "tools/harness.py"),
+            "test",
+            "--tier=full",
+            "--",
+            *pytest_args,
+            str(case),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "test_requested_worker_exit" in output.partition("node down:")[0]
+    assert "replacing crashed worker" not in output
