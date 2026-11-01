@@ -5,7 +5,10 @@ Muonium
 
 Muonium (Mu = μ⁺e⁻) forms when the implanted muon captures an electron, and
 its spin dynamics are governed by the hyperfine coupling :math:`A_{\mathrm{hf}}`
-(4463 MHz for vacuum muonium; reduced in semiconductors and molecules). In a
+(4463.302765 MHz for vacuum muonium; reduced in semiconductors and molecules).
+The vacuum starting value is the measurement of W. Liu et al., Phys. Rev. Lett.
+**82**, 711 (1999), `doi:10.1103/PhysRevLett.82.711
+<https://doi.org/10.1103/PhysRevLett.82.711>`_. In a
 field :math:`B` the four energy levels follow the Breit–Rabi diagram with
 reduced field
 

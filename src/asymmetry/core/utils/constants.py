@@ -12,6 +12,8 @@ Sources
 * S. Navas et al. (Particle Data Group), Phys. Rev. D **110**, 030001 (2024):
   `muon <https://pdg.lbl.gov/2024/listings/rpp2024-list-muon.pdf>`_ and
   `pion <https://pdg.lbl.gov/2024/download/db2024.pdf>`_ lifetimes.
+* N. J. Stone, INDC(NDS)-0794 (2019), p. 14,
+  `recommended nuclear magnetic moments <https://doi.org/10.61092/iaea.yjpc-cns6>`_.
 * W. Liu et al., Phys. Rev. Lett. **82**, 711 (1999),
   `muonium hyperfine interval <https://doi.org/10.1103/PhysRevLett.82.711>`_.
 """
@@ -64,9 +66,9 @@ MOLAR_GAS_CONSTANT_J_PER_MOL_K = AVOGADRO_CONSTANT_PER_MOL * BOLTZMANN_CONSTANT_
 #: Negative-muon magnetic moment in J/T; CODATA 2018, uncertainty 1.0e-33 J/T.
 MUON_MAGNETIC_MOMENT_J_PER_T = -4.49044830e-26
 
-#: Muon γ_μ/(2π) in MHz/T; source unverified, approximation within 6e-8
-#: relative of CODATA 2018 2|μ_μ|/h. This value does not include a sign.
-MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.538817
+#: Muon γ_μ/(2π) magnitude in MHz/T; CODATA 2018 2|μ_μ|/h,
+#: uncertainty 0.0000030 MHz/T.
+MUON_GYROMAGNETIC_RATIO_MHZ_PER_T = 135.5388095
 
 #: Electron gyromagnetic-ratio magnitude in rad/(s T); CODATA 2018, uncertainty 53 rad/(s T).
 ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_S_PER_T = 1.76085963023e11
@@ -84,12 +86,13 @@ MUON_LIFETIME_US = 2.1969811
 #: Sets the surface-muon pulse-arrival time scale in the MaxEnt response.
 PION_LIFETIME_US = 0.026
 
-#: Fluorine-19 γ_F/(2π) in MHz/T; source and shielding convention unverified.
-FLUORINE_19_GYROMAGNETIC_RATIO_MHZ_PER_T = 40.053
+#: Fluorine-19 γ_F/(2π) in MHz/T; Stone (2019) moment 2.628321(4) μ_N
+#: converted with CODATA 2018 μ_N/h. Uncertainty 0.000061 MHz/T.
+FLUORINE_19_GYROMAGNETIC_RATIO_MHZ_PER_T = 40.069243717
 
-#: Vacuum muonium hyperfine interval in MHz; truncated from Liu et al. (1999)
-#: 4463.302765(53) MHz. Used as a fit starting value.
-MUONIUM_VACUUM_HYPERFINE_MHZ = 4463.302
+#: Vacuum muonium hyperfine interval in MHz; Liu et al. (1999),
+#: uncertainty 0.000053 MHz. Used as a fit starting value.
+MUONIUM_VACUUM_HYPERFINE_MHZ = 4463.302765
 
 #: Tesla per gauss; exact unit definition, 1 G = 10⁻⁴ T.
 GAUSS_TO_TESLA = 1.0e-4

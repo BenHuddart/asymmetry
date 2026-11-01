@@ -32,7 +32,7 @@ from asymmetry.core.utils.constants import (
 
 ArrayLikeFloat = NDArray[np.float64]
 
-# Brandt, Phys. Rev. B 37, 2349 (1988), triangular-lattice London-limit prefactor.
+# Brandt, Phys. Rev. B 68, 054506 (2003), Eq. (11), rounded London-limit prefactor.
 BRANDT_COEFFICIENT = 0.0609
 
 # Existing constant is in MHz/T cycles-per-second units, so convert to rad/s/T.

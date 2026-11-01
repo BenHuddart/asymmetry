@@ -75,7 +75,7 @@ _DATA = "Superconductivity/Critical fields in Sn/Data/HIFI000%d.nxs"
 # Literature guidance (GROUND_TRUTH §10; Karl et al. PRB 99, 184515):
 _TC = 3.717  # K
 _BC0 = 306.0  # G  (≈ 30.6 mT)
-_GAMMA = round(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA, 6)  # MHz/G  (muon)
+_GAMMA_MU_MHZ_PER_G = round(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA, 6)  # MHz/G  (muon)
 
 # Applied fields present in the dataset (GROUND_TRUTH §3).
 _FIELDS = [20.0, 40.0, 80.0, 160.0]
@@ -276,7 +276,7 @@ class SnHcDomeScenario(CorpusScenario):
             freqs, amp = _line_spectrum(run)
             f_pk, _a_pk, _sig = _peak(freqs, amp)
             scan_t.append(t_nom)
-            scan_b.append(f_pk / _GAMMA)
+            scan_b.append(f_pk / _GAMMA_MU_MHZ_PER_G)
         scan_t = np.array(scan_t)
         scan_b = np.array(scan_b)
 
@@ -439,11 +439,11 @@ class SnIntermediateLinesScenario(CorpusScenario):
             freqs, amp = _line_spectrum(run)
             f_pk, _, sig = _peak(freqs, amp)
             ax1.plot(
-                freqs / _GAMMA,
+                freqs / _GAMMA_MU_MHZ_PER_G,
                 amp * 100,
                 color=colors[field],
                 lw=1.2,
-                label=f"{field} G applied — line at {f_pk / _GAMMA:.0f} G ({sig:.0f}σ)",
+                label=f"{field} G applied — line at {f_pk / _GAMMA_MU_MHZ_PER_G:.0f} G ({sig:.0f}σ)",
             )
         ax1.axvline(140.0, color="0.5", ls=":", lw=1.0)
         ax1.text(
@@ -475,9 +475,9 @@ class SnIntermediateLinesScenario(CorpusScenario):
         for run, t_nom in subset:
             freqs, amp = _line_spectrum(run)
             f_pk, a_pk, _sig = _peak(freqs, amp)
-            ax2.plot(freqs / _GAMMA, amp * 100 + offset, color="#1f77b4", lw=1.0)
+            ax2.plot(freqs / _GAMMA_MU_MHZ_PER_G, amp * 100 + offset, color="#1f77b4", lw=1.0)
             ax2.scatter(
-                [f_pk / _GAMMA],
+                [f_pk / _GAMMA_MU_MHZ_PER_G],
                 [a_pk * 100 + offset + 0.12],
                 marker="v",
                 s=34,
@@ -537,9 +537,9 @@ class SnTransverseRecoveryScenario(CorpusScenario):
         def osc(t, A, f, phi, lam, c):  # noqa: N803 (physics symbol)
             return A * np.exp(-lam * t) * np.cos(2 * np.pi * f * t + phi) + c
 
-        popt, _ = curve_fit(osc, tt, aa, p0=[0.03, 160 * _GAMMA, 0.0, 0.1, 0.0], maxfev=20000)
+        popt, _ = curve_fit(osc, tt, aa, p0=[0.03, 160 * _GAMMA_MU_MHZ_PER_G, 0.0, 0.1, 0.0], maxfev=20000)
         f_fit = abs(popt[1])
-        b_fit = f_fit / _GAMMA
+        b_fit = f_fit / _GAMMA_MU_MHZ_PER_G
 
         figure = Figure(figsize=(10.0, 7.2), dpi=120)
         figure.subplots_adjust(left=0.10, right=0.97, top=0.94, bottom=0.14, hspace=0.32)

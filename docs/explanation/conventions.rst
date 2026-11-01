@@ -46,16 +46,16 @@ Physical constants
 The :ref:`physical constants API <physical-constants-api>` gives
 values, units, uncertainties, and sources. Exact defining values follow the
 2019 SI; magnetic constants follow CODATA 2018, lifetimes follow PDG 2024,
-and the vacuum muonium hyperfine starting value approximates Liu et al. (1999).
+the fluorine-19 ratio follows Stone’s recommended 2019 nuclear moment,
+and the vacuum muonium hyperfine starting value follows Liu et al. (1999).
 Derived SI constants use the defining values directly. This fixed reference set
 keeps calculations independent of the SciPy version installed.
 
-Approximations are labelled in the API. The muon gyromagnetic ratio retains an
-unverified approximation within six parts in a hundred million of CODATA 2018;
-the fluorine-19 ratio has an unverified source and shielding convention. The
-pion lifetime is rounded to three decimal places in μs, and the proton ratio and
-muonium interval are truncated. These precisions must be considered when
-comparing inferred fields, distances, and hyperfine intervals.
+The fluorine ratio is calculated from the recommended nuclear moment and
+CODATA 2018 nuclear magneton using :math:`\gamma_F/(2\pi)=2\mu_F/h` for spin
+:math:`I=1/2`. Its standard uncertainty is given in the API alongside the other
+measured constants. The pion lifetime is rounded to three decimal places in μs,
+and the proton gyromagnetic ratio is truncated to the stated precision.
 
 .. _gaussian-width-conventions:
 

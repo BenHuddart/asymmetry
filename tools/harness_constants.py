@@ -11,14 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 CONSTANTS_PATH = Path("src/asymmetry/core/utils/constants.py")
 # Counts freeze the remaining source-reproducing lines, including assignments.
 PHYSICAL_CONSTANT_BASELINE = {
-    "docs/screenshots/scenarios/grouping_window_t0_row.py": (
-        1,
-        "Unverified lifetime approximation",
-    ),
-    "docs/screenshots/scenarios/grouping_window_good_window_row.py": (
-        1,
-        "Unverified lifetime approximation",
-    ),
     "docs/screenshots/scenarios/corpus/lifeas_pnictide.py": (1, "Paper's field-width conversion"),
     "docs/screenshots/scenarios/corpus/maleic_kinetics.py": (2, "Muon-school guide's arithmetic"),
     "docs/screenshots/scenarios/corpus/plateau_ca3co2o6.py": (1, "Paper's precession conversion"),

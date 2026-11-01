@@ -8,10 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests._harness import _load_harness
+from tests._harness import HARNESS_PATH, _load_harness
 
 ROOT = Path(__file__).resolve().parents[2]
-HARNESS_PATH = ROOT / "tools" / "harness.py"
 
 
 def test_current_core_satisfies_gui_boundary() -> None:

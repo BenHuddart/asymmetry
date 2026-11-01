@@ -73,7 +73,7 @@ SEED_NU = 0.2  # fluctuation rate ν (MHz)
 FIT_TMAX = 12.0  # limit fit window to 12 µs (guide hint)
 
 # Boltzmann constant in eV/K, for the Arrhenius slope → activation energy.
-BOLTZMANN_EV_PER_K = round(BOLTZMANN_CONSTANT_MEV_PER_K, 8) * 1e-3
+BOLTZMANN_EV_PER_K = round(BOLTZMANN_CONSTANT_MEV_PER_K * 1e-3, 11)
 # Activated branch: fit the Arrhenius line only above this temperature. Below it
 # ν sits on the flat plateau (ν ≈ baseline) where ln(ν − baseline) is undefined
 # / dominated by noise — see NOTES_llz.md "transform + baseline interplay".

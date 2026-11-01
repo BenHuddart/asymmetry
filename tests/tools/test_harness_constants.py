@@ -68,3 +68,9 @@ def test_constant_ratchet_rejects_growth_inside_a_baseline_file(tmp_path: Path) 
     )
     assert len(failures) == 1
     assert "grew" in failures[0].message
+
+
+def test_physical_constant_exception_budget_cannot_grow() -> None:
+    baseline = _load_harness()._constant_checks.PHYSICAL_CONSTANT_BASELINE
+    assert len(baseline) <= 3
+    assert sum(count for count, _reason in baseline.values()) <= 4

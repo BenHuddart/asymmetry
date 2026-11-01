@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Vortex-lattice fits retain numerical accuracy on long, uniformly sampled time axes.
+
 - Gaussian and Kubo–Toyabe reference pages and component help distinguish the
   zero-field match σ = Δ from the transverse-field envelope σ = Δ/√2; fitted values are unchanged.
 - Closing an untouched window no longer creates application-data folders;
@@ -19,8 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The physical constants API documents units, sources, uncertainties, and approximations,
-  and provides SI-derived constants for scripted analysis.
+- Calculations share cited physical constants, using CODATA 2018, Stone’s 2019 fluorine moment,
+  and Liu’s vacuum-muonium seed; inferred μ–F distances increase by about 0.014% at fixed coupling.
 
 - **``recipe --run`` starts each line where the run shows it.** At the recipe's
   frequencies and rates, every precessing term's amplitude and phase (and a
