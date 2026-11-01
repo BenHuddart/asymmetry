@@ -82,6 +82,11 @@ removing a duplicate requires lowering its count or removing its entry.
   so xdist's process-per-core parallelism isn't multiplied by per-process BLAS
   threads.
 
+CI configures pytest's native watchdog with `faulthandler_timeout=600`.
+Pytest resets the timer for each test and owns the diagnostic file descriptor
+through capture and teardown. A test exceeding that interval emits all thread
+stacks before the job deadline.
+
 The full-suite workflow logs Linux's `oom_kill` counter and available memory
 before and after tests, including test failures. A counter increase establishes
 an out-of-memory kill on the runner; it does not identify the victim process.

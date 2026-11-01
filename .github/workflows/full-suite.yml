@@ -50,8 +50,7 @@ jobs:
       - name: Run full test suite
         env:
           QT_QPA_PLATFORM: offscreen
-          ASYMMETRY_FAULTHANDLER_TIMEOUT: "600"
-        run: python tools/harness.py test --tier=${{ inputs.tier || 'full' }} -- -vv --max-worker-restart=0
+        run: python tools/harness.py test --tier=${{ inputs.tier || 'full' }} -- -vv --max-worker-restart=0 -o faulthandler_timeout=600
 
       - name: Report memory counters
         if: always()
