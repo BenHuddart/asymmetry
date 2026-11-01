@@ -11,41 +11,49 @@ links to where it is documented and driven in full.
 1. Is the χ² in its band?
 -------------------------
 
-The first, cheapest check is the reduced :math:`\chi^2`. For a correct model
-with correctly estimated Gaussian errors, the fit :math:`\chi^2` follows the
-chi-squared distribution with :math:`\nu = N - N_\mathrm{free}` degrees of
-freedom, so a *good* fit lands :math:`\chi^2_r` inside a band around 1 that
-tightens as :math:`\nu` grows. Asymmetry turns the fitted :math:`\chi^2` into a
-two-sided verdict at a confidence level :math:`R` (default 0.95):
+For independent Gaussian observations with fixed, correctly stated errors and a
+linear model, the minimized :math:`\chi^2` has :math:`\nu=N-N_\mathrm{free}`
+degrees of freedom. Nonlinear or bounded fits use this law approximately;
+the tooltip states "χ² laws are approximate for nonlinear or bounded fits."
+Asymmetry reports a two-sided band at confidence :math:`R` (default 0.999):
 
-* **good** — :math:`\chi^2_r` inside the band;
-* **poor** (upper tail) — the model is missing physics, or the input errors are
-  underestimated;
-* **overdone** (lower tail) — the fit reproduces the data *better* than the
-  errors allow, usually meaning overestimated errors or an over-flexible model.
+* **good** — the reduced statistic lies inside the band;
+* **poor** — it lies in the upper tail;
+* **overdone** — it lies in the lower tail, often indicating overestimated
+  errors or excess model flexibility.
 
-See :ref:`fit-statistics` for how to read the numbers and what each tail
-implies. The verdict assumes the :math:`\chi^2` was computed against *real*
-error estimates; with unit weights or scatter-estimated errors (which force
-:math:`\chi^2_r` toward 1 by construction) it carries no goodness information
-and is suppressed (see :doc:`parameter_trending`). Inspecting the
-:ref:`residual time series <fit-residuals>` is the companion structural check:
-a good χ² with coherent residual structure still means a missing component.
+A Poisson fit reports **Poisson deviance/ν**, not a Gaussian χ² statistic.
+Its likelihood-ratio distribution approaches a χ² law at large expected
+counts [pdg_statistics]_. As a display policy, a χ² quality verdict is shown
+only when every fitted expected bin count is at least five. This threshold
+does not guarantee an exact χ² law. For coupled fits, the minimum includes
+all members of the minimized objective. With a sparse fitted bin, the tooltip
+says "Poisson deviance has no χ² quality verdict when any fitted expected count
+is below 5." If expected counts are unknown, it says "Poisson expected counts
+were not recorded; no χ² quality verdict is available." The deviance and
+convergence status remain visible. **Fit ✓** denotes convergence, independently
+of whether a quality verdict is available.
 
-2. Is the verdict recorded and consistent across the series?
-------------------------------------------------------------
+See :ref:`fit-statistics` for residual checks. Unit weights or scatter-estimated
+errors do not supply an independent Gaussian quality test; see
+:doc:`parameter_trending`. Coherent residual structure still signals a missing
+component even when the scalar statistic looks acceptable.
 
-A single number is recorded per fit as a compact, JSON-serialisable summary —
-success flag, :math:`\chi^2`, reduced :math:`\chi^2`, and the fitted parameter
-values with uncertainties. Both the run-batch and grouped-series recording
-paths write this *same* shape, so every fit in a series carries a comparable
-verdict into the parameter-trending tables (:doc:`parameter_trending`; the
-shared data model is described under :ref:`trending-data-model`). Reading the
-χ² verdict *across* a run series is often more informative than any one fit: a
-χ²ᵣ that drifts upward through a temperature scan flags a model that fits the
-low-temperature spectra but not the high-temperature ones, and a background
-parameter that wanders usually signals a changing beam spot rather than sample
-physics.
+2. Is the objective recorded and consistent across the series?
+--------------------------------------------------------------
+
+Fit summaries record the objective (``gaussian`` or ``poisson``), total and
+reduced statistic, fitted parameters and uncertainties. Poisson summaries also
+record the minimum fitted expected count needed by the display policy. A
+missing quality verdict carries a ``quality_reason``. Run-batch and grouped
+series use the same summary format; comparisons require the same likelihood
+and data. A mixed-objective series is labelled "Mixed fit objectives." rather
+than assigned one averaged statistic.
+
+An unknown saved objective is explicitly ``null``: it has no χ² verdict and
+is labelled "Fit objective was not recorded." Known Gaussian producers retain
+their objective when loaded. A likelihood cannot be inferred from a numeric
+field named ``chi_squared`` alone. See :doc:`project_files` for saved results.
 
 3. Are the error bars themselves honest?
 ----------------------------------------
@@ -89,3 +97,7 @@ AICc is unavailable when its sample-size correction is undefined; a smaller
 AIC value cannot replace it in an AICc ranking. See :doc:`fit_wizard` for
 formulas, availability and assumptions, and :doc:`global_fit_wizard` for
 series totals and partition BIC.
+
+.. [pdg_statistics] G. Cowan and L. Lista, "Statistics", Particle Data Group
+   (2025), sections 40.2 and 40.3.3.1,
+   `Statistics review <https://pdg.lbl.gov/2025/reviews/rpp2025-rev-statistics.pdf>`_.

@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 
 from asymmetry.core.fitting.information_criteria import InformationCriteria, SelectionMetric
-from asymmetry.core.project.schema import migrate_to_current
+from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION, migrate_to_current
 
 
 @pytest.mark.parametrize(
@@ -51,7 +51,7 @@ def test_migration_recovers_samples_and_drops_criteria(row, expected):
     before = deepcopy(original)
     migrated = migrate_to_current(original)
     restored = migrated["nested"][0]["assessment"]
-    assert migrated["schema_version"] == 27
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
     assert restored["sample_count"] == expected
     assert not set(restored) & {"aic", "aicc", "bic", "selected_score"}
     if expected is not None:

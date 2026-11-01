@@ -25,6 +25,8 @@ import math
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from asymmetry.core.fitting.result_summary import reduced_statistic_label
+
 #: Provenance keys this module reads/writes on a fit-summary dict. Additive — they
 #: ride alongside the canonical summary fields and round-trip through ``.asymp``.
 PROVENANCE_KEYS = ("model_name", "fit_range", "timestamp", "provenance", "npar", "ndof")
@@ -141,11 +143,13 @@ class FitLog:
         reduced = record.get("reduced_chi_squared")
         if reduced is None:
             return ""
-        quality = record.get("quality") or {}
+        objective = record.get("objective")
+        quality = (record.get("quality") or {}) if objective is not None else {}
         dof = quality.get("dof") if isinstance(quality, Mapping) else None
         if dof is None:
             dof = record.get("ndof")
-        line = f"chi^2/nu = {_fmt(reduced, '.4f')}"
+        label = reduced_statistic_label(objective, ascii=True)
+        line = f"{label} = {_fmt(reduced, '.4f')}"
         if dof is not None:
             line += f"  (nu={int(dof)})"
         verdict = quality.get("verdict") if isinstance(quality, Mapping) else None
@@ -157,6 +161,8 @@ class FitLog:
             if low is not None and high is not None and confidence is not None:
                 band = f"; target {_fmt(low, '.3f')}-{_fmt(high, '.3f')} at {int(round(confidence * 100))}%"
             line += f"  [{verdict}{band}]"
+        if record.get("quality_reason"):
+            line += f"  [{record['quality_reason']}]"
         return line
 
     def _param_lines(self, record: Mapping[str, Any]) -> list[str]:

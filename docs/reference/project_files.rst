@@ -55,6 +55,14 @@ and from Mantid's binary HDF5 ``.mantid`` files.
 What is stored
 --------------
 
+Saved fit summaries record their likelihood as ``objective``. Gaussian and
+Poisson statistics keep their corresponding labels after loading. A grouped
+result whose objective was not recorded has ``objective: null``, no χ² quality
+verdict, and the explanation "Fit objective was not recorded." A known
+Gaussian fit retains ``objective: gaussian``. Poisson summaries carry the
+minimum fitted expected count used by the quality-display policy; see
+:doc:`assessing_a_fit`.
+
 Project files store:
 
 * Loaded dataset references (source file paths)

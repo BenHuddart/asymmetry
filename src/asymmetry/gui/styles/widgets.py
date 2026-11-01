@@ -699,7 +699,12 @@ def fit_quality_chip_html(quality: dict | None, params_at_bound: list[str] | Non
     return chips
 
 
-def fit_quality_tooltip(quality: dict | None, params_at_bound: list[str] | None = None) -> str:
+def fit_quality_tooltip(
+    quality: dict | None,
+    params_at_bound: list[str] | None = None,
+    *,
+    quality_reason: str | None = None,
+) -> str:
     """Return a teaching tooltip explaining the χ² verdict and any at-bound params."""
     lines: list[str] = []
     if quality and quality.get("verdict"):
@@ -720,7 +725,7 @@ def fit_quality_tooltip(quality: dict | None, params_at_bound: list[str] | None 
             pct = int(round(float(confidence) * 100))
             band = f"{float(low):.3f}–{float(high):.3f}"
             nu = f" (ν = {int(dof)})" if dof is not None else ""
-            lines.append(f"A good fit's χ²ᵣ falls in [{band}] at {pct}%{nu}.")
+            lines.append(f"A good fit's reduced statistic falls in [{band}] at {pct}%{nu}.")
             # Defuse the "poor at χ²ᵣ≈1.08" alarm for high-statistics muon data: the
             # band is a confidence interval that tightens with ν, so a near-unity χ²ᵣ
             # can read "poor" yet be a good fit. Clarity only — the band math is unchanged.
@@ -736,6 +741,12 @@ def fit_quality_tooltip(quality: dict | None, params_at_bound: list[str] | None 
             "overestimated errors or an over-flexible model; “poor” is worse than the "
             "errors allow."
         )
+    if quality:
+        lines.append(
+            quality.get("assumption", "χ² laws are approximate for nonlinear or bounded fits.")
+        )
+    if quality_reason:
+        lines.append(quality_reason)
     if params_at_bound:
         names = ", ".join(str(n) for n in params_at_bound)
         lines.append(
