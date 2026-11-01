@@ -29,7 +29,6 @@ from asymmetry.core.maxent import (
 from asymmetry.core.representation.base import Representation, RepresentationType
 from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
-from asymmetry.core.transform.t0 import common_t0_time_us
 
 
 class TimeFBAsymmetry(Representation):
@@ -51,39 +50,12 @@ class TimeFBAsymmetry(Representation):
         forward_gid = fb.forward_gid
         backward_gid = fb.backward_gid
         alpha = fb.alpha
-        common_t0 = fb.common_t0
 
-        n = min(fb.forward.size, fb.backward.size)
-        forward = fb.forward[:n]
-        backward = fb.backward[:n]
-
-        try:
-            first_good = max(0, int(grouping.get("first_good_bin", 0)))
-        except (TypeError, ValueError):
-            first_good = 0
-        try:
-            last_good = int(grouping.get("last_good_bin", n - 1))
-        except (TypeError, ValueError):
-            last_good = n - 1
-        last_good = min(last_good, n - 1)
-        if first_good > last_good:
-            first_good, last_good = 0, n - 1
-
-        bin_width = float(histograms[0].bin_width)
-        # All binning modes (fixed bunching included) sum counts onto the
-        # output bins before forming the asymmetry — the counts-then-ratio
-        # order all reference programs use.
         time, asymmetry, error = binned_fb_asymmetry(
-            forward,
-            backward,
+            fb.counts,
             grouping=grouping,
-            common_t0=common_t0,
-            bin_width_us=bin_width,
-            alpha=alpha,
-            first_good_bin=first_good,
-            last_good_bin=last_good,
+            alpha=fb.alpha,
             beta=fb.beta,
-            t0_time_us=common_t0_time_us(histograms, grouping, common_t0),
         )
 
         metadata = dict(run.metadata)

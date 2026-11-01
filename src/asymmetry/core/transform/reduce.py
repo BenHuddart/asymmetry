@@ -29,14 +29,13 @@ The reduction is pinned bit-identical against the original MainWindow output by
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform.asymmetry import SubtractedBackground
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     resolve_background_mode,
@@ -46,9 +45,9 @@ from asymmetry.core.transform.deadtime import (
     has_resolved_deadtime,
     prepare_histograms_with_deadtime,
 )
+from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, GroupCounts, good_window
 from asymmetry.core.transform.grouping import (
-    apply_grouping_aligned,
-    common_t0_for_groups,
+    align_forward_backward,
 )
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
 from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
@@ -140,62 +139,6 @@ def _prepare_grouping_histograms(
     return prepare_histograms_with_deadtime(histograms, grouping, use_deadtime)
 
 
-@dataclass(frozen=True)
-class CorrectedGroupedCounts:
-    """Deadtime-corrected, grouped, background-subtracted forward/backward counts.
-
-    This is the reduction pipeline's state *one step before* the asymmetry is
-    formed — the point both the reduction (:func:`reduce_grouped_asymmetry`) and
-    the alpha estimate must read, so a calibrated ``alpha`` balances the same
-    spectra the reduction applies it to. ``forward_error``/``backward_error`` are
-    the propagated per-bin count errors when background subtraction supplied them
-    (both-or-neither), else ``None``. Arrays are truncated to their common length.
-
-    ``background_level``/``background_level_error`` record the *constant* level
-    subtracted from each group and its standard error, for the modes that
-    subtract one (``None`` for ``reference_run``, which subtracts a per-bin
-    spectrum, and when no background was applied). They exist because the
-    corrected arrays alone cannot tell a downstream estimator what was taken
-    out of them — see :meth:`subtracted_background`.
-
-    ``t0_time_us`` is the run's exact common t0 in µs
-    (:func:`~asymmetry.core.transform.t0.common_t0_time_us` at ``common_t0``);
-    every stamp built from these counts is the bin centre ``(k + 0.5)·w`` minus
-    it, so a caller that re-derives an axis from ``common_t0`` alone drops the
-    sub-bin part.
-    """
-
-    forward: NDArray[np.float64]
-    backward: NDArray[np.float64]
-    forward_error: NDArray[np.float64] | None
-    backward_error: NDArray[np.float64] | None
-    common_t0: int
-    bin_width: float
-    t0_time_us: float
-    deadtime_applied: bool
-    background_state: dict[str, object] | None
-    background_level: tuple[float, float] | None = None
-    background_level_error: tuple[float, float] | None = None
-
-    def subtracted_background(self) -> SubtractedBackground | None:
-        """The constant background removed here, in the alpha estimator's form.
-
-        Hand this to
-        :func:`~asymmetry.core.transform.asymmetry.estimate_alpha_detailed` with
-        ``method="ratio"`` so its uncertainty accounts for the subtraction;
-        without it the reported σ is roughly a factor of two small in a late,
-        low-counts window. ``None`` when nothing constant was subtracted.
-        """
-        if self.background_level is None or self.background_level_error is None:
-            return None
-        return SubtractedBackground(
-            forward=float(self.background_level[0]),
-            backward=float(self.background_level[1]),
-            forward_error=float(self.background_level_error[0]),
-            backward_error=float(self.background_level_error[1]),
-        )
-
-
 def corrected_grouped_counts(
     *,
     histograms: list[Histogram],
@@ -208,7 +151,7 @@ def corrected_grouped_counts(
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
-) -> CorrectedGroupedCounts:
+) -> ForwardBackwardCounts:
     """Run the reduction's correction stages up to (not including) the asymmetry.
 
     Applies, in the order every reference program uses: deadtime correction
@@ -252,24 +195,12 @@ def corrected_grouped_counts(
         # A *manual* T0Policy carries effective per-detector t0 bins in the grouping
         # so alignment shifts without the histograms' own t0_bin being rewritten.
         detector_t0 = effective_detector_t0_bins(working_histograms, grouping)
-        common_t0 = common_t0_for_groups(
-            working_histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0
+        forward, backward, crop = align_forward_backward(
+            working_histograms, forward_idx, backward_idx, detector_t0
         )
-        forward = apply_grouping_aligned(
-            working_histograms,
-            forward_idx,
-            common_t0_bin=common_t0,
-            detector_t0_bins=detector_t0,
-        )
-        backward = apply_grouping_aligned(
-            working_histograms,
-            backward_idx,
-            common_t0_bin=common_t0,
-            detector_t0_bins=detector_t0,
-        )
-        n_grouped = min(len(forward), len(backward))
-        forward = forward[:n_grouped]
-        backward = backward[:n_grouped]
+        common_t0 = crop.common_t0_bin
+        n_grouped = crop.length
+        window = good_window(grouping, n_grouped)
 
         background_state: dict[str, object] | None = None
         bkg_result = None
@@ -278,6 +209,7 @@ def corrected_grouped_counts(
             reference_forward = None
             reference_backward = None
             reference_scale = None
+            reference_crop = None
             if (
                 resolve_background_mode(grouping) == "reference_run"
                 and reference_resolver is not None
@@ -290,22 +222,14 @@ def corrected_grouped_counts(
                         grouping,
                         effective_use_deadtime,
                     )
-                    reference_forward = apply_grouping_aligned(
+                    reference_forward, reference_backward, reference_crop = align_forward_backward(
                         reference_prepared,
                         forward_idx,
-                        common_t0_bin=common_t0,
-                        detector_t0_bins=effective_detector_t0_bins(reference_prepared, grouping),
-                    )
-                    reference_backward = apply_grouping_aligned(
-                        reference_prepared,
                         backward_idx,
+                        effective_detector_t0_bins(reference_prepared, grouping),
                         common_t0_bin=common_t0,
-                        detector_t0_bins=effective_detector_t0_bins(reference_prepared, grouping),
+                        sample_length=n_grouped,
                     )
-            try:
-                last_good = int(grouping.get("last_good_bin", n_grouped - 1))
-            except (TypeError, ValueError):
-                last_good = n_grouped - 1
             bkg_result = apply_grouped_background_correction(
                 forward,
                 backward,
@@ -314,7 +238,7 @@ def corrected_grouped_counts(
                 bin_width_us=bin_width,
                 facility=facility,
                 metadata=metadata,
-                last_good_bin=last_good,
+                last_good_bin=window.last,
                 reference_forward=reference_forward,
                 reference_backward=reference_backward,
                 reference_scale=reference_scale,
@@ -322,12 +246,16 @@ def corrected_grouped_counts(
             forward = bkg_result.forward
             backward = bkg_result.backward
             background_state = {"method": bkg_result.method}
+            if reference_crop is not None:
+                background_state["reference_alignment"] = asdict(reference_crop)
             if bkg_result.applied:
                 if bkg_result.values is not None:
                     background_state["values"] = [
                         float(bkg_result.values[0]),
                         float(bkg_result.values[1]),
                     ]
+                if bkg_result.value_errors is not None:
+                    background_state["value_errors"] = list(bkg_result.value_errors)
                 if bkg_result.ranges is not None:
                     background_state["ranges"] = [
                         [int(v) for v in bkg_result.ranges[0]],
@@ -356,32 +284,15 @@ def corrected_grouped_counts(
             deadtime_applied=dt_applied,
             background_applied=bool(background_state),
         )
-        background_level: tuple[float, float] | None = None
-        background_level_error: tuple[float, float] | None = None
-        if (
-            bkg_result is not None
-            and bkg_result.applied
-            and bkg_result.values is not None
-            and bkg_result.value_errors is not None
-        ):
-            background_level = (float(bkg_result.values[0]), float(bkg_result.values[1]))
-            background_level_error = (
-                float(bkg_result.value_errors[0]),
-                float(bkg_result.value_errors[1]),
-            )
-
-        return CorrectedGroupedCounts(
-            forward=forward,
-            backward=backward,
-            forward_error=forward_error,
-            backward_error=backward_error,
-            common_t0=int(common_t0),
-            bin_width=float(bin_width),
+        return ForwardBackwardCounts(
+            forward=GroupCounts(forward, None if forward_error is None else forward_error**2),
+            backward=GroupCounts(backward, None if backward_error is None else backward_error**2),
+            alignment=crop,
+            window=window,
+            bin_width_us=bin_width,
             t0_time_us=t0_time_us,
             deadtime_applied=dt_applied,
             background_state=background_state,
-            background_level=background_level,
-            background_level_error=background_level_error,
         )
 
 
@@ -444,34 +355,10 @@ def reduce_grouped_asymmetry(
             metadata=metadata,
             reference_resolver=reference_resolver,
         )
-        forward = corrected.forward
-        backward = corrected.backward
-        n_grouped = min(len(forward), len(backward))
-
-        # Every binning mode (fixed included) bins the counts before forming
-        # the asymmetry — the counts-then-ratio order all reference programs
-        # use. The returned arrays are final: good window applied, bunching
-        # applied, no further slicing or bunching by the caller.
-        try:
-            first_good = max(0, int(grouping.get("first_good_bin", 0)))
-        except (TypeError, ValueError):
-            first_good = 0
-        try:
-            last_good = int(grouping.get("last_good_bin", n_grouped - 1))
-        except (TypeError, ValueError):
-            last_good = n_grouped - 1
         time_axis, asymmetry, error = binned_fb_asymmetry(
-            forward,
-            backward,
+            corrected,
             grouping=grouping,
-            common_t0=corrected.common_t0,
-            bin_width_us=corrected.bin_width,
-            t0_time_us=corrected.t0_time_us,
             alpha=alpha,
-            first_good_bin=first_good,
-            last_good_bin=last_good,
-            forward_error=corrected.forward_error,
-            backward_error=corrected.backward_error,
             beta=beta,
         )
         perf.detail(
@@ -487,13 +374,12 @@ def reduce_grouped_asymmetry(
             asymmetry=np.asarray(asymmetry * PERCENT_PER_FRACTION, dtype=np.float64),
             error=np.asarray(error * PERCENT_PER_FRACTION, dtype=np.float64),
             deadtime_applied=corrected.deadtime_applied,
-            background_state=corrected.background_state,
+            background_state=corrected.background_metadata(),
             units=ASYMMETRY_PERCENT,
         )
 
 
 __all__ = [
-    "CorrectedGroupedCounts",
     "CorrectionFlags",
     "GroupedAsymmetryReduction",
     "ReferenceResolver",

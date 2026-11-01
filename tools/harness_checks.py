@@ -1,4 +1,4 @@
-"""Standard-library checks for the physical-constant authority and its consumers."""
+"""Standard-library checks for numeric authorities and validated count boundaries."""
 
 from __future__ import annotations
 
@@ -157,4 +157,64 @@ def find_physical_constant_duplicate_violations(
         else:
             continue
         failures.append(HarnessFailure(root / path, 0, message))
+    return failures
+
+
+def find_count_boundary_violations(root: Path = ROOT) -> list[HarnessFailure]:
+    """Keep shape truncation and repeated F/B window parsing at a count of zero."""
+    failures: list[HarnessFailure] = []
+    for path in sorted((root / "src/asymmetry").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        transform = path.parent.name == "transform"
+        if not transform and not any(
+            name in source for name in ("binned_fb_asymmetry", "slice_to_good_window")
+        ):
+            continue
+        tree = ast.parse(source)
+        for function in ast.walk(tree):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)]
+            reduction = any(
+                isinstance(call.func, ast.Name)
+                and call.func.id in {"binned_fb_asymmetry", "slice_to_good_window"}
+                for call in calls
+            )
+            for call in calls:
+                if (
+                    reduction
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "get"
+                    and call.args
+                    and isinstance(call.args[0], ast.Constant)
+                    and call.args[0].value in {"first_good_bin", "last_good_bin"}
+                ):
+                    failures.append(
+                        HarnessFailure(
+                            path,
+                            call.lineno,
+                            "F/B consumers use the validated BinWindow, not grouping window parsing.",
+                        )
+                    )
+                if (
+                    transform
+                    and isinstance(call.func, ast.Name)
+                    and call.func.id == "min"
+                    and sum(
+                        isinstance(arg, ast.Attribute)
+                        and arg.attr == "size"
+                        or isinstance(arg, ast.Call)
+                        and isinstance(arg.func, ast.Name)
+                        and arg.func.id == "len"
+                        for arg in call.args
+                    )
+                    >= 2
+                ):
+                    failures.append(
+                        HarnessFailure(
+                            path,
+                            call.lineno,
+                            "Count arrays require equal shape; crop only in align_forward_backward.",
+                        )
+                    )
     return failures

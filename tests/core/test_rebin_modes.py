@@ -18,6 +18,7 @@ from asymmetry.core.transform import (
     resolve_binning_mode,
 )
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
+from tests.counts import aligned_counts
 
 BIN_WIDTH_US = 0.016
 
@@ -87,14 +88,16 @@ def test_constant_error_mode_gives_flat_errors():
     forward = rng.poisson(np.clip(8000.0 * decay * BIN_WIDTH_US, 0, None)).astype(float)
     backward = rng.poisson(np.clip(6000.0 * decay * BIN_WIDTH_US, 0, None)).astype(float)
     _, _, err = binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward,
+            backward,
+            common_t0=t0,
+            bin_width_us=BIN_WIDTH_US,
+            first_good_bin=t0,
+            last_good_bin=n - 1,
+        ),
         grouping={"binning_mode": "constant_error", "bin0_us": 0.5},
-        common_t0=t0,
-        bin_width_us=BIN_WIDTH_US,
         alpha=1.0,
-        first_good_bin=t0,
-        last_good_bin=n - 1,
     )
     # All complete bins (the final bin is truncated by the window) hold the
     # same statistics, so the asymmetry error stays flat.
@@ -113,14 +116,16 @@ def test_counts_then_ratio_handles_empty_late_bins():
     forward = rng.poisson(np.clip(500.0 * decay * BIN_WIDTH_US, 0, None)).astype(float)
     backward = rng.poisson(np.clip(400.0 * decay * BIN_WIDTH_US, 0, None)).astype(float)
     time, asym, err = binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward,
+            backward,
+            common_t0=t0,
+            bin_width_us=BIN_WIDTH_US,
+            first_good_bin=t0,
+            last_good_bin=n - 1,
+        ),
         grouping={"binning_mode": "constant_error", "bin0_us": 1.0},
-        common_t0=t0,
-        bin_width_us=BIN_WIDTH_US,
         alpha=1.0,
-        first_good_bin=t0,
-        last_good_bin=n - 1,
     )
     assert np.all(np.isfinite(asym))
     assert np.all(np.isfinite(err))
@@ -187,14 +192,11 @@ def test_binned_time_convention_matches_fixed_mode():
     # (the target width stays < w for ~τ·ln2): their stamps must equal the
     # fixed-mode (k − t0)·w exactly.
     time, _, _ = binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward, backward, common_t0=t0, bin_width_us=w, first_good_bin=t0, last_good_bin=n - 1
+        ),
         grouping={"binning_mode": "constant_error", "bin0_us": 0.5 * w},
-        common_t0=t0,
-        bin_width_us=w,
         alpha=1.0,
-        first_good_bin=t0,
-        last_good_bin=n - 1,
     )
     fixed_stamps = (np.arange(t0, n) - t0) * w
     np.testing.assert_allclose(time[:20], fixed_stamps[:20])
@@ -216,14 +218,16 @@ def test_fixed_mode_bins_counts_before_ratio():
     assert np.count_nonzero(forward * backward == 0) > 50  # sparse data
 
     time, asym, err = binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward,
+            backward,
+            common_t0=t0,
+            bin_width_us=BIN_WIDTH_US,
+            first_good_bin=0,
+            last_good_bin=n - 1,
+        ),
         grouping={"bunching_factor": factor},
-        common_t0=t0,
-        bin_width_us=BIN_WIDTH_US,
         alpha=1.0,
-        first_good_bin=0,
-        last_good_bin=n - 1,
     )
 
     trimmed = (n // factor) * factor
@@ -250,14 +254,16 @@ def test_fixed_mode_factor_one_matches_plain_reduction():
     forward = rng.poisson(400.0, n).astype(float)
     backward = rng.poisson(350.0, n).astype(float)
     time, asym, err = binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward,
+            backward,
+            common_t0=t0,
+            bin_width_us=BIN_WIDTH_US,
+            first_good_bin=t0,
+            last_good_bin=n - 1,
+        ),
         grouping={},
-        common_t0=t0,
-        bin_width_us=BIN_WIDTH_US,
         alpha=1.1,
-        first_good_bin=t0,
-        last_good_bin=n - 1,
     )
     asym_ref, err_ref = compute_asymmetry(forward[t0:], backward[t0:], alpha=1.1)
     np.testing.assert_allclose(asym, asym_ref)
@@ -276,14 +282,16 @@ def test_fixed_mode_time_stamps_match_value_domain_rebin():
     raw_time = (np.arange(t0, n) - t0) * BIN_WIDTH_US
     expected_time, _, _ = rebin(raw_time, raw_time * 0, raw_time * 0 + 1, factor)
     time, _, _ = binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward,
+            backward,
+            common_t0=t0,
+            bin_width_us=BIN_WIDTH_US,
+            first_good_bin=t0,
+            last_good_bin=n - 1,
+        ),
         grouping={"bunching_factor": factor},
-        common_t0=t0,
-        bin_width_us=BIN_WIDTH_US,
         alpha=1.0,
-        first_good_bin=t0,
-        last_good_bin=n - 1,
     )
     np.testing.assert_allclose(time, expected_time)
 
@@ -334,16 +342,18 @@ def _stamp_case(grouping: dict, *, t0_time_us: float | None):
     forward = rng.poisson(500.0, n).astype(float)
     backward = rng.poisson(450.0, n).astype(float)
     return binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward,
+            backward,
+            common_t0=t0,
+            bin_width_us=BIN_WIDTH_US,
+            first_good_bin=t0 + 3,
+            last_good_bin=n - 1,
+            t0_time_us=t0_time_us,
+        ),
         grouping=grouping,
-        common_t0=t0,
-        bin_width_us=BIN_WIDTH_US,
         alpha=1.2,
-        first_good_bin=t0 + 3,
-        last_good_bin=n - 1,
         beta=1.0,
-        t0_time_us=t0_time_us,
     )
 
 
@@ -396,14 +406,16 @@ def test_fixed_bunching_stamps_match_the_musrfit_packing_oracle(packing):
     forward = np.full(n, 900.0)
     backward = np.full(n, 800.0)
     time, _, _ = binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward,
+            backward,
+            common_t0=t0,
+            bin_width_us=dt,
+            first_good_bin=fgb,
+            last_good_bin=n - 1,
+        ),
         grouping={"bunching_factor": packing},
-        common_t0=t0,
-        bin_width_us=dt,
         alpha=1.0,
-        first_good_bin=fgb,
-        last_good_bin=n - 1,
     )
     k = np.arange(time.size, dtype=np.float64)
     musrfit = dt * ((fgb - 0.5) + packing / 2.0 - t0) + k * packing * dt

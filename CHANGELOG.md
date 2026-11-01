@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Mismatched count arrays and reversed or out-of-range good-bin windows raise an
+  error instead of being truncated or replaced by the full range.
+
 - Vortex-lattice fits retain numerical accuracy on long, uniformly sampled time axes.
 
 - Gaussian and Kubo–Toyabe reference pages and component help distinguish the
@@ -20,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record bounds before allocating counts with bounded temporary read buffers.
 
 ### Changed
+
+- The grouped-count API uses validated `ForwardBackwardCounts`; `binned_fb_asymmetry`
+  accepts that value with its window, variances and time grid.
 
 - Calculations share cited physical constants, using CODATA 2018, Stone’s 2019 fluorine moment,
   and Liu’s vacuum-muonium seed; inferred μ–F distances increase by about 0.014% at fixed coupling.

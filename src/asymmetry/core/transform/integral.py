@@ -66,10 +66,14 @@ import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.transform.asymmetry import (
-    SubtractedBackground,
     compute_asymmetry,
     compute_asymmetry_with_count_errors,
     windowed_count_variance,
+)
+from asymmetry.core.transform.fb_counts import (
+    ForwardBackwardCounts,
+    SubtractedBackground,
+    validated_count_arrays,
 )
 from asymmetry.core.transform.grouping import (
     effective_group_indices,
@@ -77,11 +81,9 @@ from asymmetry.core.transform.grouping import (
     group_forward_backward,
 )
 from asymmetry.core.transform.reduce import (
-    CorrectedGroupedCounts,
     corrected_grouped_counts,
     correction_flags_from_grouping,
 )
-from asymmetry.core.transform.t0 import t0_stamp_residual_us
 from asymmetry.core.transform.units import ASYMMETRY_FRACTION, AsymmetryUnit
 from asymmetry.core.utils.constants import ORDER_KEYS
 
@@ -152,7 +154,7 @@ def integrate_asymmetry(
     background
         The constant level already subtracted from ``forward``/``backward``
         (``None``: none was), from
-        :meth:`~asymmetry.core.transform.reduce.CorrectedGroupedCounts.subtracted_background`.
+        :meth:`~asymmetry.core.transform.fb_counts.ForwardBackwardCounts.subtracted_background`.
 
     Returns
     -------
@@ -184,13 +186,12 @@ def integrate_asymmetry(
     _validate_alpha(alpha)
     _validate_beta(beta)
 
-    f = np.asarray(forward, dtype=np.float64)
-    b = np.asarray(backward, dtype=np.float64)
-    n = min(f.size, b.size)
+    f, b = validated_count_arrays(forward, backward)
+    n = f.size
     if n == 0:
         raise ValueError("integrate_asymmetry requires non-empty count arrays.")
-    f = f[:n]
-    b = b[:n]
+    if time is not None:
+        _, _, time = validated_count_arrays(f, b, time)
 
     mask = _window_mask(time, t_min, t_max, n)
     if not np.any(mask):
@@ -266,10 +267,8 @@ def integrate_curve(
         ``ds.asymmetry_fraction`` and it is a fraction, matching
         :func:`integrate_asymmetry` and :func:`integrate_run`.
     """
-    t = np.asarray(time, dtype=np.float64)
-    a = np.asarray(asymmetry, dtype=np.float64)
-    e = np.asarray(error, dtype=np.float64)
-    n = min(t.size, a.size, e.size)
+    t, a, e = validated_count_arrays(time, asymmetry, error)
+    n = t.size
     if n == 0:
         raise ValueError("integrate_curve requires non-empty arrays.")
     mask = _window_mask(t[:n], t_min, t_max, n)
@@ -336,8 +335,8 @@ def integrate_run(
     _validate_window(t_min, t_max)
 
     return integrate_asymmetry(
-        counts.forward,
-        counts.backward,
+        counts.forward.counts,
+        counts.backward.counts,
         alpha=alpha_used,
         beta=beta_used,
         time=time,
@@ -667,7 +666,7 @@ def _reduce_run_to_fb(
     run: Run,
     alpha: float | None,
     grouping_ref: dict | None,
-) -> tuple[NDArray[np.float64], CorrectedGroupedCounts, float, float, tuple[int, int]]:
+) -> tuple[NDArray[np.float64], ForwardBackwardCounts, float, float, tuple[int, int]]:
     """Form the corrected forward/backward counts + time axis + good-bin range of a run.
 
     Uses the same shared grouping and correction path as
@@ -709,9 +708,7 @@ def _reduce_run_to_fb(
             f"({counts.background_state}); the integral takes a constant background only."
         )
 
-    n = counts.forward.size
-    if n == 0:
-        raise ValueError("Forward/backward grouping produced empty arrays.")
+    n = counts.forward.counts.size
 
     # alpha: explicit value is validated (user error surface); otherwise take the
     # effective grouping's value leniently, exactly as the time-domain path does.
@@ -721,24 +718,10 @@ def _reduce_run_to_fb(
         alpha_used = float(alpha)
         _validate_alpha(alpha_used)
 
-    try:
-        first_good = max(0, int(grouping.get("first_good_bin", 0)))
-    except (TypeError, ValueError):
-        first_good = 0
-    try:
-        last_good = int(grouping.get("last_good_bin", n - 1))
-    except (TypeError, ValueError):
-        last_good = n - 1
-    last_good = min(last_good, n - 1)
-    if first_good > last_good:
-        first_good, last_good = 0, n - 1
-
-    bin_width = float(histograms[0].bin_width)
-    # Bin centres from the run's exact t0 (D4); the residual is 0.0 whenever the
-    # run carries no sub-bin t0, leaving the integer-bin axis untouched.
-    residual = t0_stamp_residual_us(histograms, grouping, counts.common_t0)
-    time = (np.arange(n, dtype=np.float64) - float(counts.common_t0)) * bin_width + residual
-    return time, counts, alpha_used, fb.beta, (first_good, last_good)
+    width = counts.bin_width_us
+    residual = (counts.common_t0_bin + 0.5) * width - counts.t0_time_us
+    time = (np.arange(n, dtype=np.float64) - counts.common_t0_bin) * width + residual
+    return time, counts, alpha_used, fb.beta, (counts.window.first, counts.window.last)
 
 
 def _order_value(run: Run, order_key: str) -> float | None:

@@ -26,6 +26,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import minimize
 
+from asymmetry.core.transform.fb_counts import validated_count_arrays
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 _BEAM_PERIOD_US = {
@@ -295,14 +296,10 @@ def subtract_scaled_counts(
     Returns ``counts − scale·reference`` and per-bin errors
     ``√(counts + scale²·reference)`` (both inputs treated as Poisson; WiMDA
     subtracts the raw reference without touching the errors — study
-    divergence D7). Arrays are truncated to their common length. This is the
+    divergence D7). Arrays must have equal one-dimensional shape. This is the
     shared frame-scaled arithmetic seam the run-arithmetic project reuses.
     """
-    a = np.asarray(counts, dtype=np.float64)
-    r = np.asarray(reference_counts, dtype=np.float64)
-    m = min(a.size, r.size)
-    a = a[:m]
-    r = r[:m]
+    a, r = validated_count_arrays(counts, reference_counts)
     s = float(scale)
     corrected = a - s * r
     variance = np.clip(a, 0.0, None) + s * s * np.clip(r, 0.0, None)

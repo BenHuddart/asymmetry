@@ -256,17 +256,18 @@ RETIRED_DOCS_BASELINE = Path("tools/baselines/retired_docs.txt")
 
 
 # Load the stdlib-only rule module for both the script and import-by-path callers.
-_CONSTANT_SPEC = importlib.util.spec_from_file_location(
-    "asymmetry_harness_constants", ROOT / "tools" / "harness_constants.py"
+_CHECKS_SPEC = importlib.util.spec_from_file_location(
+    "asymmetry_harness_checks", ROOT / "tools" / "harness_checks.py"
 )
-assert _CONSTANT_SPEC is not None and _CONSTANT_SPEC.loader is not None
-_constant_checks = importlib.util.module_from_spec(_CONSTANT_SPEC)
-sys.modules[_CONSTANT_SPEC.name] = _constant_checks
-_CONSTANT_SPEC.loader.exec_module(_constant_checks)
-HarnessFailure = _constant_checks.HarnessFailure
+assert _CHECKS_SPEC is not None and _CHECKS_SPEC.loader is not None
+_numeric_checks = importlib.util.module_from_spec(_CHECKS_SPEC)
+sys.modules[_CHECKS_SPEC.name] = _numeric_checks
+_CHECKS_SPEC.loader.exec_module(_numeric_checks)
+HarnessFailure = _numeric_checks.HarnessFailure
 find_physical_constant_duplicate_violations = (
-    _constant_checks.find_physical_constant_duplicate_violations
+    _numeric_checks.find_physical_constant_duplicate_violations
 )
+find_count_boundary_violations = _numeric_checks.find_count_boundary_violations
 
 
 def _module_matches(module: str, banned: str) -> bool:
@@ -1029,6 +1030,7 @@ def run_structural_checks() -> int:
         *find_dependency_boundary_violations(),
         *find_core_boundary_violations(),
         *find_physical_constant_duplicate_violations(),
+        *find_count_boundary_violations(),
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
         *find_axis_limit_policy_violations(),
@@ -1163,24 +1165,8 @@ _TIER_MARKER: dict[str, str | None] = {
     "full": None,
 }
 
-# The full tier is the only one that runs the heavy fit-wizard integration/slow
-# tests, and one of them — the exhaustive global-wizard harness — fans its fits
-# across a spawn ProcessPoolExecutor sized to ``cpu_count - 2``, blind to the
-# fact it is already one xdist worker of many. Under ``-n auto`` (one worker per
-# core) that nested pool oversubscribes the runner: the single-threaded neighbour
-# fits are starved of CPU, run past ``--timeout``, and — because the thread-method
-# timeout cannot interrupt native Minuit/BLAS code — xdist kills the stalled
-# worker as "node down: Not properly terminated". This is why the release-tag
-# "Full test suite" run failed on the same wizard tests every time.
-#
-# Two workers is the sweet spot: the harness's ``cpu_count - 2`` pool plus two
-# xdist workers fits the core count without oversubscription (the harness worker
-# is blocked on its subprocess, so the CPU-bound processes are the pool plus the
-# one neighbour test). The generous timeout is belt-and-braces — it also covers
-# the harness test's own multi-hundred-second internal wall budget. The full tier
-# runs only on release tags, so the reduced parallelism costs wall-clock we can
-# afford; other tiers keep ``-n auto`` (the standard tier is sharded across
-# runners by CI instead).
+# Full-tier fit-wizard tests use nested process pools. Two xdist workers bound
+# competing fits; the timeout covers their multi-hundred-second wall budget.
 _FULL_TIER_WORKERS = "2"
 _FULL_TIER_TIMEOUT_S = 600
 

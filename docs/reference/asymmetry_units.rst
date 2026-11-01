@@ -35,6 +35,12 @@ The short version
   :class:`~asymmetry.core.transform.FieldScan` is fraction-scale, and so are the
   amplitudes fitted to it.
 
+The binned primitive accepts a
+:class:`~asymmetry.core.transform.fb_counts.ForwardBackwardCounts` value,
+which carries counts, variances, the good-bin window and the time grid.
+Its result remains fraction-scale; validation does not rescale the counts
+or the resulting asymmetry.
+
 Naming a scale in code
 ----------------------
 
@@ -100,7 +106,7 @@ scale it was given: it is safe on either, and never converts.
      - As above, with supplied count uncertainties.
    * - :func:`~asymmetry.core.transform.binned_fb_asymmetry`
      - fraction
-     - Counts are binned first, then the ratio formed.
+     - Accepts validated grouped counts; bins counts before forming the ratio.
    * - :func:`~asymmetry.core.transform.reduce_grouped_asymmetry`
      - **percent**
      - The one step on the reduction path that applies the ``×100``;

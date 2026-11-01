@@ -16,6 +16,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from tests.counts import aligned_counts
+
 pytestmark = [pytest.mark.gui]
 
 pyside6 = pytest.importorskip("PySide6")
@@ -75,14 +77,16 @@ def _histogram_run_dataset(
         grouping=grouping,
     )
     time, asym, err = binned_fb_asymmetry(
-        counts_f,
-        counts_b,
+        aligned_counts(
+            counts_f,
+            counts_b,
+            common_t0=0,
+            bin_width_us=BIN_WIDTH_US,
+            first_good_bin=0,
+            last_good_bin=n - 1,
+        ),
         grouping=grouping,
-        common_t0=0,
-        bin_width_us=BIN_WIDTH_US,
         alpha=1.0,
-        first_good_bin=0,
-        last_good_bin=n - 1,
     )
     return MuonDataset(
         time=time,

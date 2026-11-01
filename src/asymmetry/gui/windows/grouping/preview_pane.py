@@ -63,6 +63,7 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.project.profiles import GroupingProfile, resolve_effective_grouping
 from asymmetry.core.transform import (
+    ForwardBackwardCounts,
     binned_fb_asymmetry,
     corrected_grouped_counts,
     correction_flags_from_grouping,
@@ -1071,33 +1072,16 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         )
 
     corrected = _reduce(use_deadtime, use_background)
-    n_grouped = min(len(corrected.forward), len(corrected.backward))
-    try:
-        first_good = max(0, int(grouping.get("first_good_bin", 0)))
-    except (TypeError, ValueError):
-        first_good = 0
-    try:
-        last_good = int(grouping.get("last_good_bin", n_grouped - 1))
-    except (TypeError, ValueError):
-        last_good = n_grouped - 1
+    first_good, last_good = corrected.window.first, corrected.window.last
     alpha = _as_float(grouping.get("alpha"), 1.0)
     beta = _as_float(grouping.get("beta"), 1.0)
     if not np.isfinite(beta) or beta <= 0.0:
         beta = 1.0
 
-    time, asymmetry, error = _form_asymmetry(
-        corrected, grouping, alpha, first_good, last_good, beta=beta
-    )
+    time, asymmetry, error = _form_asymmetry(corrected, grouping, alpha, beta=beta)
 
-    # Stage-generic before/after compare: the solid curve is the reduction above;
-    # the *ghost* removes one stage. "alpha" ghosts α=1 from the SAME corrected
-    # counts (one reduction, two curves) and reports the residual baseline;
-    # "deadtime"/"background" ghost a SECOND corrected pass with that one stage
-    # dropped — CorrectedGroupedCounts keeps only post-background arrays, so the
-    # pedestal cannot be added back and the extra pass is unavoidable, but it runs
-    # behind the pane's debounce + single-flight. All preview-only (`_reduce` reads
-    # the same grouping; nothing here touches the persisted reduction). An
-    # un-applied stage has nothing to remove, so it draws no ghost.
+    # Removing a count correction requires another reduction: the corrected
+    # spectrum cannot recover the raw Poisson means. Balance ghosts share it.
     compare = request.compare_stage
     baseline = None
     centre: tuple[float, float] | None = None
@@ -1109,16 +1093,12 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         centre = _weighted_centre(asymmetry, error)
         if abs(alpha - 1.0) > 1e-12:
             # The ghost removes only α; a configured β stays applied.
-            _bt, base_asym, _be = _form_asymmetry(
-                corrected, grouping, 1.0, first_good, last_good, beta=beta
-            )
+            _bt, base_asym, _be = _form_asymmetry(corrected, grouping, 1.0, beta=beta)
             _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
     elif compare == "beta" and abs(beta - 1.0) > 1e-12:
         # β ghost: same corrected counts, α as configured, β removed — the exact
         # mirror of the α compare (one reduction, two curves).
-        _bt, base_asym, _be = _form_asymmetry(
-            corrected, grouping, alpha, first_good, last_good, beta=1.0
-        )
+        _bt, base_asym, _be = _form_asymmetry(corrected, grouping, alpha, beta=1.0)
         _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
     elif (compare == "deadtime" and use_deadtime) or (compare == "background" and use_background):
         # The ghost is a second full reduction — honour cancellation before it, as
@@ -1130,7 +1110,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             use_deadtime and compare != "deadtime",
             use_background and compare != "background",
         )
-        ghost = _form_asymmetry(ghost_counts, grouping, alpha, first_good, last_good, beta=beta)
+        ghost = _form_asymmetry(ghost_counts, grouping, alpha, beta=beta)
         _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
 
     # Decimate here, off the GUI thread: bounds both the marshalled payload and
@@ -1153,8 +1133,8 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
 
 
 def _counts_curves(
-    corrected: Any,
-    ghost: Any | None,
+    corrected: ForwardBackwardCounts,
+    ghost: ForwardBackwardCounts | None,
     grouping: dict[str, Any],
     first_good: int,
     last_good: int,
@@ -1167,20 +1147,24 @@ def _counts_curves(
     ``(k + ½)·w`` minus the run's exact t0, the same convention the reduction's
     own axis uses.
     """
-    n = int(corrected.forward.size)
+    n = int(corrected.forward.counts.size)
     step = _preview_stride(n, _MAX_PREVIEW_POINTS)
     bins = np.arange(0, n, step, dtype=np.float64)
     # Dropping a correction stage changes neither the histogram lengths nor the
     # common t0 they are aligned on, so the ghost shares this stride and axis.
-    ghost_forward = None if ghost is None else np.asarray(ghost.forward[::step], dtype=np.float64)
-    ghost_backward = None if ghost is None else np.asarray(ghost.backward[::step], dtype=np.float64)
+    ghost_forward = (
+        None if ghost is None else np.asarray(ghost.forward.counts[::step], dtype=np.float64)
+    )
+    ghost_backward = (
+        None if ghost is None else np.asarray(ghost.backward.counts[::step], dtype=np.float64)
+    )
     return CountsCurves(
-        time=(bins + 0.5) * corrected.bin_width - corrected.t0_time_us,
-        forward=np.asarray(corrected.forward[::step], dtype=np.float64),
-        backward=np.asarray(corrected.backward[::step], dtype=np.float64),
-        bin_width=float(corrected.bin_width),
+        time=(bins + 0.5) * corrected.bin_width_us - corrected.t0_time_us,
+        forward=np.asarray(corrected.forward.counts[::step], dtype=np.float64),
+        backward=np.asarray(corrected.backward.counts[::step], dtype=np.float64),
+        bin_width=float(corrected.bin_width_us),
         n_bins=n,
-        t0_bin=int(corrected.common_t0),
+        t0_bin=int(corrected.common_t0_bin),
         first_good=first_good,
         last_good=last_good,
         background_level=corrected.background_level,
@@ -1191,11 +1175,9 @@ def _counts_curves(
 
 
 def _form_asymmetry(
-    corrected: Any,
+    corrected: ForwardBackwardCounts,
     grouping: dict[str, Any],
     alpha: float,
-    first_good: int,
-    last_good: int,
     *,
     beta: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -1205,19 +1187,9 @@ def _form_asymmetry(
     asymmetry, scaled to percent) so the preview matches the reduction exactly.
     """
     time, asym, err = binned_fb_asymmetry(
-        corrected.forward,
-        corrected.backward,
+        corrected,
         grouping=grouping,
-        common_t0=corrected.common_t0,
-        bin_width_us=corrected.bin_width,
-        # The run's exact common t0 (D4) — without it the preview axis sits up to
-        # half a bin away from the reduction's on ISIS/MusrRoot runs.
-        t0_time_us=corrected.t0_time_us,
         alpha=alpha,
-        first_good_bin=first_good,
-        last_good_bin=last_good,
-        forward_error=corrected.forward_error,
-        backward_error=corrected.backward_error,
         beta=beta,
     )
     return (

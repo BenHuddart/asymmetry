@@ -130,6 +130,7 @@ from asymmetry.core.transform.reduce import (
 from asymmetry.core.transform.t0 import (
     EFFECTIVE_DETECTOR_T0_KEY,
     detected_detector_t0_bins,
+    effective_detector_t0_bins,
     find_t0_for_run,
     good_window_for_groups,
 )
@@ -1488,20 +1489,12 @@ def _has_good_window_tables(grouping: dict[str, Any], n_hist: int) -> bool:
 
 
 def aligned_n_bins(grouping: dict[str, Any], run: Run, n_hist: int, common_t0_bin: int) -> int:
-    """Length of the aligned group sums — the last bin a window may name (D7).
-
-    The sums are as long as the shortest shifted detector, which is the length
-    the loaders clamp their window to; it is computed from the alignment offsets
-    alone, without summing anything. Without per-detector t0s nothing is
-    shifted and the histograms' own length stands.
-    """
-    detector_t0 = grouping.get("detector_t0_bins")
+    """Length of the shortest detector after its effective t0 shift, in bins."""
+    detector_t0 = effective_detector_t0_bins(run.histograms, grouping)
     indices = _analysis_group_indices(grouping, n_hist)
-    if indices and _is_detector_table(detector_t0, n_hist):
-        return min(
-            len(run.histograms[i].counts) + common_t0_bin - int(detector_t0[i]) for i in indices
-        )
-    return len(run.histograms[0].counts)
+    if not indices:
+        return len(run.histograms[0].counts)
+    return min(len(run.histograms[i].counts) + common_t0_bin - detector_t0[i] for i in indices)
 
 
 def run_file_good_window(
@@ -1776,13 +1769,11 @@ def _estimate_run_alpha(
         metadata=run.metadata,
         reference_resolver=reference_resolver,
     )
-    first_good = _as_int(grouping.get("first_good_bin"))
-    last_good = _as_int(grouping.get("last_good_bin"))
     return estimate_alpha(
-        corrected.forward,
-        corrected.backward,
-        first_good_bin=first_good,
-        last_good_bin=last_good,
+        corrected.forward.counts,
+        corrected.backward.counts,
+        first_good_bin=corrected.window.first,
+        last_good_bin=corrected.window.last,
     )
 
 

@@ -29,9 +29,16 @@ from asymmetry.core.transform.deadtime import (
     parse_deadtime_calibration_text,
     prepare_histograms_with_deadtime,
 )
+from asymmetry.core.transform.fb_counts import (
+    AlignmentCrop,
+    BinWindow,
+    ForwardBackwardCounts,
+    GroupCounts,
+    good_window,
+)
 from asymmetry.core.transform.grouping import (
     GroupedForwardBackward,
-    apply_grouping,
+    align_forward_backward,
     apply_grouping_aligned,
     common_t0_for_groups,
     effective_group_indices,
@@ -68,7 +75,6 @@ from asymmetry.core.transform.rebin import (
     resolve_binning_mode,
 )
 from asymmetry.core.transform.reduce import (
-    CorrectedGroupedCounts,
     CorrectionFlags,
     GroupedAsymmetryReduction,
     ReferenceResolver,
@@ -138,7 +144,7 @@ __all__ = [
     "promote_alpha_to_grouping",
     "promote_background_to_grouping",
     "promote_t0_to_grouping",
-    "apply_grouping",
+    "align_forward_backward",
     "apply_grouping_aligned",
     "common_t0_for_groups",
     "common_t0_time_us",
@@ -176,7 +182,11 @@ __all__ = [
     "binned_fb_asymmetry",
     "binning_slice_edges",
     "resolve_binning_mode",
-    "CorrectedGroupedCounts",
+    "ForwardBackwardCounts",
+    "GroupCounts",
+    "AlignmentCrop",
+    "BinWindow",
+    "good_window",
     "CorrectionFlags",
     "GroupedAsymmetryReduction",
     "ReferenceResolver",

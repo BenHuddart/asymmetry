@@ -23,6 +23,8 @@ import threading
 import numpy as np
 import pytest
 
+from tests.counts import aligned_counts
+
 pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -381,9 +383,7 @@ def test_dialog_hides_preview_for_histogramless_dataset(qapp: QApplication) -> N
     dialog.close()
 
 
-# --------------------------------------------------------------------------- #
-# Core-reduction pin: MainWindow reduction unchanged by the extraction
-# --------------------------------------------------------------------------- #
+# Independent replay of the counts-then-ratio pipeline.
 
 
 def _replay_reduction(
@@ -407,9 +407,9 @@ def _replay_reduction(
     n = min(len(forward), len(backward))
     forward, backward = forward[:n], backward[:n]
     f_err = b_err = None
+    bw = float(working[0].bin_width)
+    last_good = int(grouping.get("last_good_bin", n - 1))
     if use_background:
-        bw = float(working[0].bin_width)
-        last_good = int(grouping.get("last_good_bin", n - 1))
         res = apply_grouped_background_correction(
             forward,
             backward,
@@ -422,20 +422,19 @@ def _replay_reduction(
         forward, backward = res.forward, res.backward
         if res.applied and res.forward_error is not None and res.backward_error is not None:
             f_err, b_err = res.forward_error, res.backward_error
-    bw = float(working[0].bin_width)
-    first_good = max(0, int(grouping.get("first_good_bin", 0)))
-    last_good = int(grouping.get("last_good_bin", n - 1))
     t, a, e = binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward,
+            backward,
+            common_t0=common_t0,
+            bin_width_us=bw,
+            first_good_bin=max(0, int(grouping.get("first_good_bin", 0))),
+            last_good_bin=last_good,
+            forward_error=f_err,
+            backward_error=b_err,
+        ),
         grouping=grouping,
-        common_t0=common_t0,
-        bin_width_us=bw,
         alpha=alpha,
-        first_good_bin=first_good,
-        last_good_bin=last_good,
-        forward_error=f_err,
-        backward_error=b_err,
     )
     return t, a * 100.0, e * 100.0
 
