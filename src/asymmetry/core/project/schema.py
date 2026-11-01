@@ -19,7 +19,7 @@ from pathlib import Path
 
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 27
+CURRENT_SCHEMA_VERSION: int = 28
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -59,25 +59,7 @@ class UnsupportedSchemaVersion(ValueError):
 
 
 def migrate_to_current(data: dict) -> dict:
-    """Migrate a raw project dict to the current schema version.
-
-    Future schemas will chain ``_migrate_v1_to_v2``, etc.
-
-    Parameters
-    ----------
-    data : dict
-        Raw JSON dict loaded from a project file.
-
-    Returns
-    -------
-    dict
-        Data at the current schema version.
-
-    Raises
-    ------
-    UnsupportedSchemaVersion
-        If the schema version is not in the supported window.
-    """
+    """Apply each version transition once, returning a current-schema copy."""
     version = data.get("schema_version", 0)
     if version not in _SUPPORTED_VERSIONS:
         raise UnsupportedSchemaVersion(
@@ -164,7 +146,40 @@ def migrate_to_current(data: dict) -> dict:
         version = 26
     if version == 26:
         migrated = _migrate_v26_to_v27(migrated)
+        version = 27
+    if version == 27:
+        migrated = _migrate_v27_to_v28(migrated)
     return migrated
+
+
+def _migrate_v27_to_v28(data: dict) -> dict:
+    """Record known Gaussian producers and retain unknown grouped objectives explicitly."""
+
+    def summary(value, objective):
+        result = dict(value) | {"objective": objective, "minimum_expected_count": None}
+        if objective is None:
+            result.update(quality=None, quality_reason="Fit objective was not recorded.")
+        return result
+
+    def walk(value):
+        if isinstance(value, list):
+            return [walk(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        result = {key: walk(item) for key, item in value.items()}
+        if {"parameters", "provenance", "result"} <= value.keys() and isinstance(
+            value["result"], dict
+        ):
+            result["result"] = summary(value["result"], "gaussian")
+        if "member_kind" in value and isinstance(value.get("results_by_run"), dict):
+            objective = "gaussian" if value["member_kind"] == "runs" else None
+            result["results_by_run"] = {
+                key: summary(item, objective) if isinstance(item, dict) else item
+                for key, item in value["results_by_run"].items()
+            }
+        return result
+
+    return walk(data) | {"schema_version": 28}
 
 
 def _wizard_sample_count(row: dict, recorded: int | None) -> int | None:
@@ -1089,30 +1104,7 @@ def _domain_fit_state(domain: str, source: object) -> dict:
 
 
 def _migrate_v17_to_v18(data: dict) -> dict:
-    """Migrate schema v17 project state to v18.
-
-    v18 collapses every plot-panel view-limit key into one ``axis_limits``
-    block, so that each axis carries its own Auto/Hold decision instead of the
-    view being reconstructed from a pair of Auto flags, one x/y window and a
-    per-projection y cache:
-
-    * ``x_min``/``x_max`` + ``auto_x_enabled`` → the ``"x"`` axis;
-    * ``y_min``/``y_max`` + ``auto_y_enabled`` → the ``"y"`` axis;
-    * each ``y_limits_by_polarization`` entry → a ``"y:<projection>"`` axis,
-      inheriting ``auto_y_enabled`` (the toggle governed every subplot then and
-      governs every subplot now).
-
-    ``quantity`` starts ``null`` everywhere: an unstamped axis adopts whatever
-    the first render measures, so a restored project never spuriously refits.
-    Both ``plot_state`` and its nested ``frequency_plot_state`` always carry the
-    block afterwards — the latter is created when a pre-v18 file never had a
-    frequency panel — because the reader is strict about ``axis_limits``.
-    The frequency panel's ``frequency_x_limits_by_unit`` per-mode stash is
-    dropped — it existed only because the 3-decimal limit fields made unit
-    round-trips lossy, and the policy now converts full-precision held values in
-    place. Missing keys fall back to the historical field defaults, so the
-    restored block is always complete.
-    """
+    """Unify saved plot limits by axis; mirrored representations share one limits record."""
     migrated = dict(data)
     migrated["schema_version"] = 18
 
@@ -1467,34 +1459,7 @@ def _migrate_v20_to_v21(data: dict) -> dict:
 
 
 def _migrate_v19_to_v20(data: dict) -> dict:
-    """Migrate schema v19 project state to v20.
-
-    v20 makes the Batch tab a *series editor* (D1-D5): each series carries the
-    recipe that produced it and its own trend exclusions, per-run ``FitSlot``\\ s
-    hold the Single tab's fit alone, and one series per representation is
-    *active*.
-
-    * Every entry in ``batches`` gains a ``recipe`` — parameter rows taken from
-      the first member slot that points at this series, the fit window parsed
-      from the first recorded result's ``fit_range`` provenance string,
-      ``seeding="auto"`` and co-adding off — plus ``trend_excluded_runs`` (the
-      members whose slot carried ``include_in_trend=False``). ``diverged_runs``
-      is dropped: with per-run state reduced to the single fit, divergence
-      cannot occur.
-    * Every representation slot whose ``provenance`` is ``"batch"``/``"global"``
-      is emptied — it was a pointer to results the series already holds — while
-      single/wizard slots keep their model, result and ``ui_state`` and merely
-      lose ``batch_id``/``diverged``/``include_in_trend``.
-    * The top-level ``active_series`` maps each representation to its newest
-      model-bearing series (last in ``batches`` order; computed scans are
-      skipped, having no fit to draw).
-
-    Tolerant throughout: a malformed dataset, representation, slot or series is
-    skipped rather than raising, so no project fails to open on migration. A
-    ``batches`` entry that :func:`_v20_loadable_series` rejects is dropped here
-    rather than carried through — it holds nothing a reader could use, and the
-    open is where the damage would otherwise land.
-    """
+    """Give each series its editor recipe and explicit trend exclusions from member slots."""
     migrated = dict(data)
     migrated["schema_version"] = 20
 

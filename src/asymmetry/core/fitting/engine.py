@@ -522,26 +522,11 @@ def _oversampling_correction(
 
 @dataclass(frozen=True)
 class CostFactory:
-    """A pluggable objective for the single/global fit driver.
+    """Construct a minimizer cost and evaluate the same per-member statistic.
 
-    ``build`` constructs the iminuit objective over (possibly concatenated)
-    data; ``pointwise`` evaluates the *same* statistic on one (sub)dataset, for
-    the per-dataset reduced-statistic report a global fit produces. Both the
-    Gaussian (√-weighted least squares — the default everywhere) and the Poisson
-    (Cash) cost flow through this one seam, so a grouped/global fit can adopt the
-    count-domain modes' Poisson convention without the driver knowing which is
-    in play. ``build`` returns either an :mod:`iminuit.cost` object or a plain
-    ``cost(*params)`` callable carrying ``errordef``; both are accepted by
-    ``Minuit(cost, *initial, name=...)``.
-
-    ``needs_histograms`` declares whether fitting under this cost reads the
-    source run's raw detector counts (``dataset.run.histograms``) rather than
-    only the fitted time/asymmetry/error arrays. It is what lets a caller
-    assembling a worker payload decide whether the counts have to cross the
-    process boundary or whether a
-    :meth:`~asymmetry.core.data.dataset.MuonDataset.fit_record` will do — a
-    decision the cost declares, never one the payload site infers from a name.
-    It has no default: a new cost must state which it is.
+    ``build`` accepts the validated observation arrays and model; ``pointwise``
+    evaluates one member for result reporting. ``needs_histograms`` declares
+    whether source-count builders need full run records in a worker payload.
     """
 
     objective: Objective
@@ -640,9 +625,19 @@ class FitResult:
     #: Fit warnings are both retained here and emitted through Python warnings.
     warnings: list[str] = field(default_factory=list)
     deadtime_calibration: DeadtimeCalibration | None = None
+    #: Minimum over the whole minimized objective, shared by coupled members.
+    minimum_expected_count: float | None = None
 
     def __post_init__(self):
         self.objective = Objective(self.objective)
+        if self.minimum_expected_count is not None and (
+            self.objective is not Objective.POISSON
+            or not math.isfinite(self.minimum_expected_count)
+            or self.minimum_expected_count < 0
+        ):
+            raise ValueError(
+                "minimum expected count requires a finite non-negative Poisson expectation"
+            )
 
 
 @dataclass(frozen=True)
@@ -1355,6 +1350,11 @@ def _pack_coupled_block(
     the one spelling both agree on.
     """
 
+    minimum_expected_count = None
+    if cost_factory is not None and cost_factory.objective is Objective.POISSON:
+        expected = problem.model_wrapper(problem.all_times, *solution.values)
+        if np.all(np.isfinite(expected)) and np.all(expected >= 0):
+            minimum_expected_count = float(np.min(expected))
     values = solution.values
     initial_params = block.initial_params
     global_columns = problem.block_global_columns[block.key]
@@ -1518,6 +1518,7 @@ def _pack_coupled_block(
         results[ds.run_number] = FitResult(
             objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
             success=solution.success and invalid_model is None,
+            minimum_expected_count=minimum_expected_count,
             chi_squared=dataset_chi2,
             reduced_chi_squared=red_chi2,
             parameters=result_params,
@@ -1804,14 +1805,7 @@ class FitEngine:
         error_oversampling: float,
         field_source: MuonDataset | None,
     ) -> FitResult:
-        """Run a single fit over already-clipped arrays.
-
-        The one implementation behind :meth:`fit` and :meth:`fit_arrays`; the
-        arrays arrive pre-clipped to the fit window. ``field_source`` supplies
-        the run metadata for the advisory fixed-frequency guard only (``None``
-        when the caller passed bare arrays and there is no metadata to check
-        against) — it is never read for data.
-        """
+        """Minimize a checked observation value; metadata supplies only field advisories."""
         cost_factory = (
             GAUSSIAN_COST if isinstance(observations, GaussianObservations) else POISSON_COST
         )
@@ -2118,6 +2112,9 @@ class FitEngine:
         return FitResult(
             objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
             success=m.valid and invalid_model is None,
+            minimum_expected_count=float(np.min(fitted_values))
+            if isinstance(observations, PoissonCounts) and invalid_model is None
+            else None,
             chi_squared=chi_squared,
             reduced_chi_squared=red_chi2,
             parameters=result_params,
@@ -2720,41 +2717,15 @@ class FitEngine:
         cost_factory: CostFactory | None,
         error_oversampling: float = 1.0,
     ) -> tuple[dict[int, FitResult], ParameterSet]:
-        """Profiled/nested-locals global fit (technique L).
+        """Profile shared globals while each member's locals minimize checked observations.
 
-        Outer Minuit varies the free globals only. For a candidate global vector
-        every dataset's locals are solved independently by :meth:`fit` with the
-        globals pinned; the outer cost is Σ_d χ²_d. Each dataset's local solution
-        is cached and reused as the warm start for the next outer iteration, so
-        the inner problems stay in the same basin and the outer objective stays
-        smooth. At the optimum this shares the joint objective's minimum, but its
-        Hessians are ``n_global²`` + ``G`` small per-dataset blocks rather than one
-        ``(n_global + n_local·G)²`` — the source of the ~linear (not super-linear)
-        G-scaling.
+        The outer Hessian gives marginal shared-parameter errors. Local errors
+        are conditional on those globals, unlike the joint solver's marginal
+        local errors. MINOS is unavailable on this strategy. Warm starts reuse
+        the last local solution; input observations are never revalidated.
 
-        The shared-global HESSE errors come from the outer profile curvature
-        (which equals the marginal curvature, so they match the joint solver);
-        the per-dataset local errors are *conditional* on the fitted globals
-        (each inner solve holds the globals fixed), which is structurally correct
-        for a profiled fit but differs from the joint solver's marginal local
-        errors. MINOS is not supported on the profiled path — asymmetric local
-        intervals would need the coupled joint problem — so ``minos`` is accepted
-        for signature parity with the joint path but ignored here.
-
-        ``initial_step_sizes`` seeds the *outer* Minuit's initial step for the
-        named free globals, clamped by :func:`_clamp_minuit_step_size` exactly as
-        the joint path clamps its own. Only free-global names are consulted: the
-        per-dataset locals are solved by :meth:`fit`, which owns their steps.
-        A curvature hint is what lets the outer search take a first step scaled to
-        the parameter rather than to Minuit's default guess, which is the whole
-        point of warm-starting a profiled fit from the GLS collapse.
-
-        ``error_oversampling`` is *not* forwarded to the inner ``self.fit`` calls
-        (they stay on the raw, uncorrected χ² so the outer search and its warm
-        starts are unaffected); the correction from :meth:`fit`'s docstring is
-        instead applied once, to each dataset's final reported statistics, after
-        the outer optimum is found — the same one-shot post-processing the joint
-        path uses.
+        Correlation oversampling corrections apply once to reported statistics
+        and uncertainties after minimization; the inner raw χ² is unchanged.
         """
         try:
             from iminuit import Minuit
@@ -2945,6 +2916,10 @@ class FitEngine:
         # results (conditional local errors with the globals pinned, block-
         # diagonal → linear in G). The outer Hessian supplies the global errors.
         final_results = _solve_all(global_values_full)
+        minima = [result.minimum_expected_count for result in final_results.values()]
+        minimum_expected_count = (
+            min(minima) if minima and all(value is not None for value in minima) else None
+        )
 
         edm = getattr(getattr(m, "fmin", None), "edm", None)
         edm_value = float(edm) if edm is not None and np.isfinite(edm) else None
@@ -3014,6 +2989,7 @@ class FitEngine:
             results[ds.run_number] = FitResult(
                 objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=bool(inner.success) and outer_valid,
+                minimum_expected_count=minimum_expected_count,
                 chi_squared=dataset_chi2,
                 reduced_chi_squared=dataset_reduced_chi2,
                 parameters=result_params,

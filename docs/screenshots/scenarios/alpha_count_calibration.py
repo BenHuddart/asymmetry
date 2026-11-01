@@ -3,6 +3,7 @@
 A pulsed TF simulation has α = 1.25 and A cos(2π f t + φ), with f in MHz
 and A in percent. The matched Oscillatory fit reports α and its uncertainty.
 The Poisson fit reads integer raw counts without applied deadtime correction.
+Its result says Poisson deviance/ν; sparse tail bins have no χ² quality verdict.
 The Calibration section shows Promote DT₀, which writes a captured total table.
 """
 

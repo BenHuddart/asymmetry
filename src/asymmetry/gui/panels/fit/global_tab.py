@@ -89,6 +89,7 @@ from asymmetry.core.fitting.parameters import (
     get_param_info,
     split_parameter_name,
 )
+from asymmetry.core.fitting.result_summary import reduced_statistic_label, reduced_statistic_summary
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.series import fit_asymmetry_series
 from asymmetry.core.fitting.series_seeding import (
@@ -1029,7 +1030,7 @@ class GlobalFitTab(FitTabBase):
         self._member_results = dict(results_by_member)
         member_flags = self.last_batch_member_flags()
         chips: list[MemberChip] = []
-        chi2_values: list[float] = []
+        summaries = []
         n_converged = 0
         n_clean = 0
         for member, result in results_by_member.items():
@@ -1039,9 +1040,9 @@ class GlobalFitTab(FitTabBase):
             n_converged += converged
             n_clean += clean
             chi2 = float(result.reduced_chi_squared)
-            if np.isfinite(chi2):
-                chi2_values.append(chi2)
-            quality = _fit_summary(result).get("quality")
+            summary = _fit_summary(result)
+            summaries.append(summary)
+            quality = summary["quality"]
             chips.append(
                 MemberChip(
                     run=int(member),
@@ -1057,11 +1058,7 @@ class GlobalFitTab(FitTabBase):
 
         total = len(results_by_member)
         warned = total - n_clean
-        meta = (
-            f"χ²ᵣ {min(chi2_values):.3g}–{max(chi2_values):.3g}"
-            if len(chi2_values) > 1
-            else (f"χ²ᵣ {chi2_values[0]:.3g}" if chi2_values else "")
-        )
+        meta = reduced_statistic_summary(summaries)
         self._results_card.set_summary(
             FitCardSummary(
                 tag=f"{tag_prefix} {'✓' if not warned else '⚠'}",
@@ -1543,19 +1540,9 @@ class GlobalFitTab(FitTabBase):
             )
             return
         converged = [s for s in summaries.values() if s.get("success")]
-        chi2 = [
-            float(s["reduced_chi_squared"])
-            for s in converged
-            if isinstance(s.get("reduced_chi_squared"), int | float)
-            and np.isfinite(float(s["reduced_chi_squared"]))
-        ]
         flagged = sum(1 for s in converged if set(s.get("quality_flags") or ()) - {"failed"})
         warned = len(summaries) - len(converged) + flagged
-        meta = (
-            f"χ²ᵣ {min(chi2):.3g}–{max(chi2):.3g}"
-            if len(chi2) > 1
-            else (f"χ²ᵣ {chi2[0]:.3g}" if chi2 else "")
-        )
+        meta = reduced_statistic_summary(converged)
         self._results_card.set_summary(
             FitCardSummary(
                 tag=f"Batch {'✓' if not warned else '⚠'}",
@@ -3676,10 +3663,10 @@ class GlobalFitTab(FitTabBase):
                 minos=minos,
             )
 
-            def on_finished(result, d=dataset, f=forward, b=backward, c=cost):
+            def on_finished(result, d=dataset, f=forward, b=backward):
                 self._count_fit_worker = None
                 self._set_series_busy(False)
-                self._render_count_fb_result(d, result, f, b, cost=c)
+                self._render_count_fb_result(d, result, f, b)
 
         else:
             target = backward if self._count_single_side == "backward" else forward
@@ -3698,10 +3685,10 @@ class GlobalFitTab(FitTabBase):
                 minos=minos,
             )
 
-            def on_finished(result, d=dataset, t=target, c=cost, s=side):
+            def on_finished(result, d=dataset, t=target, s=side):
                 self._count_fit_worker = None
                 self._set_series_busy(False)
-                self._render_count_single_result(d, result, t, cost=c, side=s)
+                self._render_count_single_result(d, result, t, side=s)
 
         self._count_fit_worker = _start_fit_call(
             self,
@@ -3724,10 +3711,7 @@ class GlobalFitTab(FitTabBase):
         self._count_fit_worker = None
         self._on_series_fit_cancelled()
 
-    def _render_count_fb_result(
-        self, dataset, result, forward: int, backward: int, *, cost: str | None = None
-    ) -> None:
-        cost = cost if cost is not None else self._count_fit_cost
+    def _render_count_fb_result(self, dataset, result, forward: int, backward: int) -> None:
         if not result.success:
             self._results_card.set_message(
                 error_html(result.message or "Forward/backward fit failed"),
@@ -3744,15 +3728,17 @@ class GlobalFitTab(FitTabBase):
         fwd_summary = _fit_summary(fwd)
         chip = fit_quality_chip_html(fwd_summary.get("quality"), fwd_summary.get("params_at_bound"))
         detail = (
-            f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f}{chip} "
-            f"(cost: {cost})<br>" + "<br>".join(rows)
+            f"α = {self._fmt_value(alpha, alpha_err)} · {reduced_statistic_label(fwd.objective)} = {fwd.reduced_chi_squared:.4f}{chip} "
+            "<br>" + "<br>".join(rows)
         )
         self._results_card.set_message(
             success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail),
             tag="Fit ✓",
             tone="ok",
             tooltip=fit_quality_tooltip(
-                fwd_summary.get("quality"), fwd_summary.get("params_at_bound")
+                fwd_summary.get("quality"),
+                fwd_summary.get("params_at_bound"),
+                quality_reason=fwd_summary["quality_reason"],
             ),
         )
         if self._current_dataset is dataset:
@@ -3770,10 +3756,8 @@ class GlobalFitTab(FitTabBase):
         result,
         group_id: int,
         *,
-        cost: str | None = None,
         side: str | None = None,
     ) -> None:
-        cost = cost if cost is not None else self._count_fit_cost
         side = side if side is not None else self._count_single_side
         if not result.success:
             self._results_card.set_message(
@@ -3787,14 +3771,19 @@ class GlobalFitTab(FitTabBase):
         rows = [self._count_param_row(result, name) for name in result.parameters.names]
         summary = _fit_summary(result)
         chip = fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
-        detail = f"χ²/ν = {result.reduced_chi_squared:.4f}{chip} (cost: {cost})<br>" + "<br>".join(
-            rows
+        detail = (
+            f"{reduced_statistic_label(result.objective)} = {result.reduced_chi_squared:.4f}{chip}<br>"
+            + "<br>".join(rows)
         )
         self._results_card.set_message(
             success_html(f"Single-histogram fit · group {group_id} ({side})", detail=detail),
             tag="Fit ✓",
             tone="ok",
-            tooltip=fit_quality_tooltip(summary.get("quality"), summary.get("params_at_bound")),
+            tooltip=fit_quality_tooltip(
+                summary.get("quality"),
+                summary.get("params_at_bound"),
+                quality_reason=summary["quality_reason"],
+            ),
         )
         if self._current_dataset is dataset:
             self.count_fit_completed.emit(
@@ -4318,9 +4307,10 @@ class GlobalFitTab(FitTabBase):
 
         n_members = len(member_results)
         n_runs = len(set(source_run.values())) if source_run else 0
-        reduced = [r.reduced_chi_squared for r in member_results.values() if r.reduced_chi_squared]
-        avg_red_chi2 = sum(reduced) / len(reduced) if reduced else 0.0
-        stats = f"{n_runs} runs · {n_members} group fits · avg χ²/ν = {avg_red_chi2:.4f}"
+        statistic = reduced_statistic_summary(
+            [_fit_summary(result) for result in member_results.values()], mean=True
+        )
+        stats = f"{n_runs} runs · {n_members} group fits · {statistic}"
         seeding_reason = getattr(series_result, "seeding_reason", "")
         if seeding_reason:
             stats += f"<br>Seeding: {seeding_reason}"
@@ -4510,11 +4500,10 @@ class GlobalFitTab(FitTabBase):
         warnings, the fitted/failed/flagged accounting, the resolved seeding mode
         and the near-transition advice — is composed here instead.
         """
-        avg_red_chi2 = sum(r.reduced_chi_squared for r in successful.values()) / len(successful)
-        lines = [
-            f"avg χ²/ν = {avg_red_chi2:.4f} · {len(successful)} datasets · "
-            f"npar = {len(global_param_names)}"
-        ]
+        statistic = reduced_statistic_summary(
+            [_fit_summary(result) for result in successful.values()], mean=True
+        )
+        lines = [f"{statistic} · {len(successful)} datasets · npar = {len(global_param_names)}"]
         # The same trap typically fires for every run, so dedupe to one row per
         # distinct message (first-seen order) rather than repeating it per dataset.
         seen: set[str] = set()
@@ -5142,11 +5131,11 @@ class GlobalFitTab(FitTabBase):
 
         n_groups = len(grouped_result.group_results)
         group_results = list(grouped_result.group_results.values())
-        avg_red_chi2 = (
-            sum(r.reduced_chi_squared for r in group_results) / n_groups if n_groups > 0 else 0.0
-        )
         n_shared = len(grouped_result.shared_parameters)
-        stats = f"{n_groups} groups · avg χ²/ν = {avg_red_chi2:.4f} · shared = {n_shared}"
+        statistic = reduced_statistic_summary(
+            [_fit_summary(result) for result in group_results], mean=True
+        )
+        stats = f"{n_groups} groups · {statistic} · shared = {n_shared}"
         self._render_fit_summary(
             dict(grouped_result.group_results), tag_prefix="Fit", detail_html=stats
         )

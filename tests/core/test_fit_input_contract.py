@@ -132,6 +132,7 @@ def test_poisson_constant_rate_mle_and_objective():
     result = FitEngine().fit_observations(data, constant, ParameterSet([Parameter("c", 2.0)]))
     assert result.success
     assert result.objective is Objective.POISSON
+    assert result.minimum_expected_count == pytest.approx(1.0, abs=1e-3)
     assert result.parameters["c"].value == pytest.approx(1.0, abs=1e-3)
     assert result.uncertainties["c"] == pytest.approx(np.sqrt(1 / 6), rel=1e-3)
     assert result.chi_squared == pytest.approx(9.36426245424844, abs=1e-5)
@@ -152,6 +153,7 @@ def test_poisson_invalid_optimum_fails_with_bin_context():
     assert not result.success
     assert "run 7, point 0" in result.message
     assert "bins [0, 1]" in result.message
+    assert result.minimum_expected_count is None
 
 
 @pytest.mark.parametrize("strategy", ["joint", "profiled", "least_squares"])

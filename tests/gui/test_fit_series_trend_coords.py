@@ -24,6 +24,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.group import PhaseSpec
@@ -37,16 +39,16 @@ def win(qapp: QApplication) -> MainWindow:
     return w
 
 
-class _StubFitResult:
-    """Minimal duck-typed fit result for ``fit_result_summary``."""
-
-    def __init__(self, params: dict[str, float]) -> None:
-        self.parameters = ParameterSet([Parameter(name=n, value=v) for n, v in params.items()])
-        self.uncertainties = {n: 0.01 for n in params}
-        self.minos_errors = None
-        self.success = True
-        self.chi_squared = 1.0
-        self.reduced_chi_squared = 1.0
+def _sigma_fit_result() -> FitResult:
+    """A converged Gaussian width fit for coordinate/provenance recording tests."""
+    return FitResult(
+        success=True,
+        objective=Objective.GAUSSIAN,
+        parameters=ParameterSet([Parameter("sigma", 1.0)]),
+        uncertainties={"sigma": 0.01},
+        chi_squared=1.0,
+        reduced_chi_squared=1.0,
+    )
 
 
 def _add_dataset(win: MainWindow, run_number: int, temperature: float, field: float) -> None:
@@ -74,9 +76,7 @@ def _run_batch(win: MainWindow, coords: dict[int, tuple[float, float]]) -> str:
         lambda: RepresentationType.TIME_FB_ASYMMETRY
     )
 
-    payloads = {
-        run: (_StubFitResult({"sigma": 1.0}), (np.zeros(2), np.zeros(2)), []) for run in coords
-    }
+    payloads = {run: (_sigma_fit_result(), (np.zeros(2), np.zeros(2)), []) for run in coords}
     # The fit panel's launch signal, as in production: the recorder reads the
     # representation the fit was started against, not the live view.
     win._fit_panel.replace_member_datasets(
@@ -430,9 +430,7 @@ def _stub_fit_panel(win: MainWindow) -> None:
 
 def _record_over(win: MainWindow, runs: list[int]) -> str:
     """Record a batch over *runs* (which must already be loaded), returning its id."""
-    payloads = {
-        run: (_StubFitResult({"sigma": 1.0}), (np.zeros(2), np.zeros(2)), []) for run in runs
-    }
+    payloads = {run: (_sigma_fit_result(), (np.zeros(2), np.zeros(2)), []) for run in runs}
     # The fit panel's launch signal, as in production: the recorder reads the
     # representation the fit was started against, not the live view.
     win._fit_panel.replace_member_datasets([win._data_browser.get_dataset(run) for run in runs], {})

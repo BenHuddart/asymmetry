@@ -110,6 +110,7 @@ from asymmetry.core.fitting.parameter_models import (
     effective_range_bounds,
 )
 from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.result_summary import reduced_statistic_summary
 from asymmetry.core.fitting.wizard_scope import (
     restore_user_field_direction,
     set_user_field_direction,
@@ -14295,12 +14296,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Batch fit completed for {n_datasets} datasets")
 
     def _grouped_fit_completion_summary(self, grouped_datasets, results_dict) -> str:
-        """Human-readable grouped-fit accounting for the completion log (F12).
-
-        A grouped batch produces one ``(run, group)`` *trace* per member, not one
-        "group": report "35 traces (7 runs × 5 groups)" — and the average χ²ᵣ —
-        rather than the ambiguous "35 groups" the old log printed.
-        """
+        """Name completed runs, groups and the recorded likelihood statistic."""
         n_traces = len(grouped_datasets)
         source_runs: set[int] = set()
         for dataset in grouped_datasets:
@@ -14311,12 +14307,10 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 continue
         n_runs = len(source_runs)
-        chi2_values = [
-            float(payload[0].reduced_chi_squared)
+        summaries = [
+            fit_result_summary(payload[0])
             for payload in results_dict.values()
-            if isinstance(payload, tuple)
-            and payload
-            and np.isfinite(getattr(payload[0], "reduced_chi_squared", float("nan")))
+            if isinstance(payload, tuple) and payload
         ]
         parts: list[str] = []
         if n_runs > 1 and n_traces % n_runs == 0:
@@ -14326,8 +14320,9 @@ class MainWindow(QMainWindow):
             parts.append(f"{n_traces} groups (run {run})")
         else:
             parts.append(f"{n_traces} traces")
-        if chi2_values:
-            parts.append(f"average χ²ᵣ = {sum(chi2_values) / len(chi2_values):.3f}")
+        statistic = reduced_statistic_summary(summaries, mean=True)
+        if statistic:
+            parts.append(statistic)
         return " · ".join(parts)
 
     def _on_grouped_fit_completed(

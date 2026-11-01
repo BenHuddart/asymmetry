@@ -210,7 +210,11 @@ def test_single_fit_slot_keeps_ui_state_and_loses_only_the_moved_fields():
     assert slot["provenance"] == "single"
     assert slot["model"] == _MODEL
     assert slot["parameters"] == _TEMPLATE
-    assert slot["result"] == {"success": True}
+    assert slot["result"] == {
+        "success": True,
+        "objective": "gaussian",
+        "minimum_expected_count": None,
+    }
     assert slot["ui_state"] == {"composite_model": _MODEL, "result_html": "<p>ok</p>"}
     assert "batch_id" not in slot
     assert "diverged" not in slot

@@ -301,3 +301,14 @@ def test_window_omits_the_footer_segments_a_run_fit_has_none_of(qapp: QApplicati
     assert not any(text.startswith("x: ") for text in texts)
     assert not any("errors:" in text for text in texts)
     window.deleteLater()
+
+
+def test_poisson_snapshot_names_its_deviance_and_sparse_quality_reason():
+    from dataclasses import replace
+
+    from asymmetry.core.fitting.likelihood import Objective
+
+    result = replace(_fit_result(), objective=Objective.POISSON, minimum_expected_count=1.0)
+    solved = _snapshot(result).ranges[0]
+    assert solved.chi_squared == "Poisson deviance/ν 1"
+    assert "expected count is below 5" in solved.verdict

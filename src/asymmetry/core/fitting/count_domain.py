@@ -376,19 +376,13 @@ def _result_from_minuit(
     success_message: str = "Count fit successful",
     failure_prefix: str = "Count fit failed",
 ) -> FitResult:
-    """Pack a :class:`FitResult` for one count-domain (or one F/B side).
+    """Record one bank, with its own cost and equality-linked parameter values.
 
-    ``chi_squared`` overrides the reported cost; pass the per-side cost for a
-    joint forward/backward fit (``m.fval`` is the combined cost). Defaults to
-    ``m.fval`` (correct for a single-domain fit). ``followers`` (``{follower:
-    main}``) maps equality-link followers to their group main so a tied parameter
-    is reported at the main's *fitted* value, not its pre-fit seed.
+    Expected-count minima and residuals refer to this bank's observations.
     """
     keep = set(keep_params) if keep_params is not None else None
     link_followers = followers or {}
-    # MINOS intervals (when run) live on m.merrors keyed by the free parameter name;
-    # empty when MINOS was not requested. A display-only overlay — the symmetric
-    # HESSE errors below are unchanged.
+    # MINOS stores signed interval offsets; the symmetric HESSE errors stay unchanged.
     merrors = getattr(m, "merrors", None)
     result_params = ParameterSet()
     uncertainties: dict[str, float] = {}
@@ -396,7 +390,6 @@ def _result_from_minuit(
     for p in params:
         if keep is not None and p.name not in keep:
             continue
-        # A link-follower mirrors its group main: report the main's fitted value.
         source = link_followers.get(p.name, p.name)
         if source in free_names:
             idx = free_names.index(source)
@@ -443,6 +436,9 @@ def _result_from_minuit(
     return FitResult(
         objective=objective,
         success=bool(m.valid) and invalid_model is None,
+        minimum_expected_count=float(np.min(model_values))
+        if isinstance(observations, PoissonCounts) and invalid_model is None
+        else None,
         chi_squared=chi2,
         reduced_chi_squared=chi2 / max(ndata - nfree, 1),
         parameters=result_params,
@@ -928,7 +924,10 @@ def fit_fb_alpha(
         failure_prefix="Forward/backward count fit failed",
     )
 
+    minima = (result_f.minimum_expected_count, result_b.minimum_expected_count)
+    minimum = min(minima) if all(value is not None for value in minima) else None
     for result in (result_f, result_b):
+        result.minimum_expected_count = minimum
         _record_deadtime_calibration(result, dataset, [g_fwd, g_bwd])
 
     shared_parameters = ParameterSet()

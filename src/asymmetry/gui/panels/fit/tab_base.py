@@ -92,13 +92,14 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_curves import fit_curve_sample_count
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import (
     AffineTie,
     Parameter,
     ParameterSet,
     get_param_info,
 )
-from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.result_summary import fit_result_summary, reduced_statistic_label
 from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
@@ -616,14 +617,7 @@ def fit_results_snapshot(
     fit_range: str,
     runs: str,
 ) -> FitResults:
-    """Freeze a core :class:`FitResult` into what :class:`FitResultsWindow` renders.
-
-    The tab supplies the strings only it knows — the window title, the model
-    expression, the fitted range and the run provenance — and this builds the
-    one solved range from the result itself. The verdict and its chip colours
-    come from the same :func:`_fit_summary` the result label's chip uses, so the
-    window and the tab can never disagree about a fit.
-    """
+    """Freeze fitted values and likelihoods; launch strings supply their provenance."""
     rows = []
     free_names = {param.name for param in result.parameters.free_parameters}
     for param in result.parameters:
@@ -639,14 +633,20 @@ def fit_results_snapshot(
             )
         )
 
-    quality = _fit_summary(result).get("quality")
+    summary = _fit_summary(result)
+    quality = summary["quality"]
     if quality is None:
-        verdict, colours = "no verdict", NEUTRAL_CHIP_COLOURS
+        verdict, colours = summary["quality_reason"] or "no verdict", NEUTRAL_CHIP_COLOURS
     else:
         band = f"{quality['band_low']:.2g}–{quality['band_high']:.2g}"
         verdict = f"{quality['verdict']} fit (band {band} at {quality['confidence'] * 100:g} %)"
         colours = FIT_VERDICT_CHIP_COLOURS[quality["verdict"]]
 
+    statistic_label = (
+        "χ²ᵣ"
+        if result.objective is Objective.GAUSSIAN
+        else reduced_statistic_label(result.objective)
+    )
     return FitResults(
         title=title,
         # A run's asymmetry fit has neither a trended parameter nor an x axis of
@@ -657,12 +657,10 @@ def fit_results_snapshot(
         ranges=(
             FitRangeResults(
                 model=model,
-                chi_squared=f"χ²ᵣ {result.reduced_chi_squared:.3g}",
+                chi_squared=f"{statistic_label} {result.reduced_chi_squared:.3g}",
                 verdict=verdict,
                 colours=colours,
                 bounds=fit_range,
-                # The engine's FitResult records no error mode — the tabs always
-                # fit against the data's own per-point σ.
                 error_mode="",
                 # Free parameters first ("sorted" is stable, as in the trend
                 # panel's snapshot).
