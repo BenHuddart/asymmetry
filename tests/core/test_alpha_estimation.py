@@ -22,8 +22,8 @@ from asymmetry.core.transform.asymmetry import (
     _pack_for_estimation,
     _positive_mask,
 )
-from asymmetry.core.transform.reduce import corrected_grouped_counts
 from asymmetry.core.transform.fb_counts import SubtractedBackground
+from asymmetry.core.transform.reduce import corrected_grouped_counts
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 ALPHA_TRUE = 1.37
