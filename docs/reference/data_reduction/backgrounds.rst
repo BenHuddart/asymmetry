@@ -48,6 +48,19 @@ are immutable; ``CorrectionOutcomes.to_dict()`` exports an independent JSON
 snapshot. ``require_complete()`` rejects unavailable or failed corrections.
 
 A preview may request ``allow_incomplete=True`` and inspect the outcome.
+The grouping preview uses already-loaded reference runs without reading files.
+If the reference is not loaded, it displays
+"Incomplete preview — not applied: background (reference run is not loaded)".
+**Apply** is disabled until the preview is complete. A final apply refuses any
+unavailable or failed correction and leaves that run's arrays and grouping unchanged.
+Red/green combinations require both period outcomes to be complete and retain
+separate effective values for each period. Estimated default background ranges
+are recomputed from the current time zero; they do not become explicit requests.
+
+.. image:: /_generated/screenshots/grouping_incomplete_preview.png
+   :alt: Grouping dialog with an incomplete background-reference preview and disabled Apply.
+   :width: 100%
+
 Such arrays are incomplete diagnostic results and must not be promoted as a
 corrected analysis. Final reduction requires complete outcomes by default.
 

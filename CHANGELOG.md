@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Grouping previews label incomplete corrections and disable Apply; restored runs
+  retain failed requests and block fits and exports until a successful apply.
+
 - Final reduction and calibration reject unavailable deadtime or background
   corrections instead of returning an uncorrected spectrum as corrected.
 - Reference-background deadtime correction uses the reference's own frame exposure.

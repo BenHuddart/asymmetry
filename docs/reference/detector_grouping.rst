@@ -1484,3 +1484,15 @@ Related topics
 * :doc:`data_processing` for grouping and asymmetry APIs
 * :doc:`gui_usage` for UI workflows
 * :doc:`vector_polarization` for vector mode (P_x, P_y, P_z)
+
+Incomplete corrections
+----------------------
+
+**Apply** refuses a requested correction when its table, frame exposure,
+reference run, or fixed values are unavailable, or its estimator fails. The run
+keeps its arrays and grouping. A zero File-mode deadtime table is unavailable;
+a zero Manual or Estimate table is an applied identity. The preview labels
+incomplete corrections and disables **Apply**. Restored runs keep their requests
+and display "Corrections incomplete" until a successful apply; fits and exports
+refuse in the meantime. See :doc:`data_reduction/backgrounds` for correction
+outcomes and the reference-preview banner.

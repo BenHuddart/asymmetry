@@ -8,51 +8,7 @@ dataset passed to fitting in the GUI. The original MuonDataset is preserved,
 so changing the bunch factor after fitting only changes the plotted data while
 the existing fit curve remains overlaid.
 
-Navigation map
---------------
-~7.3k lines, a single ``PlotPanel(QWidget)`` class; a known decomposition
-target (see ``docs/audit/shared-foundations/FOLLOW-UPS.md``), not split in
-this pass. Methods are not grouped by section comments in the source; they
-cluster thematically in roughly this order:
-
-- **Construction and control widgets** — ``__init__``, ``_create_limit_controls``,
-  ``_create_plot_header``/``_create_plot_footer`` build the axis-limit fields
-  (``FloatLimitField``/``AxisLimitControls`` from ``gui/widgets/axis_limits.py``)
-  and the canvas chrome.
-- **Frequency-axis unit/reference conversion** — the ``_convert_frequency_*``
-  and ``_display_x_*``/``_display_y_*`` helpers translate between canonical
-  MHz storage and the user-selected display unit/reference.
-- **Navigation mode and axis limits** — ``_set_navigation_mode`` keeps the
-  Matplotlib toolbar pan/zoom state and the nav buttons consistent; the
-  axis window itself is owned by one
-  :class:`~asymmetry.gui.widgets.axis_limits.AxisLimitPolicy` (``_limits``),
-  resolved once per render and mirrored into the limit fields and the Auto
-  X/Y buttons (see :meth:`PlotPanel._apply_limits`).
-- **Dataset/projection plumbing** — ``get_analysis_dataset``, projection
-  axis helpers (``_axis_key_for_dataset``, ``set_projections``,
-  ``fit_target_projection``), and the low-count/low-confidence masking used
-  before plotting (``_low_count_mask_for_dataset``, ``_low_confidence_mask_for_dataset``).
-- **Rendering** — the ``plot_*`` family is the core draw path:
-  ``plot_datasets``/``plot_dataset`` (single/overlay), ``plot_vector_subplots``,
-  ``plot_grouped_time_domain_subplots``, ``plot_maxent_reconstruction*``, and
-  ``plot_fit``/``set_global_fits`` for fit-curve overlay. Each render resolves
-  its axes through ``_limits`` and applies the result with ``_apply_limits``;
-  ``_default_x_limits`` and ``_signal_y_limits_from_last_plot`` /
-  ``_auto_y_limits_from_display_arrays`` are the *bounds suppliers* an Auto (or
-  never-framed) axis follows.
-- **Interaction** — mouse/canvas event handlers (``_on_canvas_button_press``,
-  ``_on_canvas_motion_notify``, ``_on_canvas_button_release``) drive fit-range
-  and moments-window drag handles, annotation add/edit/delete, and the cursor
-  readout.
-- **Export** — ``get_current_plot_export_data``, ``export_plotted_data_as_text``,
-  ``export_plots_to_gle`` (via the shared ``run_gle_export`` orchestrator in
-  ``gui/utils/gle_export.py``), ``export_current_plot``.
-- **State I/O** — ``get_state``/``restore_state`` at the end serialize panel
-  configuration (bunch factor, view limits, projections, decimation, RRF) for
-  project persistence.
-
-Entry points GUI callers use most: ``plot_datasets``/``plot_dataset``,
-``plot_fit``, ``set_view_limits``/``get_view_limits``, ``get_state``/``restore_state``.
+Time-domain asymmetry is in percent; stored frequency coordinates are in MHz.
 """
 
 from __future__ import annotations
@@ -8729,11 +8685,7 @@ class PlotPanel(QWidget):
         return width, height
 
     def _collect_export_payloads(self) -> list[dict] | None:
-        """Assemble the current plot's export payloads (with the ALL fallback).
-
-        Shared by the GLE export and the plain-text data export so both see the
-        same per-dataset payloads.
-        """
+        """Collect the shared GLE/text payloads, including vector projections."""
         payloads = self.get_current_plot_export_data()
         if (
             payloads is None
@@ -8799,14 +8751,32 @@ class PlotPanel(QWidget):
             return None
         return str(content_combo.currentData()), bool(range_box.isChecked())
 
-    def export_plotted_data_as_text(self) -> None:
-        """Export the plotted curve(s) as plain text, without the GLE machinery.
+    def _export_corrections_ready(self) -> bool:
+        if not self._has_mpl:
+            return True
+        datasets = (
+            self._current_datasets
+            + self._grouped_time_subplot_datasets
+            + [dataset for group in self._vector_subplot_datasets.values() for dataset in group]
+        )
+        errors = {
+            dataset.run_number: dataset.metadata["correction_error"]
+            for dataset in datasets
+            if dataset.metadata.get("correction_error") is not None
+        }
+        if not errors:
+            return True
+        QMessageBox.warning(
+            self,
+            "Corrections incomplete",
+            "\n".join(f"Run {run}: {reason}" for run, reason in errors.items()),
+        )
+        return False
 
-        Reuses the same ``.dat``/``.fit`` writers (and their provenance header)
-        as the GLE export, but writes only the text files — no ``.gleplot``
-        folder, GLE script, or compile. The content switch (data only / data +
-        fit / fit only) mirrors WiMDA's stData/stBoth/stFit.
-        """
+    def export_plotted_data_as_text(self) -> None:
+        """Export the visible data and fit curves as plain text."""
+        if not self._export_corrections_ready():
+            return
         axis_groups = self._export_axis_groups()
         if not axis_groups:
             QMessageBox.warning(
@@ -8951,14 +8921,9 @@ class PlotPanel(QWidget):
         return fig, axes_objs
 
     def export_plots_to_gle(self) -> None:
-        """Export current main-plot view as GLE using gleplot.
-
-        Time-domain data is plotted with error bars (no connecting lines) and
-        fit curves with lines (no markers). Frequency-domain (FFT/MaxEnt) views
-        mirror the on-screen spectrum instead: a piecewise-linear line in the
-        current display unit plus a light shaded ±1σ band. File names are
-        derived from the Label dropdown value for each dataset.
-        """
+        """Export the visible curves as GLE with their plotted errors and bands."""
+        if not self._export_corrections_ready():
+            return
         payloads = self._collect_export_payloads()
         if not payloads:
             QMessageBox.warning(
