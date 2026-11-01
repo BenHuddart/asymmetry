@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.transform import background as bg
+from asymmetry.core.transform.fb_counts import BinWindow
 
 
 @pytest.mark.parametrize("values", [[0.0, 0.0, 9.0], [4.0, 5.0, 0.0]])
@@ -30,28 +31,24 @@ def test_count_noise_stays_independent_of_the_exact_fixed_level(values):
         ((0, 100), 0.0, "PSI", (0, 100)),
         ((0, 100), 0.005, "ISIS", (0, 100)),
         ((0, 100), 0.005, "unknown", (0, 100)),
-        ((100, 0), 0.005, "PSI", (2, 100)),
     ],
 )
 def test_period_endpoints(window, width, facility, expected):
-    assert (
-        bg._adjust_range_for_beam_period(window, bin_width_us=width, facility=facility) == expected
-    )
+    assert bg._adjust_range_for_beam_period(
+        BinWindow(*window), bin_width_us=width, facility=facility
+    ) == BinWindow(*expected)
 
 
 @pytest.mark.parametrize(
     "grouping,t0,expected",
     [
         ({}, 10, ((1, 6), (1, 6))),
-        ({}, -10, ((-6, -1), (-6, -1))),
-        ({"background_ranges": {"forward": [4, 1], "backward": [3, 2]}}, 10, ((1, 4), (2, 3))),
+        ({"background_ranges": {"forward": [1, 4], "backward": [2, 3]}}, 10, ((1, 4), (2, 3))),
         ({"background_ranges": [2, 5]}, 10, ((2, 5), (2, 5))),
-        ({"background_range": ["2.9", "1.1", 99]}, 10, ((1, 2), (1, 2))),
-        ({"background_range": ["bad", 1]}, 10, ((1, 6), (1, 6))),
     ],
 )
 def test_range_input_values(grouping, t0, expected):
-    assert bg._background_ranges(grouping, t0) == expected
+    assert bg._background_ranges(grouping, t0) == tuple(BinWindow(*window) for window in expected)
 
 
 @pytest.mark.parametrize(

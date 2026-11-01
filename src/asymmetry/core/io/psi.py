@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import struct
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from itertools import chain, islice
 from pathlib import Path
@@ -26,13 +26,13 @@ from asymmetry.core.instrument import (
 )
 from asymmetry.core.io.base import BaseLoader, field_direction_from_text
 from asymmetry.core.transform import (
-    apply_grouping_aligned,
-    common_t0_for_groups,
+    align_forward_backward,
     common_t0_time_us,
     compute_asymmetry,
     good_window_for_groups,
     run_t0_time_us,
 )
+from asymmetry.core.transform.fb_counts import validated_count_arrays
 from asymmetry.core.utils.perf import perf_timer
 
 _MAX_PSI_HISTOGRAMS = 32
@@ -1014,7 +1014,8 @@ class PsiLoader(BaseLoader):
         if n_hist == 0:
             raise ValueError("PSI file does not contain any histograms")
 
-        n_bins = min(len(arr) for arr in raw.counts)
+        counts = validated_count_arrays(*raw.counts)
+        n_bins = counts[0].size
         max_bin = max(0, n_bins - 1)
         t0_bins = self._resize_ints(raw.t0_bins, n_hist, 0, max_value=max_bin)
         first_good_bins = self._resize_ints(
@@ -1032,7 +1033,7 @@ class PsiLoader(BaseLoader):
 
         histograms = [
             Histogram(
-                counts=np.asarray(raw.counts[i][:n_bins], dtype=np.float64),
+                counts=counts[i],
                 bin_width=float(raw.bin_width_us),
                 t0_bin=int(t0_bins[i]),
                 good_bin_start=int(first_good_bins[i]),
@@ -1062,13 +1063,8 @@ class PsiLoader(BaseLoader):
         # ones, matching how the grouping-window Apply path drops absentees.
         forward_idx = [det - 1 for det in groups[forward_gid] if 1 <= det <= n_hist]
         backward_idx = [det - 1 for det in groups[backward_gid] if 1 <= det <= n_hist]
-        common_t0 = common_t0_for_groups(histograms, forward_idx, backward_idx)
-
-        forward = apply_grouping_aligned(histograms, forward_idx, common_t0_bin=common_t0)
-        backward = apply_grouping_aligned(histograms, backward_idx, common_t0_bin=common_t0)
-        n = min(len(forward), len(backward))
-        forward = forward[:n]
-        backward = backward[:n]
+        forward, backward, alignment = align_forward_backward(histograms, forward_idx, backward_idx)
+        common_t0, n = alignment.common_t0_bin, alignment.length
         alpha = 1.0
         asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
         asymmetry = asymmetry * 100.0
@@ -1100,6 +1096,7 @@ class PsiLoader(BaseLoader):
 
         metadata = {
             "run_number": raw.run_number,
+            "grouped_alignment": asdict(alignment),
             "title": raw.title,
             "sample": raw.sample,
             "temperature": raw.temperature,

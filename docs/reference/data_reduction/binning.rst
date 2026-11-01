@@ -47,7 +47,9 @@ the error so the window can be corrected.
 Forward and backward arrays must have equal one-dimensional shape. A
 mismatch raises ``count arrays must have equal shape.`` Supplied count
 variances must match that shape and be finite and non-negative; the
-acquisition-bin width must be finite and positive.
+acquisition-bin width must be finite and positive. File-derived profile
+windows use these same checks. Projects retain saved invalid windows when
+loaded; reducing an affected dataset raises the named window error.
 
 Uncertainty of merged counts
 ----------------------------

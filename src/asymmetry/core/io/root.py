@@ -10,7 +10,7 @@ ROOT objects directly into Asymmetry's normal raw ``Run`` model.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,13 +19,13 @@ import numpy as np
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, field_direction_from_text
 from asymmetry.core.transform import (
-    apply_grouping_aligned,
-    common_t0_for_groups,
+    align_forward_backward,
     common_t0_time_us,
     compute_asymmetry,
     good_window_for_groups,
     run_t0_time_us,
 )
+from asymmetry.core.transform.fb_counts import validated_count_arrays
 from asymmetry.core.utils.perf import perf_timer
 
 
@@ -565,8 +565,8 @@ class RootLoader(BaseLoader):
     ) -> MuonDataset:
         bin_width_us = self._time_resolution_us(header)
         selected = self._select_histograms(header, root_histograms)
-        n_bins = min(len(hist.counts) for hist in selected)
-        max_bin = max(0, n_bins - 1)
+        counts = validated_count_arrays(*(hist.counts for hist in selected))
+        max_bin = max(0, counts[0].size - 1)
 
         histograms: list[Histogram] = []
         labels: list[str] = []
@@ -576,7 +576,7 @@ class RootLoader(BaseLoader):
         last_good_bins: list[int] = []
 
         t0_present = False
-        for hist in selected:
+        for hist, counts_array in zip(selected, counts, strict=True):
             detector = self._detector_info(header, hist)
             label = detector.get("Name") or hist.title or f"hDecay{hist.histo_number:03d}"
             t0_value = detector.get("Time Zero Bin")
@@ -599,7 +599,7 @@ class RootLoader(BaseLoader):
 
             histograms.append(
                 Histogram(
-                    counts=np.asarray(hist.counts[:n_bins], dtype=np.float64),
+                    counts=counts_array,
                     bin_width=bin_width_us,
                     t0_bin=t0,
                     good_bin_start=first_good,
@@ -618,12 +618,10 @@ class RootLoader(BaseLoader):
         )
         forward_idx = [det - 1 for det in groups[forward_gid]]
         backward_idx = [det - 1 for det in groups[backward_gid]]
-        common_t0 = common_t0_for_groups(histograms, forward_idx, backward_idx)
-        forward = apply_grouping_aligned(histograms, forward_idx, common_t0_bin=common_t0)
-        backward = apply_grouping_aligned(histograms, backward_idx, common_t0_bin=common_t0)
-        n = min(len(forward), len(backward))
+        forward, backward, alignment = align_forward_backward(histograms, forward_idx, backward_idx)
+        common_t0, n = alignment.common_t0_bin, alignment.length
         alpha = 1.0
-        asymmetry, error = compute_asymmetry(forward[:n], backward[:n], alpha=alpha)
+        asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
         asymmetry = asymmetry * 100.0
         error = error * 100.0
 
@@ -655,6 +653,7 @@ class RootLoader(BaseLoader):
         metadata = self._metadata(
             path, header, header_kind, labels, root_numbers, slow_control_logs, run_summary
         )
+        metadata["grouped_alignment"] = asdict(alignment)
         grouping = {
             "groups": groups,
             "group_names": group_names,

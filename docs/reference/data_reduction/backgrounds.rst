@@ -73,6 +73,14 @@ region exists.
    as the GUI's explicit string always did. ``facility=""`` remains available as
    the deliberate "no trimming" opt-out, and any non-empty string still overrides.
 
+Declared range endpoints are inclusive acquisition-bin integers. The window
+must be ordered and contained in the aligned count record. For example,
+``[4, 1]`` raises ``good-bin window [4, 1] is reversed.`` and ``[0, 9]``
+on eight bins raises ``good-bin window [0, 9] is outside 8 bins.`` A malformed
+pair raises ``background range requires two integer bin indices.`` The
+same rules apply to grouped Fourier backgrounds. An absent range selects the
+pre-t0 default; a declared invalid range raises an error.
+
 Tail fit (late-time)
 --------------------
 
@@ -239,6 +247,5 @@ treats its points as independent and does not carry these shared components.
 - A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012).
 - F. L. Pratt, Physica B **289–290**, 710 (2000).
 
-.. [Fisher1922] R. A. Fisher, “On the mathematical foundations of theoretical
-   statistics”, *Philosophical Transactions of the Royal Society A* **222**,
+.. [Fisher1922] R. A. Fisher, Philos. Trans. R. Soc. A **222**,
    309–368 (1922). `doi:10.1098/rsta.1922.0009 <https://doi.org/10.1098/rsta.1922.0009>`_.

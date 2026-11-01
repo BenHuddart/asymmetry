@@ -8,6 +8,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     available_background_modes,
+    background_window,
     resolve_background_mode,
     subtract_scaled_counts,
 )
@@ -73,14 +74,10 @@ def _group_background_range_for_group(
     """Return a background range for one group when explicitly configured."""
 
     def _parse_range(value: object) -> tuple[int, int] | None:
-        if not isinstance(value, (list, tuple)) or len(value) < 2:
+        if value is None:
             return None
-        try:
-            lo = int(float(value[0]))
-            hi = int(float(value[1]))
-        except (TypeError, ValueError):
-            return None
-        return (lo, hi) if lo <= hi else (hi, lo)
+        window = background_window(value)
+        return window.first, window.last
 
     raw_ranges = grouping.get("background_ranges")
     if isinstance(raw_ranges, dict):
@@ -100,6 +97,8 @@ def _group_background_range_for_group(
             return forward
 
     if isinstance(raw_ranges, (list, tuple)) and len(raw_ranges) >= 2:
+        if not isinstance(raw_ranges[0], (list, tuple)):
+            return _parse_range(raw_ranges)
         first = _parse_range(raw_ranges[0])
         second = _parse_range(raw_ranges[1])
         if first is not None and second is not None:
@@ -207,15 +206,14 @@ def _apply_group_background_correction(
             return counts, False, None
         sample = np.asarray(counts, dtype=np.float64)
         reference = np.asarray(reference_counts, dtype=np.float64)
-        # Pad a shorter reference with zeros so subtract_scaled_counts (which
-        # truncates to the common length) cannot silently shorten the sample
-        # signal — bins the reference does not cover keep their raw value rather
-        # than dropping out of the spectrum and collapsing last_good_bin.
         if reference.size < sample.size:
-            reference = np.concatenate(
-                [reference, np.zeros(sample.size - reference.size, dtype=np.float64)]
+            raise ValueError(
+                f"reference run has {reference.size} aligned bins; sample requires {sample.size}."
             )
-        corrected, _errors = subtract_scaled_counts(sample, reference, float(reference_scale))
+        reference_on_sample = reference[: sample.size]
+        corrected, _variance = subtract_scaled_counts(
+            sample, reference_on_sample, float(reference_scale)
+        )
         return corrected, True, None
     if mode not in available_background_modes(metadata=metadata, source_file=source_file):
         return counts, False, None

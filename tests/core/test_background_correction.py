@@ -75,24 +75,15 @@ def test_default_range_follows_musrfit_t0_fraction() -> None:
     assert result.values == pytest.approx((3.5, 13.5))
 
 
-def test_invalid_background_range_leaves_counts_unchanged() -> None:
-    forward = np.array([10.0, 12.0])
-    backward = np.array([8.0, 9.0])
-
-    result = apply_grouped_background_correction(
-        forward,
-        backward,
-        grouping={"background_range": [0, 5]},
-        t0_bin=0,
-        bin_width_us=0.01,
-    )
-
-    assert result.applied is False
-    assert result.method == "invalid_range"
-    assert result.forward.variance is None
-    assert result.backward.variance is None
-    np.testing.assert_allclose(result.forward.counts, forward)
-    np.testing.assert_allclose(result.backward.counts, backward)
+def test_invalid_background_range_is_rejected() -> None:
+    with pytest.raises(ValueError, match="window.*outside 2 bins"):
+        apply_grouped_background_correction(
+            np.array([10.0, 12.0]),
+            np.array([8.0, 9.0]),
+            grouping={"background_range": [0, 5]},
+            t0_bin=0,
+            bin_width_us=0.01,
+        )
 
 
 # --- facility resolution and the accelerator-period trimming -----------------
