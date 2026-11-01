@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from functools import partial
 from html import escape
 from typing import Any, NamedTuple
 
@@ -460,6 +461,9 @@ class GroupingPreviewPane(QWidget):
         )
 
     def show_error(self, message: str) -> None:
+        self._generation += 1
+        self._pending = None
+        self._debounce.stop()
         self._state = message
         self._incomplete_banner.setText(f"Incomplete preview — {message}")
         self._incomplete_banner.show()
@@ -516,7 +520,7 @@ class GroupingPreviewPane(QWidget):
         self._tasks.start(
             lambda worker: _run_reduction(worker, request),
             on_finished=self._on_finished,
-            on_error=self._on_error,
+            on_error=partial(self._on_error, generation=request.generation),
         )
 
     def _dispatch_next_after_completion(self) -> None:
@@ -579,9 +583,10 @@ class GroupingPreviewPane(QWidget):
         if self._last_result is not None:
             self._draw(self._last_result)
 
-    def _on_error(self, message: str) -> None:
+    def _on_error(self, message: str, *, generation: int) -> None:
         self._dispatch_next_after_completion()
-        self.show_error(f"Preview unavailable: {message}")
+        if generation == self._generation:
+            self.show_error(f"Preview unavailable: {message}")
 
     # -- drawing ---------------------------------------------------------
 

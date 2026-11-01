@@ -200,3 +200,34 @@ def test_incomplete_run_blocks_fit_report_before_file_dialog(qapp, monkeypatch):
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[1]))
     window._on_export_fit_report()
     assert warnings == ["Corrections incomplete"]
+
+
+def test_form_error_cannot_be_cleared_by_an_older_worker_result(qapp):
+    from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
+    from tests.gui.test_grouping_preview_pane import _draw_result
+
+    pane = GroupingPreviewPane()
+    try:
+        result = _draw_result(pane, generation=pane._generation)
+        pane.show_error("invalid draft reference")
+        pane._on_finished(result)
+        assert not pane.corrections_complete
+        assert "invalid draft reference" in pane._incomplete_banner.text()
+    finally:
+        pane.shutdown()
+
+
+def test_obsolete_worker_error_cannot_replace_a_newer_preview(qapp):
+    from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
+    from tests.gui.test_grouping_preview_pane import _draw_result
+
+    pane = GroupingPreviewPane()
+    try:
+        pane._generation = 2
+        result = _draw_result(pane, generation=2)
+        pane._on_finished(result)
+        pane._on_error("older reduction failed", generation=1)
+        assert pane._last_result is result
+        assert pane.corrections_complete
+    finally:
+        pane.shutdown()
