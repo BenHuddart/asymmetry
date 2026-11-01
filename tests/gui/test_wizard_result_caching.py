@@ -124,10 +124,7 @@ def _single_wizard_payload(
     assessment = CandidateAssessment(
         template=template,
         fit_result=result,
-        aic=8.0,
-        aicc=8.2,
-        bic=10.0,
-        selected_score=8.2,
+        sample_count=1000,
         residual_rms=0.9,
         runs_z_score=0.2,
         max_abs_autocorrelation=0.1,
@@ -491,10 +488,7 @@ def _global_wizard_recommendation_for_dataset(
             ),
         ),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.2,
-        bic=12.0,
-        selected_score=10.2,
+        sample_count=1000,
         fitted_curves_by_run=fitted_curves,
         component_curves_by_run=component_curves,
     )

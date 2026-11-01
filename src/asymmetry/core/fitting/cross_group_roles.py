@@ -40,15 +40,13 @@ Criterion definitions (with ``k = n_free`` free Minuit parameters and
 ``n = n_points`` from the fit result)::
 
     AIC  = chi2 + 2k
-    AICc = AIC + 2k(k+1)/(n - k - 1)     (inf when n - k - 1 <= 0)
+    AICc = AIC + 2k(k+1)/(n - k - 1)     (unavailable when n - k - 1 <= 0)
     BIC  = chi2 + k * ln(n)
 
-Here ``chi2`` is the cross-group fit cost (``m.fval``), which equals ``-2 log
-L`` up to an additive constant **only** under the ``COLUMN`` / ``ABSOLUTE`` /
-``PERCENT`` error modes. Under ``NONE`` / ``SCATTER`` the unit y-weights carry
-no physical scale, so the absolute criterion value is not a likelihood; the
-*relative* comparison between candidates that share ``n_points`` and error
-mode is still meaningful, and the recommendation flags this in ``message``.
+Stated-error modes use χ² as −2 ln L up to a data-only constant. NONE and
+SCATTER profile out a common unknown variance: −2 ln L = n ln(RSS/n), with
+one additional parameter. Effective-variance x-error fits omit a parameter-
+dependent normalization term and cannot be ranked by these criteria.
 
 Seeding
 -------
@@ -68,6 +66,12 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from asymmetry.core.fitting.information_criteria import (
+    InformationCriteria,
+    SelectionMetric,
+    rank,
+    ranking_value,
+)
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ErrorMode,
@@ -94,42 +98,80 @@ _ROLE_DELTA_THRESHOLD = 2.0
 # branch alive when the budget allows, without exploding toward ``3^k``.
 _BEAM_WIDTH = 2
 
-_VALID_CRITERIA = ("aic", "aicc", "bic")
-
 
 @dataclass
 class CrossGroupCandidate:
-    """One attempted Global/Local/Fixed partition and its fit outcome.
-
-    ``score`` is the value of the active selection criterion (AIC / AICc /
-    BIC). ``n_free`` is the total number of free Minuit parameters:
-    ``len(global) + len(local) * n_groups``. Failed fits keep
-    ``success=False`` and are excluded from ranking (their criteria are
-    ``inf``). ``result`` holds the underlying :class:`CrossGroupFitResult` for
-    the best few candidates (populated for successful fits so callers can seed
-    an actual fit from the recommended partition).
-    """
+    """An attempted role partition and its recorded objective."""
 
     global_params: tuple[str, ...]
     local_params: tuple[str, ...]
     fixed_params: tuple[str, ...]
-    success: bool
-    chi_squared: float
-    reduced_chi_squared: float
-    n_free: int
-    n_points: int
-    aic: float
-    aicc: float
-    bic: float
-    result: CrossGroupFitResult | None = None
+    result: CrossGroupFitResult
+
+    @property
+    def success(self) -> bool:
+        return self.result.success
+
+    @property
+    def chi_squared(self) -> float:
+        return self.result.chi_squared
+
+    @property
+    def reduced_chi_squared(self) -> float:
+        return self.result.reduced_chi_squared
+
+    @property
+    def n_free(self) -> int:
+        return len(self.result.global_parameters.free_parameters) + sum(
+            len(parameters.free_parameters) for parameters in self.result.local_parameters.values()
+        )
+
+    @property
+    def n_points(self) -> int:
+        return self.result.n_points
+
+    def unavailable_reason(self, metric: SelectionMetric | str) -> str | None:
+        if not self.success or not math.isfinite(self.chi_squared):
+            return "fit failed"
+        if self.result.uses_effective_variance:
+            return "effective-variance objective omits its likelihood normalization"
+        if ErrorMode(self.result.error_mode) in {ErrorMode.NONE, ErrorMode.SCATTER}:
+            if self.n_points < 1:
+                return "sample count not recorded"
+            if self.chi_squared <= 0:
+                return "unknown-variance likelihood is unbounded at zero residual variance"
+        return self.criteria.unavailable_reason(metric)
+
+    @property
+    def criteria(self) -> InformationCriteria | None:
+        if (
+            not self.success
+            or not math.isfinite(self.chi_squared)
+            or self.result.uses_effective_variance
+        ):
+            return None
+        statistic, k, n = self.chi_squared, self.n_free, self.n_points or None
+        if ErrorMode(self.result.error_mode) in {ErrorMode.NONE, ErrorMode.SCATTER}:
+            if n is None or statistic <= 0:
+                return None
+            statistic = n * math.log(statistic / n)
+            k += 1
+        return InformationCriteria(statistic, k, n)
+
+    @property
+    def aic(self) -> float:
+        return ranking_value(self.criteria, SelectionMetric.AIC)
+
+    @property
+    def aicc(self) -> float | None:
+        return None if self.criteria is None else self.criteria.value(SelectionMetric.AICC)
+
+    @property
+    def bic(self) -> float:
+        return ranking_value(self.criteria, SelectionMetric.BIC)
 
     def criterion_value(self, criterion: str) -> float:
-        """Return this candidate's value of ``criterion`` ("aic"/"aicc"/"bic")."""
-        if criterion == "aic":
-            return self.aic
-        if criterion == "bic":
-            return self.bic
-        return self.aicc
+        return ranking_value(self.criteria, SelectionMetric.from_value(criterion))
 
 
 @dataclass
@@ -162,30 +204,6 @@ class CrossGroupRoleRecommendation:
     parameters: list[CrossGroupParameterRecommendation] = field(default_factory=list)
     criterion: str = "aicc"
     message: str = ""
-
-
-def _information_criteria(
-    chi_squared: float, n_free: int, n_points: int
-) -> tuple[float, float, float]:
-    """Return (AIC, AICc, BIC) for a fit cost, free-param count and point count.
-
-    ``chi_squared`` is the fit cost (``-2 log L`` up to a constant under the
-    column/absolute/percent error modes). AICc guards a non-positive
-    ``n - k - 1`` denominator by returning ``inf``.
-    """
-    k = float(n_free)
-    n = float(n_points)
-    if not np.isfinite(chi_squared):
-        return float("inf"), float("inf"), float("inf")
-
-    aic = chi_squared + 2.0 * k
-    denom = n - k - 1.0
-    if denom <= 0.0:
-        aicc = float("inf")
-    else:
-        aicc = aic + (2.0 * k * (k + 1.0)) / denom
-    bic = chi_squared + k * math.log(n) if n > 0.0 else float("inf")
-    return aic, aicc, bic
 
 
 def _trace_variation_and_roughness(values: np.ndarray) -> tuple[float, float]:
@@ -318,7 +336,7 @@ class _FitRunner:
             return None
 
         initial_params = dict(self._base_initial_params)
-        if seed_from is not None and seed_from.result is not None:
+        if seed_from is not None:
             initial_params.update(_seed_values_from_result(seed_from.result))
 
         self.fits_used += 1
@@ -336,27 +354,11 @@ class _FitRunner:
             xerr=self._xerr,
         )
 
-        n_free = len(global_params) + len(local_params) * self._n_groups
-        n_points = int(result.n_points)
-        success = bool(result.success)
-        if success:
-            aic, aicc, bic = _information_criteria(result.chi_squared, n_free, n_points)
-        else:
-            aic = aicc = bic = float("inf")
-
         candidate = CrossGroupCandidate(
             global_params=tuple(sorted(global_params)),
             local_params=tuple(sorted(local_params)),
             fixed_params=tuple(sorted(self._fixed_values)),
-            success=success,
-            chi_squared=float(result.chi_squared),
-            reduced_chi_squared=float(result.reduced_chi_squared),
-            n_free=int(n_free),
-            n_points=n_points,
-            aic=float(aic),
-            aicc=float(aicc),
-            bic=float(bic),
-            result=result if success else None,
+            result=result,
         )
         self._cache[key] = candidate
         self.candidates.append(candidate)
@@ -394,7 +396,7 @@ def _rank_candidates(
     then lexicographically by the local-parameter tuple, so ordering is
     reproducible across runs.
     """
-    successful = [c for c in candidates if c.success and np.isfinite(c.criterion_value(criterion))]
+    successful, _excluded = rank(candidates, SelectionMetric.from_value(criterion))
     return sorted(
         successful,
         key=lambda c: (c.criterion_value(criterion), c.n_free, c.local_params),
@@ -431,9 +433,7 @@ def suggest_cross_group_roles(
     successful candidate (or ``None``), and ``parameters`` gives the per-param
     Global/Local recommendation with wizard-style diagnostics.
     """
-    criterion = criterion.lower().strip()
-    if criterion not in _VALID_CRITERIA:
-        criterion = "aicc"
+    criterion = SelectionMetric.from_value(criterion).value.lower()
 
     error_mode = ErrorMode(error_mode)
     fixed_params = dict(fixed_params or {})
@@ -452,9 +452,8 @@ def suggest_cross_group_roles(
         for group in sorted(groups, key=lambda g: (float(g.group_variable_value), g.group_id))
     ]
 
-    # ``NONE``/``SCATTER`` weight uniformly, so the criterion value is not a
-    # likelihood; relative comparison is still well-defined but we flag it.
-    relative_only = error_mode in (ErrorMode.NONE, ErrorMode.SCATTER)
+    # Unit weights require profiling a common variance as an extra parameter.
+    unknown_variance = error_mode in (ErrorMode.NONE, ErrorMode.SCATTER)
 
     recommendation = CrossGroupRoleRecommendation(criterion=criterion)
 
@@ -483,14 +482,16 @@ def suggest_cross_group_roles(
     # (1) Baseline: all free params global.
     baseline = runner.fit(free_names, ())
     if runner.cancelled:
-        return _finalize(runner, recommendation, ordered_group_ids, free_names, relative_only, None)
+        return _finalize(
+            runner, recommendation, ordered_group_ids, free_names, unknown_variance, None
+        )
 
     # All-local reference: supplies the per-group value traces and a
     # block-separable comparison point.
     all_local = runner.fit((), free_names, seed_from=baseline)
     if runner.cancelled:
         return _finalize(
-            runner, recommendation, ordered_group_ids, free_names, relative_only, all_local
+            runner, recommendation, ordered_group_ids, free_names, unknown_variance, all_local
         )
 
     # (2) Single flips: each free param local, the rest global, seeded from the
@@ -507,7 +508,7 @@ def suggest_cross_group_roles(
 
     if runner.cancelled:
         return _finalize(
-            runner, recommendation, ordered_group_ids, free_names, relative_only, all_local
+            runner, recommendation, ordered_group_ids, free_names, unknown_variance, all_local
         )
 
     # (3) Greedy / beam accumulation over the improving single flips.
@@ -521,7 +522,7 @@ def suggest_cross_group_roles(
         )
 
     return _finalize(
-        runner, recommendation, ordered_group_ids, free_names, relative_only, all_local
+        runner, recommendation, ordered_group_ids, free_names, unknown_variance, all_local
     )
 
 
@@ -582,12 +583,13 @@ def _finalize(
     recommendation: CrossGroupRoleRecommendation,
     ordered_group_ids: list[str],
     free_names: tuple[str, ...],
-    relative_only: bool,
+    unknown_variance: bool,
     all_local: CrossGroupCandidate | None,
 ) -> CrossGroupRoleRecommendation:
     """Rank candidates, choose the recommendation, and build per-param rows."""
     criterion = recommendation.criterion
     recommendation.candidates = _rank_candidates(runner.candidates, criterion)
+    recommended = recommendation.candidates[0] if recommendation.candidates else None
     # Record every attempted candidate too (failed ones excluded from ranking
     # but discoverable). Ranked successes come first; append the rest.
     ranked_keys = {(c.global_params, c.local_params) for c in recommendation.candidates}
@@ -595,9 +597,6 @@ def _finalize(
         if (candidate.global_params, candidate.local_params) not in ranked_keys:
             recommendation.candidates.append(candidate)
 
-    recommended = recommendation.candidates[0] if recommendation.candidates else None
-    if recommended is not None and not recommended.success:
-        recommended = None
     recommendation.recommended = recommended
 
     recommendation.parameters = _parameter_recommendations(
@@ -613,11 +612,16 @@ def _finalize(
     if runner.cancelled:
         messages.append("cancelled")
     if recommended is None and not runner.cancelled:
-        messages.append("No candidate fit converged; roles left unchanged.")
-    if relative_only:
+        if any(candidate.success for candidate in runner.candidates):
+            messages.append(
+                f"No candidate can be ranked by {criterion.upper()}; roles left unchanged."
+            )
+        else:
+            messages.append("No candidate fit converged; roles left unchanged.")
+    if unknown_variance:
         messages.append(
             f"Error mode is {runner._error_mode.value!r}: {criterion.upper()} values are "
-            "not likelihoods, only their relative ordering across candidates is meaningful."
+            "computed with the unknown common-variance likelihood, counting its fitted variance."
         )
     if recommended is not None and not runner.cancelled:
         local_label = ", ".join(recommended.local_params) or "none"
@@ -654,11 +658,9 @@ def _parameter_recommendations(
         # Variation / roughness from the all-local reference (best available
         # per-group trace); fall back to the recommended fit if it localizes it.
         trace_source = None
-        if all_local is not None and all_local.result is not None:
+        if all_local is not None:
             trace_source = all_local.result
-        elif (
-            recommended is not None and recommended.result is not None and name in recommended_local
-        ):
+        elif recommended is not None and name in recommended_local:
             trace_source = recommended.result
         if trace_source is not None:
             trace = _local_value_trace(trace_source, ordered_group_ids, name)

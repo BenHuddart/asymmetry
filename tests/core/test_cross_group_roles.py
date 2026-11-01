@@ -329,7 +329,7 @@ def test_none_error_mode_flags_relative_only(monkeypatch) -> None:
         error_mode=ErrorMode.NONE,
         max_fits=40,
     )
-    assert "relative" in recommendation.message.lower()
+    assert "unknown common-variance likelihood" in recommendation.message
 
 
 def test_all_failed_fits_leaves_no_recommendation(monkeypatch) -> None:
@@ -357,3 +357,20 @@ def test_symbols_are_exported() -> None:
     assert fitting_api.CrossGroupCandidate is not None
     assert fitting_api.CrossGroupParameterRecommendation is not None
     assert fitting_api.CrossGroupRoleRecommendation is not None
+
+
+@pytest.mark.parametrize("effective_variance", [False, True])
+def test_converged_but_unrankable_fits_leave_roles_unchanged(monkeypatch, effective_variance):
+    model, groups = _linear_groups()
+
+    def fit(groups_arg, model_arg, *, global_params, local_params, **kwargs):
+        result = _stub_result(groups_arg, global_params, local_params, chi_squared=10.0)
+        result.n_points = 1
+        result.uses_effective_variance = effective_variance
+        return result
+
+    monkeypatch.setattr(cross_group_roles_module, "global_fit_parameter_model", fit)
+    recommendation = suggest_cross_group_roles(groups, model, max_fits=40)
+    assert all(candidate.success for candidate in recommendation.candidates)
+    assert recommendation.recommended is None
+    assert "No candidate can be ranked by AICC; roles left unchanged." in recommendation.message

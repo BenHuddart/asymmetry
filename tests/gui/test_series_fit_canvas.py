@@ -40,8 +40,8 @@ _AXIS = [_FIELDS[run] for run in _RUNS]
 def _pair() -> tuple[CandidateSummary, CandidateSummary]:
     a, b = summarise_candidates(
         [
-            _assessment("a", aicc=100.0, prescreen=True),
-            _assessment("b", aicc=110.0, prescreen=True),
+            _assessment("a", statistic=100.0, prescreen=True),
+            _assessment("b", statistic=110.0, prescreen=True),
         ],
         _datasets(),
         SelectionMetric.AICC,

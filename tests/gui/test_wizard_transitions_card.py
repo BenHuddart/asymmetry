@@ -161,10 +161,7 @@ def _assessment(
         parameter_recommendations=(),
         run_diagnostics=tuple(diagnostics),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.2,
-        bic=12.0,
-        selected_score=10.2,
+        sample_count=1000,
         fitted_curves_by_run=fitted_curves,
         component_curves_by_run=component_curves,
     )

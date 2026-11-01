@@ -81,7 +81,9 @@ def _runner_up(recommendation: Any, lined: bool) -> Any | None:
     expression = recommended.template.model.component_expression_string()
     candidates = [
         assessment
-        for assessment in sorted(recommendation.assessments, key=lambda item: item.selected_score)
+        for assessment in sorted(
+            recommendation.assessments, key=lambda item: item.metric_value(recommendation.metric)
+        )
         if assessment.is_successful
         and not assessment.is_disqualified
         and assessment.aicc is not None
@@ -323,7 +325,9 @@ def screen_run(
             is_recommended=assessment.template.key == recommendation.recommended_key,
             is_comparable=assessment.template.key in comparable,
         )
-        for assessment in sorted(recommendation.assessments, key=lambda item: item.selected_score)
+        for assessment in sorted(
+            recommendation.assessments, key=lambda item: item.metric_value(recommendation.metric)
+        )
     ]
 
     recommended = recommendation.recommended_assessment

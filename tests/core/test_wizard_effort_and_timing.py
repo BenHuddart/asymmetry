@@ -304,7 +304,10 @@ def test_screening_summary_distinguishes_a_ranked_table_from_a_failed_screen(
         if np.isfinite(assessment.metric_value(recommendation.metric))
     ]
     assert scored
-    assert min(scored, key=lambda a: a.selected_score).template.key in recommendation.summary
+    assert (
+        min(scored, key=lambda a: a.metric_value(SelectionMetric.AICC)).template.key
+        in recommendation.summary
+    )
 
 
 def test_screening_summary_calls_an_unscoreable_table_a_failure(
@@ -319,10 +322,10 @@ def test_screening_summary_calls_an_unscoreable_table_a_failure(
         assessments=tuple(
             replace(
                 assessment,
-                aic=float("inf"),
-                aicc=None,
-                bic=float("inf"),
-                selected_score=float("inf"),
+                fit_results_by_run={
+                    run: replace(result, success=False)
+                    for run, result in assessment.fit_results_by_run.items()
+                },
                 series_warnings=("Missing or failed single-fit assessment for run 1000.",),
             )
             for assessment in recommendation.assessments
