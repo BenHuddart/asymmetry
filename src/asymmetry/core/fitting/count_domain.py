@@ -47,17 +47,14 @@ from asymmetry.core.fitting.grouped_time_domain import (
     build_grouped_count_model,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.transform.grouping import effective_group_indices
+from asymmetry.core.transform.deadtime import _deadtime_number
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 #: Selectable count-fit cost functions.
 COUNT_COSTS: tuple[str, ...] = ("poisson", "gaussian")
 
 #: Optional count-loss (deadtime) parameters, applied when present in the fit set.
-DEADTIME_PARAMS: tuple[str, ...] = ("DT0", "DT1", "C2", "C3", "C4")
-
-#: Selectable count-loss models (WiMDA ``CountLossModelling``).
-DEADTIME_MODELS: tuple[str, ...] = ("simple", "linear", "polynomial", "power")
+DEADTIME_PARAMS: tuple[str, ...] = ("DT0",)
 
 #: Seed sentinel: give this as a parameter's ``value`` and the count-fit driver
 #: computes the seed from the data instead. Supported for ``N0``, whose right
@@ -154,6 +151,8 @@ def _gaussian_chi2(counts: NDArray[np.float64], model: NDArray[np.float64]) -> f
 
 
 def _cost_value(counts: NDArray[np.float64], model: NDArray[np.float64], cost: str) -> float:
+    if not np.all(np.isfinite(model)):
+        return _INF
     if cost == "gaussian":
         return _gaussian_chi2(counts, model)
     # Cash statistic — the single primitive shared with the grouped/global
@@ -230,116 +229,36 @@ def _split_lifetime(kw: dict, default: float) -> float:
 # --- count loss (deadtime) --------------------------------------------------
 
 
-def _pop_deadtime(kw: dict) -> tuple[float, float, float, float, float]:
-    """Pop the deadtime parameters ``(DT0, DT1, C2, C3, C4)`` (all default 0)."""
-    return (
-        float(kw.pop("DT0", 0.0)),
-        float(kw.pop("DT1", 0.0)),
-        float(kw.pop("C2", 0.0)),
-        float(kw.pop("C3", 0.0)),
-        float(kw.pop("C4", 0.0)),
-    )
+def _deadtime_frame_norm(dataset: MuonDataset, group) -> float:
+    """Exposure Δt·F per detector, with Δt the bunched bin width in µs."""
+    frames = _deadtime_number(dataset.run.grouping.get("good_frames"), "good frames", positive=True)
+    width = _deadtime_number(dataset.run.histograms[0].bin_width, "bin width (µs)", positive=True)
+    return width * group.metadata["grouped_time_domain_bunch_factor"] * frames
 
 
-def _validate_deadtime_model(model: str) -> str:
-    if model not in DEADTIME_MODELS:
-        raise ValueError(f"Unknown deadtime model {model!r}; expected one of {DEADTIME_MODELS}")
-    return model
+def _apply_deadtime(counts, tau_us, *, frame_norm, detector_counts):
+    """Non-paralysable mean Σᵢ wᵢN/(1 + τwᵢN/(Δt·F)).
 
-
-def _deadtime_frame_norm(dataset: MuonDataset, group_id: int) -> float:
-    """Per-frame, per-detector, per-bin count-rate normalization for deadtime.
-
-    Matches the convention of :func:`apply_deadtime_correction`
-    (``loss = N*tau/(bin_width*n_frames)`` per detector). The grouped count sums
-    ``n_det`` detectors, so the per-detector rate divides the group count by
-    ``n_det``. Returns ``n_det * bin_width_us * n_frames``; the loss term is then
-    ``DT0 * N_group / frame_norm``.
+    Knoll, Radiation Detection and Measurement, 4th ed., ch. 4, Dead Time.
+    Detector shares are inferred by inverting the observed per-detector traces
+    at the trial coefficient; all detectors must share their time dependence.
+    Undefined trial means return NaNs for the objective to reject with +∞.
     """
-    grouping = (
-        dataset.run.grouping if dataset.run and isinstance(dataset.run.grouping, dict) else {}
-    )
-    n_det = max(1, len(effective_group_indices(grouping, int(group_id))))
-    try:
-        n_frames = float(grouping.get("good_frames", 1.0)) or 1.0
-    except (TypeError, ValueError):
-        n_frames = 1.0
-    bin_width = float(dataset.run.histograms[0].bin_width) if dataset.run.histograms else 1.0
-    return max(n_det * bin_width * n_frames, 1e-30)
-
-
-def _deadtime_event_fraction(dataset: MuonDataset, group_id: int) -> float:
-    """Per-group event fraction ``evfr`` for the linear / power-law loss forms.
-
-    WiMDA's ``evfr`` is the fraction of the run's events landing in this group.
-    The loaders do not carry an ISIS event-fraction block, so this reads an
-    optional ``event_fractions`` (per group id) or scalar ``event_fraction`` from
-    the grouping and **falls back to 1.0** (the whole event budget) for
-    PSI/synthetic runs that lack it. With ``evfr = 1`` the linear form reduces to
-    ``(DT0 + DT1)·qq`` and the power-law base to ``DT0``.
-    """
-    grouping = (
-        dataset.run.grouping if dataset.run and isinstance(dataset.run.grouping, dict) else {}
-    )
-    fractions = grouping.get("event_fractions")
-    if isinstance(fractions, dict):
-        try:
-            return float(fractions[int(group_id)])
-        except (KeyError, TypeError, ValueError):
-            pass
-    try:
-        value = float(grouping.get("event_fraction", 1.0))
-    except (TypeError, ValueError):
-        return 1.0
-    return value if np.isfinite(value) else 1.0
-
-
-def _apply_deadtime(
-    counts: NDArray[np.float64],
-    dt_terms: tuple[float, float, float, float, float],
-    *,
-    frame_norm: float,
-    time: NDArray[np.float64],
-    evfr: float,
-    model: str,
-) -> NDArray[np.float64]:
-    """Multiply true counts by the non-paralyzable count-loss factor ``1 - L``.
-
-    Follows WiMDA's ``ArrayMusrFunc`` with
-    ``qq = counts / frame_norm`` the per-frame, per-detector rate and ``evfr`` the
-    group event fraction. An exact no-op when every coefficient is zero; the
-    factor is clipped at 0 so a runaway trial cannot make counts negative.
-
-    - ``"simple"``: ``L = DT0·qq``.
-    - ``"linear"``: ``L = (DT0 + DT1·evfr)·qq``.
-    - ``"polynomial"``: ``L = DT0·qq + C2·10³·qq² + C3·10⁶·qq³ + C4·10⁹·qq⁴``.
-    - ``"power"``: ``L = (evfr·DT0)^C2 · exp(-(C4·λ_μ·t)^C3)`` (rate-independent;
-      ``λ_μ = 1/τ_μ``).
-    """
-    dt0, dt1, c2, c3, c4 = dt_terms
-    if dt0 == 0.0 and dt1 == 0.0 and c2 == 0.0 and c3 == 0.0 and c4 == 0.0:
+    if tau_us == 0.0:
         return counts
-    counts = np.asarray(counts, dtype=float)
-    if model == "power":
-        base = np.float64(max(float(evfr) * dt0, 0.0))
-        decay_arg = np.maximum(c4 * np.asarray(time, dtype=float) / float(MUON_LIFETIME_US), 0.0)
-        # base/decay_arg are clamped >= 0, but a degenerate exponent (e.g. a
-        # fitted C2 <= 0 with base -> 0, giving 0**negative) can still make the
-        # loss non-finite. Use numpy power (yields inf, not a ZeroDivisionError)
-        # and map non-finite to a full loss (factor 0) so the Cash / least-squares
-        # cost stays finite rather than derailing migrad.
-        with np.errstate(divide="ignore", invalid="ignore"):
-            loss = np.power(base, c2) * np.exp(-np.power(decay_arg, c3))
-        loss = np.nan_to_num(loss, nan=1.0, posinf=1.0, neginf=1.0)
-    else:
-        qq = counts / frame_norm
-        if model == "simple":
-            loss = dt0 * qq
-        elif model == "linear":
-            loss = (dt0 + dt1 * float(evfr)) * qq
-        else:  # polynomial
-            loss = dt0 * qq + c2 * 1.0e3 * qq**2 + c3 * 1.0e6 * qq**3 + c4 * 1.0e9 * qq**4
-    return counts * np.clip(1.0 - loss, 0.0, None)
+    a = tau_us / frame_norm
+    inverse_denominator = 1.0 - a * detector_counts
+    if not np.all(np.isfinite(inverse_denominator) & (inverse_denominator > 0)):
+        return np.full_like(counts, np.nan)
+    totals = np.sum(detector_counts / inverse_denominator, axis=1)
+    if not np.isfinite(totals.sum()) or totals.sum() <= 0:
+        return np.full_like(counts, np.nan)
+    shares = totals / totals.sum()
+    true_counts = shares[:, None] * counts
+    denominator = 1.0 + a * true_counts
+    if not np.all(np.isfinite(denominator) & (denominator > 0)):
+        return np.full_like(counts, np.nan)
+    return np.sum(true_counts / denominator, axis=0)
 
 
 # --- double pulse -----------------------------------------------------------
@@ -648,7 +567,6 @@ def fit_single_histogram(
     *,
     side: str = "forward",
     cost: str = "poisson",
-    deadtime_model: str = "polynomial",
     t_min: float | None = None,
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
@@ -673,9 +591,8 @@ def fit_single_histogram(
     ``exclude`` drops an interior time window from the fit; a free ``t0``
     parameter shifts the model time axis; free ``lambda_base`` / ``beta_base``
     parameters add a stretched-exponential baseline drift; the deadtime
-    parameters (``DT0``, ``DT1``, ``C2``, ``C3``, ``C4``) add a count-loss term
-    whose form is set by ``deadtime_model`` (``"simple"`` / ``"linear"`` /
-    ``"polynomial"`` / ``"power"`` — see :func:`_apply_deadtime`); a ``dpsep``
+    parameter ``DT0`` adds a rational non-paralysable count-loss term;
+    a ``dpsep``
     parameter switches on the ISIS double-pulse count model — fixed by default,
     or located by a coarse->fine grid scan when supplied free (the non-smooth
     pulse-onset gate defeats gradient fitting). A ``tau`` parameter frees the muon
@@ -683,7 +600,6 @@ def fit_single_histogram(
     supported together with the double-pulse model.
     """
     _validate_cost(cost)
-    _validate_deadtime_model(deadtime_model)
     _guard_model_param_collisions(model_fn)
     if "tau" in params and "dpsep" in params:
         raise ValueError("Free muon lifetime is not supported with the double-pulse model")
@@ -697,7 +613,6 @@ def fit_single_histogram(
                 _with_fixed_dpsep(params, value),
                 side=side,
                 cost=cost,
-                deadtime_model=deadtime_model,
                 t_min=t_min,
                 t_max=t_max,
                 exclude=exclude,
@@ -717,8 +632,7 @@ def fit_single_histogram(
     free_lifetime = "tau" in params  # fit (or fix at a non-physical value) the lifetime
     dp_model = _double_pulse_single_model(fraction_fn) if double_pulse else None
     corrected_model = None if double_pulse else build_grouped_count_model(fraction_fn)
-    frame_norm = _deadtime_frame_norm(dataset, group_id)
-    evfr = _deadtime_event_fraction(dataset, group_id)
+    frame_norm = _deadtime_frame_norm(dataset, group) if "DT0" in params else 1.0
 
     # The per-group amplitude/phase are fixed nuisances here: the sign carries the
     # forward/backward orientation and the physics model owns the real amplitude.
@@ -738,7 +652,7 @@ def fit_single_histogram(
         for follower, main in followers.items():
             kw[follower] = kw[main]
         t0 = _split_time_offset(kw)
-        dt_terms = _pop_deadtime(kw)
+        dt0 = float(kw.pop("DT0", 0.0))
         tau_eval = _split_lifetime(kw, tau)
         if free_lifetime or t0:
             t_eval = time + t0 if t0 else time
@@ -759,7 +673,7 @@ def fit_single_histogram(
             # decay avoids re-exponentiating the invariant time axis each call.
             model = decay * np.asarray(corrected_model(t_eval, **kw), dtype=float)
         return _apply_deadtime(
-            model, dt_terms, frame_norm=frame_norm, time=t_eval, evfr=evfr, model=deadtime_model
+            model, dt0, frame_norm=frame_norm, detector_counts=group.detector_counts
         )
 
     def total_cost(*args) -> float:
@@ -791,7 +705,6 @@ def fit_fb_alpha(
     params: ParameterSet,
     *,
     cost: str = "poisson",
-    deadtime_model: str = "polynomial",
     t_min: float | None = None,
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
@@ -841,8 +754,8 @@ def fit_fb_alpha(
     The same optional nuisances as :func:`fit_single_histogram` apply, all
     no-ops unless requested: ``exclude`` drops an interior window; a free ``t0``
     shifts the model time axis; free ``lambda_base`` / ``beta_base`` add a
-    baseline drift; the deadtime parameters add a count-loss term (form set by
-    ``deadtime_model``); a ``dpsep`` parameter switches on the ISIS double-pulse
+    baseline drift; ``DT0`` adds rational non-paralysable count loss;
+    a ``dpsep`` parameter switches on the ISIS double-pulse
     model (the √α-tied model evaluated at ``t ± dpsep/2``); a ``tau`` parameter
     frees the shared muon lifetime (reported in ``shared_parameters``; not
     supported with the double-pulse model).
@@ -858,7 +771,6 @@ def fit_fb_alpha(
     ``estimate_beta=False`` callers are unaffected.
     """
     _validate_cost(cost)
-    _validate_deadtime_model(deadtime_model)
     _guard_model_param_collisions(model_fn)
     if estimate_beta:
         _guard_beta_collision(model_fn)
@@ -890,7 +802,6 @@ def fit_fb_alpha(
                 model_fn,
                 _with_fixed_dpsep(params, value),
                 cost=cost,
-                deadtime_model=deadtime_model,
                 t_min=t_min,
                 t_max=t_max,
                 exclude=exclude,
@@ -932,10 +843,8 @@ def fit_fb_alpha(
         None if double_pulse else build_fb_count_model(fraction_fn, with_beta=estimate_beta)
     )
 
-    frame_norm_f = _deadtime_frame_norm(dataset, forward_group)
-    frame_norm_b = _deadtime_frame_norm(dataset, backward_group)
-    evfr_f = _deadtime_event_fraction(dataset, forward_group)
-    evfr_b = _deadtime_event_fraction(dataset, backward_group)
+    frame_norm_f = _deadtime_frame_norm(dataset, g_fwd) if "DT0" in params else 1.0
+    frame_norm_b = _deadtime_frame_norm(dataset, g_bwd) if "DT0" in params else 1.0
 
     _reject_affine_ties([params], "Count-domain fitting")
     free = params.free_parameters
@@ -949,12 +858,12 @@ def fit_fb_alpha(
     shared_keys = [n for n in free_names if n not in _per_eval]
     shared_fixed = {k: v for k, v in fixed_kw.items() if k not in _per_eval}  # hoisted
 
-    def _eval(args, time, base_decay, counts_key, sign, frame_norm, evfr) -> NDArray[np.float64]:
+    def _eval(args, time, base_decay, counts_key, sign, frame_norm, group) -> NDArray[np.float64]:
         kw = {**fixed_kw, **dict(zip(free_names, args, strict=False))}
         for follower, main in followers.items():
             kw[follower] = kw[main]
         t0 = _split_time_offset(kw)
-        dt_terms = _pop_deadtime(kw)
+        dt0 = float(kw.pop("DT0", 0.0))
         tau_eval = _split_lifetime(kw, tau)
         if free_lifetime or t0:
             t_eval = time + t0 if t0 else time
@@ -981,14 +890,14 @@ def fit_fb_alpha(
                 fb_corrected(t_eval, sign=sign, background=kw[counts_key], **shared), dtype=float
             )
         return _apply_deadtime(
-            model, dt_terms, frame_norm=frame_norm, time=t_eval, evfr=evfr, model=deadtime_model
+            model, dt0, frame_norm=frame_norm, detector_counts=group.detector_counts
         )
 
     def predict_f(args):
-        return _eval(args, time_f, base_decay_f, "background", +1.0, frame_norm_f, evfr_f)
+        return _eval(args, time_f, base_decay_f, "background", +1.0, frame_norm_f, g_fwd)
 
     def predict_b(args):
-        return _eval(args, time_b, base_decay_b, "background_b", -1.0, frame_norm_b, evfr_b)
+        return _eval(args, time_b, base_decay_b, "background_b", -1.0, frame_norm_b, g_bwd)
 
     def total_cost(*args) -> float:
         return _cost_value(counts_f, predict_f(args), cost) + _cost_value(

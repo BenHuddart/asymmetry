@@ -165,28 +165,36 @@ is off by default and, when off, leaves the fit numerically unchanged.
 Count loss and double pulse
 ---------------------------
 
-* **Fit deadtime DT₀** — add a non-paralysable count-loss term to the fit. The
-  observed counts are the true counts damped by 1 − DT₀·r, with r the
-  per-frame, per-detector count rate; DT₀ is the detector deadtime in
-  microseconds, the same quantity the Grouping dialog's deadtime correction
-  applies. A high-rate run is needed for DT₀ to be well determined.
+* **Fit deadtime DT₀** — fit the non-paralysable mean count model [Knoll]_:
 
-  The core API offers WiMDA's full set of count-loss forms via the
-  ``deadtime_model`` argument — *simple* (DT₀ only), *linear*
-  ((DT₀ + DT₁·evfr)·r, using the group event fraction evfr), *polynomial*
-  (adding C₂·10³·r², C₃·10⁶·r³, C₄·10⁹·r⁴), and *power-law*
-  ((evfr·DT₀)^C₂·exp(−(C₄·λ_μ·t)^C₃)). The loaders carry no ISIS event-fraction
-  block, so evfr defaults to 1 unless the grouping supplies it. The GUI fits the
-  *simple* DT₀ term, which is the dominant and best-determined coefficient.
+  .. math::
 
-  Once a deadtime fit converges, **Promote DT₀ → grouping** writes the fitted
-  value into the grouping's per-detector deadtime (WiMDA's Send-to-Group),
-  reporting the before/after values; tick **accumulate** to add to the existing
-  value rather than replace it. Re-reduce the run to apply the promoted
-  correction. This closes the calibration loop: fit the deadtime, promote it,
-  and the reduced data is corrected. A polynomial or power-law promotion also
-  records the model name and higher-order coefficients with the run, while the
-  reduction still applies the dominant DT₀.
+     M_i = \frac{N_i}{1 + aN_i}, \qquad a = \frac{\mathrm{DT}_0}{\Delta t\,F}.
+
+  Here :math:`N_i` and :math:`M_i` are true and observed counts for detector
+  :math:`i`, :math:`F` is the good-frame count, and both DT₀ and the bin width
+  :math:`\Delta t` are in microseconds. The formula is the exact algebraic
+  inverse of the Grouping dialog's deadtime correction. Signed calibration
+  coefficients are supported. Trial values with an undefined mean
+  (:math:`1+aN_i\leq0`) receive infinite cost; counts are never clipped.
+  Good frames must be finite and positive whenever DT₀ is supplied.
+
+  Detectors in a group are assumed to share their time dependence:
+  :math:`N_i=w_iN_G`, with :math:`\sum_iw_i=1`. Their means are summed
+  individually. Shares are estimated from per-detector counts in the fit
+  window, inverted at each trial DT₀. This accounts for unequal detector
+  rates; a high-rate run is needed to determine DT₀. Bunching uses
+  :math:`\Delta t_{\mathrm{eff}}=k\Delta t` for :math:`k` raw bins. Treating
+  the rate as constant within a bunch is an approximation whose error is
+  second order in its within-bunch variation. The count likelihood does not
+  propagate uncertainty in the estimated shares or establish an acquisition
+  variance model for deadtime losses.
+
+  **Promote DT₀ → grouping** writes the fitted value into the per-detector
+  correction and reports the before/after values. Re-reduce the run to apply
+  it. If the fitted counts already include a deadtime correction, DT₀ is a
+  residual coefficient: tick **accumulate** to add it to the applied table.
+  Replacement is appropriate only when the fit used uncorrected counts.
 
 * **Double pulse (μs)** — set the pulse separation for an ISIS double-pulse
   source; 0 leaves the single-pulse model. The two pulses each carry the
@@ -263,3 +271,6 @@ References
   parameter α, and the Poisson nature of detector counts.
 * A. Suter and B. M. Wojek, Phys. Procedia **30**, 69 (2012) — musrfit, the
   single-histogram (*fittype 0*) count fit and its cost options.
+
+.. [Knoll] G. F. Knoll, *Radiation Detection and Measurement*, 4th ed.
+   (Wiley, 2010), Chapter 4, “Dead Time”.

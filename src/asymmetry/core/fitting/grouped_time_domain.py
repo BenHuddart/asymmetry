@@ -136,6 +136,7 @@ class GroupedTimeDomainGroup:
     error: NDArray[np.float64]
     source_run_number: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    detector_counts: NDArray[np.float64] | None = None
 
 
 @dataclass
@@ -155,12 +156,7 @@ def build_grouped_time_domain_datasets(
     t_max: float | None = None,
     lifetime_corrected: bool = True,
 ) -> list[MuonDataset]:
-    """Return grouped-count datasets for one grouped run.
-
-    With ``lifetime_corrected=True`` (the default) the counts are scaled by
-    ``exp(t / tau_mu)``; with ``False`` the raw detector counts are returned, on
-    which Poisson statistics are exact.
-    """
+    """Return raw or lifetime-corrected grouped-count datasets for one run."""
     with perf_timer(
         "core.reduce.grouped_time_domain",
         lifetime_corrected=lifetime_corrected,
@@ -224,12 +220,7 @@ def grouped_time_domain_available(dataset: MuonDataset | None) -> bool:
 
 @dataclass
 class _CountGroupContext:
-    """Shared per-run setup for building one or more count-domain group traces.
-
-    Computed once over a chosen set of detector groups so that single-group,
-    forward/backward, and full multi-group builders all share the same t0
-    alignment, good-bin window, deadtime preparation, and bunching.
-    """
+    """Shared detector alignment, window, correction, and bunching settings."""
 
     run: Any
     prepared_histograms: list[Any]
@@ -350,28 +341,32 @@ def _build_one_count_group(
     lifetime_corrected: bool,
     exclude: tuple[float, float] | None = None,
 ) -> GroupedTimeDomainGroup | None:
-    """Build one count-domain group trace from a prepared context.
-
-    ``exclude`` drops an interior ``[t0, t1]`` window of bins from the trace
-    (WiMDA's second time range), endpoints inclusive — for rejecting a laser/RF
-    artefact or a spike without splitting the fit. Returns ``None`` when the
-    group yields no usable bins inside the fit window.
-    """
+    """Align and bunch detector counts together before applying the fit mask."""
     run = ctx.run
-    counts = apply_grouping_aligned(
-        ctx.prepared_histograms,
-        indices,
-        common_t0_bin=ctx.common_t0,
-        detector_t0_bins=ctx.detector_t0_bins,
-    )
+    aligned = [
+        apply_grouping_aligned(
+            ctx.prepared_histograms,
+            [index],
+            common_t0_bin=ctx.common_t0,
+            detector_t0_bins=ctx.detector_t0_bins,
+        )
+        for index in indices
+    ]
+    terminal_bin = min(ctx.last_good + 1, *(trace.size for trace in aligned))
+    detector_counts = np.asarray([trace[ctx.first_good : terminal_bin] for trace in aligned])
+    counts = detector_counts.sum(axis=0)
     if counts.size == 0:
         return None
-    trimmed_counts = np.asarray(counts[ctx.first_good : ctx.last_good + 1], dtype=np.float64)
+    trimmed_counts = counts
+    bunch_factor = ctx.bunch_factor if counts.size >= ctx.bunch_factor else 1
     time = (
         np.arange(trimmed_counts.size, dtype=float) + float(ctx.axis_start)
     ) * ctx.bin_width + ctx.t0_residual_us
-    if ctx.bunch_factor > 1:
-        time, trimmed_counts = rebin_counts(time, trimmed_counts, ctx.bunch_factor)
+    if bunch_factor > 1:
+        detector_counts = np.asarray(
+            [rebin_counts(time, trace, bunch_factor)[1] for trace in detector_counts]
+        )
+        time, trimmed_counts = rebin_counts(time, trimmed_counts, bunch_factor)
 
     if lifetime_corrected:
         scale = np.exp(time / float(MUON_LIFETIME_US))
@@ -400,7 +395,7 @@ def _build_one_count_group(
             "group_id": int(group_id),
             "group_name": str(group_name),
             "grouped_time_domain": True,
-            "grouped_time_domain_bunch_factor": ctx.bunch_factor,
+            "grouped_time_domain_bunch_factor": bunch_factor,
             "grouped_time_domain_lifetime_corrected": bool(lifetime_corrected),
         }
     )
@@ -410,6 +405,7 @@ def _build_one_count_group(
         time=np.asarray(time[mask], dtype=float).copy(),
         counts=np.asarray(out_counts[mask], dtype=float).copy(),
         error=np.asarray(errors[mask], dtype=float).copy(),
+        detector_counts=detector_counts[:, mask].copy(),
         source_run_number=int(run.run_number),
         metadata=metadata,
     )
