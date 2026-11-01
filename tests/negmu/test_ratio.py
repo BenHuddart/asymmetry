@@ -14,6 +14,7 @@ import pytest
 
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.negmu.fit import CaptureModelSpec, fit_capture_fb_alpha
 from asymmetry.core.negmu.model import CaptureComponent
@@ -45,6 +46,7 @@ def _build_fit_result(
         ps.add(Parameter(name=f"amp_{label}", value=amp))
     unc = {f"amp_{lbl}": sigma for lbl, sigma in uncertainties.items()}
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         parameters=ps,
         uncertainties=unc,

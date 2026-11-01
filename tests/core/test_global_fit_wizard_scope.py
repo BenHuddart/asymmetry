@@ -23,6 +23,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     build_global_fit_wizard_candidate_portfolio,
     series_template_alphabet,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.muon_fluorine.polarization import linear_fmuf_polarization
 from asymmetry.core.fitting.wizard_scope import (
     FitTimeEstimates,
@@ -106,6 +107,7 @@ def _assessment(template: CandidateTemplate, *, score: float) -> CandidateAssess
     return CandidateAssessment(
         template=template,
         fit_result=FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=score,
             reduced_chi_squared=score / 10.0,
@@ -186,7 +188,7 @@ def test_alphabet_excludes_null_baselines_and_failures() -> None:
         replace(recommendation.assessments[0], is_null_baseline=True),
         replace(
             recommendation.assessments[1],
-            fit_result=FitResult(success=False, message="no"),
+            fit_result=FitResult(objective=Objective.GAUSSIAN, success=False, message="no"),
         ),
     )
     alphabet = series_template_alphabet({1: replace(recommendation, assessments=assessments)})

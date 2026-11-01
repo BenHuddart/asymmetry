@@ -6,6 +6,7 @@ import pytest
 from PySide6.QtWidgets import QCheckBox, QMessageBox
 
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.transform.deadtime import DeadtimeCalibration
 from asymmetry.gui.windows.grouping import deadtime_section
@@ -57,6 +58,7 @@ def test_promote_uses_captured_total_and_reports_increment(qapp):
     tab = window._single_fit_tab
     calibration = DeadtimeCalibration((0.0112, 0.01), (None, None), "count_fit", dataset.run_number)
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         parameters=ParameterSet([Parameter("DT0", 0.0012)]),
         deadtime_calibration=calibration,

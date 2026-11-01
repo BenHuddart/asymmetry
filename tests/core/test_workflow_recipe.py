@@ -13,6 +13,7 @@ import pytest
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import CandidateAssessment, CandidateTemplate
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.seeding import (
     SeedContext,
@@ -44,7 +45,7 @@ def _assessment() -> CandidateAssessment:
             rationale="baseline",
             model=model,
         ),
-        fit_result=FitResult(success=True, parameters=parameters),
+        fit_result=FitResult(objective=Objective.GAUSSIAN, success=True, parameters=parameters),
         sample_count=1000,
         residual_rms=0.1,
         runs_z_score=0.2,
@@ -80,7 +81,7 @@ def _oscillatory_assessment() -> CandidateAssessment:
     return replace(
         base,
         template=replace(base.template, key="oscillatory_exp_constant", model=model),
-        fit_result=FitResult(success=True, parameters=parameters),
+        fit_result=FitResult(objective=Objective.GAUSSIAN, success=True, parameters=parameters),
     )
 
 

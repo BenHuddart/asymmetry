@@ -13,6 +13,7 @@ import pytest
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.count_domain import fit_fb_alpha
 from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.simulate import build_builtin_template, simulate_run
@@ -131,6 +132,7 @@ def test_count_domain_alpha_minos_overlay():
 
 def _fake_result(chi2: float, dof: int) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=chi2,
         reduced_chi_squared=chi2 / dof,
@@ -166,6 +168,6 @@ def test_quality_verdict_regions_at_default():
 
 def test_quality_none_when_dof_unusable():
     # No chi²/dof information and no MINOS overlay → verdict suppressed, not faked.
-    summary = fit_result_summary(FitResult(success=True))
+    summary = fit_result_summary(FitResult(objective=Objective.GAUSSIAN, success=True))
     assert summary["quality"] is None
     assert summary["uncertainties_asymmetric"] == {}

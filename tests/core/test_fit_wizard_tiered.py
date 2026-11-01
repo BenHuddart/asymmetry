@@ -69,6 +69,7 @@ from asymmetry.core.fitting.fit_wizard import (
     PERSISTED_CURVE_MAX_POINTS as _PERSISTED_CURVE_MAX_POINTS,
 )
 from asymmetry.core.fitting.information_criteria import InformationCriteria
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.models import longitudinal_field_kubo_toyabe
 from asymmetry.core.fitting.muon_fluorine.polarization import linear_fmuf_polarization
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -297,7 +298,9 @@ def _dummy_assessment(key: str, *, stage: int = 2) -> CandidateAssessment:
         rationale="",
         model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
     )
-    fit_result = FitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0)
+    fit_result = FitResult(
+        objective=Objective.GAUSSIAN, success=True, chi_squared=1.0, reduced_chi_squared=1.0
+    )
     empty = np.array([], dtype=float)
     return CandidateAssessment(
         template=template,
@@ -413,6 +416,7 @@ def _dense_assessment(key: str, n_points: int) -> CandidateAssessment:
     return replace(
         base,
         fit_result=FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=1.0,
@@ -542,17 +546,7 @@ def _order_preserving_tasks() -> tuple[list[_AssessmentTask], list[str]]:
 
 
 class _FakeProcessPool:
-    """A stand-in for a spawn ``ProcessPoolExecutor`` that runs tasks inline.
-
-    Mirrors the pattern in ``test_global_fit_wizard.py``: submitting a task
-    just calls it synchronously. Real :class:`concurrent.futures.Future`
-    objects are used (not a bespoke fake) because ``_run_template_assessments``
-    drives completion through ``concurrent.futures.as_completed``, which
-    reaches into a future's internal condition/state — a duck-typed fake with
-    only ``.result()`` cannot satisfy it. Running synchronously (rather than on
-    a real process) keeps the test deterministic and keeps test-only
-    monkeypatches visible (a real ``spawn`` worker cannot see them).
-    """
+    """A stand-in for a spawn ``ProcessPoolExecutor`` that runs tasks inline."""
 
     def __init__(self) -> None:
         self.shutdown_calls: list[dict] = []
@@ -570,15 +564,7 @@ class _FakeProcessPool:
 
 
 def _monkeypatch_dummy_worker(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace the real fit worker with one that maps a task to ``_dummy_assessment``.
-
-    ``_execute_assessment_task`` normally drives a real fit; these tests only
-    care about fan-out mechanics (ordering, cancellation, pool lifecycle), so a
-    fake keeps them fast and deterministic on both the serial and process-pool
-    paths (a monkeypatch on the plain function is visible to
-    ``_FakeProcessPool.submit`` because it calls it in-process, unlike a real
-    spawned worker).
-    """
+    """Replace the real fit worker with one that maps a task to ``_dummy_assessment``."""
 
     def _fake_execute(task, cancel_callback=None):
         return _dummy_assessment(task.template.key, stage=task.stage)
@@ -1498,7 +1484,11 @@ def _assessment_with_frequency(frequency: float) -> CandidateAssessment:
     return replace(
         base,
         fit_result=FitResult(
-            success=True, chi_squared=1.0, reduced_chi_squared=1.0, parameters=params
+            objective=Objective.GAUSSIAN,
+            success=True,
+            chi_squared=1.0,
+            reduced_chi_squared=1.0,
+            parameters=params,
         ),
     )
 
@@ -1762,7 +1752,9 @@ def _scored_assessment(
         rationale="",
         model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
     )
-    fit_result = FitResult(success=success, chi_squared=value, reduced_chi_squared=1.0)
+    fit_result = FitResult(
+        objective=Objective.GAUSSIAN, success=success, chi_squared=value, reduced_chi_squared=1.0
+    )
     empty = np.array([], dtype=float)
     return CandidateAssessment(
         template=template,
@@ -1990,6 +1982,7 @@ def _policy_assessment(
         for i in range(param_count if param_count is not None else 1):
             parameters.add(Parameter(name=f"p{i}", value=1.0))
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=success,
         chi_squared=value
         - InformationCriteria(0.0, len(parameters.free_parameters), 1000).value(
@@ -2453,6 +2446,7 @@ def test_disqualifier_flags_frequency_at_resolution_floor() -> None:
     params.add(Parameter(name="frequency", value=0.05))
     params.add(Parameter(name="phase", value=0.0))
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
@@ -2480,6 +2474,7 @@ def test_disqualifier_flags_zero_consistent_amplitude() -> None:
     params.add(Parameter(name="frequency", value=1.5))  # well above the floor
     params.add(Parameter(name="phase", value=0.0))
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
@@ -2506,6 +2501,7 @@ def test_disqualifier_skips_amplitude_when_error_missing() -> None:
     params.add(Parameter(name="A", value=0.01))
     params.add(Parameter(name="frequency", value=1.5))
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
@@ -2532,6 +2528,7 @@ def test_disqualifier_ignores_non_oscillatory_templates() -> None:
     params.add(Parameter(name="A_1", value=0.001))  # tiny, but no frequency here
     params.add(Parameter(name="Lambda", value=0.4))
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
@@ -3135,6 +3132,7 @@ def _ladder_template() -> CandidateTemplate:
 
 def _ladder_fit_result(*, success: bool, chi_squared: float) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=success,
         chi_squared=chi_squared,
         parameters=ParameterSet(

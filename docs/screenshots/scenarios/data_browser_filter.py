@@ -83,10 +83,7 @@ def _compose(browser_pix: QPixmap, dialog_pix: QPixmap) -> QPixmap:
     caption_height = 32
 
     canvas_w = browser_pix.width() + dialog_pix.width() + gap + padding * 2
-    canvas_h = (
-        max(browser_pix.height(), dialog_pix.height() + caption_height)
-        + padding * 2
-    )
+    canvas_h = max(browser_pix.height(), dialog_pix.height() + caption_height) + padding * 2
 
     canvas = QPixmap(canvas_w, canvas_h)
     canvas.fill(QColor("#f8fafc"))

@@ -27,9 +27,7 @@ from ._base import Scenario, _process_events_for, register
 
 class MuonFluorinePbf2Scenario(Scenario):
     name = "muon_fluorine_pbf2"
-    description = (
-        "Converged FmuF_Linear*Exponential+Constant fit on a damped PbF₂ F-μ-F dataset."
-    )
+    description = "Converged FmuF_Linear*Exponential+Constant fit on a damped PbF₂ F-μ-F dataset."
     size = (1500, 920)
     requires_fit = True
 
@@ -43,9 +41,7 @@ class MuonFluorinePbf2Scenario(Scenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         dataset = make_pbf2_fmuf(relaxation_lambda_per_us=0.3)
         window._data_browser.add_dataset(dataset)

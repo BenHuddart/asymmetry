@@ -18,6 +18,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     fit_grouped_series,
     recommend_grouped_series_seeding,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
@@ -75,7 +76,11 @@ def _fake_member_factory(received: dict):
             fitted.add(Parameter(name="amplitude", value=0.7))  # fitted away from 1
             fitted.add(Parameter(name="relative_phase", value=0.2))
             group_results[g.group_id] = FitResult(
-                success=True, chi_squared=1.0, reduced_chi_squared=0.1, parameters=fitted
+                objective=Objective.GAUSSIAN,
+                success=True,
+                chi_squared=1.0,
+                reduced_chi_squared=0.1,
+                parameters=fitted,
             )
         return GroupedTimeDomainFitResult(
             success=True,
@@ -200,7 +205,11 @@ def test_failed_member_resets_chain_to_provided(monkeypatch):
             for name in GROUP_NUISANCE_PARAMS:
                 fitted.add(Parameter(name=name, value=1.0))
             group_results[g.group_id] = FitResult(
-                success=success, chi_squared=1.0, reduced_chi_squared=0.1, parameters=fitted
+                objective=Objective.GAUSSIAN,
+                success=success,
+                chi_squared=1.0,
+                reduced_chi_squared=0.1,
+                parameters=fitted,
             )
         return GroupedTimeDomainFitResult(
             success=success,

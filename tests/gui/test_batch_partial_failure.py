@@ -31,6 +31,7 @@ from PySide6.QtCore import QSettings
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.fit.global_tab import FitLaunch
@@ -76,6 +77,7 @@ def _dataset(run_number: int) -> MuonDataset:
 
 def _ok(run_number: int) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=0.5,
@@ -85,7 +87,11 @@ def _ok(run_number: int) -> FitResult:
 
 
 def _failed() -> FitResult:
-    return FitResult(success=False, message="call limit reached, invalid parameters")
+    return FitResult(
+        objective=Objective.GAUSSIAN,
+        success=False,
+        message="call limit reached, invalid parameters",
+    )
 
 
 def test_partial_batch_failure_still_emits_series_for_successes(mw, monkeypatch):

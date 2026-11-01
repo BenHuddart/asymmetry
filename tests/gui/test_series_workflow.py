@@ -22,6 +22,7 @@ from PySide6.QtCore import QSettings
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.project.schema import load_project, save_project
 from asymmetry.core.representation import RepresentationType
@@ -76,6 +77,7 @@ def _dataset(run_number: int, field: float = 100.0) -> MuonDataset:
 
 def _result(value: float = 0.2) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=0.5,

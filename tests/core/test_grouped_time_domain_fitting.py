@@ -23,6 +23,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     build_grouped_count_model,
     validate_grouped_model_contract,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
@@ -244,6 +245,7 @@ def test_fit_grouped_time_domain_maps_results_back_to_group_ids(monkeypatch) -> 
         assert set(initial_params) == set(captured_run_numbers)
         results = {
             int(dataset.run_number): FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=float(index + 1),
                 reduced_chi_squared=0.1,
@@ -319,6 +321,7 @@ def test_fit_grouped_time_domain_preserves_internal_run_numbers_when_metadata_ha
         captured_run_numbers.extend(int(dataset.run_number) for dataset in datasets)
         results = {
             int(dataset.run_number): FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=1.0,
                 reduced_chi_squared=0.1,
@@ -391,6 +394,7 @@ def test_fit_grouped_time_domain_builds_lifetime_corrected_count_model(monkeypat
         np.testing.assert_allclose(predicted, expected)
         results = {
             int(dataset.run_number): FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=1.0,
                 reduced_chi_squared=0.1,
@@ -421,31 +425,26 @@ def test_fit_grouped_time_domain_builds_lifetime_corrected_count_model(monkeypat
 
 
 def test_fit_grouped_time_domain_poisson_uses_raw_count_model(monkeypatch) -> None:
-    """The Poisson default fits raw counts against a raw-count (× e^(−t/τ)) model.
-
-    Cash needs true Poisson counts, so the grouped driver inverts the lifetime
-    correction on the data and multiplies the lifetime-corrected count model by
-    ``e^(−t/τ_μ)`` to predict raw counts. Both pieces are pinned here.
-    """
+    """The Poisson default fits raw counts against a raw-count (× e^(−t/τ)) model."""
     t_probe = 0.25
-    corrected_counts = np.array([99.0, 88.0])
+    raw_counts = np.array([99.0, 88.0])
     times = np.array([0.0, t_probe])
     groups = [
         GroupedTimeDomainGroup(
             group_id="g1",
             group_name="Group 1",
             time=times.copy(),
-            counts=corrected_counts.copy(),
+            counts=raw_counts.copy(),
             error=np.array([1.0, 1.0]),
-            metadata={"grouped_time_domain_lifetime_corrected": True},
+            metadata={"grouped_time_domain_lifetime_corrected": False},
         ),
         GroupedTimeDomainGroup(
             group_id="g2",
             group_name="Group 2",
             time=times.copy(),
-            counts=corrected_counts.copy(),
+            counts=raw_counts.copy(),
             error=np.array([1.0, 1.0]),
-            metadata={"grouped_time_domain_lifetime_corrected": True},
+            metadata={"grouped_time_domain_lifetime_corrected": False},
         ),
     ]
     initial = {"g1": _initial_group_params(), "g2": _initial_group_params()}
@@ -459,14 +458,11 @@ def test_fit_grouped_time_domain_poisson_uses_raw_count_model(monkeypatch) -> No
         initial_params,
         **kwargs,
     ):
-        # The Poisson cost-factory must be the one routed to the engine.
         from asymmetry.core.fitting.engine import POISSON_COST
 
         assert kwargs.get("cost_factory") is POISSON_COST
-        # The observed counts must be the raw (de-corrected) Poisson counts.
-        decay = np.exp(-times / float(MUON_LIFETIME_US))
         for dataset in datasets:
-            np.testing.assert_allclose(dataset.asymmetry, corrected_counts * decay)
+            np.testing.assert_allclose(dataset.asymmetry, raw_counts)
         # The model must predict raw counts: corrected model × e^(−t/τ).
         probe = np.array([t_probe], dtype=float)
         predicted = model_fn(
@@ -485,6 +481,7 @@ def test_fit_grouped_time_domain_poisson_uses_raw_count_model(monkeypatch) -> No
         np.testing.assert_allclose(predicted, expected)
         results = {
             int(dataset.run_number): FitResult(
+                objective=Objective.POISSON,
                 success=True,
                 chi_squared=1.0,
                 reduced_chi_squared=0.1,
@@ -587,13 +584,7 @@ def test_fit_grouped_series_mixed_global_local_physics() -> None:
 
 
 def test_fit_grouped_time_domain_recovers_absolute_per_group_phase() -> None:
-    """With the shared model phase fixed at zero, each group's free per-group
-    phase nuisance recovers that group's *absolute* oscillation phase.
-
-    This is the parameterisation the GUI seeds (model phase fixed at 0, per-group
-    phase carries the full phase): the fit must converge on distinct per-group
-    phases and a shared frequency from a clean two-group TF signal.
-    """
+    """With model phase fixed, recover distinct absolute group phases and shared frequency."""
     time = np.linspace(0.0, 8.0, 1601)
     frequency = 3.0
     n0, background, amplitude = 5.0e4, 50.0, 0.22
@@ -664,7 +655,7 @@ def test_fit_grouped_time_domain_rejects_unknown_cost() -> None:
         ),
     ]
     initial = {"g1": _initial_group_params(), "g2": _initial_group_params()}
-    with pytest.raises(ValueError, match="Unknown grouped fit cost"):
+    with pytest.raises(ValueError, match="not a valid Objective"):
         fit_grouped_time_domain(
             groups,
             _cosine_polarization,
@@ -799,6 +790,7 @@ def test_fit_grouped_series_individual_runs_one_fit_per_member(monkeypatch) -> N
         initial_params = kwargs["initial_params"]
         group_results = {
             group.group_id: FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=1.0,
                 reduced_chi_squared=0.1,
@@ -864,6 +856,7 @@ def test_fit_grouped_series_global_shares_physics_across_runs(monkeypatch) -> No
         captured["source_runs"] = [d.metadata["source_run_number"] for d in datasets]
         results = {
             int(d.run_number): FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=1.0,
                 reduced_chi_squared=0.1,
@@ -986,6 +979,7 @@ def test_fit_grouped_time_domain_allows_phase_less_model_when_relative_phase_is_
         np.testing.assert_allclose(predicted, expected)
         results = {
             int(dataset.run_number): FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=1.0,
                 reduced_chi_squared=0.1,
@@ -1183,10 +1177,7 @@ def _relaxing_cosine_model(t, frequency, Lambda, phase=0.0):  # noqa: N803
 
 
 def _mixed_global_local_scenario(true_lambda):
-    """Build a mixed grouped series: shared frequency, per-run Lambda, 2 groups/run.
-
-    Returns ``(members, initial, common_kwargs)`` ready for ``fit_grouped_series``.
-    """
+    """Build a mixed grouped series: shared frequency, per-run Lambda, 2 groups/run."""
     time = np.linspace(0.0, 8.0, 1601)
     frequency = 3.0
     n0, background, amplitude = 5.0e4, 50.0, 0.22
@@ -1268,10 +1259,17 @@ def test_grouped_global_is_large_counts_free_params() -> None:
     )
 
 
-def test_grouped_global_blockwise_matches_monolithic(monkeypatch) -> None:
+@pytest.mark.parametrize("cost", ["gaussian", "poisson"])
+def test_grouped_global_blockwise_matches_monolithic(monkeypatch, cost) -> None:
     """The block-separable solver recovers the same physics as the monolithic fit."""
     true_lambda = {10: 0.3, 11: 1.0, 12: 0.6, 13: 1.4}
     members, frequency, common = _mixed_global_local_scenario(true_lambda)
+    common["cost"] = cost
+    if cost == "poisson":
+        for groups in members.values():
+            for group in groups:
+                group.counts = np.round(group.counts * np.exp(-group.time / MUON_LIFETIME_US))
+                group.error = np.sqrt(np.maximum(group.counts, 1))
 
     monolithic = fit_grouped_series("global", members, _relaxing_cosine_model, **common)
 

@@ -53,6 +53,7 @@ from asymmetry.core.fitting.fit_wizard import (
     is_oscillatory_admissible,
     oscillatory_line_amplitude_names,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
 from asymmetry.core.fitting.peak_detection import (
     _EARLY_MIN_POINTS,
@@ -537,21 +538,7 @@ def test_damped_seed_puts_the_true_envelope_inside_the_fit_bounds() -> None:
 @pytest.mark.integration
 @pytest.mark.timeout(600)
 def test_blind_wizard_ranks_a_damped_oscillation_top() -> None:
-    """The headline: no ``user_frequencies_mhz``, damped cosine still wins.
-
-    On ``main`` this record's recommendation was a static Kubo-Toyabe — the
-    oscillation was invisible to both seeding FFTs, so no oscillatory candidate
-    was ever seeded near it.
-
-    The winner is the relaxing twin, which is this record's *true* shape: a
-    damped cosine, a slow relaxation and a baseline.  It used to lose, not
-    because the tail is not there but because the extra exponential was seeded
-    at a quarter of the data span with no floor on its rate, ran away into the
-    ``A·e^{-λt} + A_bg`` degeneracy and was disqualified as unresolved.  Seeded
-    from the early-minus-tail step and bounded away from that degeneracy at
-    ``1/T`` it recovers every generated value (below) and beats the plain damped
-    cosine by ~725 AICc.
-    """
+    """The headline: no ``user_frequencies_mhz``, damped cosine still wins."""
     dataset = _damped_record()
 
     recommendation = build_fit_wizard_recommendation(
@@ -979,6 +966,7 @@ class _ScriptedEngine:
 
 def _call_limited(chi_squared: float, **values: float) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=False,
         chi_squared=chi_squared,
         parameters=ParameterSet([Parameter(name=n, value=v) for n, v in values.items()]),
@@ -1012,7 +1000,9 @@ def test_a_call_limited_fit_is_restarted_from_the_parameters_it_returned() -> No
     template = _relax_template()
     seed = _relax_seed_parameters(template)
     stopped = _call_limited(2000.0, A_3=15.5, Lambda_3=0.019, A_bg=-8.4)
-    converged = FitResult(success=True, chi_squared=900.0, parameters=ParameterSet())
+    converged = FitResult(
+        objective=Objective.GAUSSIAN, success=True, chi_squared=900.0, parameters=ParameterSet()
+    )
     engine = _ScriptedEngine([converged])
 
     final = _fit_with_call_limit_continuations(
@@ -1122,6 +1112,7 @@ def _ranked_assessment(key: str, aicc: float, *, success: bool) -> CandidateAsse
             model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
         ),
         fit_result=FitResult(
+            objective=Objective.GAUSSIAN,
             success=success,
             chi_squared=aicc,
             parameters=ParameterSet([Parameter(name="Lambda", value=1.0)]),
@@ -1154,6 +1145,7 @@ def test_refinement_targets_the_metric_leader_even_when_its_fit_failed(
     refined = replace(
         leader,
         fit_result=FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=90.0,
             parameters=leader.fit_result.parameters,
@@ -1452,7 +1444,12 @@ def test_a_powder_overhauser_amplitude_inside_two_sigma_is_no_longer_a_line() ->
 
 def _amplitude_fit_result(values: dict[str, float], uncertainties: dict[str, float]) -> FitResult:
     parameters = ParameterSet([Parameter(name=name, value=value) for name, value in values.items()])
-    return FitResult(success=True, parameters=parameters, uncertainties=uncertainties)
+    return FitResult(
+        objective=Objective.GAUSSIAN,
+        success=True,
+        parameters=parameters,
+        uncertainties=uncertainties,
+    )
 
 
 def test_one_significant_line_is_enough_to_stay_oscillatory() -> None:

@@ -172,10 +172,17 @@ Sharing fit-function (physics) parameters across **several runs** — for exampl
 a global Keren fit that shares :math:`\Delta` and :math:`\nu` across a set of LF
 fields measured at one temperature — is done programmatically with
 :func:`~asymmetry.core.fitting.grouped_time_domain.fit_grouped_series`. This is
-the count-domain path: it operates on the raw, lifetime-corrected grouped
-**counts** (Cash/Poisson cost by default), the same
-:math:`N_0[1 + A\,P(t)] + B e^{t/\tau_\mu}` model documented above — it does
-**not** take ``.asymmetry`` arrays.
+the count-domain path: Poisson fits take raw grouped **counts**, while
+Gaussian fits may use lifetime-corrected counts. The raw expectation is the
+model documented above multiplied by :math:`e^{-t/\tau_\mu}`. The API does
+not fit ``.asymmetry`` arrays.
+
+Build Poisson inputs with ``build_grouped_time_domain_groups(...,
+lifetime_corrected=False)``. The fitter never reconstructs raw counts by
+inverting a lifetime correction. Poisson inputs reject applied deadtime
+correction; use the raw-count DT₀ model or Gaussian weighting as described in
+:doc:`count_domain_fitting`. Invalid Gaussian errors use the shared
+:doc:`fitting` input requirements.
 
 The ``relationship`` argument selects the sharing mode. The valid values are
 ``GROUPED_SERIES_RELATIONSHIPS`` — ``("individual", "batch", "global")``:
@@ -212,7 +219,9 @@ the ``members`` and ``initial_params`` maps keyed by a per-run id, then call
    # One LF field per run; the key is any per-run id (here the run number).
    runs = {44000: load("run_44000.nxs"), 44001: load("run_44001.nxs")}
    members = {
-       run_id: build_grouped_time_domain_groups(ds, t_min=0.1, t_max=8.0)
+       run_id: build_grouped_time_domain_groups(
+           ds, t_min=0.1, t_max=8.0, lifetime_corrected=False
+       )
        for run_id, ds in runs.items()
    }
 
@@ -247,9 +256,8 @@ The returned ``GroupedSeriesFitResult`` carries the cross-run
 
 .. note::
 
-   **This API shares parameters in the count domain.** It fits lifetime-corrected
-   grouped detector counts with a Cash/Poisson statistic — the statistically
-   faithful choice for low-count data. To share parameters across several
+   **This API shares parameters in the count domain.** Its Poisson likelihood
+   requires raw grouped counts. To share parameters across several
    ``.asymmetry`` traces in a single call instead, use the asymmetry-domain
    :func:`~asymmetry.core.fitting.fit_global` (Gaussian weighted least squares);
    see :doc:`asymmetry_domain_global_fit`. In the GUI, the asymmetry-domain

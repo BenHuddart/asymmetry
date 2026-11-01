@@ -27,6 +27,7 @@ from asymmetry.core.fitting.global_search.trend_objective import (
     CandidateRung,
     SelectionObjective,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.trend_quality import CandidateTrend, PassDiagnostic, TraceQuality
 from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION, migrate_to_current, validate
@@ -44,6 +45,7 @@ def _assessment(
         ),
         fit_results_by_run={
             run: FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=10.0,
                 reduced_chi_squared=1.0,

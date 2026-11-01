@@ -77,9 +77,7 @@ class ParameterTrendingPhaseScenario(Scenario):
             phase_by_id={"phase-1": phase},
             # The short pill label the host derives from the members — the pill
             # is a handle, the full name lives on the tooltip and in the footer.
-            short_names_by_id={
-                "phase-1": format_run_range([rd["run_number"] for rd in row_dicts])
-            },
+            short_names_by_id={"phase-1": format_run_range([rd["run_number"] for rd in row_dicts])},
         )
         _process_events_for(milliseconds=200)
         return panel

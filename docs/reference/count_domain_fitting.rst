@@ -82,10 +82,24 @@ A **Cost** selector chooses how the counts are weighted:
   when every fitted bin has high counts; it matches the historical WiMDA
   weighting.
 
-The two agree where counts are high and diverge where they are sparse; when in
-doubt, the Poisson cost is the safe default. The reduced statistic reported for
-a Poisson fit is the Cash value per degree of freedom, which behaves like a
-reduced χ² near the minimum.
+Poisson fits require finite, non-negative integer counts from the raw acquisition.
+Deadtime-corrected and lifetime-corrected counts are ineligible, even when a
+corrected value happens to be an integer. The error for corrected deadtime data
+is "Poisson likelihood needs raw counts; these counts were deadtime-corrected.
+Use the DT₀ count-domain model or the Gaussian cost." Disable the reduction's
+deadtime correction and fit DT₀ in the expected raw counts, or select
+**Gaussian √N** for corrected observations. That Gaussian cost uses
+:math:`\sigma=\sqrt{\max(N,1)}`.
+
+The Poisson statistic is the deviance
+:math:`D=2\sum_i[\mu_i-n_i+n_i\ln(n_i/\mu_i)]`, with the zero-count limit
+:math:`D_i=2\mu_i`, including exactly zero at :math:`n_i=\mu_i=0`
+[baker_cousins]_. It equals Cash's statistic up to a data-only constant.
+Invalid trial expectations receive a restoring penalty; a reported optimum
+outside the Poisson domain fails and identifies the affected bins. Positive
+observations require positive expectations; zero observations permit zero.
+The deviance per degree of freedom is not a calibrated goodness-of-fit test for
+sparse counts. Gaussian and Poisson fits approach agreement at high counts.
 
 Seeding N₀, and the spurious minimum
 ------------------------------------
@@ -303,3 +317,7 @@ for noisy data, so this check establishes agreement on the noiseless mean,
 not statistical equivalence of the estimators. See
 :doc:`detector_grouping` for the primary ISIS report and
 :doc:`/explanation/comparison` for the bounds of the program comparisons.
+
+.. [baker_cousins] S. Baker and R. D. Cousins, Nuclear Instruments and Methods
+   **221**, 437–442 (1984), `doi:10.1016/0167-5087(84)90016-4
+   <https://doi.org/10.1016/0167-5087(84)90016-4>`_.

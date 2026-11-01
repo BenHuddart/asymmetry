@@ -6,13 +6,22 @@ import inspect
 import math
 import warnings
 from collections import Counter
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.likelihood import (
+    FitInputError,
+    GaussianObservations,
+    Objective,
+    Observations,
+    PoissonCounts,
+    gaussian_chi2,
+    poisson_deviance,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.transform.corrections import require_complete_dataset
 from asymmetry.core.transform.deadtime import DeadtimeCalibration
@@ -200,71 +209,15 @@ def _warn_on_fixed_frequency_far_from_field(
         return
 
 
-def _clip_time_window(
-    time: NDArray[np.float64],
-    asymmetry: NDArray[np.float64],
-    error: NDArray[np.float64],
-    t_min: float | None,
-    t_max: float | None,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Restrict a ``(t, A, σ)`` triple to ``[t_min, t_max]`` inclusive.
-
-    The single clipping seam shared by :meth:`FitEngine.fit` and
-    :meth:`FitEngine.fit_arrays`, reproducing
-    :meth:`asymmetry.core.data.dataset.MuonDataset.time_range` exactly: the
-    bounds are inclusive, a falsy pair (``None``/``0``) is a no-op that passes
-    the arrays through untouched, and a clipped result is a copy.
-    """
-    if not (t_min or t_max):
-        return time, asymmetry, error
-    mask = np.ones(len(time), dtype=bool)
-    if t_min is not None:
-        mask &= time >= t_min
-    if t_max is not None:
-        mask &= time <= t_max
-    return time[mask].copy(), asymmetry[mask].copy(), error[mask].copy()
-
-
-def _validated_fit_arrays(
-    time: NDArray[np.float64] | Sequence[float],
-    asymmetry: NDArray[np.float64] | Sequence[float],
-    error: NDArray[np.float64] | Sequence[float],
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Coerce and validate a raw ``(t, A, σ)`` triple for :meth:`FitEngine.fit_arrays`.
-
-    Returns the three arrays as ``float64``. Raises :class:`ValueError` with a
-    message naming the offending array for a non-1-D shape, a length mismatch,
-    an empty triple, or any non-finite entry — the validation domain a
-    :class:`~asymmetry.core.data.dataset.MuonDataset` would otherwise have
-    carried implicitly.
-    """
-    coerced: dict[str, NDArray[np.float64]] = {}
-    for name, values in (("time", time), ("asymmetry", asymmetry), ("error", error)):
-        arr = np.asarray(values, dtype=np.float64)
-        if arr.ndim != 1:
-            raise ValueError(
-                f"fit_arrays: {name} must be a one-dimensional array, got shape {arr.shape}."
-            )
-        coerced[name] = arr
-
-    n_time = coerced["time"].size
-    for name in ("asymmetry", "error"):
-        if coerced[name].size != n_time:
-            raise ValueError(
-                "fit_arrays: time, asymmetry and error must have the same length; "
-                f"time has {n_time} point(s) but {name} has {coerced[name].size}."
-            )
-    if n_time == 0:
-        raise ValueError("fit_arrays: time, asymmetry and error are empty — nothing to fit.")
-
-    for name, arr in coerced.items():
-        n_bad = int(np.count_nonzero(~np.isfinite(arr)))
-        if n_bad:
-            raise ValueError(
-                f"fit_arrays: {name} contains {n_bad} non-finite value(s) (NaN or inf). "
-                "Drop or interpolate those points before fitting."
-            )
-    return coerced["time"], coerced["asymmetry"], coerced["error"]
+def _dataset_observations(dataset, t_min, t_max):
+    return GaussianObservations(
+        dataset.time,
+        dataset.asymmetry,
+        dataset.error,
+        run_number=dataset.run_number,
+        t_min=t_min,
+        t_max=t_max,
+    )
 
 
 class FitCancelledError(RuntimeError):
@@ -567,31 +520,6 @@ def _oversampling_correction(
 # --- selectable fit cost ----------------------------------------------------
 
 
-def gaussian_chi2(
-    observed: NDArray[np.float64],
-    model: NDArray[np.float64],
-    errors: NDArray[np.float64],
-) -> float:
-    """Weighted least-squares cost Σ((n − μ)/σ)² for explicit per-point σ."""
-    return float(np.sum(((observed - model) / errors) ** 2))
-
-
-def poisson_cash(observed: NDArray[np.float64], model: NDArray[np.float64]) -> float:
-    """Cash statistic ``2·Σ(μ − n + n·ln(n/μ))`` for Poisson counts.
-
-    The single Cash-cost primitive (factored here from ``count_domain.py`` so
-    the count-domain fitters and the grouped/global driver share one
-    implementation). Scaled so ``errordef = 1`` yields correct parameter errors
-    (ΔC behaves like Δχ² near the minimum). ``n = 0`` bins reduce to ``2μ`` with
-    no logarithm; ``μ`` is floored to keep the log finite.
-    """
-    mu = np.clip(model, 1.0e-12, None)
-    term = mu - observed
-    positive = observed > 0.0
-    term[positive] += observed[positive] * np.log(observed[positive] / mu[positive])
-    return 2.0 * float(np.sum(term))
-
-
 @dataclass(frozen=True)
 class CostFactory:
     """A pluggable objective for the single/global fit driver.
@@ -616,10 +544,13 @@ class CostFactory:
     It has no default: a new cost must state which it is.
     """
 
-    name: str
+    objective: Objective
     build: Callable[..., object]
     pointwise: Callable[[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]], float]
     needs_histograms: bool
+
+    def __post_init__(self):
+        object.__setattr__(self, "objective", Objective(self.objective))
 
 
 def _build_least_squares(x, y, yerr, model):
@@ -628,14 +559,14 @@ def _build_least_squares(x, y, yerr, model):
     return LeastSquares(x, y, yerr, model)
 
 
-def _build_poisson_cash(x, y, yerr, model):
+def _build_poisson_deviance(x, y, yerr, model):
     # Cash fits the raw Poisson counts ``y`` against the model expectation μ;
     # ``yerr`` is unused (the Poisson variance is μ itself, not a stored σ).
     counts = np.asarray(y, dtype=float)
     times = np.asarray(x, dtype=float)
 
     def cost(*args) -> float:
-        return poisson_cash(counts, np.asarray(model(times, *args), dtype=float))
+        return poisson_deviance(counts, np.asarray(model(times, *args), dtype=float))
 
     cost.errordef = 1.0
     return cost
@@ -644,7 +575,7 @@ def _build_poisson_cash(x, y, yerr, model):
 #: √-weighted least squares — the historical default for every fit surface.
 #: Reads only the fitted arrays, so it fits a fit record as well as a full one.
 GAUSSIAN_COST = CostFactory(
-    "gaussian",
+    Objective.GAUSSIAN,
     _build_least_squares,
     lambda observed, model, errors: gaussian_chi2(observed, model, errors),
     needs_histograms=False,
@@ -655,16 +586,16 @@ GAUSSIAN_COST = CostFactory(
 #: normalisation takes its bin width off the first detector), so this cost
 #: needs the full record.
 POISSON_COST = CostFactory(
-    "poisson",
-    _build_poisson_cash,
-    lambda observed, model, _errors: poisson_cash(observed, model),
+    Objective.POISSON,
+    _build_poisson_deviance,
+    lambda observed, model, _errors: poisson_deviance(observed, model),
     needs_histograms=True,
 )
 
-#: Resolve a cost name to its factory; ``None``/unknown → Gaussian.
-COST_FACTORIES: dict[str, CostFactory] = {
-    GAUSSIAN_COST.name: GAUSSIAN_COST,
-    POISSON_COST.name: POISSON_COST,
+#: Built-in factories keyed by the validated likelihood objective.
+COST_FACTORIES: dict[Objective, CostFactory] = {
+    GAUSSIAN_COST.objective: GAUSSIAN_COST,
+    POISSON_COST.objective: POISSON_COST,
 }
 
 
@@ -682,6 +613,7 @@ class FitResult:
     """
 
     success: bool
+    objective: Objective
     chi_squared: float = 0.0
     reduced_chi_squared: float = 0.0
     parameters: ParameterSet = field(default_factory=ParameterSet)
@@ -708,6 +640,9 @@ class FitResult:
     #: Fit warnings are both retained here and emitted through Python warnings.
     warnings: list[str] = field(default_factory=list)
     deadtime_calibration: DeadtimeCalibration | None = None
+
+    def __post_init__(self):
+        self.objective = Objective(self.objective)
 
 
 @dataclass(frozen=True)
@@ -774,11 +709,12 @@ class _CoupledGlobalProblem:
 
     #: The blocks this problem spans, in column/concatenation order.
     blocks: tuple[CoupledBlock, ...]
+    observations: Mapping[int, Observations]
     #: Cross-block shared columns, occupying columns ``0..len(shared_columns)-1``.
     shared_columns: tuple[SharedColumn, ...]
-    #: Datasets in concatenation order, already clipped to ``t_min``/``t_max``.
+    #: Dataset identities in concatenation order; observations own the fitted arrays.
     fitted_datasets: list[MuonDataset]
-    #: ``{block key: that block's clipped datasets}``, in the block's own order.
+    #: Dataset identities grouped by block, in each block's own order.
     block_fitted_datasets: dict[Hashable, list[MuonDataset]]
     #: ``{block key: {free global name: column index}}``. A shared member points
     #: at the shared column; every other free global at the block's own column.
@@ -814,6 +750,7 @@ def _build_coupled_problem(
     blocks: Sequence[CoupledBlock],
     shared_columns: Sequence[SharedColumn],
     cancel_callback: Callable[[], bool] | None,
+    observations: Mapping[int, Observations],
 ) -> _CoupledGlobalProblem:
     """Assemble the coupled problem over several blocks (see :class:`_CoupledGlobalProblem`).
 
@@ -849,18 +786,8 @@ def _build_coupled_problem(
         for block_key, member in column.members.items():
             shared_by_block[block_key][member] = column.name
 
-    # Clip every block's datasets to that block's own window. Each series brings
-    # its own fit range: the ordered phase may need a later t_min than the
-    # paramagnetic one, and one window over the concatenation would be wrong.
-    block_fitted_datasets: dict[Hashable, list[MuonDataset]] = {}
-    fitted_datasets: list[MuonDataset] = []
-    for block in blocks:
-        if block.t_min or block.t_max:
-            clipped = [ds.time_range(block.t_min, block.t_max) for ds in block.datasets]
-        else:
-            clipped = list(block.datasets)
-        block_fitted_datasets[block.key] = clipped
-        fitted_datasets.extend(clipped)
+    block_fitted_datasets = {block.key: list(block.datasets) for block in blocks}
+    fitted_datasets = [ds for block in blocks for ds in block.datasets]
 
     # Then each block's free non-shared globals. The starting value/bounds come
     # from the first dataset that actually leaves the name free -- not from the
@@ -916,14 +843,21 @@ def _build_coupled_problem(
             fixed_params[ds.run_number] = {p.name: p.value for p in params if p.fixed}
 
     # Concatenate all data
-    all_times = np.concatenate([ds.time for ds in fitted_datasets])
-    all_asymm = np.concatenate([ds.asymmetry for ds in fitted_datasets])
-    all_errors = np.concatenate([ds.error for ds in fitted_datasets])
-    # Guard against zero/invalid errors that destabilize the objective.
-    all_errors = np.where(
-        np.isfinite(all_errors) & (all_errors > 0.0),
-        all_errors,
-        1e-12,
+    records = [observations[ds.run_number] for ds in fitted_datasets]
+    all_times = np.concatenate([record.time for record in records])
+    all_asymm = np.concatenate(
+        [
+            record.values if isinstance(record, GaussianObservations) else record.counts
+            for record in records
+        ]
+    )
+    all_errors = np.concatenate(
+        [
+            record.sigma
+            if isinstance(record, GaussianObservations)
+            else np.ones_like(record.counts)
+            for record in records
+        ]
     )
 
     cancel_guard = _make_cancel_guard(cancel_callback)
@@ -937,7 +871,8 @@ def _build_coupled_problem(
         for block in blocks:
             global_columns = block_global_columns[block.key]
             for ds in block_fitted_datasets[block.key]:
-                n_points = len(ds.time)
+                time = observations[ds.run_number].time
+                n_points = len(time)
                 params = block.initial_params[ds.run_number]
 
                 # Build parameter dict. Each dataset resolves every global name
@@ -969,9 +904,9 @@ def _build_coupled_problem(
                 # outputs can happen for extreme trial parameters; convert to a
                 # large finite penalty so the minimizer can recover instead of
                 # diverging.
-                model_vals = block.model_fn(ds.time, **param_dict)
+                model_vals = block.model_fn(time, **param_dict)
                 if not np.all(np.isfinite(model_vals)):
-                    model_vals = np.full_like(ds.time, 1e30, dtype=float)
+                    model_vals = np.full_like(time, 1e30, dtype=float)
                 result[offset : offset + n_points] = model_vals
                 offset += n_points
 
@@ -1002,6 +937,7 @@ def _build_coupled_problem(
 
     return _CoupledGlobalProblem(
         blocks=blocks,
+        observations=observations,
         shared_columns=shared_columns,
         fitted_datasets=fitted_datasets,
         block_fitted_datasets=block_fitted_datasets,
@@ -1015,7 +951,7 @@ def _build_coupled_problem(
         all_asymm=all_asymm,
         all_errors=all_errors,
         model_wrapper=model_wrapper,
-        dataset_point_counts=tuple(len(ds.time) for ds in fitted_datasets),
+        dataset_point_counts=tuple(len(observations[ds.run_number].time) for ds in fitted_datasets),
         dataset_columns=tuple(dataset_columns),
     )
 
@@ -1032,6 +968,7 @@ def _build_coupled_global_problem(
     t_min: float | None,
     t_max: float | None,
     cancel_callback: Callable[[], bool] | None,
+    observations: Mapping[int, Observations],
 ) -> _CoupledGlobalProblem:
     """Assemble the one-block coupled problem a global fit optimises.
 
@@ -1059,6 +996,7 @@ def _build_coupled_global_problem(
         ],
         shared_columns=(),
         cancel_callback=cancel_callback,
+        observations=observations,
     )
 
 
@@ -1513,16 +1451,15 @@ def _pack_coupled_block(
         # so the per-group reduced value stays on the same footing as the
         # joint objective the minimiser actually drove.
         param_dict = {p.name: p.value for p in result_params}
-        model_vals = block.model_fn(ds.time, **param_dict)
-        residuals = np.asarray(ds.asymmetry, dtype=float) - np.asarray(model_vals, dtype=float)
-        if cost_factory is None:
-            dataset_chi2 = float(np.sum(((ds.asymmetry - model_vals) / ds.error) ** 2))
-        else:
-            dataset_chi2 = cost_factory.pointwise(
-                np.asarray(ds.asymmetry, dtype=float),
-                np.asarray(model_vals, dtype=float),
-                np.asarray(ds.error, dtype=float),
-            )
+        record = problem.observations[ds.run_number]
+        observed = record.values if isinstance(record, GaussianObservations) else record.counts
+        model_vals = np.asarray(block.model_fn(record.time, **param_dict), dtype=float)
+        residuals = observed - model_vals
+        dataset_chi2 = (
+            gaussian_chi2(observed, model_vals, record.sigma)
+            if isinstance(record, GaussianObservations)
+            else poisson_deviance(observed, model_vals)
+        )
 
         covariance_subset = None
         covariance_order: list[str] = []
@@ -1540,7 +1477,7 @@ def _pack_coupled_block(
             if cov_indices:
                 covariance_subset = covariance_matrix[np.ix_(cov_indices, cov_indices)]
 
-        ndata = len(ds.time)
+        ndata = len(record.time)
         # Count free parameters: global (shared) + local for this dataset
         nfree_global = sum(1 for p in block.global_params if not first_params[p].fixed)
         nfree_local = sum(1 for p in block.local_params if not params[p].fixed)
@@ -1573,8 +1510,14 @@ def _pack_coupled_block(
             if oversampling_message:
                 dataset_warnings.append(oversampling_message)
 
+        invalid_model = (
+            record.invalid_model_reason(np.asarray(model_vals))
+            if isinstance(record, PoissonCounts)
+            else None
+        )
         results[ds.run_number] = FitResult(
-            success=solution.success,
+            objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
+            success=solution.success and invalid_model is None,
             chi_squared=dataset_chi2,
             reduced_chi_squared=red_chi2,
             parameters=result_params,
@@ -1582,7 +1525,7 @@ def _pack_coupled_block(
             covariance=covariance_subset,
             covariance_parameters=covariance_order,
             residuals=residuals,
-            message=solution.message,
+            message=invalid_model or solution.message,
             function_calls=solution.function_calls,
             gradient_calls=solution.gradient_calls,
             hessian_calls=solution.hessian_calls,
@@ -1754,20 +1697,19 @@ class FitEngine:
             Container with fit results including χ², parameters, and uncertainties.
         """
         require_complete_dataset(dataset)
-        time, asymmetry, error = _clip_time_window(
-            dataset.time, dataset.asymmetry, dataset.error, t_min, t_max
-        )
+        if cost_factory is not None and cost_factory.objective is not Objective.GAUSSIAN:
+            raise FitInputError(
+                "fit(MuonDataset) requires Gaussian observations; use PoissonCounts"
+            )
+        observations = _dataset_observations(dataset, t_min, t_max)
         return self._fit_core(
-            time,
-            asymmetry,
-            error,
+            observations,
             model_fn,
             parameters,
             method=method,
             minos=minos,
             cancel_callback=cancel_callback,
             frequency_offsets=frequency_offsets,
-            cost_factory=cost_factory,
             migrad_kwargs=migrad_kwargs,
             error_oversampling=error_oversampling,
             field_source=dataset,
@@ -1790,98 +1732,67 @@ class FitEngine:
         migrad_kwargs: dict | None = None,
         *,
         error_oversampling: float = 1.0,
+        run_number: int | str | None = None,
     ) -> FitResult:
-        """Fit a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
+        """Fit Gaussian arrays using the same minimizer as :meth:`fit`.
 
-        The array-taking front door onto the same engine as :meth:`fit`: both
-        methods clip through one seam and then run one shared internal core, so
-        ``fit_arrays(ds.time, ds.asymmetry, ds.error, …)`` returns a
-        :class:`FitResult` identical to ``fit(ds, …)`` — same parameter values,
-        uncertainties, covariance, χ², dof and residuals. Use it for any curve
-        that is not a dataset's default reduction (a custom detector pairing, a
-        background-corrected export, a hand-built model curve) instead of
-        smuggling arrays through ``dataclasses.replace(ds, time=…, asymmetry=…,
-        error=…)``.
+        Time is in microseconds. Values and their stated standard deviations
+        share the caller's scale; built-in μSR model seeds use percent (0–100).
+        Arrays must be one-dimensional, non-empty and equally sized, with finite
+        times/values and finite positive errors. ``t_min`` and ``t_max`` select
+        an inclusive fit window. Invalid observations raise :class:`FitInputError`.
 
-        Parameters
-        ----------
-        time : array_like
-            Time axis in microseconds, one dimension.
-        asymmetry : array_like
-            Asymmetry values, **in percent (0–100)** — the scale
-            :attr:`asymmetry.core.data.dataset.MuonDataset.asymmetry` and the
-            built-in fit models share (``A0`` defaults to ``25``). A
-            fraction-scale curve (:math:`A \\in [-1, 1]`, what
-            :func:`asymmetry.core.transform.compute_asymmetry` and
-            :func:`asymmetry.core.transform.binned_fb_asymmetry` return) must be
-            multiplied by 100 first, or the seeds scaled to match — see
-            :class:`AsymmetryScaleWarning`, the
-            :func:`asymmetry.core.transform.units.to_percent` helper, and
-            "Asymmetry units across the API" in the docs. Nothing here rescales
-            the input; the units are the caller's to state.
-        error : array_like
-            1σ uncertainty on ``asymmetry``, on the **same scale as**
-            ``asymmetry`` (percent when it is percent).
-        model_fn, parameters, t_min, t_max, method, minos, cancel_callback, \
-frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
-            Exactly as documented on :meth:`fit`. ``t_min``/``t_max`` clip the
-            arrays with the same inclusive bounds
-            :meth:`~asymmetry.core.data.dataset.MuonDataset.time_range` applies.
-
-        Returns
-        -------
-        FitResult
-            As :meth:`fit`. ``residuals`` are ``asymmetry − model`` on the input
-            scale, over the clipped window.
-
-        Raises
-        ------
-        ValueError
-            When the arrays are not one-dimensional, have unequal lengths, are
-            empty, contain non-finite values, or when ``t_min``/``t_max`` leave
-            no points. :meth:`fit` does not validate its dataset this way (its
-            behaviour is unchanged); these guards exist because a raw triple has
-            no container to have checked them earlier.
-
-        Notes
-        -----
-        The one behavioural difference from :meth:`fit` is the advisory
-        fixed-frequency guard (:class:`FixedFrequencyFieldMismatchWarning`),
-        which compares a pinned frequency to γ_μ·B from a run's ``field``
-        metadata. Bare arrays carry no metadata, so that guard cannot run here;
-        the percent-vs-fraction scale advisory does.
+        ``run_number`` supplies error-message context. Bare arrays carry no
+        field metadata, so the fixed-frequency advisory is omitted. All remaining
+        options and returned diagnostics follow :meth:`fit`. Poisson fits take
+        :class:`PoissonCounts` through :meth:`fit_observations`.
         """
-        time_arr, asym_arr, err_arr = _validated_fit_arrays(time, asymmetry, error)
-        clipped_time, clipped_asym, clipped_err = _clip_time_window(
-            time_arr, asym_arr, err_arr, t_min, t_max
+        if cost_factory is not None and cost_factory.objective is not Objective.GAUSSIAN:
+            raise FitInputError("fit_arrays requires Gaussian observations; use PoissonCounts")
+        observations = GaussianObservations(
+            time, asymmetry, error, run_number, t_min=t_min, t_max=t_max
         )
-        if clipped_time.size == 0:
-            raise ValueError(
-                f"fit_arrays: no data points remain in the fit window "
-                f"t_min={t_min!r}, t_max={t_max!r} (the input spans "
-                f"{float(time_arr.min()):g}–{float(time_arr.max()):g} µs)."
-            )
         return self._fit_core(
-            clipped_time,
-            clipped_asym,
-            clipped_err,
+            observations,
             model_fn,
             parameters,
             method=method,
             minos=minos,
             cancel_callback=cancel_callback,
             frequency_offsets=frequency_offsets,
-            cost_factory=cost_factory,
             migrad_kwargs=migrad_kwargs,
             error_oversampling=error_oversampling,
             field_source=None,
         )
 
+    def fit_observations(
+        self,
+        observations: Observations,
+        model_fn: Callable[..., NDArray],
+        parameters: ParameterSet,
+        *,
+        method: str = "migrad",
+        minos: bool = False,
+        cancel_callback: Callable[[], bool] | None = None,
+        migrad_kwargs: dict | None = None,
+    ) -> FitResult:
+        """Fit a validated observation value without rechecking its input arrays."""
+        return self._fit_core(
+            observations,
+            model_fn,
+            parameters,
+            method=method,
+            minos=minos,
+            cancel_callback=cancel_callback,
+            frequency_offsets=None,
+            migrad_kwargs=migrad_kwargs,
+            error_oversampling=1.0,
+            field_source=None,
+        )
+
     def _fit_core(
         self,
-        time: NDArray[np.float64],
-        asymmetry: NDArray[np.float64],
-        error: NDArray[np.float64],
+        observations: Observations,
         model_fn: Callable[..., NDArray],
         parameters: ParameterSet,
         *,
@@ -1889,7 +1800,6 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         minos: bool,
         cancel_callback: Callable[[], bool] | None,
         frequency_offsets: dict[str, float] | None,
-        cost_factory: CostFactory | None,
         migrad_kwargs: dict | None,
         error_oversampling: float,
         field_source: MuonDataset | None,
@@ -1902,6 +1812,14 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         when the caller passed bare arrays and there is no metadata to check
         against) — it is never read for data.
         """
+        cost_factory = (
+            GAUSSIAN_COST if isinstance(observations, GaussianObservations) else POISSON_COST
+        )
+        time = observations.time
+        if isinstance(observations, GaussianObservations):
+            asymmetry, error = observations.values, observations.sigma
+        else:
+            asymmetry, error = observations.counts, np.ones_like(observations.counts)
         if frequency_offsets:
             # Apply the rotating-frame offset through the shared shift seam, so
             # this path and the standalone rrf_offset_model wrapper fit raw data
@@ -1918,11 +1836,15 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             error_msg = str(e)
             if "numba" in error_msg.lower() or "numpy" in error_msg.lower():
                 return FitResult(
+                    objective=Objective.GAUSSIAN
+                    if cost_factory is None
+                    else cost_factory.objective,
                     success=False,
                     message=f"iminuit import error: {error_msg}\n"
                     "Try: pip install 'numpy<2.3' to fix numpy/numba compatibility.",
                 )
             return FitResult(
+                objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=f"iminuit import error: {error_msg}\nInstall it with: pip install iminuit",
             )
@@ -2188,8 +2110,14 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             if oversampling_message:
                 result_warnings.append(oversampling_message)
 
+        invalid_model = (
+            observations.invalid_model_reason(np.asarray(fitted_values))
+            if isinstance(observations, PoissonCounts)
+            else None
+        )
         return FitResult(
-            success=m.valid,
+            objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
+            success=m.valid and invalid_model is None,
             chi_squared=chi_squared,
             reduced_chi_squared=red_chi2,
             parameters=result_params,
@@ -2197,7 +2125,8 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             covariance=covariance,
             covariance_parameters=list(param_names) if m.valid else [],
             residuals=residuals,
-            message=_minuit_status_message(
+            message=invalid_model
+            or _minuit_status_message(
                 m,
                 success_message="Fit successful",
                 failure_prefix="Fit failed",
@@ -2234,6 +2163,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         local_param_groups: dict[str, dict[int, Hashable]] | None = None,
         *,
         error_oversampling: float = 1.0,
+        observations: Mapping[int, Observations] | None = None,
     ) -> tuple[dict[int, FitResult], ParameterSet]:
         """Simultaneous fit of multiple datasets with shared and local parameters.
 
@@ -2350,15 +2280,26 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
                 f"Unknown global-fit strategy {strategy!r}; expected 'joint', 'profiled' "
                 "or 'least_squares'"
             )
-        if strategy == "least_squares" and cost_factory is not None:
-            # The trust-region solver minimises ‖r(x)‖²; a selectable objective
-            # (Poisson Cash) is not a sum of squares, so there is no residual
-            # vector to hand it. Fail loudly rather than silently fitting a
-            # different statistic than the caller asked for.
+        if observations is None:
+            if cost_factory is not None and cost_factory.objective is not Objective.GAUSSIAN:
+                raise FitInputError("Poisson global fits require typed PoissonCounts observations")
+            observations = {
+                ds.run_number: _dataset_observations(ds, t_min, t_max) for ds in datasets
+            }
+        objectives = {
+            Objective.POISSON if isinstance(record, PoissonCounts) else Objective.GAUSSIAN
+            for record in observations.values()
+        }
+        if len(objectives) != 1:
+            raise FitInputError("a global fit requires one observation objective")
+        objective = next(iter(objectives))
+        if cost_factory is not None and cost_factory.objective is not objective:
+            raise FitInputError("the requested cost must match the typed observation objective")
+        if strategy == "least_squares" and objective is Objective.POISSON:
             raise NotImplementedError(
-                "The 'least_squares' global-fit strategy supports only the least-squares "
-                "cost; a cost_factory needs the 'joint' or 'profiled' strategy."
+                "The 'least_squares' global-fit strategy requires Gaussian observations"
             )
+        cost_factory = POISSON_COST if objective is Objective.POISSON else None
         if strategy == "least_squares" and minos:
             # MINOS is a Minuit likelihood scan of the cost surface; the
             # trust-region solver has no equivalent and reports only the
@@ -2454,16 +2395,16 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
 
             results = {}
             for ds in datasets:
-                results[ds.run_number] = self.fit(
-                    ds,
+                results[ds.run_number] = self._fit_core(
+                    observations[ds.run_number],
                     model_fn,
                     initial_params[ds.run_number],
-                    t_min=t_min,
-                    t_max=t_max,
+                    frequency_offsets=None,
+                    migrad_kwargs=None,
+                    field_source=ds,
                     method=method,
                     minos=minos,
                     cancel_callback=cancel_callback,
-                    cost_factory=cost_factory,
                     error_oversampling=error_oversampling,
                 )
             return results, fitted_global
@@ -2484,6 +2425,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
                 initial_params=initial_params,
                 free_global_params=free_global_params,
                 first_params=first_params,
+                observations=observations,
                 t_min=t_min,
                 t_max=t_max,
                 method=method,
@@ -2513,6 +2455,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             initial_params=initial_params,
             free_global_params=free_global_params,
             local_group_key=_local_group_key,
+            observations=observations,
             t_min=t_min,
             t_max=t_max,
             cancel_callback=cancel_callback,
@@ -2546,6 +2489,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             # No iminuit: report the failure on every dataset rather than raising,
             # so a caller fitting a series gets one failed result per run.
             error_result = FitResult(
+                objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=f"iminuit import error: {str(e)}",
             )
@@ -2553,6 +2497,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         except _CoupledMinimizationError as e:
             # If fitting fails, return error results
             error_result = FitResult(
+                objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=False,
                 message=str(e),
             )
@@ -2650,7 +2595,13 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             [ps for block in blocks for ps in block.initial_params.values()], "Joint fitting"
         )
 
+        observations = {
+            ds.run_number: _dataset_observations(ds, block.t_min, block.t_max)
+            for block in blocks
+            for ds in block.datasets
+        }
         problem = _build_coupled_problem(
+            observations=observations,
             blocks=blocks,
             shared_columns=shared_columns,
             cancel_callback=cancel_callback,
@@ -2701,7 +2652,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             series_chi_squared[block.key] = float(
                 sum(result.chi_squared for result in results.values())
             )
-            n_points = sum(len(ds.time) for ds in problem.block_fitted_datasets[block.key])
+            n_points = sum(len(problem.observations[ds.run_number].time) for ds in block.datasets)
             block_columns = set(problem.block_global_columns[block.key].values())
             for ds in block.datasets:
                 block_columns.update(problem.dataset_param_indices[ds.run_number].values())
@@ -2746,6 +2697,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         self,
         *,
         datasets: list[MuonDataset],
+        observations: Mapping[int, Observations],
         model_fn: Callable[..., NDArray],
         global_params: list[str],
         local_params: list[str],
@@ -2807,7 +2759,11 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         try:
             from iminuit import Minuit
         except ImportError as e:  # pragma: no cover - exercised only without iminuit
-            error_result = FitResult(success=False, message=f"iminuit import error: {e}")
+            error_result = FitResult(
+                objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
+                success=False,
+                message=f"iminuit import error: {e}",
+            )
             return {ds.run_number: error_result for ds in datasets}, ParameterSet()
 
         cancel_guard = _make_cancel_guard(cancel_callback)
@@ -2873,15 +2829,16 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
                     inner.add(
                         Parameter(name=p.name, value=p.value, min=p.min, max=p.max, fixed=True)
                     )
-            return self.fit(
-                ds,
+            return self._fit_core(
+                observations[ds.run_number],
                 model_fn,
                 inner,
-                t_min=t_min,
-                t_max=t_max,
+                frequency_offsets=None,
+                minos=False,
+                error_oversampling=1.0,
+                field_source=ds,
                 method=method,
                 cancel_callback=cancel_callback,
-                cost_factory=cost_factory,
                 migrad_kwargs=inner_migrad_kwargs,
             )
 
@@ -2952,7 +2909,11 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         except FitCancelledError:
             raise
         except Exception as e:
-            error_result = FitResult(success=False, message=f"Profiled global fit failed: {e}")
+            error_result = FitResult(
+                objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
+                success=False,
+                message=f"Profiled global fit failed: {e}",
+            )
             return {ds.run_number: error_result for ds in datasets}, ParameterSet()
 
         # Final global vector and its outer-Hessian errors.
@@ -3021,12 +2982,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
                         Parameter(name=p.name, value=p.value, min=p.min, max=p.max, fixed=True)
                     )
 
-            # Explicit None checks: t_min=0.0 is a legitimate lower bound, so a
-            # truthiness test would silently skip the clip and miscount ndata/dof.
-            if t_min is not None or t_max is not None:
-                ndata = len(ds.time_range(t_min, t_max).time)
-            else:
-                ndata = len(ds.time)
+            ndata = len(observations[ds.run_number].time)
             nfree_local = sum(1 for pname in local_params if not params[pname].fixed)
             nfree = n_free_global + nfree_local
             dataset_chi2 = float(inner.chi_squared)
@@ -3056,6 +3012,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
                 if oversampling_message:
                     dataset_warnings.append(oversampling_message)
             results[ds.run_number] = FitResult(
+                objective=Objective.GAUSSIAN if cost_factory is None else cost_factory.objective,
                 success=bool(inner.success) and outer_valid,
                 chi_squared=dataset_chi2,
                 reduced_chi_squared=dataset_reduced_chi2,

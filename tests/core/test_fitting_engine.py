@@ -393,58 +393,27 @@ def test_global_fit_rejects_non_finite_initial_values(monkeypatch: pytest.Monkey
         FitEngine().global_fit([ds], _exp_model, ["A0"], ["Lambda"], init)
 
 
-def test_global_fit_all_local_reuses_single_fit_path(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_all_local_global_fit_matches_independent_single_fits():
     t = np.linspace(0.0, 2.0, 20)
-    ds1 = MuonDataset(t, _exp_model(t, 0.2, 0.3), np.full_like(t, 0.01), {"run_number": 1})
-    ds2 = MuonDataset(t, _exp_model(t, 0.3, 0.5), np.full_like(t, 0.01), {"run_number": 2})
-
-    init = {
-        1: ParameterSet([Parameter("A0", 0.2), Parameter("Lambda", 0.3)]),
-        2: ParameterSet([Parameter("A0", 0.3), Parameter("Lambda", 0.5)]),
+    datasets = [
+        MuonDataset(t, _exp_model(t, amp, rate), np.full_like(t, 0.01), {"run_number": run})
+        for run, amp, rate in [(1, 0.2, 0.3), (2, 0.3, 0.5)]
+    ]
+    initial = {
+        ds.run_number: ParameterSet([Parameter("A0", 0.25), Parameter("Lambda", 0.4)])
+        for ds in datasets
     }
-
-    captured_calls: list[tuple[int, str]] = []
-
-    def _fake_fit(
-        self,
-        dataset,
-        _model_fn,
-        parameters,
-        t_min=None,
-        t_max=None,
-        method="migrad",
-        minos=False,
-        cancel_callback=None,
-        frequency_offsets=None,
-        cost_factory=None,
-        migrad_kwargs=None,
-        *,
-        error_oversampling=1.0,
-    ):
-        captured_calls.append((int(dataset.run_number), method))
-        return FitResult(
-            success=True,
-            chi_squared=float(dataset.run_number),
-            reduced_chi_squared=0.1,
-            parameters=parameters,
-            message=f"single-fit-{int(dataset.run_number)}",
+    engine = FitEngine()
+    results, shared = engine.global_fit(datasets, _exp_model, [], ["A0", "Lambda"], initial)
+    assert not len(shared)
+    for dataset in datasets:
+        single = engine.fit(dataset, _exp_model, initial[dataset.run_number])
+        result = results[dataset.run_number]
+        assert result.success and single.success
+        assert result.chi_squared == pytest.approx(single.chi_squared)
+        assert [p.value for p in result.parameters] == pytest.approx(
+            [p.value for p in single.parameters]
         )
-
-    monkeypatch.setattr(FitEngine, "fit", _fake_fit)
-
-    results, fitted_global = FitEngine().global_fit(
-        [ds1, ds2],
-        _exp_model,
-        global_params=[],
-        local_params=["A0", "Lambda"],
-        initial_params=init,
-        method="simplex",
-    )
-
-    assert captured_calls == [(1, "simplex"), (2, "simplex")]
-    assert len(fitted_global) == 0
-    assert results[1].message == "single-fit-1"
-    assert results[2].message == "single-fit-2"
 
 
 # --- selectable fit cost (Gaussian √N vs Poisson Cash) ----------------------
@@ -490,7 +459,8 @@ def test_cost_factory_gaussian_matches_default_least_squares():
 
 def test_cost_factory_poisson_and_gaussian_agree_at_high_counts():
     """At high counts the Poisson and Gaussian fits converge to the same answer."""
-    from asymmetry.core.fitting.engine import GAUSSIAN_COST, POISSON_COST
+    from asymmetry.core.fitting.engine import GAUSSIAN_COST
+    from asymmetry.core.fitting.likelihood import CountSource, PoissonCounts
 
     t = np.linspace(0.05, 6.0, 200)
     rng = np.random.default_rng(11)
@@ -500,7 +470,9 @@ def test_cost_factory_poisson_and_gaussian_agree_at_high_counts():
     engine = FitEngine()
 
     gauss = engine.fit(ds, _decay_count_model, params, cost_factory=GAUSSIAN_COST)
-    pois = engine.fit(ds, _decay_count_model, params, cost_factory=POISSON_COST)
+    pois = engine.fit_observations(
+        PoissonCounts(t, counts, CountSource.RAW), _decay_count_model, params
+    )
     assert gauss.success and pois.success
     # √N weighting and Cash agree to <0.5% when every bin is well-populated.
     assert pois.parameters["N0"].value == pytest.approx(gauss.parameters["N0"].value, rel=5e-3)
@@ -515,7 +487,8 @@ def test_cost_factory_poisson_less_biased_than_gaussian_at_low_counts():
     the Gaussian mean is biased *low* (the known √N-weighting pathology). This is
     the bias the fgAll→Poisson migration removes by default.
     """
-    from asymmetry.core.fitting.engine import GAUSSIAN_COST, POISSON_COST
+    from asymmetry.core.fitting.engine import GAUSSIAN_COST
+    from asymmetry.core.fitting.likelihood import CountSource, PoissonCounts
 
     t = np.linspace(0.05, 6.0, 60)
     n0_true, tau_true = 12.0, 2.2
@@ -530,7 +503,9 @@ def test_cost_factory_poisson_less_biased_than_gaussian_at_low_counts():
         ds = _count_dataset(counts, t)
         seed = ParameterSet([Parameter("N0", 12.0, min=0.1), Parameter("tau", 2.2, min=0.1)])
         g = engine.fit(ds, _decay_count_model, seed, cost_factory=GAUSSIAN_COST)
-        p = engine.fit(ds, _decay_count_model, seed, cost_factory=POISSON_COST)
+        p = engine.fit_observations(
+            PoissonCounts(t, counts, CountSource.RAW), _decay_count_model, seed
+        )
         if g.success:
             gauss_n0.append(g.parameters["N0"].value)
         if p.success:
@@ -543,13 +518,13 @@ def test_cost_factory_poisson_less_biased_than_gaussian_at_low_counts():
     assert abs(pois_mean - n0_true) < abs(gauss_mean - n0_true)
 
 
-def test_poisson_cash_primitive_matches_definition():
-    """engine.poisson_cash == 2·Σ(μ − n + n·ln(n/μ)), with n=0 → 2μ."""
-    from asymmetry.core.fitting.engine import poisson_cash
+def test_poisson_deviance_primitive_matches_definition():
+    """engine.poisson_deviance == 2·Σ(μ − n + n·ln(n/μ)), with n=0 → 2μ."""
+    from asymmetry.core.fitting.likelihood import poisson_deviance
 
     n = np.array([0.0, 5.0, 10.0])
     mu = np.array([3.0, 5.0, 8.0])
     expected = 2.0 * np.sum(mu - n + np.where(n > 0, n * np.log(np.where(n > 0, n, 1.0) / mu), 0.0))
-    assert poisson_cash(n, mu) == pytest.approx(expected)
+    assert poisson_deviance(n, mu) == pytest.approx(expected)
     # Exact minimum at μ = n (for n > 0): Cash → 0.
-    assert poisson_cash(np.array([7.0]), np.array([7.0])) == pytest.approx(0.0, abs=1e-12)
+    assert poisson_deviance(np.array([7.0]), np.array([7.0])) == pytest.approx(0.0, abs=1e-12)

@@ -25,18 +25,14 @@ class VectorPolarizationEmuScenario(Scenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         datasets = make_emu_vector()
         for dataset in datasets:
             window._data_browser.add_dataset(dataset)
 
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(
-            run_numbers, name="EMU vector projections"
-        )
+        window._data_browser.create_data_group(run_numbers, name="EMU vector projections")
         window._plot_panel.set_overlay_enabled(True, emit_signal=True)
         window._data_browser._table.selectAll()
         window._on_dataset_selected(run_numbers[0])

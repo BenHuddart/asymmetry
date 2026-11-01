@@ -37,6 +37,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     build_count_group,
     build_count_groups,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.negmu.lifetimes import DECAY_BACKGROUND_LABEL, tau_us
 from asymmetry.core.negmu.model import CaptureComponent, build_capture_count_model
@@ -344,6 +345,7 @@ def fit_capture_histogram(
     residuals = counts_arr - model_values
 
     return FitResult(
+        objective=Objective(cost),
         success=bool(m.valid),
         chi_squared=chi2,
         reduced_chi_squared=chi2 / dof,
@@ -637,6 +639,7 @@ def fit_capture_fb_alpha(
         side_minos: dict[str, tuple[float, float]] | None,
     ) -> FitResult:
         return FitResult(
+            objective=Objective(cost),
             success=is_valid,
             chi_squared=chi2,
             reduced_chi_squared=chi2 / dof_g,

@@ -42,6 +42,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     RunResidualDiagnostic,
 )
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
 from asymmetry.gui.panels.log_panel import LogPanel
@@ -105,6 +106,7 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
         curve = model.function(dataset.time, A_1=0.2, Lambda=lam, A_bg=0.01)
         run_number = int(dataset.run_number)
         fit_results[run_number] = FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=3.0 + idx,
             reduced_chi_squared=0.05 + 0.01 * idx,
@@ -288,6 +290,7 @@ def _fake_single_fit_recommendation(dataset: MuonDataset) -> FitWizardRecommenda
     assessment = CandidateAssessment(
         template=template,
         fit_result=FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=4.0,
             reduced_chi_squared=0.08,
@@ -1145,15 +1148,7 @@ def test_cancel_in_the_progress_block_cancels_and_lands_on_the_origin(
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The progress block's Cancel, shown while running, cooperatively cancels the run.
-
-    Phase-one blocks on a threading.Event so the GUI thread can confirm the
-    worker is live, click Cancel, then release phase-one. The worker's next
-    cancel checkpoint raises FitCancelledError (declared in _cancel_exceptions);
-    the base's cancelled slot clears busy, the progress block collapses to its
-    Run log, and the window lands on the step the run started from. The
-    screening builder must never run.
-    """
+    """The progress block's Cancel, shown while running, cooperatively cancels the run."""
     import threading
 
     released = threading.Event()

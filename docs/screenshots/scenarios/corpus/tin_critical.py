@@ -537,7 +537,9 @@ class SnTransverseRecoveryScenario(CorpusScenario):
         def osc(t, A, f, phi, lam, c):  # noqa: N803 (physics symbol)
             return A * np.exp(-lam * t) * np.cos(2 * np.pi * f * t + phi) + c
 
-        popt, _ = curve_fit(osc, tt, aa, p0=[0.03, 160 * _GAMMA_MU_MHZ_PER_G, 0.0, 0.1, 0.0], maxfev=20000)
+        popt, _ = curve_fit(
+            osc, tt, aa, p0=[0.03, 160 * _GAMMA_MU_MHZ_PER_G, 0.0, 0.1, 0.0], maxfev=20000
+        )
         f_fit = abs(popt[1])
         b_fit = f_fit / _GAMMA_MU_MHZ_PER_G
 

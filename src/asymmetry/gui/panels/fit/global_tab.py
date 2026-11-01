@@ -1,43 +1,7 @@
-"""Global / batch fit tab (``GlobalFitTab``) and batch-seeding constants.
+"""Global and grouped-count fit controls, workers, and result presentation.
 
-Split out of ``fit_panel.py`` (Phase 2 mechanical split).
-
-Navigation map
---------------
-~5.0k lines. Module-level constants precede the class: ``BATCH_SEEDING_MODES``
-(the ``(label, mode)`` pairs shared by the on-tab selector and the
-``Analysis > Batch seeding`` menu so they cannot drift), ``BATCH_SEEDING_LABELS``
-(reverse lookup), ``BATCH_SEEDING_TOOLTIP``, the Parameters rail's settings key
-and chips, and the results card's hand-off labels. Everything else lives on
-``GlobalFitTab(FitTabBase)`` — one large class with no section-comment
-markers; methods cluster thematically in roughly this order:
-
-- **Construction** — ``__init__`` builds the batch-mode selector, the
-  parameter-classification table, and per-group model tables (deliberately
-  *not* sharing a factory with ``SingleFitTab``'s single table — see
-  ``docs/audit/shared-foundations/FOLLOW-UPS.md`` Phase 2 H2).
-- **Rail, results card and outcome chip** — ``_card_actions``,
-  ``_apply_column_group`` (the rail's three tables), ``_render_fit_summary``
-  (every converged multi-member read-out) and the per-member results windows.
-- **Grouped model dialog** — ``_open_grouped_initial_values_dialog``.
-- **Per-run wizard-cache lookups** — ``_single_fit_wizard_cache_for_run``.
-- **Fraction-value linking** — ``_synchronize_fraction_value_rows`` (the
-  global-tab counterpart of the single-tab fraction sync, using the shared
-  ``tab_base`` fraction helpers under the hood).
-- **Count-domain / T0 baseline fitting** — ``set_count_baseline``,
-  ``_render_count_fb_result``, ``promote_count_t0``.
-- **Fit run/stop lifecycle** — ``_on_stop_fit`` (cancels
-  ``self._count_fit_worker or self._fit_worker`` — the global tab has a
-  second, count-domain worker that ``SingleFitTab`` does not), and
-  ``_on_grouped_fit_finished`` (the completion slot that records results back
-  into the series/table state).
-- **Global-wizard status/seed reporting** — ``_status_text_from_global_wizard``,
-  ``_grouped_member_nuisance_seeds``, ``current_grouped_seed_values``.
-- **Teardown** — ``_reset_group_parameter_estimates`` and related per-group
-  reset helpers near the end of the file.
-
-Entry points GUI callers use most: construction via ``FitPanel``, then the
-``_on_*_fit_finished``/``_on_stop_fit`` pair as the fit-lifecycle boundary.
+Batch seeding labels are shared with the analysis menu. Fits run through
+TaskRunner; result slots bind the launch-time dataset and objective context.
 """
 
 import copy
@@ -85,7 +49,6 @@ from asymmetry.core.fitting.composite import (
     migrate_legacy_fraction_state,
 )
 from asymmetry.core.fitting.count_domain import (
-    COUNT_COSTS,
     RESERVED_COUNT_PARAMS,
     fb_overlay_curves,
     fit_fb_alpha,
@@ -117,6 +80,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
 from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_state,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.member_quality import member_quality_flags
 from asymmetry.core.fitting.parameter_carry import align_component_names, carry_parameters
 from asymmetry.core.fitting.parameters import (
@@ -579,23 +543,18 @@ class GlobalFitTab(FitTabBase):
         # ``_coadd_window`` successive members per fit via combine_runs.
         self._coadd_mode = "off"
         self._coadd_window = 2
-        # Count-domain fit target: "all" (fgAll, the existing grouped path),
-        # "fb" (forward+backward with free alpha), or "single" (one histogram).
         self._count_fit_mode = "all"
         self._count_fit_cost = "poisson"
+        self._grouped_context_cache = None
         self._count_single_side = "forward"
-        # Phase 2 window/nuisance flexibility (all off by default).
         self._count_exclude: tuple[float, float] | None = None
         self._count_fit_t0 = False
         self._count_baseline = False
-        # Phase 3 count-loss + double pulse.
         self._count_deadtime = False
         self._count_dpsep = 0.0  # µs; > 0 switches on the double-pulse model
         self._count_dpsep_fit = False  # locate dpsep by a coarse->fine scan
         self._last_count_deadtime: FitResult | None = None
         self._last_count_group: str | None = None
-        # Fitted calibrations captured for the α/t0/background promote paths
-        # (siblings of the deadtime DT0 promote). Each is suggest-only.
         self._last_count_alpha: tuple[float, float | None] | None = None
         self._last_count_t0_us: float | None = None
         self._last_count_bg: tuple[float | None, float | None] | None = None
@@ -3480,7 +3439,7 @@ class GlobalFitTab(FitTabBase):
 
     def set_count_fit_cost(self, cost: str) -> None:
         """Select the count-fit cost: ``poisson`` (default) or ``gaussian``."""
-        self._count_fit_cost = cost if cost in COUNT_COSTS else "poisson"
+        self._count_fit_cost = Objective(cost).value
 
     def set_count_single_side(self, side: str) -> None:
         """Select which detector group the single-histogram fit targets."""
@@ -5636,15 +5595,8 @@ class GlobalFitTab(FitTabBase):
     def _grouped_mode_context(
         self,
     ) -> tuple[list[object] | None, list[MuonDataset] | None, str]:
-        """Return the grouped time-domain context, memoised per active dataset.
-
-        Building the grouped groups/datasets is relatively expensive on
-        high-resolution histograms and is requested several times per
-        selection/UI refresh.  The result depends only on the active dataset and
-        the fit-blocked state, so it is cached and reused until the active
-        dataset changes (see :meth:`set_current_dataset`).
-        """
-        cache = getattr(self, "_grouped_context_cache", None)
+        """Reuse grouped inputs while members, corrections and likelihood stay unchanged."""
+        cache = self._grouped_context_cache
         # Identity of each member *and* of its data arrays and run: a
         # re-reduction (grouping edit, projection change) reassigns those
         # attributes on the same dataset object, and the grouped count domains
@@ -5653,7 +5605,13 @@ class GlobalFitTab(FitTabBase):
             (id(ds), id(ds.time), id(ds.asymmetry), id(ds.error), id(ds.run))
             for ds in self._grouped_member_datasets()
         )
-        key = (member_ids, bool(self._fit_blocked), self._coadd_mode, int(self._coadd_window))
+        key = (
+            member_ids,
+            self._fit_blocked,
+            self._count_fit_cost,
+            self._coadd_mode,
+            self._coadd_window,
+        )
         if cache is not None and cache[0] == key:
             return cache[1]
         result = self._compute_grouped_mode_context()
@@ -5702,7 +5660,12 @@ class GlobalFitTab(FitTabBase):
             fit_t_max = float(np.max(time_values[finite_mask])) if np.any(finite_mask) else None
             run_label = getattr(dataset, "run_label", str(dataset.run_number))
             try:
-                groups = build_grouped_time_domain_groups(dataset, t_min=fit_t_min, t_max=fit_t_max)
+                groups = build_grouped_time_domain_groups(
+                    dataset,
+                    t_min=fit_t_min,
+                    t_max=fit_t_max,
+                    lifetime_corrected=Objective(self._count_fit_cost) is Objective.GAUSSIAN,
+                )
                 datasets = build_grouped_time_domain_datasets(dataset)
             except ValueError as exc:
                 skipped.append(f"{run_label}: {exc}")
@@ -5803,7 +5766,13 @@ class GlobalFitTab(FitTabBase):
         """
         self._grouped_mode_context()  # ensure _grouped_members is current
         member_ids = tuple(id(ds) for ds in self._grouped_member_datasets())
-        key = (member_ids, bool(self._fit_blocked), self._coadd_mode, int(self._coadd_window))
+        key = (
+            member_ids,
+            self._fit_blocked,
+            self._count_fit_cost,
+            self._coadd_mode,
+            self._coadd_window,
+        )
         cache = self._grouped_seed_cache
         if cache is not None and cache[0] == key:
             return cache[1]

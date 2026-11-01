@@ -32,9 +32,7 @@ from ._base import CaptureContext, Scenario, _optimize_png, register
 
 class RunInfoProvenanceScenario(Scenario):
     name = "run_info_provenance"
-    description = (
-        "Run Info dialog showing the preserved provenance of a loaded YBCO TF run."
-    )
+    description = "Run Info dialog showing the preserved provenance of a loaded YBCO TF run."
     size = (780, 660)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401

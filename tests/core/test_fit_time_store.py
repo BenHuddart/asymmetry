@@ -19,6 +19,7 @@ from asymmetry.core.fitting.fit_wizard import (
     FitTiming,
     screening_points,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.wizard_scope import UNTIMED, FitTimeEstimates
 
 
@@ -33,7 +34,9 @@ def _timed(components: list[str], seconds: float, points: int = 1000) -> Candida
             rationale="",
             model=CompositeModel(components, operators=["+"] * (len(components) - 1)),
         ),
-        fit_result=FitResult(success=True, chi_squared=1.0, reduced_chi_squared=1.0),
+        fit_result=FitResult(
+            objective=Objective.GAUSSIAN, success=True, chi_squared=1.0, reduced_chi_squared=1.0
+        ),
         sample_count=1000,
         residual_rms=1.0,
         runs_z_score=0.0,

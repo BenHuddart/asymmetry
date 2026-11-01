@@ -13,6 +13,7 @@ import pytest
 
 from asymmetry.core.fitting.engine import FitCancelledError, FitResult
 from asymmetry.core.fitting.global_search.sharing_ladder import ADEQUACY_SIGMA
+from asymmetry.core.fitting.likelihood import Objective
 from tests.core.sharing_series import (
     TRANSITION,
     SimulatedSeries,
@@ -443,7 +444,7 @@ def test_cancel_is_polled_before_each_rung() -> None:
 
 def test_ladder_refuses_an_all_local_fit_that_did_not_converge() -> None:
     series = hopping_series()
-    series.all_local[3] = FitResult(success=False)
+    series.all_local[3] = FitResult(objective=Objective.GAUSSIAN, success=False)
 
     with pytest.raises(ValueError, match=r"runs \[3\]"):
         series.climb()

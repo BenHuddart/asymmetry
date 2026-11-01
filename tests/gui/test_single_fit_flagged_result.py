@@ -25,6 +25,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from asymmetry.core.data.dataset import MuonDataset  # noqa: E402
 from asymmetry.core.fitting.composite import CompositeModel  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
+from asymmetry.core.fitting.likelihood import Objective  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
 from asymmetry.gui.panels.fit.single_tab import SingleFitTab  # noqa: E402
 from asymmetry.gui.panels.fit.tab_base import _fit_result_is_usable  # noqa: E402
@@ -55,6 +56,7 @@ def _params() -> ParameterSet:
 def _flagged_result() -> FitResult:
     # success=False but a fully usable minimum: finite params + finite chi².
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=False,
         chi_squared=12.0,
         reduced_chi_squared=1.6,
@@ -72,12 +74,22 @@ def test_flagged_but_finite_result_is_usable() -> None:
 
 
 def test_result_without_parameters_is_not_usable() -> None:
-    assert _fit_result_is_usable(FitResult(success=False, message="iminuit import error")) is False
+    assert (
+        _fit_result_is_usable(
+            FitResult(objective=Objective.GAUSSIAN, success=False, message="iminuit import error")
+        )
+        is False
+    )
 
 
 def test_result_with_nonfinite_value_is_not_usable() -> None:
     params = ParameterSet([Parameter("A_1", float("nan"), min=0.0, max=1.0)])
-    assert _fit_result_is_usable(FitResult(success=False, parameters=params)) is False
+    assert (
+        _fit_result_is_usable(
+            FitResult(objective=Objective.GAUSSIAN, success=False, parameters=params)
+        )
+        is False
+    )
 
 
 # --- tab behaviour -----------------------------------------------------------
@@ -124,7 +136,7 @@ def test_genuine_failure_draws_nothing(app: QApplication) -> None:
     tab.preview_requested.connect(lambda *a: previews.append(a))
 
     tab._apply_single_fit_result(
-        FitResult(success=False, message="iminuit import error"),
+        FitResult(objective=Objective.GAUSSIAN, success=False, message="iminuit import error"),
         _params(),
         dataset,
         model,

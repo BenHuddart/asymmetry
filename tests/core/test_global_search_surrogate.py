@@ -27,6 +27,7 @@ from asymmetry.core.fitting.global_search.surrogate import (
     surrogate_ic,
 )
 from asymmetry.core.fitting.information_criteria import InformationCriteria, SelectionMetric
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 NAMES = ("a", "b", "c")
@@ -223,6 +224,7 @@ def test_singular_covariance_block_falls_back_for_that_run_only():
 def test_non_finite_covariance_entry_is_dropped_when_building_the_estimate():
     parameters = ParameterSet([Parameter(name=name, value=1.0) for name in NAMES])
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=10.0,
         parameters=parameters,
@@ -266,6 +268,7 @@ def test_run_estimate_reorders_the_covariance_to_the_free_name_order():
     engine_order = ["c", "a", "b"]
     covariance = np.array([[9.0, 0.3, 0.6], [0.3, 1.0, 0.1], [0.6, 0.1, 4.0]])
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=42.0,
         parameters=parameters,
@@ -294,6 +297,7 @@ def test_run_estimate_reorders_the_covariance_to_the_free_name_order():
 def test_run_estimate_drops_a_covariance_that_misses_a_free_parameter():
     parameters = ParameterSet([Parameter(name=name, value=1.0) for name in NAMES])
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         parameters=parameters,
         uncertainties={name: 1.0 for name in NAMES},
@@ -308,7 +312,12 @@ def test_run_estimate_drops_a_covariance_that_misses_a_free_parameter():
 
 def test_run_estimate_marks_a_missing_uncertainty_as_carrying_no_information():
     parameters = ParameterSet([Parameter(name=name, value=1.0) for name in NAMES])
-    result = FitResult(success=True, parameters=parameters, uncertainties={"a": 1.0, "b": 2.0})
+    result = FitResult(
+        objective=Objective.GAUSSIAN,
+        success=True,
+        parameters=parameters,
+        uncertainties={"a": 1.0, "b": 2.0},
+    )
 
     estimate = run_estimate_from_fit_result(result, NAMES, run_number=1, n_points=10)
 

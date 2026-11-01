@@ -58,6 +58,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     single_fit_table_covers_portfolio,
 )
 from asymmetry.core.fitting.global_search.trend_objective import SelectionObjective
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.wizard_scope import WizardScope
 
@@ -157,6 +158,7 @@ def _assessment_with_diagnostics(
     )
     fit_results = {
         int(dataset.run_number): FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=0.1,
@@ -1279,6 +1281,7 @@ def _scored_assessment(
     return CandidateAssessment(
         template=template,
         fit_result=FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=chi_squared,
             reduced_chi_squared=chi_squared / 10.0,
@@ -1491,6 +1494,7 @@ def test_filtered_gate_reasons_drops_bound_hit_when_fit_is_good() -> None:
     relaxation rate -> 0) when the fit is otherwise good, so it is not a gate
     failure; it only vetoes when the fit is also poor."""
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         reduced_chi_squared=1.0,
@@ -1853,6 +1857,7 @@ def test_global_fit_wizard_screening_completes_a_failed_cell_from_a_sibling(
                 replace(
                     assessment,
                     fit_result=FitResult(
+                        objective=Objective.GAUSSIAN,
                         success=False,
                         chi_squared=float("inf"),
                         reduced_chi_squared=float("inf"),
@@ -1948,6 +1953,7 @@ def test_single_run_prefit_parameter_sets_reuses_cache() -> None:
             ]
         )
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=0.1,
@@ -2012,6 +2018,7 @@ def test_warm_start_parameter_sets_reuses_cache() -> None:
     }
     fit_results = {
         int(dataset.run_number): FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=0.1,
@@ -2052,6 +2059,7 @@ def test_warm_start_parameter_sets_reuses_cache() -> None:
             ]
         )
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=1.0,
             reduced_chi_squared=0.1,
@@ -2126,6 +2134,7 @@ def test_cache_derived_role_recommendations_reuse_wavefront_assignments() -> Non
     def _make_assessment(*, local: tuple[str, ...], score: float) -> GlobalCandidateAssessment:
         fit_results = {
             int(dataset.run_number): FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=score / len(datasets),
                 reduced_chi_squared=0.1,
@@ -2419,20 +2428,7 @@ def test_component_canonicalization_orders_biexponential_components_by_rate() ->
 
 
 def test_staged_assignment_seed_completes_when_local_only_pinned_on_one_run() -> None:
-    """A stage must not hand Minuit a run with zero free parameters.
-
-    Regression for the docs-build crash traced to 45e5110 (PR #301, "pin B_L
-    from run metadata"): on a longitudinal-field Kubo-Toyabe series, B_L
-    legitimately gets a Local role (it varies run to run) even though it is
-    *not* uniformly free -- a ZF run pins B_L at 0 (measured, not fitted)
-    while an LF run fits it. The local-only refinement half of the staged
-    seed holds every Global parameter fixed for *every* run while unlocking
-    only the Local names; for the ZF run that left B_L (already pinned) as
-    the sole "active" name fixed too, so every parameter of that run's
-    ``ParameterSet`` came out fixed and Minuit raised "starting value(s) are
-    required". The fix (``FitEngine._fit_core``) treats a fully-fixed
-    parameter set as a valid degenerate fit rather than an error.
-    """
+    """A stage must not hand Minuit a run with zero free parameters."""
     model = CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"])
     template = CandidateTemplate(
         key="lf_kt_constant",
@@ -3340,6 +3336,7 @@ def test_identifiability_demotion_flags_highly_correlated_covariance() -> None:
     )
     covariance = np.array([[1.0, 0.999], [0.999, 1.0]])
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         parameters=ParameterSet(
@@ -3381,6 +3378,7 @@ def test_identifiability_demotion_ignores_well_conditioned_covariance() -> None:
     )
     covariance = np.array([[1.0, 0.05], [0.05, 1.0]])
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=1.0,
         parameters=ParameterSet(

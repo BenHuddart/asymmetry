@@ -49,9 +49,7 @@ class GroupedFitYbcoKnightScenario(Scenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [340], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
         dataset = make_ybco_knight_grouped()
         window._data_browser.add_dataset(dataset)

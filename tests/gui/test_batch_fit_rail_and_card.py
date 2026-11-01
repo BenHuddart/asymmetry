@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QPushButton  # noqa: E402
 
 from asymmetry.core.data.dataset import MuonDataset  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
+from asymmetry.core.fitting.likelihood import Objective  # noqa: E402
 from asymmetry.core.fitting.member_quality import member_quality_flags  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
 from asymmetry.gui.panels.fit.global_tab import (  # noqa: E402
@@ -62,6 +63,7 @@ def _dataset(run_number: int) -> MuonDataset:
 
 def _result(chi2: float, *, success: bool = True, error: float = 0.01) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=success,
         chi_squared=chi2 * 30.0,
         reduced_chi_squared=chi2,

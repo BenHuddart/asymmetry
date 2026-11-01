@@ -27,18 +27,14 @@ class GlobalFitLfktScenario(Scenario):
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [340], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
         datasets = make_ag_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
         for dataset in datasets:
             window._data_browser.add_dataset(dataset)
 
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(
-            run_numbers, name="LF decoupling — Ag"
-        )
+        window._data_browser.create_data_group(run_numbers, name="LF decoupling — Ag")
 
         # Surface the Global tab of the fit panel.
         window._fit_panel._tabs.setCurrentWidget(window._fit_panel._global_tab)

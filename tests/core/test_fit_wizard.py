@@ -22,6 +22,7 @@ from asymmetry.core.fitting.fit_wizard import (
     fingerprint_spectrum,
     serialize_fit_wizard_recommendation,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 
@@ -468,6 +469,7 @@ def test_residual_gate_demotes_structured_residuals() -> None:
         metadata={"run_number": 1},
     )
     fit_result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=float(np.sum((residuals / dataset.error) ** 2)),
         reduced_chi_squared=1.0,
@@ -524,7 +526,7 @@ def test_failed_candidate_fit_is_retained_in_the_comparison_table(
     def _patched_fit(self, dataset, model_fn, parameters, *args, **kwargs):
         param_names = {parameter.name for parameter in parameters}
         if "sigma" in param_names and "beta" not in param_names and "frequency" not in param_names:
-            return FitResult(success=False, message="forced failure")
+            return FitResult(objective=Objective.GAUSSIAN, success=False, message="forced failure")
         return original_fit(dataset, model_fn, parameters)
 
     monkeypatch.setattr(wizard_module.FitEngine, "fit", _patched_fit)

@@ -26,9 +26,7 @@ class AlcFieldScanScenario(Scenario):
         from asymmetry.gui.mainwindow import MainWindow
 
         window = MainWindow()
-        window.resizeDocks(
-            [window._dock_data_browser], [340], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
         datasets = make_alc_field_scan()
         for dataset in datasets:

@@ -21,7 +21,6 @@ from asymmetry.core.fitting.engine import (
     _minuit_status_message,
     _reject_affine_ties,
     drive_minuit,
-    poisson_cash,
 )
 from asymmetry.core.fitting.grouped_time_domain import (
     GroupedTimeDomainFitResult,
@@ -29,6 +28,14 @@ from asymmetry.core.fitting.grouped_time_domain import (
     build_count_groups,
     build_fb_count_model,
     build_grouped_count_model,
+    group_observations,
+)
+from asymmetry.core.fitting.likelihood import (
+    GaussianObservations,
+    Objective,
+    PoissonCounts,
+    gaussian_chi2,
+    poisson_deviance,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.transform.deadtime import DeadtimeCalibration, _deadtime_number
@@ -128,20 +135,12 @@ def _guard_beta_collision(model_fn: Callable[..., NDArray]) -> None:
 # --- cost functions ---------------------------------------------------------
 
 
-def _gaussian_chi2(counts: NDArray[np.float64], model: NDArray[np.float64]) -> float:
-    """sqrt(N) Gaussian least-squares cost (WiMDA weighting)."""
-    sigma = np.sqrt(np.clip(counts, 1.0, None))
-    return float(np.sum(((counts - model) / sigma) ** 2))
-
-
-def _cost_value(counts: NDArray[np.float64], model: NDArray[np.float64], cost: str) -> float:
+def _cost_value(observations, model: NDArray[np.float64]) -> float:
     if not np.all(np.isfinite(model)):
         return _INF
-    if cost == "gaussian":
-        return _gaussian_chi2(counts, model)
-    # Cash statistic — the single primitive shared with the grouped/global
-    # driver (factored into engine.poisson_cash).
-    return poisson_cash(counts, model)
+    if isinstance(observations, GaussianObservations):
+        return gaussian_chi2(observations.values, model, observations.sigma)
+    return poisson_deviance(observations.counts, model)
 
 
 def _validate_cost(cost: str) -> str:
@@ -369,8 +368,7 @@ def _result_from_minuit(
     params: ParameterSet,
     free_names: list[str],
     *,
-    time: NDArray[np.float64],
-    counts: NDArray[np.float64],
+    observations: GaussianObservations | PoissonCounts,
     model_values: NDArray[np.float64],
     keep_params: list[str] | None = None,
     chi_squared: float | None = None,
@@ -425,12 +423,26 @@ def _result_from_minuit(
             covariance = cov[np.ix_(cov_idx, cov_idx)]
             covariance_order = cov_names
 
+    counts = (
+        observations.values
+        if isinstance(observations, GaussianObservations)
+        else observations.counts
+    )
+    objective = (
+        Objective.GAUSSIAN if isinstance(observations, GaussianObservations) else Objective.POISSON
+    )
+    invalid_model = (
+        observations.invalid_model_reason(model_values)
+        if isinstance(observations, PoissonCounts)
+        else None
+    )
     ndata = int(np.size(counts))
     nfree = len(free_names if keep is None else covariance_order)
     residuals = np.asarray(counts, dtype=float) - np.asarray(model_values, dtype=float)
     chi2 = float(m.fval) if chi_squared is None else float(chi_squared)
     return FitResult(
-        success=bool(m.valid),
+        objective=objective,
+        success=bool(m.valid) and invalid_model is None,
         chi_squared=chi2,
         reduced_chi_squared=chi2 / max(ndata - nfree, 1),
         parameters=result_params,
@@ -438,7 +450,8 @@ def _result_from_minuit(
         covariance=covariance,
         covariance_parameters=covariance_order,
         residuals=residuals,
-        message=_minuit_status_message(
+        message=invalid_model
+        or _minuit_status_message(
             m, success_message=success_message, failure_prefix=failure_prefix
         ),
         function_calls=int(getattr(m, "nfcn", 0) or 0),
@@ -610,8 +623,8 @@ def fit_single_histogram(
     group = build_count_group(
         dataset, group_id, t_min=t_min, t_max=t_max, lifetime_corrected=False, exclude=exclude
     )
-    time = np.asarray(group.time, dtype=float)
-    counts = np.asarray(group.counts, dtype=float)
+    observations = group_observations(group, Objective(cost))
+    time = observations.time
 
     tau = float(MUON_LIFETIME_US)
     base_decay = np.exp(-time / tau)  # hoisted: loop-invariant unless t0 is free
@@ -665,7 +678,7 @@ def fit_single_histogram(
         )
 
     def total_cost(*args) -> float:
-        return _cost_value(counts, predict(args), cost)
+        return _cost_value(observations, predict(args))
 
     m = _solve(free, total_cost, minos=minos, cancel_callback=cancel_callback)
     model_values = predict([m.values[i] for i in range(len(free_names))])
@@ -673,8 +686,7 @@ def fit_single_histogram(
         m,
         params,
         free_names,
-        time=time,
-        counts=counts,
+        observations=observations,
         model_values=model_values,
         followers=followers,
         success_message="Single-histogram count fit successful",
@@ -717,29 +729,10 @@ def fit_fb_alpha(
     ``shared_parameters`` hold the fitted ``alpha``/``N0``/physics. The (alpha,
     amplitude) covariance is available on either group result.
 
-    Seeding ``N0``
-    --------------
-    ``N0`` may be **omitted**, or supplied with the value
-    :data:`SEED_FROM_DATA` (or any non-positive / non-finite value), in which
-    case it is seeded from the data: the forward window's first positive bin
-    lifted back to ``t = 0`` by ``exp(t/tau_mu)``. This is the default because the
-    right ``N0`` is a per-run count level no caller can know in advance, and a
-    generically scaled seed does not merely converge slowly — it converges
-    *cleanly* on a spurious minimum, with a tiny ``alpha`` and a compensating
-    amplitude balance. An explicit positive ``N0`` is used as given, and a fixed
-    ``N0`` is never overruled.
-
-    Scale sanity check
-    ------------------
-    Because that spurious minimum is a valid minimum as far as Migrad is
-    concerned, a converged fit is additionally checked against the counts: the
-    fitted ``alpha`` must sit within :data:`_FB_ALPHA_SCALE_FACTOR` of the
-    window's observed forward/backward count ratio, and the fitted forward scale
-    ``N0·√alpha`` within :data:`_FB_N0_SCALE_FACTOR` of the observed count level
-    at ``t = 0``. A violation returns ``success=False`` with a message naming the
-    discrepancy (and the same text appended to each group result's ``warnings``)
-    rather than presenting the walk-off as a clean convergence. Neither check
-    applies to a parameter the caller fixed.
+    An omitted or invalid ``N0`` seed comes from the first positive forward
+    bin, lifted to t=0 by exp(t/τμ); fixed or positive explicit seeds are retained.
+    Fitted α and N₀√α must agree with the observed bank ratio and count scale
+    within the documented factors. Violations fail the result and retain warnings.
 
     The same optional nuisances as :func:`fit_single_histogram` apply, all
     no-ops unless requested: ``exclude`` drops an interior window; a free ``t0``
@@ -813,6 +806,9 @@ def fit_fb_alpha(
     counts_f = np.asarray(g_fwd.counts, dtype=float)
     time_b = np.asarray(g_bwd.time, dtype=float)
     counts_b = np.asarray(g_bwd.counts, dtype=float)
+    observations_f = group_observations(g_fwd, Objective(cost))
+    observations_b = group_observations(g_bwd, Objective(cost))
+    time_f, time_b = observations_f.time, observations_b.time
 
     # Seed N0 from the data unless the caller supplied a usable value. The count
     # scale is a per-run fact; a caller who does not know it lands in a spurious
@@ -890,8 +886,8 @@ def fit_fb_alpha(
         return _eval(args, time_b, base_decay_b, "background_b", -1.0, frame_norm_b, g_bwd)
 
     def total_cost(*args) -> float:
-        return _cost_value(counts_f, predict_f(args), cost) + _cost_value(
-            counts_b, predict_b(args), cost
+        return _cost_value(observations_f, predict_f(args)) + _cost_value(
+            observations_b, predict_b(args)
         )
 
     # MINOS runs on the fixed-dpsep solve below (the common case). When dpsep is
@@ -901,8 +897,8 @@ def fit_fb_alpha(
     fitted = [m.values[i] for i in range(len(free_names))]
     model_f = predict_f(fitted)
     model_b = predict_b(fitted)
-    chi2_f = _cost_value(counts_f, model_f, cost)
-    chi2_b = _cost_value(counts_b, model_b, cost)
+    chi2_f = _cost_value(observations_f, model_f)
+    chi2_b = _cost_value(observations_b, model_b)
 
     # Both sides retain shared parameters and their own background.
     fwd_keep = [p.name for p in params if p.name != "background_b"]
@@ -911,8 +907,7 @@ def fit_fb_alpha(
         m,
         params,
         free_names,
-        time=time_f,
-        counts=counts_f,
+        observations=observations_f,
         model_values=model_f,
         keep_params=fwd_keep,
         chi_squared=chi2_f,
@@ -924,8 +919,7 @@ def fit_fb_alpha(
         m,
         params,
         free_names,
-        time=time_b,
-        counts=counts_b,
+        observations=observations_b,
         model_values=model_b,
         keep_params=bwd_keep,
         chi_squared=chi2_b,

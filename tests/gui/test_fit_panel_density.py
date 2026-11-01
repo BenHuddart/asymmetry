@@ -34,6 +34,7 @@ from PySide6.QtWidgets import QMenu, QPushButton, QToolButton
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit import global_tab as global_tab_module
 from asymmetry.gui.panels.fit.single_tab import (
@@ -66,6 +67,7 @@ def _run_stub_fit(tab: SingleFitTab) -> None:
 
     def _engine_fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=60.0,
             reduced_chi_squared=1.0,
@@ -93,6 +95,7 @@ def _run_stub_fit(tab: SingleFitTab) -> None:
 def _stub_result(chi2: float) -> FitResult:
     """A converged single-parameter result, enough to render an outcome chip."""
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=chi2 * 30.0,
         reduced_chi_squared=chi2,
