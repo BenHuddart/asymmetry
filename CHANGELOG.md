@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Abragam and Keren stay accurate near zero fluctuation rate and weak field;
+  negative or non-finite rates raise an error, and Keren is even in time.
+
 - ALC **Fit peaks** and `integral-scan --baseline` report fitted-baseline
   uncertainty in peak positions, widths, and amplitudes.
 
