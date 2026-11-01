@@ -24,7 +24,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from asymmetry.core.fitting.sc.constants import BOLTZMANN_CONSTANT_MEV_PER_K
+from asymmetry.core.utils.constants import BOLTZMANN_CONSTANT_MEV_PER_K
 
 ArrayLikeFloat = NDArray[np.float64]
 

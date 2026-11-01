@@ -69,16 +69,18 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
+from asymmetry.core.utils.constants import MAGNETIC_FLUX_QUANTUM_WB
+
 from .._base import CaptureContext
 from ._corpus import CorpusScenario, _process_events_for, register
 
 EXAMPLE = "Superconductivity/LiFeAs"
 _DATA = "Superconductivity/LiFeAs/data/deltat_pta_gps_%d.bin"
 
-# --- physical constants (GROUND_TRUTH §6) ---------------------------------- #
+# The teaching guide uses γ_µ = 0.8516 µs⁻¹/mT in its field-width conversion.
 _GAMMA = 0.8516  # µs⁻¹ per mT: σ_paper[µs⁻¹] = γ_µ · B_rms[mT]
 _SQRT2 = np.sqrt(2.0)  # Asymmetry Gaussian exp(−(σt)²) → σ_paper = √2 σ_A
-_PHI0 = 2.067833848e-15  # Wb, flux quantum
+_PHI0_WB = float(f"{MAGNETIC_FLUX_QUANTUM_WB:.10g}")  # Wb, flux quantum
 
 # --- Sample-1 (LFA) 40 mT (400 G) temperature scan, ascending T ------------ #
 # Runs 3366–3373 are the 400 G T-scan; 3373 (18 K) is above T_c = 16 K, i.e.
@@ -156,7 +158,7 @@ def _brms_mT(sigma_a: float, sigma_n: float) -> float:  # noqa: N802 (physics sy
 def _brms_from_lambda(lambda_nm: float) -> float:
     """Paper Eq. (3): B_rms (mT) for an ab-plane penetration depth λ_ab (nm)."""
     lam = lambda_nm * 1e-9
-    return (0.00371**0.5) * _PHI0 / ((3.0**0.25 * lam) ** 2) * 1e3
+    return (0.00371**0.5) * _PHI0_WB / ((3.0**0.25 * lam) ** 2) * 1e3
 
 
 def _regroup(run: int, rebin: int = 10):

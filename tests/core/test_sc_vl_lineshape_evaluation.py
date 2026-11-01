@@ -40,6 +40,7 @@ _RNG = np.random.default_rng(11)
 _AXES = {
     "uniform_0_8_500": np.linspace(0.0, 8.0, 500),
     "uniform_long_8192": np.linspace(0.0, 10.0, 8192),
+    "uniform_reverse_8192": np.linspace(10.0, 0.0, 8192),
     "uniform_t0_offset": 0.14 + np.arange(4096) * (10.0 / 4095),
     "uniform_t0_negative": -0.5 + np.arange(2000) * 0.004,
     "uniform_short_64": np.linspace(0.0, 8.0, 64),

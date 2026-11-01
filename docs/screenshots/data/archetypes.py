@@ -40,29 +40,22 @@ from asymmetry.core.simulate import (
     build_run_from_detector_asymmetries,
     poisson_asymmetry_errors,
 )
-
-# Shared rounded textbook constants — single authority in core.simulate_presets,
-# imported here so the gallery presets and the documentation screenshots agree
-# by construction (reconciliation F12). The docs-only constants below
-# (γ_μ in MHz/T, MgB₂/YBCO parameters, the legacy lifetime pin) stay local.
 from asymmetry.core.simulate_presets import (
     DELTA_AG_PER_US,
     GAMMA_MU_MHZ_PER_G,
     R_MUF_ANG,
     TC_EUO_K,
 )
+from asymmetry.core.utils.constants import (
+    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+)
+from asymmetry.core.utils.constants import (
+    MUON_LIFETIME_US as REFERENCE_MUON_LIFETIME_US,
+)
 
-# Legacy rounded lifetime, kept so the documentation data stay byte-stable.
-# The promoted core builder (asymmetry.core.simulate) defaults to the
-# canonical MUON_LIFETIME_US; the wrapper below pins this value explicitly.
-MUON_LIFETIME_US = 2.197
-
-# Physical constants and material parameters --------------------------------
-# GAMMA_MU_MHZ_PER_G, TC_EUO_K, DELTA_AG_PER_US and R_MUF_ANG are imported above
-# from core.simulate_presets (the shared authority). The rest are docs-only and
-# have no counterpart in the gallery presets.
-
-GAMMA_MU_MHZ_PER_T = 135.5  # γ_μ / (2π) in MHz/T (docs-only)
+# Rounded teaching values keep the synthetic reference data reproducible.
+MUON_LIFETIME_US = round(REFERENCE_MUON_LIFETIME_US, 3)
+GAMMA_MU_MHZ_PER_T = round(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T, 1)
 
 TC_MGB2_K = 36.0  # MgB₂ critical temperature
 TC_YBCO_K = 90.0  # YBa₂Cu₃O₇₋δ critical temperature

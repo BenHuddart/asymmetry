@@ -49,6 +49,7 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.asymmetry_global import GlobalFitResult, fit_global
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.utils.constants import MOLAR_GAS_CONSTANT_J_PER_MOL_K
 
 __all__ = [
     "MuRelaxationSeriesResult",
@@ -59,9 +60,6 @@ __all__ = [
     "fit_arrhenius",
     "mu_relaxation_from_amplitude",
 ]
-
-#: Molar gas constant (J·mol⁻¹·K⁻¹).
-R_GAS = 8.314462618
 
 #: The Mu-signal model: a relaxing transverse oscillation (Mu precession) plus a
 #: slowly-relaxing diamagnetic background — the guide's "relaxing oscillation".
@@ -478,7 +476,7 @@ def fit_arrhenius(
     slope, intercept, slope_err, intercept_err, reduced = _weighted_linear_fit(x, y, sigma_y)
 
     # slope = −E / (ln10 · R)  →  E = −slope · ln10 · R   (in J/mol).
-    ln10_r = math.log(10.0) * R_GAS
+    ln10_r = math.log(10.0) * MOLAR_GAS_CONSTANT_J_PER_MOL_K
     energy_j = -slope * ln10_r
     energy_err_j = slope_err * ln10_r
     scale = unit_scale[key]

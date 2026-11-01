@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import os
 import subprocess
 import sys
@@ -9,18 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests._harness import HARNESS_PATH, _load_harness
+
 ROOT = Path(__file__).resolve().parents[2]
-HARNESS_PATH = ROOT / "tools" / "harness.py"
-
-
-def _load_harness():
-    spec = importlib.util.spec_from_file_location("asymmetry_harness", HARNESS_PATH)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 def test_current_core_satisfies_gui_boundary() -> None:

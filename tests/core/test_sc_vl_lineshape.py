@@ -187,8 +187,8 @@ def test_fft_build_matches_direct_reciprocal_sum() -> None:
     n_g, n_grid = _DEFAULT_N_G, _DEFAULT_N_GRID
     for lam_eff_nm, B0_g, Bc2 in [(195.0, 400.0, 25.0), (240.0, 1600.0, 30.0)]:
         B0_t = B0_g * 1e-4
-        # Revised SI h/(2e), truncated to the precision used by the field map.
-        flux_quantum_wb = 2.067833848e-15
+        # Exact revised SI h/(2e), independent of the production constant.
+        flux_quantum_wb = 6.62607015e-34 / (2 * 1.602176634e-19)
         lam = lam_eff_nm * 1.0e-9
         xi = np.sqrt(flux_quantum_wb / (2.0 * np.pi * Bc2))
         a = np.sqrt(2.0 * flux_quantum_wb / (np.sqrt(3.0) * B0_t))

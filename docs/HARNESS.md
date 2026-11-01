@@ -39,6 +39,15 @@ boundary, touches shared behavior, or changes user-visible workflows.
 | `python tools/harness.py docs` | Sphinx documentation build. |
 | `python tools/harness.py validate` | Structural checks, lint, and the standard-tier test suite. |
 
+### Physical-constant authority
+
+Structural validation scans Python assignments and numeric literals in the
+application, screenshot scenarios, and tools. Physical constants come from
+`core/utils/constants.py`; teaching examples derive their rounding from that
+authority. Tests may type independent reference values. Source-reproducing
+paper and guide arithmetic has a baseline with a frozen count per file;
+removing a duplicate requires lowering its count or removing its entry.
+
 ### Test tiers
 
 `test` and `validate` accept `--tier {fast,standard,full}`:

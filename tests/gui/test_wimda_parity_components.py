@@ -27,7 +27,6 @@ from asymmetry.core.fitting.muon_fluorine.polarization import (
     linear_fmuf_polarization,
 )
 from asymmetry.core.fitting.muonium import (
-    VACUUM_MUONIUM_A_HF_MHZ,
     _tf_levels,
     high_tf_muonium,
     high_tf_muonium_aniso,
@@ -40,6 +39,7 @@ from asymmetry.core.fitting.nuclear_dipole import (
     electron_dipole,
     proton_dipole,
 )
+from asymmetry.core.utils.constants import MUONIUM_VACUUM_HYPERFINE_MHZ
 
 NEW_COMPONENTS = [
     "RischKehr",
@@ -238,14 +238,14 @@ def test_gbkt_broadening_softens_the_dip() -> None:
 
 
 def test_high_tf_pair_frequencies_sum_to_hyperfine() -> None:
-    a_hf = VACUUM_MUONIUM_A_HF_MHZ
+    a_hf = MUONIUM_VACUUM_HYPERFINE_MHZ
     _d, e1, e2, e3, e4 = _tf_levels(3000.0, a_hf)
     assert abs(e1 - e2) + abs(e3 - e4) == pytest.approx(a_hf, rel=1e-12)
 
 
 def test_high_tf_aniso_reduces_to_isotropic_pair() -> None:
-    iso = high_tf_muonium(T, 3000.0, VACUUM_MUONIUM_A_HF_MHZ, 0.3)
-    aniso = high_tf_muonium_aniso(T, 3000.0, VACUUM_MUONIUM_A_HF_MHZ, 0.0, 0.3)
+    iso = high_tf_muonium(T, 3000.0, MUONIUM_VACUUM_HYPERFINE_MHZ, 0.3)
+    aniso = high_tf_muonium_aniso(T, 3000.0, MUONIUM_VACUUM_HYPERFINE_MHZ, 0.0, 0.3)
     assert np.allclose(iso, aniso, atol=1e-10)
 
 
@@ -258,7 +258,7 @@ def test_high_tf_aniso_pair_frequencies_match_exact_hamiltonian() -> None:
     from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
 
     field = 3000.0
-    a_hf = VACUUM_MUONIUM_A_HF_MHZ
+    a_hf = MUONIUM_VACUUM_HYPERFINE_MHZ
     big_d = 20.0
 
     sx = 0.5 * np.array([[0, 1], [1, 0]], dtype=complex)
@@ -309,20 +309,22 @@ def test_high_tf_aniso_pair_sum_tracks_effective_hyperfine() -> None:
     from asymmetry.core.fitting.muonium import _tf_levels
 
     big_d = 50.0
-    _d, e1, e2, e3, e4 = _tf_levels(3000.0, VACUUM_MUONIUM_A_HF_MHZ + big_d)
-    assert abs(e1 - e2) + abs(e3 - e4) == pytest.approx(VACUUM_MUONIUM_A_HF_MHZ + big_d, rel=1e-12)
+    _d, e1, e2, e3, e4 = _tf_levels(3000.0, MUONIUM_VACUUM_HYPERFINE_MHZ + big_d)
+    assert abs(e1 - e2) + abs(e3 - e4) == pytest.approx(
+        MUONIUM_VACUUM_HYPERFINE_MHZ + big_d, rel=1e-12
+    )
 
 
 def test_high_tf_aniso_powder_average_damps_pair() -> None:
-    iso = high_tf_muonium(T, 3000.0, VACUUM_MUONIUM_A_HF_MHZ, 0.0)
-    aniso = high_tf_muonium_aniso(T, 3000.0, VACUUM_MUONIUM_A_HF_MHZ, 25.0, 0.0)
+    iso = high_tf_muonium(T, 3000.0, MUONIUM_VACUUM_HYPERFINE_MHZ, 0.0)
+    aniso = high_tf_muonium_aniso(T, 3000.0, MUONIUM_VACUUM_HYPERFINE_MHZ, 25.0, 0.0)
     # The distribution of anisotropy shifts dephases the pair envelope.
     assert np.max(np.abs(aniso[T > 4.0])) < np.max(np.abs(iso[T > 4.0]))
 
 
 def test_muonium_lf_relaxation_quenches_with_field() -> None:
-    low = muonium_lf_relaxation(T, 0.5, 0.01, 10.0, VACUUM_MUONIUM_A_HF_MHZ)
-    high = muonium_lf_relaxation(T, 0.5, 0.01, 5000.0, VACUUM_MUONIUM_A_HF_MHZ)
+    low = muonium_lf_relaxation(T, 0.5, 0.01, 10.0, MUONIUM_VACUUM_HYPERFINE_MHZ)
+    high = muonium_lf_relaxation(T, 0.5, 0.01, 5000.0, MUONIUM_VACUUM_HYPERFINE_MHZ)
     assert low[-1] < high[-1] <= 1.0
     assert low[0] == 1.0
 
@@ -337,7 +339,7 @@ def test_muonium_lf_relaxation_matches_kadono_eq22() -> None:
     shipped curve no longer carries it by checking lambda at tabulated fields.
     """
     delta_ex, tau_c = 0.5, 0.01
-    A = VACUUM_MUONIUM_A_HF_MHZ
+    A = MUONIUM_VACUUM_HYPERFINE_MHZ
     for B in (0.0, 100.0, 1000.0, 5000.0):
         _d, e1, e2, _e3, _e4 = _tf_levels(B, A)
         nu12 = abs(e1 - e2)

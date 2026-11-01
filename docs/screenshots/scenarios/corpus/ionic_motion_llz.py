@@ -39,6 +39,8 @@ from pathlib import Path
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QComboBox, QTableWidgetItem, QWidget
 
+from asymmetry.core.utils.constants import BOLTZMANN_CONSTANT_MEV_PER_K
+
 from .._base import CaptureContext
 from ._corpus import CorpusScenario, _process_events_for, load_corpus_datasets, register
 
@@ -71,7 +73,7 @@ SEED_NU = 0.2  # fluctuation rate ν (MHz)
 FIT_TMAX = 12.0  # limit fit window to 12 µs (guide hint)
 
 # Boltzmann constant in eV/K, for the Arrhenius slope → activation energy.
-K_B_EV = 8.617333e-5
+BOLTZMANN_EV_PER_K = round(BOLTZMANN_CONSTANT_MEV_PER_K * 1e-3, 11)
 # Activated branch: fit the Arrhenius line only above this temperature. Below it
 # ν sits on the flat plateau (ν ≈ baseline) where ln(ν − baseline) is undefined
 # / dominated by noise — see NOTES_llz.md "transform + baseline interplay".
@@ -533,8 +535,8 @@ def _build_arrhenius_line_fit(temps, nu, nu_err, baseline):
 
     slope = float(result.parameters["m"].value)
     unc = result.uncertainties or {}
-    ea_ev = -slope * K_B_EV
-    ea_err_ev = float(unc.get("m", 0.0)) * K_B_EV
+    ea_ev = -slope * BOLTZMANN_EV_PER_K
+    ea_err_ev = float(unc.get("m", 0.0)) * BOLTZMANN_EV_PER_K
     summary = {
         "baseline_MHz": float(baseline),
         "slope_K": slope,
