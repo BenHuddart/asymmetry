@@ -68,6 +68,7 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.fit_wizard import (
     PERSISTED_CURVE_MAX_POINTS as _PERSISTED_CURVE_MAX_POINTS,
 )
+from asymmetry.core.fitting.information_criteria import InformationCriteria
 from asymmetry.core.fitting.models import longitudinal_field_kubo_toyabe
 from asymmetry.core.fitting.muon_fluorine.polarization import linear_fmuf_polarization
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
@@ -301,10 +302,7 @@ def _dummy_assessment(key: str, *, stage: int = 2) -> CandidateAssessment:
     return CandidateAssessment(
         template=template,
         fit_result=fit_result,
-        aic=1.0,
-        aicc=1.0,
-        bic=1.0,
-        selected_score=1.0,
+        sample_count=1000,
         residual_rms=1.0,
         runs_z_score=0.0,
         max_abs_autocorrelation=0.0,
@@ -977,8 +975,8 @@ def test_run_template_assessments_process_path_matches_serial() -> None:
     assert process_keys == serial_keys
 
     for serial_assessment, process_assessment in zip(serial_results, process_results):
-        assert process_assessment.selected_score == pytest.approx(
-            serial_assessment.selected_score, abs=1e-6
+        assert process_assessment.metric_value(SelectionMetric.AICC) == pytest.approx(
+            serial_assessment.metric_value(SelectionMetric.AICC), abs=1e-6
         )
         assert process_assessment.fit_result.chi_squared == pytest.approx(
             serial_assessment.fit_result.chi_squared, abs=1e-6
@@ -1769,10 +1767,7 @@ def _scored_assessment(
     return CandidateAssessment(
         template=template,
         fit_result=fit_result,
-        aic=value,
-        aicc=value,
-        bic=value,
-        selected_score=value,
+        sample_count=1000,
         residual_rms=1.0,
         runs_z_score=0.0,
         max_abs_autocorrelation=0.0,
@@ -1986,7 +1981,7 @@ def _policy_assessment(
 ) -> CandidateAssessment:
     """Build a fully-formed assessment for policy-engine tests.
 
-    ``value`` is used as the AICc/AIC/BIC so metric ranking is deterministic.
+    ``value`` sets AICc through a coherent non-negative objective.
     ``param_count`` (via a padded ParameterSet) drives the strictly-simpler null
     comparison; ``gate`` maps to ``residual_gate_passed`` (High vs Medium tier).
     """
@@ -1996,7 +1991,10 @@ def _policy_assessment(
             parameters.add(Parameter(name=f"p{i}", value=1.0))
     fit_result = FitResult(
         success=success,
-        chi_squared=value,
+        chi_squared=value
+        - InformationCriteria(0.0, len(parameters.free_parameters), 1000).value(
+            SelectionMetric.AICC
+        ),
         reduced_chi_squared=1.0,
         parameters=parameters,
         uncertainties=uncertainties or {},
@@ -2011,10 +2009,7 @@ def _policy_assessment(
             model=model or CompositeModel(["Exponential", "Constant"], operators=["+"]),
         ),
         fit_result=fit_result,
-        aic=value,
-        aicc=value,
-        bic=value,
-        selected_score=value,
+        sample_count=1000,
         residual_rms=1.0,
         runs_z_score=0.0 if gate else 5.0,
         max_abs_autocorrelation=0.0,
@@ -2282,12 +2277,11 @@ def test_tie_break_cross_family_keeps_metric_winner_primary() -> None:
     assert out.recommended_key == "stretched_constant"
     assert set(out.comparable_keys) == {"stretched_constant", "risch_kehr_constant"}
 
-    # (h, tie-break half) Reranking the same payload by BIC must not change
-    # the cross-family behavior — the metric winner (by BIC score) still
-    # stays primary rather than flipping to the simpler template.
+    # BIC's stronger complexity penalty changes the metric winner; family
+    # preference must not override that winner.
     out_bic = rerank_fit_wizard_recommendation(rec, SelectionMetric.BIC)
-    assert out_bic.recommended_key == "stretched_constant"
-    assert set(out_bic.comparable_keys) == {"stretched_constant", "risch_kehr_constant"}
+    assert out_bic.recommended_key == "risch_kehr_constant"
+    assert out_bic.comparable_keys == ()
 
 
 def test_tie_break_old_payload_without_family_reports_does_not_flip() -> None:
@@ -2981,7 +2975,7 @@ def test_rebuilt_curves_are_identical_to_the_eagerly_built_ones(
     assert filled.fitted_curve.size == filled.fitted_time.size
     # Everything but the curves is the row itself, untouched.
     assert filled.fit_result is bare.fit_result
-    assert filled.selected_score == bare.selected_score
+    assert filled.metric_value(SelectionMetric.AICC) == bare.metric_value(SelectionMetric.AICC)
 
 
 def test_assessment_with_curves_rebins_by_the_recommendations_own_factor() -> None:

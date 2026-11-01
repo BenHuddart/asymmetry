@@ -21,6 +21,12 @@ from numpy.typing import NDArray
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_curves import dense_fit_curve
+from asymmetry.core.fitting.information_criteria import (
+    InformationCriteria,
+    SelectionMetric,
+    information_weights,
+    score_deltas,
+)
 from asymmetry.core.fitting.parameters import Parameter
 
 if TYPE_CHECKING:
@@ -29,7 +35,6 @@ if TYPE_CHECKING:
     from asymmetry.core.fitting.fit_wizard import (
         CandidateAssessment,
         FitWizardRecommendation,
-        SelectionMetric,
     )
     from asymmetry.core.fitting.global_fit_wizard import GlobalCandidateAssessment
     from asymmetry.core.representation.base import FitSlot
@@ -50,30 +55,6 @@ DIFFERENCE_SIGMA_THRESHOLD = 2.0
 #: A per-run χ²ᵣ at most this is a good fit, and at most ``FAIR_CHI2_MAX`` a fair one.
 GOOD_CHI2_MAX = 1.5
 FAIR_CHI2_MAX = 5.0
-
-
-def score_deltas(scores: Sequence[float]) -> list[float]:
-    """Each score minus the best finite score; a non-finite score's delta is ``inf``."""
-    values = np.asarray(scores, dtype=float)
-    finite = np.isfinite(values)
-    deltas = np.full(values.shape, math.inf)
-    if finite.any():
-        deltas[finite] = values[finite] - values[finite].min()
-    return deltas.tolist()
-
-
-def information_weights(scores: Sequence[float]) -> list[float]:
-    """Akaike-style evidence weights, w ∝ exp(−Δ/2), from information-criterion values.
-
-    A non-finite score gets weight ``0.0`` and is left out of the normalisation;
-    when every score is non-finite there is nothing to rank and every weight is
-    ``0.0``.
-    """
-    raw = np.exp(-np.asarray(score_deltas(scores), dtype=float) / 2.0)
-    total = float(raw.sum())
-    if total == 0.0:
-        return [0.0] * len(raw)
-    return (raw / total).tolist()
 
 
 def shortlist(scores: Mapping[str, float]) -> tuple[str, ...]:
@@ -391,16 +372,13 @@ def saved_fit_curves(slot: FitSlot, dataset: MuonDataset) -> RunCurves | None:
 
 def saved_fit_score(slot: FitSlot, metric: SelectionMetric) -> float:
     """*slot*'s information criterion from its stored χ² (k = npar); NaN with no data key."""
-    from asymmetry.core.fitting.fit_wizard import SelectionMetric, compute_information_criteria
-
     data_key = slot.data_key()
     if data_key is None:
         return math.nan
-    aic, aicc, bic = compute_information_criteria(
+    score = InformationCriteria(
         float(slot.result["chi_squared"]), int(slot.result["npar"]), data_key[2]
-    )
-    score = {SelectionMetric.AIC: aic, SelectionMetric.AICC: aicc, SelectionMetric.BIC: bic}[metric]
-    return math.nan if score is None else float(score)
+    ).value(metric)
+    return math.nan if score is None else score
 
 
 def summarise_saved_fits(

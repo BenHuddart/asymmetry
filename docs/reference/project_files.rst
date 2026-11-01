@@ -68,7 +68,11 @@ Project files store:
 * Separate frequency-fit state for displayed Fourier spectra
 * Per-run Fourier group-phase tables, included groups, and auto-estimated
   phase markers
-* Cached single-fit and global-fit wizard analysis payloads when present
+* Cached single-fit and global-fit wizard analysis payloads when present.
+  Assessments retain fit statistics and ``sample_count``; information criteria
+  are derived from those values. ``sample_count: null`` means the count is
+  unknown, so AICc and BIC are unavailable for that cached row. Reanalyse the
+  run to record the fitted count.
 * **Per-dataset representations** — for each analysis domain (F-B asymmetry,
   detector groups, FFT, MaxEnt) that the user has exercised, the stored
   representation records a *recipe* (for FFT: the generation config) and its

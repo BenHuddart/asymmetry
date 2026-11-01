@@ -31,6 +31,13 @@ from asymmetry.core.fitting.composite import (
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.envelope_match import match_envelope_banks
+from asymmetry.core.fitting.information_criteria import (
+    InformationCriteria,
+    SelectionMetric,
+    rank,
+    ranking_is_available,
+    ranking_value,
+)
 from asymmetry.core.fitting.legacy_product_amplitudes import fold_legacy_product_amplitude_set
 from asymmetry.core.fitting.model_comparison import bound_side
 from asymmetry.core.fitting.models import field_decoupling_threshold_gauss
@@ -199,22 +206,6 @@ class RecommendationVerdict(str, Enum):
         return cls.STRUCTURED
 
 
-class SelectionMetric(str, Enum):
-    """Model-selection metrics exposed in the fit wizard."""
-
-    AIC = "AIC"
-    AICC = "AICc"
-    BIC = "BIC"
-
-    @classmethod
-    def from_value(cls, value: object) -> SelectionMetric:
-        text = str(value).strip()
-        for metric in cls:
-            if metric.value == text:
-                return metric
-        return cls.AICC
-
-
 @dataclass(frozen=True)
 class SpectrumFingerprint:
     """Deterministic summary of a single asymmetry spectrum."""
@@ -318,10 +309,7 @@ class CandidateAssessment:
 
     template: CandidateTemplate
     fit_result: FitResult
-    aic: float
-    aicc: float | None
-    bic: float
-    selected_score: float
+    sample_count: int | None
     residual_rms: float
     runs_z_score: float
     max_abs_autocorrelation: float
@@ -387,14 +375,31 @@ class CandidateAssessment:
         """
         return len(self.template.model.param_names)
 
+    @property
+    def criteria(self) -> InformationCriteria | None:
+        if not self.fit_result.success or not math.isfinite(self.fit_result.chi_squared):
+            return None
+        return InformationCriteria(
+            self.fit_result.chi_squared, self.parameter_count, self.sample_count
+        )
+
+    @property
+    def aic(self) -> float:
+        return ranking_value(self.criteria, SelectionMetric.AIC)
+
+    @property
+    def aicc(self) -> float | None:
+        return None if self.criteria is None else self.criteria.value(SelectionMetric.AICC)
+
+    @property
+    def bic(self) -> float:
+        return ranking_value(self.criteria, SelectionMetric.BIC)
+
+    def unavailable_reason(self, metric: SelectionMetric) -> str | None:
+        return "fit failed" if self.criteria is None else self.criteria.unavailable_reason(metric)
+
     def metric_value(self, metric: SelectionMetric) -> float:
-        if metric == SelectionMetric.AIC:
-            return self.aic
-        if metric == SelectionMetric.BIC:
-            return self.bic
-        if self.aicc is not None and np.isfinite(self.aicc):
-            return self.aicc
-        return self.aic
+        return ranking_value(self.criteria, metric)
 
     @property
     def is_successful(self) -> bool:
@@ -493,30 +498,10 @@ class FitWizardRecommendation:
         self, metric: SelectionMetric | None = None
     ) -> list[CandidateAssessment]:
         active_metric = metric or self.metric
+        eligible, excluded = rank(self.assessments, active_metric)
         return sorted(
-            self.assessments,
-            key=lambda assessment: _assessment_sort_key(assessment, active_metric),
-        )
-
-
-def compute_information_criteria(
-    chi_squared: float,
-    parameter_count: int,
-    sample_count: int,
-) -> tuple[float, float | None, float]:
-    """Return AIC, AICc, and BIC from a least-squares objective."""
-    k = max(int(parameter_count), 0)
-    n = max(int(sample_count), 1)
-    chi2 = float(chi_squared)
-
-    aic = chi2 + 2.0 * k
-    aicc: float | None
-    if n > k + 1:
-        aicc = aic + 2.0 * k * (k + 1) / max(n - k - 1, 1)
-    else:
-        aicc = None
-    bic = chi2 + k * math.log(n)
-    return aic, aicc, bic
+            eligible, key=lambda assessment: _assessment_sort_key(assessment, active_metric)
+        ) + [item for item, _reason in excluded]
 
 
 def fingerprint_spectrum(
@@ -3411,8 +3396,9 @@ def rerank_fit_wizard_recommendation(
         if assessment.is_successful and not assessment.is_null_baseline
     ]
 
+    rankable, _excluded = rank(candidates, metric)
     eligible = sorted(
-        (a for a in candidates if not a.is_disqualified),
+        (a for a in rankable if not a.is_disqualified),
         key=lambda assessment: _assessment_sort_key(assessment, metric),
     )
 
@@ -3427,9 +3413,8 @@ def rerank_fit_wizard_recommendation(
         )
         if best_null is None:
             summary = (
-                "No candidate could be recommended — every successful fit was "
-                "disqualified and no null baseline is available. Inspect the "
-                "comparison table before applying a model."
+                f"No candidate could be ranked by {metric.value}; inspect unavailable criteria "
+                "and fit diagnostics before applying a model."
             )
             return replace(
                 recommendation,
@@ -3442,9 +3427,9 @@ def rerank_fit_wizard_recommendation(
                 caveat="",
             )
         caveat = (
-            "Every candidate model was disqualified (e.g. an oscillation at the "
-            "resolution floor or with amplitude consistent with zero); the data "
-            "are consistent with the null baseline."
+            f"No candidate model has an eligible {metric.value} ranking after the fit "
+            "diagnostics and criterion availability checks; inspect the comparison "
+            "table alongside the null baseline."
         )
         summary = (
             f"No significant structure — recommending the {best_null.template.title} "
@@ -3647,7 +3632,7 @@ def deserialize_fit_wizard_recommendation(
         for entry in payload.get("family_reports", []) or ()
         if (report := deserialize_family_screening_report(entry)) is not None
     )
-    return FitWizardRecommendation(
+    recommendation = FitWizardRecommendation(
         fingerprint=fingerprint,
         templates=templates,
         assessments=assessments,
@@ -3674,6 +3659,13 @@ def deserialize_fit_wizard_recommendation(
         # empty one means — "not known to come from the full single-run path".
         build_signature=str(payload.get("build_signature", "")),
     )
+
+    published = {recommendation.recommended_key, *recommendation.comparable_keys}
+    if not ranking_is_available(
+        (row for row in assessments if row.template.key in published), recommendation.metric
+    ):
+        return rerank_fit_wizard_recommendation(recommendation, recommendation.metric)
+    return recommendation
 
 
 def candidate_template_keys(
@@ -4088,10 +4080,7 @@ def _serialize_candidate_assessment(
     return {
         "template": _serialize_candidate_template(assessment.template),
         "fit_result": _serialize_fit_result(assessment.fit_result, include_residuals=not compact),
-        "aic": assessment.aic,
-        "aicc": assessment.aicc,
-        "bic": assessment.bic,
-        "selected_score": assessment.selected_score,
+        "sample_count": assessment.sample_count,
         "residual_rms": assessment.residual_rms,
         "runs_z_score": assessment.runs_z_score,
         "max_abs_autocorrelation": assessment.max_abs_autocorrelation,
@@ -4133,10 +4122,9 @@ def _deserialize_candidate_assessment(
         return CandidateAssessment(
             template=template,
             fit_result=fit_result,
-            aic=float(payload.get("aic", float("inf"))),
-            aicc=(float(payload["aicc"]) if payload.get("aicc") is not None else None),
-            bic=float(payload.get("bic", float("inf"))),
-            selected_score=float(payload.get("selected_score", float("inf"))),
+            sample_count=None
+            if payload.get("sample_count") is None
+            else int(payload["sample_count"]),
             residual_rms=float(payload.get("residual_rms", float("inf"))),
             runs_z_score=float(payload.get("runs_z_score", float("inf"))),
             max_abs_autocorrelation=float(payload.get("max_abs_autocorrelation", float("inf"))),
@@ -4416,8 +4404,6 @@ def _assess_candidate_template(
         best_parameters = ParameterSet()
 
     n_points = int(dataset.n_points)
-    k_free = len(best_result.parameters.free_parameters)
-    aic, aicc, bic = compute_information_criteria(best_result.chi_squared, k_free, n_points)
 
     residual_rms, runs_z_score, max_abs_autocorrelation, residual_fft_peak_snr = (
         _residual_diagnostics(dataset, best_result)
@@ -4448,10 +4434,7 @@ def _assess_candidate_template(
     return CandidateAssessment(
         template=template,
         fit_result=best_result,
-        aic=aic,
-        aicc=aicc,
-        bic=bic,
-        selected_score=_metric_value(metric, aic, aicc, bic),
+        sample_count=n_points,
         residual_rms=residual_rms,
         runs_z_score=runs_z_score,
         max_abs_autocorrelation=max_abs_autocorrelation,
@@ -4530,12 +4513,15 @@ def assessment_with_curves(
     return _with_dense_curves(assessment, analysis_dataset)
 
 
-def _metric_value(metric: SelectionMetric, aic: float, aicc: float | None, bic: float) -> float:
-    if metric == SelectionMetric.AIC:
-        return aic
-    if metric == SelectionMetric.BIC:
-        return bic
-    return aicc if aicc is not None else aic
+def _refinement_score(assessment: CandidateAssessment, metric: SelectionMetric) -> float:
+    """Select finite provisional minima for refinement without treating them as fitted answers."""
+    statistic = assessment.fit_result.chi_squared
+    criteria = (
+        InformationCriteria(statistic, assessment.parameter_count, assessment.sample_count)
+        if math.isfinite(statistic)
+        else None
+    )
+    return ranking_value(criteria, metric)
 
 
 def _assessment_sort_key(
@@ -6227,9 +6213,10 @@ def _refine_top_candidates(
         (
             assessment
             for assessment in assessments
-            if not assessment.is_null_baseline and math.isfinite(assessment.metric_value(metric))
+            if not assessment.is_null_baseline
+            and math.isfinite(_refinement_score(assessment, metric))
         ),
-        key=lambda assessment: assessment.metric_value(metric),
+        key=lambda assessment: _refinement_score(assessment, metric),
     )[: int(refine_top_candidates)]
     targets = {
         assessment.template.key: assessment

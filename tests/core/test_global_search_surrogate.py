@@ -15,7 +15,6 @@ import numpy as np
 import pytest
 
 from asymmetry.core.fitting.engine import FitResult
-from asymmetry.core.fitting.fit_wizard import SelectionMetric, compute_information_criteria
 from asymmetry.core.fitting.global_search.surrogate import (
     CONDITION_LIMIT,
     OrderedCollapse,
@@ -27,6 +26,7 @@ from asymmetry.core.fitting.global_search.surrogate import (
     run_estimate_from_fit_result,
     surrogate_ic,
 )
+from asymmetry.core.fitting.information_criteria import InformationCriteria, SelectionMetric
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
 NAMES = ("a", "b", "c")
@@ -324,22 +324,18 @@ def test_run_estimate_marks_a_missing_uncertainty_as_carrying_no_information():
 @pytest.mark.parametrize("parameter_count, sample_count", [(1, 500), (24, 4000), (7, 8)])
 def test_penalty_agrees_with_compute_information_criteria(metric, parameter_count, sample_count):
     chi_squared = 123.5
-    aic, aicc, bic = compute_information_criteria(chi_squared, parameter_count, sample_count)
-    expected = {
-        SelectionMetric.AIC: aic,
-        SelectionMetric.BIC: bic,
-        SelectionMetric.AICC: aicc if aicc is not None else aic,
-    }[metric]
+    expected = InformationCriteria(chi_squared, parameter_count, sample_count).value(metric)
 
     penalty = metric_penalty(parameter_count, sample_count=sample_count, metric=metric)
 
-    assert chi_squared + penalty == pytest.approx(expected)
+    if expected is None:
+        assert penalty is None
+    else:
+        assert chi_squared + penalty == pytest.approx(expected)
 
 
-def test_aicc_penalty_falls_back_to_aic_when_the_correction_is_undefined():
-    _aic, aicc, _bic = compute_information_criteria(0.0, 10, 10)
-    assert aicc is None
-    assert metric_penalty(10, sample_count=10, metric=SelectionMetric.AICC) == 20.0
+def test_aicc_penalty_is_unavailable_when_the_correction_is_undefined():
+    assert metric_penalty(10, sample_count=10, metric=SelectionMetric.AICC) is None
 
 
 @pytest.mark.parametrize("metric", list(SelectionMetric))
@@ -360,12 +356,7 @@ def test_surrogate_ic_is_chi2_plus_collapse_plus_the_shared_penalty(metric):
     delta = collapse_cost(estimates, subset).delta_chi2
     chi_squared = sum(estimate.chi_squared for estimate in estimates)
     # k = |S| + (P - |S|)·G = 2 + 1·4
-    aic, aicc, bic = compute_information_criteria(chi_squared + delta, 6, 1000)
-    expected = {
-        SelectionMetric.AIC: aic,
-        SelectionMetric.BIC: bic,
-        SelectionMetric.AICC: aicc if aicc is not None else aic,
-    }[metric]
+    expected = InformationCriteria(chi_squared + delta, 6, 1000).value(metric)
 
     assert surrogate_ic(estimates, subset, metric) == pytest.approx(expected)
 

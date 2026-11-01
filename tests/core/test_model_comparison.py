@@ -89,8 +89,7 @@ def _fit(run: int, *, a_1: float = 20.0, a_1_err: float = 0.2) -> FitResult:
 def _assessment(
     key: str,
     *,
-    aicc: float,
-    bic: float = 0.0,
+    statistic: float,
     runs: tuple[int, ...] = _RUNS,
     fits: dict[int, FitResult] | None = None,
     gate_reasons: dict[int, tuple[str, ...]] | None = None,
@@ -98,7 +97,11 @@ def _assessment(
     local_names: tuple[str, ...] = ("Lambda",),
     prescreen: bool = False,
 ) -> GlobalCandidateAssessment:
-    fits = {run: _fit(run) for run in runs} if fits is None else fits
+    fits = (
+        {run: replace(_fit(run), chi_squared=statistic / len(runs)) for run in runs}
+        if fits is None
+        else fits
+    )
     gate_reasons = gate_reasons or {}
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     curves = {}
@@ -135,10 +138,7 @@ def _assessment(
             for run in runs
         ),
         series_warnings=(),
-        aic=aicc,
-        aicc=aicc,
-        bic=bic,
-        selected_score=aicc,
+        sample_count=1000,
         fitted_curves_by_run=curves,
         component_curves_by_run={},
         prescreen_only=prescreen,
@@ -262,25 +262,30 @@ def test_bound_side_ignores_infinite_bounds_in_the_tolerance() -> None:
 
 
 def test_summaries_carry_delta_and_weight_across_the_given_pool() -> None:
-    pool = [_assessment("b|1", aicc=104.0), _assessment("a|1", aicc=100.0)]
+    pool = [_assessment("b|1", statistic=104.0), _assessment("a|1", statistic=100.0)]
     summaries = summarise_candidates(pool, _datasets(), SelectionMetric.AICC)
     assert [s.key for s in summaries] == ["b|1", "a|1"]
     assert [s.delta for s in summaries] == [4.0, 0.0]
     assert [s.weight for s in summaries] == pytest.approx(information_weights([104.0, 100.0]))
     assert summaries[0].title == "Title b|1"
-    assert summaries[0].metric_value == 104.0
+    assert summaries[0].metric_value == pytest.approx(112.04020100502512)
 
 
 def test_summaries_rank_on_the_requested_metric() -> None:
-    pool = [_assessment("a|1", aicc=100.0, bic=30.0), _assessment("b|1", aicc=104.0, bic=20.0)]
+    pool = [
+        _assessment("a|1", statistic=100.0),
+        _assessment("b|1", statistic=105.0, global_names=("A_1", "Lambda"), local_names=()),
+    ]
     summaries = summarise_candidates(pool, _datasets(), SelectionMetric.BIC)
-    assert [s.delta for s in summaries] == [10.0, 0.0]
+    assert [s.delta for s in summaries] == pytest.approx([8.815510557964274, 0.0])
 
 
 def test_summary_runs_follow_series_order_with_residuals_and_chi2() -> None:
     fits = {run: _fit(run) for run in (703, 701, 702)}
     summary = summarise_candidates(
-        [_assessment("a|1", aicc=1.0, fits=fits)], list(reversed(_datasets())), SelectionMetric.AICC
+        [_assessment("a|1", statistic=1.0, fits=fits)],
+        list(reversed(_datasets())),
+        SelectionMetric.AICC,
     )[0]
     assert [run.run_number for run in summary.runs] == [701, 702, 703]
     assert [run.axis_value for run in summary.runs] == [100.0, 200.0, 300.0]
@@ -297,7 +302,7 @@ def test_summary_runs_follow_series_order_with_residuals_and_chi2() -> None:
 def test_summary_parameter_rows_share_globals_only_after_a_coupled_fit() -> None:
     fits = {run: _fit(run, a_1=20.0, a_1_err=0.3) for run in _RUNS}
     summary = summarise_candidates(
-        [_assessment("a|1", aicc=1.0, fits=fits)], _datasets(), SelectionMetric.AICC
+        [_assessment("a|1", statistic=1.0, fits=fits)], _datasets(), SelectionMetric.AICC
     )[0]
     rows = {row.name: row for row in summary.parameters}
     assert [row.name for row in summary.parameters] == ["A_1", "Lambda", "A_bg"]
@@ -314,7 +319,9 @@ def test_summary_parameter_rows_share_globals_only_after_a_coupled_fit() -> None
     assert all(not row.flags for row in summary.parameters)
 
     prescreen = summarise_candidates(
-        [_assessment("a", aicc=1.0, fits=fits, prescreen=True)], _datasets(), SelectionMetric.AICC
+        [_assessment("a", statistic=1.0, fits=fits, prescreen=True)],
+        _datasets(),
+        SelectionMetric.AICC,
     )[0]
     assert prescreen.prescreen
     assert prescreen.parameters[0].values == (Estimate(20.0, 0.3),) * 3
@@ -324,7 +331,11 @@ def test_summary_row_flags_are_kept_per_run_with_their_union() -> None:
     fits = {run: _fit(run) for run in _RUNS}
     fits[702] = _fit(702, a_1=0.0)
     summary = summarise_candidates(
-        [_assessment("a|1", aicc=1.0, fits=fits, global_names=(), local_names=("A_1", "Lambda"))],
+        [
+            _assessment(
+                "a|1", statistic=1.0, fits=fits, global_names=(), local_names=("A_1", "Lambda")
+            )
+        ],
         _datasets(),
         SelectionMetric.AICC,
     )[0]
@@ -345,7 +356,7 @@ def test_summary_omits_runs_an_incomplete_prescreen_never_fitted() -> None:
         [
             _assessment(
                 "a",
-                aicc=math.inf,
+                statistic=math.inf,
                 fits=fits,
                 prescreen=True,
                 gate_reasons={702: ("missing successful single-fit assessment for Title a",)},
@@ -364,7 +375,7 @@ def test_summary_failed_run_has_unknown_values_without_flags() -> None:
     fits = {run: _fit(run) for run in _RUNS}
     fits[702] = FitResult(success=False, message="failed")
     summary = summarise_candidates(
-        [_assessment("a|1", aicc=1.0, fits=fits)], _datasets(), SelectionMetric.AICC
+        [_assessment("a|1", statistic=1.0, fits=fits)], _datasets(), SelectionMetric.AICC
     )[0]
     lam = summary.parameters[1].values
     assert isinstance(lam, tuple)
@@ -380,13 +391,15 @@ def test_gate_summary_dedupes_reasons_and_names_the_runs() -> None:
         703: ("runs-test z score suggests structure",),
     }
     summary = summarise_candidates(
-        [_assessment("a|1", aicc=1.0, gate_reasons=reasons)], _datasets(), SelectionMetric.AICC
+        [_assessment("a|1", statistic=1.0, gate_reasons=reasons)], _datasets(), SelectionMetric.AICC
     )[0]
     assert not summary.gate_passed
     assert summary.gate_summary == (
         "runs-test z score suggests structure (runs 701, 703); Lambda at lower bound (run 702)"
     )
-    clean = summarise_candidates([_assessment("a|1", aicc=1.0)], _datasets(), SelectionMetric.AICC)
+    clean = summarise_candidates(
+        [_assessment("a|1", statistic=1.0)], _datasets(), SelectionMetric.AICC
+    )
     assert clean[0].gate_passed
     assert clean[0].gate_summary == ""
 
@@ -399,7 +412,7 @@ def test_gate_summary_leaves_a_flagged_bound_hit_to_the_parameter_flag() -> None
         [
             _assessment(
                 "a|1",
-                aicc=1.0,
+                statistic=1.0,
                 fits=fits,
                 global_names=(),
                 local_names=("A_1", "Lambda"),
@@ -422,10 +435,14 @@ def test_compare_orders_globals_first_and_flags_shared_globals_by_sigma() -> Non
     fits_a = {run: _fit(run, a_1=20.0, a_1_err=0.3) for run in _RUNS}
     fits_b = {run: _fit(run, a_1=21.55, a_1_err=0.4) for run in _RUNS}
     a_rows = summarise_candidates(
-        [_assessment("t|a", aicc=1.0, fits=fits_a)], _datasets(), SelectionMetric.AICC
+        [_assessment("t|a", statistic=1.0, fits=fits_a)], _datasets(), SelectionMetric.AICC
     )[0]
     b_rows = summarise_candidates(
-        [_assessment("t|b", aicc=2.0, fits=fits_b, global_names=("A_1", "Lambda"), local_names=())],
+        [
+            _assessment(
+                "t|b", statistic=2.0, fits=fits_b, global_names=("A_1", "Lambda"), local_names=()
+            )
+        ],
         _datasets(),
         SelectionMetric.AICC,
     )[0]
@@ -440,11 +457,13 @@ def test_compare_orders_globals_first_and_flags_shared_globals_by_sigma() -> Non
 
 def test_compare_places_names_only_b_has_by_their_role_in_b() -> None:
     a = summarise_candidates(
-        [_assessment("t|a", aicc=1.0, global_names=(), local_names=("Lambda",))],
+        [_assessment("t|a", statistic=1.0, global_names=(), local_names=("Lambda",))],
         _datasets(),
         SelectionMetric.AICC,
     )[0]
-    b = summarise_candidates([_assessment("t|b", aicc=2.0)], _datasets(), SelectionMetric.AICC)[0]
+    b = summarise_candidates(
+        [_assessment("t|b", statistic=2.0)], _datasets(), SelectionMetric.AICC
+    )[0]
     # A has no A_1 at all; B's global A_1 leads the table.
     a = replace(a, parameters=a.parameters[1:])
     pairs = compare_parameters(a, b)
@@ -455,12 +474,20 @@ def test_compare_places_names_only_b_has_by_their_role_in_b() -> None:
 
 def test_compare_does_not_flag_a_difference_under_two_sigma() -> None:
     a = summarise_candidates(
-        [_assessment("t|a", aicc=1.0, fits={r: _fit(r, a_1=20.0, a_1_err=0.3) for r in _RUNS})],
+        [
+            _assessment(
+                "t|a", statistic=1.0, fits={r: _fit(r, a_1=20.0, a_1_err=0.3) for r in _RUNS}
+            )
+        ],
         _datasets(),
         SelectionMetric.AICC,
     )[0]
     b = summarise_candidates(
-        [_assessment("t|b", aicc=1.0, fits={r: _fit(r, a_1=20.9, a_1_err=0.4) for r in _RUNS})],
+        [
+            _assessment(
+                "t|b", statistic=1.0, fits={r: _fit(r, a_1=20.9, a_1_err=0.4) for r in _RUNS}
+            )
+        ],
         _datasets(),
         SelectionMetric.AICC,
     )[0]
@@ -472,7 +499,11 @@ def test_compare_does_not_flag_a_difference_under_two_sigma() -> None:
 def test_compare_leaves_k_unmeasured_when_errors_vanish() -> None:
     a, b = (
         summarise_candidates(
-            [_assessment(key, aicc=1.0, fits={r: _fit(r, a_1=a_1, a_1_err=0.0) for r in _RUNS})],
+            [
+                _assessment(
+                    key, statistic=1.0, fits={r: _fit(r, a_1=a_1, a_1_err=0.0) for r in _RUNS}
+                )
+            ],
             _datasets(),
             SelectionMetric.AICC,
         )[0]
@@ -507,8 +538,7 @@ def test_grade_reduced_chi_squared_thresholds(value: float, grade: FitGrade) -> 
 def _single(
     key: str,
     *,
-    aicc: float,
-    bic: float = 0.0,
+    statistic: float,
     fit: FitResult | None = None,
     curves: bool = True,
     gate_reasons: tuple[str, ...] = (),
@@ -525,11 +555,8 @@ def _single(
             rationale="synthetic",
             model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
         ),
-        fit_result=_fit(701) if fit is None else fit,
-        aic=aicc,
-        aicc=aicc,
-        bic=bic,
-        selected_score=aicc,
+        fit_result=replace(_fit(701), chi_squared=statistic) if fit is None else fit,
+        sample_count=1000,
         residual_rms=1.0,
         runs_z_score=0.0,
         max_abs_autocorrelation=0.0,
@@ -575,13 +602,15 @@ def _single_recommendation(*assessments: CandidateAssessment) -> FitWizardRecomm
 
 def test_single_summaries_rank_every_row_with_delta_and_weight_across_all() -> None:
     recommendation = _single_recommendation(
-        _single("exp", aicc=100.0),
-        _single("flat", aicc=140.0, null_baseline=True),
-        _single("osc", aicc=98.0, disqualified=("oscillation amplitude consistent with zero",)),
+        _single("exp", statistic=100.0),
+        _single("flat", statistic=140.0, null_baseline=True),
+        _single(
+            "osc", statistic=98.0, disqualified=("oscillation amplitude consistent with zero",)
+        ),
     )
     summaries = summarise_single_candidates(recommendation, _dataset(701), SelectionMetric.AICC)
     assert [s.key for s in summaries] == ["osc", "exp", "flat"]
-    assert [s.delta for s in summaries] == [0.0, 2.0, 42.0]
+    assert [s.delta for s in summaries] == pytest.approx([0.0, 2.0, 42.0])
     assert [s.weight for s in summaries] == pytest.approx(information_weights([98.0, 100.0, 140.0]))
     assert [s.title for s in summaries] == [
         "Title osc (disqualified)",
@@ -592,15 +621,23 @@ def test_single_summaries_rank_every_row_with_delta_and_weight_across_all() -> N
 
 def test_single_summaries_rank_on_the_requested_metric() -> None:
     recommendation = _single_recommendation(
-        _single("a", aicc=100.0, bic=30.0), _single("b", aicc=104.0, bic=20.0)
+        _single("a", statistic=100.0),
+        _single(
+            "b",
+            statistic=103.0,
+            fit=replace(
+                _fit(701), chi_squared=103.0, parameters=ParameterSet([Parameter("A_1", 20.0)])
+            ),
+        ),
     )
     summaries = summarise_single_candidates(recommendation, _dataset(701), SelectionMetric.BIC)
-    assert [(s.key, s.delta) for s in summaries] == [("b", 0.0), ("a", 10.0)]
+    assert [s.key for s in summaries] == ["b", "a"]
+    assert [s.delta for s in summaries] == pytest.approx([0.0, 3.907755278982137])
 
 
 def test_single_summary_is_one_run_with_fitted_and_fixed_parameters() -> None:
     summary = summarise_single_candidates(
-        _single_recommendation(_single("exp", aicc=1.0)), _dataset(701), SelectionMetric.AICC
+        _single_recommendation(_single("exp", statistic=1.0)), _dataset(701), SelectionMetric.AICC
     )[0]
     (run,) = summary.runs
     assert (run.run_number, run.run_label) == (701, "701")
@@ -617,7 +654,9 @@ def test_single_summary_is_one_run_with_fitted_and_fixed_parameters() -> None:
 
 def test_single_summary_leaves_a_bare_row_without_curves() -> None:
     summaries = summarise_single_candidates(
-        _single_recommendation(_single("drawn", aicc=1.0), _single("bare", aicc=2.0, curves=False)),
+        _single_recommendation(
+            _single("drawn", statistic=1.0), _single("bare", statistic=2.0, curves=False)
+        ),
         _dataset(701),
         SelectionMetric.AICC,
     )
@@ -635,7 +674,7 @@ def test_single_gate_summary_names_no_run_and_leaves_bound_hits_to_the_flags() -
         _single_recommendation(
             _single(
                 "exp",
-                aicc=1.0,
+                statistic=1.0,
                 fit=_fit(701, a_1=0.0),
                 gate_reasons=("A_1 at lower bound", "runs-test z score suggests structure"),
             )
@@ -650,7 +689,7 @@ def test_single_gate_summary_names_no_run_and_leaves_bound_hits_to_the_flags() -
 
 def test_compare_places_fitted_parameters_before_fixed_ones() -> None:
     a, b = summarise_single_candidates(
-        _single_recommendation(_single("a", aicc=1.0), _single("b", aicc=2.0)),
+        _single_recommendation(_single("a", statistic=1.0), _single("b", statistic=2.0)),
         _dataset(701),
         SelectionMetric.AICC,
     )

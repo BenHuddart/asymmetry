@@ -3314,12 +3314,9 @@ class CrossGroupFitResult:
     error_mode: str = ErrorMode.COLUMN.value
     #: Number of points that entered the fit across all groups (0 if unknown).
     n_points: int = 0
-    #: Per-group χ², keyed by ``group_id``. Computed from the same masked/
-    #: windowed residuals (and xerr effective-variance term, when active) that
-    #: the joint cost function used, so ``sum(per_group_chi_squared.values())
-    #: == chi_squared``. Under SCATTER error mode this is reported on the
-    #: *pre-rescale* basis — the same basis ``chi_squared`` itself uses (the
-    #: rescale only touches parameter uncertainties, never the fitted χ²).
+    uses_effective_variance: bool = False
+    #: Per-group costs use the same mask and weighting as the joint objective.
+    #: SCATTER rescales uncertainties, leaving these unit-weight RSS values unchanged.
     per_group_chi_squared: dict[str, float] = field(default_factory=dict)
     #: Number of points that entered the fit for each group (post mask/window).
     per_group_n_points: dict[str, int] = field(default_factory=dict)
@@ -3354,6 +3351,7 @@ class CrossGroupFitResult:
             },
             "message": self.message,
             "error_mode": self.error_mode,
+            "uses_effective_variance": self.uses_effective_variance,
             "n_points": int(self.n_points),
             "per_group_chi_squared": {
                 gid: float(val) for gid, val in self.per_group_chi_squared.items()
@@ -3371,10 +3369,7 @@ class CrossGroupFitResult:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, object]) -> CrossGroupFitResult:
-        """Tolerant deserialization: missing/malformed keys fall back to
-        empty defaults rather than raising, so a legacy payload (recorded
-        before these fields existed) still loads.
-        """
+        """Read the optional recorded diagnostics alongside the fitted parameters."""
         local_parameters: dict[str, ParameterSet] = {}
         raw_local_parameters = data.get("local_parameters", {})
         if isinstance(raw_local_parameters, Mapping):
@@ -3463,6 +3458,7 @@ class CrossGroupFitResult:
             local_uncertainties=local_uncertainties,
             message=str(data.get("message", "")),
             error_mode=str(data.get("error_mode", ErrorMode.COLUMN.value)),
+            uses_effective_variance=bool(data.get("uses_effective_variance", False)),
             n_points=n_points,
             per_group_chi_squared=per_group_chi_squared,
             per_group_n_points=per_group_n_points,
@@ -4404,6 +4400,7 @@ def global_fit_parameter_model(
         message=message,
         error_mode=error_mode.value,
         n_points=int(total_points),
+        uses_effective_variance=any(arrays[3] is not None for arrays in group_fit_arrays),
         per_group_chi_squared=per_group_chi_squared,
         per_group_n_points=per_group_n_points,
         global_correlations=global_correlations,

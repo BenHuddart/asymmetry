@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.information_criteria import (
+    InformationCriteria,
+    SelectionMetric,
+    ranking_value,
+)
 from asymmetry.core.fitting.parameters import ParameterSet
 
 
@@ -214,24 +219,44 @@ class SearchMove:
 class ModelScore:
     """Explicit model-selection scores for a fitted candidate."""
 
-    chi_squared: float
-    parameter_count: int
-    sample_count: int
-    bic: float
-    aic: float
-    aicc: float | None = None
+    criteria: InformationCriteria | None
     cv_score: float | None = None
     evidence_proxy: float | None = None
-    primary_metric: str = "BIC"
+    primary_metric: SelectionMetric = SelectionMetric.BIC
+
+    def __post_init__(self):
+        object.__setattr__(self, "primary_metric", SelectionMetric.from_value(self.primary_metric))
+
+    def unavailable_reason(self, metric: SelectionMetric | str) -> str | None:
+        return "fit failed" if self.criteria is None else self.criteria.unavailable_reason(metric)
 
     @property
     def primary_value(self) -> float:
-        metric = self.primary_metric.upper()
-        if metric == "AIC":
-            return float(self.aic)
-        if metric == "AICC":
-            return float(self.aicc if self.aicc is not None else self.aic)
-        return float(self.bic)
+        return ranking_value(self.criteria, SelectionMetric.from_value(self.primary_metric))
+
+    @property
+    def chi_squared(self) -> float:
+        return float("inf") if self.criteria is None else self.criteria.minus_two_log_likelihood
+
+    @property
+    def parameter_count(self) -> int | None:
+        return None if self.criteria is None else self.criteria.parameter_count
+
+    @property
+    def sample_count(self) -> int | None:
+        return None if self.criteria is None else self.criteria.sample_count
+
+    @property
+    def aic(self) -> float:
+        return ranking_value(self.criteria, SelectionMetric.AIC)
+
+    @property
+    def aicc(self) -> float | None:
+        return None if self.criteria is None else self.criteria.value(SelectionMetric.AICC)
+
+    @property
+    def bic(self) -> float:
+        return ranking_value(self.criteria, SelectionMetric.BIC)
 
 
 @dataclass

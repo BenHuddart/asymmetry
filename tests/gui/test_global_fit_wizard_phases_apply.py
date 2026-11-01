@@ -141,10 +141,7 @@ def _assessment(runs: tuple[int, ...], title: str) -> GlobalCandidateAssessment:
             for run in runs
         ),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.2,
-        bic=12.0,
-        selected_score=10.2,
+        sample_count=1000,
         fitted_curves_by_run={run: (time_axis.copy(), curve.copy()) for run in runs},
         component_curves_by_run={run: () for run in runs},
     )

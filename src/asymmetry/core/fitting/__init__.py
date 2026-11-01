@@ -53,12 +53,10 @@ from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
     FitWizardRecommendation,
-    SelectionMetric,
     SpectrumFingerprint,
     assessment_with_curves,
     build_candidate_templates,
     build_fit_wizard_recommendation,
-    compute_information_criteria,
     fingerprint_spectrum,
     rerank_fit_wizard_recommendation,
 )
@@ -94,6 +92,7 @@ from asymmetry.core.fitting.grouped_time_domain import (
     grouped_time_domain_available,
     recommend_grouped_series_seeding,
 )
+from asymmetry.core.fitting.information_criteria import InformationCriteria, SelectionMetric
 from asymmetry.core.fitting.joint import (
     JointFitResult,
     JointSeriesProblem,
@@ -196,6 +195,7 @@ __all__ = [
     "rrf_frequency_offsets",
     "rrf_offset_model",
     "SelectionMetric",
+    "InformationCriteria",
     "SelectionObjective",
     "SpectrumFingerprint",
     "CandidateTemplate",
@@ -250,7 +250,6 @@ __all__ = [
     "fit_bimolecular_rate",
     "fit_arrhenius",
     "mu_relaxation_from_amplitude",
-    "compute_information_criteria",
     "fingerprint_spectrum",
     "build_candidate_templates",
     "assessment_with_curves",

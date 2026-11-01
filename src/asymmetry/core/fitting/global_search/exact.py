@@ -11,8 +11,8 @@ from asymmetry.core.fitting.global_search.adapters import (
     build_parameter_sets_for_structure,
     compile_structure_to_legacy_roles,
 )
-from asymmetry.core.fitting.global_search.score import score_exact_candidate
 from asymmetry.core.fitting.global_search.types import DiscreteCandidate, ModelScore
+from asymmetry.core.fitting.information_criteria import InformationCriteria
 from asymmetry.core.fitting.parameters import ParameterSet
 
 
@@ -60,10 +60,10 @@ class ExactStructureFitter:
         total_chi2 = float(sum(result.chi_squared for result in results_by_run.values()))
         sample_count = int(sum(dataset.n_points for dataset in datasets))
         parameter_count = len(global_names) + len(local_names) * len(datasets)
-        score = score_exact_candidate(
-            total_chi2,
-            parameter_count,
-            sample_count,
+        score = ModelScore(
+            criteria=InformationCriteria(total_chi2, parameter_count, sample_count)
+            if all(result.success for result in results_by_run.values())
+            else None,
             primary_metric=metric.value,
         )
         return ExactCandidateFit(

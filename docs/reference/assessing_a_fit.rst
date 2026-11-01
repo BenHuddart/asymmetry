@@ -80,3 +80,12 @@ See also
 * :ref:`pull-diagnostic` — the pull-distribution error-bar validation.
 * :doc:`fit_wizard` — choosing a starting model when the χ² says the current
   one is wrong.
+
+Model-selection criteria
+-------------------------
+
+Information-criterion comparisons require the same data and likelihood.
+AICc is unavailable when its sample-size correction is undefined; a smaller
+AIC value cannot replace it in an AICc ranking. See :doc:`fit_wizard` for
+formulas, availability and assumptions, and :doc:`global_fit_wizard` for
+series totals and partition BIC.

@@ -11,6 +11,9 @@ beneath it, with the recommendation as candidate A. The wizard typically
 recommends ``StaticGKT_ZF + Constant`` for an Ag ZF dataset: the canonical
 nuclear-dipolar fingerprint (Blundell et al. Ch 5.2).
 
+All rows derive their criteria from their fitted objective, free columns and
+sample count; the screenshot uses enough samples for AICc to be available.
+
 The candidates just behind it on this record are the same function reached
 through a nested model (a rate or width fitted at zero), so their curves would
 hide under A's. B is therefore the best candidate at least

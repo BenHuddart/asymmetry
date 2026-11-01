@@ -55,6 +55,7 @@ from numpy.typing import NDArray
 
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import SelectionMetric
+from asymmetry.core.fitting.information_criteria import InformationCriteria, partition_bic
 
 __all__ = [
     "CONDITION_LIMIT",
@@ -395,25 +396,16 @@ def collapse_cost(estimates: Sequence[RunEstimate], subset: Sequence[str]) -> Co
 # --------------------------------------------------------------------------- #
 
 
-def metric_penalty(parameter_count: int, *, sample_count: int, metric: SelectionMetric) -> float:
-    """The additive IC penalty ``IC - chi2`` for ``k`` params over ``n`` points.
+def metric_penalty(
+    parameter_count: int, *, sample_count: int, metric: SelectionMetric
+) -> float | None:
+    """The selected IC's additive penalty; undefined criteria stay unavailable."""
+    return InformationCriteria(0.0, parameter_count, sample_count).value(metric)
 
-    Mirrors :func:`asymmetry.core.fitting.fit_wizard.compute_information_criteria`
-    exactly (AICc falls back to AIC's penalty when ``n <= k + 1``, which is
-    precisely when that function reports ``aicc = None``), so a surrogate IC and
-    an exact-fit IC are on one scale.
-    """
 
-    k = max(int(parameter_count), 0)
-    n = max(int(sample_count), 1)
-    if metric == SelectionMetric.AIC:
-        return 2.0 * k
-    if metric == SelectionMetric.BIC:
-        return k * math.log(n)
-    aic_penalty = 2.0 * k
-    if n > k + 1:
-        return aic_penalty + 2.0 * k * (k + 1) / max(n - k - 1, 1)
-    return aic_penalty
+def _ranking_penalty(parameter_count: int, *, sample_count: int, metric: SelectionMetric) -> float:
+    penalty = metric_penalty(parameter_count, sample_count=sample_count, metric=metric)
+    return math.inf if penalty is None else penalty
 
 
 def surrogate_ic(
@@ -437,7 +429,7 @@ def surrogate_ic(
     return (
         chi_squared
         + _delta_chi2(runs, canonical)
-        + metric_penalty(parameter_count, sample_count=sample_count, metric=metric)
+        + _ranking_penalty(parameter_count, sample_count=sample_count, metric=metric)
     )
 
 
@@ -642,7 +634,7 @@ class OrderedCollapse:
         return (
             float(self._chi_squared[stop] - self._chi_squared[start])
             + self.delta_chi2(start, stop, canonical)
-            + metric_penalty(
+            + _ranking_penalty(
                 parameter_count,
                 sample_count=int(self._sample_count[stop] - self._sample_count[start]),
                 metric=metric,
@@ -659,7 +651,7 @@ class OrderedCollapse:
         uses across templates, and exact for the same reason.
         """
 
-        return float(self._chi_squared[stop] - self._chi_squared[start]) + metric_penalty(
+        return float(self._chi_squared[stop] - self._chi_squared[start]) + _ranking_penalty(
             len(self._names),
             sample_count=int(self._sample_count[stop] - self._sample_count[start]),
             metric=metric,
@@ -715,11 +707,17 @@ class OrderedCollapse:
         shared = len(canonical)
         local = len(self._names) - shared
         sample_count = int(self._sample_count[stop] - self._sample_count[start])
-        return (
-            float(self._chi_squared[stop] - self._chi_squared[start])
-            + self.delta_chi2(start, stop, canonical)
-            + shared * math.log(max(sample_count, 1))
-            + local * float(self._log_points[stop] - self._log_points[start])
+        statistic = float(self._chi_squared[stop] - self._chi_squared[start]) + self.delta_chi2(
+            start, stop, canonical
+        )
+        if not math.isfinite(statistic):
+            return math.inf
+        return partition_bic(
+            statistic,
+            shared,
+            local,
+            sample_count=sample_count,
+            local_log_sample_count=float(self._log_points[stop] - self._log_points[start]),
         )
 
     def lower_bound_partition_ic(self, start: int, stop: int) -> float:
@@ -731,9 +729,13 @@ class OrderedCollapse:
         """
 
         sample_count = int(self._sample_count[stop] - self._sample_count[start])
-        return float(self._chi_squared[stop] - self._chi_squared[start]) + len(
-            self._names
-        ) * math.log(max(sample_count, 1))
+        return partition_bic(
+            float(self._chi_squared[stop] - self._chi_squared[start]),
+            len(self._names),
+            0,
+            sample_count=sample_count,
+            local_log_sample_count=0.0,
+        )
 
     def greedy_partition(
         self, start: int, stop: int, free_names: Sequence[str]

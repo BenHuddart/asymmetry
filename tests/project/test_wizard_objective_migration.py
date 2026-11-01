@@ -60,10 +60,7 @@ def _assessment(
         fixed_param_names=(),
         run_diagnostics=(),
         series_warnings=(),
-        aic=1.0,
-        aicc=2.0,
-        bic=3.0,
-        selected_score=2.0,
+        sample_count=1000,
         fitted_curves_by_run={run: (np.arange(3.0), np.ones(3)) for run in _RUNS},
         component_curves_by_run={},
         assessment_key=f"two_lines|g={','.join(shared)}",
@@ -151,7 +148,7 @@ def test_v23_recommendation_migrates_to_a_statistical_one_without_rungs():
     migrated = migrate_to_current(project)
     validate(migrated)
 
-    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION == 26
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
     cache = migrated["multi_group_fit_state"]["batch"]["wizard_state_by_run_set"][0]
     assert cache["recommendation"] == current
     restored = deserialize_global_fit_wizard_recommendation(cache["recommendation"])

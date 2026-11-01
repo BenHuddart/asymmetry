@@ -144,10 +144,7 @@ def _recommendation_for(dataset: MuonDataset, *, candidates: int = 1) -> FitWiza
             CandidateAssessment(
                 template=template,
                 fit_result=result,
-                aic=8.0,
-                aicc=8.2,
-                bic=10.0,
-                selected_score=8.2,
+                sample_count=1000,
                 residual_rms=0.9,
                 runs_z_score=0.2,
                 max_abs_autocorrelation=0.1,

@@ -149,10 +149,7 @@ def _assessment(
         parameter_recommendations=(),
         run_diagnostics=tuple(diagnostics),
         series_warnings=(),
-        aic=90.0,
-        aicc=92.0,
-        bic=105.0,
-        selected_score=92.0,
+        sample_count=sum(dataset.n_points for dataset in datasets),
         fitted_curves_by_run=fitted_curves,
         component_curves_by_run=component_curves,
         rung=CandidateRung(

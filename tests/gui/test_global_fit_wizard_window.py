@@ -8,6 +8,8 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
+from tests.core.criteria_fixtures import with_aicc
+
 pytestmark = [pytest.mark.gui, pytest.mark.slow, pytest.mark.integration]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -195,10 +197,7 @@ def _fake_recommendation(datasets: list[MuonDataset]) -> GlobalFitWizardRecommen
         ),
         run_diagnostics=tuple(run_diagnostics),
         series_warnings=(),
-        aic=10.0,
-        aicc=10.2,
-        bic=12.0,
-        selected_score=10.2,
+        sample_count=1000,
         fitted_curves_by_run=fitted_curves,
         component_curves_by_run=component_curves,
     )
@@ -250,23 +249,22 @@ def _fake_multi_variant_recommendation(
         base.assessments[0],
         assessment_key="exp_constant|g=A_1,A_bg|l=Lambda",
     )
-    shared = replace(
-        base.assessments[0],
-        global_param_names=("A_1", "Lambda", "A_bg"),
-        local_param_names=(),
-        global_parameters=ParameterSet(
-            [
-                Parameter("A_1", value=0.2, min=0.0, max=1.0),
-                Parameter("Lambda", value=0.35, min=0.0, max=5.0),
-                Parameter("A_bg", value=0.01, min=-0.2, max=0.2),
-            ]
+    shared = with_aicc(
+        replace(
+            base.assessments[0],
+            global_param_names=("A_1", "Lambda", "A_bg"),
+            local_param_names=(),
+            global_parameters=ParameterSet(
+                [
+                    Parameter("A_1", value=0.2, min=0.0, max=1.0),
+                    Parameter("Lambda", value=0.35, min=0.0, max=5.0),
+                    Parameter("A_bg", value=0.01, min=-0.2, max=0.2),
+                ]
+            ),
+            parameter_recommendations=(),
+            assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
         ),
-        parameter_recommendations=(),
-        aic=11.0,
-        aicc=11.2,
-        bic=13.0,
-        selected_score=11.2,
-        assessment_key="exp_constant|g=A_1,Lambda,A_bg|l=none",
+        base.assessments[0].aicc + 1,
     )
     return replace(
         base,
@@ -304,10 +302,7 @@ def _fake_single_fit_recommendation(dataset: MuonDataset) -> FitWizardRecommenda
             residuals=np.asarray(dataset.asymmetry - curve, dtype=float),
             message="ok",
         ),
-        aic=8.0,
-        aicc=8.2,
-        bic=9.0,
-        selected_score=8.2,
+        sample_count=1000,
         residual_rms=0.8,
         runs_z_score=0.1,
         max_abs_autocorrelation=0.1,

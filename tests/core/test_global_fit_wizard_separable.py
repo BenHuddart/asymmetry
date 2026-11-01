@@ -454,7 +454,9 @@ def _capture_search_caches(
     def _recording_finalise(fit_datasets, states, **kwargs):  # noqa: ANN001, ANN003, ANN202
         for state in states:
             for key, assessment in state.exact_cache.items():
-                captured[(state.template.key, *key)] = float(assessment.selected_score)
+                captured[(state.template.key, *key)] = float(
+                    assessment.metric_value(SelectionMetric.AICC)
+                )
         return real_finalise(fit_datasets, states, **kwargs)
 
     patcher.setattr(global_fit_wizard_module, "_drain_separable_tasks", _recording_drain)
@@ -631,10 +633,6 @@ def test_certificate_violation_refits_a_mis_converged_parent(
             run_number: replace(result, chi_squared=result.chi_squared + 500.0)
             for run_number, result in state.anchor_assessment.fit_results_by_run.items()
         },
-        aic=state.anchor_assessment.aic + 500.0,
-        aicc=state.anchor_assessment.aicc + 500.0,
-        bic=state.anchor_assessment.bic + 500.0,
-        selected_score=state.anchor_assessment.selected_score + 500.0,
     )
     state.anchor_assessment = damaged
     state.exact_cache[anchor_key] = damaged

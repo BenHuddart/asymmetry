@@ -35,7 +35,6 @@ from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     CandidateTemplate,
     FitWizardRecommendation,
-    SelectionMetric,
     SpectrumFingerprint,
     TemplateSeedContext,
     _AssessmentTask,
@@ -61,7 +60,6 @@ from asymmetry.core.fitting.fit_wizard import (
     build_candidate_templates,
     build_fit_wizard_recommendation,
     build_wizard_families,
-    compute_information_criteria,
     fingerprint_spectrum,
     fit_result_is_oscillatory_admissible,
     is_multiplet_template_key,
@@ -98,9 +96,6 @@ from asymmetry.core.fitting.global_search.surrogate import (
     run_estimate_from_fit_result,
     surrogate_ic,
 )
-from asymmetry.core.fitting.global_search.surrogate import (
-    metric_penalty as surrogate_metric_penalty,
-)
 from asymmetry.core.fitting.global_search.trend_objective import (
     RESIDUAL_CLUSTER_WARNING,
     CandidateRung,
@@ -108,6 +103,16 @@ from asymmetry.core.fitting.global_search.trend_objective import (
     trend_contenders,
     trend_recommendation,
     trend_sort_key,
+)
+from asymmetry.core.fitting.information_criteria import (
+    InformationCriteria,
+    SelectionMetric,
+    partition_bic,
+    ranking_is_available,
+    ranking_value,
+)
+from asymmetry.core.fitting.information_criteria import (
+    rank as rank_criteria,
 )
 from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_names,
@@ -410,7 +415,7 @@ _LOW_SHORTLIST_CAP = 3
 #: a 3-4-additive-component model must earn its place at Balanced+ instead.
 _LOW_MAX_TEMPLATE_PARAM_COUNT = 5
 #: Technique I: extra IC penalty per additive component applied *only* at Low
-#: ranking time (never baked into the stored aic/aicc/bic fields other tiers and
+#: ranking time (never baked into criteria other tiers and
 #: the harness baseline read) — a complexity prior so more additive terms must
 #: buy a proportionally larger fit improvement to be shortlisted/preferred.
 _LOW_COMPLEXITY_PRIOR_PER_ADDITIVE_TERM = 3.0
@@ -511,10 +516,7 @@ class GlobalCandidateAssessment:
     parameter_recommendations: tuple[GlobalParameterRecommendation, ...]
     run_diagnostics: tuple[RunResidualDiagnostic, ...]
     series_warnings: tuple[str, ...]
-    aic: float
-    aicc: float | None
-    bic: float
-    selected_score: float
+    sample_count: int | None
     fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]]
     component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]]
     prescreen_only: bool = False
@@ -544,6 +546,11 @@ class GlobalCandidateAssessment:
 
     @property
     def parameter_count(self) -> int:
+        if self.prescreen_only:
+            return sum(
+                len(result.parameters.free_parameters)
+                for result in self.fit_results_by_run.values()
+            )
         return _assignment_parameter_count(
             self.template.model,
             self.global_param_names,
@@ -556,14 +563,36 @@ class GlobalCandidateAssessment:
     def additive_terms(self) -> int:
         return self.template.additive_terms
 
+    @property
+    def criteria(self) -> InformationCriteria | None:
+        if not self.fit_results_by_run or not all(
+            result.success for result in self.fit_results_by_run.values()
+        ):
+            return None
+        if self.prescreen_only and len(self.fit_results_by_run) != len(self.run_diagnostics):
+            return None
+        statistic = math.fsum(result.chi_squared for result in self.fit_results_by_run.values())
+        if not math.isfinite(statistic):
+            return None
+        return InformationCriteria(statistic, self.parameter_count, self.sample_count)
+
+    @property
+    def aic(self) -> float:
+        return ranking_value(self.criteria, SelectionMetric.AIC)
+
+    @property
+    def aicc(self) -> float | None:
+        return None if self.criteria is None else self.criteria.value(SelectionMetric.AICC)
+
+    @property
+    def bic(self) -> float:
+        return ranking_value(self.criteria, SelectionMetric.BIC)
+
+    def unavailable_reason(self, metric: SelectionMetric) -> str | None:
+        return "fit failed" if self.criteria is None else self.criteria.unavailable_reason(metric)
+
     def metric_value(self, metric: SelectionMetric) -> float:
-        if metric == SelectionMetric.AIC:
-            return self.aic
-        if metric == SelectionMetric.BIC:
-            return self.bic
-        if self.aicc is not None and np.isfinite(self.aicc):
-            return self.aicc
-        return self.aic
+        return ranking_value(self.criteria, metric)
 
     @property
     def is_successful(self) -> bool:
@@ -2673,10 +2702,9 @@ def _build_single_fit_prescreen_assessments(
         fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
         component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]] = {}
         run_diagnostics: list[RunResidualDiagnostic] = []
-        aic_total = 0.0
-        bic_total = 0.0
-        aicc_total = 0.0
-        all_have_aicc = True
+        sample_count = sum(
+            analysis_dataset_by_run[int(dataset.run_number)].n_points for dataset in datasets
+        )
         missing_runs: list[str] = []
 
         for dataset in datasets:
@@ -2729,30 +2757,15 @@ def _build_single_fit_prescreen_assessments(
                 )
             )
 
-            if assessment.is_successful:
-                aic_total += float(assessment.aic)
-                bic_total += float(assessment.bic)
-                if assessment.aicc is None:
-                    all_have_aicc = False
-                else:
-                    aicc_total += float(assessment.aicc)
-            else:
+            if not assessment.is_successful:
                 missing_runs.append(dataset.run_label)
 
         complete = not missing_runs and len(fit_results_by_run) == len(datasets)
         if complete:
-            aic = float(aic_total)
-            aicc = float(aicc_total) if all_have_aicc else None
-            bic = float(bic_total)
-            selected_score = _metric_value(metric, aic, aicc, bic)
             series_warnings = (
                 "Independent single-fit pre-screen only. This candidate was not advanced to coupled global optimisation.",
             )
         else:
-            aic = float("inf")
-            aicc = None
-            bic = float("inf")
-            selected_score = float("inf")
             series_warnings = tuple(
                 [
                     "Single-fit pre-screen incomplete. This candidate is excluded from the global shortlist.",
@@ -2773,10 +2786,7 @@ def _build_single_fit_prescreen_assessments(
             parameter_recommendations=(),
             run_diagnostics=tuple(run_diagnostics),
             series_warnings=series_warnings,
-            aic=aic,
-            aicc=aicc,
-            bic=bic,
-            selected_score=selected_score,
+            sample_count=sample_count,
             fitted_curves_by_run=fitted_curves_by_run,
             component_curves_by_run=component_curves_by_run,
             prescreen_only=True,
@@ -2862,7 +2872,7 @@ def _partition_inputs_from_prescreen(
                 _record_counter(instrumentation, "oscillation_vanished_cells")
                 continue
             sample_count = int(analysed_points_by_run[run_number])
-            table[run_number][template_key] = float(result.chi_squared) + surrogate_metric_penalty(
+            table[run_number][template_key] = float(result.chi_squared) + _metric_penalty(
                 len(free_names), sample_count=sample_count, metric=_PARTITION_METRIC
             )
             per_run[run_number] = run_estimate_from_fit_result(
@@ -3870,6 +3880,15 @@ def rerank_global_fit_wizard_recommendation(
             comparable_keys=(),
             summary=_screening_no_recommendation_summary(recommendation),
         )
+    optimized_assessments, _excluded = rank_criteria(optimized_assessments, metric)
+    if not optimized_assessments:
+        return replace(
+            recommendation,
+            metric=metric,
+            recommended_key=None,
+            comparable_keys=(),
+            summary=f"No fitted candidate can be ranked by {metric.value}.",
+        )
     if recommendation.objective is SelectionObjective.TREND:
         recommended_key, comparable_keys, summary = trend_recommendation(
             optimized_assessments, metric
@@ -4126,7 +4145,7 @@ def deserialize_global_fit_wizard_recommendation(
     }
     recommended_partition_k = payload.get("recommended_partition_k")
 
-    return GlobalFitWizardRecommendation(
+    recommendation = GlobalFitWizardRecommendation(
         series_axis_key=str(payload.get("series_axis_key", "run")),
         series_axis_label=str(payload.get("series_axis_label", "Run")),
         mixed_axes_warning=(
@@ -4151,6 +4170,13 @@ def deserialize_global_fit_wizard_recommendation(
         ),
         objective=SelectionObjective(payload["objective"]),
     )
+
+    published = {recommendation.recommended_key, *recommendation.comparable_keys}
+    if not ranking_is_available(
+        (row for row in assessments if row.selection_key in published), recommendation.metric
+    ):
+        return rerank_global_fit_wizard_recommendation(recommendation, recommendation.metric)
+    return recommendation
 
 
 def _fixed_param_names(
@@ -4474,10 +4500,7 @@ def _serialize_global_candidate_assessment(
             for diagnostic in assessment.run_diagnostics
         ],
         "series_warnings": list(assessment.series_warnings),
-        "aic": assessment.aic,
-        "aicc": assessment.aicc,
-        "bic": assessment.bic,
-        "selected_score": assessment.selected_score,
+        "sample_count": assessment.sample_count,
         "fitted_curves_by_run": {
             str(run_number): _serialize_curve_pair(
                 curve, stride=strides.get(run_number, 1), compact=compact
@@ -4596,10 +4619,9 @@ def _deserialize_global_candidate_assessment(
                 for warning in payload.get("series_warnings", [])
                 if isinstance(warning, str)
             ),
-            aic=float(payload.get("aic", float("inf"))),
-            aicc=(float(payload["aicc"]) if payload.get("aicc") is not None else None),
-            bic=float(payload.get("bic", float("inf"))),
-            selected_score=float(payload.get("selected_score", float("inf"))),
+            sample_count=None
+            if payload.get("sample_count") is None
+            else int(payload["sample_count"]),
             fitted_curves_by_run=fitted_curves_by_run,
             component_curves_by_run=component_curves_by_run,
             prescreen_only=bool(payload.get("prescreen_only", False)),
@@ -5759,21 +5781,10 @@ def _assemble_assignment_assessment(
     """
 
     sample_count = int(sum(dataset.n_points for dataset in datasets))
-    parameter_count = _assignment_parameter_count(
-        template.model, global_param_names, local_param_names, run_count=len(datasets), rung=rung
-    )
-    if fit_success:
-        total_chi2 = float(sum(result.chi_squared for result in results_by_run.values()))
-        aic, aicc, bic = compute_information_criteria(
-            total_chi2,
-            parameter_count,
-            sample_count,
-        )
-    else:
-        aic = float("inf")
-        aicc = float("inf")
-        bic = float("inf")
-
+    if not fit_success:
+        results_by_run = {
+            run: replace(result, success=False) for run, result in results_by_run.items()
+        }
     run_diagnostics: list[RunResidualDiagnostic] = []
     fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
     component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]] = {}
@@ -5841,10 +5852,7 @@ def _assemble_assignment_assessment(
         parameter_recommendations=(),
         run_diagnostics=tuple(run_diagnostics),
         series_warnings=series_warnings,
-        aic=float(aic),
-        aicc=None if aicc is None else float(aicc),
-        bic=float(bic),
-        selected_score=_metric_value(metric, aic, aicc, bic),
+        sample_count=sample_count,
         fitted_curves_by_run=fitted_curves_by_run,
         component_curves_by_run=component_curves_by_run,
         rung=rung,
@@ -6780,8 +6788,6 @@ def _assess_single_fit_candidate_from_attempts(
         best_parameters = ParameterSet()
 
     n_points = int(dataset.n_points)
-    k_free = len(best_result.parameters.free_parameters)
-    aic, aicc, bic = compute_information_criteria(best_result.chi_squared, k_free, n_points)
 
     residual_rms, runs_z_score, max_abs_autocorrelation, residual_fft_peak_snr = (
         _residual_diagnostics(dataset, best_result)
@@ -6804,10 +6810,7 @@ def _assess_single_fit_candidate_from_attempts(
     return CandidateAssessment(
         template=template,
         fit_result=best_result,
-        aic=aic,
-        aicc=aicc,
-        bic=bic,
-        selected_score=_metric_value(metric, aic, aicc, bic),
+        sample_count=n_points,
         residual_rms=residual_rms,
         runs_z_score=runs_z_score,
         max_abs_autocorrelation=max_abs_autocorrelation,
@@ -8089,19 +8092,6 @@ def _assessment_sort_key(
     )
 
 
-def _metric_value(
-    metric: SelectionMetric,
-    aic: float,
-    aicc: float | None,
-    bic: float,
-) -> float:
-    if metric == SelectionMetric.AIC:
-        return aic
-    if metric == SelectionMetric.BIC:
-        return bic
-    return aicc if aicc is not None else aic
-
-
 def _layer_parameter_count(
     local_count: int,
     *,
@@ -8122,18 +8112,12 @@ def _layer_parameter_count(
 
 
 def _metric_penalty(parameter_count: int, *, sample_count: int, metric: SelectionMetric) -> float:
-    """The additive IC penalty ``IC - chi2`` for ``k`` params over ``n`` points.
+    """IC penalty for a layer bound; undefined criteria exclude the layer.
 
-    Mirrors :func:`compute_information_criteria` exactly so the layer bound uses
-    the same penalty the winning-assessment IC does. All three penalties are
-    monotone non-decreasing in ``k`` (hence in the layer index), so the bound
-    ``chi2_floor + penalty(k(m))`` lower-bounds every assignment at layer ``>= m``.
-
-    The one implementation lives in :mod:`global_search.surrogate` so the tier-2
-    surrogate's IC and the exact path's IC can never drift apart.
+    The penalty is monotone in k, so a χ² floor plus this term bounds all
+    assignments with at least that many free columns.
     """
-
-    return surrogate_metric_penalty(parameter_count, sample_count=sample_count, metric=metric)
+    return ranking_value(InformationCriteria(0.0, parameter_count, sample_count), metric)
 
 
 @dataclass
@@ -10602,28 +10586,11 @@ def _restrict_prescreen_assessment(
 
     run_numbers = [int(dataset.run_number) for dataset in datasets]
     wanted = set(run_numbers)
-    free_names = tuple(
-        name
-        for name in assessment.template.model.param_names
-        if name not in assessment.fixed_param_names
-    )
     results = {
         run_number: assessment.fit_results_by_run[run_number]
         for run_number in run_numbers
         if run_number in assessment.fit_results_by_run
     }
-    complete = len(results) == len(run_numbers) and all(
-        result.success for result in results.values()
-    )
-    if complete:
-        aic, aicc, bic = compute_information_criteria(
-            math.fsum(float(result.chi_squared) for result in results.values()),
-            len(free_names) * len(run_numbers),
-            sum(int(analysed_points_by_run[run_number]) for run_number in run_numbers),
-        )
-    else:
-        aic, aicc, bic = float("inf"), None, float("inf")
-
     return replace(
         assessment,
         fit_results_by_run=results,
@@ -10632,10 +10599,7 @@ def _restrict_prescreen_assessment(
             for diagnostic in assessment.run_diagnostics
             if diagnostic.run_number in wanted
         ),
-        aic=float(aic),
-        aicc=None if aicc is None else float(aicc),
-        bic=float(bic),
-        selected_score=_metric_value(metric, aic, aicc, bic),
+        sample_count=sum(int(analysed_points_by_run[run_number]) for run_number in run_numbers),
         fitted_curves_by_run={},
         component_curves_by_run={},
     )
@@ -10653,16 +10617,16 @@ def _partition_bic(
     at the resolution the assessment was fitted at.
     """
 
-    chi_squared = math.fsum(
-        float(result.chi_squared) for result in assessment.fit_results_by_run.values()
-    )
+    criteria = assessment.criteria
+    if criteria is None:
+        return math.inf
     points = [int(points_by_run[run]) for run in assessment.fit_results_by_run]
-    shared = len(assessment.global_param_names)
-    local = len(assessment.local_param_names)
-    return (
-        chi_squared
-        + shared * math.log(max(sum(points), 1))
-        + local * math.fsum(math.log(max(count, 1)) for count in points)
+    return partition_bic(
+        criteria.minus_two_log_likelihood,
+        len(assessment.global_param_names),
+        len(assessment.local_param_names),
+        sample_count=sum(points),
+        local_log_sample_count=math.fsum(math.log(count) for count in points),
     )
 
 

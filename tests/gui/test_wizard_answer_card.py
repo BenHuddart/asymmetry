@@ -78,10 +78,7 @@ def _assessment(
     return CandidateAssessment(
         template=template,
         fit_result=result,
-        aic=aic,
-        aicc=aicc,
-        bic=bic,
-        selected_score=aicc,
+        sample_count=1000,
         residual_rms=0.9,
         runs_z_score=0.2,
         max_abs_autocorrelation=0.1,
