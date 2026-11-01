@@ -82,6 +82,11 @@ removing a duplicate requires lowering its count or removing its entry.
   so xdist's process-per-core parallelism isn't multiplied by per-process BLAS
   threads.
 
+The full-suite workflow logs Linux's `oom_kill` counter and available memory
+before and after tests, including test failures. A counter increase establishes
+an out-of-memory kill on the runner; it does not identify the victim process.
+An unchanged counter leaves other causes of worker termination unresolved.
+
 Tests inherit a type marker automatically: anything not explicitly marked `gui`
 or `io` is treated as `unit` (see `tests/conftest.py`). Naming explicit targets
 (`-- tests/<layer>/test_x.py` or a `::node-id`) runs exactly those, bypassing
