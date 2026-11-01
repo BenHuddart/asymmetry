@@ -71,18 +71,28 @@ Gaussian
 
    A(t) = A\,e^{-(\sigma t)^2}
 
-The natural relaxation envelope when the muon ensemble experiences a *static*
-Gaussian distribution of local fields and the experimental time window is
-short compared with :math:`1/\sigma`. Expanding the static Gaussian
-Kubo–Toyabe function (:ref:`fit-static-gkt-zf`) for :math:`\Delta t \ll 1`
-gives :math:`1 - \tfrac{1}{2}\Delta^2 t^2`, which matches
-:math:`e^{-(\sigma t)^2}` to leading order with
-:math:`\sigma = \Delta/\sqrt{2}` — note the convention, since rates quoted
-for the :math:`e^{-\Delta^2 t^2/2}` form differ by :math:`\sqrt{2}`. The rate
-is set by the second moment of the field distribution at the muon site,
-:math:`\sigma = \gamma_\mu\sqrt{\langle B^2\rangle}\,/\sqrt{2}` in this
-convention, and the same form describes the Gaussian damping envelope of a
-TF precession line.
+For static Gaussian frequency broadening of a transverse-field precession line,
+the envelope is :math:`\exp(-\Delta^2t^2/2)`, so this component uses
+:math:`\sigma=\Delta/\sqrt{2}`. Here :math:`\Delta=\gamma_\mu B_c`, where
+:math:`B_c` is the standard deviation of the field component parallel to the
+applied field and :math:`\gamma_\mu` is the angular gyromagnetic ratio. For an
+isotropic field distribution this is the high-field envelope, with transverse
+field components small compared with the applied field.
+
+In **zero field**, the static Gaussian Kubo–Toyabe function
+(:ref:`fit-static-gkt-zf`) instead has the short-time expansion
+
+.. math::
+
+   G_{\mathrm{KT}}(t)=1-\Delta^2t^2+\frac{5}{12}\Delta^4t^4+O(t^6).
+
+Its early-time match to :math:`e^{-(\sigma t)^2}` is therefore
+:math:`\sigma=\Delta`. The finite-time difference is
+:math:`G_{\mathrm{KT}}(t)-e^{-\Delta^2t^2}=-\Delta^4t^4/12+O(t^6)`;
+the Gaussian does not reproduce the full dip and recovery. In this isotropic
+zero-field model, :math:`B_c=\Delta/\gamma_\mu` is the width of **one Cartesian
+component**, and :math:`\langle|\mathbf B|^2\rangle=3B_c^2`. See
+:ref:`gaussian-width-conventions` for the conventions across related models.
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
@@ -94,13 +104,12 @@ Name       Symbol           Unit   Description
 For polycrystalline samples with only nuclear moments, typical values lie in
 the range :math:`\sigma \sim 0.1{-}0.5\;\mu s^{-1}`, up to about
 :math:`1\;\mu s^{-1}` when light, high-moment nuclei such as :sup:`1`\ H or
-:sup:`19`\ F are dense at the muon site. Values substantially larger than
-this almost always signal that a coupled F–μ–F (or similar) entangled state
-is being mis-fitted as a Gaussian envelope; use the dedicated components in
-:doc:`nuclear_dipolar` instead. If the data reach
-:math:`t \gtrsim 1/\sigma` without flattening onto a :math:`1/3` tail,
-the relaxation is not purely static-Gaussian — try ``StretchedExponential``
-or the full ``StaticGKT_ZF``.
+:sup:`19`\ F are dense at the muon site. Larger widths can reflect short muon–nucleus distances, several inequivalent
+sites, or electronic moments. Resolved coupled F–μ–F oscillations call for the
+dedicated components in :doc:`nuclear_dipolar`. The :math:`1/3` tail is a feature
+of the full static isotropic **zero-field** response, not of a transverse-field
+envelope. Use ``StaticGKT_ZF`` when the time window includes its dip and
+recovery; additional relaxation channels can modify the tail.
 
 A standalone ``GaussianRelaxation`` model is available in the ``MODELS``
 registry.
@@ -171,7 +180,8 @@ Abragam
 
 The Gaussian-to-exponential crossover function: a Gaussian static width
 :math:`\Delta` fluctuating at rate :math:`\nu`, with the limits
-:math:`\nu \to 0:\ \exp(-\Delta^2 t^2/2)` (static Gaussian) and
+:math:`\nu \to 0:\ \exp(-\Delta^2 t^2/2)` (static transverse-field Gaussian, equal to ``Gaussian`` at
+:math:`\sigma=\Delta/\sqrt{2}`) and
 :math:`\nu \gg \Delta:\ \exp(-(\Delta^2/\nu)\,t)` (motionally narrowed
 exponential). It is the classic model for extracting a hop or correlation
 rate from a transverse-field line shape — the textbook example being the

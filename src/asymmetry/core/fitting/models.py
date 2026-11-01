@@ -165,7 +165,11 @@ def exponential_relaxation(t: NDArray, A0: float, Lambda: float, baseline: float
 
 
 def gaussian_relaxation(t: NDArray, A0: float, sigma: float, baseline: float = 0.0) -> NDArray:
-    """Gaussian relaxation: A(t) = A0 exp(−σ²t²) + baseline."""
+    """Gaussian envelope A0 exp(−σ²t²) + baseline.
+
+    For per-component angular-field width Delta, sigma = Delta matches the
+    zero-field KT curvature; sigma = Delta/sqrt(2) gives its TF envelope.
+    """
     # Clamp exponent to prevent overflow
     exponent = np.clip(-((sigma * t) ** 2), -700, 0)
     return A0 * np.exp(exponent) + baseline
@@ -204,9 +208,10 @@ def static_gkt_zf(
     Delta: float,
     baseline: float = 0.0,
 ) -> NDArray:
-    """Static Gaussian Kubo-Toyabe (zero field).
+    """Static Gaussian KT, with per-component angular-field width Delta.
 
-    GKT(t) = A0 [1/3 + 2/3 (1 − Δ²t²) exp(−Δ²t²/2)] + baseline
+    GKT = A0 [1/3 + 2/3 (1−Δ²t²) exp(−Δ²t²/2)] + baseline.
+    Its normalised short-time form is 1−Δ²t²+(5/12)Δ⁴t⁴+O(t⁶).
     """
     dt2 = (Delta * t) ** 2
     # Clamp exponent to prevent overflow
@@ -248,7 +253,7 @@ def longitudinal_field_kubo_toyabe(
     A0 : float
         Initial asymmetry amplitude at ``t = 0``.
     Delta : float
-        Static Gaussian field-distribution width in us^-1 (Delta = gamma_mu * sqrt(<B^2>)).
+        Per-component angular-field width in us^-1: Delta = gamma_mu * B_c.
     B_L : float
         Applied longitudinal magnetic field in Gauss.
     baseline : float, optional
@@ -256,11 +261,8 @@ def longitudinal_field_kubo_toyabe(
 
     Notes
     -----
-    The oscillatory-decaying integral term is evaluated for all requested times at
-    once by **cumulative trapezoidal integration on a shared fine grid** whose step
-    is sized from ``omega0`` and ``Delta``.  This is both faster and smoother than
-    per-point adaptive quadrature (which left the integral noisy), so it speeds up
-    the static component and the dynamic Kubo-Toyabe that builds on it.
+    The integral uses cumulative trapezoidal integration on a shared fine grid
+    whose step is sized from ``omega0`` and ``Delta``.
 
     References
     ----------
@@ -330,16 +332,13 @@ def abragam(
 
     G(t) = A0 exp[ -(Delta^2 / nu^2) (e^{-nu t} - 1 + nu t) ] + baseline
 
-    A single-component relaxation that interpolates between the static Gaussian
-    line shape and the motionally-narrowed exponential:
+    A transverse-field envelope with the Gaussian and motional-narrowing limits:
 
     - ``nu -> 0``        : G -> A0 exp(-Delta^2 t^2 / 2)  (Gaussian)
     - ``nu >> Delta``    : G -> A0 exp(-(Delta^2 / nu) t) (exponential)
 
-    Notation and form follow Blundell, De Renzi, Lancaster & Pratt, *Muon
-    Spectroscopy: An Introduction* (OUP, 2022), eqn 5.52 (the damping factor of
-    the transverse-field Abragam function), with the same Gaussian width symbol
-    ``Delta`` as the Kubo-Toyabe family.
+    This transverse-field convention follows Blundell et al., *Muon Spectroscopy:
+    An Introduction* (OUP, 2022), eqn 5.52: Gaussian at sigma = Delta/sqrt(2).
 
     Parameters
     ----------
@@ -383,9 +382,9 @@ def keren(
             (omega0^2 + nu^2) nu t + (omega0^2 - nu^2) (1 - e^{-nu t} cos(omega0 t))
             - 2 nu omega0 e^{-nu t} sin(omega0 t) ]
 
-    Keren's analytic generalisation of the Abragam function to a longitudinal
-    field.  At ``B_L = 0`` it reduces to the Abragam exponent (x2, for the two
-    transverse zero-field components): Gamma = (2 Delta^2 / nu^2)(e^{-nu t} - 1 + nu t).
+    At B_L = 0 the exponent is twice the transverse-field Abragam exponent.
+    As nu -> 0 the limit is exp(-Delta^2 t^2), matching Gaussian at sigma = Delta
+    and the early-time zero-field KT curvature; the full KT model supplies its tail.
 
     Parameters
     ----------

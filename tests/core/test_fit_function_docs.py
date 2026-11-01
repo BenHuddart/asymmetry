@@ -121,3 +121,11 @@ def test_every_resonance_model_has_applicability_and_references() -> None:
     for name in _LCR_COMPONENTS:
         assert name in PARAMETER_MODEL_APPLICABILITY, name
         assert get_component_references(name, kind="parameter_model"), name
+
+
+def test_gaussian_help_distinguishes_zero_and_transverse_field_widths() -> None:
+    from asymmetry.core.fitting.component_docs import get_component_applicability
+
+    text = get_component_applicability("Gaussian", kind="fit")
+    assert "zero-field early-time match: σ = Δ" in text
+    assert "transverse-field envelope: σ = Δ/√2" in text

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Gaussian and Kubo–Toyabe reference pages and component help distinguish the
+  zero-field match σ = Δ from the transverse-field envelope σ = Δ/√2; fitted values are unchanged.
 - Closing an untouched window no longer creates application-data folders;
   failed autosave writes and removal errors are logged without preventing close.
 - Deferred memory cleanup is cancelled when its window is destroyed.
