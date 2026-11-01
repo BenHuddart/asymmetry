@@ -51,7 +51,8 @@ in the London limit the superconducting width is proportional to
 
 so that :math:`\lambda_L=\sqrt{75780/\sigma_G}`.
 
-The temperature dependence carries the physics. The superfluid density
+The :ref:`thermal-kernel accuracy <sc-kernel-accuracy>` is specified in the
+model reference. The temperature dependence carries the physics. The superfluid density
 :math:`\rho_s(T) \propto \sigma(T) \propto 1/\lambda^2(T)` reflects the
 superconducting gap structure: a single isotropic s-wave gap freezes
 :math:`\rho_s(T)` exponentially as :math:`T \to 0`; a d-wave gap with line

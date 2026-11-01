@@ -181,9 +181,9 @@ Model selection at a glance
       \frac{E\,dE}{\sqrt{E^2-\Delta^2(T,\mathbf{k})}}
       \right\rangle_{FS}.
 
-   The implementation evaluates the energy and angular integrals with
-   Gauss-Legendre quadrature and enforces stable limits
-   :math:`\rho_s(0)=1`, :math:`\rho_s(T\ge T_c)=0`.
+   The :ref:`thermal kernel <sc-kernel-accuracy>` uses a nonsingular
+   dimensionless integration variable. The limits are :math:`\rho_s(0)=1`
+   and :math:`\rho_s(T\ge T_c)=0`.
 
 .. dropdown:: Mathematical detail: gap-amplitude approximations per symmetry
 
@@ -534,6 +534,60 @@ physics summary in
 :mod:`asymmetry.core.fitting.parameter_models.PARAMETER_MODEL_COMPONENTS` via
 the ``description`` field. Parameter-level helper text is provided by
 :func:`asymmetry.core.fitting.get_param_info`.
+
+.. _sc-kernel-accuracy:
+
+Numerical evaluation of the thermal kernel
+-----------------------------------------
+
+The thermal response in Prozorov and Giannetta [1], Eq. (16), can be evaluated
+without the density-of-states endpoint singularity. With
+:math:`u=\sqrt{E^2-\Delta^2}/(k_BT)` and :math:`d=\Delta/(k_BT)`, its integral
+is
+
+.. math::
+
+   I(d)=-\int_0^\infty
+   \frac{du}{4\cosh^2(\sqrt{u^2+d^2}/2)},
+   \qquad \rho_s=1+2\langle I(d)\rangle_{FS}.
+
+The integrand is even and smooth through a gap node. A fixed trapezoid rule
+uses 73 nodes, spacing :math:`1/2`, and upper bound 36, with half weight at each
+endpoint. The nearest complex poles are at
+:math:`u=\pm i\sqrt{\pi^2+d^2}`; the corresponding trapezoid error is below
+:math:`2\times10^{-15}` and the truncated tail contributes less than
+:math:`2.4\times10^{-16}`. Floating-point round-off remains in addition to
+these discretisation bounds.
+
+.. dropdown:: Bound on the thermal quadrature error
+
+   Writing :math:`\psi(z)=[4\cosh^2(z/2)]^{-1}`, for real :math:`d` and
+   strip height :math:`a<\pi` the complex integrand obeys
+   :math:`|\psi(\sqrt{(x+ia)^2+d^2})|\le[2(\cosh x+\cos a)]^{-1}`.
+   The integral of this bound over the real line is :math:`a/\sin a`.
+   Evenness then bounds the half-line trapezoid error by
+   :math:`(a/\sin a)/(e^{2\pi a/h}-1)`; taking :math:`a=3` and :math:`h=1/2`
+   gives less than :math:`10^{-15}`. The omitted trapezoid tail is bounded by
+   :math:`(h/2)\coth(h/2)e^{-U}`, below :math:`2.4\times10^{-16}` at
+   :math:`U=36`. These follow from the dimensionless thermal response, without
+   a small-gap substitution or a fitted numerical cutoff.
+
+Independent adaptive integration and a modified-Bessel series verify the
+thermal kernel across :math:`0\le d\le80`. The zero-gap value is
+:math:`I(0)=-1/2`. The small-gap limit is
+:math:`\rho_s/d^2\to7\zeta(3)/(4\pi^2)`; the low-temperature leading term is
+:math:`1-\rho_s\sim\sqrt{2\pi d}e^{-d}` [1], Eq. (20).
+The default s-wave curve agrees with independent integration of its stated
+Carrington–Manzano gap interpolation to :math:`10^{-10}` on the tested grid.
+This verifies evaluation of the interpolation; its physical approximation is
+separate from numerical quadrature accuracy.
+
+Angular averages use Gauss–Legendre quadrature. The ``n_phi`` and ``n_theta``
+arguments of the density helpers control angular resolution; check convergence
+for nodal or strongly anisotropic gaps. The thermal-integral bound applies
+before that angular average. The limiting values at zero temperature and at
+:math:`T\ge T_c` are imposed analytically, and intermediate values carry
+floating-point round-off without clipping.
 
 Assumptions and limitations
 ---------------------------

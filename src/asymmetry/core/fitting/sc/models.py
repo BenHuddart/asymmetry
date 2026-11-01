@@ -120,7 +120,6 @@ def rho_s_wave(
     gap_ratio: float = 1.764,
     gap_mev: float | None = None,
     n_phi: int = 64,
-    n_energy: int = 48,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for isotropic s-wave gap, :math:`g(\phi)=1`.
 
@@ -136,8 +135,6 @@ def rho_s_wave(
         Optional :math:`\Delta_0` in meV. Overrides ``gap_ratio`` when given.
     n_phi
         Number of angular quadrature points for Fermi-surface averaging.
-    n_energy
-        Number of Gauss-Legendre nodes for the energy integral.
 
     Returns
     -------
@@ -151,7 +148,6 @@ def rho_s_wave(
         gap_ratio=ratio,
         gap_function=gaps.isotropic_s,
         n_phi=n_phi,
-        n_energy=n_energy,
     )
 
 
@@ -162,7 +158,6 @@ def rho_d_wave(
     gap_ratio: float = 2.14,
     gap_mev: float | None = None,
     n_phi: int = 64,
-    n_energy: int = 48,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for d-wave :math:`g(\phi)=\cos(2\phi)`.
 
@@ -178,7 +173,6 @@ def rho_d_wave(
         gap_ratio=ratio,
         gap_function=gaps.d_wave,
         n_phi=n_phi,
-        n_energy=n_energy,
         reduced_gap_function=_make_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor=_D_WAVE_SHAPE_FACTOR,
@@ -195,7 +189,6 @@ def rho_anisotropic_s_cos4(
     shape_factor_a: float = 0.0,
     gap_mev: float | None = None,
     n_phi: int = 64,
-    n_energy: int = 48,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for anisotropic s-wave ``1 + a*cos(4phi)``.
 
@@ -213,7 +206,6 @@ def rho_anisotropic_s_cos4(
         gap_function=gaps.anisotropic_s_cos4,
         gap_params={"a_anis": float(a_anis)},
         n_phi=n_phi,
-        n_energy=n_energy,
         reduced_gap_function=_optional_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor_a=shape_factor_a,
@@ -229,7 +221,6 @@ def rho_nonmonotonic_d(
     beta_nm: float = 0.8,
     gap_mev: float | None = None,
     n_phi: int = 64,
-    n_energy: int = 48,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for nonmonotonic d-wave.
 
@@ -250,7 +241,6 @@ def rho_nonmonotonic_d(
         gap_function=gaps.nonmonotonic_d_wave,
         gap_params={"beta_nm": float(beta_nm)},
         n_phi=n_phi,
-        n_energy=n_energy,
         reduced_gap_function=_make_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor=_D_WAVE_SHAPE_FACTOR,
@@ -266,7 +256,6 @@ def rho_p_wave_axial(
     shape_factor_a: float = 0.0,
     gap_mev: float | None = None,
     n_phi: int = 64,
-    n_energy: int = 48,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for 2D axial p-wave, :math:`g(\phi)=\cos\phi`.
 
@@ -281,7 +270,6 @@ def rho_p_wave_axial(
         gap_ratio=ratio,
         gap_function=gaps.p_wave_axial_2d,
         n_phi=n_phi,
-        n_energy=n_energy,
         reduced_gap_function=_optional_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor_a=shape_factor_a,
@@ -297,7 +285,6 @@ def rho_extended_s(
     signed: bool = False,
     gap_mev: float | None = None,
     n_phi: int = 64,
-    n_energy: int = 48,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for extended s-wave based on ``cos(2phi)``.
 
@@ -315,7 +302,6 @@ def rho_extended_s(
         gap_function=gaps.extended_s,
         gap_params={"signed": bool(signed)},
         n_phi=n_phi,
-        n_energy=n_energy,
         reduced_gap_function=_make_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor=_EXTENDED_S_SHAPE_FACTOR,
@@ -332,7 +318,6 @@ def rho_p_wave_polar_3d(
     gap_mev: float | None = None,
     n_theta: int = 24,
     n_phi: int = 48,
-    n_energy: int = 48,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for 3D polar p-wave line-node example.
 
@@ -349,7 +334,6 @@ def rho_p_wave_polar_3d(
         gap_function=lambda theta, _phi: gaps.line_node_3d(theta),
         n_theta=n_theta,
         n_phi=n_phi,
-        n_energy=n_energy,
         reduced_gap_function=_optional_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor_a=shape_factor_a,
@@ -365,7 +349,6 @@ def rho_s_plus_g(
     gap_mev: float | None = None,
     n_theta: int = 24,
     n_phi: int = 48,
-    n_energy: int = 48,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for s+g-wave anisotropic singlet gap.
 
@@ -391,8 +374,6 @@ def rho_s_plus_g(
         Number of polar-angle quadrature points.
     n_phi
         Number of azimuthal-angle quadrature points.
-    n_energy
-        Number of Gauss-Legendre nodes for the energy integral.
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
     return superfluid_density_3d(
@@ -402,7 +383,6 @@ def rho_s_plus_g(
         gap_function=gaps.s_plus_g,
         n_theta=n_theta,
         n_phi=n_phi,
-        n_energy=n_energy,
         reduced_gap_function=_make_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor=_S_PLUS_G_SHAPE_FACTOR,
