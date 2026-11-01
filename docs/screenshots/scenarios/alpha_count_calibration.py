@@ -83,6 +83,7 @@ class AlphaCountCalibrationScenario(Scenario):
             alpha=1.25,
             seed=1,
         )
+        run.grouping["good_frames"] = 1.0e6
         run.run_number = 3520
         run.metadata["title"] = "TF calibration (α = 1.25)"
         # Reduce the run to its F-B asymmetry so the surface has a non-empty
