@@ -101,7 +101,7 @@ evaluated by the engine. Until then, fit ``Lambda`` directly, or fix
 **Gaussian variants** (``rtGau2``, ``rtSig2``) — reparameterisations of
 ``Gaussian`` :math:`e^{-(\sigma t)^2}`: WiMDA's ``Gau2``
 :math:`e^{-(\sigma' t)^2/2}` corresponds to :math:`\sigma = \sigma'/\sqrt{2}`
-(also the mapping to the textbook's :math:`e^{-\Delta^2 t^2/2}` convention),
+(the transverse-field envelope convention :math:`e^{-\Delta^2 t^2/2}`),
 and ``Sig2`` fits :math:`s_2 = \sigma^2` directly.
 
 **RIKEN BeCu pressure cell** (``BeCu ZF``) — exactly the composite::

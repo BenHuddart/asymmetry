@@ -40,6 +40,49 @@ interface, the fitted parameters, and the exported data:
 The muon gyromagnetic ratio is taken as
 :math:`\gamma_\mu / 2\pi = 135.539` MHz/T.
 
+.. _gaussian-width-conventions:
+
+Gaussian widths
+---------------
+
+The width :math:`\Delta=\gamma_\mu B_c` is an angular-frequency width (μs⁻¹),
+where :math:`B_c` is the standard deviation of one Cartesian component of an
+isotropic, zero-mean Gaussian field. Its total vector second moment is
+:math:`\langle|\mathbf B|^2\rangle=3B_c^2`. A transverse-field Gaussian
+frequency distribution and the early-time zero-field polarisation use different
+mappings to the ``Gaussian`` component:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 27 73
+
+   * - Model
+     - Width convention and relevant limit
+   * - ``Gaussian``
+     - :math:`e^{-\sigma^2t^2}`. Transverse-field envelope:
+       :math:`\sigma=\gamma_\mu B_c/\sqrt{2}`; zero-field early-time match:
+       :math:`\sigma=\gamma_\mu B_c`.
+   * - ``StaticGKT_ZF``
+     - :math:`\Delta=\gamma_\mu B_c`; starts as :math:`1-\Delta^2t^2`
+       and includes the static dip and :math:`1/3` tail.
+   * - ``LongitudinalFieldKT``
+     - The same per-component :math:`\Delta`; its zero-field limit is
+       ``StaticGKT_ZF``.
+   * - ``DynamicGaussianKT``
+     - The same per-component :math:`\Delta`; vanishing fluctuation rate
+       recovers the static KT response.
+   * - ``Abragam``
+     - Static transverse-field limit :math:`e^{-\Delta^2t^2/2}`;
+       ``Gaussian`` at :math:`\sigma=\Delta/\sqrt{2}`.
+   * - ``Keren``
+     - At zero applied field and vanishing fluctuation rate,
+       :math:`e^{-\Delta^2t^2}`; ``Gaussian`` at :math:`\sigma=\Delta`.
+       This limit matches the early-time KT curvature, not its full static tail.
+
+The Gaussian and zero-field KT functions first differ at fourth order:
+:math:`G_{\mathrm{KT}}(t)-e^{-\Delta^2t^2}=-\Delta^4t^4/12+O(t^6)`.
+See :ref:`fit-gaussian` and :ref:`fit-static-gkt-zf` for applicability.
+
 The asymmetry convention
 ------------------------
 
@@ -96,3 +139,12 @@ deadtime, background), :mod:`asymmetry.core.fitting` (models and engines),
 :mod:`asymmetry.core.io` (loaders). The API reference is :doc:`/api/index`, and
 the design rationale and study notes behind individual features are kept in the
 repository under ``docs/porting/``.
+
+
+.. rubric:: References
+
+- R. S. Hayano, Y. J. Uemura, J. Imazato, N. Nishida, T. Yamazaki, and
+  R. Kubo, Phys. Rev. B **20**, 850 (1979).
+- A. Abragam, *The Principles of Nuclear Magnetism* (Clarendon Press,
+  Oxford, 1961).
+- A. Keren, Phys. Rev. B **50**, 10039 (1994).
