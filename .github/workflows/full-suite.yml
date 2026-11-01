@@ -46,4 +46,4 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           ASYMMETRY_FAULTHANDLER_TIMEOUT: "600"
-        run: python tools/harness.py test --tier=${{ inputs.tier || 'full' }}
+        run: python tools/harness.py test --tier=${{ inputs.tier || 'full' }} -- -vv --max-worker-restart=0
