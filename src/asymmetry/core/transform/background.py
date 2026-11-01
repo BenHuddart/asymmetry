@@ -26,7 +26,12 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import minimize
 
-from asymmetry.core.transform.fb_counts import GroupCounts, SharedComponent, validated_count_arrays
+from asymmetry.core.transform.fb_counts import (
+    BinWindow,
+    GroupCounts,
+    SharedComponent,
+    validated_count_arrays,
+)
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 _BEAM_PERIOD_US = {
@@ -477,9 +482,8 @@ def apply_grouped_background_correction(
         )
 
     ranges = _background_ranges(grouping, int(t0_bin))
-    if ranges is None:
-        return BackgroundCorrectionResult(GroupCounts(f), GroupCounts(b), False, "none")
-
+    ranges[0].validate_length(f.size)
+    ranges[1].validate_length(b.size)
     f_range = _adjust_range_for_beam_period(
         ranges[0],
         bin_width_us=bin_width_us,
@@ -490,17 +494,8 @@ def apply_grouped_background_correction(
         bin_width_us=bin_width_us,
         facility=facility,
     )
-    if not _range_is_valid(f_range, len(f)) or not _range_is_valid(b_range, len(b)):
-        return BackgroundCorrectionResult(
-            GroupCounts(f),
-            GroupCounts(b),
-            False,
-            "invalid_range",
-            ranges=(f_range, b_range),
-        )
-
-    f_slice = f[f_range[0] : f_range[1] + 1]
-    b_slice = b[b_range[0] : b_range[1] + 1]
+    f_slice = f[f_range.slice]
+    b_slice = b[b_range.slice]
     f_value = float(np.mean(f_slice))
     b_value = float(np.mean(b_slice))
     corrected = []
@@ -509,7 +504,7 @@ def apply_grouped_background_correction(
         (b, b_slice, b_range, b_value),
     ):
         covariance = np.zeros(raw.size)
-        covariance[limits[0] : limits[1] + 1] = values / values.size
+        covariance[limits.slice] = values / values.size
         corrected.append(
             _estimated_background_group(
                 raw,
@@ -525,7 +520,7 @@ def apply_grouped_background_correction(
         applied=True,
         method="estimated",
         values=(f_value, b_value),
-        ranges=(f_range, b_range),
+        ranges=((f_range.first, f_range.last), (b_range.first, b_range.last)),
     )
 
 
@@ -562,73 +557,45 @@ def _fixed_background_values(grouping: dict[str, Any]) -> tuple[float, float] | 
     return None
 
 
-def _background_ranges(
-    grouping: dict[str, Any],
-    t0_bin: int,
-) -> tuple[tuple[int, int], tuple[int, int]] | None:
-    pair = _parse_range_pair(grouping.get("background_ranges"))
-    if pair is not None:
-        return pair
-    forward = _parse_range(grouping.get("background_forward_range"))
-    backward = _parse_range(grouping.get("background_backward_range"))
-    if forward is not None and backward is not None:
-        return forward, backward
-    shared = _parse_range(grouping.get("background_range"))
-    if shared is None:
-        shared = _ordered_range((int(0.1 * t0_bin), int(0.6 * t0_bin)))
+def background_window(value: object) -> BinWindow:
+    """Validate two inclusive acquisition-bin endpoints at the input boundary."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError("background range requires two integer bin indices.")
+    return BinWindow(*value)
+
+
+def _background_ranges(grouping: dict[str, Any], t0_bin: int) -> tuple[BinWindow, BinWindow]:
+    if "background_ranges" in grouping:
+        value = grouping["background_ranges"]
+        if isinstance(value, dict):
+            return background_window(value.get("forward")), background_window(value.get("backward"))
+        if isinstance(value, (list, tuple)) and len(value) == 2:
+            if all(isinstance(item, (list, tuple)) for item in value):
+                return background_window(value[0]), background_window(value[1])
+        shared = background_window(value)
+    elif "background_forward_range" in grouping or "background_backward_range" in grouping:
+        return (
+            background_window(grouping.get("background_forward_range")),
+            background_window(grouping.get("background_backward_range")),
+        )
+    elif "background_range" in grouping:
+        shared = background_window(grouping["background_range"])
+    else:
+        shared = BinWindow(int(0.1 * t0_bin), int(0.6 * t0_bin))
     return shared, shared
 
 
-def _parse_range_pair(value: Any) -> tuple[tuple[int, int], tuple[int, int]] | None:
-    if isinstance(value, dict):
-        forward = _parse_range(value.get("forward"))
-        backward = _parse_range(value.get("backward"))
-    elif isinstance(value, (list, tuple)) and len(value) >= 2:
-        forward = _parse_range(value[0])
-        backward = _parse_range(value[1])
-        if forward is None or backward is None:
-            shared = _parse_range(value)
-            return (shared, shared) if shared is not None else None
-    else:
-        return None
-    return (forward, backward) if forward is not None and backward is not None else None
-
-
-def _parse_range(value: Any) -> tuple[int, int] | None:
-    if not isinstance(value, (list, tuple)) or len(value) < 2:
-        return None
-    try:
-        endpoints = int(float(value[0])), int(float(value[1]))
-    except (TypeError, ValueError):
-        return None
-    return _ordered_range(endpoints)
-
-
-def _ordered_range(value: tuple[int, int]) -> tuple[int, int]:
-    first, second = int(value[0]), int(value[1])
-    return min(first, second), max(first, second)
-
-
 def _adjust_range_for_beam_period(
-    value: tuple[int, int],
-    *,
-    bin_width_us: float,
-    facility: str,
-) -> tuple[int, int]:
+    value: BinWindow, *, bin_width_us: float, facility: str
+) -> BinWindow:
     period = _beam_period_us(facility)
     if bin_width_us <= 0.0 or period <= 0.0:
         return value
-    periods = int((value[1] - value[0]) * bin_width_us / period)
+    periods = int((value.last - value.first) * bin_width_us / period)
     bins = int(periods * period / bin_width_us)
-    if bins == 0:
-        return value
-    return _ordered_range((value[0], value[0] + bins))
+    return value if bins == 0 else BinWindow(value.first, value.first + bins)
 
 
 def _beam_period_us(facility: str) -> float:
     label = facility.lower()
     return next((period for name, period in _BEAM_PERIOD_US.items() if name in label), 0.0)
-
-
-def _range_is_valid(value: tuple[int, int], length: int) -> bool:
-    return length > 0 and 0 <= value[0] <= value[1] < length

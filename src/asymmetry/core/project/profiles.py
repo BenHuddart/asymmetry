@@ -118,6 +118,7 @@ from typing import Any
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.instrument import detect_instrument, instrument_display_name
 from asymmetry.core.transform.asymmetry import estimate_alpha
+from asymmetry.core.transform.fb_counts import good_window
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     effective_group_indices,
@@ -1507,7 +1508,7 @@ def run_file_good_window(
     carries them — the intersection over the forward+backward detectors, in the
     aligned coordinates *common_t0_bin* defines — and otherwise the payload's own
     ``first_good_bin``/``last_good_bin`` (a file that carries one window for the
-    whole run), falling back to the full histogram range.
+    whole run); absent endpoints select the full histogram range.
 
     This is the base both :func:`_rebase_on_profile_groups` and a manual
     :class:`GoodWindowPolicy` measure against, and the value the grouping window
@@ -1523,10 +1524,8 @@ def run_file_good_window(
             common_t0_bin=common_t0_bin,
             n_bins=aligned_n_bins(grouping, run, n_hist, common_t0_bin),
         )
-    n_bins = len(run.histograms[0].counts)
-    first_good = _as_int(grouping.get("first_good_bin"), 0)
-    last_good = _as_int(grouping.get("last_good_bin"), max(0, n_bins - 1))
-    return int(first_good), int(last_good)
+    window = good_window(grouping, len(run.histograms[0].counts))
+    return window.first, window.last
 
 
 def resolve_good_window(
