@@ -420,8 +420,8 @@ def test_quadrature_model_is_bounded_by_sigma_nm() -> None:
 
 def test_brandt_conversions_are_consistent() -> None:
     sigma = np.array([0.2, 0.5, 1.0])
-    lam = constants.sigma_to_lambda_nm(sigma)
-    sigma_back = constants.lambda_nm_to_sigma_us(lam)
+    lam = constants.sigma_to_lambda_nm(sigma, width=constants.GaussianWidth.SECOND_MOMENT)
+    sigma_back = constants.lambda_nm_to_sigma_us(lam, width=constants.GaussianWidth.SECOND_MOMENT)
     np.testing.assert_allclose(sigma_back, sigma, rtol=1e-12, atol=1e-12)
 
 

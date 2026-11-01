@@ -28,11 +28,51 @@ used in asymmetry models for :math:`A(t)`.
 
 The superconducting workflow is:
 
-1. Fit each TF-muSR run in the time domain to extract a Gaussian rate
-   :math:`\sigma(T_i)`.
+1. Fit each TF-muSR run in the time domain to extract the ``Gaussian`` width
+   :math:`\sigma_G(T_i)` in :math:`\exp(-\sigma_G^2t^2)`.
 2. Fit the resulting :math:`\sigma(T)` trend with superconducting gap models.
 3. Interpret the fitted model in terms of :math:`\rho_s(T)` and optionally
    convert to :math:`\lambda_L(T)`.
+
+.. _sc-width-convention:
+
+Gaussian width convention
+-------------------------
+
+The field-distribution second-moment width is
+:math:`\sigma_2=\gamma_\mu\langle\Delta B^2\rangle^{1/2}`. Its Gaussian
+transverse-field envelope is :math:`\exp(-\sigma_2^2t^2/2)`, whereas the
+``Gaussian`` component uses :math:`\exp(-\sigma_G^2t^2)`. Therefore
+:math:`\sigma_2=\sqrt{2}\sigma_G`.
+
+The temperature-dependent ``SC_*`` laws inherit the convention of the trended
+width: their fitted ``sigma_0``, ``sigma_bg``, ``sigma_sc``, and ``sigma_nm``
+use that same convention. The normalised density :math:`\rho_s(T)` is unchanged
+by a constant rescaling of every width and its uncertainty.
+
+The ``SC_Brandt_*`` field models and the penetration-depth conversion scale use
+:math:`\sigma_2`. A ``Gaussian`` width must be converted before fitting these
+field models. In the **Fit Parameters** card, click **ƒ** → **Custom…**; in
+**Custom Y transform**, enter ``sqrt(2)*x`` beside **Expression in x:**.
+This transforms the values and their errors. The expression variable remains
+``x`` for a Y transform.
+
+The conversion helpers require a :class:`~asymmetry.core.fitting.sc.GaussianWidth`
+argument; select the convention of the supplied or requested width explicitly:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.sc import GaussianWidth, sigma_to_lambda_nm
+
+   lambda_nm = sigma_to_lambda_nm(
+       sigma_gaussian, width=GaussianWidth.GAUSSIAN_COMPONENT
+   )
+
+Use ``GaussianWidth.SECOND_MOMENT`` for :math:`\sigma_2`. The reverse helper
+``lambda_nm_to_sigma_us`` requires the same ``width=`` choice for its output.
+Subtract the non-superconducting contribution before converting to penetration
+depth. A width-convention conversion does not account for vortex-lattice
+asymmetry, disorder, or anisotropic powder geometry.
 
 Core equations
 --------------
@@ -367,8 +407,8 @@ field-distribution second moment depends on field through Brandt's
 Ginzburg-Landau result [5], and fitting it yields the absolute penetration
 depth :math:`\lambda` and the upper critical field :math:`B_{c2}` directly.
 
-For an ideal triangular flux-line lattice (:math:`\kappa \gg 1`) the Gaussian
-muon depolarisation rate is
+For an ideal triangular flux-line lattice (:math:`\kappa \gg 1`) the
+second-moment width is
 
 .. math::
 
@@ -383,10 +423,11 @@ field factor is normalised so that :math:`\sigma(b\to0)=\sigma_0(\lambda)` and
 form, :math:`\sigma\,[\mu s^{-1}] \approx 4.85\times10^{4}\,(1-b)[1+1.21
 (1-\sqrt{b})^3]\,\lambda^{-2}\,[\mathrm{nm}^{-2}]` [6].
 
-The field width is what the literature often reports as
-:math:`B_{\mathrm{rms}} = \sigma/\gamma_\mu`; fitting in :math:`\sigma`
-(:math:`\mu s^{-1}`) keeps the workflow identical to the time-domain Gaussian
-rate. An optional field-independent nuclear/background channel ``sigma_bg``
+Here :math:`\sigma=\sigma_2`, so the field width is
+:math:`B_{\mathrm{rms}}=\sigma_2/\gamma_\mu=\sqrt{2}\sigma_G/\gamma_\mu`.
+Convert a time-domain ``Gaussian`` width using the :ref:`width convention
+<sc-width-convention>` before fitting a Brandt field model. An optional
+field-independent nuclear/background channel ``sigma_bg``
 adds in quadrature, :math:`\sigma=\sqrt{\sigma_{VL}^2+\sigma_{bg}^2}` (Pratt
 *et al.* Eq. (2) [6]).
 
@@ -422,7 +463,7 @@ a powder type-II superconductor, recovering :math:`\lambda_{ab}` in nm:
    from asymmetry.core.fitting import Parameter, ParameterSet, ParameterCompositeModel
    from asymmetry.core.fitting.parameter_models import fit_parameter_model
 
-   # Applied transverse field in gauss; sigma in us^-1 (one point per run).
+   # Applied field in gauss; second-moment sigma in us^-1 (one point per run).
    B0 = np.array([100.0, 200.0, 800.0, 1600.0, 3200.0, 4000.0, 6000.0])
    model = ParameterCompositeModel(["SC_Brandt_VortexLattice_Powder"])
 
@@ -439,6 +480,9 @@ a powder type-II superconductor, recovering :math:`\lambda_{ab}` in nm:
 
 Shared parameter semantics
 --------------------------
+
+For temperature laws the width parameters below inherit the convention of the
+input trend. For ``SC_Brandt_*``, ``sigma_bg`` is a second-moment width.
 
 ``sigma_0``
    Additive superconducting scale in :math:`\mu s^{-1}`.
