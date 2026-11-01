@@ -37,6 +37,7 @@ from asymmetry.core.transform.units import (
     to_fraction,
     to_percent,
 )
+from tests.counts import aligned_counts
 
 #: The exact asymmetry of the fixture below, as a fraction and in percent.
 EXPECTED_FRACTION = 0.2
@@ -107,14 +108,16 @@ def test_compute_asymmetry_with_count_errors_returns_a_fraction() -> None:
 def test_binned_fb_asymmetry_returns_a_fraction() -> None:
     forward, backward = _counts()
     _, asym, _ = binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward,
+            backward,
+            common_t0=0,
+            bin_width_us=_BIN_WIDTH,
+            first_good_bin=0,
+            last_good_bin=_N_BINS - 1,
+        ),
         grouping=_grouping(),
-        common_t0=0,
-        bin_width_us=_BIN_WIDTH,
         alpha=1.0,
-        first_good_bin=0,
-        last_good_bin=_N_BINS - 1,
     )
     assert asym == pytest.approx(EXPECTED_FRACTION)
 
@@ -161,14 +164,16 @@ def test_the_reduction_is_exactly_one_hundred_times_the_primitive() -> None:
     run = _run()
     forward, backward = _counts()
     _, fraction_asym, fraction_err = binned_fb_asymmetry(
-        forward,
-        backward,
+        aligned_counts(
+            forward,
+            backward,
+            common_t0=0,
+            bin_width_us=_BIN_WIDTH,
+            first_good_bin=0,
+            last_good_bin=_N_BINS - 1,
+        ),
         grouping=_grouping(),
-        common_t0=0,
-        bin_width_us=_BIN_WIDTH,
         alpha=1.0,
-        first_good_bin=0,
-        last_good_bin=_N_BINS - 1,
     )
     reduction = reduce_grouped_asymmetry(
         histograms=run.histograms,

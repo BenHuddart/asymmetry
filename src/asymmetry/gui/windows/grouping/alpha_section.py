@@ -45,9 +45,9 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset
 from asymmetry.core.project.profiles import AlphaPolicy
 from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
 from asymmetry.core.transform.background import resolve_background_mode
+from asymmetry.core.transform.fb_counts import ForwardBackwardCounts
 from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.transform.reduce import (
-    CorrectedGroupedCounts,
     ReferenceResolver,
     corrected_grouped_counts,
     correction_flags_from_grouping,
@@ -124,7 +124,7 @@ def build_corrected(
     grouping: dict[str, Any],
     resolved_reference: tuple[list[Histogram], float] | None,
     facility: str,
-) -> CorrectedGroupedCounts:
+) -> ForwardBackwardCounts:
     """Deadtime-correct, group and background-subtract F/B for the estimate.
 
     Pure (no widgets). Raises :class:`ValueError` when the groups reference no
@@ -155,9 +155,7 @@ def build_corrected(
     )
 
 
-def correction_note(
-    grouping: dict[str, Any], corrected: CorrectedGroupedCounts
-) -> tuple[str, bool]:
+def correction_note(grouping: dict[str, Any], corrected: ForwardBackwardCounts) -> tuple[str, bool]:
     """Describe which corrections the estimate reflects (text, warn?).
 
     ``warn`` is ``True`` when a *requested* correction could not be applied to
@@ -203,8 +201,12 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
     corrected = build_corrected(
         request.histograms, request.grouping, request.resolved_reference, request.facility
     )
-    forward, backward, common_t0 = corrected.forward, corrected.backward, int(corrected.common_t0)
-    bin_width = float(corrected.bin_width)
+    forward, backward, common_t0 = (
+        corrected.forward.counts,
+        corrected.backward.counts,
+        int(corrected.common_t0_bin),
+    )
+    bin_width = float(corrected.bin_width_us)
 
     time_us = None
     if request.method == "general":

@@ -207,8 +207,18 @@ The raw metadata retains ``HIFI`` while the detector layout resolves to
 ``HAL``. This is distinct from both ISIS HiFi and PSI FLAME.
 
 PSI files can store different ``t0`` values per detector. Asymmetry preserves
-those detector-specific offsets and aligns histograms by their own ``t0`` when
-regrouping.
+those detector-specific offsets and aligns histograms by their effective
+``t0`` when regrouping. Each group ends at its shortest shifted detector;
+forward and backward sums are cropped together to the shorter group.
+The grouped-count result records the common t0 bin, each detector shift,
+both group lengths before cropping, and the final length. For example,
+two 1000-bin detectors with t0 bins 100 and 110 produce group lengths 1010
+and 1000; the shared record retains 1000 bins.
+
+A reference background is aligned on the sample's common t0 grid. It must
+cover every sample bin: a shorter reference raises an error such as
+``reference run has 500 aligned bins; sample requires 1000.`` A longer
+reference is cropped to the sample's terminal bin.
 
 For PSI-BIN, musrfit's ``MuSR_td_PSI_bin`` reader uses the stored ``t0`` and
 ``first good`` values directly as C++ vector indices, so Asymmetry treats them

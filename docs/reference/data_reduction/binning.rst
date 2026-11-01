@@ -28,6 +28,27 @@ asymmetry formed per output bin — at late times the raw bins hold zero
 counts, where an asymmetry ratio per raw bin is undefined while summed
 counts remain exactly Poisson.
 
+Good-bin window
+---------------
+
+The good-bin endpoints are inclusive, zero-based indices into the aligned
+grouped counts. Both endpoints must be integers with
+``0 <= first_good_bin <= last_good_bin < number_of_bins``. An absent first
+endpoint selects bin 0; an absent last endpoint selects the final bin.
+The selected window is applied before any binning mode.
+
+A reversed window raises ``ValueError`` with, for example,
+``good-bin window [7, 3] is reversed.`` An endpoint beyond a ten-bin record
+raises ``good-bin window [3, 100] is outside 10 bins.`` Invalid windows are
+rejected rather than clamped or replaced by the full record. A saved project
+containing such a window still loads; reduction of the affected run raises
+the error so the window can be corrected.
+
+Forward and backward arrays must have equal one-dimensional shape. A
+mismatch raises ``count arrays must have equal shape.`` Supplied count
+variances must match that shape and be finite and non-negative; the
+acquisition-bin width must be finite and positive.
+
 Fixed
 -----
 
