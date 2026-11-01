@@ -254,8 +254,9 @@ Where each function lives
   mode; use ``compute_asymmetry`` for ordinary fixed-width bins).
 * ``slice_to_good_window`` (``asymmetry.core.data.combine``) — trim a computed
   asymmetry/error pair to the good-bin window.
-* ``prepare_histograms_with_deadtime`` (``asymmetry.core.fitting.grouped_time_domain``)
-  — apply deadtime correction to the histograms before grouping.
+* ``prepare_histograms_with_deadtime`` (``asymmetry.core.transform.deadtime``)
+  — apply signed deadtime coefficients before grouping; invalid inputs or a
+  singular inverse raise ``DeadtimeCorrectionError``.
 * :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry`
   (``asymmetry.core.transform.reduce``) — the single reduction chokepoint the
   GUI and the Grouping window's live preview both call: deadtime, grouping,

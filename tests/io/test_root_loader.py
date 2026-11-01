@@ -163,7 +163,6 @@ def _write_flame_root_directory(path: Path) -> None:
 
 def _write_gps_subdetector_root_directory(path: Path) -> None:
     edges = np.arange(-0.5, 5.5, 1.0)
-    # GPS MusrRoot exposes the raw split sub-detectors (verified histogram order).
     labels = [
         "Forw",
         "Back",
@@ -414,9 +413,9 @@ def test_load_musrroot_directory_reads_header_histograms_and_grouping(tmp_path) 
 
     ds = RootLoader().load(str(path))
 
-    assert ds.run is not None
     assert ds.run_number == 2468
     assert ds.metadata["root_format"] == "musr-root-directory"
+    assert ds.run.grouping["good_frames"] == 1.0
     assert ds.metadata["facility"] == "PSI"
     assert ds.metadata["instrument"] == "LEM"
     assert ds.metadata["temperature"] == pytest.approx(12.5)

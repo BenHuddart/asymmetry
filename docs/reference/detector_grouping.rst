@@ -725,13 +725,12 @@ correction at t=0: 1.2%``) — with a **Show per-detector values** disclosure th
 reveals the read-only table on demand; ``Estimate`` also keeps its source-run
 picker and **Estimate** button.
 
-The **Cal** button ports WiMDA's per-detector calibration routine: it fits each
-detector histogram in the selected run separately, produces a resolved
+The **Cal** button fits each detector histogram in the selected run separately, produces a resolved
 per-detector deadtime table, and populates the manual table with those
-calibrated values. The **maximum correction at t=0** figure is the largest
-fractional correction any detector receives at the first good bin, so an
-unreasonable deadtime value is visible immediately rather than only showing up
-as a distorted asymmetry later.
+calibrated values. The **Max correction at t=0** figure reports the largest
+absolute fractional change at a detector's first good bin, including decreases from negative
+coefficients. This summary helps assess the correction before applying it;
+the reduction checks every raw bin, including those outside the good window.
 
 When ``Off`` is selected, deadtime correction is disabled. When ``Estimate``
 is selected, the estimate is calculated from the currently selected preview
@@ -742,8 +741,8 @@ the profile's deadtime policy, so every run following the profile shares the
 same manual, calibrated, or estimated deadtime values, just as they already
 share alpha and grouping.
 
-All modes use the same non-paralysable correction form used by musrfit
-``PRunBase::DeadTimeCorrection`` and Mantid ``ApplyDeadTimeCorr``:
+The non-paralysable inverse acts on accumulated raw counts :math:`N` per bin,
+before grouping or background subtraction [isis_deadtime]_:
 
 .. math::
 
@@ -753,14 +752,118 @@ All modes use the same non-paralysable correction form used by musrfit
 For ``File`` mode, ``t_dead`` comes from the run file when available. For
 ``Manual``, ``Cal``, and ``Estimate`` workflows, Asymmetry resolves the
 deadtime values from the profile's policy before the correction is applied.
-``N_frames`` still comes from each dataset's own good-frame metadata when it
-is available.
+A non-zero coefficient requires a finite, positive bin width and good-frame
+count :math:`N_\mathrm{frames}` from that dataset. A NeXus file without valid
+frame metadata cannot be corrected. PSI BIN/MDU and MusrRoot/LEM ROOT use the
+explicit convention :math:`N_\mathrm{frames}=1`: the whole run is one
+acquisition, and its coefficient must be calibrated in that normalisation.
+The scriptable ``apply_deadtime_correction`` function requires the
+``num_good_frames`` keyword; it has no acquisition default.
 
 PSI BIN/MDU and MusrRoot/LEM ROOT data usually do not ship NeXus-style file
 deadtime constants, so ``File`` mode is commonly unavailable there. Those runs
 can still use ``Manual`` or ``Estimate`` deadtime correction, with ``Cal``
 available to populate per-detector manual values from the selected preview
 run. The background correction path remains separate and optional.
+
+Domain of the correction
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+File and manual tables, calibration-text imports, and promoted fit coefficients
+preserve finite negative values. A fitted coefficient is an empirical count-rate
+correction parameter, distinct from the positive physical recovery time of a
+detector. A negative value reduces corrected counts; its sign alone is not a
+reason to reject it. Non-finite coefficients are invalid. A table containing
+only zeros is a no-op and does not require a frame count. The **Estimate** and
+**Cal** fits currently constrain their fitted coefficients to non-negative values.
+Manual entries may have either sign or be zero; the validation message is
+"Manual deadtime values must be finite for every detector."
+
+For a signed coefficient define :math:`x=N t_\mathrm{dead}/(\Delta t
+N_\mathrm{frames})`. Every raw count must be finite and non-negative, and every
+bin of every detector must satisfy :math:`x<1`. Any violation rejects the whole
+reduction, without clipping or masking bins. For example, 10 counts, a
+0.1 µs coefficient, 1 µs bins and one frame produce:
+
+   "Deadtime correction rejected for detector 1: occupancy N·τ/(Δt·F) reaches 1
+   at bin 0 (1 bins at or above 1); the non-paralysable model requires < 1."
+
+The detector number is one-based; the bin index is zero-based. The **Deadtime**
+card displays the same rejection wording for its summary bin. Invalid frame
+metadata produces "Deadtime correction rejected: good frames must be finite"
+or "Deadtime correction rejected: good frames must be finite and > 0".
+A rejected interactive apply preserves the run's arrays and grouping. A project
+whose saved correction is rejected keeps the freshly loaded, uncorrected run
+and logs the rejection with deadtime correction disabled.
+
+Below the pole there is no arbitrary percentage cutoff. Differentiating the
+inverse shows that relative count uncertainty is amplified by
+:math:`1/(1-x)` compared with the raw relative uncertainty, so a large positive
+correction is sensitive to statistical and calibration errors. This derivative
+is a model sensitivity: current propagation treats deadtime-corrected detector
+counts as Poisson and omits the inverse's derivative and coefficient uncertainty.
+Deadtime must act before count subtraction: applying this nonlinear inverse to subtracted
+counts is not an equivalent operation.
+
+ISIS calibration and signed coefficients
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The published ISIS procedure fits individual detectors in a high-statistics
+silver run, using a fixed muon lifetime and negligible background
+[isis_deadtime]_. With :math:`M` the measured accumulated counts, the
+lifetime-corrected counts obey a line
+:math:`M(t)\exp(t/\tau_\mu)=a+bM(t)`. Its inferred coefficient is
+:math:`t_\mathrm{dead}=-b\Delta t N_\mathrm{frames}/a`. The instrument-upgrade
+report describes a zero-field silver measurement [isis_silver]_; the WiMDA
+manual describes cycle-dependent silver calibration and per-detector file
+values [wimda_deadtime]_.
+
+An unconstrained fitted slope can have either sign. Counting fluctuations or
+departures from the assumed single exponential and background can therefore
+produce a negative coefficient even when the physical recovery time is positive.
+This explains possible mechanisms, not the cause of a particular file's values:
+that requires its calibration inputs, uncertainties and fit diagnostics.
+
+Compared with other programs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Mantid 6.16.1**, run as a binary, accepts signed coefficients in
+``ApplyDeadTimeCorr`` v1. For counts [5, 20], 1 µs bins and 10 good frames,
+coefficients −0.1, 0 and +0.1 µs give [4.761904761904762, 16.666666666666668],
+[5, 20] and [5.2631578947368425, 25], respectively. Asymmetry agrees with both
+these outputs and the analytic inverse to relative tolerance :math:`10^{-12}`.
+Mantid's ``CalMuonDeadTime`` v1 also returns signed fits: noiseless synthetic
+inputs generated with coefficients −0.02, 0 and +0.02 µs recovered those
+coefficients within :math:`2\times10^{-12}` µs. Those inputs used
+:math:`N_0=10000` counts/bin, a 2.1969811 µs lifetime, 0.016 µs bins with edges
+:math:`0.496+k\times0.016` µs (:math:`k=0,\ldots,282`), one million frames,
+and a 0.5–5 µs fit range. Measured means were generated from the forward
+non-paralysable model with Poisson standard deviations. Its published algorithm
+examples include negative fitted values [mantid_deadtime]_. This establishes signed
+behaviour, without implying that every fitted calibration is adequate.
+
+**WiMDA**, checked by inspection of the maintainer-supplied source snapshot,
+preserves negative coefficients through NeXus and calibration-text loading,
+manual input, and the standard ISIS correction path. Its automatic and
+per-detector calibration paths also retain signed fit results. This is a
+behavioural source inspection, with no binary numerical cross-check or claim
+about the optional extended correction models. The public manual describes the
+workflows [wimda_deadtime]_. See :doc:`/explanation/comparison` for the bounds of
+these comparisons.
+
+.. image:: /_generated/screenshots/signed_deadtime.png
+   :alt: Deadtime card showing finite negative and positive manual coefficients
+   :width: 620px
+
+.. [isis_deadtime] S. H. Kilcoyne, RAL-94-080 (1994), Sec. 4, pp. 30–31,
+   `ISIS report <https://epubs.stfc.ac.uk/manifestation/7175/RAL-94-080.pdf>`_.
+.. [isis_silver] S. Manolopoulos, RAL-TR-2004-013 (2004), p. 4,
+   `instrument report <https://discovery.ucl.ac.uk/id/eprint/10081716/1/RAL-TR-2004-013%20mSR%20spectrometer%20upgrade.pdf>`_.
+.. [wimda_deadtime] F. L. Pratt, WiMDA Manual, v1.2 (2005), Sec. 5.9 and Appendix B,
+   `author-hosted manual <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_.
+.. [mantid_deadtime] Mantid 6.13.1 documentation,
+   `ApplyDeadTimeCorr v1 <https://docs.mantidproject.org/v6.13.1/algorithms/ApplyDeadTimeCorr-v1.html>`_
+   and `CalMuonDeadTime v1 <https://docs.mantidproject.org/v6.13.1/algorithms/CalMuonDeadTime-v1.html>`_.
 
 Background correction
 ----------------------

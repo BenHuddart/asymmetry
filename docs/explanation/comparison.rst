@@ -45,6 +45,33 @@ The reference programs
      - Modern Python stack; Fit Wizard (AICc-ranked); composite-model
        expression syntax; interactive parameter trending
 
+Signed deadtime coefficients
+----------------------------
+
+Asymmetry preserves finite signed calibration coefficients. A fitted negative
+coefficient reduces raw counts under the non-paralysable inverse; it is an
+empirical fit parameter, distinct from a detector's physical recovery time.
+The published ISIS silver-calibration method and the numerical domain are
+explained in :doc:`/reference/detector_grouping`.
+
+A native **Mantid 6.16.1** check of ``ApplyDeadTimeCorr`` v1 used raw counts
+[5, 20], 1 µs bins, 10 good frames and coefficients −0.1, 0 and +0.1 µs.
+Asymmetry agrees with Mantid and the analytic inverse to relative tolerance
+:math:`10^{-12}`. ``CalMuonDeadTime`` v1 recovered noiseless signed synthetic
+coefficients −0.02, 0 and +0.02 µs within :math:`2\times10^{-12}` µs; its
+`published examples <https://docs.mantidproject.org/v6.13.1/algorithms/CalMuonDeadTime-v1.html>`_
+also include negative fitted values. Calibration noise and model mismatch can
+produce negative fitted coefficients; the sign does not diagnose an individual
+calibration's quality.
+
+Inspection of the maintainer-supplied **WiMDA** source snapshot confirms that
+its standard ISIS loading, manual-input and correction paths preserve signed
+coefficients, as do its calibration fit results. This is a behavioural source
+inspection, with no binary numerical cross-check or assertion about optional
+extended models. The `WiMDA Manual, v1.2 (2005), Sec. 5.9 and Appendix B
+<https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes the calibration
+workflows. No third-party implementation source is reproduced in Asymmetry.
+
 At a glance: feature coverage
 -----------------------------
 
@@ -63,11 +90,6 @@ strength.
    * - Multi-format data ingestion (NeXus, PSI BIN, MUD, ROOT)
      - ✅
      - ✅
-     - ✅
-     - ✅
-   * - Deadtime correction
-     - ◐
-     - ◐
      - ✅
      - ✅
    * - Asymmetry calculation (F/B grouping, α)

@@ -37,7 +37,9 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.project.profiles import DeadtimePolicy
 from asymmetry.core.transform import (
+    DeadtimeCorrectionError,
     calibrate_deadtime_from_histograms,
+    deadtime_occupancy,
     estimate_deadtime_from_histograms,
 )
 from asymmetry.gui.styles import tokens
@@ -46,10 +48,6 @@ from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox, NoScrollDoubleSpinBox
 
 __all__ = ["DeadtimeSectionWidget", "DeadtimeSourceRun", "deadtime_status_text"]
-
-# Above this fraction (100%) the t=0 correction has saturated — the raw
-# percentage is no longer a physically meaningful number to show.
-_MAX_SANE_CORRECTION_FRACTION = 1.0
 
 
 @dataclass(frozen=True)
@@ -154,7 +152,7 @@ class DeadtimeSectionWidget(QWidget):
         table_controls.addWidget(ElidedLabel("Per-detector values (ns)"), 1)
         self._fill_all_spin = NoScrollDoubleSpinBox()
         self._fill_all_spin.setDecimals(3)
-        self._fill_all_spin.setRange(0.0, 1.0e6)
+        self._fill_all_spin.setRange(-1.0e6, 1.0e6)
         self._fill_all_spin.setSuffix(" ns")
         table_controls.addWidget(self._fill_all_spin)
         self._fill_all_btn = QPushButton("Fill all")
@@ -220,7 +218,7 @@ class DeadtimeSectionWidget(QWidget):
         reference_run_number: int | None,
         peak_rates_per_us: list[float],
         bin_width_us: float,
-        good_frames: float,
+        good_frames: float | None,
     ) -> None:
         """(Re)seed the section from the draft state, without emitting."""
         self._seeding = True
@@ -237,7 +235,7 @@ class DeadtimeSectionWidget(QWidget):
             self._reference_run_number = reference_run_number
             self._peak_rates_per_us = list(peak_rates_per_us)
             self._bin_width_us = float(bin_width_us)
-            self._good_frames = float(good_frames) if good_frames else 1.0
+            self._good_frames = good_frames
 
             self._source_run_combo.blockSignals(True)
             self._source_run_combo.clear()
@@ -400,9 +398,12 @@ class DeadtimeSectionWidget(QWidget):
         except ValueError:
             self._refresh_table()
             return
+        if not np.isfinite(value_ns):
+            self._refresh_table()
+            return
         while len(self._manual_values_us) <= row:
             self._manual_values_us.append(0.0)
-        self._manual_values_us[row] = max(0.0, value_ns) / 1000.0
+        self._manual_values_us[row] = value_ns / 1000.0
         self._manual_method = "manual"
         self._refresh_summary()
         self._notify()
@@ -457,7 +458,7 @@ class DeadtimeSectionWidget(QWidget):
             )
             return
         tau_us = estimate_deadtime_from_histograms(run.histograms, num_good_frames=run.good_frames)
-        if tau_us is None or tau_us <= 0.0:
+        if tau_us is None or not np.isfinite(tau_us):
             QMessageBox.warning(
                 self,
                 "Deadtime Estimate Failed",
@@ -479,16 +480,19 @@ class DeadtimeSectionWidget(QWidget):
         n = min(len(values), len(self._peak_rates_per_us))
         if n == 0:
             return None
-        max_fraction = 0.0
+        if all(value == 0 for value in values):
+            return 0.0
+        fractions = []
         for i in range(n):
-            tau_us = values[i]
-            rate = self._peak_rates_per_us[i]
-            counts_per_frame = rate * self._bin_width_us
-            denom = 1.0 - (counts_per_frame * tau_us / (self._bin_width_us * self._good_frames))
-            denom = max(denom, 1.0e-6)
-            fraction = 1.0 / denom - 1.0
-            max_fraction = max(max_fraction, fraction)
-        return max_fraction
+            occupancy = deadtime_occupancy(
+                [self._peak_rates_per_us[i] * self._bin_width_us],
+                values[i],
+                self._bin_width_us,
+                self._good_frames,
+                detector=i,
+            )
+            fractions.append(float(abs(1 / (1 - occupancy[0]) - 1)))
+        return max(fractions)
 
     def _refresh_summary(self) -> None:
         mode = self._current_mode()
@@ -496,14 +500,16 @@ class DeadtimeSectionWidget(QWidget):
             self._summary_label.setText("")
             return
         values = self._display_values()
-        fraction = self._max_correction_fraction(values)
-        saturated = fraction is not None and fraction > _MAX_SANE_CORRECTION_FRACTION
+        rejection = None
+        fraction = None
+        try:
+            fraction = self._max_correction_fraction(values)
+        except DeadtimeCorrectionError as exc:
+            rejection = str(exc)
         if mode == "manual":
             # The manual table already lists every value; report the peak only.
-            if saturated:
-                self._summary_label.setText(
-                    "Deadtime saturates the t=0 correction — value too large."
-                )
+            if rejection:
+                self._summary_label.setText(rejection)
             else:
                 self._summary_label.setText(
                     f"Max correction at t=0: {fraction * 100.0:.1f}%"
@@ -518,8 +524,8 @@ class DeadtimeSectionWidget(QWidget):
         n = len(values)
         mean_ns = float(np.mean(values)) * 1000.0
         detail = f"{mean_ns:.3f} ns × {n} detector{'' if n == 1 else 's'}"
-        if saturated:
-            detail += " · deadtime saturates the t=0 correction — value too large"
+        if rejection:
+            detail += f" · {rejection}"
         elif fraction is not None:
             detail += f" · max correction at t=0: {fraction * 100.0:.1f}%"
         self._summary_label.setText(detail)
