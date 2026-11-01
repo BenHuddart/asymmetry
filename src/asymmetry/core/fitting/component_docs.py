@@ -255,11 +255,11 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "fluctuation-dominated signals."
     ),
     "Gaussian": (
-        "Use when depolarization is driven by a static or quasi-static, dense (Gaussian) distribution of "
-        "local fields, with σ set by the second moment of the distribution. Typical sources are dense nuclear "
-        "moments in transverse field; in zero field with the full ⅓ tail visible, prefer the Kubo–Toyabe "
-        "forms, which expose the field-distribution width Δ directly. Note the convention A·exp[−(σt)²]: "
-        "rates quoted for the e^(−Δ²t²/2) convention correspond to σ = Δ/√2."
+        "Use for static Gaussian frequency broadening, or for the early-time approximation to a static "
+        "Gaussian zero-field response. The component is A·exp[−(σt)²]. For a per-component angular-field "
+        "width Δ, the zero-field early-time match: σ = Δ; transverse-field envelope: σ = Δ/√2. The full "
+        "zero-field dip and ⅓ tail require StaticGKT_ZF. Large widths can reflect short muon–nucleus "
+        "distances, several sites, or electronic moments."
     ),
     "Oscillatory": (
         "Use for coherent muon spin precession at a well-defined frequency ν, e.g. from long-range magnetic "
@@ -427,18 +427,17 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "non-negative."
     ),
     "StaticGKT_ZF": (
-        "Use for zero-field relaxation from a static, dense (Gaussian) distribution of local fields of width "
-        "Δ — most commonly randomly oriented nuclear moments in nonmagnetic hosts. The Kubo–Toyabe dip and "
-        "recovery to the ⅓ tail is the unambiguous zero-field signature of static disorder; if the tail "
-        "relaxes, the field is partly dynamic (use DynamicGaussianKT)."
+        "Use for a static isotropic Gaussian field distribution in zero field. Δ is γµ times the "
+        "standard deviation of one Cartesian field component. The early-time form is 1−Δ²t², matching "
+        "Gaussian at σ = Δ. The dip and ⅓ tail are consistent with quasistatic fields; a relaxing tail "
+        "can indicate dynamics or another relaxation channel."
     ),
     "LongitudinalFieldKT": (
-        "Use for a static, dense (Gaussian) local-field distribution of width Δ with an applied longitudinal "
-        "field Bₗ — the workhorse for frozen/static magnetism and nuclear-dipole hosts. Sweeping Bₗ through "
-        "the decoupling crossover (γµBₗ ~ Δ) and watching the polarization recover toward 1 is the "
-        "unambiguous signature that the local field is static; the Bₗ → 0 limit is the zero-field ⅓-tail "
-        "Kubo–Toyabe (StaticGKT_ZF). If the polarization does not recover, or relaxation persists at high "
-        "field, the field is dynamic — use DynamicGaussianKT or Keren instead. Δ in µs⁻¹, Bₗ in Gauss."
+        "Use for a static isotropic Gaussian field distribution with an applied longitudinal field Bₗ. Δ "
+        "is the per-component angular-field width in µs⁻¹; Bₗ is in Gauss. The zero-field limit is "
+        "StaticGKT_ZF. Recovery when γµBₗ ≫ Δ is consistent with static fields, but slow fluctuations (ν "
+        "≪ Δ) can also decouple. Persistent relaxation can indicate dynamics; consider DynamicGaussianKT "
+        "or Keren within their applicable regimes."
     ),
     "DynamicGaussianKT": (
         "Use when a dense (Gaussian) static local-field distribution of width Δ is partially averaged by "
@@ -461,15 +460,15 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "Use as the analytic longitudinal-field dynamic Gaussian relaxation function: an accurate "
         "strong-collision result in the fast/intermediate fluctuation regime (ν ≳ Δ) that avoids the "
         "numerical convolution of the full dynamic Kubo–Toyabe. It is the standard model for "
-        "longitudinal-field decoupling analyses (e.g. ionic diffusion) and reduces to the Abragam function at "
-        "zero field. Prefer the full DynamicGaussianKT when fluctuations are slow (ν ≲ Δ) or the static ⅓ "
+        "longitudinal-field decoupling analyses (e.g. ionic diffusion); its zero-field exponent is twice "
+        "the transverse-field Abragam exponent. Prefer the full DynamicGaussianKT when fluctuations are slow (ν ≲ Δ) or the static ⅓ "
         "tail matters."
     ),
     "Abragam": (
-        "Use for single-component relaxation that crosses over from a Gaussian line shape (slow fluctuations, "
-        "ν → 0: exp(−Δ²t²/2)) to an exponential (fast fluctuations, ν ≫ Δ: exp(−(Δ²/ν)t)). It is the classic "
-        "model for extracting a hop or correlation rate from a transverse-field line shape, e.g. the "
-        "Gaussian-to-Lorentzian change of the Cu line shape as muon diffusion sets in on warming."
+        "Use for the transverse-field Gaussian-to-exponential crossover as the fluctuation rate ν rises. "
+        "The static limit is exp(−Δ²t²/2), equal to Gaussian at σ = Δ/√2; Δ is the per-component "
+        "angular-field width. At ν ≫ Δ the envelope approaches exp(−(Δ²/ν)t). This describes the "
+        "Gaussian-to-Lorentzian line-shape change associated with diffusion."
     ),
     "GaussianBroadenedKT": (
         "Use when a static Kubo–Toyabe fit is qualitatively right but the dip is too sharp and the ⅓-tail "
