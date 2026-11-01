@@ -3804,18 +3804,6 @@ class TestMainWindowBasic:
         assert buttons["fb_asymmetry"].isChecked()
         assert not buttons["frequency"].isChecked()
 
-    def test_deadtime_correction_uses_good_frames(self, mainwindow: MainWindow) -> None:
-        """Deadtime correction should include good-frame normalization (Mantid-style)."""
-        counts = np.array([100.0], dtype=float)
-        corrected = mainwindow._apply_deadtime_correction(
-            counts,
-            tau_us=0.01,
-            bin_width_us=0.02,
-            num_good_frames=1000.0,
-        )
-        expected = 100.0 / (1.0 - (100.0 * 0.01 / (0.02 * 1000.0)))
-        assert corrected[0] == pytest.approx(expected)
-
     def test_background_correction_subtracts_grouped_mean_before_asymmetry(
         self,
         mainwindow: MainWindow,

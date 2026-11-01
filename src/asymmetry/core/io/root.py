@@ -1,10 +1,9 @@
 """Load MusrRoot/LEM ROOT raw histogram data.
 
 The supported layout follows musrfit's ``PRunDataHandler::ReadRootFile``:
-newer MusrRoot files store a ``RunHeader`` plus ``hDecay%03d`` histograms,
-while older LEM files use ROOT folders and ``hDecay%02d`` histograms. The
-implementation uses ``uproot`` rather than PyROOT, so it reads the documented
-ROOT objects directly into Asymmetry's normal raw ``Run`` model.
+MusrRoot files store a ``RunHeader`` plus ``hDecay%03d`` histograms;
+LEM files use ROOT folders and ``hDecay%02d`` histograms. ``uproot`` reads
+these documented objects into the raw ``Run`` model.
 """
 
 from __future__ import annotations
@@ -95,10 +94,6 @@ class RootLoader(BaseLoader):
             )
             perf.detail(detectors=len(root_histograms), bins=dataset.n_points)
             return dataset
-
-    # ------------------------------------------------------------------
-    # ROOT object extraction
-    # ------------------------------------------------------------------
 
     def _read_header(self, root_file) -> tuple[dict[str, str], str, str | None]:
         if "RunHeader" in root_file:
@@ -667,6 +662,8 @@ class RootLoader(BaseLoader):
             "bin_index_base": 0,
             "bunching_factor": 1,
             "deadtime_correction": False,
+            # Whole-run acquisition: τ must be calibrated in this normalisation.
+            "good_frames": 1.0,
             "detector_t0_bins": detector_t0_bins,
             "detector_first_good_bins": first_good_bins,
             "detector_last_good_bins": last_good_bins,

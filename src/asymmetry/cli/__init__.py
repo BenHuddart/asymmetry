@@ -145,15 +145,14 @@ def main(argv: list[str] | None = None) -> None:
     if not args.verbose:
         _collapse_repeated_warnings()
 
-    # The CLI's error boundary: the two failure modes the command contract
-    # promises. A UserError or a stale work-directory record is something the
-    # caller can fix, so it prints one line; anything else is a bug, so it
-    # prints the traceback and exits 2 rather than pretending the run succeeded.
+    # Input and stale-record errors print one line; unexpected failures retain
+    # their traceback and exit 2.
+    from asymmetry.core.transform.deadtime import DeadtimeCorrectionError
     from asymmetry.core.workflow.workdir import StaleWorkDirError
 
     try:
         _logged(args, argv)
-    except (UserError, StaleWorkDirError) as exc:
+    except (UserError, StaleWorkDirError, DeadtimeCorrectionError) as exc:
         print(f"asymmetry: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
     except Exception:

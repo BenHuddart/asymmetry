@@ -84,11 +84,13 @@ from asymmetry.core.transform import (
     calibrate_deadtime_from_histograms,
     common_t0_for_groups,
     detected_detector_t0_bins,
+    effective_detector_t0_bins,
     estimate_deadtime_from_histograms,
     excluded_detector_indices,
     filter_excluded_indices,
     find_t0_for_run,
     format_detector_list,
+    good_frames,
     parse_detector_list,
     parse_group_detectors,
     resolve_background_mode,
@@ -2911,20 +2913,10 @@ class GroupingDialog(QDialog):
         return self._preferred_window_size
 
     def _measure_preferred_window_size(self) -> tuple[int, int]:
-        """Derive the default size from the panes' measured minimums.
+        """Give the grouping and Corrections panes equal spare width.
 
-        Width: the dialog's own minimum (every pane at its measured content
-        minimum, which is where the platform's fonts enter) plus the room the
-        grouping column needs to grow from that minimum to its t0-line cap.
-        The two right-hand columns share spare width equally, so the column
-        reaches the cap only when the same amount has also gone to
-        Corrections — hence twice the difference. Height: the design floor
-        that keeps both columns' default (deadtime-off) state free of a
-        vertical scrollbar above the fixed-height preview pinned under them,
-        so it moves with ``preview_pane._PANE_HEIGHT``. The window opens at
-        ``resize_to_available`` of this, which is smaller on a small display;
-        tests that pin the budget resize to this value rather than reading
-        the window back.
+        The t0 provenance line determines that width; the preview sets the
+        height floor. Platform screen bounds constrain the initial window.
         """
         self.layout().activate()
         grouping_room = max(0, self._t0_line_max_px - self._grouping_scroll.minimumWidth())
@@ -3433,7 +3425,7 @@ class GroupingDialog(QDialog):
                 return []
             if not np.isfinite(tau_us):
                 return []
-            normalized.append(max(0.0, tau_us))
+            normalized.append(tau_us)
         return normalized
 
     def _reference_file_deadtime_values(
@@ -3459,7 +3451,8 @@ class GroupingDialog(QDialog):
         if file_values:
             return file_values
         n_histograms = self._histogram_deadtime_count()
-        default_tau = float(grouping.get("deadtime_manual_us", 0.01) or 0.01)
+        manual_tau = grouping.get("deadtime_manual_us")
+        default_tau = 0.01 if manual_tau is None else float(manual_tau)
         return [default_tau] * n_histograms
 
     def _estimate_deadtime_us_from_reference(self) -> float | None:
@@ -3505,12 +3498,12 @@ class GroupingDialog(QDialog):
 
         if mode == "manual":
             values_us = list(self._deadtime_manual_values_us)
-            if not values_us or any(value <= 0.0 for value in values_us):
+            if not values_us or any(not np.isfinite(value) for value in values_us):
                 if show_warnings:
                     QMessageBox.warning(
                         self,
                         "Invalid Deadtime",
-                        "Manual deadtime values must be greater than zero for every detector.",
+                        "Manual deadtime values must be finite for every detector.",
                     )
                 return None
             payload.update(
@@ -3526,7 +3519,7 @@ class GroupingDialog(QDialog):
 
         if mode == "estimate":
             tau_us = self._estimate_deadtime_us_from_reference()
-            if tau_us is None or tau_us <= 0.0:
+            if tau_us is None or not np.isfinite(tau_us):
                 if show_warnings:
                     QMessageBox.warning(
                         self,
@@ -3623,22 +3616,23 @@ class GroupingDialog(QDialog):
             )
         return source_runs
 
-    def _deadtime_peak_rates(self, grouping: dict[str, Any]) -> tuple[list[float], float, float]:
-        """Per-detector peak early-time rate, bin width and good frames (summary line)."""
+    def _deadtime_peak_rates(
+        self, grouping: dict[str, Any]
+    ) -> tuple[list[float], float, float | None]:
+        """First-good-bin detector rates, bin width and frame normalisation."""
         peak_rates: list[float] = []
         bin_width_us = 0.0
-        good_frames = 1.0
+        frames = good_frames(grouping, default=0.0) or None
         if self._run is not None and self._run.histograms:
             bin_width_us = float(self._run.histograms[0].bin_width)
-            try:
-                good_frames = float(grouping.get("good_frames", 1.0))
-            except (TypeError, ValueError):
-                good_frames = 1.0
-            for hist in self._run.histograms:
+            t0_bins = effective_detector_t0_bins(self._run.histograms, grouping)
+            offset = int(grouping.get("t_good_offset", 0))
+            for hist, t0 in zip(self._run.histograms, t0_bins, strict=True):
                 counts = np.asarray(hist.counts, dtype=np.float64)
-                peak = float(np.max(counts)) if counts.size else 0.0
+                index = int(t0) + offset
+                peak = float(counts[index]) if 0 <= index < counts.size else 0.0
                 peak_rates.append(peak / bin_width_us if bin_width_us > 0.0 else 0.0)
-        return peak_rates, bin_width_us, good_frames
+        return peak_rates, bin_width_us, frames
 
     def _on_deadtime_changed(self) -> None:
         """Fold an inline deadtime-section edit back into the draft + preview."""

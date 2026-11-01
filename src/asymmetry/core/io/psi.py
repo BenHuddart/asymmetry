@@ -1173,6 +1173,8 @@ class PsiLoader(BaseLoader):
             "bin_index_base": 0,
             "bunching_factor": 1,
             "deadtime_correction": False,
+            # Whole-run acquisition: τ must be calibrated in this normalisation.
+            "good_frames": 1.0,
             "detector_t0_bins": [int(v) for v in t0_bins],
             "detector_first_good_bins": [int(v) for v in first_good_bins],
             "detector_last_good_bins": [int(v) for v in last_good_bins],
@@ -1182,10 +1184,7 @@ class PsiLoader(BaseLoader):
             # recorded one — D7 searches for it at resolve time.
             "t0_source": "missing" if not any(int(v) for v in t0_bins) else "file",
             "histogram_labels": list(raw.histogram_labels),
-            # Stamp the canonical registry identity (e.g. "HAL") so fingerprinting
-            # and the stale-identity heal do not mistake the raw PSI "HIFI" string
-            # for the ISIS HiFi spectrometer and discard the loader grouping. The
-            # raw string is kept in metadata["instrument"] for provenance.
+            # The registry identity and the raw header name have separate provenance.
             "instrument": canonical_instrument or raw.instrument,
         }
         t0_time_us = run_t0_time_us(histograms, common_t0)

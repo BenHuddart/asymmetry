@@ -363,6 +363,7 @@ def _import_scenarios() -> None:
         rotating_frame_projection,
         run_info_provenance,
         simulate_dialog,
+        signed_deadtime,
         single_fit_saved_fits,
         spectral_moments_readout,
         suggest_next_point,

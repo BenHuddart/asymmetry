@@ -741,9 +741,7 @@ class NexusLoader(BaseLoader):
         field off: ``[0, 15000, 0, 15001]``) into two data periods — then fall
         back to the run totals (``frames_good`` / ``frames``).
 
-        Without this, the deadtime path defaults ``good_frames`` to ``1.0`` and
-        ``prepare_histograms_with_deadtime`` over-corrects HDF4 counts by ~5
-        orders of magnitude.
+        The count is the acquisition normalisation for detector deadtime.
         """
         beam = self._read_optional(self._read_optional(entry, "instrument"), "beam")
         if beam is None:
@@ -807,7 +805,6 @@ class NexusLoader(BaseLoader):
         good_frames_periods = self._split_period_scalars(
             good_frames_values,
             n_periods=n_periods,
-            default=1.0,
         )
 
         for period_idx, period_counts in enumerate(counts_periods, start=1):
@@ -897,7 +894,6 @@ class NexusLoader(BaseLoader):
                 "detector_first_good_bins": [int(hist.good_bin_start) for hist in histograms],
                 "detector_last_good_bins": [int(hist.good_bin_end) for hist in histograms],
                 "t0_source": decode.source,
-                "good_frames": float(good_frames_periods[period_idx - 1]),
                 "dead_time_us": [
                     float(v)
                     for v in np.asarray(
@@ -905,6 +901,8 @@ class NexusLoader(BaseLoader):
                     ).tolist()
                 ],
             }
+            if good_frames_periods[period_idx - 1] is not None:
+                run_grouping["good_frames"] = good_frames_periods[period_idx - 1]
             if t0_time_us is not None:
                 run_grouping["t0_time_us"] = float(t0_time_us)
 
@@ -1330,11 +1328,10 @@ class NexusLoader(BaseLoader):
         values: np.ndarray,
         *,
         n_periods: int,
-        default: float,
-    ) -> list[float]:
-        """Normalise optional scalar metadata into one value per period."""
+    ) -> list[float | None]:
+        """Normalise frame metadata, preserving absent/invalid values as missing."""
         if values.size == 0:
-            return [float(default) for _ in range(n_periods)]
+            return [None] * n_periods
 
         arr = np.asarray(values, dtype=np.float64).ravel()
         if arr.size >= n_periods:
@@ -1342,13 +1339,11 @@ class NexusLoader(BaseLoader):
         elif arr.size == 1:
             out = np.full(n_periods, arr[0], dtype=np.float64)
         else:
-            out = np.resize(arr, n_periods)
+            out = arr
 
-        result: list[float] = []
-        for val in out:
-            f = float(val)
-            result.append(f if np.isfinite(f) and f > 0.0 else float(default))
-        return result
+        return [float(val) if np.isfinite(val) and val > 0 else None for val in out] + [None] * (
+            n_periods - out.size
+        )
 
     def _encode_period_run_number(self, run_number: int, period_idx: int) -> int:
         """Encode a stable unique run number for a specific period row.

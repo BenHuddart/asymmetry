@@ -229,10 +229,9 @@ def test_load_psi_bin_uses_labels_and_per_detector_t0(tmp_path) -> None:
     assert ds.run is not None
     assert ds.metadata["facility"] == "PSI"
     assert ds.metadata["psi_format"] == "psi-bin"
+    assert ds.run.grouping["good_frames"] == 1.0
     assert ds.metadata["temperature"] == pytest.approx(50.0)
     assert ds.metadata["field"] == pytest.approx(1000.0)
-    # The "TF" orientation tag in the header is classified as Transverse so the
-    # transverse-field grouping nudge can fire on PSI data (B8a).
     assert ds.metadata["field_direction"] == "Transverse"
     assert ds.run.grouping["groups"] == {1: [1], 2: [2]}
     assert ds.run.grouping["group_names"] == {1: "Back", 2: "Forw"}

@@ -44,7 +44,7 @@ fixed line ranges (the file will reflow as sections are extracted):
    ``_load_file``, dataset overwrite/removal helpers.
 4. **Detector grouping** — ``_open_shared_grouping_dialog`` through
    ``_apply_grouping_settings_to_dataset`` and the histogram-reduction helpers
-   (``_reduce_grouped_histograms_to_asymmetry``, ``_apply_deadtime_correction``).
+   (``_reduce_grouped_histograms_to_asymmetry``).
 5. **Fit orchestration and fit-result recording** — ``_on_fit``,
    ``_on_fit_completed``, ``_record_fit_series``, ``_record_global_fit_batch``,
    ``_record_grouped_fit_series``, and the various
@@ -260,8 +260,8 @@ from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     ASYMMETRY_PERCENT,
     EFFECTIVE_DETECTOR_T0_KEY,
+    DeadtimeCorrectionError,
     FieldScan,
-    apply_deadtime_correction,
     available_background_modes,
     build_field_scan,
     common_t0_for_groups,
@@ -4726,7 +4726,14 @@ class MainWindow(QMainWindow):
         for dataset in dialog_datasets:
             if run_numbers is not None and int(dataset.run_number) not in run_numbers:
                 continue
-            applied, dt_applied = self._apply_grouping_settings_to_dataset(dataset, grouping_result)
+            try:
+                applied, dt_applied = self._apply_grouping_settings_to_dataset(
+                    dataset, grouping_result
+                )
+            except DeadtimeCorrectionError as exc:
+                skipped += 1
+                skip_reasons.append(f"run {int(dataset.run_number)}: {exc}")
+                continue
             if not applied:
                 skipped += 1
                 reason = self._describe_grouping_skip(dataset, grouping_result)
@@ -5456,13 +5463,8 @@ class MainWindow(QMainWindow):
         setattr(dataset, "_grouping_source_arrays_cache", cached)
         return cached
 
-    # Strictly per-run normalisers. ``good_frames`` is the universal dead-time
-    # normaliser: ``apply_deadtime_correction`` divides the loss term by
-    # ``dt * good_frames``, so a wrong (another run's) or missing value makes the
-    # denominator clip and the asymmetry saturate at +-100%. The ``period_*``
-    # companions let per-period selection re-resolve it. None of these may be
-    # inherited from another run's grouping template — they belong to the run
-    # whose DAQ produced them and must be re-resolved per dataset.
+    # Frame counts normalise raw N·τ/(Δt·F); they and their period companions
+    # belong to the acquisition and cannot be inherited from a grouping template.
     _PER_RUN_NORMALISER_KEYS = (
         "good_frames",
         "period_good_frames",
@@ -5899,24 +5901,23 @@ class MainWindow(QMainWindow):
         if not forward_idx or not backward_idx:
             return False, False
 
-        if not isinstance(run.grouping, dict):
-            run.grouping = {}
+        grouping = dict(existing_grouping)
 
         # Keep histogram time-zero consistent with grouping metadata. PSI files
         # can have per-detector t0 values, so preserve relative detector
         # offsets when the user edits the common t0 control.
         if isinstance(grouping_result.get("detector_t0_bins"), list):
-            run.grouping["detector_t0_bins"] = list(grouping_result.get("detector_t0_bins", []))
+            grouping["detector_t0_bins"] = list(grouping_result.get("detector_t0_bins", []))
         if isinstance(grouping_result.get("detector_first_good_bins"), list):
-            run.grouping["detector_first_good_bins"] = list(
+            grouping["detector_first_good_bins"] = list(
                 grouping_result.get("detector_first_good_bins", [])
             )
         if isinstance(grouping_result.get("detector_last_good_bins"), list):
-            run.grouping["detector_last_good_bins"] = list(
+            grouping["detector_last_good_bins"] = list(
                 grouping_result.get("detector_last_good_bins", [])
             )
         if isinstance(grouping_result.get("histogram_labels"), list):
-            run.grouping["histogram_labels"] = list(grouping_result.get("histogram_labels", []))
+            grouping["histogram_labels"] = list(grouping_result.get("histogram_labels", []))
 
         # A user t0 edit is applied NON-DESTRUCTIVELY (T0Policy semantics): the
         # run's histograms keep their file-derived t0_bin values, and the effective
@@ -5934,47 +5935,42 @@ class MainWindow(QMainWindow):
         )
         delta = int(t0_bin) - int(file_common_t0)
         if run.histograms and delta != 0:
-            run.grouping[EFFECTIVE_DETECTOR_T0_KEY] = [
+            grouping[EFFECTIVE_DETECTOR_T0_KEY] = [
                 max(0, int(hist.t0_bin) + delta) for hist in run.histograms
             ]
         else:
-            run.grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
-        # The exact t0 moves with the same whole-bin delta (D4), exactly as
-        # ``_apply_t0_policy`` moves it — otherwise the per-run override would
-        # shift the alignment but leave the time stamps on the file's t0.
-        # Re-derived from the FILE baseline (not from the stored value) for the
-        # same reason as the override list above: this path mutates
-        # ``run.grouping`` in place and runs again on every apply, so reading
-        # back its own output would compound the shift.
+            grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
+        # Exact t0 carries the alignment's whole-bin delta. Derive it from file
+        # coordinates so repeated applies cannot compound the shift.
         if run.histograms:
             file_t0_time_us = run_t0_time_us(run.histograms, file_common_t0)
             if file_t0_time_us is not None:
-                run.grouping["t0_time_us"] = file_t0_time_us + delta * float(
+                grouping["t0_time_us"] = file_t0_time_us + delta * float(
                     run.histograms[0].bin_width
                 )
 
         if has_file_deadtime(existing_grouping, len(run.histograms)):
-            run.grouping["deadtime_file_us"] = list(existing_grouping.get("dead_time_us", []))
+            grouping["deadtime_file_us"] = list(existing_grouping.get("dead_time_us", []))
         elif isinstance(existing_grouping.get("deadtime_file_us"), list):
-            run.grouping["deadtime_file_us"] = list(existing_grouping.get("deadtime_file_us", []))
+            grouping["deadtime_file_us"] = list(existing_grouping.get("deadtime_file_us", []))
 
-        run.grouping["deadtime_mode"] = deadtime_mode
+        grouping["deadtime_mode"] = deadtime_mode
         if grouping_result.get("deadtime_method"):
-            run.grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
+            grouping["deadtime_method"] = str(grouping_result.get("deadtime_method"))
         else:
-            run.grouping.pop("deadtime_method", None)
-        _sync_grouping_keys(run.grouping, grouping_result, DEADTIME_SETTING_KEYS)
-        run.grouping.pop("deadtime_source_path", None)
-        run.grouping.pop("deadtime_loaded_us", None)
+            grouping.pop("deadtime_method", None)
+        _sync_grouping_keys(grouping, grouping_result, DEADTIME_SETTING_KEYS)
+        grouping.pop("deadtime_source_path", None)
+        grouping.pop("deadtime_loaded_us", None)
 
         if deadtime_mode == "file":
-            if isinstance(run.grouping.get("deadtime_file_us"), list):
-                run.grouping["dead_time_us"] = list(run.grouping.get("deadtime_file_us", []))
+            if isinstance(grouping.get("deadtime_file_us"), list):
+                grouping["dead_time_us"] = list(grouping.get("deadtime_file_us", []))
         elif isinstance(grouping_result.get("dead_time_us"), list):
-            run.grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
+            grouping["dead_time_us"] = list(grouping_result.get("dead_time_us", []))
         elif isinstance(grouping_result.get("deadtime_loaded_us"), list):
-            run.grouping["dead_time_us"] = list(grouping_result.get("deadtime_loaded_us", []))
-        self._preserve_per_run_normalisers(run.grouping, existing_grouping, grouping_result)
+            grouping["dead_time_us"] = list(grouping_result.get("deadtime_loaded_us", []))
+        self._preserve_per_run_normalisers(grouping, existing_grouping, grouping_result)
         for key in (
             "background_ranges",
             "background_range",
@@ -5985,10 +5981,10 @@ class MainWindow(QMainWindow):
             "bkg_fix",
         ):
             if key in grouping_result:
-                run.grouping[key] = grouping_result.get(key)
-        _sync_grouping_keys(run.grouping, grouping_result, REDUCTION_SETTING_KEYS)
+                grouping[key] = grouping_result.get(key)
+        _sync_grouping_keys(grouping, grouping_result, REDUCTION_SETTING_KEYS)
 
-        reduction_grouping = dict(run.grouping)
+        reduction_grouping = dict(grouping)
         reduction_grouping.update(
             {
                 "groups": groups,
@@ -6013,7 +6009,7 @@ class MainWindow(QMainWindow):
             reduction_grouping["alpha_z"] = float(vector_alphas.get("P_z", alpha))
 
         if not use_deadtime:
-            run.grouping.pop("deadtime_method", None)
+            grouping.pop("deadtime_method", None)
 
         run_alpha = alpha if alpha > 0 else 1.0
         has_two_period_histograms = bool(
@@ -6079,8 +6075,8 @@ class MainWindow(QMainWindow):
                 period_mode,
             )
             if len(time_axis) == 0:
-                return False, bool(red_dt or green_dt)
-            dt_applied = bool(red_dt or green_dt)
+                return False, bool(red_dt and green_dt)
+            dt_applied = bool(red_dt and green_dt)
             if use_background:
                 if red_background == green_background:
                     background_state = red_background
@@ -6118,25 +6114,25 @@ class MainWindow(QMainWindow):
                 str(PeriodMode.GREEN),
             }:
                 if "good_frames" in selected_grouping:
-                    run.grouping["good_frames"] = selected_grouping.get("good_frames")
+                    grouping["good_frames"] = selected_grouping.get("good_frames")
                 if isinstance(selected_grouping.get("dead_time_us"), list):
-                    run.grouping["dead_time_us"] = list(selected_grouping.get("dead_time_us", []))
+                    grouping["dead_time_us"] = list(selected_grouping.get("dead_time_us", []))
 
         if use_background:
             if isinstance(background_state, dict) and isinstance(
                 background_state.get("method"), str
             ):
-                run.grouping["background_method"] = str(background_state.get("method"))
+                grouping["background_method"] = str(background_state.get("method"))
             else:
-                run.grouping.pop("background_method", None)
+                grouping.pop("background_method", None)
             values = background_state.get("values") if isinstance(background_state, dict) else None
             if isinstance(values, list) and len(values) == 2:
-                run.grouping["background_values"] = [float(values[0]), float(values[1])]
+                grouping["background_values"] = [float(values[0]), float(values[1])]
             else:
-                run.grouping.pop("background_values", None)
+                grouping.pop("background_values", None)
             ranges = background_state.get("ranges") if isinstance(background_state, dict) else None
             if isinstance(ranges, list) and len(ranges) == 2:
-                run.grouping["background_ranges"] = [
+                grouping["background_ranges"] = [
                     [int(v) for v in ranges[0]],
                     [int(v) for v in ranges[1]],
                 ]
@@ -6144,9 +6140,9 @@ class MainWindow(QMainWindow):
                 background_state.get("details") if isinstance(background_state, dict) else None
             )
             if isinstance(details, dict) and details:
-                run.grouping["background_details"] = dict(details)
+                grouping["background_details"] = dict(details)
             else:
-                run.grouping.pop("background_details", None)
+                grouping.pop("background_details", None)
             method = (
                 str(background_state.get("method", ""))
                 if isinstance(background_state, dict)
@@ -6165,9 +6161,9 @@ class MainWindow(QMainWindow):
                     8000,
                 )
         else:
-            run.grouping.pop("background_method", None)
-            run.grouping.pop("background_values", None)
-            run.grouping.pop("background_details", None)
+            grouping.pop("background_method", None)
+            grouping.pop("background_values", None)
+            grouping.pop("background_details", None)
 
         # binned_fb_asymmetry already applied the good window and the
         # binning (fixed bunching included) inside the reduction.
@@ -6175,7 +6171,7 @@ class MainWindow(QMainWindow):
         dataset.asymmetry = asymmetry.copy()
         dataset.error = error.copy()
 
-        run.grouping.update(
+        grouping.update(
             {
                 "groups": groups,
                 "forward_group": forward_gid,
@@ -6193,38 +6189,39 @@ class MainWindow(QMainWindow):
                 "period_mode": period_mode,
             }
         )
-        _sync_grouping_keys(run.grouping, grouping_result, ALPHA_PROVENANCE_KEYS)
+        _sync_grouping_keys(grouping, grouping_result, ALPHA_PROVENANCE_KEYS)
         if axis_pairs:
-            run.grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
-            run.grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
-            run.grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
+            grouping["alpha_x"] = float(vector_alphas.get("P_x", run_alpha))
+            grouping["alpha_y"] = float(vector_alphas.get("P_y", run_alpha))
+            grouping["alpha_z"] = float(vector_alphas.get("P_z", run_alpha))
         # Keep the file-derived per-detector t0 table in sync with the (unmutated)
         # histograms; a manual t0 shift is carried non-destructively via the
         # effective-t0 override, never by rewriting these file values.
-        existing_detector_t0 = run.grouping.get("detector_t0_bins")
+        existing_detector_t0 = grouping.get("detector_t0_bins")
         if isinstance(existing_detector_t0, list) and len(existing_detector_t0) == len(
             run.histograms
         ):
-            run.grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in run.histograms]
+            grouping["detector_t0_bins"] = [int(hist.t0_bin) for hist in run.histograms]
         # Persist group names if provided
         group_names = grouping_result.get("group_names")
         if isinstance(group_names, dict) and group_names:
-            run.grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
+            grouping["group_names"] = {int(k): str(v) for k, v in group_names.items()}
         included_groups = grouping_result.get("included_groups")
         if isinstance(included_groups, dict):
-            run.grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
-        self._store_vector_axis(run.grouping, vector_axis if axis_pairs else None)
-        self._store_projections(run.grouping, projections_to_store)
+            grouping["included_groups"] = {int(k): bool(v) for k, v in included_groups.items()}
+        self._store_vector_axis(grouping, vector_axis if axis_pairs else None)
+        self._store_projections(grouping, projections_to_store)
         preset_name = grouping_result.get("grouping_preset")
         if preset_name:
-            run.grouping["grouping_preset"] = str(preset_name)
+            grouping["grouping_preset"] = str(preset_name)
         else:
-            run.grouping.pop("grouping_preset", None)
+            grouping.pop("grouping_preset", None)
         instrument_name = grouping_result.get("instrument")
         if instrument_name:
-            run.grouping["instrument"] = str(instrument_name)
+            grouping["instrument"] = str(instrument_name)
         else:
-            run.grouping.pop("instrument", None)
+            grouping.pop("instrument", None)
+        run.grouping = grouping
         return True, dt_applied
 
     def _period_histograms_for_mode(
@@ -6540,31 +6537,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Background run unavailable: {exc}", 8000)
             return None
         return reference.histograms, reference.scale
-
-    def _apply_deadtime_correction(
-        self,
-        counts,
-        tau_us: float,
-        bin_width_us: float,
-        *,
-        num_good_frames: float = 1.0,
-    ):
-        """Apply non-paralyzable deadtime correction to histogram counts.
-
-        The corrected counts are computed as:
-
-        ``N_corr = N / (1 - N * tau / (dt * n_frames))``
-
-        where ``tau`` is detector deadtime, ``dt`` is bin width, and
-        ``n_frames`` is the number of good frames (Mantid-compatible).
-        Denominators are clamped away from zero for numerical stability.
-        """
-        return apply_deadtime_correction(
-            counts,
-            tau_us,
-            bin_width_us,
-            num_good_frames=num_good_frames,
-        )
 
     def _maybe_apply_comment_field(
         self,
@@ -17939,48 +17911,57 @@ class MainWindow(QMainWindow):
                     # ``profile``. A dataset with neither — or whose assigned
                     # name no longer resolves — follows the default profile of
                     # its fingerprint, if any.
-                    profile_name = ds_info.get("profile")
-                    grouping_overrides = ds_info.get("grouping_overrides")
-                    if isinstance(grouping_overrides, dict):
-                        # Heal the persisted per-run override against the fresh run
-                        # (its stored instrument may be stale); discard the wrong
-                        # instrument's structure before applying it.
-                        grouping_overrides, heal_note = reconcile_instrument_for_payload(
-                            dataset.run, grouping_overrides
-                        )
-                        if heal_note:
-                            self._log_panel.log(heal_note, tag="grouping")
-                        self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
-                        dataset.metadata["grouping_overrides"] = True
-                        if profile_name:
-                            self._assign_dataset_profile(dataset, str(profile_name))
-                    elif dataset.run is not None:
-                        followed_name: str | None = None
-                        if profile_name:
-                            resolved_grouping = self._resolve_named_profile_for_run(
-                                str(profile_name), dataset.run
+                    try:
+                        profile_name = ds_info.get("profile")
+                        grouping_overrides = ds_info.get("grouping_overrides")
+                        if isinstance(grouping_overrides, dict):
+                            # Heal the persisted per-run override against the fresh run
+                            # (its stored instrument may be stale); discard the wrong
+                            # instrument's structure before applying it.
+                            grouping_overrides, heal_note = reconcile_instrument_for_payload(
+                                dataset.run, grouping_overrides
                             )
-                            if resolved_grouping is not None:
-                                self._apply_grouping_settings_to_dataset(dataset, resolved_grouping)
-                                followed_name = str(profile_name)
-                        if followed_name is None:
-                            inherited = default_profile_for_run(
-                                self._grouping_profiles, dataset.run
-                            )
-                            if inherited is not None:
-                                run = dataset.run
-                                resolved_grouping = resolve_effective_grouping(
-                                    inherited,
-                                    run,
-                                    reference_resolver=lambda g, r=run: (
-                                        self._resolve_background_reference(g, r)
-                                    ),
+                            if heal_note:
+                                self._log_panel.log(heal_note, tag="grouping")
+                            self._apply_grouping_settings_to_dataset(dataset, grouping_overrides)
+                            dataset.metadata["grouping_overrides"] = True
+                            if profile_name:
+                                self._assign_dataset_profile(dataset, str(profile_name))
+                        elif dataset.run is not None:
+                            followed_name: str | None = None
+                            if profile_name:
+                                resolved_grouping = self._resolve_named_profile_for_run(
+                                    str(profile_name), dataset.run
                                 )
-                                self._apply_grouping_settings_to_dataset(dataset, resolved_grouping)
-                                followed_name = inherited.name
-                        if followed_name is not None:
-                            dataset.metadata.pop("grouping_overrides", None)
-                            self._assign_dataset_profile(dataset, followed_name)
+                                if resolved_grouping is not None:
+                                    self._apply_grouping_settings_to_dataset(
+                                        dataset, resolved_grouping
+                                    )
+                                    followed_name = str(profile_name)
+                            if followed_name is None:
+                                inherited = default_profile_for_run(
+                                    self._grouping_profiles, dataset.run
+                                )
+                                if inherited is not None:
+                                    run = dataset.run
+                                    resolved_grouping = resolve_effective_grouping(
+                                        inherited,
+                                        run,
+                                        reference_resolver=lambda g, r=run: (
+                                            self._resolve_background_reference(g, r)
+                                        ),
+                                    )
+                                    self._apply_grouping_settings_to_dataset(
+                                        dataset, resolved_grouping
+                                    )
+                                    followed_name = inherited.name
+                            if followed_name is not None:
+                                dataset.metadata.pop("grouping_overrides", None)
+                                self._assign_dataset_profile(dataset, followed_name)
+
+                    except DeadtimeCorrectionError as exc:
+                        dataset.run.grouping["deadtime_correction"] = False
+                        self._log_panel.log(f"Run {dataset.run_number}: {exc}", tag="grouping")
 
                     self._data_browser.add_dataset(dataset)
                     loaded_run_numbers.add(dataset.run_number)

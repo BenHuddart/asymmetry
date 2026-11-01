@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Deadtime correction preserves finite signed coefficients and rejects singular
+  corrections or invalid counts, bin widths and frame metadata with a clear error.
+
 - Raw PSI/ROOT acquisition mismatches, invalid background windows, and Fourier
   reference runs that do not cover the sample raise an error.
 
@@ -29,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record bounds before allocating counts with bounded temporary read buffers.
 
 ### Changed
+
+- The standalone deadtime correction requires an explicit `num_good_frames` value.
 
 - Integral asymmetry and detailed alpha estimation accept `GroupCounts` with shared
   uncertainty components; reference-count subtraction returns a variance.

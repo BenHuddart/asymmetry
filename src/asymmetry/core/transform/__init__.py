@@ -21,8 +21,11 @@ from asymmetry.core.transform.background import (
     supports_background_correction,
 )
 from asymmetry.core.transform.deadtime import (
+    DeadtimeCorrection,
+    DeadtimeCorrectionError,
     apply_deadtime_correction,
     calibrate_deadtime_from_histograms,
+    deadtime_occupancy,
     estimate_deadtime_from_histograms,
     has_file_deadtime,
     has_resolved_deadtime,
@@ -137,6 +140,9 @@ __all__ = [
     "resolve_facility",
     "supports_background_correction",
     "apply_deadtime_correction",
+    "DeadtimeCorrection",
+    "DeadtimeCorrectionError",
+    "deadtime_occupancy",
     "calibrate_deadtime_from_histograms",
     "estimate_deadtime_from_histograms",
     "has_file_deadtime",

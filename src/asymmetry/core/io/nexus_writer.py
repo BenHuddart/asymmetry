@@ -170,10 +170,7 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
     if dead_time.size != n_det:
         dead_time = np.zeros(n_det, dtype=np.float64)
 
-    try:
-        good_frames = float(grouping.get("good_frames", 1.0))
-    except (TypeError, ValueError):
-        good_frames = 1.0
+    good_frames = grouping.get("good_frames")
 
     with h5py.File(str(path), "w") as handle:
         entry = handle.create_group("run")
@@ -186,7 +183,8 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
             value = metadata.get(key)
             if value:
                 _write_str(entry, name, str(value))
-        entry.create_dataset("good_frames", data=np.float64(good_frames))
+        if good_frames is not None:
+            entry.create_dataset("good_frames", data=np.float64(good_frames))
 
         instrument = entry.create_group("instrument")
         _write_str(instrument, "name", metadata.get("instrument", ""))

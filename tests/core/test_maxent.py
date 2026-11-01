@@ -329,11 +329,12 @@ def test_maxent_auto_window_takes_precedence_over_stale_explicit_bounds() -> Non
     assert auto_input.f_min_mhz <= 1.49 <= auto_input.f_max_mhz
 
 
-def test_maxent_use_deadtime_correction_flag_controls_preparation() -> None:
+@pytest.mark.parametrize("coefficient", [-0.005, 0.005])
+def test_maxent_use_deadtime_correction_flag_controls_preparation(coefficient) -> None:
     run = _synthetic_run()
     grouping = dict(run.grouping)
     grouping["deadtime_correction"] = True
-    grouping["dead_time_us"] = [0.5] * len(run.histograms)
+    grouping["dead_time_us"] = [coefficient] * len(run.histograms)
     grouping["good_frames"] = 1000.0
     run_with_deadtime = Run(
         run_number=run.run_number,
@@ -369,10 +370,7 @@ def test_maxent_use_deadtime_correction_flag_controls_preparation() -> None:
         for on_group, off_group in zip(on_input.groups, off_input.groups, strict=True)
     )
 
-    # "Use existing deadtime correction" honours the run-level setting: with
-    # deadtime data present but the grouping flag OFF (the loader default),
-    # config-on must NOT correct — keeping MaxEnt consistent with the FFT
-    # path, which follows the grouping flag.
+    # Config-on honours the run-level switch, as does the FFT path.
     grouping_flag_off = dict(grouping)
     grouping_flag_off["deadtime_correction"] = False
     run_flag_off = Run(

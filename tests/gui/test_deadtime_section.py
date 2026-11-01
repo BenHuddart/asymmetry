@@ -182,7 +182,8 @@ def test_manual_mode_saturated_correction_shows_warning(qapp: QApplication) -> N
     # read as a nonsensical ~1e8%.
     section = _configured(mode="manual", manual_values_us=[2.0, 2.0])
     text = section._summary_label.text()
-    assert text == "Deadtime saturates the t=0 correction — value too large."
+    assert text.startswith("Deadtime correction rejected for detector 1:")
+    assert "requires < 1" in text
     assert "%" not in text
 
 
@@ -208,7 +209,8 @@ def test_file_mode_saturated_correction_shows_warning(qapp: QApplication) -> Non
     # Mean/detector-count prefix survives; the max-correction clause is
     # replaced with the saturation warning instead of a huge percentage.
     assert text.startswith("2000.000 ns × 2 detectors")
-    assert "deadtime saturates the t=0 correction — value too large" in text
+    assert "Deadtime correction rejected for detector 1:" in text
+    assert "requires < 1" in text
     assert "max correction" not in text
     assert "%" not in text
 
@@ -232,3 +234,38 @@ def test_table_height_capped_with_many_detectors(qapp: QApplication) -> None:
     # The rows beyond the cap scroll inside the table, not the tab.
     assert table.verticalScrollBar().maximum() > 0
     section.close()
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_manual_table_refuses_nonfinite_entries(qapp, value):
+    section = _configured(mode="manual", manual_values_us=[-0.01, 0.02])
+    section._table.item(0, 1).setText(value)
+    assert section.get_policy().values == [-0.01, 0.02]
+    assert section._table.item(0, 1).text() == "-10.000"
+
+
+def test_signed_file_manual_and_fill_all_values_are_retained(qapp):
+    section = _configured(mode="file", file_values_us=[-0.02, 0.01])
+    assert section._table.item(0, 1).text() == "-20.000"
+    assert "max correction at t=0: 1.0%" in section._summary_label.text()
+    section._mode_buttons["manual"].click()
+    section._table.item(0, 1).setText("-30")
+    assert section.get_policy().values[0] == -0.03
+    section._fill_all_spin.setValue(-40)
+    section._fill_all_btn.click()
+    assert section.get_policy().values == [-0.04, -0.04]
+
+
+def test_subcritical_large_correction_is_not_arbitrarily_rejected(qapp):
+    section = _configured(mode="manual", manual_values_us=[1.5, 1.5])
+    assert section._summary_label.text() == "Max correction at t=0: 300.0%"
+
+
+def test_summary_reports_missing_frame_normalisation(qapp):
+    section = _configured(mode="file", file_values_us=[-0.02, 0.01], good_frames=None)
+    assert "good frames must be finite" in section._summary_label.text()
+
+
+def test_zero_table_summary_needs_no_frames(qapp):
+    section = _configured(mode="manual", manual_values_us=[0, 0], good_frames=None)
+    assert section._summary_label.text() == "Max correction at t=0: 0.0%"

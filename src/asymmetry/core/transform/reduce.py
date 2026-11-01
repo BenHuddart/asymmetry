@@ -74,7 +74,8 @@ class GroupedAsymmetryReduction:
     returns, matching the arrays the plot panel and
     :attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry` consume; the
     :attr:`units` field states that machine-readably. ``time`` is in µs relative
-    to t0. ``deadtime_applied`` reports whether deadtime correction actually ran,
+    to t0. ``deadtime_applied`` is true only after a non-zero signed coefficient
+    is applied successfully to the complete raw detector record,
     and ``background_state`` mirrors the per-mode dict the MainWindow records
     back onto ``run.grouping`` (``None`` when no background correction was
     requested).

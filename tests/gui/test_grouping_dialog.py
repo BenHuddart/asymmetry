@@ -1602,12 +1602,11 @@ def test_correction_card_status_tracks_section_state(qapp: QApplication) -> None
     assert dialog._background_card.status_text() == "none"
     assert dialog._alpha_card.status_text() == "1.0000"
 
-    # A deadtime mode edit refreshes the status through the section's changed
-    # signal → _on_deadtime_changed → staleness refresh → pipeline/card sync.
-    # (_on_mode_clicked is the user-click path: relayout + notify.)
+    # A zero table exercises the manual status without altering the α input.
     dialog._deadtime_card.set_expanded(True)
     dialog._deadtime_section._set_mode("manual")
     dialog._deadtime_section._on_mode_clicked()
+    dialog._deadtime_section._fill_all_btn.click()
     assert dialog._deadtime_card.status_text().startswith("manual")
 
     # A calibrated α reads value · method (and the stale flag warn-tints).

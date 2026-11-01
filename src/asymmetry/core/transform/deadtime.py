@@ -2,13 +2,95 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from scipy.optimize import curve_fit
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform.grouping import good_frames
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
+
+
+class DeadtimeCorrectionError(ValueError):
+    """A correction outside its raw-count or inverse-model domain."""
+
+    def __init__(self, reason, *, detector=None, bin_index=None, occupancy=None):
+        self.detector = detector
+        self.bin_index = bin_index
+        self.occupancy = occupancy
+        location = "" if detector is None else f" for detector {detector + 1}"
+        super().__init__(f"Deadtime correction rejected{location}: {reason}")
+
+
+def _deadtime_number(value, name, *, detector=None, positive=False) -> float:
+    """Parse a finite calibration or normalisation scalar at an input boundary."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise DeadtimeCorrectionError(f"{name} must be finite", detector=detector) from None
+    if isinstance(value, (bool, np.bool_)) or not np.isfinite(number) or (positive and number <= 0):
+        requirement = "finite and > 0" if positive else "finite"
+        raise DeadtimeCorrectionError(f"{name} must be {requirement}", detector=detector)
+    return number
+
+
+@dataclass(frozen=True)
+class DeadtimeCorrection:
+    """Finite signed detector coefficients with an explicit acquisition normalisation."""
+
+    tau_us: tuple[float, ...]
+    good_frames: float | None
+
+    def __post_init__(self):
+        coefficients = tuple(
+            _deadtime_number(value, "deadtime coefficient (µs)", detector=i)
+            for i, value in enumerate(self.tau_us)
+        )
+        object.__setattr__(self, "tau_us", coefficients)
+        if any(value != 0 for value in coefficients):
+            object.__setattr__(
+                self,
+                "good_frames",
+                _deadtime_number(self.good_frames, "good frames", positive=True),
+            )
+
+    @classmethod
+    def from_grouping(cls, grouping: dict, n_histograms: int) -> DeadtimeCorrection:
+        return cls(tuple(grouping["dead_time_us"][:n_histograms]), grouping.get("good_frames"))
+
+
+def deadtime_occupancy(counts, tau_us, bin_width_us, good_frames, *, detector=None):
+    """Return N·τ/(Δt·F) for valid raw counts and an invertible signed correction."""
+    tau = _deadtime_number(tau_us, "deadtime coefficient (µs)", detector=detector)
+    width = _deadtime_number(bin_width_us, "bin width (µs)", detector=detector, positive=True)
+    frames = _deadtime_number(good_frames, "good frames", detector=detector, positive=True)
+    try:
+        raw = np.asarray(counts)
+        n = raw.astype(np.float64) if not np.iscomplexobj(raw) else None
+    except (TypeError, ValueError, OverflowError):
+        n = None
+    if n is None or n.ndim != 1 or not np.all(np.isfinite(n) & (n >= 0)):
+        raise DeadtimeCorrectionError(
+            "raw counts must be finite and non-negative", detector=detector
+        )
+    with np.errstate(over="ignore", invalid="ignore"):
+        occupancy = (n / frames) * (tau / width)
+    if not np.all(np.isfinite(occupancy)):
+        raise DeadtimeCorrectionError("N·τ/(Δt·F) must be finite", detector=detector)
+    saturated = occupancy >= 1
+    if np.any(saturated):
+        index = int(np.argmax(occupancy))
+        peak = float(occupancy[index])
+        raise DeadtimeCorrectionError(
+            f"occupancy N·τ/(Δt·F) reaches {peak:.6g} at bin {index} "
+            f"({np.count_nonzero(saturated)} bins at or above 1); "
+            "the non-paralysable model requires < 1.",
+            detector=detector,
+            bin_index=index,
+            occupancy=peak,
+        )
+    return occupancy
 
 
 def apply_deadtime_correction(
@@ -16,20 +98,21 @@ def apply_deadtime_correction(
     tau_us: float,
     bin_width_us: float,
     *,
-    num_good_frames: float = 1.0,
+    num_good_frames: float,
+    detector: int | None = None,
 ):
-    """Apply the musrfit/Mantid non-paralyzable deadtime correction.
+    """Invert the non-paralysable model on every raw bin, rejecting N·τ/(Δt·F) ≥ 1.
 
     ``N_corr = N / (1 - N * tau / (dt * n_frames))``
     """
-    n = np.asarray(counts, dtype=np.float64)
-    tau_us = float(tau_us)
-    if not np.isfinite(tau_us) or tau_us == 0.0 or bin_width_us <= 0.0 or num_good_frames <= 0.0:
-        return n.copy()
-
-    denom = 1.0 - (n * tau_us / (float(bin_width_us) * float(num_good_frames)))
-    denom = np.clip(denom, 1.0e-6, None)
-    return n / denom
+    # ISIS calibration coefficients are signed fit parameters, in µs. A negative
+    # coefficient reduces counts; it is not a negative physical recovery interval.
+    occupancy = deadtime_occupancy(counts, tau_us, bin_width_us, num_good_frames, detector=detector)
+    with np.errstate(over="ignore"):
+        corrected = np.asarray(counts, dtype=np.float64) / (1 - occupancy)
+    if not np.all(np.isfinite(corrected)):
+        raise DeadtimeCorrectionError("corrected counts must be finite", detector=detector)
+    return corrected
 
 
 def estimate_deadtime_from_histograms(
@@ -189,7 +272,10 @@ def parse_deadtime_calibration_text(text: str, *, n_histograms: int | None = Non
     if len(first_tokens) == 1:
         try:
             expected_count = int(first_tokens[0])
-            start_index = 1
+            if expected_count > 0:
+                start_index = 1
+            else:
+                expected_count = None
         except ValueError:
             expected_count = None
 
@@ -204,9 +290,11 @@ def parse_deadtime_calibration_text(text: str, *, n_histograms: int | None = Non
         if len(tokens) >= 2:
             try:
                 detector_index = int(tokens[0])
-                tau_us = float(tokens[1])
             except ValueError:
                 continue
+            tau_us = _deadtime_number(
+                tokens[1], "deadtime coefficient (µs)", detector=detector_index - 1
+            )
             indexed_values[detector_index] = tau_us
             continue
         try:
@@ -234,7 +322,10 @@ def parse_deadtime_calibration_text(text: str, *, n_histograms: int | None = Non
         raise ValueError(
             f"Deadtime calibration provides {len(values)} values but the run has {int(n_histograms)} histograms."
         )
-    return [float(value) for value in values]
+    return [
+        _deadtime_number(value, "deadtime coefficient (µs)", detector=i)
+        for i, value in enumerate(values)
+    ]
 
 
 #: Higher-order count-loss coefficients carried alongside the promoted DT0.
@@ -286,10 +377,7 @@ def promote_deadtime_to_grouping(
     existing = grouping.get("dead_time_us")
     if isinstance(existing, list):
         for i in range(min(len(existing), n)):
-            try:
-                values[i] = float(existing[i])
-            except (TypeError, ValueError):
-                values[i] = 0.0
+            values[i] = _deadtime_number(existing[i], "deadtime coefficient (µs)", detector=i)
 
     if detector_indices is None:
         targets = list(range(n))
@@ -300,7 +388,9 @@ def promote_deadtime_to_grouping(
     before = {i: values[i] for i in targets}
     for i in targets:
         dt = incoming[i]
-        values[i] = values[i] + dt if additive else dt
+        values[i] = _deadtime_number(
+            values[i] + dt if additive else dt, "deadtime coefficient (µs)", detector=i
+        )
     after = {i: values[i] for i in targets}
 
     grouping["dead_time_us"] = values
@@ -326,12 +416,9 @@ def _coerce_deadtime_value(
         seq = list(dead_time_us_value)
         result = [0.0] * n
         for i in range(min(len(seq), n)):
-            try:
-                result[i] = float(seq[i])
-            except (TypeError, ValueError):
-                result[i] = 0.0
+            result[i] = _deadtime_number(seq[i], "deadtime coefficient (µs)", detector=i)
         return result
-    return [float(dead_time_us_value)] * n
+    return [_deadtime_number(dead_time_us_value, "deadtime coefficient (µs)")] * n
 
 
 def _promote_deadtime_model_terms(
@@ -376,14 +463,14 @@ def has_file_deadtime(grouping: dict, n_histograms: int = 0) -> bool:
 
 
 def has_resolved_deadtime(grouping: dict, n_histograms: int = 0) -> bool:
-    """Return ``True`` when grouping metadata contains usable deadtime values."""
+    """Return whether a complete non-zero table is present, pending domain validation."""
     if not isinstance(grouping, dict):
         return False
     dead_time_us = grouping.get("dead_time_us")
     if not isinstance(dead_time_us, list):
         return False
     required = max(1, int(n_histograms))
-    return len(dead_time_us) >= required and any(_finite_nonzero(value) for value in dead_time_us)
+    return len(dead_time_us) >= required and any(value != 0 for value in dead_time_us)
 
 
 def prepare_histograms_with_deadtime(
@@ -403,8 +490,9 @@ def prepare_histograms_with_deadtime(
 
         dead_time_us = grouping.get("dead_time_us") if isinstance(grouping, dict) else None
         if isinstance(dead_time_us, list) and len(dead_time_us) >= len(histograms):
+            correction = DeadtimeCorrection.from_grouping(grouping, len(histograms))
             corrected, applied = _prepare_histograms_with_resolved_deadtime(
-                histograms, grouping, dead_time_us
+                histograms, grouping, correction
             )
             perf.detail(applied=applied)
             return corrected, applied
@@ -416,43 +504,27 @@ def prepare_histograms_with_deadtime(
 def _prepare_histograms_with_resolved_deadtime(
     histograms: list[Histogram],
     grouping: dict,
-    dead_time_us: list,
+    correction: DeadtimeCorrection,
 ) -> tuple[list[Histogram], bool]:
-    frames = good_frames(grouping)
-
+    applied_any = any(value != 0 for value in correction.tau_us)
+    if not applied_any:
+        return list(histograms), False
     corrected: list[Histogram] = []
-    applied_any = False
     for i, hist in enumerate(histograms):
-        try:
-            tau_us = float(dead_time_us[i])
-        except (TypeError, ValueError):
-            tau_us = 0.0
-
-        counts = np.asarray(hist.counts, dtype=np.float64)
-        if tau_us != 0.0 and np.isfinite(tau_us):
-            counts = apply_deadtime_correction(
-                counts,
-                tau_us,
-                hist.bin_width,
-                num_good_frames=frames,
-            )
-            applied_any = True
+        tau_us = correction.tau_us[i]
+        counts = apply_deadtime_correction(
+            hist.counts,
+            tau_us,
+            hist.bin_width,
+            num_good_frames=correction.good_frames,
+            detector=i,
+        )
 
         corrected.append(_copy_histogram_with_counts(hist, counts))
 
-    if applied_any and isinstance(grouping, dict):
-        method = str(grouping.get("deadtime_method", "")).strip().lower()
-        grouping["deadtime_method"] = method or "file"
-
-    return corrected, applied_any
-
-
-def _finite_nonzero(value) -> bool:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return False
-    return bool(np.isfinite(number) and number != 0.0)
+    method = str(grouping.get("deadtime_method", "")).strip().lower()
+    grouping["deadtime_method"] = method or "file"
+    return corrected, True
 
 
 def _copy_histogram_with_counts(histogram: Histogram, counts) -> Histogram:

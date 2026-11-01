@@ -5,21 +5,19 @@ The processing tools in this chapter act on a loaded dataset before it
 reaches the fit engine: rebinning to trade time resolution for statistics,
 restricting the time range, applying the grouping defined in the Grouping
 dialog, estimating the calibration constant :math:`\alpha`, and the
-specific deadtime / background corrections that PSI BIN-style raw
-histograms typically require. The order is always deadtime first, then
-background, then grouping, then asymmetry — skipping deadtime when it is
-needed inflates the fitted amplitudes, and applying background subtraction
-before grouping mis-weights the per-detector contributions.
+deadtime and background corrections for raw detector histograms. The order is
+deadtime, grouping, background subtraction, then asymmetry. The nonlinear
+deadtime inverse acts on each raw detector before any count subtraction.
 
 Rebinning is the most common operation. Combining :math:`N` adjacent bins
 reduces the per-bin uncertainty by :math:`\sqrt{N}` at the cost of time
 resolution, so the new bin width should stay well below the period of any
 precession you intend to fit (rule of thumb: at least eight samples per
-cycle). NeXus files from ISIS arrive pre-corrected for deadtime; PSI BIN
-and ROOT files generally require deadtime correction to be enabled in the
-Grouping dialog before any analysis. Visually compare the raw and
-processed traces in the plot panel before committing to a fit — the
-preview is faster than diagnosing a misweighted asymmetry after the fact.
+cycle). ISIS NeXus files carry raw counts and may supply per-detector deadtime
+coefficients; enable **File** in the Grouping window to apply them. PSI BIN/MDU
+and ROOT can use separately calibrated coefficients in their whole-acquisition
+normalisation. See :doc:`detector_grouping` for the correction's domain and
+signed coefficients. Compare the raw and processed traces before fitting.
 
 .. image:: /_generated/screenshots/bunching_comparison.png
    :alt: ×1, ×4, and ×16 bunching comparison on a 1.4 MHz TF signal
