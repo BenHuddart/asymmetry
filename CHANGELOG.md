@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Raw PSI/ROOT acquisition mismatches, invalid background windows, and Fourier
+  reference runs that do not cover the sample raise an error.
+
 - Background-subtracted error bars scale the background-estimate uncertainty with
   the number of merged bins and account for overlap with the estimation window.
 

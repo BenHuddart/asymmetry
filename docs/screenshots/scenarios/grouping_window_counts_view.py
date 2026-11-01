@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication
 
 from ..data import make_ybco_knight_grouped
 from ._base import CaptureContext, Scenario, register
+from .grouping_window_good_window_row import _pump_until
 from .grouping_window_profile_editor import _renumbered
 
 
@@ -78,7 +79,21 @@ class GroupingWindowCountsViewScenario(Scenario):
         dialog._set_compare_stage("background")
         dialog._preview_view_buttons["counts"].click()
         dialog._preview_pane.flush()
-        _pump_events(1500)
+        pane = dialog._preview_pane
+        _pump_until(
+            lambda: (
+                pane._tasks.active_count == 0
+                and pane._last_result is not None
+                and pane._last_result.counts.background_level is not None
+            )
+        )
+        if (
+            pane._tasks.active_count
+            or pane._last_result is None
+            or pane._last_result.counts.background_level is None
+        ):
+            raise RuntimeError("Counts preview did not complete its background reduction")
+        _pump_events(80)
 
         pix = dialog.grab()
         out_path = ctx.output_dir / f"{self.name}.png"

@@ -20,6 +20,20 @@ be navigated with the scriptable period-selection API — see
 For an end-to-end walk-through that starts with loading, see
 :doc:`/workflows/temperature_scan_magnetism`.
 
+Acquisition shape and alignment
+-------------------------------
+
+A detector's acquired histogram is retained before grouping. PSI and ROOT
+acquisition arrays must have equal one-dimensional shape; a mismatch raises
+``count arrays must have equal shape.`` PSI-MDU records use their declared
+format extent, including padding of shorter records, before this check.
+
+All three loaders align the selected detectors by their own time-zero bins
+and crop the forward/backward pair to their common terminal bin. The loaded
+run metadata records this operation as ``grouped_alignment``: the common t0,
+each detector's shift, both group lengths, and the retained length. This
+makes the alignment crop distinguishable from missing acquisition bins.
+
 Supported formats
 -----------------
 
@@ -210,7 +224,7 @@ PSI files can store different ``t0`` values per detector. Asymmetry preserves
 those detector-specific offsets and aligns histograms by their effective
 ``t0`` when regrouping. Each group ends at its shortest shifted detector;
 forward and backward sums are cropped together to the shorter group.
-The grouped-count result records the common t0 bin, each detector shift,
+The grouped-count result and loaded alignment record carry the common t0 bin, each detector shift,
 both group lengths before cropping, and the final length. For example,
 two 1000-bin detectors with t0 bins 100 and 110 produce group lengths 1010
 and 1000; the shared record retains 1000 bins.
@@ -218,7 +232,8 @@ and 1000; the shared record retains 1000 bins.
 A reference background is aligned on the sample's common t0 grid. It must
 cover every sample bin: a shorter reference raises an error such as
 ``reference run has 500 aligned bins; sample requires 1000.`` A longer
-reference is cropped to the sample's terminal bin.
+reference is cropped to the sample's terminal bin. The grouped Fourier path
+uses the same coverage rule and does not pad a missing reference tail.
 
 For PSI-BIN, musrfit's ``MuSR_td_PSI_bin`` reader uses the stored ``t0`` and
 ``first good`` values directly as C++ vector indices, so Asymmetry treats them

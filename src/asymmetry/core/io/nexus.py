@@ -17,7 +17,7 @@ mode selection in the grouping workflow.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +29,7 @@ from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
 from asymmetry.core.transform import compute_asymmetry
-from asymmetry.core.transform.grouping import apply_grouping_aligned, common_t0_for_groups
+from asymmetry.core.transform.grouping import align_forward_backward
 from asymmetry.core.transform.t0 import good_window_for_groups, run_t0_time_us
 
 try:  # optional dependency
@@ -827,21 +827,12 @@ class NexusLoader(BaseLoader):
             # ISIS files normally carry one t0 for every detector, in which case
             # the aligned sum is bit-identical to the unaligned one; a
             # per-detector ``t0_bin``/``time_zero`` array is aligned like PSI's.
-            common_t0 = common_t0_for_groups(
+            forward, backward, alignment = align_forward_backward(
                 histograms, grouping.forward_indices, grouping.backward_indices
             )
-            forward = apply_grouping_aligned(
-                histograms, grouping.forward_indices, common_t0_bin=common_t0
-            )
-            backward = apply_grouping_aligned(
-                histograms, grouping.backward_indices, common_t0_bin=common_t0
-            )
-            n_grouped = min(len(forward), len(backward))
-
+            common_t0, n_grouped = alignment.common_t0_bin, alignment.length
             alpha = 1.0
-            asymmetry, error = compute_asymmetry(
-                forward[:n_grouped], backward[:n_grouped], alpha=alpha
-            )
+            asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
 
             # Asymmetry works in percent throughout Asymmetry/WiMDA-style UI.
             asymmetry = asymmetry * 100.0
@@ -881,6 +872,7 @@ class NexusLoader(BaseLoader):
                 run_label = f"{run_number}/{period_idx}"
 
             run_meta = dict(metadata_base)
+            run_meta["grouped_alignment"] = asdict(alignment)
             run_meta["run_number"] = period_run_number
             run_meta["source_run_number"] = run_number
             run_meta["run_label"] = run_label
