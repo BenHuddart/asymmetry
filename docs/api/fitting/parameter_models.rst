@@ -61,3 +61,16 @@ Parameter trend models
    ``AngularCos2``, and ``AngularFourier2`` are registered alongside the
    others (``scope="angle"``).
 
+
+Field-scan baseline and peak inference
+-------------------------------------
+
+.. autofunction:: asymmetry.core.fitting.fit_scan_baseline
+
+.. autoclass:: asymmetry.core.fitting.ScanBaselineResult
+   :members:
+
+.. autofunction:: asymmetry.core.fitting.fit_scan_peaks
+
+.. autoclass:: asymmetry.core.fitting.ScanPeakFit
+   :members:

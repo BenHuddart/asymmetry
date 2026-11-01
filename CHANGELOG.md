@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Scripted ALC baseline subtraction exposes correlated propagated errors, and
+  `fit_scan_peaks` carries fitted-baseline uncertainty into peak inference.
+
 - Wizard and role comparisons explain unavailable criteria; CLI screening prints
   `n/a`, and saved fits rank only with matching data and recorded objectives.
 

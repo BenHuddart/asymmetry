@@ -3488,7 +3488,8 @@ def _parameter_values_by_name(parameters: ParameterSet) -> dict[str, float]:
     return {parameter.name: float(parameter.value) for parameter in parameters}
 
 
-def _stabilize_parameter_model_errors(errors: NDArray[np.float64]) -> NDArray[np.float64]:
+def stabilized_point_errors(errors: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Apply the column-error floor used by parameter-model least squares."""
     positive_errors = np.asarray(errors, dtype=float)
     positive_errors = positive_errors[np.isfinite(positive_errors) & (positive_errors > 0.0)]
     if positive_errors.size == 0:
@@ -3931,9 +3932,7 @@ def fit_parameter_model(
     y_fit = yy[mask]
     e_fit = ee[mask]
     if error_mode is ErrorMode.COLUMN:
-        # The stabilisation floor exists to tame near-zero propagated errors;
-        # explicit Percent/Absolute/unit weights are honoured verbatim.
-        e_fit = _stabilize_parameter_model_errors(e_fit)
+        e_fit = stabilized_point_errors(e_fit)
 
     # Effective-variance weighting only when x carries usable uncertainty;
     # otherwise stay on the ordinary least-squares path (byte-identical).
