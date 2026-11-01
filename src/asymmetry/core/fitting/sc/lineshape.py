@@ -56,13 +56,13 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.signal import czt
 
-from asymmetry.core.fitting.sc.constants import FLUX_QUANTUM_WB
 from asymmetry.core.fitting.sc.models import (
     _POWDER_LAMBDA_FACTOR,
     brandt_field_width_sigma,
 )
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
+    MAGNETIC_FLUX_QUANTUM_WB,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
 )
 
@@ -116,9 +116,9 @@ def _centered_field_offsets(
             "reciprocal-lattice aliasing in the FFT field-map evaluation."
         )
     lam = lambda_eff_nm * 1.0e-9
-    xi = np.sqrt(FLUX_QUANTUM_WB / (2.0 * np.pi * Bc2_tesla))
+    xi = np.sqrt(MAGNETIC_FLUX_QUANTUM_WB / (2.0 * np.pi * Bc2_tesla))
     # Triangular FLL: area per vortex = Phi0/B0 = (sqrt(3)/2) a^2.
-    a = np.sqrt(2.0 * FLUX_QUANTUM_WB / (np.sqrt(3.0) * B0_tesla))
+    a = np.sqrt(2.0 * MAGNETIC_FLUX_QUANTUM_WB / (np.sqrt(3.0) * B0_tesla))
     a1 = np.array([a, 0.0])
     a2 = np.array([0.5 * a, np.sqrt(3.0) / 2.0 * a])
     cell = abs(a1[0] * a2[1] - a1[1] * a2[0])

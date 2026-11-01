@@ -33,11 +33,7 @@ from asymmetry.core.fitting.latex_preview import (
 )
 from asymmetry.core.fitting.member_quality import parameters_at_bound
 from asymmetry.core.fitting.muon_proton import rf_resonance_mup, rf_transition_freqs
-from asymmetry.core.fitting.muonium import (
-    G_E_MHZ_PER_G,
-    G_MU_MHZ_PER_G,
-    VACUUM_MUONIUM_A_HF_MHZ,
-)
+from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G, G_MU_MHZ_PER_G
 from asymmetry.core.fitting.parameter_carry import ComponentParameter, ParameterIdentity
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -48,9 +44,11 @@ from asymmetry.core.fitting.parameters import (
 )
 from asymmetry.core.fitting.sc import models as sc_models
 from asymmetry.core.utils.constants import (
+    BOLTZMANN_CONSTANT_MEV_PER_K,
     ELECTRON_GYROMAGNETIC_RATIO_RAD_PER_US_PER_G,
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+    MUONIUM_VACUUM_HYPERFINE_MHZ,
 )
 
 
@@ -216,10 +214,9 @@ def _exp_decay(x: NDArray, a: float, tau: float, c: float = 0.0) -> NDArray[np.f
 
 def _arrhenius(x: NDArray, a: float, Ea: float) -> NDArray[np.float64]:
     # x is T (K), k_B in meV/K to keep Ea in meV-scale units.
-    kb_mev = 8.617333262e-2
     tt = np.asarray(x, dtype=float)
     safe_t = np.maximum(np.abs(tt), 1e-9)
-    exponent = np.clip(-Ea / (kb_mev * safe_t), -700, 700)
+    exponent = np.clip(-Ea / (BOLTZMANN_CONSTANT_MEV_PER_K * safe_t), -700, 700)
     return a * np.exp(exponent)
 
 
@@ -750,7 +747,7 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         description="a_Mu*(1/2 + (B/B0)^2)/(1 + (B/B0)^2) + a_Dia, B0 = A_hf/(γₑ+γµ)",
         function=_mu_repolarisation,
         param_names=["a_Mu", "A_hf", "a_Dia"],
-        param_defaults={"a_Mu": 15.0, "A_hf": VACUUM_MUONIUM_A_HF_MHZ, "a_Dia": 5.0},
+        param_defaults={"a_Mu": 15.0, "A_hf": MUONIUM_VACUUM_HYPERFINE_MHZ, "a_Dia": 5.0},
         param_info={
             "a_Mu": get_param_info("a_Mu"),
             "A_hf": get_param_info("A_hf"),
@@ -2361,7 +2358,6 @@ def _estimate_arrhenius(
     ``−Ea/k_B`` ⇒ ``Ea = −slope·k_B`` and the intercept is ``ln a``. Only
     positive-y, positive-T points enter the regression.
     """
-    kb_mev = 8.617333262e-2
     mask = (x > 0.0) & (y > 0.0)
     if int(np.count_nonzero(mask)) < 2:
         return {}
@@ -2370,7 +2366,7 @@ def _estimate_arrhenius(
     if line is None:
         return {}
     slope, intercept = line
-    ea = -float(slope) * kb_mev
+    ea = -float(slope) * BOLTZMANN_CONSTANT_MEV_PER_K
     a = float(np.exp(intercept))
     out: dict[str, float] = {}
     if np.isfinite(ea):

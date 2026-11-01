@@ -69,16 +69,18 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
+from asymmetry.core.utils.constants import MAGNETIC_FLUX_QUANTUM_WB
+
 from .._base import CaptureContext
 from ._corpus import CorpusScenario, _process_events_for, register
 
 EXAMPLE = "Superconductivity/LiFeAs"
 _DATA = "Superconductivity/LiFeAs/data/deltat_pta_gps_%d.bin"
 
-# --- physical constants (GROUND_TRUTH §6) ---------------------------------- #
+# The teaching guide uses γ_µ = 0.8516 µs⁻¹/mT in its field-width conversion.
 _GAMMA = 0.8516  # µs⁻¹ per mT: σ_paper[µs⁻¹] = γ_µ · B_rms[mT]
 _SQRT2 = np.sqrt(2.0)  # Asymmetry Gaussian exp(−(σt)²) → σ_paper = √2 σ_A
-_PHI0 = 2.067833848e-15  # Wb, flux quantum
+_PHI0 = float(f"{MAGNETIC_FLUX_QUANTUM_WB:.10g}")  # Wb, flux quantum
 
 # --- Sample-1 (LFA) 40 mT (400 G) temperature scan, ascending T ------------ #
 # Runs 3366–3373 are the 400 G T-scan; 3373 (18 K) is above T_c = 16 K, i.e.

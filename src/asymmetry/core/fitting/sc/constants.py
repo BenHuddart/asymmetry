@@ -25,15 +25,14 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 
-from asymmetry.core.utils.constants import MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+from asymmetry.core.utils.constants import (
+    MAGNETIC_FLUX_QUANTUM_WB,
+    MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+)
 
 ArrayLikeFloat = NDArray[np.float64]
 
-# Flux quantum h/2e in Wb = T m^2.
-FLUX_QUANTUM_WB = 2.067833848e-15
-# Boltzmann constant in meV K^-1 for optional meV gap inputs.
-BOLTZMANN_CONSTANT_MEV_PER_K = 8.617333262e-2
-# Brandt prefactor for triangular lattice in the London limit.
+# Brandt, Phys. Rev. B 37, 2349 (1988), triangular-lattice London-limit prefactor.
 BRANDT_COEFFICIENT = 0.0609
 
 # Existing constant is in MHz/T cycles-per-second units, so convert to rad/s/T.
@@ -52,7 +51,7 @@ def sigma_to_lambda_nm(
     sigma_arr = np.asarray(sigma_us, dtype=float)
     sigma_s = np.maximum(sigma_arr, 0.0) * 1.0e6
 
-    prefactor = float(brandt_coefficient) * GAMMA_MU_RAD_S_PER_T * FLUX_QUANTUM_WB
+    prefactor = float(brandt_coefficient) * GAMMA_MU_RAD_S_PER_T * MAGNETIC_FLUX_QUANTUM_WB
     lambda_m = np.full_like(sigma_s, np.inf, dtype=float)
 
     positive = sigma_s > 0.0
@@ -69,7 +68,7 @@ def lambda_nm_to_sigma_us(
     lam_nm = np.asarray(lambda_nm, dtype=float)
     lam_m = np.maximum(lam_nm, 0.0) * 1.0e-9
 
-    prefactor = float(brandt_coefficient) * GAMMA_MU_RAD_S_PER_T * FLUX_QUANTUM_WB
+    prefactor = float(brandt_coefficient) * GAMMA_MU_RAD_S_PER_T * MAGNETIC_FLUX_QUANTUM_WB
     sigma_s = np.zeros_like(lam_m, dtype=float)
 
     positive = lam_m > 0.0

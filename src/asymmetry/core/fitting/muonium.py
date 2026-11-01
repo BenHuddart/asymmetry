@@ -293,10 +293,6 @@ def high_tf_muonium_aniso(
     return np.asarray(_ANISO_WT @ cos_sum, dtype=float)
 
 
-#: Vacuum-muonium hyperfine constant in MHz (WiMDA hard-codes 4464).
-VACUUM_MUONIUM_A_HF_MHZ = 4463.302
-
-
 def muonium_lf_relaxation(
     t: NDArray[np.float64], delta_ex: float, tau_c: float, B_LF: float, A_hf: float
 ) -> NDArray[np.float64]:

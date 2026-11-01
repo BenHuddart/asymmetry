@@ -78,6 +78,7 @@ from asymmetry.core.transform.grouping import (
     effective_group_indices,
 )
 from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 # --------------------------------------------------------------------------- #
 # Configuration
@@ -110,7 +111,7 @@ RAM_SAFETY_FRACTION = 0.5
 DEADTIME_US = 0.01
 
 #: Muon lifetime (µs) used to shape synthetic decay histograms.
-TAU_MU_US = 2.197
+TAU_MU_US = round(MUON_LIFETIME_US, 3)
 
 
 # --------------------------------------------------------------------------- #

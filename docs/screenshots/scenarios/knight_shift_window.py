@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QSplitter, QWidget
 
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+
 from ._base import Scenario, _process_events_for, register
 
 
@@ -42,7 +44,9 @@ def _build_snapshot():
     # contact shift, opposite-sign axial shifts, crossing at both magic
     # angles (54.7 deg and 125.3 deg). Frequencies are expressed in MHz so
     # the Applied field reference (nu_ref = gamma_mu * B) converts them.
-    gamma_mu_mhz_per_g = 0.0135538  # MHz/G
+    gamma_mu_mhz_per_g = (
+        np.trunc(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * 1e7) / 1e7
+    )  # MHz/G
     field_g = 2000.0
     nu_ref = gamma_mu_mhz_per_g * field_g
     k_iso = 0.0040

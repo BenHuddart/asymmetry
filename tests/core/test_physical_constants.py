@@ -76,3 +76,20 @@ def test_lifetimes_match_pdg_2024_with_documented_pion_rounding() -> None:
 def test_muonium_default_is_a_truncation_of_the_measured_interval() -> None:
     # Liu et al., Phys. Rev. Lett. 82, 711 (1999): 4,463,302,765(53) Hz.
     assert MUONIUM_VACUUM_HYPERFINE_MHZ == pytest.approx(4463.302765, abs=0.001, rel=0)
+
+
+def test_consumer_values_preserve_reference_precision() -> None:
+    from asymmetry.core.fitting.muon_fluorine.dipolar import (
+        omega_d_f_f_rad_per_us,
+        omega_d_mu_f_rad_per_us,
+    )
+    from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G
+    from asymmetry.core.fitting.sc.bcs import gap_ratio_from_mev
+    from asymmetry.core.fitting.sc.constants import lambda_nm_to_sigma_us
+
+    # Exact ħ and CODATA μ₀ together change the rounded dipolar baseline by 1.163e-9.
+    assert omega_d_mu_f_rad_per_us(1.17) == pytest.approx(1.4111625863735597, rel=2e-9)
+    assert omega_d_f_f_rad_per_us(2.34) == pytest.approx(0.052126483323242566, rel=2e-9)
+    assert lambda_nm_to_sigma_us(200.0) == pytest.approx(2.6811215311944148, rel=1e-9)
+    assert G_E_MHZ_PER_G == pytest.approx(2.802495142420715, rel=1e-12)
+    assert gap_ratio_from_mev(1.0, 10.0) == pytest.approx(1.0 / (8.617333262e-2 * 10), rel=1e-9)

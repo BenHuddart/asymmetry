@@ -64,6 +64,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+
 from .._base import CaptureContext
 from ._corpus import CorpusScenario, corpus_path, register
 
@@ -73,7 +75,7 @@ _DATA = "Superconductivity/Critical fields in Sn/Data/HIFI000%d.nxs"
 # Literature guidance (GROUND_TRUTH §10; Karl et al. PRB 99, 184515):
 _TC = 3.717  # K
 _BC0 = 306.0  # G  (≈ 30.6 mT)
-_GAMMA = 0.013554  # MHz/G  (muon)
+_GAMMA = round(MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA, 6)  # MHz/G  (muon)
 
 # Applied fields present in the dataset (GROUND_TRUTH §3).
 _FIELDS = [20.0, 40.0, 80.0, 160.0]
