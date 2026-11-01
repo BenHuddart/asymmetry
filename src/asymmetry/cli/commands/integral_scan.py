@@ -428,6 +428,7 @@ def _render(result: dict, settings, notes: list[str]) -> str:
             [
                 f"fit: {fit['expression']}, chi2_red "
                 f"{format_number(fit['reduced_chi_squared'], 3)}{verdict}",
+                f"uncertainty basis: {fit.get('uncertainty_basis', 'unrecorded')}",
                 render_table(
                     ["parameter", "value", "unit", error_header]
                     + (["unscaled error"] if scale > 1 else []),

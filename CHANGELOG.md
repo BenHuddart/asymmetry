@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ALC **Fit peaks** and `integral-scan --baseline` report fitted-baseline
+  uncertainty in peak positions, widths, and amplitudes.
+
 - Scripted ALC baseline subtraction exposes correlated propagated errors, and
   `fit_scan_peaks` carries fitted-baseline uncertainty into peak inference.
 

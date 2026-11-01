@@ -69,6 +69,13 @@ small). This is the definitive answer to "can I quote this uncertainty?" — and
 the one a low χ² alone cannot give, because a fit can land a perfect χ² while
 its Hessian errors are mis-scaled.
 
+ALC fits that subtract an estimated baseline have two uncertainty levels.
+Conditional errors hold that baseline fixed. Baseline-propagated errors include
+its fitted uncertainty and its correlation with the scan points; **Fit peaks**
+and ``integral-scan --baseline`` report these propagated errors. Their validity
+still requires a suitable baseline model and non-resonant fitting regions.
+See :doc:`alc_mode` for the covariance construction and its first-order limits.
+
 Before the full pull diagnostic, a quick read on a *single* parameter's error is
 its :ref:`MINOS asymmetric interval <minos-asymmetric-errors>`: when the upper
 and lower excursions differ markedly, the symmetric Hessian error is already
