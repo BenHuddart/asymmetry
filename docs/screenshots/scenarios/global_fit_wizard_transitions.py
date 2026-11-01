@@ -14,6 +14,8 @@ fully deterministic while still exercising the real ``TransitionsCard`` and
 ``GlobalFitWizardWindow`` rendering code — nothing about the *display* is
 faked, only the (expensive) search that would normally produce its input.
 
+Screen and Compare use the shared criterion cells: defined numbers sort
+numerically and unavailable entries show a dash with their recorded reason.
 The cached state lands on Screen, so the scenario opens Phases and picks the
 second phase's row: the overlay is coloured by phase and draws that phase's
 coupled fit over its runs, and the trace strip below it follows the precession

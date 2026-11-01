@@ -291,6 +291,11 @@ do not count toward :math:`k`; free auxiliary tie parameters do. If no row is
 rankable, the message is "No candidate could be ranked by AICc; inspect
 unavailable criteria and fit diagnostics before applying a model."
 
+Unavailable cells show "—". Hover for the reason and recorded counts, for
+example "AICc undefined: n − k − 1 = 0 (n = 4 points, k = 3 free parameters)".
+The CLI screening table prints ``n/a``; its JSON candidate rows contain
+``aicc: null`` and an ``aicc_unavailable`` explanation.
+
 The correction is derived for linear Gaussian models with an estimated variance
 and is used here as the conventional small-sample correction [aicc_primary]_.
 Comparisons require the same data and likelihood; a data-only additive

@@ -22,6 +22,12 @@ from PySide6.QtCore import QSettings  # type: ignore  # noqa: E402
 from PySide6.QtWidgets import QApplication  # type: ignore  # noqa: E402
 
 import asymmetry.gui.mainwindow as mw_module  # noqa: E402
+from asymmetry.core.fitting.cross_group_roles import (  # noqa: E402
+    cross_group_free_parameter_count as count_free_parameters,
+)
+from asymmetry.core.fitting.cross_group_roles import (  # noqa: E402
+    cross_group_information_criteria as information_criteria,
+)
 from asymmetry.core.fitting.parameter_models import (  # noqa: E402
     CrossGroupFitResult,
     ParameterCompositeModel,
@@ -32,10 +38,6 @@ from asymmetry.core.representation.global_fit_study import GlobalFitStudy  # noq
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
 from asymmetry.gui.windows.global_fit_compare_dialog import (  # noqa: E402
     GlobalFitCompareDialog,
-)
-from asymmetry.gui.windows.global_fit_window_helpers import (  # noqa: E402
-    count_free_parameters,
-    information_criteria,
 )
 from asymmetry.gui.windows.global_parameter_fit_window import (  # noqa: E402
     StudySidebarEntry,
@@ -142,10 +144,6 @@ def test_count_free_parameters_globals_plus_locals() -> None:
     assert count_free_parameters(result) == 8
 
 
-def test_count_free_parameters_none() -> None:
-    assert count_free_parameters(None) == 0
-
-
 # ── helpers: information_criteria ────────────────────────────────────────────
 
 
@@ -160,19 +158,22 @@ def test_information_criteria_values_match_hand_computation() -> None:
     ic = information_criteria(result)
     assert ic is not None
     k, n, chi2 = 2, 20, 10.0
-    assert ic["k"] == k
-    assert ic["n"] == n
-    assert ic["aic"] == pytest.approx(chi2 + 2 * k)
-    assert ic["aicc"] == pytest.approx(chi2 + 2 * k + (2 * k * (k + 1)) / (n - k - 1))
-    assert ic["bic"] == pytest.approx(chi2 + k * math.log(n))
+    assert ic.parameter_count == k
+    assert ic.sample_count == n
+    assert ic.value("AIC") == pytest.approx(chi2 + 2 * k)
+    assert ic.value("AICc") == pytest.approx(chi2 + 2 * k + (2 * k * (k + 1)) / (n - k - 1))
+    assert ic.value("BIC") == pytest.approx(chi2 + k * math.log(n))
 
 
 def test_information_criteria_none_when_no_points() -> None:
-    assert information_criteria(_result(n_points=0)) is None
+    ic = information_criteria(_result(n_points=0))
+    assert ic.value("AIC") == 5
+    assert ic.value("AICc") is None
+    assert ic.value("BIC") is None
 
 
-def test_information_criteria_aicc_inf_when_overparameterized() -> None:
-    # n - k - 1 <= 0 → aicc = inf. k = 2 globals, n = 3 → 3 - 2 - 1 = 0.
+def test_information_criteria_aicc_unavailable_when_overparameterized() -> None:
+    # Two fitted parameters and three points put AICc at its pole.
     result = _result(
         chi2=1.0,
         n_points=3,
@@ -180,7 +181,7 @@ def test_information_criteria_aicc_inf_when_overparameterized() -> None:
     )
     ic = information_criteria(result)
     assert ic is not None
-    assert math.isinf(ic["aicc"])
+    assert ic.value("AICc") is None
 
 
 # ── dialog: grid + per-panel notes ───────────────────────────────────────────
@@ -261,13 +262,13 @@ def test_dialog_stats_columns_show_both_names(qapp: QApplication) -> None:
     assert any("Δ" in h for h in headers)
 
 
-def test_dialog_delta_row_present(qapp: QApplication) -> None:
+def test_dialog_different_data_has_no_deltas(qapp: QApplication) -> None:
     study_a, study_b = _two_studies_shared_plus_b_only()
     dialog = GlobalFitCompareDialog(study_a, study_b)
     table = dialog._stats_table
-    # The Δ column (index 3) has at least one numeric (non "—") entry.
+    # Different fitted point sets cannot share likelihood differences.
     delta_texts = [table.item(r, 3).text() for r in range(table.rowCount())]
-    assert any(t not in ("—", "") for t in delta_texts)
+    assert set(delta_texts) == {"—"}
 
 
 # ── dialog: union parameter table + discrepancy highlight ────────────────────
@@ -475,3 +476,42 @@ def test_mainwindow_compare_handler_ignores_missing_study(mainwindow: MainWindow
     _register_two_studies(mainwindow)
     mainwindow._on_global_fit_study_compare_requested("id-a", "does-not-exist")
     assert mainwindow._global_fit_compare_dialog is None
+
+
+def test_dialog_aicc_pole_has_no_nan_delta(qapp):
+    groups = [_group("g0", "G0")]
+    result = _result(n_points=2, local_groups=["g0"])
+    a = _study("a", "A", groups, result)
+    b = _study("b", "B", groups, result)
+    dialog = GlobalFitCompareDialog(a, b)
+    table = dialog._stats_table
+    row = next(r for r in range(table.rowCount()) if table.item(r, 0).text() == "AICc")
+    assert [table.item(row, col).text() for col in (1, 2, 3)] == ["—"] * 3
+    assert "n − k − 1 = 0" in table.item(row, 1).toolTip()
+    aic_row = next(r for r in range(table.rowCount()) if table.item(r, 0).text() == "AIC")
+    assert table.item(aic_row, 3).text() == "+0"
+
+
+@pytest.mark.parametrize("uses_x_errors", [False, True])
+def test_dialog_profiles_unit_weight_variance_or_explains_x_error_exclusion(qapp, uses_x_errors):
+    from dataclasses import replace
+
+    groups = [_group("g0", "G0")]
+    result = replace(
+        _result(chi2=10, n_points=20, error_mode="none"), uses_effective_variance=uses_x_errors
+    )
+    dialog = GlobalFitCompareDialog(
+        _study("a", "A", groups, result), _study("b", "B", groups, result)
+    )
+    table = dialog._stats_table
+    rows = {table.item(row, 0).text(): row for row in range(table.rowCount())}
+    if uses_x_errors:
+        for label in ("AIC", "AICc", "BIC"):
+            assert table.item(rows[label], 1).text() == "—"
+            assert "effective-variance" in table.item(rows[label], 1).toolTip()
+            assert table.item(rows[label], 3).text() == "—"
+    else:
+        assert table.item(rows["k"], 1).text() == "2"
+        assert float(table.item(rows["AICc"], 1).text()) == pytest.approx(
+            -9.157061222963611, rel=1e-5
+        )

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Wizard and role comparisons explain unavailable criteria; CLI screening prints
+  `n/a`, and saved fits rank only with matching data and recorded objectives.
+
 - Single, global and joint Gaussian fits reject invalid uncertainties with run
   and point context; Poisson fits reject negative, non-integer and corrected counts.
 
