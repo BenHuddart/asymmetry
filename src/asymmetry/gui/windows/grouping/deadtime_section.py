@@ -15,7 +15,9 @@ Cal calibrates the table from the reference run
 
 from __future__ import annotations
 
+from concurrent.futures import CancelledError
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
@@ -38,12 +40,12 @@ from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.project.profiles import DeadtimePolicy
 from asymmetry.core.transform import (
     DeadtimeCorrectionError,
-    calibrate_deadtime_from_histograms,
     deadtime_occupancy,
-    estimate_deadtime_from_histograms,
 )
+from asymmetry.core.transform.deadtime import DeadtimeCalibration, fit_deadtime_calibration
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style
+from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox, NoScrollDoubleSpinBox
 
@@ -57,7 +59,7 @@ class DeadtimeSourceRun:
     run_number: int
     label: str
     histograms: list[Histogram]
-    good_frames: float = 1.0
+    good_frames: float | None = None
 
 
 def deadtime_status_text(policy: DeadtimePolicy) -> str:
@@ -91,6 +93,8 @@ class DeadtimeSectionWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         """Build the mode radios, estimate row, table and summary."""
         super().__init__(parent)
+        self._tasks = TaskRunner(self)
+        self._calibration_generation = 0
         self._seeding = False
         self._n_detectors = 0
         self._file_values_us: list[float] = []
@@ -221,6 +225,7 @@ class DeadtimeSectionWidget(QWidget):
         good_frames: float | None,
     ) -> None:
         """(Re)seed the section from the draft state, without emitting."""
+        self._calibration_generation += 1
         self._seeding = True
         try:
             self._n_detectors = max(0, int(n_detectors))
@@ -425,21 +430,7 @@ class DeadtimeSectionWidget(QWidget):
                 "No reference run with histograms is available to calibrate from.",
             )
             return
-        values = calibrate_deadtime_from_histograms(run.histograms, num_good_frames=run.good_frames)
-        if not values:
-            QMessageBox.warning(
-                self,
-                "Deadtime Calibration Failed",
-                "The reference run did not provide enough valid early-time "
-                "counts to calibrate per-detector deadtime values.",
-            )
-            return
-        self._manual_values_us = list(values)
-        self._manual_method = "calibrate"
-        self._source_run = run.run_number
-        self._set_mode("manual")
-        self._on_mode_or_state_changed()
-        self._notify()
+        self._start_calibration(run, "calibrate")
 
     def _resolve_reference_source_run(self) -> DeadtimeSourceRun | None:
         for run in self._source_runs:
@@ -457,21 +448,60 @@ class DeadtimeSectionWidget(QWidget):
                 "No source run with histograms is available to estimate from.",
             )
             return
-        tau_us = estimate_deadtime_from_histograms(run.histograms, num_good_frames=run.good_frames)
-        if tau_us is None or not np.isfinite(tau_us):
-            QMessageBox.warning(
-                self,
-                "Deadtime Estimate Failed",
-                "The source run did not provide enough valid early-time counts to estimate deadtime.",
+        self._start_calibration(run, "estimate")
+
+    def _start_calibration(self, run: DeadtimeSourceRun, method: str) -> None:
+        self._calibration_generation += 1
+        generation = self._calibration_generation
+        self.setEnabled(False)
+        self._tasks.start(
+            lambda worker: fit_deadtime_calibration(
+                run.histograms,
+                num_good_frames=run.good_frames,
+                method=method,
+                source_run=run.run_number,
+                cancel_callback=worker.is_cancelled,
+            ),
+            on_finished=partial(self._on_calibration_finished, generation=generation),
+            on_error=partial(self._on_calibration_error, generation=generation),
+            on_cancelled=self._on_calibration_cancelled,
+            cancel_exceptions=(CancelledError,),
+        )
+
+    def _on_calibration_finished(
+        self, result: DeadtimeCalibration | None, *, generation: int
+    ) -> None:
+        self.setEnabled(True)
+        if generation != self._calibration_generation:
+            return
+        if result is None:
+            self._on_calibration_error(
+                "The source run did not provide enough valid early-time counts.",
+                generation=generation,
             )
             return
-        self._estimated_us = tau_us
-        self._source_run = int(run_number)
-        self._manual_values_us = [tau_us] * max(self._n_detectors, 1)
+        self._source_run = result.source_run
+        if result.method == "estimate":
+            self._estimated_us = result.tau_us[0]
+            self._manual_values_us = [self._estimated_us] * self._n_detectors
+        else:
+            self._manual_values_us = list(result.tau_us)
+            self._manual_method = result.method
+            self._set_mode("manual")
         self._refresh_table()
-        self._refresh_summary()
-        self._apply_row_visibility()
+        self._on_mode_or_state_changed()
         self._notify()
+
+    def _on_calibration_error(self, message: str, *, generation: int) -> None:
+        self.setEnabled(True)
+        if generation == self._calibration_generation:
+            QMessageBox.warning(self, "Deadtime Calibration Failed", message)
+
+    def _on_calibration_cancelled(self) -> None:
+        self.setEnabled(True)
+
+    def shutdown(self) -> None:
+        self._tasks.shutdown()
 
     def _max_correction_fraction(self, values: list[float]) -> float | None:
         """Largest fractional correction any detector receives at the first bin."""

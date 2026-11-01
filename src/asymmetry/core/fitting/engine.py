@@ -15,6 +15,7 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.transform.corrections import require_complete_dataset
+from asymmetry.core.transform.deadtime import DeadtimeCalibration
 
 
 class AsymmetryScaleWarning(UserWarning):
@@ -704,13 +705,9 @@ class FitResult:
     #: symmetric HESSE :attr:`uncertainties` are unchanged and remain the value
     #: every downstream surface (trends, export, propagation, promote) consumes.
     minos_errors: dict[str, tuple[float, float]] | None = None
-    #: Advisory warning messages emitted while fitting (the percent/fraction
-    #: scale trap and the fixed-frequency σ-inflation trap — see
-    #: :class:`AsymmetryScaleWarning` / :class:`FixedFrequencyFieldMismatchWarning`).
-    #: Captured off the Python ``warnings`` system so the GUI can surface them in
-    #: the fit panel; they are also *re-emitted*, so stderr/logging and any outer
-    #: ``catch_warnings`` still observe them exactly as before.
+    #: Fit warnings are both retained here and emitted through Python warnings.
     warnings: list[str] = field(default_factory=list)
+    deadtime_calibration: DeadtimeCalibration | None = None
 
 
 @dataclass(frozen=True)

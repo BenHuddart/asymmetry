@@ -99,6 +99,17 @@ class CorrectionOutcome:
             "uncertainty": self.uncertainty,
         }
 
+    def __reduce__(self):
+        """Rebuild the owned read-only tree when crossing process-worker boundaries."""
+        return type(self), (
+            self.name,
+            self.requested,
+            self.status,
+            self.reason,
+            _export_effective(self.effective),
+            self.uncertainty,
+        )
+
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> CorrectionOutcome:
         return cls(**value)

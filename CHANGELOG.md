@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Estimate/Cal fit the exact rational deadtime model with signed coefficients;
+  count-fit promotion adds the fitted increment to the applied base table.
+
 - Grouping previews label incomplete corrections and disable Apply; restored runs
   retain failed requests and block fits and exports until a successful apply.
 
@@ -42,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record bounds before allocating counts with bounded temporary read buffers.
 
 ### Removed
+
+- The count-fit deadtime promotion “accumulate” toggle; promotion always uses the captured applied base.
 
 - Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 

@@ -733,6 +733,19 @@ correction at t=0: 1.2%``) — with a **Show per-detector values** disclosure th
 reveals the read-only table on demand; ``Estimate`` also keeps its source-run
 picker and **Estimate** button.
 
+**Estimate** and **Cal** run in cancellable background tasks. Both require
+finite positive good-frame exposure; a missing value raises
+"Deadtime correction rejected: good frames must be finite and > 0".
+They fit :math:`M=N/(1+Nd/(\Delta t F))` by weighted least squares with
+standard deviations :math:`\sqrt{\max(M,1)}`, with signed :math:`d` in µs and
+:math:`N` a fixed-lifetime muon exponential. Trial means outside the positive
+denominator domain have infinite cost. The core
+``fit_deadtime_calibration`` API returns an immutable ``DeadtimeCalibration``
+with a coefficient and standard error per detector, method and source run;
+``calibrate_deadtime_from_histograms`` returns its coefficient list and
+``estimate_deadtime_from_histograms`` returns their mean. All three require
+the ``num_good_frames`` keyword.
+
 The **Cal** button fits each detector histogram in the selected run separately, produces a resolved
 per-detector deadtime table, and populates the manual table with those
 calibrated values. The **Max correction at t=0** figure reports the largest
@@ -740,9 +753,9 @@ absolute fractional change at a detector's first good bin, including decreases f
 coefficients. This summary helps assess the correction before applying it;
 the reduction checks every raw bin, including those outside the good window.
 
-When ``Off`` is selected, deadtime correction is disabled. When ``Estimate``
-is selected, the estimate is calculated from the currently selected preview
-run only, then applied to every run following the profile. ``Cal`` also uses
+When ``Off`` is selected, deadtime correction is disabled. In ``Estimate``
+mode, press **Estimate** to fit the currently selected source run. Its shared
+coefficient is applied to every run following the profile. ``Cal`` also uses
 the selected run only, but calibrates one deadtime value per detector
 instead of a single shared value. The resolved deadtime values are stored on
 the profile's deadtime policy, so every run following the profile shares the
@@ -783,7 +796,7 @@ correction parameter, distinct from the positive physical recovery time of a
 detector. A negative value reduces corrected counts; its sign alone is not a
 reason to reject it. Non-finite coefficients are invalid. A table containing
 only zeros is a no-op and does not require a frame count. The **Estimate** and
-**Cal** fits currently constrain their fitted coefficients to non-negative values.
+**Cal** fits use the rational forward model without a sign constraint.
 Manual entries may have either sign or be zero; the validation message is
 "Manual deadtime values must be finite for every detector."
 
@@ -849,6 +862,10 @@ and a 0.5–5 µs fit range. Measured means were generated from the forward
 non-paralysable model with Poisson standard deviations. Its published algorithm
 examples include negative fitted values [mantid_deadtime]_. This establishes signed
 behaviour, without implying that every fitted calibration is adequate.
+Asymmetry's rational calibration agrees on these noiseless inputs within
+:math:`10^{-9}` µs. It fits raw-count residuals with Poisson standard deviations;
+Mantid fits the transformed regression, so noisy-data estimator equivalence is
+not asserted.
 
 **WiMDA**, checked by inspection of the maintainer-supplied source snapshot,
 preserves negative coefficients through NeXus and calibration-text loading,

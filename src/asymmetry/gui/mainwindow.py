@@ -16,62 +16,7 @@ Layout overview (mirroring WiMDA):
     │  Log / message panel  (bottom dock)              │
     └──────────────────────────────────────────────────┘
 
-Navigation map
---------------
-This module is ~13k lines and one dominant class (``MainWindow``); it is a
-known decomposition target (see ``docs/audit/shared-foundations/FOLLOW-UPS.md``)
-but is not being split in this pass. Module-level helpers (``_safe_float``,
-``_normalise_source_path``, ``_format_bytes``, ``_write_text_file``,
-``_load_window_icon``, ``_coerce_bool``, ``_sync_grouping_keys``,
-``_run_number_gap_ranges``, ``_format_gap_ranges``) sit before the class;
-``_InspectorStack`` and ``_inspector_scroll_area`` support the right-dock
-inspector deck. Two free functions after the class
-(``_has_saved_fit_results``, ``_has_saved_fit_parameters_results``) are
-project-restore predicates.
-
-``MainWindow.__init__`` wires menus, toolbars, and docks
-(``_setup_menus`` → ``_create_toolbars`` / ``_setup_toolbar`` →
-``_create_docks`` → ``_setup_panels`` → ``_connect_actions``), then the class
-body proceeds roughly in this order, grouped by feature area rather than by
-fixed line ranges (the file will reflow as sections are extracted):
-
-1. **View-mode / bunch-factor / plot-viewport state** — ``_apply_view_mode``,
-   ``_apply_bunch_factor_to_context``, ``_on_plot_view_limits_changed``.
-2. **Vector-axis / projection selection and rendering** —
-   ``_refresh_vector_axis_selector``, ``_build_vector_axis_datasets``,
-   ``_render_current_selection_plot`` (the main plot-refresh entry point).
-3. **File loading and dataset lifecycle** — ``_on_open``, ``_load_files``,
-   ``_load_file``, dataset overwrite/removal helpers.
-4. **Detector grouping** — ``_open_shared_grouping_dialog`` through
-   ``_apply_grouping_settings_to_dataset`` and the histogram-reduction helpers
-   (``_reduce_grouped_histograms_to_asymmetry``).
-5. **Fit orchestration and fit-result recording** — ``_on_fit``,
-   ``_on_fit_completed``, ``_record_fit_series``, ``_record_global_fit_batch``,
-   ``_record_grouped_fit_series``, and the various
-   ``_on_*_fit_completed``/``_on_*_fit_started`` slots that bridge worker
-   signals back into ``FitSeries``/``ProjectModel`` state.
-6. **Fourier / MaxEnt** — ``_on_fourier``, ``_on_compute_fourier`` and the
-   frequency-recompute cache/async machinery (``_ensure_frequency_spectra_for_run``,
-   ``_start_async_frequency_recompute``), then the MaxEnt worker lifecycle
-   (``_launch_maxent_worker`` → ``_on_maxent_worker_finished``/``_error``/
-   ``_cancelled``) and spectral moments (``_refresh_spectral_moments``,
-   ``_on_moments_send_to_trend``).
-7. **ALC / field-scan** — ``_on_scan_requested``, ``_render_alc_scan``,
-   ``_on_fit_baseline``/``_on_fit_peaks``/``_on_fit_rf``.
-8. **Trend panel bridging** — ``_refresh_trend_panel``, ``_build_series_rows``,
-   the ``_on_series_*`` slots.
-9. **Project persistence** — ``collect_project_state`` /
-   ``restore_project_state`` (the serialize/deserialize round trip),
-   ``_write_project``, ``_open_project_file``, ``_clear_all_state``.
-10. **Window lifecycle** — ``_update_window_title``, ``_mark_dirty``/
-    ``_clear_dirty``, ``_maybe_save``, ``closeEvent``.
-
-Signal flow entry points: dataset selection changes arrive via
-``_on_dataset_selected``/``_update_selected_datasets`` and fan out to plot
-refresh, fit-panel rebinding, and Fourier/MaxEnt panel sync. Fit completion
-signals from panel workers arrive via the ``_on_*_fit_completed`` slots and
-fan out to plotting (``PlotPanel.plot_fit``/``set_global_fits``), trend
-recording, and the Fit Parameters panel.
+The shell routes analysis through the pure core and owns GUI task lifetimes.
 """
 
 from __future__ import annotations
@@ -86,6 +31,7 @@ import time
 import weakref
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import CancelledError
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -285,7 +231,8 @@ from asymmetry.core.transform.corrections import (
     background_grouping_metadata,
 )
 from asymmetry.core.transform.deadtime import (
-    calibrate_deadtime_from_histograms,
+    DeadtimeCalibration,
+    fit_deadtime_calibration,
     promote_deadtime_to_grouping,
 )
 from asymmetry.core.transform.projections import reduce_run_projections, reduction_identity
@@ -1016,7 +963,8 @@ class MainWindow(QMainWindow):
         # The most recent full result + config per run, for spectrum/log export.
         self._maxent_result_by_run: dict[int, tuple] = {}
         # The last fitted per-detector deadtime (run_number, [µs per detector]).
-        self._maxent_fitted_deadtime: tuple[int, list[float]] | None = None
+        self._maxent_fitted_deadtime: DeadtimeCalibration | None = None
+        self._maxent_deadtime_generation = 0
         self._maxent_panel_state_by_run: dict[int, dict] = {}
         # MaxEnt runs on the shared TaskRunner (self._tasks); _maxent_worker is
         # the live TaskWorker handle (for the Stop button), and _maxent_active
@@ -5350,6 +5298,7 @@ class MainWindow(QMainWindow):
             "deadtime_manual_us",
             "deadtime_estimated_us",
             "deadtime_reference_run",
+            "deadtime_errors_us",
         ):
             if key in grouping:
                 payload[key] = grouping.get(key)
@@ -9837,30 +9786,61 @@ class MainWindow(QMainWindow):
             return
         run = self._current_dataset.run
         grouping = run.grouping if isinstance(run.grouping, dict) else {}
-        deadtimes = calibrate_deadtime_from_histograms(
-            list(run.histograms),
-            # t_good_offset is measured from t0 (the calibrator adds it to
-            # t0_bin); first_good_bin is absolute (= t0_bin + t_good_offset), so
-            # passing it would double-count t0.  good_frames lives in grouping,
-            # not metadata — the universal deadtime normaliser.
-            t_good_offset=int(grouping.get("t_good_offset", 0) or 0),
-            last_good_bin=grouping.get("last_good_bin"),
-            num_good_frames=good_frames(grouping),
-            detector_t0_bins=effective_detector_t0_bins(list(run.histograms), grouping),
+        self._maxent_deadtime_generation += 1
+        generation = self._maxent_deadtime_generation
+        self._maxent_fitted_deadtime = None
+        self._maxent_panel.set_deadtime_text("Fitting deadtime…", can_apply=False)
+        self._tasks.start(
+            lambda worker: fit_deadtime_calibration(
+                list(run.histograms),
+                num_good_frames=grouping.get("good_frames"),
+                t_good_offset=int(grouping.get("t_good_offset", 0)),
+                last_good_bin=grouping.get("last_good_bin"),
+                detector_t0_bins=effective_detector_t0_bins(list(run.histograms), grouping),
+                source_run=int(run_number),
+                method="maxent_fit",
+                cancel_callback=worker.is_cancelled,
+            ),
+            on_finished=functools.partial(
+                self._on_maxent_deadtime_fitted, generation=generation, source_run=int(run_number)
+            ),
+            on_error=functools.partial(
+                self._on_maxent_deadtime_error, generation=generation, source_run=int(run_number)
+            ),
+            cancel_exceptions=(CancelledError,),
         )
-        if not deadtimes:
+
+    def _on_maxent_deadtime_fitted(
+        self, calibration: DeadtimeCalibration | None, *, generation: int, source_run: int
+    ) -> None:
+        if (
+            generation != self._maxent_deadtime_generation
+            or source_run != self._maxent_active_run_number_or_none()
+        ):
+            return
+        if calibration is None:
             self._maxent_panel.set_deadtime_text("Deadtime fit failed.", can_apply=False)
             return
-        self._maxent_fitted_deadtime = (int(run_number), [float(v) for v in deadtimes])
-        mean_us = float(np.mean(deadtimes))
+        if calibration.source_run != source_run:
+            raise ValueError("MaxEnt deadtime calibration must belong to its requested source run")
+        self._maxent_fitted_deadtime = calibration
+        mean_us = float(np.mean(calibration.tau_us))
         self._maxent_panel.set_deadtime_text(
-            f"Fitted deadtime: mean {mean_us * 1000.0:.2f} ns across {len(deadtimes)} detector(s).",
+            f"Fitted deadtime: mean {mean_us * 1000.0:.2f} ns across {len(calibration.tau_us)} detector(s).",
             can_apply=True,
         )
         self._set_fourier_status(
-            f"Fitted deadtime for run {run_number} (mean {mean_us * 1000.0:.2f} ns).",
+            f"Fitted deadtime for run {calibration.source_run} (mean {mean_us * 1000.0:.2f} ns).",
             success=True,
         )
+
+    def _on_maxent_deadtime_error(self, message: str, *, generation: int, source_run: int) -> None:
+        if (
+            generation != self._maxent_deadtime_generation
+            or source_run != self._maxent_active_run_number_or_none()
+        ):
+            return
+        self._maxent_panel.set_deadtime_text(f"Deadtime fit failed: {message}", can_apply=False)
 
     def _on_maxent_apply_deadtime(self) -> None:
         """Apply the fitted deadtime to the active run's grouping correction."""
@@ -9868,7 +9848,7 @@ class MainWindow(QMainWindow):
         if (
             run_number is None
             or self._maxent_fitted_deadtime is None
-            or self._maxent_fitted_deadtime[0] != int(run_number)
+            or self._maxent_fitted_deadtime.source_run != int(run_number)
             or self._current_dataset is None
             or self._current_dataset.run is None
         ):
@@ -9876,19 +9856,9 @@ class MainWindow(QMainWindow):
             return
         run = self._current_dataset.run
         grouping = dict(run.grouping) if isinstance(run.grouping, dict) else {}
-        fitted = list(self._maxent_fitted_deadtime[1])
-        # Route through the shared chokepoint so the MaxEnt calibration writes the
-        # grouping exactly like the count-fit promote (per-detector values,
-        # before/after, re-reduce message). The "maxent_fit" provenance label is
-        # kept — both labels are inert in reduction (only file-sourced deadtimes
-        # are distinguished), but the label records where the value came from.
-        change = promote_deadtime_to_grouping(
-            grouping,
-            fitted,
-            n_histograms=len(run.histograms),
-            method="maxent_fit",
-        )
+        change = promote_deadtime_to_grouping(grouping, self._maxent_fitted_deadtime)
         run.grouping = grouping
+        self._current_dataset.metadata["grouping_overrides"] = True
         # MaxEnt fits one deadtime per detector, so summarise the change across
         # all detectors (a single-detector readout would misreport when detector
         # 0 fits ~0 but others do not).
@@ -9906,6 +9876,7 @@ class MainWindow(QMainWindow):
             f"Applied fitted deadtime to run {run_number}'s grouping. Re-reduce the run to apply.",
             success=True,
         )
+        self._mark_dirty()
         self._log_panel.log(f"Applied MaxEnt-fitted deadtime to run {run_number}.")
 
     def _maxent_export_result(self, run_number: int):
@@ -14504,6 +14475,7 @@ class MainWindow(QMainWindow):
         """
         if dataset is None:
             return
+        self._mark_dirty()
         self._log_panel.log("Count calibration promoted to grouping; re-reduce to apply.")
         self.statusBar().showMessage("Count calibration promoted to grouping — re-reduce to apply.")
 
