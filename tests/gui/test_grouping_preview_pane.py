@@ -466,7 +466,7 @@ def test_reduce_grouped_asymmetry_matches_replay(bunch: float, alpha: float) -> 
     np.testing.assert_array_equal(result.time, exp_t)
     np.testing.assert_array_equal(result.asymmetry, exp_a)
     np.testing.assert_array_equal(result.error, exp_e)
-    assert result.deadtime_applied is False
+    assert result.corrections.deadtime.status == "off"
 
 
 def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication) -> None:
@@ -508,7 +508,7 @@ def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication)
         np.testing.assert_array_equal(mw_time, core.time)
         np.testing.assert_array_equal(mw_asym, core.asymmetry)
         np.testing.assert_array_equal(mw_err, core.error)
-        assert mw_dt == core.deadtime_applied
+        assert mw_dt == (core.corrections.deadtime.status == "applied")
     finally:
         window.close()
 

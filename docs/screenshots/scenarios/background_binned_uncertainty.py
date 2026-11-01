@@ -74,12 +74,14 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
             lambda: (
                 pane._tasks.active_count == 0
                 and pane._last_result is not None
+                and pane._last_result.counts.background_mode == "tail_fit"
                 and pane._last_result.counts.background_level is not None
             )
         )
         if (
             pane._tasks.active_count
             or pane._last_result is None
+            or pane._last_result.counts.background_mode != "tail_fit"
             or pane._last_result.counts.background_level is None
         ):
             raise RuntimeError("Background preview did not complete its tail fit")

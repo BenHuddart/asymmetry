@@ -616,4 +616,4 @@ def test_background_that_cannot_be_subtracted_excludes_the_run():
     run.grouping["background_mode"] = "reference_run"
     scan = build_field_scan([run], order_key="field")
     assert scan.n_points == 0
-    assert "constant background" in scan.excluded[0][1]
+    assert "reference run is not loaded" in scan.excluded[0][1]

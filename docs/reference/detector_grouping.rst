@@ -713,6 +713,14 @@ available:
   following WiMDA's uniform deadtime estimate workflow, then applies that one
   estimated value to every detector.
 
+A requested ``File`` correction requires a complete, non-zero file table.
+A table marked as a manual or fitted calibration does not satisfy a file
+request. Missing tables and acquisition normalisation block final analysis
+rather than silently switching the correction off. An all-zero ``Manual`` or
+``Estimate`` table is a valid identity correction; ``Off`` explicitly disables
+correction. Correction preparation preserves the requested settings and records
+the actual table, frame count, coefficient source, and uncertainty convention.
+
 The section adapts to the selected mode, showing only the controls that mode
 uses so the Corrections column stays readable without scrolling. ``Off`` shows the
 mode radios and a **Deadtime correction is disabled.** note. ``Manual`` shows

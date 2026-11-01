@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass
 from numbers import Integral, Real
-from types import MappingProxyType
 from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+
+from asymmetry.core.transform.corrections import CorrectionOutcomes
 
 
 def _bin_index(value: object, name: str, *, signed: bool = False) -> int:
@@ -27,20 +26,19 @@ class BinWindow:
 
     first: int
     last: int
+    label: InitVar[str] = "good-bin window"
 
-    def __post_init__(self) -> None:
-        first = _bin_index(self.first, "good-bin window first")
-        last = _bin_index(self.last, "good-bin window last")
+    def __post_init__(self, label) -> None:
+        first = _bin_index(self.first, f"{label} first")
+        last = _bin_index(self.last, f"{label} last")
         if first > last:
-            raise ValueError(f"good-bin window [{first}, {last}] is reversed.")
+            raise ValueError(f"{label} [{first}, {last}] is reversed.")
         object.__setattr__(self, "first", first)
         object.__setattr__(self, "last", last)
 
-    def validate_length(self, n_bins: int) -> None:
+    def validate_length(self, n_bins: int, *, label="good-bin window") -> None:
         if n_bins < 1 or self.last >= n_bins:
-            raise ValueError(
-                f"good-bin window [{self.first}, {self.last}] is outside {n_bins} bins."
-            )
+            raise ValueError(f"{label} [{self.first}, {self.last}] is outside {n_bins} bins.")
 
     @property
     def slice(self) -> slice:
@@ -279,8 +277,7 @@ class ForwardBackwardCounts:
     bin_width_us: float
     window: BinWindow
     alignment: AlignmentCrop
-    deadtime_applied: bool = False
-    background_state: Mapping[str, object] | None = None
+    corrections: CorrectionOutcomes = CorrectionOutcomes()
 
     def __post_init__(self) -> None:
         if not isinstance(self.forward, GroupCounts) or not isinstance(self.backward, GroupCounts):
@@ -300,39 +297,8 @@ class ForwardBackwardCounts:
         width, t0 = count_timing(self.bin_width_us, self.common_t0_bin, self.t0_time_us)
         object.__setattr__(self, "bin_width_us", width)
         object.__setattr__(self, "t0_time_us", t0)
-        state = None if self.background_state is None else deepcopy(dict(self.background_state))
-        if state is not None:
-            if "value_errors" in state:
-                raise ValueError("background standard errors derive from shared count components.")
-            if "values" in state:
-                (levels,) = validated_count_arrays(state["values"])
-                if levels.size != 2:
-                    raise ValueError("background provenance requires two constant levels.")
-                state["values"] = tuple(float(value) for value in levels)
-        object.__setattr__(
-            self, "background_state", None if state is None else MappingProxyType(state)
-        )
-
-    def background_metadata(self) -> dict[str, object] | None:
-        """Export independent JSON-ready provenance with list-valued count levels."""
-        if self.background_state is None:
-            return None
-        state = deepcopy(dict(self.background_state))
-        if "values" in state:
-            state["values"] = list(state["values"])
-            state["value_errors"] = [
-                float(
-                    np.sqrt(
-                        sum(
-                            component.variance
-                            for component in group.shared
-                            if component.name == "background"
-                        )
-                    )
-                )
-                for group in (self.forward, self.backward)
-            ]
-        return state
+        if not isinstance(self.corrections, CorrectionOutcomes):
+            raise ValueError("grouped counts require typed correction outcomes")
 
     @property
     def common_t0_bin(self) -> int:
@@ -340,7 +306,8 @@ class ForwardBackwardCounts:
 
     @property
     def background_level(self) -> tuple[float, float] | None:
-        if self.background_state is None or "values" not in self.background_state:
+        effective = self.corrections.background.effective
+        if effective is None or "values" not in effective:
             return None
-        forward, backward = self.background_state["values"]
+        forward, backward = effective["values"]
         return float(forward), float(backward)

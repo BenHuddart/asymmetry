@@ -159,3 +159,33 @@ def test_estimate_reads_context_fresh(qapp: QApplication) -> None:
     assert with_hot == pytest.approx(1000.0 / 100.0)
     assert without_hot == pytest.approx(100.0 / 100.0)
     section.shutdown()
+
+
+def test_request_resolution_error_is_shown_without_starting_a_worker(qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    section = AlphaSectionWidget()
+    context = _context()
+    context["correction_provider"] = lambda _dataset: {
+        "background_correction": True,
+        "background_mode": "reference_run",
+    }
+
+    def missing_reference(_grouping):
+        raise ValueError("reference run is not loaded")
+
+    context["reference_resolver"] = missing_reference
+    section.configure(
+        datasets=[_run(1, ratio=2.0)],
+        method="ratio",
+        selected_run_number=1,
+        context_provider=lambda: context,
+    )
+    messages = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda _parent, _title, message: messages.append(message)
+    )
+    section._on_estimate()
+    assert messages == ["reference run is not loaded"]
+    assert section._estimate_btn.isEnabled()
+    assert section._tasks.active_count == 0

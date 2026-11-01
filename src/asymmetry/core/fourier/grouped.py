@@ -12,6 +12,11 @@ from asymmetry.core.transform.background import (
     resolve_background_mode,
     subtract_scaled_counts,
 )
+from asymmetry.core.transform.corrections import (
+    CorrectionOutcome,
+    CorrectionOutcomes,
+    CorrectionStatus,
+)
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
@@ -154,20 +159,26 @@ def _resolve_group_reference_counts(
 
     cache = cache if cache is not None else {}
     sample_frames = good_frames(grouping, default=0.0) or None
-    try:
-        reference = resolve_background_reference(
-            grouping.get("background_run"), sample_good_frames=sample_frames, cache=cache
-        )
-    except (ValueError, OSError):
-        return None, None
+    reference = resolve_background_reference(
+        grouping.get("background_run"), sample_good_frames=sample_frames, cache=cache
+    )
 
     # Prepared reference histograms are identical for every group of this run
     # (same grouping + deadtime flag), so prepare once per sweep.
-    prepared_key = ("_prepared_reference", bool(apply_deadtime))
+    prepared_key = (
+        "_prepared_reference",
+        bool(apply_deadtime),
+        reference.source_file,
+        reference.run_number,
+        reference.good_frames_reference,
+        tuple(grouping.get("dead_time_us", ())) if apply_deadtime else (),
+    )
     reference_prepared = cache.get(prepared_key)
     if reference_prepared is None:
         reference_prepared, _ = prepare_histograms_with_deadtime(
-            reference.histograms, grouping, apply_deadtime
+            reference.histograms,
+            dict(grouping, good_frames=reference.good_frames_reference),
+            apply_deadtime,
         )
         cache[prepared_key] = reference_prepared
     reference_counts = apply_grouping_aligned(
@@ -203,7 +214,11 @@ def _apply_group_background_correction(
         # the reference is resolved+grouped by the caller and subtracted at the
         # count level, matching the time-domain reduction.
         if reference_counts is None or reference_scale is None:
-            return counts, False, None
+            CorrectionOutcomes(
+                background=CorrectionOutcome(
+                    "background", mode, CorrectionStatus.UNAVAILABLE, "reference run is not loaded"
+                )
+            ).require_complete()
         sample = np.asarray(counts, dtype=np.float64)
         reference = np.asarray(reference_counts, dtype=np.float64)
         if reference.size < sample.size:
@@ -216,7 +231,14 @@ def _apply_group_background_correction(
         )
         return corrected, True, None
     if mode not in available_background_modes(metadata=metadata, source_file=source_file):
-        return counts, False, None
+        CorrectionOutcomes(
+            background=CorrectionOutcome(
+                "background",
+                mode,
+                CorrectionStatus.UNAVAILABLE,
+                "mode is unavailable for this acquisition",
+            )
+        ).require_complete()
 
     payload = dict(grouping)
     # Only the fixed/range modes carry a per-group value/range from the
@@ -251,8 +273,18 @@ def _apply_group_background_correction(
         metadata=metadata,
         last_good_bin=last_good_bin,
     )
-    background_value = correction.values[0] if correction.values is not None else None
-    return correction.forward.counts, bool(correction.applied), background_value
+    CorrectionOutcomes(background=correction.outcome).require_complete()
+    values = (
+        correction.outcome.effective.get("values")
+        if correction.outcome.effective is not None
+        else None
+    )
+    background_value = values[0] if values is not None else None
+    return (
+        correction.forward.counts,
+        correction.outcome.status == CorrectionStatus.APPLIED,
+        background_value,
+    )
 
 
 def build_group_signal_dataset(

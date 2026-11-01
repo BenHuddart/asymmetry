@@ -147,12 +147,18 @@ def main(argv: list[str] | None = None) -> None:
 
     # Input and stale-record errors print one line; unexpected failures retain
     # their traceback and exit 2.
+    from asymmetry.core.transform.corrections import CorrectionUnavailableError
     from asymmetry.core.transform.deadtime import DeadtimeCorrectionError
     from asymmetry.core.workflow.workdir import StaleWorkDirError
 
     try:
         _logged(args, argv)
-    except (UserError, StaleWorkDirError, DeadtimeCorrectionError) as exc:
+    except (
+        UserError,
+        StaleWorkDirError,
+        DeadtimeCorrectionError,
+        CorrectionUnavailableError,
+    ) as exc:
         print(f"asymmetry: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
     except Exception:

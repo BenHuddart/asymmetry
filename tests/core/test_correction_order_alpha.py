@@ -262,7 +262,7 @@ def _reduced_background(run: Run, **kwargs):
         use_background=True,
         **kwargs,
     )
-    state = corrected.background_state
+    state = corrected.corrections.background.effective
     assert state is not None
     return state["ranges"][0], corrected.background_level
 
@@ -304,8 +304,8 @@ def test_reduce_grouped_asymmetry_defaults_the_facility_too():
     derived = reduce_grouped_asymmetry(**kwargs, metadata=run.metadata)
     explicit = reduce_grouped_asymmetry(**kwargs, facility="PSI")
     untrimmed = reduce_grouped_asymmetry(**kwargs, facility="")
-    assert derived.background_state == explicit.background_state
-    assert derived.background_state != untrimmed.background_state
+    assert derived.corrections.background.effective == explicit.corrections.background.effective
+    assert derived.corrections.background.effective != untrimmed.corrections.background.effective
     np.testing.assert_allclose(derived.asymmetry, explicit.asymmetry, rtol=0, atol=0)
 
 
@@ -325,7 +325,7 @@ def test_reduction_falls_back_to_the_groupings_instrument_without_metadata():
         deadtime_mode="off",
         use_background=True,
     )
-    state = corrected.background_state
+    state = corrected.corrections.background.effective
     assert state is not None
     trimmed, _ = _reduced_background(run, facility="PSI")
     assert state["ranges"][0] == trimmed

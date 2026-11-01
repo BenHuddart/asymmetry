@@ -103,6 +103,7 @@ from asymmetry.core.transform.background import (
     resolve_background_mode,
     resolve_facility,
 )
+from asymmetry.core.transform.corrections import CorrectionStatus
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     effective_group_indices,
@@ -6667,12 +6668,7 @@ class PlotPanel(QWidget):
             source_file = str(
                 getattr(run, "source_file", "") or reference_dataset.metadata.get("source_file", "")
             )
-            # Mode-aware gate (matches the real reduction): apply whichever
-            # background mode the grouping selects when it is available for this
-            # source, instead of the old PSI/LEM-only range gate. (reference_run
-            # needs externally resolved counts that this display-only mask does
-            # not load, so apply_grouped_background_correction no-ops it here —
-            # a minor difference in which bins render gray, never in the data.)
+            # This display mask uses only backgrounds with resolved inputs.
             mode = resolve_background_mode(grouping)
             available = available_background_modes(metadata=metadata, source_file=source_file)
             if mode in available:
@@ -6688,7 +6684,7 @@ class PlotPanel(QWidget):
                     bin_width_us=bin_width,
                     facility=facility,
                 )
-                if bkg_result.applied:
+                if bkg_result.outcome.status == CorrectionStatus.APPLIED:
                     forward = bkg_result.forward.counts
                     backward = bkg_result.backward.counts
 

@@ -260,7 +260,6 @@ from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     ASYMMETRY_PERCENT,
     EFFECTIVE_DETECTOR_T0_KEY,
-    DeadtimeCorrectionError,
     FieldScan,
     available_background_modes,
     build_field_scan,
@@ -272,12 +271,16 @@ from asymmetry.core.transform import (
     format_detector_list,
     good_frames,
     group_detectors_outside_run,
-    has_file_deadtime,
     prepare_histograms_with_deadtime,
     reduce_grouped_asymmetry,
     resolve_background_mode,
+    resolve_deadtime,
     resolve_facility,
     run_t0_time_us,
+)
+from asymmetry.core.transform.corrections import (
+    BackgroundReference,
+    CorrectionStatus,
 )
 from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
@@ -4730,7 +4733,7 @@ class MainWindow(QMainWindow):
                 applied, dt_applied = self._apply_grouping_settings_to_dataset(
                     dataset, grouping_result
                 )
-            except DeadtimeCorrectionError as exc:
+            except (ValueError, OSError) as exc:
                 skipped += 1
                 skip_reasons.append(f"run {int(dataset.run_number)}: {exc}")
                 continue
@@ -5949,7 +5952,10 @@ class MainWindow(QMainWindow):
                     run.histograms[0].bin_width
                 )
 
-        if has_file_deadtime(existing_grouping, len(run.histograms)):
+        if (
+            resolve_deadtime(existing_grouping, len(run.histograms), True, "from_file").status
+            == CorrectionStatus.APPLIED
+        ):
             grouping["deadtime_file_us"] = list(existing_grouping.get("dead_time_us", []))
         elif isinstance(existing_grouping.get("deadtime_file_us"), list):
             grouping["deadtime_file_us"] = list(existing_grouping.get("deadtime_file_us", []))
@@ -6293,8 +6299,8 @@ class MainWindow(QMainWindow):
             result.time,
             result.asymmetry,
             result.error,
-            result.deadtime_applied,
-            result.background_state,
+            result.corrections.deadtime.status == CorrectionStatus.APPLIED,
+            result.corrections.background.to_dict()["effective"],
         )
 
     def _counts_first_rebunched_arrays(
@@ -6443,28 +6449,6 @@ class MainWindow(QMainWindow):
         time_axis, asymmetry, error = cached
         return time_axis.copy(), asymmetry.copy(), error.copy()
 
-    def _prepare_grouping_histograms(self, histograms, grouping: dict, use_deadtime: bool):
-        """Return histograms prepared for grouping, with optional deadtime correction.
-
-        Parameters
-        ----------
-        histograms
-            Original run histograms.
-        grouping
-            Run grouping dictionary potentially containing ``dead_time_us``.
-        use_deadtime
-            Whether deadtime correction should be applied.
-
-        Returns
-        -------
-        tuple[list[Histogram], bool]
-            Prepared histogram list and a flag indicating whether deadtime was
-            actually applied.
-        """
-        if not use_deadtime:
-            return list(histograms), False
-        return prepare_histograms_with_deadtime(histograms, grouping, use_deadtime)
-
     def _dataset_allows_background_mode(self, dataset, mode: str) -> bool:
         """Return whether *mode* applies to this dataset (per-mode gating)."""
         run = getattr(dataset, "run", None)
@@ -6511,7 +6495,7 @@ class MainWindow(QMainWindow):
 
     def _resolve_background_reference(
         self, grouping: dict, sample_run
-    ) -> tuple[list, float] | None:
+    ) -> BackgroundReference | None:
         """Delegate ``background_run`` resolution to the core resolver.
 
         The GUI supplies the loaded-dataset registry (reuse an already-open
@@ -6526,17 +6510,12 @@ class MainWindow(QMainWindow):
             cache = {}
             self._background_run_cache = cache
         sample_frames = good_frames(getattr(sample_run, "grouping", None), default=0.0) or None
-        try:
-            reference = resolve_background_reference(
-                grouping.get("background_run"),
-                sample_good_frames=sample_frames,
-                datasets=self._data_browser.get_all_datasets(),
-                cache=cache,
-            )
-        except (ValueError, OSError) as exc:
-            self.statusBar().showMessage(f"Background run unavailable: {exc}", 8000)
-            return None
-        return reference.histograms, reference.scale
+        return resolve_background_reference(
+            grouping.get("background_run"),
+            sample_good_frames=sample_frames,
+            datasets=self._data_browser.get_all_datasets(),
+            cache=cache,
+        )
 
     def _maybe_apply_comment_field(
         self,
@@ -17959,7 +17938,7 @@ class MainWindow(QMainWindow):
                                 dataset.metadata.pop("grouping_overrides", None)
                                 self._assign_dataset_profile(dataset, followed_name)
 
-                    except DeadtimeCorrectionError as exc:
+                    except (ValueError, OSError) as exc:
                         dataset.run.grouping["deadtime_correction"] = False
                         self._log_panel.log(f"Run {dataset.run_number}: {exc}", tag="grouping")
 

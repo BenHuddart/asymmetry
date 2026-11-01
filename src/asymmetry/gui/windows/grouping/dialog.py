@@ -97,6 +97,7 @@ from asymmetry.core.transform import (
     resolve_binning_mode,
     resolve_facility,
 )
+from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
@@ -5236,7 +5237,7 @@ class GroupingDialog(QDialog):
 
     def _calibration_reference_resolver(
         self, grouping: dict[str, Any]
-    ) -> tuple[list, float] | None:
+    ) -> BackgroundReference | None:
         """Resolve a ``reference_run`` background for the alpha calibration.
 
         Reuses an already-loaded reference run from the fingerprint's datasets (or
@@ -5255,16 +5256,12 @@ class GroupingDialog(QDialog):
             sample_frames = float(grouping.get("good_frames", 0.0)) or None
         except (TypeError, ValueError):
             sample_frames = None
-        try:
-            reference = resolve_background_reference(
-                payload,
-                sample_good_frames=sample_frames,
-                datasets=self._fingerprint_datasets(),
-                cache=cache,
-            )
-        except (ValueError, OSError):
-            return None
-        return reference.histograms, reference.scale
+        return resolve_background_reference(
+            payload,
+            sample_good_frames=sample_frames,
+            datasets=self._fingerprint_datasets(),
+            cache=cache,
+        )
 
     def _calibration_facility(self) -> str:
         """Facility label for the alpha dialog's background tail-fit shortening."""

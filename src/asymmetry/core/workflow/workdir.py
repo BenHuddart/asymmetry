@@ -76,7 +76,7 @@ from asymmetry.core.workflow.reduction import ALPHA_ESTIMATED_PREFIX, ReductionS
 #: its ``members`` with their digests.
 #: 5: trend rows retain the names of bound-pinned parameters so diagnostics
 #: and plotting distinguish an observable from an unconstrained nuisance term.
-SCHEMA = 5
+SCHEMA = 6
 
 #: Series built from other stored series rather than from runs: a batch of
 #: simultaneous fits (``global-batch``) and a stored law's parameter trended
