@@ -863,6 +863,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._background_run_cache: dict[str, object] = {}
         # QMainWindow forces the Window flag on. A hosted page must lose it
         # before the native (macOS) menu bar built below hands the page its own
         # native window, which would survive into the shell and mis-map every
@@ -6496,25 +6497,17 @@ class MainWindow(QMainWindow):
     def _resolve_background_reference(
         self, grouping: dict, sample_run
     ) -> BackgroundReference | None:
-        """Delegate ``background_run`` resolution to the core resolver.
+        """Resolve against loaded runs and the per-window file cache.
 
-        The GUI supplies the loaded-dataset registry (reuse an already-open
-        reference run) and a per-window cache (load the reference once per apply
-        batch, not once per sample dataset); the core
-        :func:`resolve_background_reference` owns the matching, loader fallback
-        and frame-scale arithmetic. On failure we surface the message and skip
-        the subtraction.
+        Input and I/O failures propagate to the user-boundary error handler;
+        a final reduction cannot substitute unsubtracted counts.
         """
-        cache = getattr(self, "_background_run_cache", None)
-        if cache is None:
-            cache = {}
-            self._background_run_cache = cache
-        sample_frames = good_frames(getattr(sample_run, "grouping", None), default=0.0) or None
+        sample_frames = good_frames(sample_run.grouping, default=0.0) or None
         return resolve_background_reference(
             grouping.get("background_run"),
             sample_good_frames=sample_frames,
             datasets=self._data_browser.get_all_datasets(),
-            cache=cache,
+            cache=self._background_run_cache,
         )
 
     def _maybe_apply_comment_field(

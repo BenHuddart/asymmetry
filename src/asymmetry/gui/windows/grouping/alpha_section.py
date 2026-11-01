@@ -312,7 +312,8 @@ def resolve_reference(
 
     Done on the GUI thread (not in the worker) because the resolver reaches into
     the loaded-dataset registry; the result is plain data snapshotted into the
-    worker request. Degrades to ``None`` for non-reference modes or any failure.
+    worker request. Non-reference modes return ``None``; resolution failures
+    reach the user-input error display.
     """
     if reference_resolver is None:
         return None
