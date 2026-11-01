@@ -17,7 +17,7 @@ import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import (
-    POISSON_COST,
+    GAUSSIAN_COST,
     AsymmetryScaleWarning,
     FitCancelledError,
     FitEngine,
@@ -158,8 +158,8 @@ def test_fit_arrays_honours_a_cost_factory() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", AsymmetryScaleWarning)
         _assert_identical(
-            engine.fit(ds, _MODEL, params, cost_factory=POISSON_COST),
-            engine.fit_arrays(time, counts, error, _MODEL, params, cost_factory=POISSON_COST),
+            engine.fit(ds, _MODEL, params, cost_factory=GAUSSIAN_COST),
+            engine.fit_arrays(time, counts, error, _MODEL, params, cost_factory=GAUSSIAN_COST),
         )
 
 
@@ -203,19 +203,19 @@ def test_fit_arrays_rejects_length_mismatch() -> None:
     time, asymmetry, error = _synthetic_curve(n=40)
     with pytest.raises(ValueError, match="same length"):
         FitEngine().fit_arrays(time, asymmetry[:-3], error, _MODEL, _exponential_params())
-    with pytest.raises(ValueError, match="error has 37"):
+    with pytest.raises(ValueError, match="same length"):
         FitEngine().fit_arrays(time, asymmetry, error[:-3], _MODEL, _exponential_params())
 
 
 def test_fit_arrays_rejects_non_one_dimensional_input() -> None:
     time, asymmetry, error = _synthetic_curve(n=40)
-    with pytest.raises(ValueError, match="asymmetry must be a one-dimensional array"):
+    with pytest.raises(ValueError, match="one-dimensional arrays"):
         FitEngine().fit_arrays(time, asymmetry.reshape(4, 10), error, _MODEL, _exponential_params())
 
 
 def test_fit_arrays_rejects_empty_input() -> None:
     empty = np.array([], dtype=float)
-    with pytest.raises(ValueError, match="nothing to fit"):
+    with pytest.raises(ValueError, match="contain no points"):
         FitEngine().fit_arrays(empty, empty, empty, _MODEL, _exponential_params())
 
 
@@ -224,15 +224,15 @@ def test_fit_arrays_rejects_non_finite_values(bad: float) -> None:
     time, asymmetry, error = _synthetic_curve(n=40)
     asymmetry = asymmetry.copy()
     asymmetry[7] = bad
-    with pytest.raises(ValueError, match="asymmetry contains 1 non-finite"):
+    with pytest.raises(ValueError, match="point 7 .*value .* is not finite"):
         FitEngine().fit_arrays(time, asymmetry, error, _MODEL, _exponential_params())
 
 
 def test_fit_arrays_rejects_an_empty_fit_window() -> None:
     time, asymmetry, error = _synthetic_curve()
-    with pytest.raises(ValueError, match="no data points remain in the fit window"):
+    with pytest.raises(ValueError, match="contain no points"):
         FitEngine().fit_arrays(time, asymmetry, error, _MODEL, _exponential_params(), 20.0, 30.0)
-    with pytest.raises(ValueError, match="no data points remain in the fit window"):
+    with pytest.raises(ValueError, match="contain no points"):
         FitEngine().fit_arrays(time, asymmetry, error, _MODEL, _exponential_params(), 5.0, 1.0)
 
 

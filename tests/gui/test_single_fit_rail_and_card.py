@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 
 from asymmetry.core.data.dataset import MuonDataset  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
+from asymmetry.core.fitting.likelihood import Objective  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
 from asymmetry.gui.panels.fit.single_tab import (  # noqa: E402
     ADD_TO_SERIES_ACTION,
@@ -62,6 +63,7 @@ def _fit(tab: SingleFitTab) -> None:
 
     def _engine_fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=60.0,
             reduced_chi_squared=1.0,

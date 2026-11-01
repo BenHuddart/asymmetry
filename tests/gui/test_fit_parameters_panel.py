@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (  # type: ignore
 from asymmetry.core.fitting.axis_transforms import AxisTransform
 from asymmetry.core.fitting.composite_parameters import CompositeParameterDefinition
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ErrorMode,
@@ -525,14 +526,7 @@ def test_focus_expands_one_card_and_restores_on_exit(panel: FitParametersPanel) 
 def test_expanded_cards_share_the_dock_height_without_scrolling(
     panel: FitParametersPanel, qapp: QApplication
 ) -> None:
-    """Two cards must divide the dock's viewport, not overflow it.
-
-    The stack used to pass each card's figure-sized height preference up through
-    the panel's height-for-width chain, so the dock's scroll area grew the panel
-    past its own viewport and the whole panel scrolled while the cards sat at
-    their preferred height. 376 × 585 is the Parameters dock's viewport on a
-    13-inch MacBook at UI scale 1.
-    """
+    """Two cards must divide the dock's viewport, not overflow it."""
     area = _inspector_scroll_area(panel)
     area.resize(376, 585)
     area.show()
@@ -1797,6 +1791,7 @@ def test_new_asymmetry_fit_overwrites_existing_group_model_fits(panel: FitParame
     panel._plot_annotations = [{"parameter": "Lambda"}]
 
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         reduced_chi_squared=1.0,
         parameters=ParameterSet([Parameter("A0", value=0.24), Parameter("Lambda", value=0.11)]),
@@ -2149,6 +2144,7 @@ def test_set_fit_results_copies_global_params_per_group(panel: FitParametersPane
     shared_global = ParameterSet([Parameter("A0", value=0.25, min=0.0, max=1.0, fixed=False)])
 
     result_g1 = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         reduced_chi_squared=1.0,
         parameters=ParameterSet([Parameter("A0", value=0.24), Parameter("Lambda", value=0.11)]),
@@ -2169,6 +2165,7 @@ def test_set_fit_results_copies_global_params_per_group(panel: FitParametersPane
     shared_global["A0"].value = 0.42
 
     result_g2 = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         reduced_chi_squared=1.0,
         parameters=ParameterSet([Parameter("A0", value=0.30), Parameter("Lambda", value=0.12)]),
@@ -2433,6 +2430,7 @@ def test_set_fit_results_preserves_group_composite_definitions(
     }
 
     result = FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         reduced_chi_squared=1.0,
         parameters=ParameterSet([Parameter("A0", value=0.24), Parameter("Lambda", value=0.11)]),

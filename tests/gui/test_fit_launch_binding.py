@@ -37,6 +37,7 @@ from asymmetry.core.fitting.engine import FitResult  # noqa: E402
 from asymmetry.core.fitting.grouped_time_domain import (  # noqa: E402
     build_grouped_count_model,
 )
+from asymmetry.core.fitting.likelihood import Objective  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
 from asymmetry.gui.panels.fit import global_tab as global_tab_module  # noqa: E402
 from asymmetry.gui.panels.fit.global_tab import FitLaunch, GlobalFitTab  # noqa: E402
@@ -79,6 +80,7 @@ def _grouped_dataset(member_key: int, group_id: int) -> MuonDataset:
 
 def _result(values: dict[str, float]) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=30.0,
         reduced_chi_squared=1.0,
@@ -240,6 +242,7 @@ def test_d_the_single_form_is_frozen_while_its_fit_runs(qapp: QApplication) -> N
         def _fit(_ds, _model_fn, parameters, *, minos=False, cancel_callback=None, **_kwargs):
             assert release.wait(_RELEASE_TIMEOUT_S), "the test never released the stub engine"
             return FitResult(
+                objective=Objective.GAUSSIAN,
                 success=True,
                 chi_squared=30.0,
                 reduced_chi_squared=1.0,

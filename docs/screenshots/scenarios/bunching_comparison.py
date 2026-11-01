@@ -39,13 +39,16 @@ class BunchingComparisonScenario(Scenario):
                 ds = raw_dataset
             else:
                 t, v, e = rebin(
-                    raw_dataset.time, raw_dataset.asymmetry,
-                    raw_dataset.error, factor=factor,
+                    raw_dataset.time,
+                    raw_dataset.asymmetry,
+                    raw_dataset.error,
+                    factor=factor,
                 )
                 ds = MuonDataset(
-                    time=t, asymmetry=v, error=e,
-                    metadata={**raw_dataset.metadata,
-                              "title": f"TF 100G bunched ×{factor}"},
+                    time=t,
+                    asymmetry=v,
+                    error=e,
+                    metadata={**raw_dataset.metadata, "title": f"TF 100G bunched ×{factor}"},
                 )
             panels.append(_grab_plot(ds, caption=caption))
 
@@ -82,7 +85,10 @@ def _grab_plot(dataset: MuonDataset, *, caption: str) -> QPixmap:
     painter.setFont(font)
     painter.setPen(QColor("#0f172a"))
     painter.drawText(
-        0, 0, pix.width(), 36,
+        0,
+        0,
+        pix.width(),
+        36,
         Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
         caption,
     )

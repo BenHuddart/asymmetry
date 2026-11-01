@@ -15,6 +15,7 @@ from PySide6.QtCore import QEvent  # type: ignore
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QTableWidget  # type: ignore
 
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit.tab_base import fit_results_snapshot
 from asymmetry.gui.styles import tokens
@@ -213,6 +214,7 @@ def _fit_result(*, chi_squared: float = 595.0, dof: int = 595) -> FitResult:
         ]
     )
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         chi_squared=chi_squared,
         reduced_chi_squared=chi_squared / dof if dof else 0.0,

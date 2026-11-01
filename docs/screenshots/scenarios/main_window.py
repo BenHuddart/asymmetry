@@ -32,9 +32,7 @@ class MainWindowScenario(Scenario):
         # Surface the fit dock so the full WiMDA-style layout is visible.
         window._on_fit()
         # Wider data-browser dock so Run/Title/T(K)/B(G) all fit.
-        window.resizeDocks(
-            [window._dock_data_browser], [380], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [380], Qt.Orientation.Horizontal)
         for dataset in make_euo_tf_tscan():
             window._data_browser.add_dataset(dataset)
         window._on_dataset_selected(3003)  # T=65 K, just below Tc

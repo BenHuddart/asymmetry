@@ -23,6 +23,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
     RunResidualDiagnostic,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.model_comparison import (
     AT_BOUND_RELATIVE_TOLERANCE,
     SHORTLIST_MAX_DELTA,
@@ -73,6 +74,7 @@ def _datasets() -> list[MuonDataset]:
 
 def _fit(run: int, *, a_1: float = 20.0, a_1_err: float = 0.2) -> FitResult:
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=True,
         reduced_chi_squared=1.0 + 0.1 * (run - 700),
         parameters=ParameterSet(
@@ -373,7 +375,7 @@ def test_summary_omits_runs_an_incomplete_prescreen_never_fitted() -> None:
 
 def test_summary_failed_run_has_unknown_values_without_flags() -> None:
     fits = {run: _fit(run) for run in _RUNS}
-    fits[702] = FitResult(success=False, message="failed")
+    fits[702] = FitResult(objective=Objective.GAUSSIAN, success=False, message="failed")
     summary = summarise_candidates(
         [_assessment("a|1", statistic=1.0, fits=fits)], _datasets(), SelectionMetric.AICC
     )[0]

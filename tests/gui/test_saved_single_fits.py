@@ -25,6 +25,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run  # noqa: E402
 from asymmetry.core.fitting.composite import CompositeModel  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
+from asymmetry.core.fitting.likelihood import Objective  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
 from asymmetry.core.representation import FitSlot, RepresentationType  # noqa: E402
 from asymmetry.gui.mainwindow import MainWindow  # noqa: E402
@@ -88,6 +89,7 @@ def _fit(mw, model: CompositeModel | None = None, chi_squared: float = 60.0) -> 
 
     def _engine_fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
         return FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=chi_squared,
             reduced_chi_squared=chi_squared / 60.0,

@@ -145,9 +145,7 @@ class GroupingWindowGoodWindowRowScenario(Scenario):
         last_good_spin = dialog._last_good_spin
         line = dialog._good_window_line_row_widget
         row_rect = QRect(row.mapTo(dialog, QPoint(0, 0)), row.size())
-        last_good_rect = QRect(
-            last_good_spin.mapTo(dialog, QPoint(0, 0)), last_good_spin.size()
-        )
+        last_good_rect = QRect(last_good_spin.mapTo(dialog, QPoint(0, 0)), last_good_spin.size())
         line_rect = QRect(line.mapTo(dialog, QPoint(0, 0)), line.size())
         crop = row_rect.united(last_good_rect).united(line_rect).adjusted(-16, -12, 16, 4)
         # Stop at the grouping column's edge: the line's row spans the whole

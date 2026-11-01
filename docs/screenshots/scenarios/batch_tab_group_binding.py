@@ -34,9 +34,7 @@ class BatchTabGroupBindingScenario(Scenario):
         window = MainWindow()
         window._on_fit()
         window._dock_log.hide()
-        window.resizeDocks(
-            [window._dock_data_browser], [300], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [300], Qt.Orientation.Horizontal)
 
         datasets = make_euo_tf_tscan()[:4]  # 30, 50, 65, 69 K -- below/at Tc
         for dataset in datasets:

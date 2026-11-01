@@ -28,6 +28,8 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtWidgets import QWidget
 
+from asymmetry.core.fitting.likelihood import Objective
+
 from ..data import make_two_phase_zf_tscan
 from ._base import Scenario, _process_events_for, register
 
@@ -99,6 +101,7 @@ def _assessment(
         params = param_values_for_run(run_number, float(dataset.metadata["temperature"]))
         curve = template.model.function(dataset.time, **params)
         fit_results[run_number] = FitResult(
+            objective=Objective.GAUSSIAN,
             success=True,
             chi_squared=48.0,
             reduced_chi_squared=1.03,

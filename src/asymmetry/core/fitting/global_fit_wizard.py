@@ -118,6 +118,7 @@ from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_names,
     fold_legacy_product_amplitude_set,
 )
+from asymmetry.core.fitting.likelihood import Objective
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
 from asymmetry.core.fitting.wizard_scope import (
@@ -628,27 +629,14 @@ class GlobalCandidateAssessment:
 
 @dataclass(frozen=True)
 class GlobalFitWizardRecommendation:
-    """Global-fit analysis payload plus the current recommendation.
+    """Series-wide and partitioned global-fit answers with their search objective.
 
-    Two answers live here, and they do not compete. ``recommended_key``,
-    ``comparable_keys`` and ``assessments`` are the **series-wide** answer: one
-    template, one role assignment, every run. ``partition_path`` and
-    ``phase_assessments`` are the **partitioned** answer: the series split into
-    contiguous phases at structural breaks, each phase with its own template and
-    assignment. A screening pass always computes the path (it is closed-form and
-    cheap); the per-phase coupled fits happen only when
-    :func:`build_global_fit_wizard_recommendation` is asked for a ``partition_k``.
-
-    ``partition_path`` is ``None`` when the series cannot be partitioned at all —
-    fewer than ``2 × min_segment`` runs, or no template scoreable on every run.
-    ``phase_assessments`` is keyed ``(k, segment_index)`` so the assessments of
-    the neighbouring solutions tier 3 verified stay addressable next to the
-    selected one; ``recommended_partition_k`` names which ``k`` was optimised.
-
-    ``objective`` is what the optimised assessments were searched and ranked
-    for. Under :attr:`SelectionObjective.TREND` they are rungs of sharing
-    ladders; under ``STATISTICAL`` nodes of the role search. One recommendation
-    holds one objective's assessments; changing it is a new optimisation.
+    ``recommended_key`` and ``comparable_keys`` select series-wide assessments.
+    ``partition_path`` describes contiguous phases; ``phase_assessments`` stores
+    each verified (k, segment_index) fit, and ``recommended_partition_k`` selects
+    the optimized partition. Screening computes the path without fitting phases.
+    Too few runs or no common template leaves the path absent.
+    Changing between TREND ladders and STATISTICAL role searches requires optimization.
     """
 
     series_axis_key: str
@@ -4334,6 +4322,7 @@ def _deserialize_fit_result(payload: object) -> FitResult | None:
     except (TypeError, ValueError):
         uncertainties = {}
     return FitResult(
+        objective=Objective.GAUSSIAN,
         success=bool(payload.get("success", False)),
         chi_squared=float(payload.get("chi_squared", 0.0)),
         reduced_chi_squared=float(payload.get("reduced_chi_squared", 0.0)),
@@ -5793,7 +5782,9 @@ def _assemble_assignment_assessment(
         run_number = int(dataset.run_number)
         result = results_by_run.get(
             run_number,
-            FitResult(success=False, message="Missing global fit result"),
+            FitResult(
+                objective=Objective.GAUSSIAN, success=False, message="Missing global fit result"
+            ),
         )
         (
             residual_rms,
@@ -5889,7 +5880,9 @@ def _with_dense_curves(
         run_number = int(dataset.run_number)
         result = results_by_run.get(
             run_number,
-            FitResult(success=False, message="Missing global fit result"),
+            FitResult(
+                objective=Objective.GAUSSIAN, success=False, message="Missing global fit result"
+            ),
         )
         fallback_parameters = base_by_run.get(run_number)
         fitted_time, fitted_curve, component_curves = _dense_fit_curves(
@@ -6272,6 +6265,7 @@ def _fit_exact_assignment(
     if best_results is None:
         best_results = {
             int(dataset.run_number): FitResult(
+                objective=Objective.GAUSSIAN,
                 success=False,
                 message="No fit attempts were created.",
             )
@@ -6784,7 +6778,9 @@ def _assess_single_fit_candidate_from_attempts(
             best_parameters = _clone_parameter_set(parameters)
 
     if best_result is None:
-        best_result = FitResult(success=False, message="No fit attempt was created.")
+        best_result = FitResult(
+            objective=Objective.GAUSSIAN, success=False, message="No fit attempt was created."
+        )
         best_parameters = ParameterSet()
 
     n_points = int(dataset.n_points)
@@ -6926,7 +6922,9 @@ def _best_single_run_fit_result(
                     method="simplex",
                 )
             except Exception:
-                simplex_result = FitResult(success=False, message="Single-run simplex failed")
+                simplex_result = FitResult(
+                    objective=Objective.GAUSSIAN, success=False, message="Single-run simplex failed"
+                )
             if simplex_result.success and (
                 best_result is None or simplex_result.chi_squared < best_result.chi_squared
             ):
@@ -9375,6 +9373,7 @@ def _all_local_run_fit_results(
         )
         if best_result is None:
             results[run_number] = FitResult(
+                objective=Objective.GAUSSIAN,
                 success=False,
                 message="No single-run fit attempt produced a result.",
             )

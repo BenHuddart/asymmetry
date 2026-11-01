@@ -51,9 +51,7 @@ class ApodisationComparisonScenario(Scenario):
         window.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         window.show()
         window._on_fourier()
-        window.resizeDocks(
-            [window._dock_data_browser], [320], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
         dataset = make_ybco_vortex_lattice()
         window._data_browser.add_dataset(dataset)
@@ -143,7 +141,10 @@ def _grab_canvas(freq_panel, *, caption: str) -> QPixmap:
     painter.setFont(font)
     painter.setPen(QColor("#0f172a"))
     painter.drawText(
-        0, 0, pix.width(), 40,
+        0,
+        0,
+        pix.width(),
+        40,
         Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
         caption,
     )

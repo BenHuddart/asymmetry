@@ -39,9 +39,7 @@ class NewUserFunctionDialogScenario(Scenario):
         # formula (lam, beta, f, phi, plus the seeded amplitude A) is declared
         # as a parameter with a start value tuned for a legible preview.
         dialog._name_edit.setText("StretchedOsc")
-        dialog._description_edit.setText(
-            "Stretched-exponential envelope on a Larmor oscillation"
-        )
+        dialog._description_edit.setText("Stretched-exponential envelope on a Larmor oscillation")
         dialog._formula_edit.setText("A*exp(-(lam*x)**beta)*cos(2*pi*f*x + phi)")
 
         # Seed the parameter table: the pre-seeded A row plus the four detected
