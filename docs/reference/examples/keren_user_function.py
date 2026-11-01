@@ -12,6 +12,7 @@ your own physics, replace the body and metadata.
 import numpy as np
 
 from asymmetry import register_component
+from asymmetry.core.fitting.phi_functions import phi2
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -29,30 +30,15 @@ def keren_user(t, A, Delta, nu, B_L):
             - 2 nu omega_0 e^{-nu t} sin(omega_0 t) ]
 
     after A. Keren, Phys. Rev. B 50, 10039 (1994). At B_L = 0 it reduces to
-    the Abragam exponent; as nu and B_L both vanish it tends to the static
+    twice the transverse-field Abragam exponent; as nu and B_L vanish it tends to the
     Gaussian envelope exp(-Delta^2 t^2).
     """
-    t = np.asarray(t, dtype=float)
-    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
-    omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)  # rad/us
-    delta2 = float(Delta) * float(Delta)
-    w2 = omega0 * omega0
-    n2 = float(nu) * float(nu)
-    denom = w2 + n2
-
-    if denom < 1e-20:
-        # nu -> 0 and B_L -> 0: Gamma -> Delta^2 t^2 (static Gaussian limit)
-        exponent = np.clip(-delta2 * t * t, -700, 0)
-        return A * np.exp(exponent)
-
-    e = np.exp(np.clip(-float(nu) * np.abs(t), -700, 0))
-    gamma = (2.0 * delta2 / (denom * denom)) * (
-        denom * float(nu) * np.abs(t)
-        + (w2 - n2) * (1.0 - e * np.cos(omega0 * t))
-        - 2.0 * float(nu) * omega0 * e * np.sin(omega0 * t)
-    )
-    exponent = np.clip(-gamma, -700, 0)
-    return A * np.exp(exponent)
+    if not np.isfinite(nu) or nu < 0:
+        raise ValueError("fluctuation rate nu must be finite and >= 0")
+    t = np.abs(np.asarray(t, dtype=float))
+    omega0 = 2 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * float(B_L)
+    exponent = 2 * float(Delta) ** 2 * t**2 * phi2(-(float(nu) + 1j * omega0) * t).real
+    return A * np.exp(-exponent)
 
 
 register_component(

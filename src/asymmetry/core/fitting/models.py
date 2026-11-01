@@ -36,6 +36,7 @@ from scipy.linalg import solve_triangular, toeplitz
 from scipy.special import erfcx, j0, sici
 
 from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
+from asymmetry.core.fitting.phi_functions import phi2
 from asymmetry.core.fitting.registration import insert_definition
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
@@ -318,7 +319,7 @@ def longitudinal_field_kubo_toyabe(
 # ``nu`` (strong-collision / Markovian model), the polarisation becomes the
 # *dynamic* G_d(t).  Limits: nu -> 0 recovers the static function; nu -> infinity
 # gives motional narrowing (exponential decay, rate 2*Delta^2/nu for Gaussian).
-# See docs/porting/dynamic-relaxation/.  ``nu`` is a rate in MHz (== us^-1).
+# ``nu`` is a rate in MHz (== us^-1).
 
 
 def abragam(
@@ -349,21 +350,15 @@ def abragam(
     Delta : float
         Static Gaussian field-distribution width in us^-1.
     nu : float
-        Field fluctuation (hop) rate in MHz (== us^-1).  ``nu`` <= 0 gives the
-        static Gaussian limit.
+        Finite, non-negative field fluctuation (hop) rate in MHz (== us^-1).
+        Zero gives the static Gaussian limit; negative/non-finite rates raise ValueError.
     baseline : float, optional
         Constant baseline offset.
     """
-    t = np.asarray(t, dtype=float)
-    d2 = float(Delta) * float(Delta)
-    nt = float(nu) * np.abs(t)
-    if nu <= 1e-9:
-        exponent = -0.5 * d2 * t * t
-    else:
-        # e^{-nt} - 1 + nt is >= 0 and ~ (nt)^2/2 as nt -> 0 (Gaussian limit)
-        exponent = -(d2 / (float(nu) * float(nu))) * (np.exp(np.clip(-nt, -700, 0)) - 1.0 + nt)
-    exponent = np.clip(exponent, -700, 0)
-    return A0 * np.exp(exponent) + baseline
+    nu = _require_rate(nu)
+    t = np.abs(np.asarray(t, dtype=float))
+    exponent = float(Delta) ** 2 * t**2 * phi2(-nu * t)
+    return A0 * np.exp(-exponent) + baseline
 
 
 def keren(
@@ -385,6 +380,10 @@ def keren(
     At B_L = 0 the exponent is twice the transverse-field Abragam exponent.
     As nu -> 0 the limit is exp(-Delta^2 t^2), matching Gaussian at sigma = Delta
     and the early-time zero-field KT curvature; the full KT model supplies its tail.
+    Numerical evaluation uses the entire phi2 function, including zero rate and
+    field. Physical validity is perturbative (Delta/nu < 1, or early times);
+    numerical support at nu=0 does not supply the static KT tail. See Eq. (4)
+    of Keren (1994); the exponent here denotes his Gamma(t)*t.
 
     Parameters
     ----------
@@ -395,33 +394,24 @@ def keren(
     Delta : float
         Static Gaussian field-distribution width in us^-1.
     nu : float
-        Field fluctuation rate in MHz (== us^-1).
+        Finite, non-negative fluctuation rate in MHz (== us^-1); invalid rates raise ValueError.
     B_L : float
         Longitudinal magnetic field in Gauss (omega0 = gamma_mu * B_L).
     baseline : float, optional
         Constant baseline offset.
     """
-    t = np.asarray(t, dtype=float)
-    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
-    omega0 = gamma_mu * (float(B_L) * GAUSS_TO_TESLA)  # rad/us
-    delta2 = float(Delta) * float(Delta)
-    w2 = omega0 * omega0
-    n2 = float(nu) * float(nu)
-    denom = w2 + n2
+    nu = _require_rate(nu)
+    t = np.abs(np.asarray(t, dtype=float))
+    omega0 = 2 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * float(B_L)
+    exponent = 2 * float(Delta) ** 2 * t**2 * phi2(-(nu + 1j * omega0) * t).real
+    return A0 * np.exp(-exponent) + baseline
 
-    if denom < 1e-20:
-        # nu -> 0 and B_L -> 0: Gamma -> Delta^2 t^2 (fast-Gaussian envelope limit)
-        exponent = np.clip(-delta2 * t * t, -700, 0)
-        return A0 * np.exp(exponent) + baseline
 
-    e = np.exp(np.clip(-float(nu) * np.abs(t), -700, 0))
-    gamma = (2.0 * delta2 / (denom * denom)) * (
-        denom * float(nu) * np.abs(t)
-        + (w2 - n2) * (1.0 - e * np.cos(omega0 * t))
-        - 2.0 * float(nu) * omega0 * e * np.sin(omega0 * t)
-    )
-    exponent = np.clip(-gamma, -700, 0)
-    return A0 * np.exp(exponent) + baseline
+def _require_rate(nu: float) -> float:
+    """Fluctuation rates are finite, non-negative inverse correlation times."""
+    if not np.isfinite(nu) or nu < 0:
+        raise ValueError("fluctuation rate nu must be finite and >= 0")
+    return float(nu)
 
 
 def static_lorentzian_kt_zf(

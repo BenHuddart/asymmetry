@@ -2,10 +2,12 @@
 
 Covers dynamic Gaussian & Lorentzian Kubo-Toyabe (strong collision), the Keren
 LF function and the Abragam function: analytic limits, properties, registration
-metadata, and a fitting round-trip.  See docs/porting/dynamic-relaxation/.
+metadata, and a fitting round-trip.
 """
 
 from __future__ import annotations
+
+from decimal import Decimal, localcontext
 
 import numpy as np
 import pytest
@@ -124,7 +126,7 @@ def test_keren_zf_is_abragam_squared() -> None:
 
 def test_abragam_gaussian_limit() -> None:
     sigma = 0.4
-    assert np.max(np.abs(abragam(T, 1.0, sigma, 1e-9) - np.exp(-0.5 * sigma**2 * T**2))) < 1e-4
+    assert np.max(np.abs(abragam(T, 1.0, sigma, 0.0) - np.exp(-0.5 * sigma**2 * T**2))) < 1e-15
 
 
 def test_abragam_fast_exponential_limit() -> None:
@@ -133,7 +135,7 @@ def test_abragam_fast_exponential_limit() -> None:
 
 
 def test_keren_zero_field_zero_nu_is_finite_gaussian() -> None:
-    # The denom -> 0 guard: nu=0, B_L=0 gives exp(-Delta^2 t^2), finite.
+    # The entire-function limit at nu=0, B_L=0 is exp(-Delta^2 t^2).
     g = keren(T, 1.0, 0.3, 0.0, 0.0)
     assert np.all(np.isfinite(g)) and np.allclose(g, np.exp(-(0.3**2) * T**2), atol=1e-9)
 
@@ -524,3 +526,196 @@ def test_strong_collision_fast_matches_reference_large_grid(kind: str, nu: float
 def test_strong_collision_single_point_grid() -> None:
     # Degenerate one-sample grid: G_d(0) = 1 with no recursion.
     assert _strong_collision_solve(np.array([1.0]), 3.0, 0.02) == np.array([1.0])
+
+
+# Independent 70-digit evaluation of the published exponential/trigonometric
+# expression, rather than the production Taylor expansion of phi2.
+def _decimal_phi2(z: complex) -> complex:
+    with localcontext() as context:
+        context.prec = 70
+        a, b = Decimal(str(z.real)), Decimal(str(z.imag))
+        if a == b == 0:
+            return 0.5 + 0j
+        pi = Decimal("3.1415926535897932384626433832795028841971693993751058209749445923078164")
+        b_reduced = b % (2 * pi)
+        cos_b, sin_b = Decimal(1), b_reduced
+        cos_term, sin_term = cos_b, sin_b
+        for k in range(1, 120):
+            cos_term *= -(b_reduced**2) / ((2 * k - 1) * (2 * k))
+            sin_term *= -(b_reduced**2) / ((2 * k) * (2 * k + 1))
+            cos_b += cos_term
+            sin_b += sin_term
+        numerator_re = a.exp() * cos_b - 1 - a
+        numerator_im = a.exp() * sin_b - b
+        denominator = (a * a + b * b) ** 2
+        return complex(
+            float((numerator_re * (a * a - b * b) + numerator_im * 2 * a * b) / denominator),
+            float((numerator_im * (a * a - b * b) - numerator_re * 2 * a * b) / denominator),
+        )
+
+
+def test_phi2_matches_independent_decimal_expression():
+    from asymmetry.core.fitting.phi_functions import phi2
+
+    rng = np.random.default_rng(20261031)
+    radii = 10.0 ** rng.uniform(-12, 2, 500)
+    angles = rng.uniform(np.pi / 2, 3 * np.pi / 2, 500)
+    z = radii * np.exp(1j * angles)
+    z = np.concatenate(
+        (z, [0j, -1 * (1 - 1e-12), -1 * (1 + 1e-12), 1j * (1 - 1e-12), 1j * (1 + 1e-12)])
+    )
+    reference = np.array([_decimal_phi2(value) for value in z])
+    np.testing.assert_allclose(phi2(z), reference, rtol=1e-15, atol=0)
+
+
+@pytest.mark.parametrize("delta", [0.04, 0.4, 4.0])
+@pytest.mark.parametrize("nu", [0.0, 1e-12, 1e-9, 1.0000001e-9, 2e-9, 1e-6, 1e-2, 1.0, 10.0, 1e4])
+def test_abragam_and_keren_match_decimal_oracle(delta, nu):
+    from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+
+    time = np.array([0.0, 0.01, 0.1, 1.0, 3.0, 8.0])
+    abragam_expected = np.array(
+        [
+            float(
+                (
+                    -(Decimal(str(delta)) ** 2)
+                    * Decimal(str(t)) ** 2
+                    * Decimal(str(_decimal_phi2(complex(-nu * t)).real))
+                ).exp()
+            )
+            for t in time
+        ]
+    )
+    np.testing.assert_allclose(abragam(time, 1.0, delta, nu), abragam_expected, rtol=0, atol=1e-14)
+    for field in (0.0, 1e-9, 1e-6, 1e-4, 1e-2, 1.0, 100.0):
+        omega = 2 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * field
+        expected = np.array(
+            [
+                np.exp(-2 * delta**2 * t**2 * _decimal_phi2(complex(-nu * t, -omega * t)).real)
+                for t in time
+            ]
+        )
+        np.testing.assert_allclose(keren(time, 1.0, delta, nu, field), expected, rtol=0, atol=1e-14)
+
+
+@pytest.mark.parametrize("function", [abragam, keren])
+@pytest.mark.parametrize("nu", [-1.0, np.nan, np.inf, -np.inf])
+def test_dynamic_envelopes_reject_invalid_rate(function, nu):
+    extra = (20.0,) if function is keren else ()
+    with pytest.raises(ValueError, match="fluctuation rate nu must be finite and >= 0"):
+        function(T, 1.0, 0.4, nu, *extra)
+
+
+def test_keren_is_even_in_time_and_field():
+    for nu in (0.0, 1e-9, 1.0):
+        positive = keren(T, 1.0, 0.4, nu, 20.0)
+        np.testing.assert_array_equal(keren(-T, 1.0, 0.4, nu, 20.0), positive)
+        np.testing.assert_array_equal(keren(T, 1.0, 0.4, nu, -20.0), positive)
+
+
+def test_dynamic_envelope_zero_rate_limits_and_derivatives():
+    t, delta, h = 0.5, 0.4, 1e-6
+    for function, factor, args in ((abragam, 1.0, ()), (keren, 2.0, (0.0,))):
+        static = np.exp(-factor * delta**2 * t * t / 2)
+        assert function(t, 1.0, delta, 0.0, *args) == pytest.approx(static, abs=1e-15)
+        derivative = (function(t, 1.0, delta, h, *args) - function(t, 1.0, delta, 0.0, *args)) / h
+        assert derivative == pytest.approx(factor * delta**2 * t**3 * static / 6, rel=1e-6)
+    for field in (1e-9, 1e-6, 1.0, 100.0):
+        omega = _omega0(field)
+        static = np.exp(-4 * delta**2 * (np.sin(omega * T / 2) / omega) ** 2)
+        np.testing.assert_allclose(keren(T, 1.0, delta, 0.0, field), static, rtol=0, atol=1e-15)
+
+
+def test_dynamic_envelopes_are_smooth_at_series_switch():
+    delta, t = 0.4, 1.0
+    for function, factor, args in ((abragam, 1.0, ()), (keren, 2.0, (0.0,))):
+        at_switch = function(t, 1.0, delta, 1.0, *args)
+        for nu in (1 - 1e-12, 1 + 1e-12):
+            expected = np.exp(-factor * delta**2 * _decimal_phi2(complex(-nu)).real)
+            assert function(t, 1.0, delta, nu, *args) == pytest.approx(
+                expected, abs=4 * np.finfo(float).eps
+            )
+            h = 1e-5
+            actual_gradient = (
+                function(t, 1.0, delta, nu + h, *args) - function(t, 1.0, delta, nu - h, *args)
+            ) / (2 * h)
+            expected_gradient = (
+                np.exp(-factor * delta**2 * _decimal_phi2(complex(-nu - h)).real)
+                - np.exp(-factor * delta**2 * _decimal_phi2(complex(-nu + h)).real)
+            ) / (2 * h)
+            assert actual_gradient == pytest.approx(expected_gradient, rel=1e-7)
+        assert np.isfinite(at_switch)
+
+
+@pytest.mark.parametrize("scale", [0.1, 10.0])
+def test_dynamic_envelopes_dimensionless_scaling(scale):
+    np.testing.assert_allclose(
+        abragam(T * scale, 1.0, 0.4 / scale, 1e-9 / scale), abragam(T, 1.0, 0.4, 1e-9), rtol=1e-14
+    )
+    np.testing.assert_allclose(
+        keren(T * scale, 1.0, 0.4 / scale, 0.02 / scale, 20 / scale),
+        keren(T, 1.0, 0.4, 0.02, 20),
+        rtol=1e-14,
+    )
+
+
+def test_dynamic_envelopes_motional_narrowing_bounds():
+    delta = 0.4
+    for nu in (1e2, 1e4):
+        for function, factor, args in ((abragam, 1.0, ()), (keren, 2.0, (0.0,))):
+            expected = np.exp(-factor * delta**2 * T / nu)
+            assert (
+                np.max(abs(function(T, 1.0, delta, nu, *args) - expected))
+                <= factor * delta**2 / nu**2
+            )
+        omega = _omega0(20.0)
+        time = np.array([40.0, 80.0]) / nu
+        exponent = -np.log(keren(time, 1.0, delta, nu, 20.0))
+        rate = 2 * delta**2 * nu / (nu**2 + omega**2)
+        offset = 2 * delta**2 * (omega**2 - nu**2) / (nu**2 + omega**2) ** 2
+        np.testing.assert_allclose(exponent - rate * time, offset, rtol=1e-7, atol=1e-16)
+
+
+@pytest.mark.parametrize("time", [np.array(0.5), np.array([]), np.array([[0.0, 0.5], [1.0, 3.0]])])
+def test_dynamic_envelope_array_shapes(time):
+    assert abragam(time, 1.0, 0.4, 0.0).shape == time.shape
+    assert keren(time, 1.0, 0.4, 0.0, 20.0).shape == time.shape
+
+
+def test_abragam_fit_recovers_zero_rate():
+    from asymmetry.core.data.dataset import MuonDataset
+
+    time = np.linspace(0, 8, 161)
+    rng = np.random.default_rng(20261031)
+    errors = np.full(time.size, 0.01)
+    data = MuonDataset(
+        time=time, asymmetry=abragam(time, 1.0, 0.4, 0.0) + rng.normal(0, errors), error=errors
+    )
+    parameters = ParameterSet()
+    for name, value, fixed in (
+        ("A0", 1.0, True),
+        ("Delta", 0.4, True),
+        ("nu", 0.01, False),
+        ("baseline", 0.0, True),
+    ):
+        parameters.add(
+            Parameter(name=name, value=value, fixed=fixed, min=0.0 if name == "nu" else -np.inf)
+        )
+    result = FitEngine().fit(data, abragam, parameters)
+    assert result.success
+    assert result.parameters["nu"].value <= 2 * result.uncertainties["nu"]
+
+
+@pytest.mark.parametrize("argument", [[0.0, -1.0], [0j, -1j], 0.0, 0j, np.empty((0, 2))])
+def test_phi2_accepts_array_like_inputs(argument):
+    from asymmetry.core.fitting.phi_functions import phi2
+
+    expected = np.asarray(argument)
+    result = phi2(argument)
+    assert result.shape == expected.shape
+    assert np.iscomplexobj(result) == np.iscomplexobj(expected)
+    if result.size:
+        reference = np.array([_decimal_phi2(complex(z)) for z in expected.ravel()]).reshape(
+            expected.shape
+        )
+        np.testing.assert_allclose(result, reference, rtol=1e-15, atol=0)
