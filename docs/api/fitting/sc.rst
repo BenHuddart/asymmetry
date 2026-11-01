@@ -122,6 +122,9 @@ contributions added in quadrature.
 
 lambda and sigma conversion helpers:
 
+.. autoclass:: asymmetry.core.fitting.sc.GaussianWidth
+   :members:
+
 .. autofunction:: asymmetry.core.fitting.sc.constants.sigma_to_lambda_nm
 
 .. autofunction:: asymmetry.core.fitting.sc.constants.lambda_nm_to_sigma_us

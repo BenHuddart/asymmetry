@@ -63,7 +63,7 @@ Parameter trend models
 
 
 Field-scan baseline and peak inference
--------------------------------------
+--------------------------------------
 
 .. autofunction:: asymmetry.core.fitting.fit_scan_baseline
 

@@ -753,6 +753,19 @@ for _sc_name in ("SC_DWave", "SC_NonmonotonicD", "SC_TwoGap_SD", "SC_DWave_Q"):
     PARAMETER_MODEL_REFERENCES[_sc_name] = _SC_CM_REFERENCES
 
 
+for _sc_name in ("SC_Brandt_VortexLattice", "SC_Brandt_VortexLattice_Powder"):
+    PARAMETER_MODEL_APPLICABILITY[_sc_name] = (
+        "Use for the vortex-lattice field width in the type-II mixed state. "
+        "σ is the second-moment width γ_μ⟨ΔB²⟩^½, for exp(−σ²t²/2). "
+        "Multiply a Gaussian-component σ by √2 before fitting."
+    )
+    PARAMETER_MODEL_REFERENCES[_sc_name] = (
+        "E. H. Brandt, Phys. Rev. B 37, 2349 (1988).",
+        "E. H. Brandt, Phys. Rev. B 68, 054506 (2003).",
+        "F. L. Pratt et al., Phys. Rev. B 79, 052508 (2009).",
+    )
+
+
 _GENERIC_APPLICABILITY = (
     "Use this component when its mathematical form matches the expected physics "
     "and the fit remains stable across your selected data range."

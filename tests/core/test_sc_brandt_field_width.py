@@ -38,7 +38,9 @@ def test_zero_field_limit_ties_to_london_helper() -> None:
     # At B0 -> 0 the bracket is 1 + 1.21 = 2.21 and g -> 1, so the model must
     # reproduce the existing field-independent London conversion exactly.
     lam = 195.0
-    sigma0 = float(constants.lambda_nm_to_sigma_us(lam))
+    sigma0 = float(
+        constants.lambda_nm_to_sigma_us(lam, width=constants.GaussianWidth.SECOND_MOMENT)
+    )
     model_value = float(models.brandt_field_width_sigma(1e-9, lam, 25.0))
     assert np.isclose(model_value, sigma0, rtol=1e-6)
 

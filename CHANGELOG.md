@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Superconducting docs and component help distinguish second-moment widths from
+  the `Gaussian` width when inferring penetration depth.
+
 - Abragam and Keren stay accurate near zero fluctuation rate and weak field;
   negative or non-finite rates raise an error, and Keren is even in time.
 
@@ -69,6 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 
 ### Changed
+
+- `sigma_to_lambda_nm` and `lambda_nm_to_sigma_us` require an explicit `width=` convention.
 
 - Saved fit summaries record their objective; count fits display Poisson deviance
   and suppress χ² verdicts for sparse or unrecorded expected counts.

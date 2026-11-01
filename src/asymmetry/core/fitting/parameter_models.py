@@ -1317,10 +1317,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_Brandt_VortexLattice": ParameterModelComponentDefinition(
                 name="SC_Brandt_VortexLattice",
-                description=(
-                    "Brandt field-dependent vortex-lattice line width (single crystal): "
-                    "sigma(B0; lambda_ab, Bc2) for a type-II superconductor"
-                ),
+                description="Brandt second-moment σ(B0): single crystal",
                 function=sc_models.brandt_field_width_sigma,
                 param_names=["lambda_ab", "Bc2", "sigma_bg"],
                 param_defaults={"lambda_ab": 200.0, "Bc2": 10.0, "sigma_bg": 0.0},
@@ -1342,10 +1339,7 @@ def _register_superconducting_components() -> None:
             ),
             "SC_Brandt_VortexLattice_Powder": ParameterModelComponentDefinition(
                 name="SC_Brandt_VortexLattice_Powder",
-                description=(
-                    "Brandt field-dependent vortex-lattice line width (polycrystalline): "
-                    "sigma(B0; lambda_ab, Bc2) with the 3^(1/4) ab-plane powder average"
-                ),
+                description="Brandt second-moment σ(B0): ab-plane powder average",
                 function=sc_models.brandt_field_width_sigma_powder,
                 param_names=["lambda_ab", "Bc2", "sigma_bg"],
                 param_defaults={"lambda_ab": 200.0, "Bc2": 10.0, "sigma_bg": 0.0},

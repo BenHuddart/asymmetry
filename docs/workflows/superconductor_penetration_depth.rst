@@ -30,25 +30,26 @@ lattice and samples the inhomogeneous internal field, drawn from the
 lattice's field distribution :math:`p(B)`. The distribution is asymmetric:
 a sharp peak at the saddle-point field between three vortices, with a long
 tail toward the high-field cores (see Brandt, Phys. Rev. B **37**, 2349
-(1988)). The TF-μSR line is well approximated by a Gaussian relaxation of
-the time-domain asymmetry,
+(1988)). The Gaussian approximation to the time-domain envelope can be written as
 
 .. math::
 
-   G(t) = \exp\!\left(-\tfrac{1}{2}\sigma^2 t^2\right),
+   G(t)=\exp(-\sigma_2^2t^2/2)=\exp(-\sigma_G^2t^2),
+   \qquad \sigma_2=\gamma_\mu\langle\Delta B^2\rangle^{1/2}
+   =\sqrt{2}\sigma_G.
 
-whose second moment is set by the width of :math:`p(B)`,
-:math:`\sigma = \gamma_\mu \langle \Delta B^2 \rangle^{1/2}`, with
-:math:`\gamma_\mu / 2\pi = 135.5\;\mathrm{MHz/T}`. For a triangular vortex
-lattice in the London limit :math:`\sigma` is fixed by the penetration
-depth alone, so a single measured number returns :math:`\lambda_L`. The
-WiMDA teaching example uses the compact guide relation
+The ``Gaussian`` component fits :math:`\sigma_G`, while the second-moment
+width :math:`\sigma_2` enters the London conversion. In the fitted trends
+below, :math:`\sigma` denotes :math:`\sigma_G`. For a triangular vortex lattice
+in the London limit the superconducting width is proportional to
+:math:`\lambda_L^{-2}`. The teaching guide uses the rounded relation
 
 .. math::
 
-   \sigma(T \to 0)\;[\mu\mathrm{s}^{-1}] = \frac{75780}{\lambda_L^2\;[\mathrm{nm}]},
+   \sigma_G(T\to0)\;[\mu\mathrm{s}^{-1}]
+   =\frac{75780}{\lambda_L^2\;[\mathrm{nm}]},
 
-so that :math:`\lambda_L = \sqrt{75780/\sigma}`.
+so that :math:`\lambda_L=\sqrt{75780/\sigma_G}`.
 
 The temperature dependence carries the physics. The superfluid density
 :math:`\rho_s(T) \propto \sigma(T) \propto 1/\lambda^2(T)` reflects the
@@ -67,17 +68,19 @@ nodes gives a linear-in-:math:`T` decrease at low :math:`T`; a two-gap
 
       \sigma = 0.0609\,\gamma_\mu\,\frac{\Phi_0}{\lambda_L^2},
 
-   with :math:`\Phi_0` the flux quantum. Asymmetry implements this as
-   :func:`asymmetry.core.fitting.sc.constants.sigma_to_lambda_nm`, using
-   :math:`\gamma_\mu` in rad s⁻¹ T⁻¹. The teaching guide's coefficient
-   (75780, with :math:`\sigma` in μs⁻¹ and :math:`\lambda` in nm) and
-   Bernhard *et al.*'s equivalent :math:`\sigma = 7.086\times10^{4}\,
-   \lambda_{ab}^{-2}` (Phys. Rev. B **52**, 10488 (1995)) differ by about
-   7 %: they are the same Brandt relation written in different conventions.
-   The absolute :math:`\lambda_L` therefore carries a convention-level
-   ambiguity of order 10 %, while the *shape* of :math:`\lambda_L(T)` — flat
-   at low :math:`T`, divergent near :math:`T_c` — is convention-independent
-   and is what fixes the gap structure.
+   with :math:`\Phi_0` the flux quantum; the width in this equation is
+   :math:`\sigma_2`. Brandt's field variance is
+   :math:`\langle\Delta B^2\rangle=0.00371\Phi_0^2/\lambda_L^4`
+   (Phys. Rev. B **68**, 054506 (2003), Eq. (11)). The rounded square root
+   gives the coefficient 0.0609.
+
+   :func:`asymmetry.core.fitting.sc.constants.sigma_to_lambda_nm` takes
+   ``width=GaussianWidth.GAUSSIAN_COMPONENT`` for the fitted
+   :math:`\sigma_G`, or ``width=GaussianWidth.SECOND_MOMENT`` for
+   :math:`\sigma_2`. With the library constants, the coefficient for
+   :math:`\sigma_G` is approximately :math:`7.58\times10^4`, consistent with
+   the guide's rounded 75780. See :ref:`sc-width-convention` for the API and
+   the trend-panel conversion required by the Brandt field models.
 
 The data
 --------
@@ -114,7 +117,7 @@ Step 1 — Fit a TF run for σ
 For each temperature the per-run recipe is the same. Open the **Fit** dock,
 build the composite ``Oscillatory * Gaussian + Constant`` in the function
 builder (see :doc:`/reference/composite_models`), and record the Gaussian
-envelope's :math:`\sigma` — the second moment of :math:`p(B)` — with its
+envelope's :math:`\sigma_G=\gamma_\mu B_{\mathrm{rms}}/\sqrt{2}` with its
 uncertainty. The ``Oscillatory`` component carries the average field's
 Larmor frequency; the additive ``Constant`` absorbs the non-precessing
 baseline. The fitted ``σ`` = 1.164 μs⁻¹ reproduces the WiMDA reference
@@ -269,7 +272,7 @@ Cross-reference — LiFeAs, the field width B_rms(T)
 
 The **LiFeAs** corpus example runs the same vortex-lattice workflow on the
 "111" iron-arsenide superconductor, but reports the linewidth as a field
-width :math:`B_\mathrm{rms} = \sigma_\mathrm{VL}/\gamma_\mu` (mT) rather
+width :math:`B_\mathrm{rms}=\sqrt{2}\sigma_{G,\mathrm{VL}}/\gamma_\mu` (mT) rather
 than a rate, following Pratt *et al.*, Phys. Rev. B **79**, 052508 (2009).
 The superconducting broadening adds in quadrature to a
 temperature-independent nuclear width, :math:`\sigma^2 = \sigma_\mathrm{VL}^2
@@ -372,10 +375,11 @@ Assumptions and limitations
   suppressed; and in extremely anisotropic layered materials a pancake-
   vortex crossover (Bi-2212 above) breaks the single-:math:`\lambda`
   picture even well inside the mixed state.
-- **Convention on the absolute :math:`\lambda`.** The guide's coefficient
-  (75780) and the Brandt/Bernhard form differ by ~7 %, so the absolute
-  :math:`\lambda_L` is convention-dependent at the ~10 % level; the *shape*
-  of :math:`\lambda_L(T)` is not.
+- **Width convention.** Convert :math:`\sigma_G` to
+  :math:`\sigma_2=\sqrt{2}\sigma_G` when using a second-moment relation.
+  Omitting this factor makes :math:`\lambda_L` too long by
+  :math:`2^{1/4}`. Geometry and vortex-lattice assumptions must be assessed
+  separately; normalised :math:`\rho_s(T)` is unchanged by this width rescaling.
 - **Data range.** Without points above :math:`T_c` the fit cannot separate
   :math:`T_c` from :math:`\sigma_{bg}`; without points below
   :math:`T/T_c \approx 0.3` a small gap in a two-gap model is poorly

@@ -81,13 +81,15 @@ def test_muonium_default_matches_the_measured_interval() -> None:
 def test_non_dipolar_consumer_values_follow_independent_references() -> None:
     from asymmetry.core.fitting.muonium import G_E_MHZ_PER_G
     from asymmetry.core.fitting.sc.bcs import gap_ratio_from_mev
-    from asymmetry.core.fitting.sc.constants import lambda_nm_to_sigma_us
+    from asymmetry.core.fitting.sc.constants import GaussianWidth, lambda_nm_to_sigma_us
 
     # London-limit conversion with independent CODATA 2018 and revised SI values.
     gamma_mu = 2 * 4.49044830e-26 / (6.62607015e-34 / (2 * pi))
     flux_quantum = 6.62607015e-34 / (2 * 1.602176634e-19)
     sigma = 0.0609 * gamma_mu * flux_quantum / (200e-9) ** 2 * 1e-6
-    assert lambda_nm_to_sigma_us(200.0) == pytest.approx(sigma, rel=1e-9)
+    assert lambda_nm_to_sigma_us(200.0, width=GaussianWidth.SECOND_MOMENT) == pytest.approx(
+        sigma, rel=1e-9
+    )
     assert G_E_MHZ_PER_G == pytest.approx(2.802495142420715, rel=1e-12)
     assert gap_ratio_from_mev(1.0, 10.0) == pytest.approx(
         1.602176634e-19 / (1.380649e-23 * 1e3 * 10), rel=1e-12

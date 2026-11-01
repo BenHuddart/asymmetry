@@ -69,6 +69,7 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
+from asymmetry.core.fitting.sc import GaussianWidth
 from asymmetry.core.utils.constants import MAGNETIC_FLUX_QUANTUM_WB
 
 from .._base import CaptureContext
@@ -79,7 +80,6 @@ _DATA = "Superconductivity/LiFeAs/data/deltat_pta_gps_%d.bin"
 
 # The teaching guide uses γ_µ = 0.8516 µs⁻¹/mT in its field-width conversion.
 _GAMMA = 0.8516  # µs⁻¹ per mT: σ_paper[µs⁻¹] = γ_µ · B_rms[mT]
-_SQRT2 = np.sqrt(2.0)  # Asymmetry Gaussian exp(−(σt)²) → σ_paper = √2 σ_A
 _PHI0_WB = float(f"{MAGNETIC_FLUX_QUANTUM_WB:.10g}")  # Wb, flux quantum
 
 # --- Sample-1 (LFA) 40 mT (400 G) temperature scan, ascending T ------------ #
@@ -152,7 +152,7 @@ def _brms_mT(sigma_a: float, sigma_n: float) -> float:  # noqa: N802 (physics sy
     quadrature (paper Eq. 2), apply the √2 convention factor, then divide by γ_µ.
     """
     svl_a = np.sqrt(max(sigma_a**2 - sigma_n**2, 0.0))
-    return _SQRT2 * svl_a / _GAMMA
+    return GaussianWidth.GAUSSIAN_COMPONENT.value * svl_a / _GAMMA
 
 
 def _brms_from_lambda(lambda_nm: float) -> float:

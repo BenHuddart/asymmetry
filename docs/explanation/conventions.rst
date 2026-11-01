@@ -96,6 +96,18 @@ mappings to the ``Gaussian`` component:
        :math:`e^{-\Delta^2t^2}`; ``Gaussian`` at :math:`\sigma=\Delta`.
        This limit matches the early-time KT curvature, not its full static tail.
 
+   * - Temperature-dependent ``SC_*``
+     - Width parameters inherit the convention of the input trend;
+       normalised :math:`\rho_s(T)` is unchanged by constant width rescaling.
+   * - ``SC_Brandt_*`` and σ ↔ λ helpers
+     - Second-moment width :math:`\sigma_2=\gamma_\mu B_\mathrm{rms}` for
+       :math:`e^{-\sigma_2^2t^2/2}`. Helpers require ``width=`` to select
+       :math:`\sigma_2` or :math:`\sigma_G=\sigma_2/\sqrt{2}`.
+   * - ``VortexLattice`` and ``VortexLatticePowder``
+     - The field distribution is calibrated to the Brandt second moment;
+       the time signal is its characteristic function, without a Gaussian-width
+       substitution. See :ref:`sc-width-convention`.
+
 The Gaussian and zero-field KT functions first differ at fourth order:
 :math:`G_{\mathrm{KT}}(t)-e^{-\Delta^2t^2}=-\Delta^4t^4/12+O(t^6)`.
 See :ref:`fit-gaussian` and :ref:`fit-static-gkt-zf` for applicability.
