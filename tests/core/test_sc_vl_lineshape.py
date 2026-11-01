@@ -182,16 +182,16 @@ def test_fft_build_matches_direct_reciprocal_sum() -> None:
     the *set* of field offsets must be identical to the direct modified-London sum
     (only the ordering may differ), so every moment and R(t) is unchanged.
     """
-    from asymmetry.core.fitting.sc.constants import FLUX_QUANTUM_WB
     from asymmetry.core.fitting.sc.lineshape import _centered_field_offsets
-    from asymmetry.core.utils.constants import GAUSS_TO_TESLA
 
     n_g, n_grid = _DEFAULT_N_G, _DEFAULT_N_GRID
     for lam_eff_nm, B0_g, Bc2 in [(195.0, 400.0, 25.0), (240.0, 1600.0, 30.0)]:
-        B0_t = B0_g * GAUSS_TO_TESLA
+        B0_t = B0_g * 1e-4
+        # Revised SI h/(2e), truncated to the precision used by the field map.
+        flux_quantum_wb = 2.067833848e-15
         lam = lam_eff_nm * 1.0e-9
-        xi = np.sqrt(FLUX_QUANTUM_WB / (2.0 * np.pi * Bc2))
-        a = np.sqrt(2.0 * FLUX_QUANTUM_WB / (np.sqrt(3.0) * B0_t))
+        xi = np.sqrt(flux_quantum_wb / (2.0 * np.pi * Bc2))
+        a = np.sqrt(2.0 * flux_quantum_wb / (np.sqrt(3.0) * B0_t))
         a1 = np.array([a, 0.0])
         a2 = np.array([0.5 * a, np.sqrt(3.0) / 2.0 * a])
         cell = abs(a1[0] * a2[1] - a1[1] * a2[0])
