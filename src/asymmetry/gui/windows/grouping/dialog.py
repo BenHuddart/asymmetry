@@ -81,11 +81,9 @@ from asymmetry.core.transform import (
     T0Assessment,
     assess_t0,
     available_background_modes,
-    calibrate_deadtime_from_histograms,
     common_t0_for_groups,
     detected_detector_t0_bins,
     effective_detector_t0_bins,
-    estimate_deadtime_from_histograms,
     excluded_detector_indices,
     filter_excluded_indices,
     find_t0_for_run,
@@ -3458,25 +3456,6 @@ class GroupingDialog(QDialog):
         default_tau = 0.01 if manual_tau is None else float(manual_tau)
         return [default_tau] * n_histograms
 
-    def _estimate_deadtime_us_from_reference(self) -> float | None:
-        """Estimate a uniform deadtime value from the current reference run."""
-        if self._run is None or not self._run.histograms:
-            return None
-        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-        _t0_bin, t_good_offset, _first_good_bin, last_good_bin = (
-            self._resolve_good_bin_limits_from_controls()
-        )
-        try:
-            good_frames = float(grouping.get("good_frames", 1.0))
-        except (TypeError, ValueError):
-            good_frames = 1.0
-        return estimate_deadtime_from_histograms(
-            self._run.histograms,
-            t_good_offset=t_good_offset,
-            last_good_bin=last_good_bin,
-            num_good_frames=good_frames,
-        )
-
     def _resolve_deadtime_payload(self, *, show_warnings: bool = False) -> dict[str, Any] | None:
         """Return resolved deadtime payload for the current dialog state."""
         mode = self._current_deadtime_mode()
@@ -3521,7 +3500,7 @@ class GroupingDialog(QDialog):
             return payload
 
         if mode == "estimate":
-            tau_us = self._estimate_deadtime_us_from_reference()
+            tau_us = self._deadtime_estimated_us
             if tau_us is None or not np.isfinite(tau_us):
                 if show_warnings:
                     QMessageBox.warning(
@@ -3529,48 +3508,18 @@ class GroupingDialog(QDialog):
                         "Deadtime Estimate Failed",
                         "The reference run did not provide enough valid early-time counts to estimate deadtime.",
                     )
-                return None
+                    return None
             payload.update(
                 {
                     "deadtime_method": "estimate",
                     "deadtime_estimated_us": tau_us,
                     "deadtime_reference_run": int(self._reference_dataset.run_number),
-                    "dead_time_us": [tau_us] * n_histograms,
+                    "dead_time_us": [] if tau_us is None else [tau_us] * n_histograms,
                 }
             )
             return payload
 
         return None
-
-    def _calibrate_deadtime_from_reference(self) -> None:
-        """Calibrate a per-detector deadtime table from the reference run."""
-        if self._run is None or not self._run.histograms:
-            return
-        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-        _t0_bin, t_good_offset, _first_good_bin, last_good_bin = (
-            self._resolve_good_bin_limits_from_controls()
-        )
-        try:
-            good_frames = float(grouping.get("good_frames", 1.0))
-        except (TypeError, ValueError):
-            good_frames = 1.0
-        values = calibrate_deadtime_from_histograms(
-            self._run.histograms,
-            t_good_offset=t_good_offset,
-            last_good_bin=last_good_bin,
-            num_good_frames=good_frames,
-        )
-        if not values:
-            QMessageBox.warning(
-                self,
-                "Deadtime Calibration Failed",
-                "The reference run did not provide enough valid early-time counts to calibrate per-detector deadtime values.",
-            )
-            return
-        self._deadtime_manual_values_us = list(values)
-        self._deadtime_manual_method = "calibrate"
-        self._set_deadtime_mode("manual")
-        self._update_deadtime_status()
 
     def _update_deadtime_status(self) -> None:
         """Re-seed the inline deadtime section from the current draft state."""
@@ -3605,16 +3554,13 @@ class GroupingDialog(QDialog):
             if ds.run is None or not ds.run.histograms:
                 continue
             run_grouping = ds.run.grouping if isinstance(ds.run.grouping, dict) else {}
-            try:
-                good_frames = float(run_grouping.get("good_frames", 1.0))
-            except (TypeError, ValueError):
-                good_frames = 1.0
+            frames = run_grouping.get("good_frames")
             source_runs.append(
                 DeadtimeSourceRun(
                     run_number=int(ds.run_number),
                     label=f"{ds.run_label} (run {ds.run_number})",
                     histograms=ds.run.histograms,
-                    good_frames=good_frames,
+                    good_frames=frames,
                 )
             )
         return source_runs
@@ -4465,6 +4411,7 @@ class GroupingDialog(QDialog):
         alpha_section = getattr(self, "_alpha_section", None)
         if alpha_section is not None:
             alpha_section.shutdown()
+        self._deadtime_section.shutdown()
         beta_section = getattr(self, "_beta_section", None)
         if beta_section is not None:
             beta_section.shutdown()

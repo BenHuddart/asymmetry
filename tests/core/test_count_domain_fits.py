@@ -38,7 +38,7 @@ from asymmetry.core.simulate import (
     simulate_double_pulse_run,
     simulate_run,
 )
-from asymmetry.core.transform.deadtime import promote_deadtime_to_grouping
+from asymmetry.core.transform.deadtime import DeadtimeCalibration, promote_deadtime_to_grouping
 from asymmetry.core.transform.promote import promote_t0_to_grouping
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -654,47 +654,17 @@ def test_deadtime_off_state_is_noop():
     assert with_dt.parameters["A"].value == pytest.approx(base.parameters["A"].value, abs=1e-6)
 
 
-def test_promote_deadtime_replace_and_additive():
+def test_promote_deadtime_writes_total_coefficients_and_provenance():
     grouping = {"dead_time_us": [0.0, 0.0]}
-    out = promote_deadtime_to_grouping(
-        grouping, 0.012, n_histograms=2, detector_indices=[0], additive=False
-    )
-    assert out["before"] == {0: 0.0}
-    assert out["after"] == {0: 0.012}
-    assert grouping["dead_time_us"] == [0.012, 0.0]
-    assert grouping["deadtime_correction"] is True
-    assert grouping["deadtime_method"] == "value"
-
-    out2 = promote_deadtime_to_grouping(
-        grouping, 0.003, n_histograms=2, detector_indices=[0], additive=True
-    )
-    assert out2["after"][0] == pytest.approx(0.015)
-
-
-def test_promote_deadtime_defaults_to_all_detectors():
-    grouping = {}
-    out = promote_deadtime_to_grouping(grouping, 0.02, n_histograms=3)
-    assert out["after"] == {0: 0.02, 1: 0.02, 2: 0.02}
-
-
-def test_promote_deadtime_per_detector_list_and_method():
-    """A per-detector sequence aligns by index; ``method`` records provenance."""
-    grouping = {}
-    out = promote_deadtime_to_grouping(
-        grouping, [0.012, 0.018], n_histograms=2, method="maxent_fit"
-    )
-    assert out["before"] == {0: 0.0, 1: 0.0}
-    assert out["after"] == {0: 0.012, 1: 0.018}
-    assert grouping["dead_time_us"] == [0.012, 0.018]
+    calibration = DeadtimeCalibration((-0.012, 0.018), (0.001, 0.002), "maxent_fit", 42)
+    out = promote_deadtime_to_grouping(grouping, calibration)
+    assert out == {"before": {0: 0.0, 1: 0.0}, "after": {0: -0.012, 1: 0.018}}
+    assert grouping["dead_time_us"] == [-0.012, 0.018]
+    assert grouping["deadtime_errors_us"] == [0.001, 0.002]
+    assert grouping["deadtime_correction"]
+    assert grouping["deadtime_mode"] == "manual"
     assert grouping["deadtime_method"] == "maxent_fit"
-    assert grouping["deadtime_correction"] is True
-
-
-def test_promote_deadtime_short_list_pads_with_zero():
-    """A sequence shorter than the detector count leaves the tail untouched."""
-    grouping = {}
-    out = promote_deadtime_to_grouping(grouping, [0.02], n_histograms=3)
-    assert out["after"] == {0: 0.02, 1: 0.0, 2: 0.0}
+    assert grouping["deadtime_reference_run"] == 42
 
 
 def _double_pulse_dataset(*, dpsep_us=0.324, seed=3):

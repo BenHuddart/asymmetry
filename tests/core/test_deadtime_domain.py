@@ -89,13 +89,14 @@ def test_nonfinite_calibration_text_is_rejected(text):
         deadtime.parse_deadtime_calibration_text(text)
 
 
-def test_promotion_preserves_sign_and_rejects_nonfinite_results_atomically():
+def test_calibration_preserves_sign_and_rejects_nonfinite_results_atomically():
     grouping = {"dead_time_us": [0.1, 0.2]}
-    deadtime.promote_deadtime_to_grouping(grouping, [-0.2, -0.1], n_histograms=2, additive=True)
+    calibration = deadtime.DeadtimeCalibration((-0.1, 0.1), (None, None), "count_fit", 7)
+    deadtime.promote_deadtime_to_grouping(grouping, calibration)
     assert grouping["dead_time_us"] == pytest.approx([-0.1, 0.1])
     before = dict(grouping)
     with pytest.raises(deadtime.DeadtimeCorrectionError):
-        deadtime.promote_deadtime_to_grouping(grouping, np.inf, n_histograms=2, additive=True)
+        deadtime.DeadtimeCalibration((np.inf,), (None,), "count_fit", 7)
     assert grouping == before
 
 
@@ -144,10 +145,19 @@ def test_reduction_rejects_a_saturated_unused_detector_outside_the_good_window()
     assert error.value.bin_index == 0
 
 
-def test_additive_promotion_rejects_overflow_before_mutating_grouping():
+def test_increment_overflow_is_rejected_before_promotion():
+    from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionStatus
+
     grouping = {"dead_time_us": [1e308, 0.0]}
+    base = CorrectionOutcome(
+        "deadtime",
+        "manual",
+        CorrectionStatus.APPLIED,
+        effective={"tau_us": [1e308, 0.0]},
+        uncertainty="unknown",
+    )
     with pytest.raises(deadtime.DeadtimeCorrectionError):
-        deadtime.promote_deadtime_to_grouping(
-            grouping, [1e308, -0.1], n_histograms=2, additive=True
+        deadtime.DeadtimeCalibration.from_increment(
+            base, 1e308, n_histograms=2, detector_indices=[0], error_us=None, source_run=7
         )
     assert grouping == {"dead_time_us": [1e308, 0.0]}

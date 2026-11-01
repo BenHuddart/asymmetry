@@ -1,9 +1,4 @@
-"""Tests for the inline deadtime-configuration section (Corrections panel).
-
-Covers the embeddable body that replaced the retired ``DeadtimeDialog``: mode
-seeding, the ``changed`` signal on edits, Fill-all, and the Estimate action
-(``estimate_deadtime_from_histograms`` monkeypatched).
-"""
+"""Inline deadtime modes, edits, layout, and worker calibration results."""
 
 from __future__ import annotations
 
@@ -19,11 +14,13 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.transform.deadtime import DeadtimeCalibration
 from asymmetry.gui.windows.grouping import deadtime_section as section_module
 from asymmetry.gui.windows.grouping.deadtime_section import (
     DeadtimeSectionWidget,
     DeadtimeSourceRun,
 )
+from tests._qt_helpers import wait_for
 
 
 def _source_runs() -> list[DeadtimeSourceRun]:
@@ -100,16 +97,22 @@ def test_fill_all_updates_values_and_emits(qapp: QApplication) -> None:
 def test_estimate_fills_table_and_emits(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(section_module, "estimate_deadtime_from_histograms", lambda *a, **k: 0.05)
+    monkeypatch.setattr(
+        section_module,
+        "fit_deadtime_calibration",
+        lambda *args, **kwargs: DeadtimeCalibration((0.05, 0.05), (0.001, 0.001), "estimate", 4101),
+    )
     section = _configured(mode="estimate")
     fired: list[int] = []
     section.changed.connect(lambda: fired.append(1))
     section._estimate_btn.click()
+    wait_for(lambda: bool(fired), qapp)
     policy = section.get_policy()
     assert policy.mode == "estimate"
     assert policy.estimated_us == pytest.approx(0.05)
     assert policy.source_run == 4101
     assert fired
+    section.shutdown()
 
 
 def test_off_mode_policy(qapp: QApplication) -> None:

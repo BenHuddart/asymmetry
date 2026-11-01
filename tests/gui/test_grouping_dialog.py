@@ -20,19 +20,13 @@ import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.t0 import T0Assessment
-from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
 def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
-    """Pump a real nested event loop until *predicate* holds (queued signals).
-
-    Both the alpha estimate (B4) and the background-configure preview grouping
-    run on a ``TaskRunner`` worker thread now, so tests that trigger them must
-    pump the event loop for the finished/error callback to land instead of
-    reading state right after the triggering call returns.
-    """
+    """Pump queued worker signals until the predicate holds or times out."""
     if predicate():
         return
     loop = QEventLoop()
@@ -212,13 +206,11 @@ def _dataset_with_deadtime_profile(run_number: int, tau_us: float) -> MuonDatase
     amplitude = 120.0
     bin_width = 0.01
     num_good_frames = 1000.0
-    lifetime_us = 2.1969811
+    lifetime_us = MUON_LIFETIME_US
     times = (np.arange(12, dtype=float) + 1.0) * bin_width
     frame_scale = num_good_frames * bin_width
     true_counts = amplitude * np.exp(-times / lifetime_us)
-    observed = true_counts * (
-        1.0 - (true_counts / frame_scale) * lifetime_us * (1.0 - np.exp(-tau_us / lifetime_us))
-    )
+    observed = true_counts / (1 + true_counts * tau_us / frame_scale)
     histograms = [Histogram(observed.copy(), bin_width=bin_width) for _ in range(4)]
     run = Run(
         run_number=run_number,
@@ -1065,7 +1057,9 @@ def test_estimate_deadtime_uses_reference_run_only(qapp: QApplication) -> None:
     )
 
     dialog._set_deadtime_mode("estimate")
-
+    dialog._update_deadtime_status()
+    dialog._deadtime_section._on_estimate_clicked()
+    _wait_until(lambda: dialog._deadtime_section.isEnabled())
     payload = dialog.get_grouping_result()
 
     assert payload is not None
@@ -1082,14 +1076,19 @@ def test_calibrate_deadtime_populates_explicit_table(
 ) -> None:
     dialog = GroupingDialog([_dataset_with_histograms()])
 
-    monkeypatch.setattr(
-        grouping_dialog_dialog_module,
-        "calibrate_deadtime_from_histograms",
-        lambda *args, **kwargs: [0.011, 0.022],
-    )
+    from asymmetry.core.transform.deadtime import DeadtimeCalibration
+    from asymmetry.gui.windows.grouping import deadtime_section
 
+    monkeypatch.setattr(
+        deadtime_section,
+        "fit_deadtime_calibration",
+        lambda *args, **kwargs: DeadtimeCalibration(
+            (0.011, 0.022), (None, None), "calibrate", 4001
+        ),
+    )
     dialog._set_deadtime_mode("manual")
-    dialog._calibrate_deadtime_from_reference()
+    dialog._deadtime_section._on_calibrate_clicked()
+    _wait_until(lambda: dialog._deadtime_section.isEnabled())
     payload = dialog.get_grouping_result()
 
     assert payload is not None

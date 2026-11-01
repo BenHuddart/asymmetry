@@ -60,7 +60,14 @@ Asymmetry agrees with Mantid and the analytic inverse to relative tolerance
 :math:`10^{-12}`. ``CalMuonDeadTime`` v1 recovered noiseless signed synthetic
 coefficients −0.02, 0 and +0.02 µs within :math:`2\times10^{-12}` µs; its
 `published examples <https://docs.mantidproject.org/v6.13.1/algorithms/CalMuonDeadTime-v1.html>`_
-also include negative fitted values. Calibration noise and model mismatch can
+also include negative fitted values. Asymmetry's rational per-detector fit
+agrees on these noiseless inputs within :math:`10^{-9}` µs. The inputs are
+:math:`N_0=10000` counts/bin, lifetime 2.1969811 µs, one million frames,
+0.016 µs bins with edges :math:`0.496+k\times0.016` µs
+(:math:`k=0,\ldots,282`), and fit range 0.5–5 µs. Asymmetry weights raw-count
+residuals by Poisson standard deviations, while Mantid fits the transformed
+regression; this is not a claim of noisy-data estimator equivalence.
+Calibration noise and model mismatch can
 produce negative fitted coefficients; the sign does not diagnose an individual
 calibration's quality.
 
