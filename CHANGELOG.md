@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Nodal and anisotropic superconducting laws resolve Fermi-surface averages down
+  to T/Tc = 0.005; density helpers choose resolution without `n_phi` or `n_theta`.
+
 - Superconducting density laws use a nonsingular thermal integral with controlled
   quadrature error, correcting biases in the default s-wave curve and gap fits.
 

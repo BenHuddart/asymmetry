@@ -582,12 +582,28 @@ Carrington–Manzano gap interpolation to :math:`10^{-10}` on the tested grid.
 This verifies evaluation of the interpolation; its physical approximation is
 separate from numerical quadrature accuracy.
 
-Angular averages use Gauss–Legendre quadrature. The ``n_phi`` and ``n_theta``
-arguments of the density helpers control angular resolution; check convergence
-for nodal or strongly anisotropic gaps. The thermal-integral bound applies
-before that angular average. The limiting values at zero temperature and at
-:math:`T\ge T_c` are imposed analytically, and intermediate values carry
-floating-point round-off without clipping.
+Angular averages use each gap form's declared period of :math:`|g|` and
+mirror symmetry about the equator. A nested periodic trapezoid integrates the
+azimuth; Gauss–Legendre quadrature integrates :math:`\cos\theta` on a sphere.
+Both coordinates refine until the sum of twice their successive differences
+is at most :math:`10^{-7}`. A thermal-scale resolution requirement prevents
+coarse grids from accepting an unresolved nodal contribution. Independent
+angular integration checks the registered models to :math:`10^{-8}` on the
+reference grid, including :math:`T/T_c=0.005`.
+
+Angular quadrature supports :math:`T/T_c\ge0.005`. Lower positive temperatures,
+or failure to converge within 16,384 nodes per coordinate, raise ``ValueError``
+naming the gap form and reduced temperature. Azimuth-independent cylindrical
+gaps require no angular quadrature and support every positive temperature.
+Zero temperature and :math:`T\ge T_c` use analytic limits. Values are not clipped.
+The density helpers choose their resolution; they have no ``n_phi`` or
+``n_theta`` arguments.
+
+For angular integration, a cached cubic Hermite table of :math:`I(d)` uses
+analytically integrated derivatives, with absolute interpolation error below
+:math:`10^{-11}` on :math:`0\le d\le80`. Beyond 80 the bound
+:math:`|I(d)|\le dK_1(d)<3\times10^{-33}` permits zero. The isotropic
+cylindrical calculation uses the thermal quadrature directly.
 
 Assumptions and limitations
 ---------------------------

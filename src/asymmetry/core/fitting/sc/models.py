@@ -44,7 +44,7 @@ from numpy.typing import NDArray
 from asymmetry.core.fitting.sc import gaps
 from asymmetry.core.fitting.sc.bcs import delta_generalized, resolve_gap_ratio
 from asymmetry.core.fitting.sc.constants import GaussianWidth, lambda_nm_to_sigma_us
-from asymmetry.core.fitting.sc.kernel import superfluid_density, superfluid_density_3d
+from asymmetry.core.fitting.sc.kernel import superfluid_density
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA
 
 ArrayLikeFloat = NDArray[np.float64]
@@ -119,7 +119,6 @@ def rho_s_wave(
     Tc: float,
     gap_ratio: float = 1.764,
     gap_mev: float | None = None,
-    n_phi: int = 64,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for isotropic s-wave gap, :math:`g(\phi)=1`.
 
@@ -133,8 +132,6 @@ def rho_s_wave(
         Dimensionless ratio :math:`\Delta_0/(k_B T_c)`.
     gap_mev
         Optional :math:`\Delta_0` in meV. Overrides ``gap_ratio`` when given.
-    n_phi
-        Number of angular quadrature points for Fermi-surface averaging.
 
     Returns
     -------
@@ -146,8 +143,7 @@ def rho_s_wave(
         T,
         tc=float(Tc),
         gap_ratio=ratio,
-        gap_function=gaps.isotropic_s,
-        n_phi=n_phi,
+        gap=gaps.GAP_FORMS["isotropic_s"],
     )
 
 
@@ -157,7 +153,6 @@ def rho_d_wave(
     Tc: float,
     gap_ratio: float = 2.14,
     gap_mev: float | None = None,
-    n_phi: int = 64,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for d-wave :math:`g(\phi)=\cos(2\phi)`.
 
@@ -171,8 +166,7 @@ def rho_d_wave(
         T,
         tc=float(Tc),
         gap_ratio=ratio,
-        gap_function=gaps.d_wave,
-        n_phi=n_phi,
+        gap=gaps.GAP_FORMS["d_wave"],
         reduced_gap_function=_make_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor=_D_WAVE_SHAPE_FACTOR,
@@ -188,7 +182,6 @@ def rho_anisotropic_s_cos4(
     a_anis: float = 0.2,
     shape_factor_a: float = 0.0,
     gap_mev: float | None = None,
-    n_phi: int = 64,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for anisotropic s-wave ``1 + a*cos(4phi)``.
 
@@ -203,9 +196,8 @@ def rho_anisotropic_s_cos4(
         T,
         tc=float(Tc),
         gap_ratio=ratio,
-        gap_function=gaps.anisotropic_s_cos4,
+        gap=gaps.GAP_FORMS["anisotropic_s_cos4"],
         gap_params={"a_anis": float(a_anis)},
-        n_phi=n_phi,
         reduced_gap_function=_optional_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor_a=shape_factor_a,
@@ -220,7 +212,6 @@ def rho_nonmonotonic_d(
     gap_ratio: float = 2.14,
     beta_nm: float = 0.8,
     gap_mev: float | None = None,
-    n_phi: int = 64,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for nonmonotonic d-wave.
 
@@ -238,9 +229,8 @@ def rho_nonmonotonic_d(
         T,
         tc=float(Tc),
         gap_ratio=ratio,
-        gap_function=gaps.nonmonotonic_d_wave,
+        gap=gaps.GAP_FORMS["nonmonotonic_d_wave"],
         gap_params={"beta_nm": float(beta_nm)},
-        n_phi=n_phi,
         reduced_gap_function=_make_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor=_D_WAVE_SHAPE_FACTOR,
@@ -255,7 +245,6 @@ def rho_p_wave_axial(
     gap_ratio: float = 2.0,
     shape_factor_a: float = 0.0,
     gap_mev: float | None = None,
-    n_phi: int = 64,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for 2D axial p-wave, :math:`g(\phi)=\cos\phi`.
 
@@ -268,8 +257,7 @@ def rho_p_wave_axial(
         T,
         tc=float(Tc),
         gap_ratio=ratio,
-        gap_function=gaps.p_wave_axial_2d,
-        n_phi=n_phi,
+        gap=gaps.GAP_FORMS["p_wave_axial_2d"],
         reduced_gap_function=_optional_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor_a=shape_factor_a,
@@ -284,7 +272,6 @@ def rho_extended_s(
     gap_ratio: float = 2.14,
     signed: bool = False,
     gap_mev: float | None = None,
-    n_phi: int = 64,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for extended s-wave based on ``cos(2phi)``.
 
@@ -299,9 +286,8 @@ def rho_extended_s(
         T,
         tc=float(Tc),
         gap_ratio=ratio,
-        gap_function=gaps.extended_s,
+        gap=gaps.GAP_FORMS["extended_s"],
         gap_params={"signed": bool(signed)},
-        n_phi=n_phi,
         reduced_gap_function=_make_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor=_EXTENDED_S_SHAPE_FACTOR,
@@ -316,10 +302,8 @@ def rho_p_wave_polar_3d(
     gap_ratio: float = 2.0,
     shape_factor_a: float = 0.0,
     gap_mev: float | None = None,
-    n_theta: int = 24,
-    n_phi: int = 48,
 ) -> ArrayLikeFloat:
-    r"""Return :math:`\rho_s(T)` for 3D polar p-wave line-node example.
+    r"""Return :math:`\rho_s(T)` for the spherical sin(theta) gap example.
 
     Uses :math:`g(\theta)=\sin\theta` with spherical angular averaging.
     If ``shape_factor_a > 0``, use the generalized weak-coupling reduced-gap
@@ -327,13 +311,11 @@ def rho_p_wave_polar_3d(
     interpolation.
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
-    return superfluid_density_3d(
+    return superfluid_density(
         T,
         tc=float(Tc),
         gap_ratio=ratio,
-        gap_function=lambda theta, _phi: gaps.line_node_3d(theta),
-        n_theta=n_theta,
-        n_phi=n_phi,
+        gap=gaps.GAP_FORMS["line_node_3d"],
         reduced_gap_function=_optional_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor_a=shape_factor_a,
@@ -347,8 +329,6 @@ def rho_s_plus_g(
     Tc: float,
     gap_ratio: float = 2.77,
     gap_mev: float | None = None,
-    n_theta: int = 24,
-    n_phi: int = 48,
 ) -> ArrayLikeFloat:
     r"""Return :math:`\rho_s(T)` for s+g-wave anisotropic singlet gap.
 
@@ -370,19 +350,13 @@ def rho_s_plus_g(
         Dimensionless ratio :math:`\Delta_0/(k_B T_c)`.
     gap_mev
         Optional :math:`\Delta_0` in meV. Overrides ``gap_ratio`` when given.
-    n_theta
-        Number of polar-angle quadrature points.
-    n_phi
-        Number of azimuthal-angle quadrature points.
     """
     ratio = resolve_gap_ratio(tc=Tc, gap_ratio=gap_ratio, gap_mev=gap_mev)
-    return superfluid_density_3d(
+    return superfluid_density(
         T,
         tc=float(Tc),
         gap_ratio=ratio,
-        gap_function=gaps.s_plus_g,
-        n_theta=n_theta,
-        n_phi=n_phi,
+        gap=gaps.GAP_FORMS["s_plus_g"],
         reduced_gap_function=_make_generalized_reduced_gap(
             gap_ratio=ratio,
             shape_factor=_S_PLUS_G_SHAPE_FACTOR,
