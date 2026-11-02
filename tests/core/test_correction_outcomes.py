@@ -220,3 +220,24 @@ def test_file_source_label_is_normalised_without_mutating_the_request():
     grouping = {"dead_time_us": [0.01], "good_frames": 1e6, "deadtime_method": " File "}
     assert resolve_deadtime(grouping, 1, True, "file").status == "applied"
     assert grouping["deadtime_method"] == " File "
+
+
+@pytest.mark.parametrize("use_background", [False, True])
+def test_count_fit_requires_deadtime_before_checking_background(histograms, use_background):
+    from asymmetry.core.data.dataset import MuonDataset, Run
+    from asymmetry.core.fitting.grouped_time_domain import build_count_group
+
+    run = Run(
+        histograms=histograms,
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "deadtime_correction": True,
+            "deadtime_mode": "file",
+            "background_correction": use_background,
+            "background_mode": "fixed",
+            "background_fixed_values": [1.0, 2.0],
+        },
+    )
+    dataset = MuonDataset(np.array([]), np.array([]), np.array([]), run=run)
+    with pytest.raises(ValueError, match="deadtime.*table"):
+        build_count_group(dataset, 1)

@@ -375,6 +375,31 @@ channel sums add supplied variances, using measured counts where a channel
 has no supplied variance. The preview status shows effective F/B channel counts.
 See :doc:`data_reduction/detector_exclusion` for the editing workflow.
 
+Independent forward/backward analysis requires two nonempty, disjoint effective
+channel sets after exclusions. Identical selections, aliases, and partial overlap
+raise ``InvalidGroupingError`` naming the selected groups and shared acquired
+channels. The **Preview unavailable:** message disables **Apply** until the pair
+is repaired. Excluding a shared channel makes the pair valid if both sides
+remain nonempty; Asymmetry never removes shared members implicitly.
+
+This contract also covers corrected-count previews, alpha preparation and integral
+asymmetry. For example, independent source counts 10, 30 and 50 grouped as
+F = 10 + 30 and B = 30 + 50 give first-order asymmetry variance 1/270 when their
+shared-observation covariance is included, but 1/135 under independence
+(:math:`\alpha=\beta=1`). Asymmetry rejects that pair rather than reporting
+the independent error. See :doc:`/reference/alc_mode` for integral reduction.
+
+Auxiliary groups and raw group spectra may overlap. EMU **Vector Polarization**
+retains all three projections and channel reuse between projections; each
+individual F/B pair must be disjoint. Equal-valued counts from distinct channels
+do not imply shared identity. Acquired ordinals cannot establish unknown physical
+constituents of pregrouped channels or cross-projection covariance.
+
+Saved overlapping requests retain their memberships, fixed correction settings
+and raw histograms, and load with an unavailable reduction for editing. A raw
+file whose default pair shares a channel likewise loads without a derived
+asymmetry. Select an independent pair to enable reduction.
+
 An explicitly empty saved group map stays empty in the editor. Select a preset
 or define groups in **Detector Layout…**; opening the editor does not replace
 an authored empty or incomplete map with a half/half grouping.
@@ -957,6 +982,11 @@ Native musrfit 1.12.1 (``708f777b``, ROOT 6.40.04), with zero deadtime,
 :math:`5\times10^{-6}`, set by text precision. Both tested programs reject
 missing members and count repeated members twice. Asymmetry rejects repetitions
 because ordinary membership is unique, rather than a numerical weight.
+Native Mantid 6.16.1 ``MuonPairingAsymmetry`` rejects the tested identical
+lists but accepts partial overlap; native musrfit 1.12.1 accepts both tested
+overlaps. Asymmetry's disjoint-pair rule follows its independent-count uncertainty
+model. WiMDA **Group Table Edit** manual/source evidence does not establish a
+disjointness guarantee; no WiMDA binary comparison was executed.
 These arithmetic comparisons do not certify detector geometry or pair independence.
 See :doc:`/explanation/comparison` for sources and limits.
 
@@ -1590,10 +1620,9 @@ per-instrument special case anywhere downstream of the grouping payload.
 
 A classic PSI GPS PSI-BIN file stores only **five** histograms — Forward,
 Backward, Up, Down, and Right, with no Left counter recorded. The Transverse
-preset's Left group is then simply empty for that run; grouping, calibration,
-and reduction all handle an empty group gracefully (an empty forward or
-backward group falls back rather than dividing by zero), so an older GPS file
-loads and analyses normally, just without a usable Left-Right projection.
+preset requires a Left counter that is absent from that run. The raw file
+remains available, while that projection is unavailable until an explicit
+matching grouping is selected. Required missing channels are never trimmed.
 
 FLAME, HAL-9500, and GPS-RD detector labels (``R_F``, ``L_B``, and similar)
 come from the data file's own metadata rather than a published facility

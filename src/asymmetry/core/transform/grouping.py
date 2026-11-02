@@ -472,6 +472,49 @@ def effective_group_indices(
     return effective
 
 
+def independent_pair_indices(
+    grouping: dict,
+    *,
+    n_histograms: int,
+    resolved_indices: tuple[list[int], list[int]] | None = None,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Resolve one independent F/B pair, after exclusions, without changing it.
+
+    Resolved-index entry points supply their effective selections explicitly.
+    Identity is the declared acquired ordinal, never count or array equality.
+    Auxiliary groups and other projections do not participate in this contract.
+    """
+    gids = tuple(
+        int(grouping.get(key, default))
+        for key, default in (("forward_group", 1), ("backward_group", 2))
+    )
+    if resolved_indices is None:
+        pair = tuple(
+            tuple(effective_group_indices(grouping, gid, n_histograms=n_histograms)) for gid in gids
+        )
+    else:
+        try:
+            pair = tuple(
+                tuple(_validated_group_indices(indices, n_histograms))
+                for indices in resolved_indices
+            )
+        except ValueError as exc:
+            raise InvalidGroupingError(str(exc), grouping) from exc
+    shared = sorted(set(pair[0]).intersection(pair[1]))
+    if shared:
+        raw_names = grouping.get("group_names")
+        names = raw_names if isinstance(raw_names, dict) else {}
+        labels = [f"{names.get(gid, names.get(str(gid), 'Group'))} ({gid})" for gid in gids]
+        raise InvalidGroupingError(
+            f"Forward/backward groups {labels[0]} and {labels[1]} have shared acquired "
+            f"channels {format_detector_list([i + 1 for i in shared])}. "
+            "Independent F/B analysis requires disjoint groups; edit the groups "
+            "or exclude shared channels while keeping both sides nonempty.",
+            grouping,
+        )
+    return pair
+
+
 def effective_grouping(run: Run, grouping_ref: dict | None = None) -> dict:
     """Merge a run's grouping with an optional override (override wins).
 
@@ -548,20 +591,13 @@ def group_forward_backward(
     and rebinning, so reductions share the same aligned coordinates.
 
     Raises :class:`ValueError` when the grouping lacks a ``groups`` definition or
-    the forward/backward groups reference no detectors.
+    the effective forward/backward groups are empty or share acquired channels.
     """
-    groups = grouping.get("groups")
-    if not isinstance(groups, dict) or not groups:
-        raise ValueError(
-            "Forward-backward grouping requires a detector grouping definition "
-            "(grouping['groups'])."
-        )
-
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
-    n = len(histograms)
-    forward_indices = effective_group_indices(grouping, forward_gid, n_histograms=n)
-    backward_indices = effective_group_indices(grouping, backward_gid, n_histograms=n)
+    forward_indices, backward_indices = independent_pair_indices(
+        grouping, n_histograms=len(histograms)
+    )
     try:
         alpha = float(grouping.get("alpha", 1.0))
     except (TypeError, ValueError):

@@ -40,7 +40,9 @@ changes with the group membership.
 
 A required group emptied by exclusions is unavailable: the preview displays
 **Preview unavailable:** and disables **Apply**. Removing an exclusion or
-editing the authored membership restores availability. An exclusion cannot hide
+editing the authored membership restores availability. Independent F/B pairs also
+require disjoint effective channels: excluding a shared channel repairs overlap
+when both sides remain nonempty. An exclusion cannot hide
 an absent channel required by a preset. The numbers address acquired channels;
 a pregrouped histogram cannot lose an individual physical constituent unless
 that constituent's observations are separately available.
@@ -54,10 +56,10 @@ that constituent's observations are separately available.
 
 .. figure:: /_generated/screenshots/grouping_membership_unavailable.png
    :width: 100%
-   :alt: Synthetic group emptied by exclusions, with an unavailable preview and disabled Apply.
+   :alt: Synthetic shared F/B channel, with an unavailable preview and disabled Apply.
 
-   Excluding channels 1 and 2 empties the forward group. Its raw counts remain
-   accessible while the grouping is edited.
+   Removing the exclusion exposes shared channel 2. The independent F/B preview
+   is unavailable and **Apply** is disabled; raw counts remain accessible.
 
 Compared with other programs
 ----------------------------

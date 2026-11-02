@@ -123,6 +123,7 @@ from asymmetry.core.transform.grouping import (
     InvalidGroupingError,
     common_t0_for_groups,
     effective_group_indices,
+    independent_pair_indices,
 )
 from asymmetry.core.transform.rebin import BinningSpec, binning_spec
 from asymmetry.core.transform.reduce import (
@@ -1276,6 +1277,12 @@ def resolve_effective_grouping(
 
         # -- per-run / file-derived facts ---------------------------------------
         _copy_per_run_facts(grouping, run_grouping, run)
+        # -- period mode --------------------------------------------------------
+        if profile.period_mode is not None:
+            grouping["period_mode"] = str(profile.period_mode)
+        elif "period_mode" in run_grouping:
+            grouping["period_mode"] = run_grouping["period_mode"]
+
         try:
             _rebase_on_profile_groups(grouping, run, n_hist)
         except InvalidGroupingError:
@@ -1284,12 +1291,6 @@ def resolve_effective_grouping(
             if not profile.projections:
                 _apply_beta_policy(grouping, profile.beta_policy)
             raise
-
-        # -- period mode --------------------------------------------------------
-        if profile.period_mode is not None:
-            grouping["period_mode"] = str(profile.period_mode)
-        elif "period_mode" in run_grouping:
-            grouping["period_mode"] = run_grouping["period_mode"]
 
         # -- policies -----------------------------------------------------------
         # Alpha uses the same deadtime-corrected, background-subtracted counts as reduction.
@@ -1353,12 +1354,7 @@ def _copy_per_run_facts(grouping: dict[str, Any], run_grouping: dict[str, Any], 
 
 def _analysis_group_indices(grouping: dict[str, Any], n_hist: int) -> list[int]:
     """0-based indices of the detectors the profile's forward+backward groups use."""
-    forward_idx = effective_group_indices(
-        grouping, int(grouping.get("forward_group", 1)), n_histograms=n_hist
-    )
-    backward_idx = effective_group_indices(
-        grouping, int(grouping.get("backward_group", 2)), n_histograms=n_hist
-    )
+    forward_idx, backward_idx = independent_pair_indices(grouping, n_histograms=n_hist)
     return sorted(set(forward_idx) | set(backward_idx))
 
 
@@ -1705,8 +1701,6 @@ def _estimate_run_alpha(
     backward_gid = int(grouping.get("backward_group", 2))
     forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
     backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
-    if not forward_idx or not backward_idx:
-        return 1.0
     flags = correction_flags_from_grouping(grouping)
     corrected = corrected_grouped_counts(
         histograms=run.histograms,

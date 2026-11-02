@@ -269,7 +269,7 @@ def test_integrate_run_differential_matches_time_fb_asymmetry():
 
 def test_integrate_run_requires_groups():
     run = Run(run_number=1, histograms=[Histogram(counts=np.ones(4), bin_width=0.1)])
-    with pytest.raises(ValueError, match="grouping definition"):
+    with pytest.raises(ValueError, match="Group definitions"):
         integrate_run(run)
 
 

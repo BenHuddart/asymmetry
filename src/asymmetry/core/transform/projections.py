@@ -106,7 +106,7 @@ def reduce_run_projections(run: Run, period_index: int) -> dict[str, MuonDataset
         result = reduce_grouped_asymmetry(
             histograms=source.histograms,
             binning=binning_spec(grouping),
-            grouping=grouping,
+            grouping=dict(grouping, forward_group=forward, backward_group=backward),
             forward_idx=effective_group_indices(grouping, forward, n_histograms=n_histograms),
             backward_idx=effective_group_indices(grouping, backward, n_histograms=n_histograms),
             alpha=alphas[label],

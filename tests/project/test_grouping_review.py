@@ -57,12 +57,13 @@ def test_background_details_keep_their_position_after_timing_resolution():
     assert (grouping["first_good_bin"], grouping["last_good_bin"]) == (4, 10)
 
 
-def test_unavailable_profile_still_exposes_fixed_correction_configuration():
+@pytest.mark.parametrize("members", [[0], [1, 2]])
+def test_unavailable_profile_still_exposes_fixed_correction_configuration(members):
     run = Run(histograms=[Histogram(np.full(20, 20.0), 0.1) for _ in range(2)])
     profile = GroupingProfile(
         name="sample",
         fingerprint=ProfileFingerprint("test", 2),
-        groups={1: [0], 2: [2]},
+        groups={1: members, 2: [2]},
         alpha_policy=AlphaPolicy(value=1.7),
         beta_policy=BetaPolicy(value=1.3),
         deadtime_policy=DeadtimePolicy(mode="manual", values=[0.01, 0.02]),
@@ -77,3 +78,20 @@ def test_unavailable_profile_still_exposes_fixed_correction_configuration():
     assert grouping["beta"] == 1.3
     assert grouping["dead_time_us"] == [0.01, 0.02]
     assert grouping["background_fixed_values"] == [3.0, 4.0]
+
+
+@pytest.mark.parametrize("from_profile", [False, True])
+def test_unavailable_pair_preserves_selected_period(from_profile):
+    profile = GroupingProfile(
+        name="sample",
+        fingerprint=ProfileFingerprint("test", 2),
+        groups={1: [1, 2], 2: [2]},
+        period_mode="green" if from_profile else None,
+    )
+    run = Run(
+        histograms=[Histogram(np.full(20, level), 0.1) for level in (10, 30)],
+        grouping={"period_mode": "red" if from_profile else "green"},
+    )
+    with pytest.raises(InvalidGroupingError) as error:
+        resolve_effective_grouping(profile, run)
+    assert error.value.grouping["period_mode"] == "green"

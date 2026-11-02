@@ -17,6 +17,11 @@ resulting scan. The method follows WiMDA's count-integral ALC and Mantid's
 ``PlotAsymmetryByLogValue``; with :math:`\alpha = 1` it reproduces the WiMDA
 count integral exactly.
 
+Every integral reduction uses the independent F/B pair contract in
+:doc:`detector_grouping`: effective sides must be nonempty and disjoint after
+exclusions. An overlapping saved request remains editable with its fixed
+correction settings and raw histograms, but cannot produce an integral value.
+
 The integral-asymmetry observable
 ---------------------------------
 
@@ -583,6 +588,17 @@ References
   Physica B **289–290**, 710 (2000). — the count-integral ALC this mode follows.
 * The Mantid ``PlotAsymmetryByLogValue`` algorithm — the alpha-aware
   integral/differential field-scan reference.
+
+Compared with other programs
+----------------------------
+
+Pair validation follows Asymmetry's independent-count uncertainty assumption.
+Native Mantid 6.16.1 rejects tested identical pair lists but accepts partial
+overlap; native musrfit 1.12.1 accepts the tested overlaps. WiMDA manual/source
+evidence does not establish disjointness, and no WiMDA binary was executed.
+These input checks do not establish agreement of integral endpoints or timing
+conventions. See :doc:`detector_grouping` and :doc:`/explanation/comparison`
+for the versioned grouping observations and sources.
 
 See also
 --------
