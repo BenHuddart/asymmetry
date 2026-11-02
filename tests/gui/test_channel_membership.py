@@ -15,7 +15,7 @@ def window(qapp):
     return MainWindow()
 
 
-@pytest.mark.parametrize("members", [[0], [True], [1.5], ["bad"], [1, 1], [1, 4]])
+@pytest.mark.parametrize("members", [[0], [True], [1.5], ["bad"], [1, 1], [1, 4], [1, 2]])
 def test_invalid_authored_members_remain_editable_and_unavailable(qapp, members):
     dataset = _histogram_dataset(grouping_extra={"groups": {1: members, 2: [2]}})
     dialog = GroupingDialog([dataset])
@@ -35,7 +35,7 @@ def test_invalid_authored_members_remain_editable_and_unavailable(qapp, members)
         dialog.close()
 
 
-@pytest.mark.parametrize("members", [[], [0], [1, 1], [1, 4], ["bad"]])
+@pytest.mark.parametrize("members", [[], [0], [1, 1], [1, 4], ["bad"], [1, 2]])
 def test_project_restore_retains_invalid_request_and_raw_data(
     window, monkeypatch, tmp_path, members
 ):
@@ -158,6 +158,171 @@ def test_invalid_grouping_keeps_the_all_detector_t0_base(qapp):
         assert dialog._file_common_t0_for_preview_run() == 9
         assert dialog._common_t0_for_preview_run([3, 12]) == 12
         assert dialog._current_t0_policy().offset_bins == 2
+    finally:
+        dialog._clear_dirty()
+        dialog.close()
+
+
+def test_calibration_preparation_rejects_partial_overlap():
+    from asymmetry.core.transform.grouping import InvalidGroupingError
+    from asymmetry.gui.windows.grouping.alpha_section import build_corrected
+    from tests.core.test_group_membership import histograms
+
+    with pytest.raises(InvalidGroupingError, match="shared acquired channels 2"):
+        build_corrected(histograms(), {"groups": {1: [1, 2], 2: [2, 3]}}, None, "")
+
+
+def test_saved_overlap_keeps_fixed_options_and_can_be_repaired(window, monkeypatch, tmp_path):
+    from asymmetry.core.project.schema import load_project, save_project
+
+    dataset = _histogram_dataset()
+    original_counts = [h.counts.copy() for h in dataset.run.histograms]
+    source = tmp_path / "synthetic.nxs"
+    source.touch()
+    monkeypatch.setattr(type(window), "_load_file", lambda self, path: dataset)
+    requested = dict(
+        dataset.run.grouping,
+        groups={1: [1, 2], 2: [2]},
+        alpha=1.7,
+        beta=1.3,
+        deadtime_mode="manual",
+        dead_time_us=[0.01, 0.02],
+        background_mode="fixed",
+        background_fixed_values=[3.0, 4.0],
+    )
+    state = window.collect_project_state()
+    state["datasets"] = [
+        {
+            "run_number": dataset.run_number,
+            "source_file": str(source),
+            "grouping_overrides": requested,
+        }
+    ]
+    project = tmp_path / "overlap.asymp"
+    save_project(state, project)
+    window.restore_project_state(load_project(project), str(project))
+    restored = window._data_browser.get_dataset(dataset.run_number)
+    assert restored.metadata["correction_error"]
+    for hist, counts in zip(restored.run.histograms, original_counts):
+        np.testing.assert_array_equal(hist.counts, counts)
+    saved = window.collect_project_state()["datasets"][0]["grouping_overrides"]
+    for key in (
+        "groups",
+        "alpha",
+        "beta",
+        "deadtime_mode",
+        "dead_time_us",
+        "background_mode",
+        "background_fixed_values",
+    ):
+        assert saved[key] == requested[key]
+    dialog = GroupingDialog([restored])
+    try:
+        pane = dialog._preview_pane
+        pane.flush()
+        _wait_until(lambda: not pane.corrections_complete)
+        assert pane._last_result is None
+        assert not dialog._apply_btn.isEnabled()
+        dialog._group_table.item(0, 3).setText("1")
+        pane.flush()
+        _wait_until(lambda: pane.corrections_complete)
+        assert dialog._apply_btn.isEnabled()
+        assert dialog._current_grouping_payload()["alpha"] == 1.7
+    finally:
+        dialog._clear_dirty()
+        dialog.close()
+
+
+def test_valid_preview_is_cleared_when_pair_becomes_overlapping(qapp):
+    dialog = GroupingDialog([_histogram_dataset()])
+    try:
+        pane = dialog._preview_pane
+        pane.flush()
+        _wait_until(lambda: pane._last_result is not None)
+        dialog._group_table.item(0, 3).setText("1,2")
+        pane.flush()
+        _wait_until(lambda: not pane.corrections_complete)
+        assert pane._last_result is None
+        assert len(pane._axes.lines) == 0
+        assert not dialog._apply_btn.isEnabled()
+    finally:
+        dialog._clear_dirty()
+        dialog.close()
+
+
+def test_apply_checks_current_pair_before_pending_preview_finishes(qapp, monkeypatch):
+    dialog = GroupingDialog([_histogram_dataset()])
+    warnings = []
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.grouping.dialog.QMessageBox.warning",
+        lambda *args: warnings.append(args[-1]),
+    )
+    try:
+        pane = dialog._preview_pane
+        pane.flush()
+        _wait_until(lambda: pane._last_result is not None)
+        dialog._group_table.item(0, 3).setText("1,2")
+        dialog._on_apply()
+        assert dialog.result() == 0
+        assert any("shared acquired channels 2" in warning for warning in warnings)
+    finally:
+        dialog._clear_dirty()
+        dialog.close()
+
+
+def test_unavailable_pair_discards_a_deferred_drag_result(qapp):
+    dialog = GroupingDialog([_histogram_dataset()])
+    try:
+        pane = dialog._preview_pane
+        pane.flush()
+        _wait_until(lambda: pane._last_result is not None)
+        pane._nav_press_view = (pane._axes.get_xlim(), pane._axes.get_ylim())
+        pane._draw(pane._last_result)
+        assert pane._deferred_result is not None
+        dialog._group_table.item(0, 3).setText("1,2")
+        pane.flush()
+        _wait_until(lambda: not pane.corrections_complete)
+        pane._on_canvas_button_release(None)
+        assert pane._last_result is None
+        assert len(pane._axes.lines) == 0
+    finally:
+        dialog._clear_dirty()
+        dialog.close()
+
+
+@pytest.mark.parametrize("overlap", ["same_group", "partial"])
+def test_invalid_vector_axis_warns_and_continues_calibration_queue(qapp, monkeypatch, overlap):
+    from tests.gui.test_grouping_dialog import _vector_dataset_with_histograms
+
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    warnings = []
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.grouping.dialog.QMessageBox.warning",
+        lambda parent, title, message: warnings.append((title, message)),
+    )
+    try:
+        if overlap == "same_group":
+            dialog._vector_axis_pairs["P_x"] = (5, 5)
+            shared = 1
+        else:
+            dialog._groups[5] = [0, 1]
+            shared = 2
+        original_alpha = dialog._vector_alpha_spins["P_x"].value()
+        dialog._begin_vector_estimates(["P_x", "P_y"])
+        _wait_until(
+            lambda: (
+                not dialog._vector_estimate_queue and dialog._vector_alpha_tasks.active_count == 0
+            )
+        )
+        assert len(warnings) == 1
+        assert warnings[0][0] == "Alpha Calibration"
+        assert f"shared acquired channels {shared}" in warnings[0][1]
+        assert dialog._vector_alpha_spins["P_x"].value() == original_alpha
+        assert dialog._vector_alpha_spins["P_y"].value() == pytest.approx(2.0)
+        assert dialog._vector_estimate_buttons["P_y"].isEnabled()
+        payload = dialog._current_grouping_payload()
+        assert "alpha_x_reference_run" not in payload
+        assert payload["alpha_y_reference_run"] == 4010
     finally:
         dialog._clear_dirty()
         dialog.close()

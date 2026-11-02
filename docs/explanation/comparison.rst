@@ -65,9 +65,20 @@ tested missing member and count a repeated member twice. Asymmetry's unique
 membership rule deliberately rejects that repetition. The tests do not establish
 pair independence or equivalence of geometry, timing, or calibration methods.
 
+Asymmetry requires disjoint effective acquired channels within each independent
+F/B pair, after exclusions. Native Mantid 6.16.1
+``MuonPairingAsymmetry`` rejects tested identical lists but accepts partial
+overlap; see its `algorithm documentation
+<https://docs.mantidproject.org/v6.16.1/algorithms/MuonPairingAsymmetry-v1.html>`_.
+Native musrfit 1.12.1 accepts the tested identical and partially overlapping
+pairs. These observations describe request acceptance, not a covariance-aware
+error guarantee. Asymmetry retains EMU vector channel reuse across projections
+and overlapping auxiliary groups, and never infers identity from equal counts.
+
 WiMDA's **Group Table Edit** exposes numbered histogram channels; see the
 `WiMDA manual <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_.
-This is a manual/source comparison, without executed WiMDA numerical evidence.
+This is a manual/source comparison, without executed WiMDA numerical evidence;
+it does not establish a within-pair disjointness guarantee.
 
 Signed deadtime coefficients
 ----------------------------

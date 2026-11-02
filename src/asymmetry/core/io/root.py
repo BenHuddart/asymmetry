@@ -25,10 +25,9 @@ from asymmetry.core.io.physical_units import (
     parse_quantity,
     quantity_parts,
 )
+from asymmetry.core.io.quick_asymmetry import quick_asymmetry
 from asymmetry.core.transform import (
-    align_forward_backward,
     common_t0_time_us,
-    compute_asymmetry,
     good_window_for_groups,
     run_t0_time_us,
 )
@@ -638,12 +637,13 @@ class RootLoader(BaseLoader):
         )
         forward_idx = [det - 1 for det in groups[forward_gid]]
         backward_idx = [det - 1 for det in groups[backward_gid]]
-        forward, backward, alignment = align_forward_backward(histograms, forward_idx, backward_idx)
-        common_t0, n = alignment.common_t0_bin, alignment.length
+        quick = quick_asymmetry(
+            histograms,
+            {"groups": groups, "forward_group": forward_gid, "backward_group": backward_gid},
+        )
+        asymmetry, error = quick.asymmetry, quick.error
+        common_t0, n = quick.common_t0, len(asymmetry)
         alpha = 1.0
-        asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
-        asymmetry = asymmetry * 100.0
-        error = error * 100.0
 
         group_idx = sorted(
             i for i in set(forward_idx) | set(backward_idx) if 0 <= i < len(histograms)
@@ -657,9 +657,7 @@ class RootLoader(BaseLoader):
             n_bins=n,
         )
 
-        # Bin centres from the run's exact t0 (D4) — MusrRoot's fractional
-        # "Time Zero Bin" moves this axis off the integer grid, and the
-        # reduction stamps the same way, so the two agree by construction.
+        # Retain the fractional file t0 when stamping the aligned bin centres.
         t0_residual_us = (float(common_t0) + 0.5) * bin_width_us - common_t0_time_us(
             histograms, None, int(common_t0)
         )
@@ -680,7 +678,7 @@ class RootLoader(BaseLoader):
             slow_control_logs,
             run_summary,
         )
-        metadata["grouped_alignment"] = asdict(alignment)
+        metadata.update(quick.metadata)
         grouping = {
             "groups": groups,
             "group_names": group_names,

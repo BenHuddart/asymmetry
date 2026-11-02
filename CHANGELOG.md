@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Independent forward/backward reductions and calibrations reject shared channels
+  after exclusions; saved requests remain editable and raw counts remain available.
+
 - Detector groups reject invalid, repeated, or missing channel IDs; exclusions
   preserve raw counts and make empty groups explicitly unavailable.
 - Partial exports with missing preset channels, including forward-ring-only HAL
