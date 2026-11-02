@@ -266,13 +266,12 @@ apodisation or phase-mode controls below are applied:
 * ``F−B asymmetry`` — *"FFT of the forward−backward asymmetry signal (as
   plotted in the time domain) — cleaner for a single detector pair."* Rather
   than averaging every group's own FFT, this transforms the single
-  forward−backward asymmetry curve directly — exactly the signal the
-  time-domain plot shows, built with the same grouping and α. This source
-  requires a uniform retained time grid. Binning **Fixed** supplies one;
-  unequal bins from **Variable** or **Constant error** are refused. Deadtime
-  correction is **not** applied on this path, matching the time-domain plot
-  (the grouped-average path does apply it to each group's count signal before
-  the transform).
+  forward−backward asymmetry curve from the recorded grouping, α, and binning.
+  This source requires a uniform retained time grid. Binning **Fixed** supplies
+  one; unequal bins from **Variable** or **Constant error** are refused.
+  Deadtime correction is **not** applied on this path (the grouped-average
+  path does apply it to each group's count signal before the transform), so
+  it can differ from a corrected time-domain display.
 
 For a run with just one forward/backward detector pair, ``F−B asymmetry``
 gives markedly better peak-to-floor contrast than ``Grouped average``: on a
