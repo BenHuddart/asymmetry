@@ -121,6 +121,22 @@ independent at pad factor :math:`n`), so moment uncertainties are scaled by
 frequency-domain fits apply. Run-to-run scatter across a temperature scan is
 then handled, as for any series, by the trend layer.
 
+The scripting option ``uncertainty="propagate"`` uses the complete first-order
+Jacobian with independent per-point errors [4], including normalization and
+motion of the refined parabolic peak. It reports errors for the mean, both RMS
+widths, :math:`\gamma_1`, the peak, the mean-minus-peak difference and
+:math:`\beta`. The support above the cutoff and the discrete peak bin are held
+fixed. A positive cutoff can make these errors too small when noisy points
+cross its threshold; peak-bin changes are also outside the linearization.
+Bootstrap instead re-finds both support and peak on each draw.
+
+Cube-root :math:`\alpha` has no propagated uncertainty because its derivative
+diverges at a symmetric line; use the propagated :math:`\gamma_1` uncertainty.
+An unrefined or clamped peak leaves all peak-derived errors unavailable
+(``NaN``), and zero-width support leaves every propagated error unavailable.
+The oversampling correction applies to finite propagated errors as it does to
+bootstrap errors.
+
 Which spectra qualify
 ---------------------
 
@@ -172,3 +188,7 @@ References
 [3] S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt, *Muon
 Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022).
 
+
+[4] JCGM 100:2008, *Evaluation of measurement data — Guide to the expression
+of uncertainty in measurement*, sections 5.1–5.2,
+`doi:10.59161/JCGM100-2008E <https://doi.org/10.59161/JCGM100-2008E>`_.
