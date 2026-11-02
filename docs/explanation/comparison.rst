@@ -99,9 +99,12 @@ Executed synthetic checks distinguish two reference programs:
   with this convention to relative tolerance :math:`5\times10^{-6}`, set
   by the ASCII export precision.
 
-Asymmetry's deadtime-prepared histograms carry corrected values without a
-separate counting variance, so its counting errors differ from Mantid's
-retention of supplied errors.
+Asymmetry retains measured counting variance, or supplied independent variance,
+through deadtime preparation, grouping, background subtraction, and binning.
+It agrees with Mantid's supplied-error convention on the recorded synthetic
+inputs and differs from the tested musrfit exported-error convention. Calibration
+coefficients and frame exposure are fixed in this propagation; the error bars
+do not include their uncertainty or physical deadtime-induced correlations.
 These comparisons do not assert equality of low-count asymmetry formulas,
 background treatment, or fit objectives.
 The formulas and limitations are in :doc:`/reference/detector_grouping`.

@@ -140,6 +140,16 @@ class GroupCounts:
     variance: NDArray[np.float64] | None = None
     shared: tuple[SharedComponent, ...] = ()
 
+    @classmethod
+    def from_value(cls, value: GroupCounts | ArrayLike) -> GroupCounts:
+        """Accept an existing validated group or raw Poisson count arrays."""
+        return value if isinstance(value, cls) else cls(value)
+
+    @property
+    def independent_variance(self) -> NDArray[np.float64]:
+        """Independent count variance before any shared correction components."""
+        return self.counts if self.variance is None else self.variance
+
     def __post_init__(self) -> None:
         arrays = (self.counts,) if self.variance is None else (self.counts, self.variance)
         values = validated_count_arrays(*arrays)
@@ -211,7 +221,7 @@ def linear_combination_variance(
     bounds = np.asarray(bounds, dtype=np.intp)
     window = slice(int(bounds[0]), int(bounds[-1]))
     starts = bounds[:-1] - bounds[0]
-    v = group.counts if group.variance is None else group.variance
+    v = group.independent_variance
     if np.any(v < 0):
         raise ValueError(
             "Poisson count variance requires non-negative counts or explicit variance."

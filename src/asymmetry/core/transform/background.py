@@ -4,10 +4,10 @@ Four modes are supported, selected by the ``background_mode`` grouping key
 (with back-compatible derivation from the older keys when absent):
 
 - ``"fixed"`` — subtract user-supplied per-group constants.
-- ``"range"`` — musrfit's ``PRunAsymmetry`` convention: the mean count over
+- ``"range"`` — a pre-t0 background convention: the mean count over
   a pre-t0 bin range (fallback range ``0.1·t0`` to ``0.6·t0``), only
   meaningful at continuous sources where a pre-t0 region exists.
-- ``"tail_fit"`` — WiMDA's pulsed-source mode (``estBG``/``BGfit``):
+- ``"tail_fit"`` — a pulsed-source background mode:
   a bin-integrated muon exponential plus a flat rate fitted to the late-time
   spectrum; the flat rate is subtracted. Asymmetry fits by Poisson maximum
   likelihood instead of WiMDA's √N weights (study divergence D4) and reports
@@ -191,7 +191,7 @@ def resolve_background_mode(grouping: dict[str, Any] | None) -> str:
 
 
 def fit_tail_background(
-    counts: NDArray[np.float64],
+    counts: NDArray[np.float64] | GroupCounts,
     *,
     bin_width_us: float,
     t0_bin: int,
@@ -200,8 +200,7 @@ def fit_tail_background(
 ) -> TailFitResult:
     """Fit exponential + flat background to the late-time spectrum.
 
-    The model is WiMDA's ``BGfit``, the muon exponential
-    averaged across each bin plus a flat rate:
+    The model is the muon exponential averaged across each bin plus a flat rate:
 
         µ_i = [p₁ · e^{−t_i/τ_µ} · sinh(w/2τ_µ)/(w/2τ_µ) + p₂] · w
 
@@ -210,12 +209,14 @@ def fit_tail_background(
     the negative log-likelihood is convex and the minimum unique. WiMDA
     instead weights by √N and deletes bins with ≤ 4 counts, which biases the
     rate low exactly where this fit operates (study divergence D4). The rate
-    uncertainty comes from the expected information matrix at the optimum.
+    uncertainty comes from the expected information matrix for raw counts.
+    With GroupCounts, propagate supplied variance through the estimator's
+    linearised influence, including its covariance with the input bins.
 
-    The default window is the late half of (t0, last_good) — WiMDA's
-    ``estBG`` convention expressed on raw bins rather than display bins.
+    The default window is the late half of (t0, last_good), on acquisition bins.
     """
-    n = np.asarray(counts, dtype=np.float64)
+    source = GroupCounts.from_value(counts)
+    n, supplied_variance = source.counts, source.variance
     width = float(bin_width_us)
     end = int(last_good_bin) if last_good_bin is not None else n.size - 1
     end = min(end, n.size - 1)
@@ -297,6 +298,13 @@ def fit_tail_background(
     rate_error = float(np.sqrt(covariance[1, 1]))
     # Cov(raw count j, fitted rate) = J_j · I⁻¹[:, rate] for Poisson ML.
     count_covariance = j1 * covariance[0, 1] + j2 * covariance[1, 1]
+    if supplied_variance is not None:
+        influence = count_covariance / mu
+        source_variance = supplied_variance[start : end + 1]
+        count_covariance = source_variance * influence
+        rate_error = float(np.sqrt(np.sum(source_variance * influence**2)))
+        if not np.isfinite(rate_error) or rate_error <= 0:
+            return _failure("Tail-fit propagated variance must be finite and positive")
     consistent = p2 < 2.0 * rate_error
     return TailFitResult(
         rate_per_us=p2,
@@ -312,28 +320,31 @@ def fit_tail_background(
 
 
 def subtract_scaled_counts(
-    counts: NDArray[np.float64],
-    reference_counts: NDArray[np.float64],
+    counts: NDArray[np.float64] | GroupCounts,
+    reference_counts: NDArray[np.float64] | GroupCounts,
     scale: float,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Subtract a scaled reference spectrum with error propagation.
 
-    Returns ``counts − scale·reference`` and independent per-bin variance
-    ``counts + scale²·reference`` (both inputs treated as Poisson; WiMDA
-    subtracts the raw reference without touching the errors — study
-    divergence D7). Arrays must have equal one-dimensional shape. This is the
-    shared frame-scaled arithmetic seam the run-arithmetic project reuses.
+    Returns ``counts − scale·reference`` with variance ``v + scale²·v_ref``.
+    Array inputs use the Poisson approximation; GroupCounts retain supplied
+    independent variance. Arrays must have equal one-dimensional shape.
     """
-    a, r = validated_count_arrays(counts, reference_counts)
+    sample, reference = (GroupCounts.from_value(value) for value in (counts, reference_counts))
+    if sample.shared or reference.shared:
+        raise ValueError("scaled count subtraction requires independent input counts")
+    a, r = validated_count_arrays(sample.counts, reference.counts)
     s = float(scale)
     corrected = a - s * r
-    variance = np.clip(a, 0.0, None) + s * s * np.clip(r, 0.0, None)
+    variance = np.clip(sample.independent_variance, 0.0, None) + s * s * np.clip(
+        reference.independent_variance, 0.0, None
+    )
     return corrected, variance
 
 
 def apply_grouped_background_correction(
-    forward: NDArray[np.float64],
-    backward: NDArray[np.float64],
+    forward: NDArray[np.float64] | GroupCounts,
+    backward: NDArray[np.float64] | GroupCounts,
     *,
     grouping: dict[str, Any] | None,
     t0_bin: int,
@@ -341,8 +352,8 @@ def apply_grouped_background_correction(
     facility: str | None = None,
     metadata: dict[str, Any] | None = None,
     last_good_bin: int | None = None,
-    reference_forward: NDArray[np.float64] | None = None,
-    reference_backward: NDArray[np.float64] | None = None,
+    reference_forward: NDArray[np.float64] | GroupCounts | None = None,
+    reference_backward: NDArray[np.float64] | GroupCounts | None = None,
     reference_scale: float | None = None,
 ) -> BackgroundCorrectionResult:
     """Subtract background from grouped counts by the active mode.
@@ -350,7 +361,8 @@ def apply_grouped_background_correction(
     Parameters
     ----------
     forward, backward
-        Grouped forward/backward count arrays.
+        Grouped forward/backward count arrays, or GroupCounts carrying supplied
+        independent variance. Background estimation requires independent inputs.
     grouping
         Grouping payload. ``background_mode`` selects the mode (see
         :func:`resolve_background_mode` for the back-compatible default);
@@ -378,32 +390,36 @@ def apply_grouped_background_correction(
         from the ``background_run`` payload happens at the caller, which has
         loader access).
     """
-    f, b = validated_count_arrays(forward, backward)
+    f_input, b_input = (GroupCounts.from_value(value) for value in (forward, backward))
+    if f_input.shared or b_input.shared:
+        raise ValueError("background estimation requires independent input counts")
+    f, b = validated_count_arrays(f_input.counts, b_input.counts)
+    vf, vb = f_input.independent_variance, b_input.independent_variance
     grouping = grouping if isinstance(grouping, dict) else {}
     if facility is None:
         facility = resolve_facility(metadata=metadata, grouping=grouping)
     mode = resolve_background_mode(grouping)
 
     if mode == "none":
-        return _background_result(GroupCounts(f), GroupCounts(b), mode, status=CorrectionStatus.OFF)
+        return _background_result(f_input, b_input, mode, status=CorrectionStatus.OFF)
 
     if mode == "tail_fit":
         forward_fit = fit_tail_background(
-            f,
+            f_input,
             bin_width_us=bin_width_us,
             t0_bin=t0_bin,
             last_good_bin=last_good_bin,
         )
         backward_fit = fit_tail_background(
-            b,
+            b_input,
             bin_width_us=bin_width_us,
             t0_bin=t0_bin,
             last_good_bin=last_good_bin,
         )
         if not forward_fit.ok or not backward_fit.ok:
             return _background_result(
-                GroupCounts(f),
-                GroupCounts(b),
+                f_input,
+                b_input,
                 mode,
                 status=CorrectionStatus.FAILED,
                 reason=f"{forward_fit.message}; {backward_fit.message}",
@@ -411,10 +427,15 @@ def apply_grouped_background_correction(
         f_value = forward_fit.rate_per_us * bin_width_us
         b_value = backward_fit.rate_per_us * bin_width_us
         corrected = []
-        for raw, fitted, level in ((f, forward_fit, f_value), (b, backward_fit, b_value)):
+        for source, fitted, level in (
+            (f_input, forward_fit, f_value),
+            (b_input, backward_fit, b_value),
+        ):
+            raw = source.counts
             first, last = fitted.window
-            poisson_variance = raw.copy()
-            poisson_variance[first : last + 1] = fitted.expected_counts
+            independent_variance = source.independent_variance.copy()
+            if source.variance is None:
+                independent_variance[first : last + 1] = fitted.expected_counts
             covariance = np.zeros(raw.size)
             covariance[first : last + 1] = bin_width_us * fitted.count_covariance
             corrected.append(
@@ -423,7 +444,7 @@ def apply_grouped_background_correction(
                     level,
                     (bin_width_us * fitted.rate_error_per_us) ** 2,
                     covariance,
-                    poisson_variance,
+                    independent_variance,
                 )
             )
         return _background_result(
@@ -445,14 +466,14 @@ def apply_grouped_background_correction(
     if mode == "reference_run":
         if reference_forward is None or reference_backward is None or reference_scale is None:
             return _background_result(
-                GroupCounts(f),
-                GroupCounts(b),
+                f_input,
+                b_input,
                 mode,
                 status=CorrectionStatus.UNAVAILABLE,
                 reason="reference run is not loaded",
             )
-        f_corr, f_var = subtract_scaled_counts(f, reference_forward, reference_scale)
-        b_corr, b_var = subtract_scaled_counts(b, reference_backward, reference_scale)
+        f_corr, f_var = subtract_scaled_counts(f_input, reference_forward, reference_scale)
+        b_corr, b_var = subtract_scaled_counts(b_input, reference_backward, reference_scale)
         return _background_result(
             forward=GroupCounts(f_corr, f_var),
             backward=GroupCounts(b_corr, b_var),
@@ -466,21 +487,21 @@ def apply_grouped_background_correction(
             # An explicit fixed mode without usable values must not silently
             # degrade to a range estimate the user never asked for.
             return _background_result(
-                GroupCounts(f),
-                GroupCounts(b),
+                f_input,
+                b_input,
                 mode,
                 status=CorrectionStatus.UNAVAILABLE,
                 reason="fixed background values are unavailable",
             )
         return _background_result(
-            forward=GroupCounts(f - fixed[0], f),
-            backward=GroupCounts(b - fixed[1], b),
+            forward=GroupCounts(f - fixed[0], vf),
+            backward=GroupCounts(b - fixed[1], vb),
             mode=mode,
             values=fixed,
             ranges=None,
         )
 
-    ranges = _background_ranges(grouping, int(t0_bin))
+    ranges = resolve_background_ranges(grouping, int(t0_bin))
     ranges[0].validate_length(f.size, label="background range")
     ranges[1].validate_length(b.size, label="background range")
     f_range = _adjust_range_for_beam_period(
@@ -498,10 +519,11 @@ def apply_grouped_background_correction(
     f_value = float(np.mean(f_slice))
     b_value = float(np.mean(b_slice))
     corrected = []
-    for raw, values, limits, level in (
-        (f, f_slice, f_range, f_value),
-        (b, b_slice, b_range, b_value),
+    for raw, variance, limits, level in (
+        (f, vf, f_range, f_value),
+        (b, vb, b_range, b_value),
     ):
+        values = variance[limits.slice]
         covariance = np.zeros(raw.size)
         covariance[limits.slice] = values / values.size
         corrected.append(
@@ -510,7 +532,7 @@ def apply_grouped_background_correction(
                 level,
                 float(np.sum(values)) / values.size**2,
                 covariance,
-                raw,
+                variance,
             )
         )
     return _background_result(
@@ -558,9 +580,9 @@ def _background_result(
             effective["details"] = details
         uncertainty = {
             "fixed": "fixed background values treated as exact",
-            "reference_run": "independent Poisson sample and reference counts",
+            "reference_run": "independent supplied sample and reference count variances",
             "range": "shared estimated levels with count-estimator covariance",
-            "tail_fit": "shared fitted levels with Poisson information and count-estimator covariance",
+            "tail_fit": "shared fitted levels with count-estimator influence covariance",
         }[mode]
     return BackgroundCorrectionResult(
         forward,
@@ -621,7 +643,8 @@ def background_window(value: object) -> BinWindow:
     return BinWindow(*value, label="background range")
 
 
-def _background_ranges(grouping: dict[str, Any], t0_bin: int) -> tuple[BinWindow, BinWindow]:
+def resolve_background_ranges(grouping: dict[str, Any], t0_bin: int) -> tuple[BinWindow, BinWindow]:
+    """Resolve both inclusive background windows on the declared acquisition grid."""
     if "background_ranges" in grouping:
         value = grouping["background_ranges"]
         if isinstance(value, dict):

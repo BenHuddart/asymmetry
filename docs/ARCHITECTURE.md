@@ -783,7 +783,7 @@ The PSI support is deliberately tied to existing muon-analysis implementations:
 
 ### 4.2.2 Background Provenance
 
-Raw-count background correction follows musrfit's `PRunAsymmetry` ordering:
+Raw-count background correction uses this ordering:
 group forward/backward histograms first, subtract fixed or estimated
 background next, then calculate asymmetry. Estimated background values are the
 mean counts in an inclusive background-bin range. When no range is supplied,

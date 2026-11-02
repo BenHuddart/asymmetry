@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.asymmetry import compute_asymmetry
+from asymmetry.core.transform.corrections import CorrectionStatus
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 from ._base import CaptureContext, Scenario, _optimize_png, register
@@ -24,7 +25,7 @@ _SEED = 20261031
 
 class BackgroundBinnedUncertaintyScenario(Scenario):
     name = "background_binned_uncertainty"
-    description = "Tail-fit background and fixed bunching in the asymmetry preview."
+    description = "Deadtime, tail-fit background and fixed bunching in the asymmetry preview."
     size = (1180, 780)
     requires_fit = True
 
@@ -40,7 +41,7 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
             run_number=8101,
             histograms=[Histogram(counts, bin_width=width, t0_bin=t0) for counts in raw],
             metadata={
-                "title": "Unpolarised decay with count background (synthetic)",
+                "title": "Measured counts with fixed deadtime and background (synthetic)",
                 "simulation_seed": _SEED,
             },
             grouping={
@@ -55,6 +56,11 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
                 "t0_bin": t0,
                 "bunching_factor": 8,
                 "background_correction": False,
+                "deadtime_correction": True,
+                "deadtime_mode": "manual",
+                "deadtime_method": "manual",
+                "dead_time_us": [0.1, 0.1],
+                "good_frames": 2000.0,
             },
         )
         asymmetry, error = compute_asymmetry(*raw)
@@ -76,6 +82,9 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
                 and pane._last_result is not None
                 and pane._last_result.counts.background_mode == "tail_fit"
                 and pane._last_result.counts.background_level is not None
+                and pane._last_result.corrections.deadtime.status == CorrectionStatus.APPLIED
+                and pane._last_result.corrections.deadtime.effective["tau_us"] == (0.1, 0.1)
+                and pane._last_result.corrections.deadtime.effective["good_frames"] == 2000.0
             )
         )
         if (
@@ -83,8 +92,11 @@ class BackgroundBinnedUncertaintyScenario(Scenario):
             or pane._last_result is None
             or pane._last_result.counts.background_mode != "tail_fit"
             or pane._last_result.counts.background_level is None
+            or pane._last_result.corrections.deadtime.status != CorrectionStatus.APPLIED
+            or pane._last_result.corrections.deadtime.effective["tau_us"] != (0.1, 0.1)
+            or pane._last_result.corrections.deadtime.effective["good_frames"] != 2000.0
         ):
-            raise RuntimeError("Background preview did not complete its tail fit")
+            raise RuntimeError("Preview did not apply manual deadtime and complete its tail fit")
         _pump_events(80)
         output = ctx.output_dir / f"{self.name}.png"
         output.parent.mkdir(parents=True, exist_ok=True)
