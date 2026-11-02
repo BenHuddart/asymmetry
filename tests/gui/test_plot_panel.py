@@ -1756,6 +1756,25 @@ class TestPlotPanel:
             run=run,
         )
 
+        from asymmetry.core.transform.rebin import BinningSpec
+        from asymmetry.core.transform.reduce import reduce_period_asymmetry
+
+        def reduce_counts(dataset, factor):
+            result = reduce_period_asymmetry(
+                dataset.run.histograms,
+                dataset.run.grouping,
+                "red",
+                binning=BinningSpec(merge=factor),
+                forward_idx=[0],
+                backward_idx=[1],
+                alpha=1.0,
+                use_deadtime=False,
+                deadtime_mode="off",
+                use_background=False,
+            )
+            return result.time, result.asymmetry, result.error
+
+        panel.set_counts_rebunch_provider(reduce_counts)
         analysis_ds = panel.get_analysis_dataset(ds)
         assert analysis_ds is not None
 
@@ -3731,41 +3750,20 @@ class TestPlotPanel:
         np.testing.assert_array_equal(sample_dataset.asymmetry, original_asymmetry)
         np.testing.assert_array_equal(sample_dataset.error, original_error)
 
-    def test_oversized_bunch_factor_falls_back_to_source_dataset(self, panel: PlotPanel) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+    def test_oversized_bunch_factor_leaves_no_complete_points(self, panel: PlotPanel) -> None:
+        if not panel._has_mpl:
             pytest.skip("matplotlib not available")
-
         ds = MuonDataset(
             time=np.array([0.0, 0.5, 1.0]),
             asymmetry=np.array([0.2, 0.15, 0.1]),
             error=np.array([0.01, 0.01, 0.01]),
             metadata={"run_number": 9981},
         )
-
-        panel._bunch_factor.setValue(10)
-        analysis_dataset = panel.get_analysis_dataset(ds)
-
-        assert analysis_dataset is ds
-
-    def test_plot_dataset_with_oversized_bunch_factor_keeps_data_visible(
-        self, panel: PlotPanel
-    ) -> None:
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        ds = MuonDataset(
-            time=np.array([0.0, 0.5, 1.0]),
-            asymmetry=np.array([0.2, 0.15, 0.1]),
-            error=np.array([0.01, 0.01, 0.01]),
-            metadata={"run_number": 9982},
-        )
-
-        panel._bunch_factor.setValue(10)
+        panel.set_bunch_factor(10, emit_signal=False)
+        assert panel.get_analysis_dataset(ds).n_points == 0
         panel.plot_dataset(ds)
-
         assert panel._current_dataset is ds
-        assert panel._last_plot_time is not None
-        assert panel._last_plot_time.size == 3
+        assert panel._last_plot_time is None
 
     def test_clear_plot(self, panel: PlotPanel, sample_dataset: MuonDataset) -> None:
         """Test clearing the plot."""

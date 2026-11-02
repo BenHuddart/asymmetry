@@ -25,7 +25,7 @@ from ._base import CaptureContext, Scenario, register
 
 class DataProcessingRebinScenario(Scenario):
     name = "data_processing_rebin"
-    description = "Composite plot of a TF dataset before and after an ×8 rebin."
+    description = "Independent curve-bin merging of a synthetic TF curve at ×1 and ×4."
     size = (1400, 720)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401

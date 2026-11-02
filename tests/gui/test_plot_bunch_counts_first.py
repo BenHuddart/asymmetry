@@ -1,14 +1,7 @@
-"""Counts-first display bunching through the plot panel's bunch control.
+"""Display bunching replays counts for every binning and period mode.
 
-When the displayed run still carries its raw histograms, the panel bunch
-factor must not value-domain rebin the reduced asymmetry curve: one-sided raw
-bins (F·B = 0) carry the σ = 100 % no-information sentinel, which a quadrature
-merge folds into every bunched error bar on sparse data. Instead the panel's
-``get_analysis_dataset`` re-runs the recorded reduction (via the MainWindow
-chokepoint, deadtime/background included) with the factor multiplied onto the
-grouping ``bunching_factor``, packing counts before the ratio. Histogram-less
-curves (co-added data, G±R period combinations) keep the curve-level
-``rebin``.
+Corrected counts and their shared errors are packed before the ratio. Curves
+without raw histograms and rotated projections use independent curve means.
 """
 
 from __future__ import annotations
@@ -28,7 +21,7 @@ import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec, merge_curve_bins
-from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.plot_panel import PlotPanel
 
@@ -206,36 +199,6 @@ class TestPanelBunchCountsFirst:
         np.testing.assert_allclose(analysis.asymmetry, twin.asymmetry)
         np.testing.assert_allclose(analysis.error, twin.error)
 
-    def test_period_combined_and_nonfixed_runs_fall_back_to_curve_rebin(
-        self, mainwindow: MainWindow
-    ) -> None:
-        """G±R combinations and non-fixed binning keep the value-domain rebin."""
-        counts_f, counts_b = _sparse_counts(seed=29)
-        gr_dataset = _histogram_run_dataset(
-            counts_f,
-            counts_b,
-            grouping_extra={
-                "period_mode": str(PeriodMode.GREEN_MINUS_RED),
-                "period_histograms": [[1], [2]],
-            },
-        )
-        factor = 5
-        assert mainwindow._counts_first_rebunched_arrays(gr_dataset, factor) is None
-
-        mainwindow._plot_panel.set_bunch_factor(factor, emit_signal=False)
-        analysis = mainwindow._plot_panel.get_analysis_dataset(gr_dataset)
-        t_ref, a_ref, e_ref = merge_curve_bins(
-            gr_dataset.time, gr_dataset.asymmetry, gr_dataset.error, factor
-        )
-        np.testing.assert_allclose(analysis.time, t_ref)
-        np.testing.assert_allclose(analysis.asymmetry, a_ref)
-        np.testing.assert_allclose(analysis.error, e_ref)
-
-        variable_dataset = _histogram_run_dataset(
-            counts_f, counts_b, grouping_extra={"binning_mode": "variable"}
-        )
-        assert mainwindow._counts_first_rebunched_arrays(variable_dataset, factor) is None
-
 
 class TestPanelProviderContract:
     """Panel-side contract, no MainWindow: the hook gates on raw histograms."""
@@ -267,7 +230,7 @@ class TestPanelProviderContract:
         np.testing.assert_allclose(analysis.asymmetry, a_ref)
         np.testing.assert_allclose(analysis.error, e_ref)
 
-    def test_provider_none_result_falls_back_to_rebin(self, qapp: QApplication) -> None:
+    def test_provider_none_result_raises_a_named_error(self, qapp: QApplication) -> None:
         panel = PlotPanel()
         run = Run(
             run_number=7,
@@ -279,39 +242,63 @@ class TestPanelProviderContract:
         panel.set_counts_rebunch_provider(lambda ds, factor: None)
 
         panel.set_bunch_factor(4, emit_signal=False)
-        analysis = panel.get_analysis_dataset(dataset)
+        with pytest.raises(ValueError, match="provider must return"):
+            panel.get_analysis_dataset(dataset)
 
-        t_ref, a_ref, e_ref = merge_curve_bins(dataset.time, dataset.asymmetry, dataset.error, 4)
-        np.testing.assert_allclose(analysis.time, t_ref)
-        np.testing.assert_allclose(analysis.asymmetry, a_ref)
-        np.testing.assert_allclose(analysis.error, e_ref)
 
-    def test_provider_arrays_are_used_verbatim(self, qapp: QApplication) -> None:
-        panel = PlotPanel()
-        run = Run(
-            run_number=7,
-            histograms=[Histogram(counts=np.ones(12), bin_width=BIN_WIDTH_US)],
-            metadata={},
-            grouping={},
-        )
-        dataset = self._curve_dataset(run=run)
-        provided = (
-            np.array([0.0, 1.0]),
-            np.array([10.0, 9.0]),
-            np.array([0.5, 0.6]),
-        )
-        seen: list[int] = []
+@pytest.mark.parametrize("mode", ["variable", "constant_error"])
+def test_nonfixed_display_merges_recorded_count_bins(mainwindow, mode):
+    f, b = np.arange(1.0, 12.0), np.arange(21.0, 32.0)
+    dataset = _histogram_run_dataset(
+        f, b, grouping_extra={"binning_mode": mode, "bin0_us": 0.04, "bin10_us": 0.04}
+    )
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._on_dataset_selected(dataset.run_number)
+    mainwindow._view_bunch_spin.setValue(2)
+    actual = mainwindow._plot_panel.get_analysis_dataset(dataset)
+    forward = np.array([f[:6].sum(), f[6:].sum()])
+    backward = np.array([b[:6].sum(), b[6:].sum()])
+    expected = 100 * (forward - backward) / (forward + backward)
+    error = 200 * np.sqrt(backward**2 * forward + forward**2 * backward) / (forward + backward) ** 2
+    np.testing.assert_allclose(actual.time, [0.04, 0.128], rtol=0, atol=1e-15)
+    np.testing.assert_allclose(actual.asymmetry, expected, rtol=1e-12)
+    np.testing.assert_allclose(actual.error, error, rtol=1e-12)
 
-        def provider(ds: MuonDataset, factor: int):
-            seen.append(factor)
-            return provided
 
-        panel.set_counts_rebunch_provider(provider)
-        panel.set_bunch_factor(6, emit_signal=False)
-        analysis = panel.get_analysis_dataset(dataset)
+@pytest.mark.parametrize("mode,sign", [("green_minus_red", -1), ("green_plus_red", 1)])
+def test_period_display_bunches_each_period_before_combining(mainwindow, mode, sign):
+    red_f, red_b = np.array([90.0, 1, 30, 2]), np.array([10.0, 9, 20, 8])
+    green_f, green_b = np.array([2.0, 80, 10, 2]), np.array([8.0, 10, 30, 8])
+    dataset = _histogram_run_dataset(red_f, red_b)
+    green = _histogram_run_dataset(green_f, green_b, run_number=4243)
+    dataset.run.grouping.update(
+        period_mode=mode, period_histograms=[dataset.run.histograms, green.run.histograms]
+    )
+    dataset.asymmetry = green.asymmetry + sign * dataset.asymmetry
+    dataset.error = np.sqrt(green.error**2 + dataset.error**2)
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._on_dataset_selected(dataset.run_number)
+    mainwindow._view_bunch_spin.setValue(2)
+    actual = mainwindow._plot_panel.get_analysis_dataset(dataset)
+    _, _, ra, re = _packed_reference(red_f, red_b, 2)
+    _, _, ga, ge = _packed_reference(green_f, green_b, 2)
+    np.testing.assert_allclose(actual.asymmetry, ga + sign * ra, rtol=1e-12)
+    np.testing.assert_allclose(actual.error, np.sqrt(ge**2 + re**2), rtol=1e-12)
 
-        assert seen == [6]
-        np.testing.assert_allclose(analysis.time, provided[0])
-        np.testing.assert_allclose(analysis.asymmetry, provided[1])
-        np.testing.assert_allclose(analysis.error, provided[2])
-        assert analysis.run is run
+
+def test_bunching_larger_than_the_record_returns_no_points(mainwindow):
+    dataset = _histogram_run_dataset(np.array([90.0, 1]), np.array([10.0, 9]))
+    mainwindow._plot_panel.set_bunch_factor(8, emit_signal=False)
+    assert mainwindow._plot_panel.get_analysis_dataset(dataset).time.size == 0
+
+
+def test_toolbar_merge_also_sums_raw_group_counts(mainwindow):
+    dataset = _histogram_run_dataset(np.array([90.0, 1, 30, 2]), np.array([10.0, 9, 20, 8]))
+    mainwindow._data_browser.add_dataset(dataset)
+    mainwindow._on_dataset_selected(dataset.run_number)
+    mainwindow._view_bunch_spin.setValue(2)
+    groups = mainwindow._grouped_time_domain_display_datasets(dataset, lifetime_corrected=False)
+    by_group = {item.metadata["group_id"]: item for item in groups}
+    np.testing.assert_array_equal(by_group[1].asymmetry, [91.0, 32.0])
+    np.testing.assert_array_equal(by_group[2].asymmetry, [19.0, 28.0])
+    assert dataset.run.grouping["bunching_factor"] == 1

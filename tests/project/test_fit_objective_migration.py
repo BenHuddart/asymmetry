@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 
-from asymmetry.core.project.schema import migrate_to_current
+from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION, migrate_to_current
 from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
 
 
@@ -28,7 +28,7 @@ def test_v27_migration_records_known_gaussian_and_unknown_group_objectives():
     }
     original = deepcopy(project)
     migrated = migrate_to_current(project)
-    assert migrated["schema_version"] == 28
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
     restored_slot = FitSlot.from_dict(migrated["datasets"][0]["nested"]["slot"])
     assert restored_slot.result["objective"] == "gaussian"
     runs, groups = migrated["batches"]
