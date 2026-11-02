@@ -2072,13 +2072,14 @@ need magnetic line-shift/splitting interpretations.
 Sampling bandwidth in stored reductions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``reduce --rebin`` averages bins and lowers the Nyquist frequency used by later
-fits and transforms. Before averaging, the workflow checks detected spectral
+``reduce --rebin`` merges raw counts before forming the asymmetry and lowers
+the Nyquist frequency used by later fits and transforms. Before merging, the workflow checks detected spectral
 lines on the native record. It rejects a factor that would fold a detected line
 through the new Nyquist boundary and prints a safe maximum factor. Use a smaller
 factor, a shorter fit window, or ``--plot-tmax`` for display-only zoom. A high
 applied field alone does not forbid averaging a nonprecessing LF trace; the
-check protects measured lines, rather than assuming a Larmor line is present.
+check protects measured lines. Fit-recipe ``rebin`` uses independent curve-bin
+means, recorded as ``rebin_operation: merge_curve_bins`` in the recipe.
 To average a known fast line away on purpose, for example to study slower
 relaxation beneath a high-TF diamagnetic line, pass ``--allow-aliasing``:
 "Rebin even when a detected line lies above the new Nyquist frequency,

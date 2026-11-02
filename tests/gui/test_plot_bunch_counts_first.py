@@ -27,7 +27,7 @@ from PySide6.QtWidgets import QApplication  # type: ignore
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.asymmetry import compute_asymmetry
-from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec, merge_curve_bins
 from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.plot_panel import PlotPanel
@@ -85,7 +85,7 @@ def _histogram_run_dataset(
             first_good_bin=0,
             last_good_bin=n - 1,
         ),
-        grouping=grouping,
+        binning=binning_spec(grouping),
         alpha=1.0,
     )
     return MuonDataset(
@@ -136,7 +136,9 @@ class TestPanelBunchCountsFirst:
         np.testing.assert_allclose(analysis.error, err_ref)
 
         # The time axis must not move relative to the old value-domain path.
-        time_ref, _, err_old = rebin(dataset.time, dataset.asymmetry, dataset.error, factor)
+        time_ref, _, err_old = merge_curve_bins(
+            dataset.time, dataset.asymmetry, dataset.error, factor
+        )
         np.testing.assert_allclose(analysis.time, time_ref)
 
         # And the value-domain merge is strictly noisier here: the σ = 100 %
@@ -222,7 +224,9 @@ class TestPanelBunchCountsFirst:
 
         mainwindow._plot_panel.set_bunch_factor(factor, emit_signal=False)
         analysis = mainwindow._plot_panel.get_analysis_dataset(gr_dataset)
-        t_ref, a_ref, e_ref = rebin(gr_dataset.time, gr_dataset.asymmetry, gr_dataset.error, factor)
+        t_ref, a_ref, e_ref = merge_curve_bins(
+            gr_dataset.time, gr_dataset.asymmetry, gr_dataset.error, factor
+        )
         np.testing.assert_allclose(analysis.time, t_ref)
         np.testing.assert_allclose(analysis.asymmetry, a_ref)
         np.testing.assert_allclose(analysis.error, e_ref)
@@ -258,7 +262,7 @@ class TestPanelProviderContract:
         analysis = panel.get_analysis_dataset(dataset)
 
         assert calls == []
-        t_ref, a_ref, e_ref = rebin(dataset.time, dataset.asymmetry, dataset.error, 3)
+        t_ref, a_ref, e_ref = merge_curve_bins(dataset.time, dataset.asymmetry, dataset.error, 3)
         np.testing.assert_allclose(analysis.time, t_ref)
         np.testing.assert_allclose(analysis.asymmetry, a_ref)
         np.testing.assert_allclose(analysis.error, e_ref)
@@ -277,7 +281,7 @@ class TestPanelProviderContract:
         panel.set_bunch_factor(4, emit_signal=False)
         analysis = panel.get_analysis_dataset(dataset)
 
-        t_ref, a_ref, e_ref = rebin(dataset.time, dataset.asymmetry, dataset.error, 4)
+        t_ref, a_ref, e_ref = merge_curve_bins(dataset.time, dataset.asymmetry, dataset.error, 4)
         np.testing.assert_allclose(analysis.time, t_ref)
         np.testing.assert_allclose(analysis.asymmetry, a_ref)
         np.testing.assert_allclose(analysis.error, e_ref)

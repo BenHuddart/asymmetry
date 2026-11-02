@@ -333,7 +333,7 @@ asymmetry reduce <folder> --runs 102-107 --alpha-from 101 --deadtime from_file -
   use `reduce --plot --plot-tmax 2`, which leaves the record whole. To restrict
   one screen or fit, pass `--tmin`/`--tmax` to `wizard`, `recipe`, `fit` or
   `fit-series` instead (a wizard window is kept in the recipe it writes).
-  `--rebin k` merges bins.
+  `--rebin k` merges raw counts before forming asymmetry.
 - `--period red`, `--period green` or `--period N` selects one acquisition
   period before calibration or reduction. For ISIS photo-μSR files the usual
   convention is red/light-ON and green/light-OFF, but confirm that against the

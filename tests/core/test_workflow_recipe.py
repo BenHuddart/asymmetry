@@ -90,6 +90,7 @@ def _oscillatory_assessment() -> CandidateAssessment:
 
 def test_from_expression_seeds_every_parameter_of_the_model() -> None:
     recipe = FitRecipe.from_expression(_EXPRESSION)
+    assert recipe.to_dict()["rebin_operation"] == "merge_curve_bins"
     assert recipe.expression == _EXPRESSION
     assert recipe.parameter_names == recipe.model().param_names
     assert recipe.source == {"user": True}
@@ -176,7 +177,7 @@ def test_recipe_reports_actual_bin_centres_after_rebin_and_window(
     recipe = FitRecipe.from_expression(_EXPRESSION)
     assert recipe.time_window(data) == (data.time[0], data.time[-1])
     cut = replace(recipe, rebin=2, t_min=0.23, t_max=4.91)
-    time = data.rebin(2).time
+    time = data.merge_curve_bins(2).time
     selected = time[(time >= 0.23) & (time <= 4.91)]
     assert cut.time_window(data) == (selected[0], selected[-1])
 

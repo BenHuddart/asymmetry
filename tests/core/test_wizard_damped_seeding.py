@@ -1078,7 +1078,7 @@ def test_screening_fits_are_never_continued(monkeypatch: pytest.MonkeyPatch) -> 
     template = build_null_baseline_templates()[1]
 
     _assess_candidate_template(
-        dataset.rebin(20),
+        dataset.merge_curve_bins(20),
         fingerprint,
         template,
         fit_engine=FitEngine(),
@@ -1089,7 +1089,7 @@ def test_screening_fits_are_never_continued(monkeypatch: pytest.MonkeyPatch) -> 
     assert calls == []
 
     _assess_candidate_template(
-        dataset.rebin(20),
+        dataset.merge_curve_bins(20),
         fingerprint,
         template,
         fit_engine=FitEngine(),

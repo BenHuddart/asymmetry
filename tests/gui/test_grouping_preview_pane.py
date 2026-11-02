@@ -18,17 +18,9 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.project.profiles import GroupingProfile, ProfileFingerprint
 from asymmetry.core.transform import (
-    AlignmentCrop,
-    BinWindow,
-    ForwardBackwardCounts,
-    GroupCounts,
-    apply_grouped_background_correction,
-    apply_grouping_aligned,
-    binned_fb_asymmetry,
-    common_t0_for_groups,
-    prepare_histograms_with_deadtime,
     reduce_grouped_asymmetry,
 )
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.utils.plot_decimation import preview_stride
 from asymmetry.gui.windows.grouping import preview_pane as preview_pane_module
@@ -370,65 +362,16 @@ def test_dialog_hides_preview_for_histogramless_dataset(qapp: QApplication) -> N
     dialog.close()
 
 
-# Independent replay of the counts-then-ratio pipeline.
-
-
-def _replay_reduction(
-    histograms,
-    grouping,
-    forward_idx,
-    backward_idx,
-    alpha,
-    *,
-    use_deadtime,
-    use_background,
-    facility,
-):
-    """From-scratch replay of the documented counts-then-ratio pipeline."""
-    working = list(histograms)
-    if use_deadtime:
-        working, _ = prepare_histograms_with_deadtime(histograms, grouping, True)
-    common_t0 = common_t0_for_groups(working, forward_idx, backward_idx)
-    forward = apply_grouping_aligned(working, forward_idx, common_t0_bin=common_t0)
-    backward = apply_grouping_aligned(working, backward_idx, common_t0_bin=common_t0)
-    n = min(len(forward), len(backward))
-    forward, backward = forward[:n], backward[:n]
-    width = float(working[0].bin_width)
-    first_good = max(0, int(grouping.get("first_good_bin", 0)))
-    last_good = int(grouping.get("last_good_bin", n - 1))
-    f_counts, b_counts = GroupCounts(forward), GroupCounts(backward)
-    if use_background:
-        result = apply_grouped_background_correction(
-            forward,
-            backward,
-            grouping=grouping,
-            t0_bin=common_t0,
-            bin_width_us=width,
-            facility=facility,
-            last_good_bin=last_good,
-        )
-        f_counts, b_counts = result.forward, result.backward
-    counts = ForwardBackwardCounts(
-        f_counts,
-        b_counts,
-        (common_t0 + 0.5) * width,
-        width,
-        BinWindow(first_good, last_good),
-        AlignmentCrop(common_t0, (), (n, n), n),
-    )
-    t, a, e = binned_fb_asymmetry(counts, grouping=grouping, alpha=alpha)
-    return t, a * 100.0, e * 100.0
-
-
 @pytest.mark.parametrize("bunch", [1, 2])
 @pytest.mark.parametrize("alpha", [1.0, 1.7])
-def test_reduce_grouped_asymmetry_matches_replay(bunch: float, alpha: float) -> None:
+def test_reduce_grouped_asymmetry_matches_hand_sums(bunch: int, alpha: float) -> None:
     dataset = _histogram_dataset(grouping_extra={"bunching_factor": bunch})
     grouping = dataset.run.grouping
     forward_idx = [0]
     backward_idx = [1]
     result = reduce_grouped_asymmetry(
         histograms=dataset.run.histograms,
+        binning=binning_spec(grouping),
         grouping=grouping,
         forward_idx=forward_idx,
         backward_idx=backward_idx,
@@ -438,19 +381,14 @@ def test_reduce_grouped_asymmetry_matches_replay(bunch: float, alpha: float) -> 
         use_background=False,
         facility="TESTINST",
     )
-    exp_t, exp_a, exp_e = _replay_reduction(
-        dataset.run.histograms,
-        grouping,
-        forward_idx,
-        backward_idx,
-        alpha,
-        use_deadtime=False,
-        use_background=False,
-        facility="TESTINST",
-    )
-    np.testing.assert_array_equal(result.time, exp_t)
-    np.testing.assert_array_equal(result.asymmetry, exp_a)
-    np.testing.assert_array_equal(result.error, exp_e)
+    f, b = [hist.counts.reshape(-1, bunch).sum(axis=1) for hist in dataset.run.histograms]
+    denominator = f + alpha * b
+    expected_a = 100 * (f - alpha * b) / denominator
+    expected_error = 200 * alpha * np.sqrt(b * b * f + f * f * b) / denominator**2
+    expected_time = dataset.time.reshape(-1, bunch).mean(axis=1)
+    np.testing.assert_allclose(result.time, expected_time, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(result.asymmetry, expected_a, rtol=1e-13)
+    np.testing.assert_allclose(result.error, expected_error, rtol=1e-13)
     assert result.corrections.deadtime.status == "off"
 
 
@@ -481,6 +419,7 @@ def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication)
         )
         core = reduce_grouped_asymmetry(
             histograms=dataset.run.histograms,
+            binning=binning_spec(grouping),
             grouping=grouping,
             forward_idx=[0],
             backward_idx=[1],
@@ -1599,6 +1538,7 @@ def test_preview_axis_uses_the_runs_exact_t0(qapp: QApplication) -> None:
 
     expected = reduce_grouped_asymmetry(
         histograms=dataset.run.histograms,
+        binning=binning_spec(dataset.run.grouping),
         grouping=dataset.run.grouping,
         forward_idx=[0],
         backward_idx=[1],

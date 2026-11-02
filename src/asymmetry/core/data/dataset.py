@@ -277,32 +277,21 @@ class MuonDataset:
             return self
         return replace(self, run=replace(self.run, histograms=[]))
 
-    def rebin(self, factor: int) -> MuonDataset:
-        r"""Return a copy with every ``factor`` consecutive bins merged.
+    def merge_curve_bins(self, factor: int) -> MuonDataset:
+        r"""Merge independent curve bins by averaging values and adding variances.
 
-        Thin convenience wrapper over
-        :func:`asymmetry.core.transform.rebin.rebin`: the time/asymmetry/error
-        arrays are rebinned by that primitive and a *new* dataset is returned
-        with the same metadata and run (this dataset is left unchanged).
+        This operation reads only the curve arrays. Use counts-first reduction
+        with a BinningSpec when raw histograms are available. The returned
+        dataset shares this dataset's Run for provenance; it leaves the source
+        arrays untouched. Use :meth:`fit_record` for worker-process transfers.
 
-        The returned copy **shares this dataset's** :class:`Run`, raw
-        histograms and all — which is what an in-process caller wants (the
-        GUI's rebinned views still reach for the counts behind them), and which
-        also means a rebinned copy pickles no smaller than the record it came
-        from. Use :meth:`fit_record` on anything bound for a worker process.
-
-        Combining ``factor`` adjacent bins trades time resolution for
-        statistics — the per-point error shrinks as :math:`1/\sqrt{factor}` on
-        flat data. ``factor = 1`` is a no-op copy; a length that is not a
-        multiple of ``factor`` drops the trailing remainder bins; ``factor < 1``
-        raises ``ValueError``.
-
-        Useful on high-rate continuous-source data (e.g. PSI GPS 1.25 ns bins)
-        where the raw sampling is far finer than the physics requires.
+        The error on the mean is sqrt(sum(error²))/factor, on the input scale.
+        A factor of one copies the arrays, and a trailing partial group is
+        dropped. The factor must be an integer >= 1.
         """
-        from asymmetry.core.transform.rebin import rebin
+        from asymmetry.core.transform.rebin import merge_curve_bins
 
-        time, asymmetry, error = rebin(self.time, self.asymmetry, self.error, factor)
+        time, asymmetry, error = merge_curve_bins(self.time, self.asymmetry, self.error, factor)
         return MuonDataset(
             time=time,
             asymmetry=asymmetry,
@@ -314,7 +303,7 @@ class MuonDataset:
     def time_range(self, t_min: float | None = None, t_max: float | None = None) -> MuonDataset:
         """Return a copy restricted to [t_min, t_max].
 
-        Like :meth:`rebin`, the copy shares this dataset's :class:`Run` and so
+        Like :meth:`merge_curve_bins`, the copy shares this dataset's :class:`Run` and so
         keeps its raw histograms: correct in-process, but it means a windowed
         copy pickles no smaller than the record it came from. Use
         :meth:`fit_record` for anything bound for a worker process.

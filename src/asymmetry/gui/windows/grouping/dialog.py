@@ -81,6 +81,7 @@ from asymmetry.core.transform import (
     T0Assessment,
     assess_t0,
     available_background_modes,
+    binning_spec,
     common_t0_for_groups,
     detected_detector_t0_bins,
     effective_detector_t0_bins,
@@ -92,7 +93,6 @@ from asymmetry.core.transform import (
     parse_detector_list,
     parse_group_detectors,
     resolve_background_mode,
-    resolve_binning_mode,
     resolve_facility,
 )
 from asymmetry.core.transform.corrections import BackgroundReference
@@ -833,10 +833,10 @@ class GroupingDialog(QDialog):
         # setup, before the layout row that positions them is built).
         self._bin0_label = QLabel("Initial bin")
         self._bin10_label = QLabel("Bin at 10 µs")
-        initial_mode, initial_bin0, initial_bin10 = resolve_binning_mode(grouping)
-        self._bin0_spin.setValue(initial_bin0)
-        self._bin10_spin.setValue(initial_bin10)
-        self._set_binning_mode(initial_mode)
+        initial_binning = binning_spec(grouping)
+        self._bin0_spin.setValue(initial_binning.bin0_us)
+        self._bin10_spin.setValue(initial_binning.bin10_us)
+        self._set_binning_mode(initial_binning.mode)
         self._binning_mode_combo.currentIndexChanged.connect(self._on_binning_mode_changed)
         self._on_binning_mode_changed()
 
@@ -3334,10 +3334,10 @@ class GroupingDialog(QDialog):
         self._update_background_status()
         self._update_alpha_section()
         self._update_beta_section()
-        mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
-        self._bin0_spin.setValue(bin0_us)
-        self._bin10_spin.setValue(bin10_us)
-        self._set_binning_mode(mode)
+        binning = binning_spec(grouping)
+        self._bin0_spin.setValue(binning.bin0_us)
+        self._bin10_spin.setValue(binning.bin10_us)
+        self._set_binning_mode(binning.mode)
         self._on_binning_mode_changed()
         self._set_excluded_detectors_text(grouping)
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))

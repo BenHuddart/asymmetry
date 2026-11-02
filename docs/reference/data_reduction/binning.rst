@@ -22,8 +22,8 @@ Constant error      grows as :math:`e^{t/\tau_\mu}` from *Initial bin* — equal
 ==================  =============================================================
 
 All three are display/fit-input transformations: the raw histograms are
-never modified, and changing mode (or any width) is always reversible. For
-the non-fixed modes the *counts* are summed onto the output bins and the
+never modified, and changing mode (or any width) is always reversible. In
+all modes the *counts* are summed onto the output bins and the
 asymmetry formed per output bin — at late times the raw bins hold zero
 counts, where an asymmetry ratio per raw bin is undefined while summed
 counts remain exactly Poisson.
@@ -114,22 +114,60 @@ carries fewer counts than the rest.
 Rebinning programmatically
 --------------------------
 
-Fixed bunching is also available directly on a reduced dataset.
-:meth:`MuonDataset.rebin <asymmetry.core.data.dataset.MuonDataset.rebin>`
-merges every ``factor`` consecutive bins and returns a *new* dataset, leaving
-the original untouched — convenient for high-rate continuous-source data
-(e.g. PSI GPS 1.25 ns bins) without dropping to manual array work:
+A :class:`~asymmetry.core.transform.rebin.BinningSpec` selects the mode,
+fixed factor and non-fixed widths. Its ``merge`` combines that many output
+bins at the count level; a fixed factor of 4 with merge 2 equals factor 8.
+An incomplete final group of output bins is dropped. Reduction records the
+spec it used.
 
 .. code-block:: python
 
-   coarse = dataset.rebin(8)   # merge 8 raw bins → 10 ns effective width
+   from dataclasses import replace
+   from asymmetry.core.transform import binning_spec, reduce_grouped_asymmetry
+   from asymmetry.core.transform import correction_flags_from_grouping
 
-It is a thin wrapper over the array-level
-:func:`~asymmetry.core.transform.rebin.rebin` primitive: ``factor = 1`` is a
-no-op copy, a length that is not a multiple of ``factor`` drops the trailing
-remainder bins, and the per-point error shrinks as
-:math:`\sigma_\text{new} = \sqrt{\sum \sigma^2} / factor` (i.e.
-:math:`\propto 1/\sqrt{factor}` on flat data).
+   grouping = run.grouping
+   bins = replace(binning_spec(grouping), merge=4)
+   flags = correction_flags_from_grouping(grouping)
+   result = reduce_grouped_asymmetry(
+       histograms=run.histograms, grouping=grouping, binning=bins,
+       forward_idx=[0], backward_idx=[1], alpha=grouping["alpha"],
+       use_deadtime=flags.use_deadtime, deadtime_mode=flags.deadtime_mode,
+       use_background=flags.use_background, metadata=run.metadata,
+   )
+
+Choose the zero-based detector indices for the required pair. The returned
+asymmetry and errors are in percent. The workflow and CLI ``reduce --rebin``
+use the same count-level merge. For period sums and differences,
+:func:`~asymmetry.core.transform.reduce.reduce_period_asymmetry` bins each
+period first, then combines :math:`A_g\pm A_r` with variances added. Periods
+must have identical output time arrays; mismatches raise ``ValueError``.
+
+Absent binning keys use fixed factor 1 and widths 0.08/0.25 µs. Present invalid
+values raise errors, for example
+``binning mode 'Varaible' is not one of fixed, variable, constant_error.`` or
+``bunching factor must be an integer >= 1; got 'abc'.`` Both widths must be
+finite and positive. A non-positive width raises, for example,
+``bin0_us must be finite and > 0; got -1.``
+
+Curves without raw counts
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:meth:`MuonDataset.merge_curve_bins <asymmetry.core.data.dataset.MuonDataset.merge_curve_bins>`
+and :func:`~asymmetry.core.transform.rebin.merge_curve_bins` compute the mean
+of consecutive curve points and add their independent variances. This is exact
+for the mean of independent Gaussian measurements; it gives different values
+and uncertainties from counts-first reduction for sparse or
+background-subtracted counts. Workdir-stored curves, rotated-frame projections
+and fit-stage bin merging use this explicitly named curve operation.
+
+.. code-block:: python
+
+   coarse = dataset.merge_curve_bins(8)
+
+A factor of one returns a copy. A trailing partial group is dropped. The
+per-point uncertainty is :math:`\sqrt{\sum\sigma^2}/factor`, on the input's
+fraction or percent scale. The raw acquisition record remains unchanged.
 
 Notes
 -----

@@ -109,7 +109,7 @@ class TestMuonDataset:
 
     def test_rebin_halves_point_count(self):
         ds = self._make_dataset(100)
-        reb = ds.rebin(2)
+        reb = ds.merge_curve_bins(2)
         assert reb.n_points == 50
         # A new dataset is returned; the original is untouched.
         assert ds.n_points == 100
@@ -118,7 +118,7 @@ class TestMuonDataset:
     def test_rebin_preserves_metadata_and_run(self):
         ds = self._make_dataset(50)
         ds.run = Run(run_number=999, metadata={})
-        reb = ds.rebin(5)
+        reb = ds.merge_curve_bins(5)
         assert reb.run is ds.run
         assert reb.metadata == ds.metadata
         # Metadata is copied, not shared, so later edits do not leak back.
@@ -126,7 +126,7 @@ class TestMuonDataset:
 
     def test_rebin_conserves_asymmetry_mean(self):
         ds = self._make_dataset(100)
-        reb = ds.rebin(4)
+        reb = ds.merge_curve_bins(4)
         assert reb.asymmetry.mean() == pytest.approx(ds.asymmetry.mean(), rel=1e-6)
 
     def test_rebin_propagates_error_on_flat_data(self):
@@ -137,13 +137,13 @@ class TestMuonDataset:
             asymmetry=np.ones(n),
             error=np.full(n, e),
         )
-        reb = ds.rebin(4)
+        reb = ds.merge_curve_bins(4)
         # Flat per-bin error e shrinks as e / sqrt(factor).
         np.testing.assert_allclose(reb.error, e / np.sqrt(4))
 
     def test_rebin_factor_1_is_noop_copy(self):
         ds = self._make_dataset(50)
-        reb = ds.rebin(1)
+        reb = ds.merge_curve_bins(1)
         np.testing.assert_array_equal(reb.time, ds.time)
         np.testing.assert_array_equal(reb.asymmetry, ds.asymmetry)
         np.testing.assert_array_equal(reb.error, ds.error)
@@ -152,13 +152,13 @@ class TestMuonDataset:
 
     def test_rebin_truncates_remainder(self):
         ds = self._make_dataset(101)
-        reb = ds.rebin(4)
+        reb = ds.merge_curve_bins(4)
         assert reb.n_points == 25  # 101 // 4, trailing bin dropped
 
     def test_rebin_invalid_factor_raises(self):
         ds = self._make_dataset(50)
         with pytest.raises(ValueError):
-            ds.rebin(0)
+            ds.merge_curve_bins(0)
 
     def test_summary(self):
         """Test summary method output."""
@@ -291,7 +291,7 @@ class TestFitRecord:
     def test_rebinning_keeps_the_counts_so_the_fit_record_is_the_boundary(self):
         """``rebin`` and ``time_range`` share the run by design; only this strips it."""
         dataset = self._record()
-        rebinned = dataset.rebin(2)
+        rebinned = dataset.merge_curve_bins(2)
 
         assert rebinned.run is dataset.run
         assert len(rebinned.run.histograms) == 15

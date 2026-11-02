@@ -10,6 +10,7 @@ from asymmetry.core.io.nexus import NexusLoader
 from asymmetry.core.io.psi import PsiLoader
 from asymmetry.core.io.root import RootLoader, _RootHistogram
 from asymmetry.core.transform.grouping import align_forward_backward, effective_group_indices
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
 from tests.io.test_nexus_loader import _write_v2_file
 from tests.io.test_psi_loader import _write_psi_bin
@@ -56,6 +57,7 @@ def test_loader_records_the_named_group_alignment(tmp_path, kind):
 
     reduction = reduce_grouped_asymmetry(
         histograms=run.histograms,
+        binning=binning_spec(run.grouping),
         grouping=run.grouping,
         forward_idx=forward,
         backward_idx=backward,

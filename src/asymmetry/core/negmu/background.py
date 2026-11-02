@@ -33,6 +33,7 @@ from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.grouped_time_domain import build_count_group
 from asymmetry.core.negmu.fit import CaptureModelSpec
 from asymmetry.core.negmu.model import CaptureComponent, evaluate_capture_model
+from asymmetry.core.transform.rebin import binning_spec
 
 
 def subtract_capture_background(
@@ -169,7 +170,7 @@ def capture_background_run(
     if len(group.time) > 1:
         bin_width = float(group.time[1] - group.time[0])
     else:
-        bunch = max(1, int(source_run.grouping.get("bunching_factor", 1)))
+        bunch = binning_spec(source_run.grouping).factor
         bin_width = float(source_run.histograms[0].bin_width) * bunch
 
     # group.time[0] is the post-rebin bin-centre offset from t0; rounding to the

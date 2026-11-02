@@ -15,6 +15,7 @@ from asymmetry.core.simulate import (
     simulate_two_period_run,
 )
 from asymmetry.core.transform.grouping import effective_group_indices, group_names
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import (
     correction_flags_from_grouping,
     reduce_grouped_asymmetry,
@@ -54,6 +55,7 @@ def _direct_reduction(run):
     flags = correction_flags_from_grouping(grouping)
     return reduce_grouped_asymmetry(
         histograms=run.histograms,
+        binning=binning_spec(grouping),
         grouping=grouping,
         forward_idx=effective_group_indices(
             grouping, int(grouping["forward_group"]), n_histograms=n_histograms
@@ -349,7 +351,7 @@ def test_the_background_error_names_the_source_run_of_a_period_selection() -> No
 @pytest.mark.parametrize("frequency", [40.0, 60.0])
 def test_user_rebinning_cannot_fold_detected_lines(frequency: float) -> None:
     from asymmetry.core.data.dataset import MuonDataset
-    from asymmetry.core.workflow.reduction import _bandwidth_preserving_rebin
+    from asymmetry.core.workflow.reduction import _check_rebin_bandwidth
 
     time = np.arange(8192) * 0.001
     dataset = MuonDataset(
@@ -358,16 +360,15 @@ def test_user_rebinning_cannot_fold_detected_lines(frequency: float) -> None:
         error=np.ones_like(time) * 0.1,
         metadata={"run_number": 7},
     )
-    safe = _bandwidth_preserving_rebin(dataset, 4)
-    assert safe.n_points == dataset.n_points // 4
+    assert _check_rebin_bandwidth(dataset, 4) is None
     with pytest.raises(ValueError, match="would alias a detected"):
-        _bandwidth_preserving_rebin(dataset, 20)
+        _check_rebin_bandwidth(dataset, 20)
     assert dataset.n_points == 8192
 
 
 def test_relaxation_only_data_can_be_rebinned_in_a_high_field() -> None:
     from asymmetry.core.data.dataset import MuonDataset
-    from asymmetry.core.workflow.reduction import _bandwidth_preserving_rebin
+    from asymmetry.core.workflow.reduction import _check_rebin_bandwidth
 
     time = np.arange(8192) * 0.001
     dataset = MuonDataset(
@@ -376,8 +377,7 @@ def test_relaxation_only_data_can_be_rebinned_in_a_high_field() -> None:
         error=np.ones_like(time),
         metadata={"field": 80000},
     )
-    rebinned = _bandwidth_preserving_rebin(dataset, 20)
-    assert rebinned.n_points == dataset.n_points // 20
+    assert _check_rebin_bandwidth(dataset, 20) is None
 
 
 def test_reduction_rejects_aliasing_before_returning_a_cached_spectrum() -> None:

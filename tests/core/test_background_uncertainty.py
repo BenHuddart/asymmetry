@@ -7,7 +7,7 @@ import pytest
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.integral import integrate_asymmetry
-from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec
 from asymmetry.core.transform.reduce import corrected_grouped_counts
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -37,7 +37,7 @@ def _background_counts(*, scale=1.0, background_range=(0, 1), bunching=4):
 
 def test_shared_background_binned_covariance() -> None:
     counts, grouping = _background_counts()
-    time, asymmetry, error = binned_fb_asymmetry(counts, grouping=grouping, alpha=1.0)
+    time, asymmetry, error = binned_fb_asymmetry(counts, binning=binning_spec(grouping), alpha=1.0)
     # Four raw Poisson bins minus four copies of one independent mean level.
     # var(F) = 400 + 4²·4 = 464; var(B) = 320 + 4²·4 = 384 count².
     np.testing.assert_allclose(time, [0.015], rtol=0.0, atol=1e-16)
@@ -62,7 +62,7 @@ def test_overlapping_background_integral_uses_the_raw_linear_coefficients() -> N
 
 def test_shared_background_seeded_simulation() -> None:
     counts, grouping = _background_counts(scale=100.0)
-    _, _, error = binned_fb_asymmetry(counts, grouping=grouping, alpha=1.0)
+    _, _, error = binned_fb_asymmetry(counts, binning=binning_spec(grouping), alpha=1.0)
     assert error[0] == pytest.approx(0.004420992805650498, rel=1e-12)
     rng = np.random.default_rng(20261031)
     forward = rng.poisson([800, 800, 10000, 10000, 10000, 10000], size=(200_000, 6))
@@ -178,7 +178,7 @@ def test_integral_ratio_and_one_binned_point_share_the_same_variances() -> None:
     from asymmetry.core.transform.asymmetry import estimate_alpha_detailed
 
     counts, grouping = _background_counts()
-    _, _, binned = binned_fb_asymmetry(counts, grouping=grouping, alpha=1.0)
+    _, _, binned = binned_fb_asymmetry(counts, binning=binning_spec(grouping), alpha=1.0)
     _, integral = integrate_asymmetry(
         counts.forward, counts.backward, time=np.arange(6), t_min=2, t_max=5
     )
@@ -190,7 +190,7 @@ def test_integral_ratio_and_one_binned_point_share_the_same_variances() -> None:
 
 
 def test_variable_width_bins_match_direct_raw_count_coefficients() -> None:
-    from asymmetry.core.transform.rebin import binning_slice_edges
+    from asymmetry.core.transform.rebin import BinningSpec
 
     forward, backward = np.full(80, 100.0), np.full(80, 80.0)
     forward[:10], backward[:10] = np.arange(2, 12), np.arange(3, 13)
@@ -213,10 +213,10 @@ def test_variable_width_bins_match_direct_raw_count_coefficients() -> None:
         use_background=True,
         facility="",
     )
-    _, asymmetry, error = binned_fb_asymmetry(counts, grouping=grouping, alpha=1.0)
+    _, asymmetry, error = binned_fb_asymmetry(counts, binning=binning_spec(grouping), alpha=1.0)
     edges = (
-        binning_slice_edges(
-            72, mode="variable", bin_width_us=0.05, t_start_us=0.4, bin0_us=0.1, bin10_us=0.4
+        BinningSpec(mode="variable", bin0_us=0.1, bin10_us=0.4).edges(
+            72, bin_width_us=0.05, t_start_us=0.4
         )
         + 8
     )

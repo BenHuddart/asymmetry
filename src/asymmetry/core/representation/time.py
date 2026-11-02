@@ -28,7 +28,7 @@ from asymmetry.core.maxent import (
 )
 from asymmetry.core.representation.base import Representation, RepresentationType
 from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
-from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec
 
 
 class TimeFBAsymmetry(Representation):
@@ -53,7 +53,7 @@ class TimeFBAsymmetry(Representation):
 
         time, asymmetry, error = binned_fb_asymmetry(
             fb.counts,
-            grouping=grouping,
+            binning=binning_spec(grouping),
             alpha=fb.alpha,
             beta=fb.beta,
         )

@@ -165,6 +165,7 @@ class FitRecipe:
             "t_min": None if self.t_min is None else float(self.t_min),
             "t_max": None if self.t_max is None else float(self.t_max),
             "rebin": int(self.rebin),
+            "rebin_operation": "merge_curve_bins",
             "source": {**self.source, "field": self.seed_field},
             "pinned": list(self.pinned),
         }
@@ -363,7 +364,7 @@ def retained_window(
     t_max: float | None = None,
 ) -> tuple[float, float]:
     """First and last bin centres a fit keeps after merging *rebin* bins and the time cut."""
-    record = dataset.rebin(rebin) if rebin != 1 else dataset
+    record = dataset.merge_curve_bins(rebin) if rebin != 1 else dataset
     time = record.time_range(t_min, t_max).time
     return float(time[0]), float(time[-1])
 

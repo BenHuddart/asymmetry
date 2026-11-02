@@ -46,7 +46,7 @@ from asymmetry.core.transform.grouping import (
     group_forward_backward,
     resolve_group_indices,
 )
-from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec
 from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
 
 #: A per-group asymmetry signal: a callable evaluated on the time axis in
@@ -1848,7 +1848,7 @@ def _reduce_histograms(
 
     time, asymmetry, error = binned_fb_asymmetry(
         fb.counts,
-        grouping=grouping,
+        binning=binning_spec(grouping),
         alpha=fb.alpha,
         beta=fb.beta,
     )

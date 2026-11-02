@@ -382,27 +382,19 @@ def combine_period_asymmetry(
     * ``GREEN_MINUS_RED``: ``green - red``
     * ``GREEN_PLUS_RED``: ``green + red``
 
-    with errors added in quadrature. Arrays are truncated to their common
-    length (the time axis from the red spectrum is used). Returns empty arrays
-    when there is no overlap.
+    with errors added in quadrature. All arrays must have the same length and
+    the time coordinates must be identical; misaligned periods raise an error.
     """
-    n = min(
-        len(red_time),
-        len(green_time),
-        len(red_asymmetry),
-        len(green_asymmetry),
-        len(red_error),
-        len(green_error),
-    )
-    if n <= 0:
-        empty = np.array([], dtype=np.float64)
-        return empty, empty.copy(), empty.copy()
-
-    time = np.asarray(red_time[:n], dtype=np.float64).copy()
-    red_a = np.asarray(red_asymmetry[:n], dtype=np.float64)
-    green_a = np.asarray(green_asymmetry[:n], dtype=np.float64)
-    red_e = np.asarray(red_error[:n], dtype=np.float64)
-    green_e = np.asarray(green_error[:n], dtype=np.float64)
+    arrays = (red_time, red_asymmetry, red_error, green_time, green_asymmetry, green_error)
+    if any(np.asarray(array).ndim != 1 or len(array) != len(red_time) for array in arrays):
+        raise ValueError(
+            "Period asymmetry arrays must have identical lengths and be one-dimensional."
+        )
+    if not np.array_equal(red_time, green_time):
+        raise ValueError("Period asymmetry time arrays must be identical.")
+    time = np.asarray(red_time, dtype=np.float64).copy()
+    red_a, green_a = np.asarray(red_asymmetry), np.asarray(green_asymmetry)
+    red_e, green_e = np.asarray(red_error), np.asarray(green_error)
 
     mode_key = str(mode)
     if mode_key == str(PeriodMode.GREEN_MINUS_RED):

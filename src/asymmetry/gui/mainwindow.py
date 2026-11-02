@@ -238,7 +238,7 @@ from asymmetry.core.transform.deadtime import (
     promote_deadtime_to_grouping,
 )
 from asymmetry.core.transform.projections import reduce_run_projections, reduction_identity
-from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
+from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
 from asymmetry.core.transform.rotating_frame import (
     ROTATED_LABELS,
     ROTATED_PROJECTIONS,
@@ -5762,7 +5762,7 @@ class MainWindow(QMainWindow):
                 asym_out = source_asymmetry[lo : hi + 1].copy()
                 err_out = source_error[lo : hi + 1].copy()
                 if bunch_factor > 1:
-                    time_out, asym_out, err_out = rebin(
+                    time_out, asym_out, err_out = merge_curve_bins(
                         time_out,
                         asym_out,
                         err_out,
@@ -6171,6 +6171,7 @@ class MainWindow(QMainWindow):
             beta = 1.0
         result = reduce_grouped_asymmetry(
             histograms=histograms,
+            binning=binning_spec(grouping),
             grouping=grouping,
             forward_idx=forward_idx,
             backward_idx=backward_idx,
@@ -6203,7 +6204,7 @@ class MainWindow(QMainWindow):
         ``None`` when the recorded reduction cannot be replayed as a wider
         fixed packing (no histograms or groups, non-fixed binning modes,
         G±R period-combined curves); the panel then keeps the curve-level
-        :func:`rebin`.
+        :func:`merge_curve_bins`.
         """
         extra = int(extra_bunch_factor)
         run = getattr(dataset, "run", None)
@@ -6211,8 +6212,7 @@ class MainWindow(QMainWindow):
             return None
         grouping = run.grouping if isinstance(run.grouping, dict) else {}
 
-        binning_mode, _, _ = resolve_binning_mode(grouping)
-        if binning_mode != "fixed":
+        if binning_spec(grouping).mode != "fixed":
             return None
 
         groups_raw = grouping.get("groups")
@@ -6261,10 +6261,7 @@ class MainWindow(QMainWindow):
             # combination stays at the curve level.
             return None
 
-        try:
-            base_factor = max(1, int(grouping.get("bunching_factor", 1)))
-        except (TypeError, ValueError):
-            base_factor = 1
+        base_factor = binning_spec(grouping).factor
         reduction_grouping = dict(grouping)
         reduction_grouping["bunching_factor"] = base_factor * extra
 

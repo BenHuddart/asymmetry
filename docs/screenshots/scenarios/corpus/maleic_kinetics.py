@@ -210,7 +210,7 @@ def _anchor():
 
 def _baseline_subtracted(dataset, result, rebin_factor=3):
     """Return (t, Mu-oscillation) with the fitted diamagnetic baseline removed."""
-    ds = dataset.rebin(rebin_factor) if rebin_factor > 1 else dataset
+    ds = dataset.merge_curve_bins(rebin_factor) if rebin_factor > 1 else dataset
     t = np.asarray(ds.time, dtype=float)
     a = np.asarray(ds.asymmetry, dtype=float)
     p = result.parameters
@@ -248,7 +248,7 @@ class MaleicMuPrecessionScenario(CorpusScenario):
 
         # Rebin ×3 (48 ns bins; Nyquist ≈ 10 MHz ≫ 2.79 MHz) so the ~0.36 µs Mu
         # oscillation reads clearly in the plot instead of a wall of per-bin noise.
-        ds = load_corpus_datasets([_rel(_ANCHOR_RUN)])[0].rebin(3)
+        ds = load_corpus_datasets([_rel(_ANCHOR_RUN)])[0].merge_curve_bins(3)
         window._data_browser.add_dataset(ds)
         window._on_dataset_selected(ds.run_number)
 

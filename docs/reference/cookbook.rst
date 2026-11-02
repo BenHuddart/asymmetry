@@ -213,16 +213,16 @@ See :doc:`grouped_time_domain_fitting`.
 Rebin a curve
 -------------
 
-:meth:`MuonDataset.rebin <asymmetry.core.data.dataset.MuonDataset.rebin>` returns
+:meth:`MuonDataset.merge_curve_bins <asymmetry.core.data.dataset.MuonDataset.merge_curve_bins>` returns
 a coarser copy with every ``factor`` bins merged (errors propagated):
 
 .. code-block:: python
 
-   coarse = ds.rebin(4)        # 4 bins -> 1; coarse.time/.asymmetry/.error
+   coarse = ds.merge_curve_bins(4)        # 4 bins -> 1; coarse.time/.asymmetry/.error
 
    # Or the array-level function when you do not have a MuonDataset:
-   from asymmetry.core.transform import rebin
-   time, values, errors = rebin(ds.time, ds.asymmetry, ds.error, factor=4)
+   from asymmetry.core.transform import merge_curve_bins
+   time, values, errors = merge_curve_bins(ds.time, ds.asymmetry, ds.error, factor=4)
 
 See :doc:`data_reduction/index`.
 

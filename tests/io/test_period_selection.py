@@ -324,17 +324,17 @@ def test_combine_period_asymmetry_difference_and_sum():
     assert np.allclose(total, green_a + red_a)
 
 
-def test_combine_period_asymmetry_truncates_to_common_length():
-    tm, diff, err = combine_period_asymmetry(
-        np.arange(5.0),
-        np.arange(5.0),
-        np.ones(5),
-        np.arange(3.0),
-        np.full(3, 10.0),
-        np.ones(3),
-        PeriodMode.GREEN_MINUS_RED,
-    )
-    assert len(tm) == len(diff) == len(err) == 3
+def test_combine_period_asymmetry_rejects_length_mismatch():
+    with pytest.raises(ValueError, match="identical lengths"):
+        combine_period_asymmetry(
+            np.arange(5.0),
+            np.arange(5.0),
+            np.ones(5),
+            np.arange(3.0),
+            np.full(3, 10.0),
+            np.ones(3),
+            PeriodMode.GREEN_MINUS_RED,
+        )
 
 
 def test_combine_period_asymmetry_empty_and_bad_mode():

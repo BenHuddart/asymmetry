@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- CLI `reduce --rebin` merges counts before forming asymmetry, including period
+  differences and shared-background errors; invalid binning raises an error.
+
 - Scripted spectral-moment propagation includes normalization and peak motion
   in width, skewness, peak-field and asymmetry uncertainties.
 
@@ -81,6 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 
 ### Changed
+
+- Curve-only `rebin` and `MuonDataset.rebin` are named `merge_curve_bins`;
+  raw-count reductions take an explicit `BinningSpec`.
 
 - The superconducting kernel exposes `thermal_integral(gap_over_temperature)`
   in place of `energy_integral`; `rho_*` helpers no longer accept `n_energy`.

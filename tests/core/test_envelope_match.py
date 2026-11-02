@@ -285,7 +285,8 @@ def test_rebinned_copy_matches_the_same_bank_and_parameter() -> None:
 
     full = _best(match_envelope_banks(dataset), "fmuf_envelope")
     rebinned = _best(
-        match_envelope_banks(dataset.rebin(4), analysis_window_us=window), "fmuf_envelope"
+        match_envelope_banks(dataset.merge_curve_bins(4), analysis_window_us=window),
+        "fmuf_envelope",
     )
 
     assert full is not None and rebinned is not None

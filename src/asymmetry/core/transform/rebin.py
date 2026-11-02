@@ -1,31 +1,16 @@
-"""Rebinning utilities for time-domain data.
+"""Counts-first histogram binning and independent curve-bin merging.
 
-Three binning modes (WiMDA's binning modes, textbook Fig. 15.7):
-
-- **fixed** — every output bin merges the same number of raw bins
-  (:func:`rebin`, the ``bunching_factor`` grouping key);
-- **variable** — output width grows exponentially from ``bin0_us`` at t = 0
-  to ``bin10_us`` at t = 10 µs (WiMDA's formula folds 1/(10·λ_µ) into the
-  exponent with a rounded constant, 0.22; the exact law is implemented here —
-  study divergence D8, < 0.6 % difference over a 32 µs window);
-- **constant_error** — output width grows as exp(t/τ_µ), so each output bin
-  holds roughly equal counts and the Poisson error per bin stays flat while
-  the polarization varies slowly.
-
-All modes are display/fit-input transformations on the reduced data: raw
-histograms are never modified (provenance invariant). Every mode bins the
-*counts* and then forms the asymmetry per output bin (via
-:func:`binned_fb_asymmetry`) — the order WiMDA, musrfit, and Mantid all
-use. At late times the raw bins hold few or zero counts, where a mean of
-per-bin asymmetry ratios is undefined (and its σ = 1 no-information
-sentinels inflate merged error bars); summed counts stay exactly Poisson.
-:func:`rebin` remains the curve-level combiner for data without raw
-histograms (curve-only datasets, period-combined curves, display bunching
-of an already-reduced curve).
+BinningSpec fixes the raw edges for fixed, exponentially variable, or
+constant-error binning. Corrected counts and their shared-background noise are
+combined on those edges before forming a forward/backward asymmetry ratio.
+The raw acquisition record is unchanged. Curve-only inputs use
+merge_curve_bins, whose errors assume independent points.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from numbers import Integral, Real
 from typing import Any
 
 import numpy as np
@@ -40,13 +25,13 @@ from asymmetry.core.utils.constants import MUON_LIFETIME_US
 BINNING_MODES = ("fixed", "variable", "constant_error")
 
 
-def rebin(
+def merge_curve_bins(
     time: NDArray[np.float64],
     values: NDArray[np.float64],
     errors: NDArray[np.float64],
     factor: int,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
-    """Rebin data by combining *factor* consecutive bins.
+    """Merge independent curve bins by a linear mean, without using raw counts.
 
     Parameters
     ----------
@@ -64,8 +49,7 @@ def rebin(
         ``values`` with errors added in quadrature, so this transform is
         unit-preserving: it never converts between fraction and percent.
     """
-    if factor < 1:
-        raise ValueError("Rebinning factor must be >= 1")
+    BinningSpec(factor=factor)
     if factor == 1:
         return time.copy(), values.copy(), errors.copy()
 
@@ -87,19 +71,21 @@ def rebin_counts(
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Return count-preserving bunched traces (sum counts, mean times).
 
-    Unlike :func:`rebin`, which is value-domain (mean of values, errors in
+    Unlike :func:`merge_curve_bins`, which is value-domain (mean of values, errors in
     quadrature ÷ factor), this merges neighbouring bins by *summing* the
     counts while moving the time coordinate to the centre of the wider
     effective bin — the right combiner for grouped count-like signals
     (fit-input traces, grouped Fourier inputs). The two are deliberately
     distinct: a value-domain mean would corrupt Poisson statistics on counts.
 
-    ``factor`` is clamped to ``max(1, int(factor))``; a no-op factor or a
-    series shorter than the factor returns ``float64`` copies of the inputs.
+    ``factor`` must be an integer >= 1. A factor of one returns float64 copies;
+    an incomplete trailing group is dropped.
     """
-    bunch_factor = max(1, int(factor))
-    if bunch_factor <= 1 or counts.size < bunch_factor:
-        return np.asarray(time, dtype=np.float64), np.asarray(counts, dtype=np.float64)
+    bunch_factor = BinningSpec(factor=factor).factor
+    if bunch_factor == 1:
+        return np.asarray(time, dtype=np.float64).copy(), np.asarray(
+            counts, dtype=np.float64
+        ).copy()
 
     n_new = counts.size // bunch_factor
     trimmed = n_new * bunch_factor
@@ -112,25 +98,61 @@ def rebin_counts(
     return rebinned_time, rebinned_counts
 
 
-def resolve_binning_mode(grouping: dict[str, Any] | None) -> tuple[str, float, float]:
-    """Return ``(mode, bin0_us, bin10_us)`` from a grouping payload.
+@dataclass(frozen=True)
+class BinningSpec:
+    """Validated raw-bin edges and the number of recorded bins to merge."""
 
-    Defaults mirror WiMDA's ``InitializeGlobalVars``: bin0 = 0.08 µs,
-    bin10 = 0.25 µs. Unknown modes fall back to ``fixed``.
-    """
-    grouping = grouping if isinstance(grouping, dict) else {}
-    mode = str(grouping.get("binning_mode", "fixed")).strip().lower()
-    if mode not in BINNING_MODES:
-        mode = "fixed"
+    mode: str = "fixed"
+    factor: int = 1
+    bin0_us: float = 0.08
+    bin10_us: float = 0.25
+    merge: int = 1
 
-    def _positive(key: str, default: float) -> float:
-        try:
-            value = float(grouping.get(key, default))
-        except (TypeError, ValueError):
-            return default
-        return value if np.isfinite(value) and value > 0.0 else default
+    def __post_init__(self) -> None:
+        if not isinstance(self.mode, str) or self.mode not in BINNING_MODES:
+            raise ValueError(
+                f"binning mode {self.mode!r} is not one of {', '.join(BINNING_MODES)}."
+            )
+        for name, value in (("bunching factor", self.factor), ("bin merge", self.merge)):
+            if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
+                raise ValueError(f"{name} must be an integer >= 1; got {value!r}.")
+        for name, value in (("bin0_us", self.bin0_us), ("bin10_us", self.bin10_us)):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, Real)
+                or not np.isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError(f"{name} must be finite and > 0; got {value!r}.")
 
-    return mode, _positive("bin0_us", 0.08), _positive("bin10_us", 0.25)
+    def edges(self, n_bins: int, bin_width_us: float, t_start_us: float) -> NDArray[np.intp]:
+        """Raw edges; retain a variable-mode tail, drop an incomplete merged group."""
+        if self.mode == "fixed":
+            edges = np.arange(
+                0, n_bins // self.factor * self.factor + 1, self.factor, dtype=np.intp
+            )
+        else:
+            boundaries = [0]
+            index = 0
+            while index < n_bins:
+                time = t_start_us + index * bin_width_us
+                width = _target_width_us(self.mode, time, self.bin0_us, self.bin10_us)
+                step = max(1, int(np.ceil(width / bin_width_us - 1e-9)))
+                index = min(index + step, n_bins)
+                boundaries.append(index)
+            edges = np.asarray(boundaries, dtype=np.intp)
+        return edges[:: self.merge]
+
+
+def binning_spec(grouping: dict[str, Any] | None) -> BinningSpec:
+    """Parse file/project/user grouping binning, rejecting present invalid values."""
+    values = {} if grouping is None else grouping
+    return BinningSpec(
+        mode=values.get("binning_mode", "fixed"),
+        factor=values.get("bunching_factor", 1),
+        bin0_us=values.get("bin0_us", 0.08),
+        bin10_us=values.get("bin10_us", 0.25),
+    )
 
 
 def _target_width_us(mode: str, t_us: float, bin0_us: float, bin10_us: float) -> float:
@@ -139,58 +161,20 @@ def _target_width_us(mode: str, t_us: float, bin0_us: float, bin10_us: float) ->
     return bin0_us * np.exp(max(t_us, 0.0) / MUON_LIFETIME_US)
 
 
-def binning_slice_edges(
-    n_bins: int,
-    *,
-    mode: str,
-    bin_width_us: float,
-    t_start_us: float,
-    bin0_us: float = 0.08,
-    bin10_us: float = 0.25,
-) -> NDArray[np.intp]:
-    """Output-bin boundaries (indices 0..n_bins) for a non-fixed binning mode.
-
-    Raw bins are accumulated until the running edge passes the target width
-    at the output bin's start time — WiMDA's ``Regroup`` loop, snapped to
-    integer raw-bin boundaries. ``t_start_us`` is the time (relative to t0)
-    of the window's first raw-bin edge; widths before t = 0 use the t = 0
-    target.
-    """
-    if mode not in ("variable", "constant_error"):
-        raise ValueError(f"binning_slice_edges expects a non-fixed mode, got {mode!r}")
-    if bin_width_us <= 0.0:
-        raise ValueError("bin_width_us must be positive")
-    edges = [0]
-    i = 0
-    while i < n_bins:
-        t1 = t_start_us + i * bin_width_us
-        width = _target_width_us(mode, t1, bin0_us, bin10_us)
-        step = max(1, int(np.ceil(width / bin_width_us - 1e-9)))
-        i = min(i + step, n_bins)
-        edges.append(i)
-    return np.asarray(edges, dtype=np.intp)
-
-
 def binned_fb_asymmetry(
     counts: ForwardBackwardCounts,
     *,
-    grouping: dict[str, Any] | None,
+    binning: BinningSpec,
     alpha: float,
     beta: float = 1.0,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Reduce grouped counts to a binned asymmetry curve (all binning modes).
 
-    Counts (and, when supplied, count variances) are summed onto the output
-    bins first and the asymmetry formed per output bin — the counts-then-
-    ratio order WiMDA, musrfit, and Mantid all use. This matters beyond
-    tidiness: forming the asymmetry per raw bin and then averaging gives
-    one-sided raw bins (F·B = 0) the σ = 1 no-information sentinel, which
-    leaks into every merged bin's quadrature and inflates late-time errors
-    on sparse data. Fixed mode merges ``bunching_factor`` raw bins per
-    output bin (trailing remainder dropped, like :func:`rebin`); the
-    non-fixed modes use :func:`binning_slice_edges`. Output times are the mean of
-    the merged raw bins' reduction time stamps — the same convention
-    :func:`rebin` uses, so switching binning modes never shifts the time axis.
+    The validated spec selects raw edges inside the good-bin window, then
+    merges ``binning.merge`` recorded output bins. Counts and their full
+    variance model are summed before the ratio is formed. Fixed binning drops
+    a partial raw group; variable modes keep their last partial bin. An
+    incomplete group of output bins is dropped when merge is greater than one.
 
     Raw bin ``k`` is stamped at its **centre** measured from the run's exact t0,
     ``(k + 0.5)·w − t0_time_us``. The validated counts carry the exact t0
@@ -206,7 +190,6 @@ def binned_fb_asymmetry(
         :func:`~asymmetry.core.transform.reduce_grouped_asymmetry` is the
         reduction that does, and its output is percent.
     """
-    mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
     window = counts.window
     f = counts.forward.counts[window.slice]
     b = counts.backward.counts[window.slice]
@@ -214,29 +197,13 @@ def binned_fb_asymmetry(
     residual_us = (counts.common_t0_bin + 0.5) * bin_width_us - counts.t0_time_us
     t_start = (window.first - counts.common_t0_bin) * bin_width_us + residual_us
 
-    if mode == "fixed":
-        try:
-            factor = max(1, int((grouping or {}).get("bunching_factor", 1)))
-        except (TypeError, ValueError):
-            factor = 1
-        trimmed = (f.size // factor) * factor
-        edges = np.arange(0, trimmed + 1, factor, dtype=np.intp)
-        if edges.size < 2:
-            empty = np.array([], dtype=np.float64)
-            return empty, empty.copy(), empty.copy()
-        # reduceat's last segment runs to the end of the array, so drop the
-        # trailing partial block explicitly (same trim as rebin()).
-        f = f[:trimmed]
-        b = b[:trimmed]
-    else:
-        edges = binning_slice_edges(
-            f.size,
-            mode=mode,
-            bin_width_us=float(bin_width_us),
-            t_start_us=t_start,
-            bin0_us=bin0_us,
-            bin10_us=bin10_us,
-        )
+    edges = binning.edges(f.size, float(bin_width_us), t_start)
+    if edges.size < 2:
+        empty = np.array([], dtype=np.float64)
+        return empty, empty.copy(), empty.copy()
+    # reduceat runs its last segment to the array end; exclude dropped raw bins.
+    f = f[: edges[-1]]
+    b = b[: edges[-1]]
     starts = edges[:-1]
     f_out = np.add.reduceat(f, starts)
     b_out = np.add.reduceat(b, starts)
@@ -248,6 +215,6 @@ def binned_fb_asymmetry(
     )
     # Mean of the merged raw bins' stamps: for the slice [e0, e1) that is
     # t_start + ((e0 + e1 − 1)/2)·w — matching the fixed-mode path, where
-    # rebin() averages the same per-bin stamps.
+    # merge_curve_bins() averages the same per-bin stamps.
     time = t_start + (edges[:-1] + edges[1:] - 1) * 0.5 * float(bin_width_us)
     return np.asarray(time, dtype=np.float64), asymmetry, error

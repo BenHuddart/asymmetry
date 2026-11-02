@@ -237,9 +237,7 @@ REQUIRED_KNOWLEDGE_FILES = (
 # AGENTS.md costs context in every session of every agent, so it stays a short map:
 # a rule that does not fit replaces another, or becomes a check here.
 AGENTS_MD_MAX_LINES = 150
-# The packaged agent skill grows by accretion: each evaluation failure tempts a
-# new paragraph. Its line count is frozen here and may only fall, so a new rule
-# replaces or merges an old one. Lower the baseline whenever the file shrinks.
+# The packaged skill has a frozen line budget; lower it whenever the file shrinks.
 SKILL_MD = SRC_ROOT / "resources" / "skills" / "asymmetry-analysis" / "SKILL.md"
 SKILL_MD_MAX_LINES = 1706
 LINT_TARGETS = ("src", "tests", "tools")
@@ -268,6 +266,7 @@ find_physical_constant_duplicate_violations = (
     _numeric_checks.find_physical_constant_duplicate_violations
 )
 find_count_boundary_violations = _numeric_checks.find_count_boundary_violations
+find_binning_payload_violations = _numeric_checks.find_binning_payload_violations
 
 
 def _module_matches(module: str, banned: str) -> bool:
@@ -1031,6 +1030,7 @@ def run_structural_checks() -> int:
         *find_core_boundary_violations(),
         *find_physical_constant_duplicate_violations(),
         *find_count_boundary_violations(),
+        *find_binning_payload_violations(),
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
         *find_axis_limit_policy_violations(),

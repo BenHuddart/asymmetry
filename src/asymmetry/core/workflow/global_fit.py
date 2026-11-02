@@ -82,7 +82,9 @@ def fit_global(
     model = recipe.model()
     runs = sorted(datasets_by_run, key=lambda run: (axis.values[run], run))
     datasets = [
-        datasets_by_run[run] if recipe.rebin <= 1 else datasets_by_run[run].rebin(recipe.rebin)
+        datasets_by_run[run]
+        if recipe.rebin <= 1
+        else datasets_by_run[run].merge_curve_bins(recipe.rebin)
         for run in runs
     ]
     initial = {}

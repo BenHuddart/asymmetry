@@ -5,6 +5,7 @@ import pytest
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform import deadtime
+from asymmetry.core.transform.rebin import binning_spec
 
 
 @pytest.mark.parametrize(
@@ -126,15 +127,17 @@ def test_reduction_rejects_a_saturated_unused_detector_outside_the_good_window()
         Histogram(np.array(counts), bin_width=1, good_bin_end=1)
         for counts in ([5, 5], [4, 4], [10, 0])
     ]
+    grouping = {
+        "good_frames": 1,
+        "dead_time_us": [0.1] * 3,
+        "first_good_bin": 1,
+        "last_good_bin": 1,
+    }
     with pytest.raises(deadtime.DeadtimeCorrectionError, match="detector 3") as error:
         reduce_grouped_asymmetry(
             histograms=histograms,
-            grouping={
-                "good_frames": 1,
-                "dead_time_us": [0.1] * 3,
-                "first_good_bin": 1,
-                "last_good_bin": 1,
-            },
+            binning=binning_spec(grouping),
+            grouping=grouping,
             forward_idx=[0],
             backward_idx=[1],
             alpha=1,

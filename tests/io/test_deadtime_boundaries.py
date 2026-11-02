@@ -12,6 +12,7 @@ from asymmetry.core.io.nexus_writer import write_nexus_v1
 from asymmetry.core.io.periods import combine_mapped_periods, select_period_histograms
 from asymmetry.core.transform import reduce_grouped_asymmetry
 from asymmetry.core.transform.corrections import CorrectionUnavailableError
+from asymmetry.core.transform.rebin import binning_spec
 
 h5py = pytest.importorskip("h5py")
 
@@ -51,6 +52,7 @@ def test_nexus_does_not_invent_missing_or_invalid_frames(signed_file, frames):
     with pytest.raises(CorrectionUnavailableError, match="good frames"):
         reduce_grouped_asymmetry(
             histograms=run.histograms,
+            binning=binning_spec(run.grouping),
             grouping=run.grouping,
             forward_idx=[0],
             backward_idx=[1],
@@ -66,6 +68,7 @@ def test_negative_file_table_reaches_the_reduction(signed_file):
     assert run.grouping["dead_time_us"] == [-0.1, 0.1]
     result = reduce_grouped_asymmetry(
         histograms=run.histograms,
+        binning=binning_spec(run.grouping),
         grouping=run.grouping,
         forward_idx=[0],
         backward_idx=[1],
@@ -104,6 +107,7 @@ def test_period_selection_does_not_inherit_another_periods_frames(signed_file, s
     with pytest.raises(CorrectionUnavailableError, match="good frames"):
         reduce_grouped_asymmetry(
             histograms=histograms,
+            binning=binning_spec(grouping),
             grouping=grouping,
             forward_idx=[0],
             backward_idx=[1],

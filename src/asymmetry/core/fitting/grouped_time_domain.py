@@ -44,7 +44,7 @@ from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     effective_group_indices,
 )
-from asymmetry.core.transform.rebin import rebin_counts
+from asymmetry.core.transform.rebin import binning_spec, rebin_counts
 from asymmetry.core.transform.reduce import corrected_grouped_counts, correction_flags_from_grouping
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
@@ -316,10 +316,7 @@ def _count_group_context(
     except (TypeError, ValueError):
         last_good = max_last_good
     last_good = max(first_good, min(max_last_good, last_good))
-    try:
-        bunch_factor = max(1, int(grouping.get("bunching_factor", 1)))
-    except (TypeError, ValueError):
-        bunch_factor = 1
+    bunch_factor = binning_spec(grouping).factor
 
     bin_width = float(prepared_histograms[0].bin_width)
     axis_start = first_good - common_t0

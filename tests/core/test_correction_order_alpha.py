@@ -25,6 +25,7 @@ from asymmetry.core.project.profiles import (
     resolve_effective_grouping,
 )
 from asymmetry.core.transform.asymmetry import estimate_alpha
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import (
     corrected_grouped_counts,
     correction_flags_from_grouping,
@@ -140,6 +141,7 @@ def test_corrected_counts_match_the_reductions_pre_asymmetry_counts():
     # And the reduction runs without error on the same grouping (shared pipeline).
     reduction = reduce_grouped_asymmetry(
         histograms=run.histograms,
+        binning=binning_spec(grouping),
         grouping=grouping,
         forward_idx=[0],
         backward_idx=[1],
@@ -294,6 +296,7 @@ def test_reduce_grouped_asymmetry_defaults_the_facility_too():
     kwargs = dict(
         histograms=run.histograms,
         grouping=_psi_grouping(),
+        binning=binning_spec(_psi_grouping()),
         forward_idx=[0],
         backward_idx=[1],
         alpha=A_TRUE,

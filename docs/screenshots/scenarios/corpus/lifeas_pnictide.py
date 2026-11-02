@@ -206,7 +206,7 @@ def _regroup(run: int, rebin: int = 10):
         metadata=dict(dataset.metadata),
         run=dataset.run,
     )
-    return ds.rebin(rebin) if rebin > 1 else ds
+    return ds.merge_curve_bins(rebin) if rebin > 1 else ds
 
 
 def _tf2_seeds(dataset, sigma_seed: float, freq: float) -> dict:
@@ -669,7 +669,7 @@ def _regroup_pair(run: int, fwd_idx, bwd_idx, rebin: int = 10):
         metadata=dict(dataset.metadata),
         run=dataset.run,
     )
-    return ds.rebin(rebin) if rebin > 1 else ds
+    return ds.merge_curve_bins(rebin) if rebin > 1 else ds
 
 
 def _fft_lineshape(dataset, t_lo: float = 0.05, t_hi: float = 6.0):

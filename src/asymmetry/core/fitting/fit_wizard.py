@@ -2646,7 +2646,7 @@ def build_fit_wizard_recommendation(
     # BIC, residual diagnostic and fitted curve below therefore refers to the
     # analysed record, which is what ``analysed_points`` records.
     rebin_factor = analysis_rebin_factor(dataset, peak_analysis, field_gauss=field_gauss)
-    analysis_dataset = dataset.rebin(rebin_factor) if rebin_factor > 1 else dataset
+    analysis_dataset = dataset.merge_curve_bins(rebin_factor) if rebin_factor > 1 else dataset
     if rebin_factor > 1:
         _progress(
             f"Fitting a ×{rebin_factor} rebinned copy "
@@ -4501,7 +4501,7 @@ def assessment_with_curves(
     """
     assessment = {row.template.key: row for row in recommendation.assessments}[key]
     factor = int(recommendation.rebin_factor)
-    analysis_dataset = dataset.rebin(factor) if factor > 1 else dataset
+    analysis_dataset = dataset.merge_curve_bins(factor) if factor > 1 else dataset
     return _with_dense_curves(assessment, analysis_dataset)
 
 
