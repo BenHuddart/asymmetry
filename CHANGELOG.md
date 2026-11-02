@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Failed explicit Auto-detect t0 searches make reductions unavailable while
+  retaining raw data and settings for repair.
+
+- Grouping edits retain automatic alpha policies and refresh selected-period
+  inputs; failed automatic estimates and pending previews block Apply without replacing stored calibrations.
+
 - Independent forward/backward reductions and calibrations reject shared channels
   after exclusions; saved requests remain editable and raw counts remain available.
 

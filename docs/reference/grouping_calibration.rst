@@ -42,6 +42,18 @@ The Grouping window
    forward/backward asymmetry preview along the bottom. Two sample profiles
    are in concurrent use, with one run following each.
 
+The illustrated Sample A profile uses the existing ``per_run_estimate`` alpha
+policy. Its label reads **per-run integral ratio · see preview**; the completed
+preview supplies the coefficient for the selected run. Group edits keep that
+policy. Editing the alpha number explicitly replaces it with a fixed value;
+**Estimate** supplies a one-shot calibrated value.
+
+During refresh the plot reads **Computing preview…** and **Apply** waits for
+the current result. A failed estimate reads **Preview unavailable:** followed
+by its reason. Repair the grouping or correction inputs, or explicitly choose
+a fixed value, to recover. Raw histograms and saved profile choices remain
+available. A superseded preview cannot enable **Apply**.
+
 Open it with the **Grouping** button on the main toolbar (or
 **Analysis → Grouping…**). It edits one **profile** at a time — the named,
 shareable calibration for the loaded run's instrument — rather than pushing
@@ -247,6 +259,8 @@ Where each function lives
   ``AlphaCalc``); the **detailed** form (``method="diamagnetic"`` by default)
   returns an :class:`~asymmetry.core.transform.AlphaEstimate` with an
   uncertainty and is the one to use for the diamagnetic (TF balance) method.
+  The simple form raises ``CorrectionUnavailableError`` for empty inputs,
+  nonpositive integrals or an unrepresentable ratio; it has no default result.
 * ``apply_grouping(histograms, group_indices)``
   (``asymmetry.core.io.nexus``; also re-exported from
   ``asymmetry.core.transform``) — sums the listed detector histograms into one
@@ -309,6 +323,10 @@ overlap; native musrfit 1.12.1 accepts the tested overlaps. WiMDA permits a
 histogram to contribute to both selected groups. Asymmetry requires disjoint
 effective channels before preparing an independent F/B calibration. These
 grouping-input conventions do not establish calibration-estimator agreement.
+WiMDA retains its stored grouping alpha during ordinary regrouping; **Estimate**
+is an explicit action. Its enabled background processing runs when groups are
+rebuilt. Asymmetry similarly distinguishes stored coefficients from reduction
+operations, and additionally supports an explicit per-run integral-ratio policy.
 See :doc:`detector_grouping` and :doc:`/explanation/comparison` for sources,
 settings and limits.
 
