@@ -85,8 +85,8 @@ from asymmetry.core.transform import (
     common_t0_for_groups,
     detected_detector_t0_bins,
     effective_detector_t0_bins,
+    effective_group_indices,
     excluded_detector_indices,
-    filter_excluded_indices,
     find_t0_for_run,
     format_detector_list,
     good_frames,
@@ -96,6 +96,7 @@ from asymmetry.core.transform import (
     resolve_facility,
 )
 from asymmetry.core.transform.corrections import BackgroundReference
+from asymmetry.core.transform.grouping import InvalidGroupingError
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
@@ -138,6 +139,7 @@ from asymmetry.gui.windows.grouping.beta_section import (
     BetaSectionWidget,
     beta_status_text,
 )
+from asymmetry.gui.windows.grouping.channel_entries import shift_channel_entries
 from asymmetry.gui.windows.grouping.correction_card import CorrectionCard
 from asymmetry.gui.windows.grouping.deadtime_section import (
     DeadtimeSectionWidget,
@@ -1700,7 +1702,10 @@ class GroupingDialog(QDialog):
             )
             cursor = self._busy_cursor() if expensive else contextlib.nullcontext()
             with cursor:
-                payload = payload_from_profile_for_preview(self._draft, self._run)
+                try:
+                    payload = payload_from_profile_for_preview(self._draft, self._run)
+                except InvalidGroupingError as exc:
+                    payload = exc.grouping
 
         # Cache the resolved payload so the read-only auto-detect t0 display can
         # reuse the consensus t0 (and strategy/spread) the resolve just derived,
@@ -2215,7 +2220,7 @@ class GroupingDialog(QDialog):
     def _apply_preset_payload_to_form(self, payload: dict[str, Any]) -> None:
         """Adopt a preset's groups/names/slots/projections into the form state."""
         self._groups = {
-            int(gid): sorted(max(0, int(d) - 1) for d in dets)
+            int(gid): shift_channel_entries(dets, -1)
             for gid, dets in payload.get("groups", {}).items()
         }
         self._group_names = {int(k): str(v) for k, v in payload.get("group_names", {}).items()}
@@ -2498,27 +2503,10 @@ class GroupingDialog(QDialog):
         grouping = run.grouping or {}
         groups_raw = grouping.get("groups")
 
-        groups: dict[int, list[int]] = {}
         if isinstance(groups_raw, dict):
-            for key, values in groups_raw.items():
-                try:
-                    gid = int(key)
-                except (TypeError, ValueError):
-                    continue
-                if not isinstance(values, list):
-                    continue
-                idxs = []
-                for val in values:
-                    try:
-                        # Persisted groups are 1-based in project/run metadata.
-                        idxs.append(max(0, int(val) - 1))
-                    except (TypeError, ValueError):
-                        continue
-                if idxs:
-                    groups[gid] = sorted(set(idxs))
-
-        if len(groups) >= 2:
-            return groups
+            return {
+                int(key): shift_channel_entries(values, -1) for key, values in groups_raw.items()
+            }
 
         n = len(run.histograms)
         if n <= 0:
@@ -2618,7 +2606,9 @@ class GroupingDialog(QDialog):
         """
         run_grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
         grouping: dict[str, Any] = {
-            "groups": {gid: [idx + 1 for idx in values] for gid, values in self._groups.items()},
+            "groups": {
+                gid: shift_channel_entries(values, 1) for gid, values in self._groups.items()
+            },
             "forward_group": int(self._forward_combo.currentData() or 1),
             "backward_group": int(self._backward_combo.currentData() or 2),
         } | self._exclusion_payload()
@@ -2823,16 +2813,14 @@ class GroupingDialog(QDialog):
         """
         policy = self._draft.t0_policy
         self._set_t0_mode_combo(policy.mode)
-        # A pre-v21 absolute `value` is converted on project open, before any
-        # profile reaches this editor — resolution would raise on one too.
-        assert policy.legacy_value is None, (
-            f"Grouping profile {self._draft.name!r} reached the editor with an "
-            "unconverted pre-v21 manual t0 value."
-        )
-        if policy.mode == "manual" and policy.offset_bins is not None:
+        if policy.mode == "manual":
             base = self._bin_index_base()
             max_bin = self._max_bin_index_for_reference_dataset()
-            resolved = self._file_common_t0_for_preview_run() + int(policy.offset_bins)
+            resolved = (
+                policy.legacy_value
+                if policy.legacy_value is not None
+                else self._file_common_t0_for_preview_run() + int(policy.offset_bins)
+            )
             blocked = self._t0_spin.blockSignals(True)
             try:
                 self._t0_spin.setValue(max(0, min(max_bin, resolved)) + base)
@@ -2931,27 +2919,15 @@ class GroupingDialog(QDialog):
         """
         if self._run is None or not self._run.histograms:
             return 0
-        n_hist = len(self._run.histograms)
-        forward_idx = [
-            i
-            for i in self._filtered_group_indices(int(self._forward_combo.currentData() or 1))
-            if 0 <= i < n_hist
-        ]
-        backward_idx = [
-            i
-            for i in self._filtered_group_indices(int(self._backward_combo.currentData() or 2))
-            if 0 <= i < n_hist
-        ]
-        if not forward_idx and not backward_idx:
-            bins = detector_t0_bins or [int(h.t0_bin) for h in self._run.histograms]
-            return int(max(bins))
-        return int(
-            common_t0_for_groups(
-                self._run.histograms,
-                forward_idx,
-                backward_idx,
-                detector_t0_bins=detector_t0_bins,
+        try:
+            forward_idx = self._filtered_group_indices(int(self._forward_combo.currentData() or 1))
+            backward_idx = self._filtered_group_indices(
+                int(self._backward_combo.currentData() or 2)
             )
+        except InvalidGroupingError:
+            return int(self._run.histograms[0].t0_bin)
+        return common_t0_for_groups(
+            self._run.histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0_bins
         )
 
     def _detected_common_t0_for_preview_run(self, search: RunT0Search) -> int:
@@ -3085,7 +3061,9 @@ class GroupingDialog(QDialog):
         """
         run_grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
         grouping: dict[str, Any] = {
-            "groups": {gid: [idx + 1 for idx in values] for gid, values in self._groups.items()},
+            "groups": {
+                gid: shift_channel_entries(values, 1) for gid, values in self._groups.items()
+            },
             "forward_group": int(self._forward_combo.currentData() or 1),
             "backward_group": int(self._backward_combo.currentData() or 2),
             "bin_index_base": self._bin_index_base(),
@@ -3713,18 +3691,12 @@ class GroupingDialog(QDialog):
         excluded = self._current_excluded_detectors()
         if excluded is None:
             return  # parse error already shown
-        if excluded:
-            forward_gid = int(self._forward_combo.currentData())
-            backward_gid = int(self._backward_combo.currentData())
-            for label, gid in (("Forward", forward_gid), ("Backward", backward_gid)):
-                remaining = self._filtered_group_indices(gid)
-                if not remaining:
-                    QMessageBox.warning(
-                        self,
-                        "Detector Exclusion",
-                        f"{label} group would have no detectors left after exclusion.",
-                    )
-                    return
+        try:
+            for combo in (self._forward_combo, self._backward_combo):
+                self._filtered_group_indices(int(combo.currentData()))
+        except InvalidGroupingError as exc:
+            QMessageBox.warning(self, "Invalid Grouping", str(exc))
+            return
         # Lift the validated form state back into the current editing target
         # (the profile draft, or the selected run's override draft) so the result
         # getters return it. Snapshot the dirty overrides as *committed* so
@@ -4421,17 +4393,7 @@ class GroupingDialog(QDialog):
             tasks.shutdown()
 
     def _populate_group_table(self) -> None:
-        """Render the detector-group table used as grouping context.
-
-        ``itemChanged`` is connected to both ``_mark_dirty`` and
-        ``_refresh_preview`` (which queues a debounced off-thread recompute on
-        the preview pane's worker — resolution no longer runs synchronously
-        here, see B3/#216), so populating without blocking signals fires up to
-        4×N_groups redundant dirty marks + queued previews. Population is not a
-        user edit, so the signal is blocked for the whole rebuild; callers that
-        need the dirty/preview side effects for the triggering action invoke
-        them explicitly once, after this returns.
-        """
+        """Render authored groups without firing edit or preview signals."""
         blocked = self._group_table.blockSignals(True)
         try:
             self._group_table.setRowCount(len(self._groups))
@@ -4453,7 +4415,7 @@ class GroupingDialog(QDialog):
                 self._group_table.setItem(row, 1, include_item)
                 name = self._group_names.get(gid, "")
                 self._group_table.setItem(row, 2, QTableWidgetItem(name))
-                detectors = [str(idx + 1) for idx in self._groups[gid]]
+                detectors = [str(value) for value in shift_channel_entries(self._groups[gid], 1)]
                 detectors_item = QTableWidgetItem(", ".join(detectors))
                 detectors_item.setToolTip(_DETECTORS_CELL_TIP)
                 self._group_table.setItem(row, 3, detectors_item)
@@ -4842,7 +4804,7 @@ class GroupingDialog(QDialog):
         backward_gid = int(grouping.get("backward_group", self._backward_combo.currentData() or 2))
 
         # Convert internal 0-based indices to 1-based for the layout editor
-        groups_1based = {gid: [idx + 1 for idx in idxs] for gid, idxs in self._groups.items()}
+        groups_1based = {gid: shift_channel_entries(idxs, 1) for gid, idxs in self._groups.items()}
 
         current_exclusion = self._current_excluded_detectors() or []
         dlg = DetectorLayoutDialog(
@@ -4863,6 +4825,7 @@ class GroupingDialog(QDialog):
 
         result = dlg.get_result()
         self._exclude_edit.setText(format_detector_list(result.get("excluded_detectors", [])))
+        self._exclude_edit.setModified(True)
         # Preserve any per-projection alpha the user edited in the table: the
         # layout editor returns each projection with its preset-declared alpha,
         # which would otherwise silently revert an unsaved edit for a label that
@@ -4961,8 +4924,7 @@ class GroupingDialog(QDialog):
 
     def _set_excluded_detectors_text(self, grouping: dict[str, Any]) -> None:
         raw = grouping.get("excluded_detectors")
-        ids = [int(v) for v in raw] if isinstance(raw, (list, tuple)) else []
-        self._exclude_edit.setText(format_detector_list(ids))
+        self._exclude_edit.setText(",".join(str(v) for v in raw) if raw else "")
 
     def _excluded_index_set(self) -> set[int]:
         """0-based indices of currently excluded detectors (empty on parse error)."""
@@ -4970,19 +4932,23 @@ class GroupingDialog(QDialog):
         return set(excluded_detector_indices({"excluded_detectors": ids}))
 
     def _filtered_group_indices(self, gid: int) -> list[int]:
-        """0-based indices of group *gid* with excluded detectors removed.
-
-        Routes the dialog's 0-based ``self._groups`` through the same core
-        exclusion primitive the reduction paths use, so the dialog cannot apply
-        exclusion differently from the engine.
-        """
-        return filter_excluded_indices(
-            list(self._groups.get(gid, [])),
-            {"excluded_detectors": self._current_excluded_detectors() or []},
+        """Resolve the editor's membership through the core user-input boundary."""
+        return effective_group_indices(
+            {
+                "groups": {gid: shift_channel_entries(self._groups.get(gid, []), 1)},
+                "excluded_detectors": self._current_excluded_detectors() or [],
+            },
+            gid,
+            n_histograms=len(self._run.histograms),
         )
 
     def _current_excluded_detectors(self) -> list[int] | None:
         """Parse the exclusion field; warn and return None on bad input."""
+        seed = self._last_resolved_seed or {}
+        authored = seed.get("excluded_detectors", [])
+        rendered = ",".join(str(v) for v in authored)
+        if self._exclude_edit.text() == rendered and not self._exclude_edit.isModified():
+            return list(authored)
         text = self._exclude_edit.text().strip()
         if not text:
             return []
@@ -5005,7 +4971,11 @@ class GroupingDialog(QDialog):
             return
         metadata = dict(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(self._run.metadata or {})
-        excluded = self._excluded_index_set()
+        try:
+            excluded = self._excluded_index_set()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Detector Exclusion", str(exc))
+            return
         histograms = [hist for i, hist in enumerate(self._run.histograms) if i not in excluded]
         if not histograms:
             QMessageBox.warning(self, "Find t0", "All detectors are excluded.")
@@ -5687,8 +5657,8 @@ class GroupingDialog(QDialog):
 
     def _current_grouping_payload(self) -> dict[str, Any]:
         """Build the current grouping payload from UI controls."""
-        forward_gid = int(self._forward_combo.currentData())
-        backward_gid = int(self._backward_combo.currentData())
+        forward_gid = int(self._forward_combo.currentData() or 1)
+        backward_gid = int(self._backward_combo.currentData() or 2)
         t0_bin, t_good_offset, first_good_bin, last_good_bin = (
             self._resolve_good_bin_limits_from_controls()
         )
@@ -5727,7 +5697,7 @@ class GroupingDialog(QDialog):
         return (
             {
                 "groups": {
-                    gid: [idx + 1 for idx in values] for gid, values in self._groups.items()
+                    gid: shift_channel_entries(values, 1) for gid, values in self._groups.items()
                 },
                 "included_groups": self._current_included_groups(),
                 "group_names": dict(self._group_names),

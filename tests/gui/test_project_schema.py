@@ -2136,8 +2136,8 @@ class TestMainWindowProjectState:
                 source_file=str(source_file),
                 grouping={
                     "groups": {
-                        1: [(1, 100), (2, 100)],
-                        2: [(3, 100), (4, 100)],
+                        1: [1, 2],
+                        2: [3, 4],
                     },
                     "forward_group": 1,
                     "backward_group": 2,
@@ -2167,8 +2167,8 @@ class TestMainWindowProjectState:
 
         grouping_payload = {
             "groups": {
-                1: [(1, 100), (2, 100)],
-                2: [(3, 100), (4, 100)],
+                1: [1, 2],
+                2: [3, 4],
             },
             "forward_group": 1,
             "backward_group": 2,
@@ -2201,8 +2201,8 @@ class TestMainWindowProjectState:
         assert restored.run is not None
         assert restored.run.grouping["bunching_factor"] == 2
         assert restored.run.grouping["groups"] == {
-            1: [(1, 100), (2, 100)],
-            2: [(3, 100), (4, 100)],
+            1: [1, 2],
+            2: [3, 4],
         }
 
     def test_collect_project_state_structure(

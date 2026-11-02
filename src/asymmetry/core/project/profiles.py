@@ -120,6 +120,7 @@ from asymmetry.core.instrument import detect_instrument, instrument_display_name
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.fb_counts import good_window
 from asymmetry.core.transform.grouping import (
+    InvalidGroupingError,
     common_t0_for_groups,
     effective_group_indices,
 )
@@ -863,13 +864,13 @@ class GroupingProfile:
             "name": self.name,
             "fingerprint": self.fingerprint.to_dict(),
             "active": bool(self.active),
-            "groups": {int(gid): [int(d) for d in dets] for gid, dets in self.groups.items()},
+            "groups": {int(gid): list(dets) for gid, dets in self.groups.items()},
             "group_names": {int(gid): str(name) for gid, name in self.group_names.items()},
             "included_groups": {int(gid): bool(v) for gid, v in self.included_groups.items()},
             "forward_group": int(self.forward_group),
             "backward_group": int(self.backward_group),
             "projections": [dict(p) for p in self.projections],
-            "excluded_detectors": [int(d) for d in self.excluded_detectors],
+            "excluded_detectors": list(self.excluded_detectors),
             "alpha_policy": self.alpha_policy.to_dict(),
             "deadtime_policy": self.deadtime_policy.to_dict(),
             "background_policy": self.background_policy.to_dict(),
@@ -919,18 +920,8 @@ class GroupingProfile:
         """Reconstruct a profile from :meth:`to_dict` output (lenient)."""
         if not isinstance(data, dict):
             raise TypeError("GroupingProfile.from_dict requires a dict")
-        groups_raw = data.get("groups")
-        groups: dict[int, list[int]] = {}
-        if isinstance(groups_raw, dict):
-            for key, dets in groups_raw.items():
-                gid = _as_int(key)
-                if gid is None or not isinstance(dets, (list, tuple)):
-                    continue
-                # Entries may be plain detector ids or (detector_id, t0_bin)
-                # pairs — decode like resolve_group_indices() so a pair-carrying
-                # payload round-trips without dropping detectors.
-                decoded = (v[0] if isinstance(v, (list, tuple)) and v else v for v in dets)
-                groups[gid] = [d for d in (_as_int(v) for v in decoded) if d is not None]
+        groups_raw = data.get("groups", {})
+        groups = {int(key): list(dets) for key, dets in groups_raw.items()}
 
         names_raw = data.get("group_names")
         group_names = (
@@ -948,12 +939,8 @@ class GroupingProfile:
         projections = (
             [dict(p) for p in proj_raw if isinstance(p, dict)] if isinstance(proj_raw, list) else []
         )
-        excl_raw = data.get("excluded_detectors")
-        excluded = (
-            [d for d in (_as_int(v) for v in excl_raw) if d is not None]
-            if isinstance(excl_raw, (list, tuple))
-            else []
-        )
+        excluded = list(data.get("excluded_detectors", []))
+
         return cls(
             name=str(data.get("name", "")),
             fingerprint=ProfileFingerprint.from_dict(data.get("fingerprint")),
@@ -1050,8 +1037,11 @@ def _payload_file_common_t0(
     n_hist = len(detector_t0)
     forward_gid = _as_int(payload.get("forward_group"), 1) or 1
     backward_gid = _as_int(payload.get("backward_group"), 2) or 2
-    indices = set(effective_group_indices(payload, forward_gid, n_histograms=n_hist))
-    indices |= set(effective_group_indices(payload, backward_gid, n_histograms=n_hist))
+    try:
+        indices = set(effective_group_indices(payload, forward_gid, n_histograms=n_hist))
+        indices |= set(effective_group_indices(payload, backward_gid, n_histograms=n_hist))
+    except InvalidGroupingError:
+        return None
     values = [v for v in (_as_int(detector_t0[i]) for i in sorted(indices)) if v is not None]
     if not values:
         return None
@@ -1074,21 +1064,8 @@ def profile_from_payload(
     """
     payload = payload if isinstance(payload, dict) else {}
 
-    groups: dict[int, list[int]] = {}
-    groups_raw = payload.get("groups")
-    if isinstance(groups_raw, dict):
-        for key, dets in groups_raw.items():
-            gid = _as_int(key)
-            if gid is None or not isinstance(dets, (list, tuple)):
-                continue
-            ids: list[int] = []
-            for value in dets:
-                # A detector entry may be a bare id or a ``[id, t0]`` pair.
-                raw = value[0] if isinstance(value, (list, tuple)) and value else value
-                det = _as_int(raw)
-                if det is not None:
-                    ids.append(det)
-            groups[gid] = ids
+    groups_raw = payload.get("groups", {})
+    groups = {int(key): list(dets) for key, dets in groups_raw.items()}
 
     names_raw = payload.get("group_names")
     group_names = (
@@ -1106,12 +1083,7 @@ def profile_from_payload(
     projections = (
         [dict(p) for p in proj_raw if isinstance(p, dict)] if isinstance(proj_raw, list) else []
     )
-    excl_raw = payload.get("excluded_detectors")
-    excluded = (
-        [d for d in (_as_int(v) for v in excl_raw) if d is not None]
-        if isinstance(excl_raw, (list, tuple))
-        else []
-    )
+    excluded = list(payload.get("excluded_detectors", []))
 
     extra: dict[str, Any] = {}
     for key in _STRUCTURE_KEYS:
@@ -1278,9 +1250,7 @@ def resolve_effective_grouping(
     same background-subtracted counts the reduction will; ``None`` skips that
     subtraction for the estimate.
 
-    Detector ids in the profile that fall outside ``1..n_detectors`` are handled
-    gracefully by the reduction chokepoints (:func:`effective_group_indices`
-    drops out-of-range ids), exactly as they are for a file-derived grouping.
+    Authored membership is preserved; reduction rejects invalid or absent channels.
     """
     with perf_timer(
         "core.grouping.resolve_effective",
@@ -1292,11 +1262,12 @@ def resolve_effective_grouping(
         n_hist = len(run.histograms)
 
         grouping: dict[str, Any] = {
-            "groups": {int(gid): [int(d) for d in dets] for gid, dets in profile.groups.items()},
+            "groups": {int(gid): list(dets) for gid, dets in profile.groups.items()},
+            "alpha": profile.alpha_policy.value,
             "group_names": {int(gid): str(name) for gid, name in profile.group_names.items()},
             "forward_group": int(profile.forward_group),
             "backward_group": int(profile.backward_group),
-            "excluded_detectors": [int(d) for d in profile.excluded_detectors],
+            "excluded_detectors": list(profile.excluded_detectors),
             **_base_binning_payload(profile.binning),
         }
         if profile.included_groups:
@@ -1317,6 +1288,10 @@ def resolve_effective_grouping(
 
         # -- per-run / file-derived facts ---------------------------------------
         _copy_per_run_facts(grouping, run_grouping, run)
+        _apply_deadtime_policy(grouping, profile.deadtime_policy, run_grouping, n_hist)
+        _apply_background_policy(grouping, profile.background_policy)
+        if not profile.projections:
+            _apply_beta_policy(grouping, profile.beta_policy)
         _rebase_on_profile_groups(grouping, run, n_hist)
 
         # -- period mode --------------------------------------------------------
@@ -1335,19 +1310,9 @@ def resolve_effective_grouping(
         # Directly after t0: a manual good window is measured from the effective
         # t0 the policy above just resolved (D2).
         _apply_good_window_policy(grouping, profile.good_window_policy, run, n_hist)
-        _apply_deadtime_policy(grouping, profile.deadtime_policy, run_grouping, n_hist)
-        _apply_background_policy(grouping, profile.background_policy)
         _apply_alpha_policy(
             grouping, profile.alpha_policy, run, n_hist, reference_resolver=reference_resolver
         )
-        # Beta (fixed or calibrated; no per-run resolution) is written only
-        # when active so a beta = 1 payload stays byte-identical to today's.
-        # It is scalar-only: a projection-carrying (vector) profile never
-        # emits it or its provenance — a per-pair beta would be a different
-        # feature (docs/porting/beta-correction/), and a uniform one would be
-        # wrong for every pair but the one it was measured on.
-        if not profile.projections:
-            _apply_beta_policy(grouping, profile.beta_policy)
 
         perf.detail(n_detectors=n_hist, n_groups=len(grouping.get("groups", {})))
         return grouping
@@ -1473,8 +1438,7 @@ def _has_good_window_tables(grouping: dict[str, Any], n_hist: int) -> bool:
     window is the run's file window.
     """
     return (
-        bool(_analysis_group_indices(grouping, n_hist))
-        and _is_detector_table(grouping.get("detector_t0_bins"), n_hist)
+        _is_detector_table(grouping.get("detector_t0_bins"), n_hist)
         and _is_detector_table(grouping.get("detector_first_good_bins"), n_hist)
         and _is_detector_table(grouping.get("detector_last_good_bins"), n_hist)
     )
@@ -1841,10 +1805,10 @@ def _apply_background_policy(grouping: dict[str, Any], policy: BackgroundPolicy)
 def _profile_file_common_t0(profile: GroupingProfile, run: Run) -> int:
     """*run*'s file-derived common t0 over *profile*'s analysis groups."""
     grouping = {
-        "groups": {int(gid): [int(d) for d in dets] for gid, dets in profile.groups.items()},
+        "groups": {int(gid): list(dets) for gid, dets in profile.groups.items()},
         "forward_group": int(profile.forward_group),
         "backward_group": int(profile.backward_group),
-        "excluded_detectors": [int(d) for d in profile.excluded_detectors],
+        "excluded_detectors": list(profile.excluded_detectors),
     }
     return _file_common_t0(grouping, run, len(run.histograms))
 
@@ -1891,7 +1855,13 @@ def heal_t0_policies(profiles: list[GroupingProfile], runs_by_number: dict[int, 
             run = _t0_reference_run(profile, runs_by_number)
             if run is None or not run.histograms:
                 continue
-            file_common_t0 = _profile_file_common_t0(profile, run)
+            try:
+                file_common_t0 = _profile_file_common_t0(profile, run)
+            except InvalidGroupingError as exc:
+                messages.append(
+                    f"Grouping profile {profile.name!r}: manual t0 remains unresolved: {exc}"
+                )
+                continue
             profile.t0_policy = T0Policy.from_legacy_value(legacy_value, file_common_t0)
             healed = profile.t0_policy
             became = (

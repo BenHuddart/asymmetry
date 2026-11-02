@@ -7,6 +7,7 @@ groups by summing their counts.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
 
 import numpy as np
 from numpy.typing import NDArray
@@ -22,14 +23,66 @@ from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0
 from asymmetry.core.utils.perf import perf_timer
 
 
-def _present_indices(group_indices: list[int], n_histograms: int) -> list[int]:
-    """Drop indices that fall outside ``[0, n_histograms)``.
+class InvalidGroupingError(ValueError):
+    """An unavailable request retained verbatim so project/UI boundaries can edit it."""
 
-    A grouping (e.g. a HAL-9500 preset that names the backward ring) can
-    reference detectors a particular run does not contain. Filtering here keeps
-    the summing helpers from indexing past the histogram list.
-    """
-    return [i for i in group_indices if 0 <= i < n_histograms]
+    def __init__(self, message: str, grouping: dict):
+        super().__init__(message)
+        self.grouping = grouping
+
+
+@dataclass(frozen=True)
+class ChannelMembership:
+    """Unique acquired-channel ordinals; physical detector identity is separate."""
+
+    ids: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.ids, tuple):
+            raise ValueError("Detector membership must be an immutable tuple.")
+        for value in self.ids:
+            if isinstance(value, bool) or not isinstance(value, Integral) or value < 1:
+                raise ValueError(f"Detector IDs must be positive integers; got {value!r}.")
+        if len(set(self.ids)) != len(self.ids):
+            raise ValueError(f"Detector membership contains duplicate IDs: {self.ids!r}.")
+
+    @classmethod
+    def from_entries(cls, entries: object) -> ChannelMembership:
+        """Decode structured membership without coercion or accidental weights."""
+        if not isinstance(entries, (list, tuple)):
+            raise ValueError("Detector membership must be a list of integer IDs.")
+        return cls(tuple(entries))
+
+    def indices(self, n_histograms: int | None = None) -> tuple[int, ...]:
+        """Resolve declared ordinals against the acquired channels, without trimming."""
+        if n_histograms is not None:
+            missing = [d for d in self.ids if d > n_histograms]
+            if missing:
+                raise ValueError(
+                    f"Detector(s) {format_detector_list(missing)} do not exist in this "
+                    f"{n_histograms}-detector run; choose a matching preset or edit the group."
+                )
+        return tuple(d - 1 for d in self.ids)
+
+
+def _group_membership(groups: dict, group_id: int) -> ChannelMembership:
+    entries = groups.get(group_id, groups.get(str(group_id)))
+    if entries is None:
+        raise ValueError(f"Group {group_id!r} is not defined.")
+    membership = ChannelMembership.from_entries(entries)
+    if not membership.ids:
+        raise ValueError(f"Group {group_id!r} needs at least one detector.")
+    return membership
+
+
+def _validated_group_indices(group_indices: list[int], n_histograms: int) -> list[int]:
+    """Validate a public zero-based selection before accessing count observations."""
+    membership = ChannelMembership.from_entries(
+        [i + 1 if isinstance(i, Integral) and not isinstance(i, bool) else i for i in group_indices]
+    )
+    if not membership.ids:
+        raise ValueError("A group needs at least one detector.")
+    return list(membership.indices(n_histograms))
 
 
 def _detector_t0(
@@ -75,11 +128,8 @@ def apply_grouping_aligned(
     counts for detectors without an explicit variance. Padding contributes zero.
     """
     with perf_timer("core.grouping.apply_aligned", n_indices=len(group_indices)) as perf:
-        present = _present_indices(group_indices, len(histograms))
+        present = _validated_group_indices(group_indices, len(histograms))
         selected = [(i, histograms[i]) for i in present]
-        if not selected:
-            return np.array([], dtype=np.float64)
-
         if common_t0_bin is None:
             common_t0_bin = max(
                 0, max(_detector_t0(histograms, i, detector_t0_bins) for i, _ in selected)
@@ -132,7 +182,7 @@ def common_t0_for_groups(
     t0 without mutating ``Histogram.t0_bin``.
     """
     indices = sorted({idx for group in group_indices for idx in group})
-    indices = _present_indices(indices, len(histograms))
+    indices = _validated_group_indices(indices, len(histograms))
     if not indices:
         if not histograms:
             return 0
@@ -176,7 +226,7 @@ def align_forward_backward(
             f"reference run has {available} aligned bins; sample requires {sample_length}."
         )
     length = available if sample_length is None else sample_length
-    selected = sorted(set(_present_indices(forward_indices + backward_indices, len(histograms))))
+    selected = sorted(set(forward_indices + backward_indices))
     crop = AlignmentCrop(
         common,
         tuple(
@@ -192,7 +242,8 @@ def align_forward_backward(
 def _aligned_count_variance(histograms, indices, **alignment):
     """Keep Poisson inference only when every contributing detector is raw."""
     if not any(
-        histograms[i].count_variance is not None for i in _present_indices(indices, len(histograms))
+        histograms[i].count_variance is not None
+        for i in _validated_group_indices(indices, len(histograms))
     ):
         return None
     return apply_grouping_aligned(histograms, indices, variance=True, **alignment)
@@ -278,54 +329,23 @@ def good_event_count(
     if not histograms or not isinstance(grouping, dict):
         return None
 
-    def _safe_int(raw: object) -> int | None:
-        try:
-            return int(raw)
-        except (TypeError, ValueError):
-            return None
-
-    first_good = _safe_int(grouping.get("first_good_bin"))
-    last_good = _safe_int(grouping.get("last_good_bin"))
-    if first_good is None or last_good is None:
+    first_good = grouping.get("first_good_bin")
+    last_good = grouping.get("last_good_bin")
+    if first_good is None or last_good is None or not grouping.get("groups"):
         return None
-    lo = max(0, min(first_good, last_good))
-    hi = max(first_good, last_good)
-
-    groups_raw = grouping.get("groups")
-    if not isinstance(groups_raw, dict):
+    try:
+        lo = max(0, min(int(first_good), int(last_good)))
+        hi = max(int(first_good), int(last_good))
+        selected = [
+            index
+            for key, default in (("forward_group", 1), ("backward_group", 2))
+            for index in effective_group_indices(
+                grouping, grouping.get(key, default), n_histograms=len(histograms)
+            )
+        ]
+    except (TypeError, ValueError):
         return None
-    # Coerce group ids to int so a JSON-restored grouping (string keys) matches
-    # the int forward/backward ids just as an in-memory grouping does.
-    groups_by_id: dict[int, object] = {}
-    for key, vals in groups_raw.items():
-        gid = _safe_int(key)
-        if gid is not None:
-            groups_by_id[gid] = vals
-    f_gid = _safe_int(grouping.get("forward_group"))
-    b_gid = _safe_int(grouping.get("backward_group"))
-    selected: list[object] = []
-    if f_gid is not None and f_gid in groups_by_id:
-        selected.extend(groups_by_id[f_gid])
-    if b_gid is not None and b_gid in groups_by_id:
-        selected.extend(groups_by_id[b_gid])
-    if not selected:
-        return None
-
-    n_hist = len(histograms)
-    total = 0.0
-    for det in selected:
-        det_idx = _safe_int(det)
-        if det_idx is None:
-            continue
-        hist_idx = det_idx - 1
-        if hist_idx < 0 or hist_idx >= n_hist:
-            continue
-        counts = np.asarray(histograms[hist_idx].counts, dtype=float)
-        if counts.size == 0:
-            continue
-        hi_clamped = min(hi, counts.size - 1)
-        if hi_clamped >= lo:
-            total += float(np.sum(counts[lo : hi_clamped + 1]))
+    total = sum(float(np.sum(histograms[i].counts[lo : hi + 1])) for i in selected)
     return total if total > 0 else None
 
 
@@ -338,19 +358,8 @@ def excluded_detector_indices(grouping: dict | None) -> frozenset[int]:
     histograms stay intact and no reload is needed (study divergence D10;
     WiMDA zeroes the counts in its file-read path instead).
     """
-    grouping = grouping if isinstance(grouping, dict) else {}
-    raw = grouping.get("excluded_detectors")
-    if not isinstance(raw, (list, tuple, set)):
-        return frozenset()
-    indices: set[int] = set()
-    for value in raw:
-        try:
-            detector = int(value)
-        except (TypeError, ValueError):
-            continue
-        if detector >= 1:
-            indices.add(detector - 1)
-    return frozenset(indices)
+    raw = grouping.get("excluded_detectors", []) if grouping is not None else []
+    return frozenset(ChannelMembership.from_entries(raw).indices())
 
 
 def filter_excluded_indices(indices: list[int], grouping: dict | None) -> list[int]:
@@ -392,15 +401,9 @@ def parse_group_detectors(text: str, n_detectors: int) -> list[int]:
     ``ValueError`` with a message fit to show the user.
     """
     ids = parse_detector_list(text)
-    if not ids:
-        raise ValueError("A group needs at least one detector")
-    out_of_range = [d for d in ids if d > n_detectors]
-    if out_of_range:
-        raise ValueError(
-            f"This run has {n_detectors} detectors, so "
-            f"{format_detector_list(out_of_range)} does not exist"
-        )
-    return ids
+    membership = _group_membership({1: ids}, 1)
+    membership.indices(n_detectors)
+    return list(membership.ids)
 
 
 def format_detector_list(ids: list[int]) -> str:
@@ -420,65 +423,16 @@ def format_detector_list(ids: list[int]) -> str:
     return ",".join(parts)
 
 
-def resolve_group_indices(groups: dict, group_id: int) -> list[int]:
-    """Return zero-based detector indices for *group_id*.
-
-    Grouping entries are 1-based detector numbers (matching the convention in
-    ``fourier.grouped`` / ``grouped_time_domain``); they are converted to
-    zero-based histogram indices here.  Group keys may be ``int`` or ``str``.
-
-    This is the single source of truth shared by the time-domain F-B asymmetry
-    representation and the time-integral observable, so the two cannot decode a
-    run's grouping differently.
-    """
-    entries = groups.get(group_id)
-    if entries is None:
-        entries = groups.get(str(group_id))
-    if not isinstance(entries, list):
-        return []
-    indices: list[int] = []
-    for value in entries:
-        detector = value[0] if isinstance(value, (list, tuple)) and value else value
-        try:
-            indices.append(max(0, int(detector) - 1))
-        except (TypeError, ValueError):
-            continue
-    return indices
+def resolve_group_indices(
+    groups: dict, group_id: int, *, n_histograms: int | None = None
+) -> list[int]:
+    """Resolve unique authored 1-based channel IDs (integer or JSON group keys)."""
+    return list(_group_membership(groups, group_id).indices(n_histograms))
 
 
 def group_detectors_outside_run(groups: dict, group_id: int, n_histograms: int) -> list[int]:
-    """Return the 1-based detector numbers in *group_id* absent from the run.
-
-    A grouping (typically an instrument preset or a saved profile) may name
-    detectors a particular run does not contain — e.g. a full HAL-9500 preset
-    referencing the backward ring (detectors 10-17) applied to a forward-ring-only
-    ``.mdu`` file with only nine histograms. Reduction sums over the detectors
-    that ARE present (:func:`effective_group_indices` with ``n_histograms``
-    drops the rest); this helper names the dropped detectors so the GUI can
-    report them — as an informational note when the group still has present
-    detectors, or as the skip reason when it has none and no asymmetry can be
-    formed.
-
-    Returns the sorted detector numbers whose 0-based index is ``>= n_histograms``
-    (or ``< 1``), empty when every referenced detector is present.
-    """
-    if n_histograms is None or n_histograms < 0:
-        return []
-    entries = groups.get(group_id)
-    if entries is None:
-        entries = groups.get(str(group_id))
-    if not isinstance(entries, list):
-        return []
-    missing: set[int] = set()
-    for value in entries:
-        detector = value[0] if isinstance(value, (list, tuple)) and value else value
-        try:
-            number = int(detector)
-        except (TypeError, ValueError):
-            continue
-        if number < 1 or number - 1 >= n_histograms:
-            missing.add(number)
-    return sorted(missing)
+    """Name absent authored channels for diagnostics; no reduction trims them."""
+    return [d for d in _group_membership(groups, group_id).ids if d > n_histograms]
 
 
 def effective_group_indices(
@@ -487,36 +441,24 @@ def effective_group_indices(
     *,
     n_histograms: int | None = None,
 ) -> list[int]:
-    """Resolve a group's detector indices for **reduction**, exclusion applied.
+    """Validate authored membership, then subtract explicit acquired-channel exclusions.
 
-    This is the single exclusion-aware chokepoint: every reduction path that
-    turns a ``grouping`` + ``group_id`` into the 0-based detector indices it will
-    sum MUST go through here, so detector exclusion (the ``excluded_detectors``
-    grouping key) can never be silently skipped at a new call site.
-
-    The raw decoder :func:`resolve_group_indices` is reserved for non-reduction
-    uses that legitimately want every named detector regardless of exclusion
-    (synthetic-run generation, NeXus writing); reduction code should not call it
-    directly.
-
-    Parameters
-    ----------
-    grouping
-        An effective grouping dict (must carry ``groups``; may carry
-        ``excluded_detectors``).
-    group_id
-        The forward/backward (or custom) group id to resolve.
-    n_histograms
-        When given, indices outside ``[0, n_histograms)`` are dropped too — a
-        grouping or preset may name detectors a particular run does not contain.
+    Missing preset channels remain a mismatch even when excluded. A required
+    group with no effective members cannot be reduced. Raw counts are untouched.
     """
     groups = grouping.get("groups") if isinstance(grouping, dict) else None
     if not isinstance(groups, dict):
-        return []
-    indices = resolve_group_indices(groups, group_id)
-    if n_histograms is not None:
-        indices = _present_indices(indices, n_histograms)
-    return filter_excluded_indices(indices, grouping)
+        raise ValueError("Group definitions must be a dictionary.")
+    try:
+        indices = _group_membership(groups, group_id).indices(n_histograms)
+        excluded = ChannelMembership.from_entries(grouping.get("excluded_detectors", []))
+        excluded_indices = frozenset(excluded.indices(n_histograms))
+        effective = [i for i in indices if i not in excluded_indices]
+        if not effective:
+            raise ValueError(f"Group {group_id!r} has no detectors after exclusion.")
+    except ValueError as exc:
+        raise InvalidGroupingError(str(exc), grouping) from exc
+    return effective
 
 
 def effective_grouping(run: Run, grouping_ref: dict | None = None) -> dict:
@@ -609,12 +551,6 @@ def group_forward_backward(
     n = len(histograms)
     forward_indices = effective_group_indices(grouping, forward_gid, n_histograms=n)
     backward_indices = effective_group_indices(grouping, backward_gid, n_histograms=n)
-    if not forward_indices or not backward_indices:
-        raise ValueError(
-            "Forward/backward groups do not reference any detectors present in this run "
-            "(after detector exclusion)."
-        )
-
     try:
         alpha = float(grouping.get("alpha", 1.0))
     except (TypeError, ValueError):

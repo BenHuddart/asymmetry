@@ -20,7 +20,7 @@ from pathlib import Path
 from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 29
+CURRENT_SCHEMA_VERSION: int = 30
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -69,7 +69,8 @@ def migrate_to_current(data: dict) -> dict:
             "Upgrade the Asymmetry package to open this file, or check that "
             "the file is a valid Asymmetry project."
         )
-    migrated = dict(data)
+    # Channel representation must precede inference of profiles from old payloads.
+    migrated = _migrate_channel_membership(data) if version < 30 else dict(data)
     if version == 1:
         migrated = _migrate_v1_to_v2(migrated)
         version = 2
@@ -153,7 +154,35 @@ def migrate_to_current(data: dict) -> dict:
         version = 28
     if version == 28:
         migrated = _migrate_v28_to_v29(migrated)
+        version = 29
+    if version == 29:
+        migrated = dict(migrated, schema_version=30)
     return migrated
+
+
+def _migrate_channel_membership(data: dict) -> dict:
+    """Decode historical detector/t0 pairs once; retain invalid authored IDs."""
+
+    def visit(value):
+        if isinstance(value, list):
+            return [visit(v) for v in value]
+        if not isinstance(value, dict):
+            return value
+        result = {key: visit(v) for key, v in value.items()}
+        groups = result.get("groups")
+        if isinstance(groups, dict):
+            result["groups"] = {
+                gid: [
+                    entry[0] if isinstance(entry, (list, tuple)) and len(entry) == 2 else entry
+                    for entry in entries
+                ]
+                if isinstance(entries, list)
+                else entries
+                for gid, entries in groups.items()
+            }
+        return result
+
+    return visit(data)
 
 
 def _migrate_v28_to_v29(data: dict) -> dict:
@@ -681,34 +710,12 @@ def _migrate_v9_to_v10(data: dict) -> dict:
 
 
 def _migrate_v11_to_v12(data: dict) -> dict:
-    """Migrate schema v11 project state to v12.
-
-    v12 introduces project-level named grouping profiles
-    (:class:`~asymmetry.core.project.profiles.GroupingProfile`). The migration
-    groups datasets by *fingerprint* ``(instrument, histogram count)`` derived
-    from each dataset's stored ``grouping_overrides``, then:
-
-    * **Missing metadata** — if a dataset's ``grouping_overrides`` lacks the
-      instrument name or a usable histogram count, it is migrated conservatively:
-      the ``grouping_overrides`` payload is kept as-is and it joins no profile, so
-      resolution falls back to the per-run payload exactly as in v11.
-    * **All-identical collapse** — within a fingerprint, if every run's shareable
-      grouping fields are identical, one active profile ``"Default (<instrument>)"``
-      is created and each contributing dataset drops its ``grouping_overrides`` in
-      favour of ``profile: "<name>"``.
-    * **Divergence** — if the shareable fields differ, a profile is built from the
-      **majority** payload (ties resolved by first occurrence); datasets matching
-      the majority inherit it (``profile`` set, overrides dropped) while divergent
-      datasets keep their ``grouping_overrides``.
-
-    The migration is additive and lossless: nothing that could not be faithfully
-    lifted into a profile is dropped — divergent and metadata-poor datasets retain
-    their full per-run payload.
-    """
+    """Lift valid shared grouping choices into profiles; retain unresolved overrides."""
     from asymmetry.core.project.profiles import (
         ProfileFingerprint,
         profile_from_payload,
     )
+    from asymmetry.core.transform.grouping import InvalidGroupingError, effective_group_indices
 
     migrated = dict(data)
     migrated["schema_version"] = 12
@@ -732,6 +739,13 @@ def _migrate_v11_to_v12(data: dict) -> dict:
         histogram_count = _histogram_count_from_overrides(overrides)
         if not instrument or histogram_count is None:
             continue  # Conservative: keep grouping_overrides, no profile.
+        try:
+            for key, default in (("forward_group", 1), ("backward_group", 2)):
+                effective_group_indices(
+                    overrides, overrides.get(key, default), n_histograms=histogram_count
+                )
+        except InvalidGroupingError:
+            continue
         key = (instrument.lower(), int(histogram_count))
         buckets.setdefault(key, []).append(index)
         fingerprints.setdefault(key, ProfileFingerprint(instrument, int(histogram_count)))
@@ -996,32 +1010,11 @@ def _migrate_v16_to_v17(data: dict) -> dict:
 
 
 def _histogram_count_from_overrides(overrides: dict) -> int | None:
-    """Infer a run's histogram count from a stored grouping payload, or ``None``.
-
-    Prefers an explicit per-detector list length (``detector_t0_bins``,
-    ``detector_first_good_bins``, ``histogram_labels`` — stored by the PSI/ROOT
-    loaders); falls back to the largest 1-based detector id named across the
-    groups (a lower bound that still fingerprints NeXus payloads consistently).
-    Returns ``None`` when neither is available.
-    """
+    """Read acquired-channel count from stored file tables, never authored IDs."""
     for key in ("detector_t0_bins", "detector_first_good_bins", "histogram_labels"):
         value = overrides.get(key)
         if isinstance(value, (list, tuple)) and value:
             return len(value)
-    groups = overrides.get("groups")
-    if isinstance(groups, dict):
-        max_det = 0
-        for dets in groups.values():
-            if not isinstance(dets, (list, tuple)):
-                continue
-            for entry in dets:
-                raw = entry[0] if isinstance(entry, (list, tuple)) and entry else entry
-                try:
-                    max_det = max(max_det, int(raw))
-                except (TypeError, ValueError):
-                    continue
-        if max_det > 0:
-            return max_det
     return None
 
 
@@ -1568,21 +1561,7 @@ def _v20_migrated_slot(slot: object) -> dict:
 
 
 def _migrate_v18_to_v19(data: dict) -> dict:
-    """Migrate schema v18 project state to v19.
-
-    v19 adds nested *phase* data groups (Global Fit Wizard transitions, D1).
-    The migration is additive and tolerant of every legacy shape (no
-    ``data_groups`` block, junk entries), mirroring :func:`_migrate_v14_to_v15`:
-
-    * Each ``data_groups`` entry gains ``parent_group_id`` (default ``None``)
-      — a group is a phase iff this is set, so every pre-v19 group migrates
-      to "not a phase".
-    * ``phase_ordinal``, ``phase_range``, ``phase_color`` default ``None``.
-    * ``phase_boundaries`` defaults to ``{"lower": None, "upper": None}``.
-    * ``phase_provenance`` defaults to ``{}``.
-    """
-    migrated = dict(data)
-    migrated["schema_version"] = 19
+    migrated = dict(data, schema_version=19)
 
     groups = migrated.get("data_groups")
     if isinstance(groups, list):
@@ -1605,22 +1584,7 @@ def _migrate_v18_to_v19(data: dict) -> dict:
 
 
 def _migrate_v10_to_v11(data: dict) -> dict:
-    """Migrate schema v10 project state to v11.
-
-    v11 consolidates the fit-panel state into a single representation-keyed
-    ``fit_states`` block so the time- and frequency-domain fit forms round-trip
-    symmetrically.  Earlier schemas stored the time-domain single/global/UI fit
-    state as *un-keyed* top-level keys (``single_fit_state``,
-    ``global_fit_state``, ``fit_ui_state``) while the frequency domain nested
-    under ``frequency_fit_state`` -- an asymmetry that let a frequency fit form
-    bleed into the time-domain form on restore (F21c).
-
-    This migration folds the legacy keys into
-    ``fit_states = {"time": ..., "frequency": ...}`` and drops the legacy
-    top-level copies.  Each per-domain block carries a ``domain`` tag so a stale
-    blob can never be applied to the wrong domain.  ``multi_group_fit_state`` is
-    unrelated to the per-domain fit forms and is left at the top level.
-    """
+    """Move domain fit settings into the shared fit-state shape."""
     migrated = dict(data)
     migrated["schema_version"] = 11
 

@@ -711,16 +711,10 @@ def test_load_psi_mdu_t5(tmp_path) -> None:
     assert ds.metadata["instrument"] == "HIFI"
     assert ds.metadata["field_direction"] == "Transverse"
     assert len(ds.run.histograms) == 2
-    assert ds.run.grouping["groups"] == {1: [1], 2: [2]}
-    assert ds.run.grouping["group_names"] == {1: "F1", 2: "B1"}
-    # Positron detectors are included by default.
-    assert ds.run.grouping["included_groups"] == {1: True, 2: True}
-    assert ds.run.grouping["forward_group"] == 2
-    assert ds.run.grouping["backward_group"] == 1
-    assert ds.run.grouping["t0_bin"] == 1
-    assert ds.run.grouping["first_good_bin"] == 2
-    assert ds.run.grouping["last_good_bin"] == 5
-    assert ds.n_points == 4
+    assert ds.run.grouping["groups"] == {k + 1: [2 + k, 10 + k] for k in range(8)}
+    assert ds.run.grouping["grouping_preset"] == "Per-octant"
+    assert ds.n_points == 0
+    assert "do not exist" in ds.metadata["correction_error"]
 
 
 def test_non_positron_label_classifier() -> None:
@@ -1042,16 +1036,8 @@ def test_hal_loaded_grouping_survives_instrument_self_heal() -> None:
     assert reconciled["groups"] == {k + 1: [2 + k, 10 + k] for k in range(8)}
 
 
-def test_hal_forward_ring_only_run_applies_degraded_per_octant(tmp_path) -> None:
-    """A forward-ring-only HAL run still auto-applies Per-octant, degraded to present wedges.
-
-    The Per-octant preset names backward-ring detectors (ids 10-17) absent from a
-    nine-histogram ``MV, F1..F8`` file. Auto-apply keeps the full preset
-    definition — byte-for-byte what the grouping window's manual Apply stores —
-    so each octant degrades to just its present forward wedge (F_k) and the
-    analysis pair reduces to F1 vs F5, exactly the opposed-pair asymmetry. The
-    absent backward-ring detectors are dropped at reduction time.
-    """
+def test_hal_forward_ring_only_run_retains_unavailable_per_octant(tmp_path) -> None:
+    """A missing bank stays an explicit mismatch with raw channels available."""
     labels = [b"MV", b"F1", b"F2", b"F3", b"F4", b"F5", b"F6", b"F7", b"F8"]
     counts = np.vstack(
         [np.arange(6, dtype=np.int32) + 10 * (i + 1) for i in range(len(labels))]
@@ -1070,9 +1056,9 @@ def test_hal_forward_ring_only_run_applies_degraded_per_octant(tmp_path) -> None
     assert grouping["group_names"] == {k + 1: f"Octant {k + 1}" for k in range(8)}
     assert grouping["forward_group"] == 1  # Octant 1 → present F1
     assert grouping["backward_group"] == 5  # Octant 5 → present F5
-    # The asymmetry reduces over the present detectors (F1 vs F5) — finite output.
-    assert ds.n_points >= 1
-    assert np.all(np.isfinite(ds.asymmetry))
+    assert ds.n_points == 0
+    assert "do not exist" in ds.metadata["correction_error"]
+    np.testing.assert_array_equal(np.vstack([h.counts for h in ds.run.histograms]), counts)
 
 
 def test_aligned_grouping_preserves_per_detector_t0() -> None:

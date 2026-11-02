@@ -2564,7 +2564,7 @@ def test_apply_blocks_when_exclusion_empties_a_group(qapp: QApplication, monkeyp
         lambda *args, **kwargs: warnings.append(str(args[2]) if len(args) > 2 else ""),
     )
     dialog._on_apply()
-    assert any("no detectors left" in w for w in warnings)
+    assert any("no detectors after exclusion" in w for w in warnings)
 
 
 def test_estimate_alpha_respects_detector_exclusion(
@@ -2730,27 +2730,6 @@ def test_default_draft_name_is_neutral_without_positive_instrument(qapp: QApplic
     assert dialog._draft_name == "Default (6 detectors)"
 
 
-def test_payload_matches_preset_accepts_detector_t0_pair_entries(qapp: QApplication) -> None:
-    """Group entries stored as (detector_id, t0_bin) pairs still match a preset.
-
-    resolve_group_indices() accepts pair entries, so the drift check must
-    decode them the same way or a pair-carrying payload looks falsely
-    "drifted" (Copilot review, PR #174).
-    """
-    from asymmetry.core.instrument import get_instrument_layout
-    from asymmetry.gui.windows.grouping.profile_bridge import payload_matches_preset
-
-    layout = get_instrument_layout("GPS")
-    preset = layout.presets["Longitudinal"]
-    payload = {
-        "groups": {1: [[1, 100]], 2: [[2, 100]]},
-        "group_names": {1: "Forward", 2: "Backward"},
-        "forward_group": preset.forward_group,
-        "backward_group": preset.backward_group,
-    }
-    assert payload_matches_preset(payload, layout, "Longitudinal")
-
-
 def test_preset_dropdown_shows_the_applied_preset(qapp: QApplication) -> None:
     """The dropdown stays on the applied preset, not the instrument's first one."""
     dataset = _gps_dataset(None)
@@ -2850,8 +2829,11 @@ def test_typed_detector_list_updates_the_draft(qapp: QApplication) -> None:
 @pytest.mark.parametrize(
     ("text", "reason"),
     [
-        ("1-20", "This run has 16 detectors, so 17-20 does not exist"),
-        ("", "A group needs at least one detector"),
+        (
+            "1-20",
+            "17-20 do not exist",
+        ),
+        ("", "needs at least one detector"),
         ("1, x", "Cannot read 'x' as a detector id or range"),
     ],
 )
@@ -2863,7 +2845,7 @@ def test_invalid_detector_list_leaves_the_draft_and_marks_the_cell(
     item.setText(text)
 
     assert dialog._groups[1] == list(range(0, 8))
-    assert item.toolTip() == reason
+    assert reason in item.toolTip()
     assert item.background().color().name() == tokens.ERROR_SOFT
 
     # Correcting the cell clears the mark and takes the edit.

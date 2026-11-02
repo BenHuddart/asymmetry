@@ -342,14 +342,33 @@ with uncommitted changes, which prompts and lists exactly what would be lost —
 e.g. "profile 'Default (GPS)' and overrides for runs 12, 15".
 
 Applying reports, in the LOG and the status bar, how many runs the profile
-reached and which overrides were updated. A grouping may name detectors a run
-does not contain — a full instrument preset applied to a file exporting only
-some of the instrument's detectors. The forward/backward groups then reduce
-over the detectors that are present (matching the dialog preview), and the LOG
-notes which absent detectors were ignored. Only when a forward or backward
-group has *none* of its detectors in the run — so no asymmetry can be formed —
-is that run skipped, and the report names the missing detectors and the run's
-detector count so the mismatch is diagnosable rather than a silent no-op.
+reached and which overrides were updated. A preset that requires channels
+absent from the file is a preset/data mismatch: it cannot be trimmed or
+replaced implicitly. Select a matching preset or edit the channel list.
+Raw histograms remain available, and invalid saved settings remain editable.
+A saved request without a recorded acquired-channel count stays a per-run
+override; its largest requested ID does not establish the acquisition size.
+The preview reports **Preview unavailable:** with the reason and disables
+**Apply** until the requested groups can be formed.
+
+Channel membership
+~~~~~~~~~~~~~~~~~~
+
+Group entries are unique positive integer acquired-channel IDs. With the
+current ordinal convention, channel 1 selects the first file histogram;
+these ordinals do not establish physical detector identity under file
+reordering. Structured API and project lists reject booleans, fractional
+values, malformed values, repeated members, and IDs absent from the run.
+Typed lists such as ``1-3,2`` express set union and select channels 1, 2,
+and 3 once each. Missing members remain a mismatch even when excluded.
+
+Explicit exclusions subtract from authored membership without rewriting raw
+histograms or supplied variances. A required group with no remaining channels
+is unavailable. Preview, final reduction, calibration preparation, integrals,
+count fits, and grouped spectra use the same membership resolution. Independent
+channel sums add supplied variances, using measured counts where a channel
+has no supplied variance. The preview status shows effective F/B channel counts.
+See :doc:`data_reduction/detector_exclusion` for the editing workflow.
 
 The grouping payload stores:
 
@@ -911,6 +930,19 @@ that requires its calibration inputs, uncertainties and fit diagnostics.
 Compared with other programs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+For ordinary grouping, Mantid's ``MuonGroupingCounts`` selects detector IDs,
+whereas musrfit RUN lists select histogram numbers. Native Mantid 6.16.1 sums
+channels [10, 20] and [50, 60] to [60, 80], retaining supplied errors in
+quadrature, within relative/absolute tolerance :math:`10^{-12}`.
+Native musrfit 1.12.1 (``708f777b``, ROOT 6.40.04), with zero deadtime,
+0.1 µs bins and packing one, exports 125000 counts/bin from constant channels
+100000 and 25000; its Poisson errors agree within relative tolerance
+:math:`5\times10^{-6}`, set by text precision. Both tested programs reject
+missing members and count repeated members twice. Asymmetry rejects repetitions
+because ordinary membership is unique, rather than a numerical weight.
+These arithmetic comparisons do not certify detector geometry or pair independence.
+See :doc:`/explanation/comparison` for sources and limits.
+
 **Mantid 6.16.1**, run as a binary, accepts signed coefficients in
 ``ApplyDeadTimeCorr`` v1. For counts [5, 20], 1 µs bins and 10 good frames,
 coefficients −0.1, 0 and +0.1 µs give [4.761904761904762, 16.666666666666668],
@@ -1400,19 +1432,11 @@ PSI HAL-9500
    available immediately without opening the Grouping window. The eight octant
    groups exclude the muon-veto MV.
 
-   Some high-field ``.mdu`` runs ship only the forward ring (``MV, F1…F8`` —
-   nine histograms, no backward ring). Such a run still opens grouped
-   **Per-octant**: the preset naming backward-ring detectors (10–17) applies
-   over the detectors the run *does* contain, so each octant degrades to one
-   forward wedge (physically equivalent to **Transverse (opposed pairs)**, with
-   the analysis pair reducing to F1 vs F5), and the absent detectors are dropped
-   at reduction time. This is identical to *applying* Per-octant by hand from the
-   Grouping window, where the LOG additionally notes which absent detectors were
-   ignored. A preset whose forward or backward *analysis* group is an entirely
-   absent ring — **Longitudinal**, whose backward group is the whole missing
-   backward ring — cannot form an asymmetry, so it is not auto-applied and the
-   loader's label-based default is kept instead; applying it by hand is likewise
-   skipped with the missing detectors named.
+   A file exporting only the forward ring (``MV, F1…F8``) lacks the
+   backward channels required by **Per-octant**. The authored preset and raw
+   histograms remain accessible, with reduction explicitly unavailable.
+   Choose an explicit grouping appropriate to the acquired channels; Asymmetry
+   does not infer an equivalent preset or discard the absent bank.
 
 PSI GPS
 ~~~~~~~

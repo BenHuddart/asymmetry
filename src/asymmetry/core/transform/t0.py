@@ -543,19 +543,7 @@ def assess_t0(
     grouping: dict | None,
     search: RunT0Search | None,
 ) -> T0Assessment:
-    """Compare a run's file t0 with the detected one and return the verdict (D8).
-
-    Checks run in severity order and the first *error* wins outright; warnings
-    accumulate. ``search`` is the detection for this run
-    (:func:`find_t0_for_run`) or ``None`` while one is still pending, in which
-    case only the file-side checks can fire.
-
-    Every bin number inside a message is written in the run's own display base
-    (``grouping["bin_index_base"]``, 1 for ISIS), because the messages are shown
-    beside bin numbers the GUI already displays that way — a message quoting the
-    internal 0-based index would contradict the line it sits on. Comparisons and
-    :attr:`T0Assessment.delta_bins` stay internal: a difference is base-free.
-    """
+    """Compare file and detected t0; messages use the run's displayed bin base."""
     # Imported here, not at module scope: grouping.py imports this module for
     # the resolver, so a top-level import would close the cycle.
     from asymmetry.core.transform.grouping import common_t0_for_groups, effective_group_indices
@@ -564,12 +552,15 @@ def assess_t0(
     n_hist = len(histograms)
     base = int(grouping.get("bin_index_base", 0))
     detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
-    forward_idx = effective_group_indices(
-        grouping, int(grouping.get("forward_group", 1)), n_histograms=n_hist
-    )
-    backward_idx = effective_group_indices(
-        grouping, int(grouping.get("backward_group", 2)), n_histograms=n_hist
-    )
+    try:
+        forward_idx = effective_group_indices(
+            grouping, int(grouping.get("forward_group", 1)), n_histograms=n_hist
+        )
+        backward_idx = effective_group_indices(
+            grouping, int(grouping.get("backward_group", 2)), n_histograms=n_hist
+        )
+    except ValueError as exc:
+        return T0Assessment("error", None, (str(exc),), ())
     file_common = common_t0_for_groups(
         histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0_bins
     )

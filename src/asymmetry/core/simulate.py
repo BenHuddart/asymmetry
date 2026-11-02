@@ -503,9 +503,8 @@ def _detector_group_map(grouping: dict, n_detectors: int) -> dict[int, int]:
             gid = int(key)
         except (TypeError, ValueError):
             continue
-        for det in resolve_group_indices(groups, gid):
-            if 0 <= det < n_detectors:
-                mapping.setdefault(det, gid)
+        for det in resolve_group_indices(groups, gid, n_histograms=n_detectors):
+            mapping.setdefault(det, gid)
     return mapping
 
 

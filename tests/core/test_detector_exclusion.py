@@ -68,9 +68,9 @@ def test_parse_group_detectors_accepts_ids_on_the_run():
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("", "A group needs at least one detector"),
-        (" , ", "A group needs at least one detector"),
-        ("1-20", "This run has 16 detectors, so 17-20 does not exist"),
+        ("", "needs at least one detector"),
+        (" , ", "needs at least one detector"),
+        ("1-20", "17-20 do not exist"),
     ],
 )
 def test_parse_group_detectors_rejects_empty_and_absent_ids(text, message):
@@ -94,7 +94,8 @@ def test_excluded_detector_indices_one_based_to_zero_based():
     assert excluded_detector_indices({"excluded_detectors": [1, 5]}) == frozenset({0, 4})
     assert excluded_detector_indices({}) == frozenset()
     assert excluded_detector_indices(None) == frozenset()
-    assert excluded_detector_indices({"excluded_detectors": ["2", None, 0]}) == frozenset({1})
+    with pytest.raises(ValueError):
+        excluded_detector_indices({"excluded_detectors": ["2", None, 0]})
 
 
 def test_filter_excluded_indices():
@@ -111,11 +112,11 @@ def test_effective_group_indices_is_the_exclusion_aware_chokepoint():
     # group 1 = detectors [1, 2] (0-based [0, 1]); detector 2 excluded -> [0]
     assert effective_group_indices(grouping, 1) == [0]
     assert effective_group_indices(grouping, 2) == [2, 3]
-    # n_histograms drops indices a run does not contain
-    assert effective_group_indices(_grouping(), 2, n_histograms=3) == [2]
-    # absent / malformed grouping resolves to empty rather than raising
-    assert effective_group_indices({}, 1) == []
-    assert effective_group_indices(None, 1) == []
+    with pytest.raises(ValueError, match="4 do not exist"):
+        effective_group_indices(_grouping(), 2, n_histograms=3)
+    for grouping in ({}, None):
+        with pytest.raises(ValueError, match="Group definitions"):
+            effective_group_indices(grouping, 1)
 
 
 def test_group_detectors_outside_run_names_absent_detectors():
@@ -136,26 +137,28 @@ def test_group_detectors_outside_run_names_absent_detectors():
 
 
 def test_group_detectors_outside_run_edge_cases():
-    groups = {1: [1, 2], "2": [3, 99], 3: [(4, 12), 5]}  # str key, (det, t0) pair
+    groups = {1: [1, 2], "2": [3, 99], 3: [4, 5]}  # str key, (det, t0) pair
     assert group_detectors_outside_run(groups, 1, 4) == []
     assert group_detectors_outside_run(groups, 2, 4) == [99]  # str-keyed group resolves
     # pair (4, 12) decodes to det 4 (present); det 5 is absent from a 4-detector run
     assert group_detectors_outside_run(groups, 3, 4) == [5]
-    assert group_detectors_outside_run(groups, 99, 4) == []  # missing group id -> empty
+    with pytest.raises(ValueError, match="not defined"):
+        group_detectors_outside_run(groups, 99, 4)
     assert group_detectors_outside_run(groups, 1, 0) == [1, 2]  # empty run: all absent
-    assert group_detectors_outside_run({1: [0, 1]}, 1, 4) == [0]  # det number < 1 is invalid
+    with pytest.raises(ValueError, match="positive integers"):
+        group_detectors_outside_run({1: [0, 1]}, 1, 4)
 
 
 def test_effective_group_indices_matches_manual_compose():
     """It is exactly filter_excluded_indices ∘ resolve_group_indices so the
     migrated call sites keep their previous behaviour."""
-    from asymmetry.core.transform.grouping import _present_indices, resolve_group_indices
+    from asymmetry.core.transform.grouping import _validated_group_indices, resolve_group_indices
 
     grouping = _grouping(excluded_detectors=[3])
     groups = grouping["groups"]
     for gid in (1, 2):
         manual = filter_excluded_indices(
-            _present_indices(resolve_group_indices(groups, gid), 4), grouping
+            _validated_group_indices(resolve_group_indices(groups, gid), 4), grouping
         )
         assert effective_group_indices(grouping, gid, n_histograms=4) == manual
 

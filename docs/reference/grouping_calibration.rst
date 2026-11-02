@@ -1,6 +1,12 @@
 Grouping and calibration walkthrough
 ====================================
 
+Calibration preparation uses the same unique acquired-channel membership and
+exclusions as reduction. Invalid or missing members and required groups emptied
+by exclusions make the request unavailable; select a matching preset or edit
+the groups before estimating. See :doc:`detector_grouping` for the membership
+contract and its comparisons with other programs.
+
 Before you fit anything, a raw run has to be *calibrated*: the time-zero and
 good-bin range set, the detectors combined into forward and backward groups, the
 calibration constant :math:`\alpha` fixed, and — for raw histogram formats — deadtime
