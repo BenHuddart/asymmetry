@@ -26,13 +26,8 @@ CORE_ROOT = SRC_ROOT / "core"
 GUI_ROOT = SRC_ROOT / "gui"
 TESTS_ROOT = ROOT / "tests"
 
-# ── One t0 resolver (decision D10) ────────────────────────────────────────────
-# `effective_detector_t0_bins` in core/transform/t0.py is the ONLY source of
-# per-detector alignment: it returns the T0Policy-resolved override when the
-# grouping carries one and the file `Histogram.t0_bin` otherwise. An alignment
-# call that omits `detector_t0_bins=` silently re-derives alignment from the
-# histograms alone, so the user's Manual / Auto-detect t0 applies to reduction
-# and to nothing else — the bug D10 exists to make unrepeatable.
+# Alignment must use T0Policy-resolved detector offsets; raw histogram t0
+# omits Manual/Auto-detect overrides applied by the user's reduction recipe.
 T0_ALIGNMENT_CALLS = frozenset({"common_t0_for_groups", "apply_grouping_aligned"})
 # Paths (relative to src/asymmetry) that legitimately align without the
 # resolver: the alignment chokepoints themselves, and the loaders, which run
@@ -267,6 +262,7 @@ find_physical_constant_duplicate_violations = (
 )
 find_count_boundary_violations = _numeric_checks.find_count_boundary_violations
 find_binning_payload_violations = _numeric_checks.find_binning_payload_violations
+find_unit_comparison_violations = _numeric_checks.find_unit_comparison_violations
 
 
 def _module_matches(module: str, banned: str) -> bool:
@@ -1031,6 +1027,7 @@ def run_structural_checks() -> int:
         *find_physical_constant_duplicate_violations(),
         *find_count_boundary_violations(),
         *find_binning_payload_violations(),
+        *find_unit_comparison_violations(),
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
         *find_axis_limit_policy_violations(),

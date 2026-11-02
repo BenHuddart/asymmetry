@@ -800,9 +800,7 @@ def test_primary_sample_temperature_selection_masks_zero_padding() -> None:
     offset = {"role": "sample_temperature", "primary": False, "values": [80.0, 80.0]}
     series = {"musrroot_slow_control/padded": padded, "musrroot_slow_control/offset": offset}
 
-    loader._resolve_primary_sample_temperature(
-        series, {"RunInfo/Sample Temperature": "150.15 +- 0.01 K"}
-    )
+    loader._resolve_primary_sample_temperature(series, 150.15)
 
     assert padded["primary"] is True
     assert offset["primary"] is False
@@ -815,7 +813,7 @@ def test_primary_sample_temperature_promotes_lone_candidate() -> None:
     lone = {"role": "sample_temperature", "primary": False, "values": [150.1, 150.2]}
     series = {"musrroot_slow_control/Cryostat Sample Temperature": lone}
 
-    loader._resolve_primary_sample_temperature(series, {})
+    loader._resolve_primary_sample_temperature(series, 0.0)
 
     assert lone["primary"] is True
 
@@ -831,7 +829,7 @@ def test_primary_sample_temperature_keeps_sensor_primary_without_scalar() -> Non
         "musrroot_slow_control/b_designated": designated,
     }
 
-    loader._resolve_primary_sample_temperature(series, {})
+    loader._resolve_primary_sample_temperature(series, 0.0)
 
     assert designated["primary"] is True
     assert first["primary"] is False

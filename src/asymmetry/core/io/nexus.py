@@ -31,6 +31,7 @@ from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_
 from asymmetry.core.transform import compute_asymmetry
 from asymmetry.core.transform.grouping import align_forward_backward
 from asymmetry.core.transform.t0 import good_window_for_groups, run_t0_time_us
+from asymmetry.core.utils.constants import CELSIUS_ZERO_K, GAUSS_TO_TESLA
 
 try:  # optional dependency
     import h5py  # type: ignore[import-untyped]
@@ -62,7 +63,6 @@ _CELSIUS_UNIT_TOKENS = frozenset(
         "degcelsius",
     }
 )
-_ABSOLUTE_ZERO_CELSIUS = 273.15
 
 #: EMU's sample cryostat tops out near room temperature; a reading above this
 #: ceiling implies a furnace/oven, whose NeXus header is the known unit-mislabel
@@ -108,7 +108,7 @@ def _normalize_temperature_to_kelvin(value: float | None, units: str | None) -> 
     if value is None:
         return None
     if _is_celsius_unit(units):
-        return float(value) + _ABSOLUTE_ZERO_CELSIUS
+        return float(value) + CELSIUS_ZERO_K
     return float(value)
 
 
@@ -120,8 +120,6 @@ def _normalize_temperature_to_kelvin(value: float | None, units: str | None) -> 
 #: here; an absent, blank, gauss, or unrecognised unit is left as-is.
 _TESLA_UNIT_TOKENS = frozenset({"t", "tesla", "teslas"})
 _MILLITESLA_UNIT_TOKENS = frozenset({"mt", "millitesla", "milliteslas"})
-_TESLA_TO_GAUSS = 1.0e4
-_MILLITESLA_TO_GAUSS = 10.0
 
 
 def _normalize_field_to_gauss(value: float | None, units: str | None) -> float | None:
@@ -137,9 +135,9 @@ def _normalize_field_to_gauss(value: float | None, units: str | None) -> float |
         return None
     token = str(units or "").strip().lower().replace(" ", "").replace(".", "").replace("_", "")
     if token in _TESLA_UNIT_TOKENS:
-        return float(value) * _TESLA_TO_GAUSS
+        return float(value) * (1.0 / GAUSS_TO_TESLA)
     if token in _MILLITESLA_UNIT_TOKENS:
-        return float(value) * _MILLITESLA_TO_GAUSS
+        return float(value) * (1e-3 / GAUSS_TO_TESLA)
     return float(value)
 
 

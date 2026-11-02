@@ -48,6 +48,12 @@ validated `BinWindow` rather than parsing window keys from grouping again.
 Both violation counts are zero; metadata displays and non-F/B analyses retain
 their own window policies.
 
+### Physical-unit authority
+
+Unit comparisons in raw-file loaders belong to the shared physical-unit table.
+Structural validation freezes the three NeXus normalizer comparisons and rejects
+new dispatch elsewhere. The constant authority also covers the Celsius offset.
+
 ### Physical-constant authority
 
 Structural validation scans Python assignments and numeric literals in the

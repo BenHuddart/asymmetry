@@ -1,14 +1,13 @@
 """File-boundary shape checks and named detector-alignment provenance."""
 
 from dataclasses import asdict
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from asymmetry.core.io.nexus import NexusLoader
 from asymmetry.core.io.psi import PsiLoader
-from asymmetry.core.io.root import RootLoader, _RootHistogram
+from asymmetry.core.io.root import RootLoader
 from asymmetry.core.transform.grouping import align_forward_backward, effective_group_indices
 from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
@@ -29,12 +28,18 @@ def test_psi_rejects_ragged_raw_acquisition_counts(tmp_path):
         loader._build_dataset(raw)
 
 
-def test_root_rejects_ragged_raw_acquisition_counts():
-    histograms = [_RootHistogram(i + 1, np.ones(n), "") for i, n in enumerate((10, 8))]
+def test_root_rejects_ragged_raw_acquisition_counts(tmp_path):
+    uproot = pytest.importorskip("uproot")
+    path = tmp_path / "ragged.root"
+    _write_musrroot_directory(path)
+    with uproot.update(path) as h:
+        for index, length in enumerate((10, 8), start=1):
+            h[f"histos/DecayAnaModule/hDecay{index:03d}"] = (
+                np.ones(length),
+                np.arange(length + 1, dtype=float),
+            )
     with pytest.raises(ValueError, match="equal shape"):
-        RootLoader()._build_dataset(
-            Path("synthetic.root"), {"RunInfo/Time Resolution": "10 ns"}, "musrroot", histograms
-        )
+        RootLoader().load(path)
 
 
 @pytest.mark.parametrize("kind", ["psi", "root", "nexus"])

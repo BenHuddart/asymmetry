@@ -27,6 +27,15 @@ _FIELD_DIRECTION_TAGS: dict[str, re.Pattern[str]] = {
 }
 
 
+def comment_field_gauss(comment: str) -> float | None:
+    """Read an explicitly gauss-labelled field candidate from free text."""
+    match = re.search(
+        r"(?i)\b(?:field|bx|by|bz|lf|tf|zf)?\s*[:=]?\s*([+-]?\d+(?:\.\d+)?)\s*(?:g|gauss)\b",
+        comment,
+    )
+    return float(match[1]) if match else None
+
+
 def field_direction_from_text(*texts: object) -> str:
     """Classify the applied-field geometry from PSI free-text fields.
 

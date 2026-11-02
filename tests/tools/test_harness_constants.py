@@ -15,6 +15,7 @@ def test_physical_constants_have_one_authority() -> None:
     ("source", "violates"),
     [
         ("R_GAS = 8.314\n", True),
+        ("x = 273.15\n", True),
         ("kb_mev = 0.1\n", True),
         ("self.R_GAS = 8.3\n", True),
         ("x = 2.19703\n", True),
