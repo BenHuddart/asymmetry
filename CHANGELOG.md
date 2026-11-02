@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- NeXus loading converts declared time, field, temperature, and physical-log units;
+  invalid axes and missing or incompatible physical units raise contextual errors.
+
 - ROOT and PSI headers convert declared time, field, and temperature units;
   invalid units and missing ROOT timing raise errors with file and field context.
 
