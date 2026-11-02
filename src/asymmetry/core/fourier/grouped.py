@@ -25,7 +25,7 @@ from asymmetry.core.transform.grouping import (
     good_frames,
     resolve_group_indices,
 )
-from asymmetry.core.transform.rebin import rebin_counts
+from asymmetry.core.transform.rebin import binning_spec, rebin_counts
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -402,10 +402,7 @@ def build_group_signal_dataset(
         last_good = counts.size - 1
 
     trimmed_counts = np.asarray(counts[first_good : last_good + 1], dtype=np.float64)
-    try:
-        bunch_factor = max(1, int(grouping.get("bunching_factor", 1)))
-    except (TypeError, ValueError):
-        bunch_factor = 1
+    bunch_factor = binning_spec(grouping).factor
 
     bin_width = float(prepared_histograms[0].bin_width)
     axis_start = first_good - common_t0

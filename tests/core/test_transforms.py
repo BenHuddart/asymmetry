@@ -8,7 +8,7 @@ from asymmetry.core.transform.asymmetry import (
     compute_asymmetry_with_count_errors,
     estimate_alpha,
 )
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import merge_curve_bins
 
 
 class TestComputeAsymmetry:
@@ -120,16 +120,16 @@ class TestRebin:
         t = np.arange(10, dtype=float)
         v = np.ones(10)
         e = np.full(10, 0.1)
-        t2, v2, e2 = rebin(t, v, e, factor=2)
+        t2, v2, e2 = merge_curve_bins(t, v, e, factor=2)
         assert len(t2) == 5
 
     def test_factor_1_is_noop(self):
         t = np.arange(5, dtype=float)
         v = np.ones(5)
         e = np.full(5, 0.1)
-        t2, v2, e2 = rebin(t, v, e, factor=1)
+        t2, v2, e2 = merge_curve_bins(t, v, e, factor=1)
         np.testing.assert_array_equal(t2, t)
 
     def test_invalid_factor(self):
         with pytest.raises(ValueError):
-            rebin(np.zeros(5), np.zeros(5), np.zeros(5), factor=0)
+            merge_curve_bins(np.zeros(5), np.zeros(5), np.zeros(5), factor=0)

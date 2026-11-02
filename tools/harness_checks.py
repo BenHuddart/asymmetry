@@ -218,3 +218,42 @@ def find_count_boundary_violations(root: Path = ROOT) -> list[HarnessFailure]:
                         )
                     )
     return failures
+
+
+# Raw grouping binning is parsed only at the BinningSpec boundary.
+BINNING_PAYLOAD_BASELINE = {
+    "src/asymmetry/core/project/profiles.py": 4,
+    "src/asymmetry/gui/mainwindow.py": 3,
+    "src/asymmetry/gui/panels/data_browser.py": 1,
+    "src/asymmetry/gui/panels/plot_panel.py": 2,
+    "src/asymmetry/gui/windows/grouping/dialog.py": 2,
+}
+
+
+def find_binning_payload_violations(root: Path = ROOT) -> list[HarnessFailure]:
+    """Freeze remaining raw binning reads outside the typed parser."""
+    failures = []
+    for path in sorted((root / "src/asymmetry").rglob("*.py")):
+        relative = path.relative_to(root).as_posix()
+        if relative == "src/asymmetry/core/transform/rebin.py":
+            continue
+        reads = [
+            node
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value in {"bunching_factor", "binning_mode"}
+        ]
+        allowed = BINNING_PAYLOAD_BASELINE.get(relative, 0)
+        if len(reads) != allowed:
+            failures.append(
+                HarnessFailure(
+                    path,
+                    reads[0].lineno if reads else 0,
+                    f"Raw binning reads: {len(reads)}, frozen count {allowed}. Use binning_spec; lower the baseline when reads are removed.",
+                )
+            )
+    return failures

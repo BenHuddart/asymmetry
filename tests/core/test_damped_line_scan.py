@@ -37,7 +37,7 @@ from asymmetry.core.fitting.damped_line_scan import (
     serialize_damped_line_analysis,
     tau_ladder,
 )
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import merge_curve_bins
 
 #: µSR error growth: σ doubles roughly every 3 µs and saturates at 25 % once
 #: the record is pure noise, which is what makes
@@ -414,7 +414,7 @@ def test_max_lines_caps_the_number_of_accepted_lines() -> None:
 
 def test_a_rebinned_copy_of_the_record_yields_the_same_lines() -> None:
     time, asymmetry, error = _record(_two_damped_lines, seed=39, sigma0_percent=_SIGMA0_FINE)
-    coarse = rebin(time, asymmetry, error, 2)
+    coarse = merge_curve_bins(time, asymmetry, error, 2)
 
     original = detect_damped_lines(time, asymmetry, error)
     rebinned = detect_damped_lines(*coarse)

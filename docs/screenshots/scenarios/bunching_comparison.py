@@ -16,7 +16,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import merge_curve_bins
 
 from ..data import make_generic_tf_for_processing
 from ._base import CaptureContext, Scenario, register
@@ -38,7 +38,7 @@ class BunchingComparisonScenario(Scenario):
             if factor == 1:
                 ds = raw_dataset
             else:
-                t, v, e = rebin(
+                t, v, e = merge_curve_bins(
                     raw_dataset.time,
                     raw_dataset.asymmetry,
                     raw_dataset.error,

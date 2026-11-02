@@ -1624,7 +1624,7 @@ def test_rebinning_lengthens_the_informative_window_of_a_counting_error_record()
     dataset = _counting_error_tf_record()
 
     raw = _effective_window_us(dataset)
-    rebinned = _effective_window_us(dataset.rebin(6))
+    rebinned = _effective_window_us(dataset.merge_curve_bins(6))
 
     assert rebinned > 1.15 * raw
     # ...and the 0.69 MHz line straddles the two-cycle floor because of it.
@@ -1638,7 +1638,7 @@ def test_frequency_support_verdict_differs_between_the_record_and_its_rebinned_c
 
     (raw,) = _apply_frequency_support_disqualifiers(dataset, (assessment,), _peaks_at(0.69))
     (rebinned,) = _apply_frequency_support_disqualifiers(
-        dataset.rebin(6), (assessment,), _peaks_at(0.69)
+        dataset.merge_curve_bins(6), (assessment,), _peaks_at(0.69)
     )
 
     assert any("informative window" in reason for reason in raw.disqualification_reasons)
@@ -2710,7 +2710,7 @@ def test_rebin_factor_is_capped_so_the_fastest_seeded_line_stays_sampled() -> No
     factor = analysis_rebin_factor(dataset, analysis)
 
     assert factor == 5
-    rebinned = dataset.rebin(factor)
+    rebinned = dataset.merge_curve_bins(factor)
     period_us = 1.0 / 240.0
     assert period_us / float(np.median(np.diff(rebinned.time))) >= 8.0
 
@@ -2996,7 +2996,7 @@ def test_assessment_with_curves_rebins_by_the_recommendations_own_factor() -> No
     )
 
     rebuilt = assessment_with_curves(recommendation, "exp_constant", dataset)
-    against_rebinned = _with_dense_curves(assessment, dataset.rebin(factor))
+    against_rebinned = _with_dense_curves(assessment, dataset.merge_curve_bins(factor))
     against_raw = _with_dense_curves(assessment, dataset)
 
     assert np.array_equal(rebuilt.fitted_time, against_rebinned.fitted_time)
@@ -3081,7 +3081,7 @@ def test_peaks_above_the_analysed_record_nyquist_are_dropped() -> None:
     # residual-FFT spike at 4.9 GHz cannot be represented on that record and
     # must never be seeded (its frequency bounds would invert on the clamp).
     dataset = _rebin_dataset(90_000)
-    analysed = dataset.rebin(11)
+    analysed = dataset.merge_curve_bins(11)
     spike = DetectedPeak(
         frequency_mhz=4907.0,
         amplitude=1.0,

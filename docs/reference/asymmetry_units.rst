@@ -136,7 +136,7 @@ scale it was given: it is safe on either, and never converts.
      - preserves
      - Dividing by :math:`\Delta x` leaves the asymmetry scale alone.
    * - :func:`~asymmetry.core.transform.rebin`,
-       :meth:`~asymmetry.core.data.dataset.MuonDataset.rebin`
+       :meth:`~asymmetry.core.data.dataset.MuonDataset.merge_curve_bins`
      - preserves
      - A mean of values with errors in quadrature.
    * - :func:`~asymmetry.core.transform.rrf_demodulate`,

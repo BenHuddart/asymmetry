@@ -104,7 +104,7 @@ blanket decimation:
 
 1. each rung is cropped to ``~10τ``, beyond which its own apodisation has
    suppressed the record to ``e^{-10}``;
-2. the crop is value-rebinned (:func:`asymmetry.core.transform.rebin.rebin`)
+2. the crop is value-rebinned (:func:`asymmetry.core.transform.rebin.merge_curve_bins`)
    so no rung exceeds ``sample_budget`` samples.
 
 Short-τ rungs are short, so they keep full resolution; long-τ rungs are
@@ -131,7 +131,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.fitting.peak_detection import effective_analysis_window
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import merge_curve_bins
 
 _EPS = 1e-12
 
@@ -720,7 +720,7 @@ def _rung_record(
     factor = max(1, int(np.ceil(crop / max(1, int(sample_budget)))))
     if factor == 1:
         return time[:crop], asymmetry[:crop], error[:crop], 1
-    t_r, y_r, e_r = rebin(time[:crop], asymmetry[:crop], error[:crop], factor)
+    t_r, y_r, e_r = merge_curve_bins(time[:crop], asymmetry[:crop], error[:crop], factor)
     return t_r, y_r, e_r, factor
 
 
@@ -1159,7 +1159,7 @@ def _verification_record(
     if factor == 1:
         t_v, y_v, e_v = time[:crop], asymmetry[:crop], error[:crop]
     else:
-        t_v, y_v, e_v = rebin(time[:crop], asymmetry[:crop], error[:crop], factor)
+        t_v, y_v, e_v = merge_curve_bins(time[:crop], asymmetry[:crop], error[:crop], factor)
     if t_v.size > budget:
         t_v, y_v, e_v = t_v[:budget], y_v[:budget], e_v[:budget]
     return t_v, y_v, e_v

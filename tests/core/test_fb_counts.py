@@ -13,6 +13,7 @@ from asymmetry.core.transform.fb_counts import (
     GroupCounts,
     good_window,
 )
+from asymmetry.core.transform.rebin import binning_spec
 
 
 def _counts(**overrides) -> ForwardBackwardCounts:
@@ -136,10 +137,12 @@ def test_reduction_rejects_invalid_good_windows(window) -> None:
     from asymmetry.core.data.dataset import Histogram
     from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
 
+    grouping = {"first_good_bin": window[0], "last_good_bin": window[1]}
     with pytest.raises(ValueError, match="good-bin window"):
         reduce_grouped_asymmetry(
             histograms=[Histogram(np.ones(10), bin_width=0.01) for _ in range(2)],
-            grouping={"first_good_bin": window[0], "last_good_bin": window[1]},
+            binning=binning_spec(grouping),
+            grouping=grouping,
             forward_idx=[0],
             backward_idx=[1],
             alpha=1.0,
@@ -202,6 +205,7 @@ def test_saved_window_loads_unchanged_and_is_checked_at_reduction(tmp_path, wind
     kwargs = dict(
         histograms=[Histogram(np.full(10, 20.0), bin_width=0.01) for _ in range(2)],
         grouping=loaded_grouping,
+        binning=binning_spec(loaded_grouping),
         forward_idx=[0],
         backward_idx=[1],
         alpha=1.0,

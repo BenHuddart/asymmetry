@@ -1205,7 +1205,7 @@ def _plan_run_completion(
     :func:`series_template_alphabet` admits), so ``sibling_values_by_template``
     covers every cell this run lacks and no cell ever starts cold.
     """
-    analysis_dataset = dataset.rebin(rebin_factor) if rebin_factor > 1 else dataset
+    analysis_dataset = dataset.merge_curve_bins(rebin_factor) if rebin_factor > 1 else dataset
     # One task per cell means the rebinned record is pickled once per cell this
     # run lacks, and a series-wide completion pass is hundreds of cells. The
     # tasks therefore carry the *fit record* — arrays and provenance, no raw
@@ -2625,7 +2625,7 @@ def _build_single_fit_prescreen_assessments(
     # fitted at, so it is what this row's dense curves are sampled between.
     analysis_dataset_by_run = {
         int(dataset.run_number): (
-            dataset.rebin(factor)
+            dataset.merge_curve_bins(factor)
             if (
                 factor := int(
                     single_fit_recommendations_by_run[int(dataset.run_number)].rebin_factor
@@ -8678,7 +8678,7 @@ def _decimated_datasets_for_search(
         _record_counter(instrumentation, "decimation_skipped_nyquist_gate")
         return datasets, 1
     try:
-        decimated = [dataset.rebin(factor) for dataset in datasets]
+        decimated = [dataset.merge_curve_bins(factor) for dataset in datasets]
     except ValueError:
         return datasets, 1
     _record_counter(instrumentation, "decimation_applied")
@@ -9328,7 +9328,7 @@ def _separable_search_datasets(
     if search_rebin_factor <= 1:
         return datasets
     _record_counter(instrumentation, "separable_search_rebin_applied")
-    return [dataset.rebin(search_rebin_factor) for dataset in datasets]
+    return [dataset.merge_curve_bins(search_rebin_factor) for dataset in datasets]
 
 
 def _all_local_run_fit_results(
@@ -10329,7 +10329,7 @@ def _run_separable_search(
     # whole series, so the series crosses the process boundary once per task —
     # as fit records, arrays and provenance without the runs' raw counts, which
     # no fit in this search reads. Rebinning shares the source ``Run``
-    # (see :meth:`MuonDataset.rebin`), so a search-resolution record still holds
+    # (see :meth:`MuonDataset.merge_curve_bins`), so a search-resolution record still holds
     # the full-resolution counts until this strips them. Built once, here.
     search_fit_records = [dataset.fit_record() for dataset in search_datasets]
     if search_rebin_factor > 1:

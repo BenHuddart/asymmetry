@@ -32,7 +32,7 @@ from asymmetry.core.transform.asymmetry import (
 from asymmetry.core.transform.fb_counts import GroupCounts
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.integral import integrate_asymmetry
-from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec
 from tests.counts import aligned_counts
 
 MU_TAU_US = 2.197
@@ -142,7 +142,7 @@ class TestBetaFormula:
             aligned_counts(
                 f, b, common_t0=0, bin_width_us=0.016, first_good_bin=0, last_good_bin=f.size - 1
             ),
-            grouping={"bunching_factor": 1},
+            binning=binning_spec({"bunching_factor": 1}),
             alpha=alpha_true,
             beta=beta_true,
         )
@@ -150,7 +150,7 @@ class TestBetaFormula:
             aligned_counts(
                 f, b, common_t0=0, bin_width_us=0.016, first_good_bin=0, last_good_bin=f.size - 1
             ),
-            grouping={"bunching_factor": 1},
+            binning=binning_spec({"bunching_factor": 1}),
             alpha=alpha_true,
         )
         assert not np.allclose(with_beta, without)

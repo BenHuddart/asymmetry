@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication
 
 import asymmetry.gui.mainwindow as mw_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import merge_curve_bins
 from asymmetry.core.transform.rotating_frame import (
     FrameEstimate,
     Provenance,
@@ -181,7 +181,7 @@ def test_bunching_rebins_the_rotated_values(mainwindow):
     panel.set_bunch_factor(4)
 
     bunched = panel.get_analysis_dataset(panel._vector_subplot_datasets["P′_y"][0])
-    time, values, errors = rebin(rotated.time, rotated.asymmetry, rotated.error, 4)
+    time, values, errors = merge_curve_bins(rotated.time, rotated.asymmetry, rotated.error, 4)
     np.testing.assert_allclose(bunched.time, time)
     np.testing.assert_allclose(bunched.asymmetry, values)
     np.testing.assert_allclose(bunched.error, errors)

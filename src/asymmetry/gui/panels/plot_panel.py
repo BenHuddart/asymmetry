@@ -68,7 +68,7 @@ from asymmetry.core.transform.grouping import (
 )
 from asymmetry.core.transform.integral import integrate_curve
 from asymmetry.core.transform.peakfit import parabolic_peak
-from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
+from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
 from asymmetry.core.transform.rotating_frame import ROTATED_LABELS
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import (
@@ -2839,7 +2839,7 @@ class PlotPanel(QWidget):
         same metadata and run association. Runs that still carry raw
         histograms are re-reduced counts-first through the host-injected
         provider; histogram-less curves (co-added data, G±R combinations)
-        keep the curve-level :func:`rebin`.
+        keep the curve-level :func:`merge_curve_bins`.
         """
         if dataset is None:
             return None
@@ -2860,7 +2860,7 @@ class PlotPanel(QWidget):
         if rebunched is not None:
             time, asymmetry, error = rebunched
         else:
-            time, asymmetry, error = rebin(
+            time, asymmetry, error = merge_curve_bins(
                 dataset.time,
                 dataset.asymmetry,
                 dataset.error,
@@ -6593,8 +6593,7 @@ class PlotPanel(QWidget):
         # on the displayed asymmetry) already flags unreliable bins there. Skip
         # the raw-bin reduction explicitly rather than letting it self-disable
         # via a silent array-shape mismatch.
-        binning_mode, _, _ = resolve_binning_mode(grouping)
-        if binning_mode != "fixed":
+        if binning_spec(grouping).mode != "fixed":
             return self._project_source_mask_to_analysis_dataset(
                 source_mask=saturated,
                 source_dataset=reference_dataset,
