@@ -81,18 +81,20 @@ from asymmetry.core.transform.promote import (
 )
 from asymmetry.core.transform.rebin import (
     BINNING_MODES,
+    BinningSpec,
     binned_fb_asymmetry,
-    binning_slice_edges,
-    rebin,
-    resolve_binning_mode,
+    binning_spec,
+    merge_curve_bins,
 )
 from asymmetry.core.transform.reduce import (
     CorrectionFlags,
     GroupedAsymmetryReduction,
+    PeriodAsymmetryReduction,
     ReferenceResolver,
     corrected_grouped_counts,
     correction_flags_from_grouping,
     reduce_grouped_asymmetry,
+    reduce_period_asymmetry,
 )
 from asymmetry.core.transform.rrf import (
     RRFCurve,
@@ -184,7 +186,7 @@ __all__ = [
     "differentiate_scan",
     "FieldScan",
     "FieldScanPoint",
-    "rebin",
+    "merge_curve_bins",
     "RRFCurve",
     "default_bandwidth_mhz",
     "rrf_demodulate",
@@ -200,8 +202,8 @@ __all__ = [
     "subtract_scaled_counts",
     "BINNING_MODES",
     "binned_fb_asymmetry",
-    "binning_slice_edges",
-    "resolve_binning_mode",
+    "BinningSpec",
+    "binning_spec",
     "ForwardBackwardCounts",
     "GroupCounts",
     "SharedComponent",
@@ -215,6 +217,8 @@ __all__ = [
     "corrected_grouped_counts",
     "correction_flags_from_grouping",
     "reduce_grouped_asymmetry",
+    "reduce_period_asymmetry",
+    "PeriodAsymmetryReduction",
     "RunT0Search",
     "T0Assessment",
     "T0Estimate",

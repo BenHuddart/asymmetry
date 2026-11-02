@@ -13,8 +13,8 @@ and backward detector sums
 asymmetry calculation with the chosen :math:`\alpha` calibration constant
 (:func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`,
 :func:`~asymmetry.core.transform.asymmetry.estimate_alpha`), and
-optional rebinning of the resulting asymmetry trace
-(:func:`~asymmetry.core.transform.rebin.rebin`). The order is fixed
+count binning before the asymmetry ratio is formed
+(:class:`~asymmetry.core.transform.rebin.BinningSpec`). The order is fixed
 and matches musrfit's ``PRunAsymmetry`` pipeline:
 deadtime → grouping → background → count binning → asymmetry. The user-facing
 documentation of these steps and of Asymmetry's conventions (alpha
@@ -96,5 +96,5 @@ Rebinning
    :members:
    :undoc-members:
 
-.. autofunction:: asymmetry.core.transform.rebin.rebin
+.. autofunction:: asymmetry.core.transform.rebin.merge_curve_bins
    :no-index:

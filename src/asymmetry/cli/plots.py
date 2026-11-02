@@ -182,7 +182,7 @@ def _drawn_record(
     )
     windowed = full.time_range(window_min, window_max)
     factor = _bunch_factor(windowed.n_points)
-    drawn = windowed if factor <= 1 else windowed.rebin(factor)
+    drawn = windowed if factor <= 1 else windowed.merge_curve_bins(factor)
     return drawn, factor
 
 

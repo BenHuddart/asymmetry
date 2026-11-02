@@ -26,7 +26,7 @@ from asymmetry.core.transform.asymmetry import (
 )
 from asymmetry.core.transform.fb_counts import GroupCounts
 from asymmetry.core.transform.integral import build_field_scan, integrate_asymmetry, integrate_run
-from asymmetry.core.transform.rebin import binned_fb_asymmetry, rebin
+from asymmetry.core.transform.rebin import binned_fb_asymmetry, binning_spec, merge_curve_bins
 from asymmetry.core.transform.reduce import reduce_grouped_asymmetry
 from asymmetry.core.transform.rrf import rrf_demodulate
 from asymmetry.core.transform.units import (
@@ -117,7 +117,7 @@ def test_binned_fb_asymmetry_returns_a_fraction() -> None:
             first_good_bin=0,
             last_good_bin=_N_BINS - 1,
         ),
-        grouping=_grouping(),
+        binning=binning_spec(_grouping()),
         alpha=1.0,
     )
     assert asym == pytest.approx(EXPECTED_FRACTION)
@@ -148,6 +148,7 @@ def test_reduce_grouped_asymmetry_is_percent_scale_and_says_so() -> None:
     run = _run()
     reduction = reduce_grouped_asymmetry(
         histograms=run.histograms,
+        binning=binning_spec(_grouping()),
         grouping=_grouping(),
         forward_idx=[0],
         backward_idx=[1],
@@ -173,11 +174,12 @@ def test_the_reduction_is_exactly_one_hundred_times_the_primitive() -> None:
             first_good_bin=0,
             last_good_bin=_N_BINS - 1,
         ),
-        grouping=_grouping(),
+        binning=binning_spec(_grouping()),
         alpha=1.0,
     )
     reduction = reduce_grouped_asymmetry(
         histograms=run.histograms,
+        binning=binning_spec(_grouping()),
         grouping=_grouping(),
         forward_idx=[0],
         backward_idx=[1],
@@ -218,8 +220,8 @@ def test_rebin_preserves_whichever_scale_it_is_given() -> None:
     time = np.arange(8, dtype=float)
     fraction = np.full(8, EXPECTED_FRACTION)
     errors = np.full(8, 0.01)
-    _, rebinned_fraction, _ = rebin(time, fraction, errors, 2)
-    _, rebinned_percent, _ = rebin(time, fraction * PERCENT_PER_FRACTION, errors, 2)
+    _, rebinned_fraction, _ = merge_curve_bins(time, fraction, errors, 2)
+    _, rebinned_percent, _ = merge_curve_bins(time, fraction * PERCENT_PER_FRACTION, errors, 2)
     assert rebinned_fraction == pytest.approx(EXPECTED_FRACTION)
     assert rebinned_percent == pytest.approx(rebinned_fraction * PERCENT_PER_FRACTION)
 

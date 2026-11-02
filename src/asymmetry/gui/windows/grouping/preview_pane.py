@@ -40,6 +40,7 @@ from asymmetry.core.transform.corrections import (
     CorrectionOutcomes,
     CorrectionStatus,
 )
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import make_warning_banner
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
@@ -1166,14 +1167,10 @@ def _form_asymmetry(
     *,
     beta: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Bin the corrected counts into a percent asymmetry for one (α, β).
-
-    Mirrors :func:`reduce_grouped_asymmetry`'s final step (counts → binned
-    asymmetry, scaled to percent) so the preview matches the reduction exactly.
-    """
+    """Form percent asymmetry on the same count edges as final reduction."""
     time, asym, err = binned_fb_asymmetry(
         corrected,
-        grouping=grouping,
+        binning=binning_spec(grouping),
         alpha=alpha,
         beta=beta,
     )

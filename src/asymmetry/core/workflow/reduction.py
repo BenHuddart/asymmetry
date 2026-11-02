@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from numbers import Integral
 from pathlib import Path
 from typing import Any
 
@@ -27,9 +28,7 @@ from asymmetry.core.data.combine import (
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.io import load
 from asymmetry.core.io.periods import (
-    GREEN_INDEX,
     RED_INDEX,
-    combine_period_asymmetry,
     period_count,
     period_run,
     select_period,
@@ -48,9 +47,10 @@ from asymmetry.core.project.profiles import (
 )
 from asymmetry.core.transform.background import available_background_modes
 from asymmetry.core.transform.grouping import effective_group_indices, group_names
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.reduce import (
     correction_flags_from_grouping,
-    reduce_grouped_asymmetry,
+    reduce_period_asymmetry,
 )
 from asymmetry.core.utils.constants import PeriodMode
 
@@ -141,8 +141,8 @@ class ReductionSettings:
             raise ValueError(
                 f"The t_good offset counts bins after t0, got {self.t_good_offset_bins}."
             )
-        if self.rebin < 1:
-            raise ValueError(f"Rebin factor must be at least 1, got {self.rebin}.")
+        if isinstance(self.rebin, bool) or not isinstance(self.rebin, Integral) or self.rebin < 1:
+            raise ValueError(f"Rebin factor must be an integer >= 1, got {self.rebin!r}.")
         if self.alpha <= 0.0:
             raise ValueError(f"Alpha must be positive, got {self.alpha}.")
         if self.t_min is not None and self.t_max is not None and self.t_min >= self.t_max:
@@ -183,7 +183,7 @@ class ReductionSettings:
             t_good_offset_bins=None
             if data["t_good_offset_bins"] is None
             else int(data["t_good_offset_bins"]),
-            rebin=int(data["rebin"]),
+            rebin=data["rebin"],
             t_min=None if data["t_min"] is None else float(data["t_min"]),
             t_max=None if data["t_max"] is None else float(data["t_max"]),
             period=None if data["period"] is None else str(data["period"]),
@@ -332,9 +332,10 @@ def _fixed_alpha_grouping(run: Run, settings: ReductionSettings) -> dict[str, An
     return resolve_effective_grouping(profile, run)
 
 
-def _reduce_period(run: Run, settings: ReductionSettings) -> MuonDataset:
-    """One period's asymmetry through the reduction chokepoint, before rebinning or windowing."""
-    grouping = _fixed_alpha_grouping(run, settings)
+def _reduce_binned_run(run: Run, settings: ReductionSettings, merge: int) -> MuonDataset:
+    """Resolve the run recipe, then bin each selected period counts-first."""
+    spec = replace(binning_spec(run.grouping), merge=merge)
+    grouping = dict(run.grouping) | _fixed_alpha_grouping(_grouping_run(run, settings), settings)
     n_histograms = len(run.histograms)
     forward_idx = effective_group_indices(
         grouping, int(grouping["forward_group"]), n_histograms=n_histograms
@@ -343,9 +344,11 @@ def _reduce_period(run: Run, settings: ReductionSettings) -> MuonDataset:
         grouping, int(grouping["backward_group"]), n_histograms=n_histograms
     )
     flags = correction_flags_from_grouping(grouping)
-    result = reduce_grouped_asymmetry(
-        histograms=run.histograms,
-        grouping=grouping,
+    result = reduce_period_asymmetry(
+        run.histograms,
+        grouping,
+        GREEN_MINUS_RED if settings.period == GREEN_MINUS_RED else str(PeriodMode.RED),
+        binning=spec,
         forward_idx=forward_idx,
         backward_idx=backward_idx,
         alpha=float(grouping["alpha"]),
@@ -374,45 +377,24 @@ def reduce_run(
     grouping payload, so the groups, t0, good-bin window and alpha are the
     file's own. For :data:`GREEN_MINUS_RED` *run* is the combined two-period
     run and each period is reduced alone before the difference is formed.
-    ``rebin`` and the time window are applied to the reduced curve afterwards,
-    in that order. A ``rebin`` that would fold a detected line above the new
-    Nyquist frequency raises :class:`ValueError` unless *allow_aliasing*.
+    ``rebin`` merges recorded bins at the count level before the ratio is formed;
+    the time window is applied to that final curve. A ``rebin`` that would fold a
+    detected line above the new Nyquist frequency raises :class:`ValueError`
+    unless *allow_aliasing*.
     """
-    if settings.period == GREEN_MINUS_RED:
-        if period_count(run) != 2:
-            raise ValueError(
-                f"Run {run.run_number} is not a two-period (red/green) run; there is no "
-                "green − red difference."
-            )
-        red, green = (
-            _reduce_period(period_run(run, index), settings) for index in (RED_INDEX, GREEN_INDEX)
+    if settings.period == GREEN_MINUS_RED and period_count(run) != 2:
+        raise ValueError(
+            f"Run {run.run_number} is not a two-period (red/green) run; there is no green − red difference."
         )
-        time, asymmetry, error = combine_period_asymmetry(
-            red.time,
-            red.asymmetry,
-            red.error,
-            green.time,
-            green.asymmetry,
-            green.error,
-            GREEN_MINUS_RED,
-        )
-        dataset = MuonDataset(
-            time=time, asymmetry=asymmetry, error=error, metadata=dict(run.metadata), run=run
-        )
-    else:
-        dataset = _reduce_period(run, settings)
-    if settings.rebin > 1:
-        dataset = (
-            dataset.rebin(settings.rebin)
-            if allow_aliasing
-            else _bandwidth_preserving_rebin(dataset, settings.rebin)
-        )
+    if settings.rebin > 1 and not allow_aliasing:
+        _check_rebin_bandwidth(_reduce_binned_run(run, settings, 1), settings.rebin)
+    dataset = _reduce_binned_run(run, settings, settings.rebin)
     if settings.t_min is not None or settings.t_max is not None:
         dataset = dataset.time_range(settings.t_min, settings.t_max)
     return dataset
 
 
-def _bandwidth_preserving_rebin(dataset: MuonDataset, factor: int) -> MuonDataset:
+def _check_rebin_bandwidth(dataset: MuonDataset, factor: int) -> None:
     """Reject user binning that would alias a detected line in the original record."""
     from asymmetry.core.fitting.peak_detection import analyze_dataset_peaks
 
@@ -430,7 +412,6 @@ def _bandwidth_preserving_rebin(dataset: MuonDataset, factor: int) -> MuonDatase
             "A folded line is not a physical frequency shift; to average a known fast "
             "line away on purpose, pass --allow-aliasing."
         )
-    return dataset.rebin(factor)
 
 
 def estimate_alpha_for_run(run: Run, settings: ReductionSettings) -> AlphaEstimate:

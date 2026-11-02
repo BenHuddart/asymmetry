@@ -45,7 +45,7 @@ from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     group_names,
 )
-from asymmetry.core.transform.rebin import resolve_binning_mode
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.core.transform.t0 import detector_t0_overrides, effective_detector_t0_bins
 from asymmetry.core.utils.coerce import optional_float
 
@@ -464,11 +464,11 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         overrides = detector_t0_overrides(grouping, len(run.histograms))
         if overrides is not None:
             payload["fb_detector_t0_bins"] = overrides
-        binning_mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
-        payload["fb_binning_mode"] = binning_mode
-        if binning_mode != "fixed":
-            payload["fb_bin0_us"] = bin0_us
-            payload["fb_bin10_us"] = bin10_us
+        binning = binning_spec(grouping)
+        payload["fb_binning_mode"] = binning.mode
+        if binning.mode != "fixed":
+            payload["fb_bin0_us"] = binning.bin0_us
+            payload["fb_bin10_us"] = binning.bin10_us
         # Two-period selection: only live when a valid two-period payload
         # exists (mirrors reduce_run_to_dataset's has_periods gate).
         period_lists = grouping.get("period_histograms")

@@ -170,7 +170,8 @@ options:
                         Select one period from a multi-period file (red is period 1,
                         green period 2), or green-red for the difference of a two-
                         period run
-  --rebin REBIN         Merge this many bins (default: 1)
+  --rebin REBIN         Merge this many bins' counts before forming the asymmetry
+                        (default: 1)
   --allow-aliasing      Rebin even when a detected line lies above the new Nyquist
                         frequency, deliberately averaging a known fast line away to
                         study slower relaxation

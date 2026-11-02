@@ -17,7 +17,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.transform.rebin import rebin
+from asymmetry.core.transform.rebin import merge_curve_bins
 
 from ..data import make_generic_tf_for_processing
 from ._base import CaptureContext, Scenario, register
@@ -31,7 +31,7 @@ class DataProcessingRebinScenario(Scenario):
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
 
         raw_dataset = make_generic_tf_for_processing()
-        t_reb, v_reb, e_reb = rebin(
+        t_reb, v_reb, e_reb = merge_curve_bins(
             raw_dataset.time, raw_dataset.asymmetry, raw_dataset.error, factor=4
         )
         rebinned_dataset = MuonDataset(

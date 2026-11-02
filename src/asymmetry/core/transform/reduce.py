@@ -31,7 +31,7 @@ from asymmetry.core.transform.fb_counts import ForwardBackwardCounts, GroupCount
 from asymmetry.core.transform.grouping import (
     align_forward_backward,
 )
-from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
 from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
@@ -52,6 +52,7 @@ class GroupedAsymmetryReduction:
     asymmetry: NDArray[np.float64]
     error: NDArray[np.float64]
     corrections: CorrectionOutcomes
+    binning: BinningSpec
     #: Scale of :attr:`asymmetry` and :attr:`error`. Always
     #: :data:`~asymmetry.core.transform.units.ASYMMETRY_PERCENT` — the reduction
     #: has no other mode; the field exists so a consumer can assert the scale it
@@ -258,6 +259,7 @@ def reduce_grouped_asymmetry(
     *,
     histograms: list[Histogram],
     grouping: dict,
+    binning: BinningSpec,
     forward_idx: list[int],
     backward_idx: list[int],
     alpha: float,
@@ -319,7 +321,7 @@ def reduce_grouped_asymmetry(
         )
         time_axis, asymmetry, error = binned_fb_asymmetry(
             corrected,
-            grouping=grouping,
+            binning=binning,
             alpha=alpha,
             beta=beta,
         )
@@ -336,8 +338,103 @@ def reduce_grouped_asymmetry(
             asymmetry=np.asarray(asymmetry * PERCENT_PER_FRACTION, dtype=np.float64),
             error=np.asarray(error * PERCENT_PER_FRACTION, dtype=np.float64),
             corrections=corrected.corrections,
+            binning=binning,
             units=ASYMMETRY_PERCENT,
         )
+
+
+@dataclass(frozen=True)
+class PeriodAsymmetryReduction:
+    """Percent asymmetry after binning each period; keep every correction outcome."""
+
+    time: NDArray[np.float64]
+    asymmetry: NDArray[np.float64]
+    error: NDArray[np.float64]
+    corrections: dict[str, CorrectionOutcomes]
+    binning: BinningSpec
+
+
+def reduce_period_asymmetry(
+    histograms: list[Histogram],
+    grouping: dict,
+    period_mode: str,
+    *,
+    binning: BinningSpec,
+    forward_idx: list[int],
+    backward_idx: list[int],
+    alpha: float,
+    use_deadtime: bool,
+    deadtime_mode: str,
+    use_background: bool,
+    beta: float = 1.0,
+    facility: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    reference_resolver: ReferenceResolver | None = None,
+    allow_incomplete: bool = False,
+    context: str = "",
+) -> PeriodAsymmetryReduction:
+    """Reduce identical raw-bin edges per period before combining G +/- R.
+
+    Period selection supplies each period's own exposure and deadtime table.
+    A sum or difference combines asymmetries, with independent variances added;
+    it never sums or averages already reduced bins to implement bunching.
+    """
+    from asymmetry.core.io.periods import combine_period_asymmetry, select_period_histograms
+    from asymmetry.core.utils.constants import PeriodMode
+
+    mode = PeriodMode(period_mode)
+    combined = mode in {PeriodMode.GREEN_MINUS_RED, PeriodMode.GREEN_PLUS_RED}
+    labels = (PeriodMode.RED, PeriodMode.GREEN) if combined else (mode,)
+    periods = grouping.get("period_histograms")
+    if periods is not None and (not isinstance(periods, list) or len(periods) != 2):
+        raise ValueError("Period asymmetry reduction requires exactly two held periods.")
+    if combined and periods is None:
+        raise ValueError("A period sum or difference requires two held periods.")
+    reduced = {}
+    for label in labels:
+        selected, effective = (
+            select_period_histograms(histograms, grouping, int(label == PeriodMode.GREEN))
+            if periods is not None
+            else (histograms, grouping)
+        )
+        reduced[label] = reduce_grouped_asymmetry(
+            histograms=selected,
+            grouping=effective,
+            binning=binning,
+            forward_idx=forward_idx,
+            backward_idx=backward_idx,
+            alpha=alpha,
+            use_deadtime=use_deadtime,
+            deadtime_mode=deadtime_mode,
+            use_background=use_background,
+            beta=beta,
+            facility=facility,
+            metadata=metadata,
+            reference_resolver=reference_resolver,
+            allow_incomplete=allow_incomplete,
+            context=f"{context} {label}".strip() if combined else context,
+        )
+    if combined:
+        red, green = reduced[PeriodMode.RED], reduced[PeriodMode.GREEN]
+        time, asymmetry, error = combine_period_asymmetry(
+            red.time,
+            red.asymmetry,
+            red.error,
+            green.time,
+            green.asymmetry,
+            green.error,
+            mode,
+        )
+    else:
+        single = reduced[mode]
+        time, asymmetry, error = single.time, single.asymmetry, single.error
+    return PeriodAsymmetryReduction(
+        time,
+        asymmetry,
+        error,
+        {str(label): result.corrections for label, result in reduced.items()},
+        binning,
+    )
 
 
 __all__ = [
@@ -347,4 +444,6 @@ __all__ = [
     "corrected_grouped_counts",
     "correction_flags_from_grouping",
     "reduce_grouped_asymmetry",
+    "reduce_period_asymmetry",
+    "PeriodAsymmetryReduction",
 ]

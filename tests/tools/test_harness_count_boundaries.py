@@ -21,7 +21,7 @@ def test_repository_uses_the_count_boundary() -> None:
         ('window = grouping.get("first_good_bin"); binned_fb_asymmetry(counts)', True),
         ('window = grouping.get("last_good_bin"); slice_to_good_window(a, e, window)', True),
         ('window = grouping.get("first_good_bin")', False),
-        ("binned_fb_asymmetry(counts, grouping=grouping, alpha=alpha)", False),
+        ("binned_fb_asymmetry(counts, binning=spec, alpha=alpha)", False),
     ],
 )
 def test_ratchet_distinguishes_reduction_from_alignment_and_metadata(

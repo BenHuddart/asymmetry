@@ -43,7 +43,7 @@ Reduce noise by combining adjacent time bins:
 
 .. code-block:: python
 
-   from asymmetry.core.transform.rebin import rebin
+   from asymmetry.core.transform.rebin import merge_curve_bins
    import numpy as np
    
    # Original data
@@ -52,7 +52,7 @@ Reduce noise by combining adjacent time bins:
    error = np.ones(1000) * 0.01
    
    # Rebin by factor of 10
-   t_rebinned, a_rebinned, e_rebinned = rebin(time, asymmetry, error, factor=10)
+   t_rebinned, a_rebinned, e_rebinned = merge_curve_bins(time, asymmetry, error, factor=10)
    
    print(f"Original: {len(time)} points")
    print(f"Rebinned: {len(t_rebinned)} points")

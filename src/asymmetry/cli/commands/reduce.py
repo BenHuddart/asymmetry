@@ -51,7 +51,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     add_reduction_arguments(parser)
-    parser.add_argument("--rebin", type=int, default=1, help="Merge this many bins (default: 1)")
+    parser.add_argument(
+        "--rebin",
+        type=int,
+        default=1,
+        help="Merge this many bins' counts before forming the asymmetry (default: 1)",
+    )
     parser.add_argument(
         "--allow-aliasing",
         action="store_true",

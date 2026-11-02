@@ -582,7 +582,7 @@ def _field_line_starts(
 
 def _prepared(dataset: MuonDataset, recipe: FitRecipe) -> MuonDataset:
     """The record a recipe is fitted against (its rebin applied)."""
-    return dataset if recipe.rebin <= 1 else dataset.rebin(recipe.rebin)
+    return dataset if recipe.rebin <= 1 else dataset.merge_curve_bins(recipe.rebin)
 
 
 def _workflow_flags(
