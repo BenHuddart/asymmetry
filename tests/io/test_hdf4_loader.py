@@ -91,7 +91,7 @@ def _write_hdf4_v1(
             s = sd.create(name, dtype, shape)
             s[:] = arr.reshape(shape)
             for key, val in (attrs or {}).items():
-                s.attr(key).set(SDC.INT32, int(val))
+                s.attr(key).set(SDC.CHAR8 if isinstance(val, str) else SDC.INT32, val)
             ref = s.ref()
             s.endaccess()
             return ref
@@ -135,8 +135,8 @@ def _write_hdf4_v1(
             log_times = np.arange(log_values.size, dtype=np.float64) * 10.0
             nxlog = _vgroup("log_1", "NXlog")  # generic Vgroup name
             nxlog.add(HC.DFTAG_NDG, _char("name", temp_log_name))
-            nxlog.add(HC.DFTAG_NDG, _num("time", log_times, SDC.FLOAT64))
-            nxlog.add(HC.DFTAG_NDG, _num("values", log_values, SDC.FLOAT64))
+            nxlog.add(HC.DFTAG_NDG, _num("time", log_times, SDC.FLOAT64, {"units": "seconds"}))
+            nxlog.add(HC.DFTAG_NDG, _num("values", log_values, SDC.FLOAT64, {"units": "K"}))
             run.insert(nxlog)
             nxlog.detach()
 

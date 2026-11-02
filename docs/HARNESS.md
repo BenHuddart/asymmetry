@@ -51,8 +51,7 @@ their own window policies.
 ### Physical-unit authority
 
 Unit comparisons in raw-file loaders belong to the shared physical-unit table.
-Structural validation freezes the three NeXus normalizer comparisons and rejects
-new dispatch elsewhere. The constant authority also covers the Celsius offset.
+Structural validation rejects unit dispatch outside that authority. The constant authority also covers the Celsius offset.
 
 ### Physical-constant authority
 

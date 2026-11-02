@@ -27,11 +27,12 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
+from asymmetry.core.io.nexus_units import NexusUnits
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
+from asymmetry.core.io.physical_units import physical_unit, unit_text
 from asymmetry.core.transform import compute_asymmetry
 from asymmetry.core.transform.grouping import align_forward_backward
 from asymmetry.core.transform.t0 import good_window_for_groups, run_t0_time_us
-from asymmetry.core.utils.constants import CELSIUS_ZERO_K, GAUSS_TO_TESLA
 
 try:  # optional dependency
     import h5py  # type: ignore[import-untyped]
@@ -47,98 +48,12 @@ logger = logging.getLogger(__name__)
 _T0_BIN_TOLERANCE = 1.0e-6
 
 
-#: Unit tokens (lower-cased, with degree signs / spaces / dots stripped) that a
-#: NeXus ``units`` attribute may use to name the Celsius scale. ``celcius`` is a
-#: common misspelling seen in the wild.
-_CELSIUS_UNIT_TOKENS = frozenset(
-    {
-        "c",
-        "degc",
-        "celsius",
-        "celcius",
-        "centigrade",
-        "degreec",
-        "degreecelsius",
-        "degreescelsius",
-        "degcelsius",
-    }
-)
-
 #: EMU's sample cryostat tops out near room temperature; a reading above this
 #: ceiling implies a furnace/oven, whose NeXus header is the known unit-mislabel
 #: risk (Celsius values stored under a ``Kelvin`` label). 320 K leaves a ~20 K
 #: margin above room temperature so ordinary cold runs are never flagged. See
 #: :meth:`NexusLoader._temperature_unit_suspect`.
 _EMU_FURNACE_SUSPECT_CEILING_K = 320.0
-
-
-def _is_celsius_unit(units: str | None) -> bool:
-    """True when a NeXus ``units`` token names the Celsius scale.
-
-    Normalisation strips degree signs, spaces, dots and underscores so
-    ``°C`` / ``deg C`` / ``Celsius`` all match the tokens in
-    :data:`_CELSIUS_UNIT_TOKENS`.
-    """
-    token = (
-        str(units or "")
-        .strip()
-        .lower()
-        .replace("°", "")
-        .replace(" ", "")
-        .replace(".", "")
-        .replace("_", "")
-    )
-    return token in _CELSIUS_UNIT_TOKENS
-
-
-def _normalize_temperature_to_kelvin(value: float | None, units: str | None) -> float | None:
-    """Convert a temperature to kelvin, honoring the NeXus ``units`` attribute.
-
-    A Celsius unit (``degC`` / ``°C`` / ``Celsius``) shifts the value by
-    ``+273.15``; Kelvin, an empty unit, or any unrecognized unit is passed
-    through unchanged — we never *guess* a conversion the file did not declare.
-    ``None`` propagates as ``None``.
-
-    Note this honors the *declared* unit only. A file that stores Celsius values
-    but mislabels the field ``Kelvin`` (seen on some EMU furnace runs) is left
-    as-is; silently "correcting" it would corrupt genuinely-cold Kelvin runs.
-    The suspected-mislabel case is *surfaced* (not converted) via
-    :meth:`NexusLoader._temperature_unit_suspect`.
-    """
-    if value is None:
-        return None
-    if _is_celsius_unit(units):
-        return float(value) + CELSIUS_ZERO_K
-    return float(value)
-
-
-#: Unit tokens (lower-cased, with spaces / dots / underscores stripped) that a
-#: NeXus ``sample/magnetic_field`` ``units`` attribute may use to name the tesla
-#: and millitesla scales. The rest of the application treats
-#: ``metadata['field']`` as gauss (the ROOT/PSI/ICP-log loaders all normalise to
-#: gauss at the I/O boundary), so a declared tesla / millitesla unit is converted
-#: here; an absent, blank, gauss, or unrecognised unit is left as-is.
-_TESLA_UNIT_TOKENS = frozenset({"t", "tesla", "teslas"})
-_MILLITESLA_UNIT_TOKENS = frozenset({"mt", "millitesla", "milliteslas"})
-
-
-def _normalize_field_to_gauss(value: float | None, units: str | None) -> float | None:
-    """Convert a magnetic field to gauss, honoring the NeXus ``units`` attribute.
-
-    A tesla unit (``T`` / ``tesla``) scales the value by ``1e4`` and a
-    millitesla unit (``mT`` / ``millitesla``) by ``10``; gauss, an empty unit, or
-    any unrecognized unit is passed through unchanged — we never *guess* a
-    conversion the file did not declare, preserving the historical
-    gauss-pass-through behaviour. ``None`` propagates as ``None``.
-    """
-    if value is None:
-        return None
-    token = str(units or "").strip().lower().replace(" ", "").replace(".", "").replace("_", "")
-    if token in _TESLA_UNIT_TOKENS:
-        return float(value) * (1.0 / GAUSS_TO_TESLA)
-    if token in _MILLITESLA_UNIT_TOKENS:
-        return float(value) * (1e-3 / GAUSS_TO_TESLA)
-    return float(value)
 
 
 def active_series_samples(entry: dict[str, Any]) -> np.ndarray:
@@ -366,6 +281,7 @@ class NexusLoader(BaseLoader):
     def _load_v1(self, handle: Any, entry_name: str, source_file: str) -> list[MuonDataset]:
         """Read legacy ``/run`` muon NeXus content and reduce to asymmetry."""
         entry = handle[entry_name]
+        units = NexusUnits(entry, entry_name, source_file, "v1")
         h_data = self._require_group(entry, "histogram_data_1")
 
         counts = np.asarray(self._require_dataset(h_data, "counts"), dtype=np.float64)
@@ -381,10 +297,7 @@ class NexusLoader(BaseLoader):
             counts = counts.reshape(n_switching, n_spectra, counts.shape[-1])
         counts_periods = self._split_period_counts(counts)
 
-        corrected_time = np.asarray(
-            self._read_optional(h_data, "corrected_time", default=[]),
-            dtype=np.float64,
-        )
+        corrected_time = units.read("histogram_data_1/corrected_time")
         grouping_array = np.asarray(
             self._read_optional(h_data, "grouping", default=[]),
             dtype=np.int64,
@@ -407,33 +320,18 @@ class NexusLoader(BaseLoader):
             )
         if good_frames_values.size == 0:
             good_frames_values = self._good_frames_from_beam(entry)
-        dead_time_values = np.asarray(
-            self._read_optional(h_data, "dead_time", default=[]),
-            dtype=np.float64,
-        )
-        if dead_time_values.size == 0:
-            dead_time_values = np.asarray(
-                self._read_optional(h_data, "deadtime", default=[]),
-                dtype=np.float64,
-            )
-        # Legacy ISIS muon NeXus v1 files (and the HDF4 originals read directly)
-        # store the dead-time table at ``instrument/detector/deadtimes`` (plural,
-        # a different group) rather than under ``histogram_data_1``. The nxs4to5
-        # converter maps that location to ``detector_1/dead_time`` (read by
-        # _load_v2), so HDF5 twins are fine; a directly loaded v1 file needs this
-        # fallback or it returns an all-zeros table. (deadtimes is the real key;
-        # dead_time/deadtime are accepted defensively.)
-        for dead_time_key in ("deadtimes", "dead_time", "deadtime"):
-            if dead_time_values.size:
+        dead_time_values = np.array([], dtype=float)
+        for path in (
+            "histogram_data_1/dead_time",
+            "histogram_data_1/deadtime",
+            "instrument/detector/deadtimes",
+            "instrument/detector/dead_time",
+            "instrument/detector/deadtime",
+        ):
+            if units.node(path) is not None:
+                dead_time_values = units.read(path)
                 break
-            dead_time_values = np.asarray(
-                self._read_optional(entry, f"instrument/detector/{dead_time_key}", default=[]),
-                dtype=np.float64,
-            )
-        time_zero_values = np.asarray(
-            self._read_optional(h_data, "time_zero", default=[]),
-            dtype=np.float64,
-        )
+        time_zero_values = units.read("histogram_data_1/time_zero")
 
         run_number = self._safe_int(self._read_optional(entry, "number"), default=0)
         instrument_name = self._safe_str(
@@ -441,10 +339,10 @@ class NexusLoader(BaseLoader):
         )
 
         sample = self._read_optional(entry, "sample")
-        temperature = self._read_temperature_kelvin(sample)
+        temperature = units.scalar("sample/temperature", "temperature", 0.0)
         temperature_units = self._sample_temperature_units(sample)
         magnetic_field_node = self._read_optional(sample, "magnetic_field")
-        magnetic_field = self._read_field_gauss(sample)
+        magnetic_field = units.scalar("sample/magnetic_field", "field", 0.0)
 
         orientation_raw = self._safe_str(
             self._read_optional(self._read_optional(entry, "instrument"), "detector/orientation")
@@ -469,6 +367,7 @@ class NexusLoader(BaseLoader):
             "field_state": field_state,
             "detector_orientation": detector_orientation,
             "source_file": source_file,
+            "declared_units": units.declarations,
             "nexus_version": "v1",
         }
         if field_vector is not None:
@@ -480,7 +379,7 @@ class NexusLoader(BaseLoader):
         )
 
         nexus_fields = self._extract_tree(entry)
-        time_series = self._extract_time_series(entry)
+        time_series = self._extract_time_series(entry, units)
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
@@ -506,7 +405,7 @@ class NexusLoader(BaseLoader):
         counts_attrs = getattr(counts_ds, "attrs", {}) if counts_ds is not None else {}
 
         first_good_bin, last_good_bin = self._good_bin_window(counts_attrs, h_data, n_bins)
-        _, bin_width = self._build_time_axis(corrected_time, n_bins)
+        bin_width = units.bin_width("histogram_data_1", n_bins)
         decode = self._decode_t0(
             t0_bin_attr=counts_attrs.get("t0_bin"),
             time_zero_values=time_zero_values,
@@ -536,33 +435,19 @@ class NexusLoader(BaseLoader):
     def _load_v2(self, handle: Any, entry_name: str, source_file: str) -> list[MuonDataset]:
         """Read modern V2 muon NeXus content and reduce to asymmetry.
 
-        V2 files may contain both ``raw_time`` and ``corrected_time``.
-        Mantid's loading flow uses ``raw_time`` and applies ``time_zero`` as a
-        separate correction. To align user-visible behaviour with both Mantid
-        and files that already provide corrected centres:
-
-        * Prefer ``corrected_time`` when it has a shape compatible with counts.
-        * Otherwise, build from ``raw_time`` and subtract ``time_zero``.
-        * For per-histogram metadata, prefer ``counts.attrs['t0_bin']`` when
-          present, otherwise derive ``t0_bin`` from ``time_zero / bin_width``.
+        Every provided time axis is validated; corrected-time diagnostics use
+        the declared corrected axis when present. Histogram centres are
+        stamped from the decoded exact t0. The one-based counts attribute
+        takes precedence when it conflicts with physical time zero.
         """
         entry = handle[entry_name]
+        units = NexusUnits(entry, entry_name, source_file, "v2")
         detector = self._require_group(self._require_group(entry, "instrument"), "detector_1")
 
         counts = np.asarray(self._require_dataset(detector, "counts"), dtype=np.float64)
         counts_periods = self._split_period_counts(counts)
 
-        raw_time = np.asarray(
-            self._read_optional(detector, "raw_time", default=[]), dtype=np.float64
-        )
-        if raw_time.size == 0:
-            raw_time = np.asarray(
-                self._read_optional(detector, "time_of_flight", default=[]), dtype=np.float64
-            )
-        corrected_time = np.asarray(
-            self._read_optional(detector, "corrected_time", default=[]), dtype=np.float64
-        )
-
+        corrected_time = units.read("instrument/detector_1/corrected_time")
         grouping_array = np.asarray(
             self._read_optional(detector, "grouping", default=[]), dtype=np.int64
         )
@@ -584,22 +469,16 @@ class NexusLoader(BaseLoader):
             )
         if good_frames_values.size == 0:
             good_frames_values = self._good_frames_from_beam(entry)
-        dead_time_values = np.asarray(
-            self._read_optional(detector, "dead_time", default=[]),
-            dtype=np.float64,
-        )
-        # The converter writes ``dead_time``; accept the ``deadtime``/``deadtimes``
-        # spellings too so a hand-made or partially-converted v2 file still reads.
-        for dead_time_key in ("deadtime", "deadtimes"):
-            if dead_time_values.size:
+        dead_time_values = np.array([], dtype=float)
+        for path in (
+            "instrument/detector_1/dead_time",
+            "instrument/detector_1/deadtime",
+            "instrument/detector_1/deadtimes",
+        ):
+            if units.node(path) is not None:
+                dead_time_values = units.read(path)
                 break
-            dead_time_values = np.asarray(
-                self._read_optional(detector, dead_time_key, default=[]),
-                dtype=np.float64,
-            )
-        time_zero_values = np.asarray(
-            self._read_optional(detector, "time_zero", default=[]), dtype=np.float64
-        )
+        time_zero_values = units.read("instrument/detector_1/time_zero")
 
         run_number = self._safe_int(self._read_optional(entry, "run_number"), default=0)
         title = self._safe_str(self._read_optional(entry, "title"))
@@ -612,10 +491,10 @@ class NexusLoader(BaseLoader):
             )
 
         sample = self._read_optional(entry, "sample")
-        temperature = self._read_temperature_kelvin(sample)
+        temperature = units.scalar("sample/temperature", "temperature", 0.0)
         temperature_units = self._sample_temperature_units(sample)
         magnetic_field_node = self._read_optional(sample, "magnetic_field")
-        magnetic_field = self._read_field_gauss(sample)
+        magnetic_field = units.scalar("sample/magnetic_field", "field", 0.0)
 
         orientation_raw = self._safe_str(self._read_optional(detector, "orientation"))
         detector_orientation = self._normalise_orientation(orientation_raw)
@@ -627,20 +506,13 @@ class NexusLoader(BaseLoader):
 
         counts_attrs = getattr(detector.get("counts"), "attrs", {})
         n_bins = int(counts_periods[0].shape[-1])
-        use_corrected_time = corrected_time.size in {n_bins, n_bins + 1}
-        time_axis_source = corrected_time if use_corrected_time else raw_time
+        use_corrected_time = units.node("instrument/detector_1/corrected_time") is not None
 
         first_good_bin_raw = self._safe_int(counts_attrs.get("first_good_bin"), default=None)
         last_good_bin_raw = self._safe_int(counts_attrs.get("last_good_bin"), default=None)
         first_good_bin, last_good_bin = self._good_bin_window(counts_attrs, None, n_bins)
-        first_good_time = self._safe_float(
-            self._read_optional(detector, "first_good_time"),
-            default=None,
-        )
-        last_good_time = self._safe_float(
-            self._read_optional(detector, "last_good_time"),
-            default=None,
-        )
+        first_good_time = units.scalar("instrument/detector_1/first_good_time", "time")
+        last_good_time = units.scalar("instrument/detector_1/last_good_time", "time")
 
         metadata_base = {
             "run_number": run_number,
@@ -655,6 +527,7 @@ class NexusLoader(BaseLoader):
             "field_state": field_state,
             "detector_orientation": detector_orientation,
             "source_file": source_file,
+            "declared_units": units.declarations,
             "nexus_version": "v2",
         }
         if field_vector is not None:
@@ -672,7 +545,7 @@ class NexusLoader(BaseLoader):
                 default=len(counts_periods),
             )
 
-        _, bin_width = self._build_time_axis(time_axis_source, n_bins)
+        bin_width = units.bin_width("instrument/detector_1", n_bins)
         decode = self._decode_t0(
             t0_bin_attr=counts_attrs.get("t0_bin"),
             time_zero_values=time_zero_values,
@@ -692,7 +565,7 @@ class NexusLoader(BaseLoader):
         use_last_good_time = last_good_bin_raw is None and last_good_time is not None
 
         nexus_fields = self._extract_tree(entry)
-        time_series = self._extract_time_series(entry)
+        time_series = self._extract_time_series(entry, units)
         metadata_base["nexus_fields"] = nexus_fields
         metadata_base["nexus_time_series"] = time_series
         _add_main_field(metadata_base, time_series)
@@ -1017,23 +890,6 @@ class NexusLoader(BaseLoader):
             n_bins=n_grouped,
         )
 
-    def _build_time_axis(self, source_axis: np.ndarray, n_bins: int) -> tuple[np.ndarray, float]:
-        """Build a usable time axis and bin width from NeXus time datasets."""
-        if source_axis.size == n_bins + 1:
-            axis = 0.5 * (source_axis[:-1] + source_axis[1:])
-        elif source_axis.size >= n_bins:
-            axis = source_axis[:n_bins]
-        else:
-            axis = np.arange(n_bins, dtype=np.float64)
-
-        if axis.size >= 2:
-            bin_width = float(np.nanmedian(np.diff(axis)))
-        else:
-            bin_width = 1.0
-        if not np.isfinite(bin_width) or bin_width == 0.0:
-            bin_width = 1.0
-        return np.asarray(axis, dtype=np.float64), float(bin_width)
-
     def _resolve_good_bin_range(
         self,
         time_axis: np.ndarray,
@@ -1225,9 +1081,13 @@ class NexusLoader(BaseLoader):
         t0 than the attribute declares (the 2003-era stale-header case) — the
         attribute still wins, but the run is marked ``"conflict"``.
         """
-        axis, _ = self._build_time_axis(corrected_time, n_bins)
-        if corrected_time.size == 0 or axis.size == 0:
+        if corrected_time.size == 0:
             return decode
+        axis = (
+            (corrected_time[:-1] + corrected_time[1:]) / 2
+            if corrected_time.size == n_bins + 1
+            else corrected_time
+        )
         k = int(np.max(decode.t0_bins))
         if k + 1 >= axis.size:
             return decode
@@ -1371,7 +1231,7 @@ class NexusLoader(BaseLoader):
 
         return None
 
-    def _extract_time_series(self, root: Any) -> dict[str, dict[str, Any]]:
+    def _extract_time_series(self, root: Any, units: NexusUnits) -> dict[str, dict[str, Any]]:
         """Collect all ``time``/``value`` NXlog-like groups for advanced display."""
         series: dict[str, dict[str, Any]] = {}
 
@@ -1383,11 +1243,8 @@ class NexusLoader(BaseLoader):
             has_time = "time" in keys
             value_name = "value" if "value" in keys else ("values" if "values" in keys else "")
             if has_time and value_name:
-                t = np.asarray(node["time"][()])
                 v = np.asarray(node[value_name][()])
-                t_num = self._to_numeric_array(t)
                 v_num = self._to_numeric_array(v)
-                units = self._safe_str(getattr(node[value_name], "attrs", {}).get("units", ""))
                 # The NXlog's human sensor label lives in a sibling ``name``
                 # dataset. Native HDF4 v1 files name the Vgroup generically and
                 # carry the real sensor name (e.g. ``Temp_Cryostat``) only here,
@@ -1400,13 +1257,17 @@ class NexusLoader(BaseLoader):
                     if hasattr(name_node, "dtype"):  # a name dataset, not a subgroup
                         name_label = self._safe_str(name_node[()])
                 if v_num.size > 0:
+                    values, value_units = units.log_values(prefix, node, value_name, name_label)
+                    v_num = self._to_numeric_array(values)
+                    t_num = units.clock_seconds(prefix, node)
                     # Guard the all-NaN case: np.nanmean/nanmin/nanmax emit
                     # "Mean of empty slice"/"All-NaN slice" RuntimeWarnings when
                     # no finite values are present (seen on some ARGUS files).
                     has_finite = bool(np.isfinite(v_num).any())
                     entry: dict[str, Any] = {
                         "path": prefix,
-                        "units": units,
+                        "units": value_units,
+                        "time_units": "s",
                         "time": t_num.tolist(),
                         "values": v_num.tolist(),
                         "mean": float(np.nanmean(v_num)) if has_finite else None,
@@ -1453,10 +1314,7 @@ class NexusLoader(BaseLoader):
         for path, entry in time_series.items():
             if not self._is_sample_temperature_path(path, entry):
                 continue
-            units = entry.get("units", "")
-            kelvin = np.array(
-                [_normalize_temperature_to_kelvin(v, units) for v in active_series_samples(entry)]
-            )
+            kelvin = active_series_samples(entry)
             physical = kelvin[kelvin > 0.0]
             if not physical.size:
                 rejections.append(
@@ -1656,31 +1514,6 @@ class NexusLoader(BaseLoader):
             if not metadata.get("field_state"):
                 metadata["field_state"] = "ZF"
 
-    def _read_temperature_kelvin(
-        self, sample: Any, name: str = "temperature", default: float = 0.0
-    ) -> float:
-        """Read ``sample/<name>`` as a temperature in kelvin.
-
-        Reads both the value and its NeXus ``units`` attribute so a Celsius
-        field (``degC`` / ``°C``) is normalized to kelvin via
-        :func:`_normalize_temperature_to_kelvin`. A Kelvin, missing, or
-        unrecognized unit passes the value through unchanged.
-        """
-        if sample is None or not hasattr(sample, "get"):
-            return float(default)
-        # Cannot use _read_optional here: it returns the unwrapped value and
-        # drops the node, but we need node.attrs['units'] to decide the scale.
-        node = sample.get(name)
-        if node is None:
-            return float(default)
-        raw = node[()] if hasattr(node, "dtype") else node
-        value = self._safe_float(raw, default=default)
-        units = ""
-        if hasattr(node, "attrs"):
-            units = self._safe_str(node.attrs.get("units", ""))
-        normalized = _normalize_temperature_to_kelvin(value, units)
-        return float(default) if normalized is None else float(normalized)
-
     def _sample_temperature_units(self, sample: Any, name: str = "temperature") -> str:
         """Return the declared ``units`` attribute of ``sample/<name>`` (``""`` if none)."""
         if sample is None or not hasattr(sample, "get"):
@@ -1688,32 +1521,7 @@ class NexusLoader(BaseLoader):
         node = sample.get(name)
         if node is None or not hasattr(node, "attrs"):
             return ""
-        return self._safe_str(node.attrs.get("units", ""))
-
-    def _read_field_gauss(self, sample: Any, default: float = 0.0) -> float:
-        """Read ``sample/magnetic_field`` as a field in gauss.
-
-        Reads both the value and its NeXus ``units`` attribute so a field
-        declared in tesla (``T`` / ``tesla``) or millitesla (``mT`` /
-        ``millitesla``) is normalized to gauss via
-        :func:`_normalize_field_to_gauss`. A gauss, missing, or unrecognized
-        unit passes the value through unchanged, matching the historical
-        behaviour and the gauss convention the rest of the app assumes.
-        """
-        if sample is None or not hasattr(sample, "get"):
-            return float(default)
-        # Cannot use _read_optional here: it returns the unwrapped value and
-        # drops the node, but we need node.attrs['units'] to decide the scale.
-        node = sample.get("magnetic_field")
-        if node is None:
-            return float(default)
-        raw = node[()] if hasattr(node, "dtype") else node
-        value = self._safe_float(raw, default=default)
-        units = ""
-        if hasattr(node, "attrs"):
-            units = self._safe_str(node.attrs.get("units", ""))
-        normalized = _normalize_field_to_gauss(value, units)
-        return float(default) if normalized is None else float(normalized)
+        return unit_text(node.attrs.get("units", ""))
 
     def _read_field_vector(self, sample: Any) -> list[float] | None:
         """Read ``sample/magnetic_field_vector`` when the file marks it usable.
@@ -1764,8 +1572,7 @@ class NexusLoader(BaseLoader):
 
         Returns ``(suspect, reason)``. A true result is only a *hint* for the GUI
         to surface — the temperature value itself is **never** changed here. We
-        deliberately do not convert: see :func:`_normalize_temperature_to_kelvin`
-        — silently adding 273 would corrupt a genuinely-cold Kelvin run.
+        declared units are converted at the file boundary.
 
         The detection is intentionally conservative; every condition must hold:
 
@@ -1789,7 +1596,8 @@ class NexusLoader(BaseLoader):
             return False, ""
         if str(instrument or "").strip().upper() != "EMU":
             return False, ""
-        if _is_celsius_unit(units):
+        declared_unit = physical_unit(units)
+        if declared_unit is not None and declared_unit.offset != 0:
             return False, ""
         if logged_temperature is not None:
             return False, ""

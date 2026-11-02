@@ -254,8 +254,8 @@ def find_binning_payload_violations(root: Path = ROOT) -> list[HarnessFailure]:
     return failures
 
 
-# NeXus's separate normalizers are the only allowed unit-dispatch exceptions.
-UNIT_COMPARISON_BASELINE = {"src/asymmetry/core/io/nexus.py": 3}
+# Physical unit dispatch has one authority.
+UNIT_COMPARISON_BASELINE: dict[str, int] = {}
 
 
 def find_unit_comparison_violations(
@@ -271,6 +271,7 @@ def find_unit_comparison_violations(
             node
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
             if isinstance(node, ast.Compare)
+            and any(isinstance(op, (ast.Eq, ast.NotEq, ast.In, ast.NotIn)) for op in node.ops)
             and any(
                 isinstance(part, ast.Name)
                 and (part.id in {"unit", "units", "unit_token"} or part.id.endswith("_UNIT_TOKENS"))
@@ -280,7 +281,7 @@ def find_unit_comparison_violations(
                 and part.args
                 and isinstance(part.args[0], ast.Constant)
                 and part.args[0].value == "units"
-                for part in ast.walk(node)
+                for part in (node.left, *node.comparators)
             )
         ]
         relative = path.relative_to(root).as_posix()

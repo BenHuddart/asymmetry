@@ -37,12 +37,12 @@ def _write_v2_file(
     field_vector: tuple[float, float, float] | None = None,
     field_vector_available: int | None = None,
     magnetic_field: float | None = 150.0,
-    magnetic_field_units: str | None = None,
+    magnetic_field_units: str | None = "G",
     temp_setpoint: float = 12.5,
-    temp_setpoint_units: str | None = None,
+    temp_setpoint_units: str | None = "K",
     temp_log_values: tuple[float, ...] = (12.0, 12.5, 13.0),
     temp_log_style: str = "flat",
-    temp_log_units: str | None = None,
+    temp_log_units: str | None = "K",
     temp_log_block: str = "Temp_Sample",
     temp_log_name: str | None = None,
     temp_log_times: tuple[float, ...] | None = None,
@@ -147,14 +147,14 @@ def _write_v2_file(
             # of the block, e.g. ``selog/Temp_Sample/value_log``.
             selog = entry.create_group("selog")
             value_log = selog.create_group(temp_log_block).create_group("value_log")
-            value_log.create_dataset("time", data=log_times)
+            value_log.create_dataset("time", data=log_times).attrs["units"] = "seconds"
             value_ds = value_log.create_dataset("value", data=log_values)
             if temp_log_name is not None:
                 value_log.create_dataset("name", data=np.bytes_(temp_log_name))
         else:
             # Flat convention: the NXlog is the block group itself.
             temp_log = sample.create_group(temp_log_block)
-            temp_log.create_dataset("time", data=log_times)
+            temp_log.create_dataset("time", data=log_times).attrs["units"] = "seconds"
             value_ds = temp_log.create_dataset("value", data=log_values)
             if temp_log_name is not None:
                 temp_log.create_dataset("name", data=np.bytes_(temp_log_name))
@@ -172,7 +172,7 @@ def _write_v1_file(
     orientation: str = "T",
     field_state: str | None = None,
     magnetic_field: float | None = 20.0,
-    magnetic_field_units: str | None = None,
+    magnetic_field_units: str | None = "G",
 ) -> None:
     with h5py.File(path, "w") as f:
         run = f.create_group("run")
@@ -189,7 +189,7 @@ def _write_v1_file(
         detector.create_dataset("orientation", data=np.bytes_(orientation))
 
         sample = run.create_group("sample")
-        sample.create_dataset("temperature", data=5.0)
+        sample.create_dataset("temperature", data=5.0).attrs["units"] = "K"
         if magnetic_field is not None:
             field_ds = sample.create_dataset("magnetic_field", data=magnetic_field)
             if magnetic_field_units is not None:
@@ -383,13 +383,9 @@ def test_temperature_setpoint_celsius_normalized_to_kelvin(tmp_path, loader: Nex
     assert ds.metadata["temperature"] == pytest.approx(380.0 + 273.15)
 
 
-@pytest.mark.parametrize("units", ["Kelvin", "K", None])
-def test_temperature_setpoint_kelvin_or_unitless_unchanged(
-    tmp_path, loader: NexusLoader, units
-) -> None:
-    # Kelvin, "K", or an absent units attribute pass the value through unchanged
-    # — we never guess a conversion the file did not declare. (This is also why
-    # a file that mislabels Celsius data as "Kelvin" is left as-is.)
+@pytest.mark.parametrize("units", ["Kelvin", "K"])
+def test_temperature_setpoint_kelvin_unchanged(tmp_path, loader: NexusLoader, units) -> None:
+    # Declared Kelvin readings retain their value, including a suspected mislabel.
     path = tmp_path / f"run_k_{units}.nxs"
     _write_v2_file(path, temp_setpoint=380.0, temp_setpoint_units=units)
 
@@ -530,8 +526,10 @@ def test_temperature_unit_suspect_heuristic_matrix(loader: NexusLoader) -> None:
 
 def _write_log(group, name: str, times, values) -> None:
     log = group.create_group(name)
-    log.create_dataset("time", data=np.asarray(times, dtype=np.float64))
-    log.create_dataset("value", data=np.asarray(values, dtype=np.float64))
+    log.create_dataset("time", data=np.asarray(times, dtype=np.float64)).attrs["units"] = "seconds"
+    log.create_dataset("value", data=np.asarray(values, dtype=np.float64)).attrs["units"] = (
+        "G" if name == "Field_Main" else "dimensionless"
+    )
 
 
 @pytest.mark.parametrize(
@@ -621,8 +619,8 @@ def _write_v1_file_detector_deadtimes(path) -> None:
         detector.create_dataset("deadtimes", data=np.array([0.011, 0.021], dtype=np.float64))
 
         sample = run.create_group("sample")
-        sample.create_dataset("temperature", data=5.0)
-        sample.create_dataset("magnetic_field", data=20.0)
+        sample.create_dataset("temperature", data=5.0).attrs["units"] = "K"
+        sample.create_dataset("magnetic_field", data=20.0).attrs["units"] = "G"
 
         h_data = run.create_group("histogram_data_1")
         h_data.create_dataset(
@@ -683,8 +681,8 @@ def _write_v1_file_beam_good_frames(path) -> None:
         beam.create_dataset("frames", data=np.array([69322], dtype=np.int32))
 
         sample = run.create_group("sample")
-        sample.create_dataset("temperature", data=5.0)
-        sample.create_dataset("magnetic_field", data=0.0)
+        sample.create_dataset("temperature", data=5.0).attrs["units"] = "K"
+        sample.create_dataset("magnetic_field", data=0.0).attrs["units"] = "G"
 
         h_data = run.create_group("histogram_data_1")
         h_data.create_dataset(
@@ -945,8 +943,8 @@ def test_load_v2_normalizes_one_based_bin_attributes(tmp_path, loader: NexusLoad
         detector.create_dataset("orientation", data=np.bytes_("L"))
 
         sample = entry.create_group("sample")
-        sample.create_dataset("temperature", data=12.5)
-        sample.create_dataset("magnetic_field", data=150.0)
+        sample.create_dataset("temperature", data=12.5).attrs["units"] = "K"
+        sample.create_dataset("magnetic_field", data=150.0).attrs["units"] = "G"
 
     result = loader.load(str(path))
     assert not isinstance(result, list)
@@ -1046,15 +1044,15 @@ def test_v1_field_state_absent_geometry_is_blank(tmp_path, loader: NexusLoader) 
 # The rest of the app treats metadata["field"] as gauss. A NeXus file may
 # declare units="T"/"tesla" or "mT"/"millitesla" on sample/magnetic_field; the
 # loader converts those at the I/O boundary (tesla x1e4, millitesla x10) and
-# leaves a gauss / blank / unrecognised unit unchanged.
+# rejects missing or incompatible units.
 
 
-def test_v2_field_no_units_is_gauss_passthrough(tmp_path, loader: NexusLoader) -> None:
+def test_v2_field_missing_unit_rejected(tmp_path, loader: NexusLoader) -> None:
     path = tmp_path / "run_v2_field_bare.nxs"
     _write_v2_file(path, magnetic_field=150.0, magnetic_field_units=None)
 
-    ds = loader.load(str(path))
-    assert ds.metadata["field"] == pytest.approx(150.0)
+    with pytest.raises(ValueError, match="field unit.*supported"):
+        loader.load(str(path))
 
 
 def test_v2_field_gauss_units_passthrough(tmp_path, loader: NexusLoader) -> None:
@@ -1083,12 +1081,12 @@ def test_v2_field_millitesla_converts_to_gauss(units, tmp_path, loader: NexusLoa
     assert ds.metadata["field"] == pytest.approx(1500.0)
 
 
-def test_v2_field_unrecognised_units_passthrough(tmp_path, loader: NexusLoader) -> None:
+def test_v2_field_unknown_unit_rejected(tmp_path, loader: NexusLoader) -> None:
     path = tmp_path / "run_v2_field_weird.nxs"
     _write_v2_file(path, magnetic_field=150.0, magnetic_field_units="oersted")
 
-    ds = loader.load(str(path))
-    assert ds.metadata["field"] == pytest.approx(150.0)
+    with pytest.raises(ValueError, match="field unit.*supported"):
+        loader.load(str(path))
 
 
 def test_v1_field_tesla_converts_to_gauss(tmp_path, loader: NexusLoader) -> None:
@@ -1099,20 +1097,12 @@ def test_v1_field_tesla_converts_to_gauss(tmp_path, loader: NexusLoader) -> None
     assert ds.metadata["field"] == pytest.approx(20.0)
 
 
-def test_v1_field_no_units_is_gauss_passthrough(tmp_path, loader: NexusLoader) -> None:
+def test_v1_field_missing_unit_rejected(tmp_path, loader: NexusLoader) -> None:
     path = tmp_path / "run_v1_field_bare.nxs"
     _write_v1_file(path, magnetic_field=20.0, magnetic_field_units=None)
 
-    ds = loader.load(str(path))
-    assert ds.metadata["field"] == pytest.approx(20.0)
-
-
-# --- sample/magnetic_field_vector extraction --------------------------------
-#
-# ISIS NeXus files carry a magnetic_field_vector dataset with an ``available``
-# attribute; a real-corpus survey found every "unavailable" file held the same
-# placeholder ([1, 1, 1], available=0). It is surfaced as raw provenance only —
-# never used to infer TF/LF geometry (see NexusLoader._read_field_vector).
+    with pytest.raises(ValueError, match="field unit.*supported"):
+        loader.load(str(path))
 
 
 def test_v2_field_vector_available_is_surfaced(tmp_path, loader: NexusLoader) -> None:

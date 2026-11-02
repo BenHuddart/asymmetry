@@ -34,6 +34,58 @@ run metadata records this operation as ``grouped_alignment``: the common t0,
 each detector's shift, both group lengths, and the retained length. This
 makes the alignment crop distinguishable from missing acquisition bins.
 
+.. _declared-physical-units:
+
+Declared physical units
+-----------------------
+
+NeXus quantities and ROOT/PSI text headers are converted to μs, G, and K using
+the declared unit. Text headers place it adjacent to the number, after an
+optional uncertainty. Symbols are
+case-sensitive (``mT`` and ``MT`` differ); spelled-out unit names are
+case-insensitive. Both micro glyphs, ``µ`` and ``μ``, are accepted.
+
+.. list-table:: Supported physical units
+   :header-rows: 1
+   :widths: 25 20 55
+
+   * - Quantity
+     - Stored as
+     - Accepted units
+   * - NeXus timing and ROOT time resolution
+     - μs
+     - ``s``, ``ms``, ``us``/``µs``/``μs``, ``ns``, ``ps``
+   * - Magnetic field
+     - G
+     - ``G``, ``kG``, ``T``, ``mT``, ``uT``/``µT``/``μT``
+   * - Temperature
+     - K
+     - ``K``, ``mK``, ``°C``/``degC``
+
+For example, ``10mT`` is 100 G, ``300mK`` is 0.3 K, and ``20degC`` is
+293.15 K. A PSI label of ``TF 100`` has no unit following the number and uses
+the PSI G convention; the ``T`` in the prefix is not a tesla declaration.
+The SI temperature relation and prefixes follow the
+`BIPM SI Brochure <https://www.bipm.org/en/publications/si-brochure>`_.
+
+ROOT requires a declared unit for present numeric temperature and field
+headers and a finite, positive ``RunInfo/Time Resolution``. Missing resolution
+raises ``missing time value.`` rather than inventing a bin width. Incompatible
+units raise an error naming the file, header field, token, and supported units,
+for example ``example.root: RunInfo/Sample Magnetic Field: field unit 'Oe';
+supported units: G, kG, T, mT, uT.`` Oersted describes H rather than B and is
+not converted to gauss.
+
+PSI text headers without a unit use K or G, recorded as an ``unverified`` format
+convention pending instrument review. A declared file unit takes precedence.
+MDU's nonzero mean-temperature header takes precedence over the title's
+sample-temperature field. ``metadata["declared_units"]`` records each source
+header's unit, ``source`` (``file`` or ``format``), and convention ``reference``;
+it contains no duplicate measured values. ROOT sensor logs associated with a
+header declaration are converted to the same canonical unit before their
+means and primary thermometer are selected. Their ``unit_declaration`` retains
+the original unit.
+
 Supported formats
 -----------------
 
@@ -66,14 +118,38 @@ sample above 0 K, or none of the required name, is recorded in
 ``temperature_log_rejected`` with the reason, the same key the PSI loader
 above uses.
 
-The applied field is read from the ``sample/magnetic_field`` header and stored
-in gauss, matching the convention the rest of Asymmetry (and the PSI and
-MusrRoot loaders) uses. Most ISIS files store the value in gauss with no unit,
-which is taken as-is. When the dataset carries a ``units`` attribute the loader
-honours it: ``T`` / ``tesla`` is converted by a factor of 10\ :sup:`4` and
-``mT`` / ``millitesla`` by a factor of 10. An absent, blank, gauss, or
-unrecognised unit is passed through unchanged — the loader never guesses a
-conversion the file did not declare.
+The applied field from ``sample/magnetic_field`` is stored in G, and
+``sample/temperature`` in K, using the :ref:`declared-unit contract
+<declared-physical-units>`. A present quantity with a missing, unsupported,
+or incompatible unit raises an error naming the file and dataset. Physical
+NXlogs are converted before their mean, minimum, maximum, and run-active
+summaries are computed; log timestamps use seconds and apply a declared
+``scaling_factor`` as specified by `NXlog
+<https://manual.nexusformat.org/classes/base_classes/NXlog.html>`_. NXlog timestamps
+require a time unit; there is no implicit clock unit. Non-physical engineering
+logs retain their declared units.
+
+NeXus time axes must be finite, strictly increasing, and uniformly spaced,
+with the counts-compatible number of centres or edges. Step deviations may
+not exceed four ULPs at the largest axis magnitude in the stored floating-point
+dtype, allowing float32 axes; conversion roundoff is also allowed. Width is
+the end-to-end span divided by the number of intervals. Invalid provided axes
+raise instead of being replaced or resampled. For example, a nonuniform axis
+raises ``time axis must have uniform bin widths.``
+
+The `muon NeXus definition
+<https://nmi3.eu/nexus_instrument_definitions_for_muon_data-get_file=nexus_instrument_definitions_for_muon_data.pdf.pdf>`_
+sets μs conventions for histogram time axes, t0, good times, and dead time.
+Its resolution convention is ps for v1 and ns for v2 (pp. 14 and 49); a file's
+explicit unit always takes precedence. Field and temperature have no missing-unit
+convention. Format-derived declarations name the definition in their
+``reference``. Available raw and corrected axes must agree in width.
+
+A positive ``resolution`` supplies the width when no axis determines it;
+zero means not applicable. When an axis is available, resolution must agree
+within half its declared storage unit plus axis quantisation tolerance.
+A lone centre therefore requires a resolution. With neither usable timing
+source, loading raises ``no usable time axis or resolution.``
 
 NeXus exports declare units on every written physical quantity: sample
 ``temperature`` uses ``kelvin``, ``magnetic_field`` uses ``gauss``,
@@ -208,58 +284,6 @@ PSI BIN/MDU (.bin, .mdu)
 Asymmetry supports PSI raw histogram files in the classic PSI-BIN and PSI-MDU
 formats. These files are loaded into normal raw histogram runs, so they use the
 same full Grouping dialog as ISIS NeXus data.
-
-ROOT and PSI header quantities
-""""""""""""""""""""""""""""""
-
-Text header quantities are converted to μs, G, and K using the declared unit
-adjacent to the number, after an optional uncertainty. Symbols are
-case-sensitive (``mT`` and ``MT`` differ); spelled-out unit names are
-case-insensitive. Both micro glyphs, ``µ`` and ``μ``, are accepted.
-
-.. list-table:: Supported text-header units
-   :header-rows: 1
-   :widths: 25 20 55
-
-   * - Quantity
-     - Stored as
-     - Accepted units
-   * - ROOT time resolution
-     - μs
-     - ``s``, ``ms``, ``us``/``µs``/``μs``, ``ns``, ``ps``
-   * - Magnetic field
-     - G
-     - ``G``, ``kG``, ``T``, ``mT``, ``uT``/``µT``/``μT``
-   * - Temperature
-     - K
-     - ``K``, ``mK``, ``°C``/``degC``
-
-For example, ``10mT`` is 100 G, ``300mK`` is 0.3 K, and ``20degC`` is
-293.15 K. A PSI label of ``TF 100`` has no unit following the number and uses
-the PSI G convention; the ``T`` in the prefix is not a tesla declaration.
-The SI temperature relation and prefixes follow the
-`BIPM SI Brochure <https://www.bipm.org/en/publications/si-brochure>`_.
-
-ROOT requires a declared unit for present numeric temperature and field
-headers and a finite, positive ``RunInfo/Time Resolution``. Missing resolution
-raises ``missing time value.`` rather than inventing a bin width. Incompatible
-units raise an error naming the file, header field, token, and supported units,
-for example ``example.root: RunInfo/Sample Magnetic Field: field unit 'Oe';
-supported units: G, kG, T, mT, uT.`` Oersted describes H rather than B and is
-not converted to gauss.
-
-PSI text headers without a unit use K or G, recorded as an ``unverified`` format
-convention pending instrument review. A declared file unit takes precedence.
-MDU's nonzero mean-temperature header takes precedence over the title's
-sample-temperature field. ``metadata["declared_units"]`` records each source
-header's unit, ``source`` (``file`` or ``format``), and convention ``reference``;
-it contains no duplicate measured values. ROOT sensor logs associated with a
-header declaration are converted to the same canonical unit before their
-means and primary thermometer are selected. Their ``unit_declaration`` retains
-the original unit.
-
-PSI format and acquisition details
-""""""""""""""""""""""""""""""""""
 
 PSI publishes a `data-format overview <https://www.psi.ch/en/smus/data-format>`_
 and a `BIN layout description
