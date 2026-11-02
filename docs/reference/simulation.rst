@@ -69,7 +69,8 @@ The result appears in the Data Browser as ``SIM 90001`` (and counting),
 tinted and carrying a tooltip with its provenance: the generating model,
 parameter values, seed, event budget and template run. The run's metadata
 records the same information permanently. **Save as NeXus…** writes the run
-as a standard ISIS muon NeXus file that reloads through *Open Data
+as a standard ISIS muon NeXus file with explicit temperature, field, and
+timing units that reloads through *Open Data
 File(s)…* with identical counts — this is also how a synthetic run persists
 across sessions, since project files reference data files rather than
 storing histograms. A synthetic run that has not been saved this way is held

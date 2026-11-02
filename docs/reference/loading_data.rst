@@ -75,6 +75,13 @@ honours it: ``T`` / ``tesla`` is converted by a factor of 10\ :sup:`4` and
 unrecognised unit is passed through unchanged — the loader never guesses a
 conversion the file did not declare.
 
+NeXus exports declare units on every written physical quantity: sample
+``temperature`` uses ``kelvin``, ``magnetic_field`` uses ``gauss``,
+``corrected_time``, ``time_zero``, and ``dead_time`` use ``microseconds``,
+and ``resolution`` uses ``picoseconds``. These declarations follow the
+`muon NeXus definition <https://nmi3.eu/nexus_instrument_definitions_for_muon_data-get_file=nexus_instrument_definitions_for_muon_data.pdf.pdf>`_
+(v1, pp. 9, 11, and 14). Per-detector time zero retains its sub-bin precision.
+
 HiFi can sweep the field with its small Z coil on top of the main solenoid held
 persistent, and such a run records only the Z offset (a title of ``F=50`` with
 the main at 20900 G). Both coils are logged, as ``Field_Main`` and ``Field_Z``;

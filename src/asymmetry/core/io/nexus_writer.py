@@ -194,8 +194,12 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
             _write_str(detector, "orientation", str(orientation))
 
         sample = entry.create_group("sample")
-        sample.create_dataset("temperature", data=np.float64(metadata.get("temperature", 0.0)))
-        sample.create_dataset("magnetic_field", data=np.float64(metadata.get("field", 0.0)))
+        sample.create_dataset(
+            "temperature", data=np.float64(metadata.get("temperature", 0.0))
+        ).attrs["units"] = np.bytes_("kelvin")
+        sample.create_dataset("magnetic_field", data=np.float64(metadata.get("field", 0.0))).attrs[
+            "units"
+        ] = np.bytes_("gauss")
         field_state = metadata.get("field_state")
         if field_state:
             _write_str(sample, "magnetic_field_state", str(field_state))
@@ -210,9 +214,14 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
         h_data.create_dataset(
             "corrected_time",
             data=(np.arange(n_bins, dtype=np.float64) + 0.5) * bin_width - common_time_zero,
+        ).attrs["units"] = np.bytes_("microseconds")
+        h_data.create_dataset("resolution", data=bin_width * 1e6).attrs["units"] = np.bytes_(
+            "picoseconds"
         )
         h_data.create_dataset("grouping", data=_detector_group_ids(grouping, n_det))
-        h_data.create_dataset("dead_time", data=dead_time)
+        h_data.create_dataset("dead_time", data=dead_time).attrs["units"] = np.bytes_(
+            "microseconds"
+        )
         # time_zero is the exact t0 in µs from the start of acquisition, one
         # value per detector (WiMDA quantised a single value to whole µs here).
         time_zero_ds = h_data.create_dataset("time_zero", data=time_zero)
