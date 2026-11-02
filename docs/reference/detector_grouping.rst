@@ -384,7 +384,7 @@ remain nonempty; Asymmetry never removes shared members implicitly.
 
 This contract also covers corrected-count previews, alpha preparation and integral
 asymmetry. For example, independent source counts 10, 30 and 50 grouped as
-F = 10 + 30 and B = 30 + 50 give first-order ratio variance 1/270 when their
+F = 10 + 30 and B = 30 + 50 give first-order asymmetry variance 1/270 when their
 shared-observation covariance is included, but 1/135 under independence
 (:math:`\alpha=\beta=1`). Asymmetry rejects that pair rather than reporting
 the independent error. See :doc:`/reference/alc_mode` for integral reduction.

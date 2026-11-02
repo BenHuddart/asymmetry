@@ -589,16 +589,6 @@ References
 * The Mantid ``PlotAsymmetryByLogValue`` algorithm — the alpha-aware
   integral/differential field-scan reference.
 
-See also
---------
-
-* :doc:`fitting` — time-domain model fitting (the per-spectrum alternative).
-* :doc:`parameter_trending` — trending fitted parameters across a run series.
-* :doc:`detector_grouping` — the F/B grouping and :math:`\alpha` used by the
-  integral.
-* :doc:`project_files` — what is saved in a project and how it is restored.
-
-
 Compared with other programs
 ----------------------------
 
@@ -609,3 +599,12 @@ evidence does not establish disjointness, and no WiMDA binary was executed.
 These input checks do not establish agreement of integral endpoints or timing
 conventions. See :doc:`detector_grouping` and :doc:`/explanation/comparison`
 for the versioned grouping observations and sources.
+
+See also
+--------
+
+* :doc:`fitting` — time-domain model fitting (the per-spectrum alternative).
+* :doc:`parameter_trending` — trending fitted parameters across a run series.
+* :doc:`detector_grouping` — the F/B grouping and :math:`\alpha` used by the
+  integral.
+* :doc:`project_files` — what is saved in a project and how it is restored.

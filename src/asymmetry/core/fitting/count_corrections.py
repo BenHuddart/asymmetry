@@ -2,7 +2,7 @@
 
 from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform.background import apply_grouped_background_correction
-from asymmetry.core.transform.corrections import CorrectionOutcome, CorrectionOutcomes
+from asymmetry.core.transform.corrections import CorrectionOutcomes
 from asymmetry.core.transform.fb_counts import good_window
 from asymmetry.core.transform.grouping import align_forward_backward_counts
 from asymmetry.core.transform.t0 import effective_detector_t0_bins
@@ -13,7 +13,6 @@ def require_count_background(
     grouping: dict,
     group_specs: list[tuple[int, list[int]]],
     metadata: dict,
-    deadtime: CorrectionOutcome,
 ) -> None:
     """Check the requested background on count groups, which may be the same group.
 
@@ -35,4 +34,4 @@ def require_count_background(
         last_good_bin=good_window(grouping, crop.length).last,
         metadata=metadata,
     )
-    CorrectionOutcomes(deadtime, background.outcome).require_complete()
+    CorrectionOutcomes(background=background.outcome).require_complete()

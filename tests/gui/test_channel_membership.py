@@ -288,3 +288,41 @@ def test_unavailable_pair_discards_a_deferred_drag_result(qapp):
     finally:
         dialog._clear_dirty()
         dialog.close()
+
+
+@pytest.mark.parametrize("overlap", ["same_group", "partial"])
+def test_invalid_vector_axis_warns_and_continues_calibration_queue(qapp, monkeypatch, overlap):
+    from tests.gui.test_grouping_dialog import _vector_dataset_with_histograms
+
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    warnings = []
+    monkeypatch.setattr(
+        "asymmetry.gui.windows.grouping.dialog.QMessageBox.warning",
+        lambda parent, title, message: warnings.append((title, message)),
+    )
+    try:
+        if overlap == "same_group":
+            dialog._vector_axis_pairs["P_x"] = (5, 5)
+            shared = 1
+        else:
+            dialog._groups[5] = [0, 1]
+            shared = 2
+        original_alpha = dialog._vector_alpha_spins["P_x"].value()
+        dialog._begin_vector_estimates(["P_x", "P_y"])
+        _wait_until(
+            lambda: (
+                not dialog._vector_estimate_queue and dialog._vector_alpha_tasks.active_count == 0
+            )
+        )
+        assert len(warnings) == 1
+        assert warnings[0][0] == "Alpha Calibration"
+        assert f"shared acquired channels {shared}" in warnings[0][1]
+        assert dialog._vector_alpha_spins["P_x"].value() == original_alpha
+        assert dialog._vector_alpha_spins["P_y"].value() == pytest.approx(2.0)
+        assert dialog._vector_estimate_buttons["P_y"].isEnabled()
+        payload = dialog._current_grouping_payload()
+        assert "alpha_x_reference_run" not in payload
+        assert payload["alpha_y_reference_run"] == 4010
+    finally:
+        dialog._clear_dirty()
+        dialog.close()

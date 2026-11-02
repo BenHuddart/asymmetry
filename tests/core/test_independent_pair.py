@@ -68,6 +68,7 @@ def test_overlap_is_unavailable_at_production_boundaries(groups, boundary):
 
 
 def test_covariance_counterexample_from_independent_source_counts():
+    """First-order asymmetry variance includes covariance from the shared channel."""
     # A=(F-B)/(F+B), F=X+Y, B=Y+Z; derivatives are with respect to X,Y,Z.
     x, y, z = map(Fraction, (10, 30, 50))
     f, b = x + y, y + z

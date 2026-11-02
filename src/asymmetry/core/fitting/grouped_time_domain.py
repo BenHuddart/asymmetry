@@ -274,12 +274,10 @@ def _count_group_context(
     require_complete_dataset(dataset)
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
     prepared_histograms, deadtime = prepare_histograms_with_deadtime(
-        list(run.histograms),
-        grouping,
-        apply_deadtime,
+        list(run.histograms), grouping, apply_deadtime
     )
     if correction_flags_from_grouping(grouping).use_background:
-        require_count_background(prepared_histograms, grouping, group_specs, run.metadata, deadtime)
+        require_count_background(prepared_histograms, grouping, group_specs, run.metadata)
     detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
     common_t0 = common_t0_for_groups(
         prepared_histograms,

@@ -300,18 +300,6 @@ Minimal workflow
 For the lower-level grouping/asymmetry APIs (deadtime-first ordering, the error
 model, PSI background correction) see :doc:`data_processing`.
 
-See also
---------
-
-* :doc:`detector_grouping` — the grouping-profile model, the stored payload,
-  deadtime/background maths, and per-format (PSI / ROOT) grouping details.
-* :doc:`loading_data` — getting runs into the session in the first place.
-* :doc:`data_processing` — the grouping and asymmetry APIs behind this window.
-* :doc:`vector_polarization` — building :math:`P_x` / :math:`P_y` / :math:`P_z`
-  groups in the layout editor.
-* :doc:`project_files` — how a profile is saved and restored with a project.
-
-
 Compared with other programs
 ----------------------------
 
@@ -322,3 +310,14 @@ evidence does not establish a disjointness guarantee. These are grouping-input
 observations, without executed WiMDA results or calibration-estimator agreement.
 See :doc:`detector_grouping` and :doc:`/explanation/comparison` for sources,
 settings and limits.
+
+See also
+--------
+
+* :doc:`detector_grouping` — the grouping-profile model, the stored payload,
+  deadtime/background maths, and per-format (PSI / ROOT) grouping details.
+* :doc:`loading_data` — getting runs into the session in the first place.
+* :doc:`data_processing` — the grouping and asymmetry APIs behind this window.
+* :doc:`vector_polarization` — building :math:`P_x` / :math:`P_y` / :math:`P_z`
+  groups in the layout editor.
+* :doc:`project_files` — how a profile is saved and restored with a project.
