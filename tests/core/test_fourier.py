@@ -575,3 +575,30 @@ def test_fourier_display_values_phase_opt_real_returns_real_part() -> None:
     spectrum = np.array([1.0 + 2.0j, 3.0 - 1.5j, 0.5 + 0.5j], dtype=np.complex128)
     result = fourier_display_values(spectrum, display="phaseOptReal")
     np.testing.assert_array_equal(result, spectrum.real)
+
+
+@pytest.mark.parametrize("mode", ["variable", "constant_error", "fixed"])
+@pytest.mark.parametrize("display", ["Magnitude", "Burg"])
+def test_fb_asymmetry_spectrum_requires_uniform_binning(mode, display):
+    from asymmetry.core.fourier.spectrum import GroupSpectrumConfig, compute_average_group_spectrum
+    from asymmetry.core.simulate import build_builtin_template, simulate_run
+
+    template = build_builtin_template("ideal_pulsed_fb", n_bins=512, bin_width_us=0.016, t0_bin=0)
+    run = simulate_run(
+        template, lambda t: 20 * np.cos(2 * np.pi * 1.3 * t), total_events=2e6, seed=52
+    )
+    run.grouping.update(binning_mode=mode, bunching_factor=3, bin0_us=0.02, bin10_us=0.1)
+    config = GroupSpectrumConfig(
+        signal_source="fb_asymmetry",
+        display=display,
+        window="none",
+        burg_order_min=2,
+        burg_order_max=4,
+    )
+    if mode == "fixed":
+        result = compute_average_group_spectrum(run, config)
+        assert result is not None
+        assert np.all(np.isfinite(result.asymmetry))
+    else:
+        with pytest.raises(ValueError, match="not uniformly sampled"):
+            compute_average_group_spectrum(run, config)

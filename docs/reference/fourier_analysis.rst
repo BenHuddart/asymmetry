@@ -158,11 +158,36 @@ exactly what ``fft_asymmetry(ds, …)`` returns — the same frequencies, real p
 and magnitude, equal bit for bit with no tolerance, across every window,
 padding factor, crop, phase rotation and calibration setting.
 
-Like ``fit_arrays``, and unlike the dataset path, the array path validates what
-a dataset would otherwise have carried implicitly: a non-1-D shape, a length
-mismatch, an empty triple, non-finite values, or a ``t_min``/``t_max`` window
-that leaves no points each raise ``ValueError`` naming both the offending array
-and the entry point you called.
+The array path checks one-dimensional shape, equal lengths, nonempty inputs,
+and finite signal/error values. Both dataset and array paths enforce the same
+sampling-grid contract after the inclusive time crop; a refusal raises
+``ValueError`` naming the entry point and the transform window.
+
+Sampling grid
+~~~~~~~~~~~~~
+
+FFT and Burg spectra require at least two finite, increasing time samples in
+the selected window. The DFT assigns physical frequencies to uniformly spaced
+samples [15]_. The sampling interval is :math:`\Delta=\operatorname{mean}(\Delta t)`;
+the retained positions must satisfy
+
+.. math::
+
+   \max_k |t_k-t_0-k\Delta| \le 10^{-6}\Delta.
+
+This positional bound prevents small interval errors accumulating over a long
+record and admits floating-point roundoff for nonzero origins and bin-centre
+stamps. At Nyquist a displacement :math:`\delta` changes phase by
+:math:`\pi\delta/\Delta`, so the bound limits the corresponding phase error
+to about 3 μrad. Frequency assignment still uses the mean interval for every
+accepted grid.
+
+Irregular, duplicate, reversed, and undersized grids are refused. The transform
+does not sort, interpolate, or silently choose another reduction. For example,
+``time=[0,1,2,4]`` raises ``time is not uniformly sampled`` with the offending
+sample, its displacement in intervals, and the tolerance. A crop retaining
+fewer than two samples reports ``the FFT needs at least 2 to fix its sampling
+interval.`` Use **Fixed** binning or resample explicitly before transforming.
 
 .. note::
 
@@ -241,11 +266,12 @@ apodisation or phase-mode controls below are applied:
 * ``F−B asymmetry`` — *"FFT of the forward−backward asymmetry signal (as
   plotted in the time domain) — cleaner for a single detector pair."* Rather
   than averaging every group's own FFT, this transforms the single
-  forward−backward asymmetry curve directly — exactly the signal the
-  time-domain plot shows, built with the same grouping and α. Deadtime
-  correction is **not** applied on this path, matching the time-domain plot
-  (the grouped-average path does apply it to each group's count signal before
-  the transform).
+  forward−backward asymmetry curve from the recorded grouping, α, and binning.
+  This source requires a uniform retained time grid. Binning **Fixed** supplies
+  one; unequal bins from **Variable** or **Constant error** are refused.
+  Deadtime correction is **not** applied on this path (the grouped-average
+  path does apply it to each group's count signal before the transform), so
+  it can differ from a corrected time-domain display.
 
 For a run with just one forward/backward detector pair, ``F−B asymmetry``
 gives markedly better peak-to-floor contrast than ``Grouped average``: on a
@@ -1870,3 +1896,9 @@ References
 .. [14] L. Chen, Z. Weng, L. Y. Goh, and M. Garland,
    J. Magn. Reson. **158**, 164 (2002).
    `doi:10.1016/S1090-7807(02)00069-1 <https://doi.org/10.1016/S1090-7807(02)00069-1>`_.
+
+
+.. [15] A. V. Oppenheim and R. W. Schafer, *Discrete-Time Signal Processing*,
+   3rd ed. (Pearson, 2009), ch. 8, The Discrete Fourier Transform.
+   See also the `SciPy DFT sampling convention
+   <https://docs.scipy.org/doc/scipy/tutorial/fft.html#fourier-series-and-the-dft>`_.

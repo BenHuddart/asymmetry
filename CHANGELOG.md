@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- FFT and Burg spectra reject nonuniform, reversed, or undersized time grids,
+  including F−B asymmetry with Variable or Constant error binning.
+
 - All grouped FFT display modes preserve the reduction's good-time interval
   and exact t0 when staggered detector timing changes the alignment reference.
 
