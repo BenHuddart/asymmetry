@@ -14,9 +14,8 @@ from asymmetry.core.fourier.fft import (
     fft_asymmetry,
     fft_complex_asymmetry,
     fourier_display_values,
-    fourier_mode_uses_entropy_optimizer,
     fourier_mode_uses_phase_correction,
-    optimize_phase_entropy,
+    fourier_mode_uses_phase_fit,
 )
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.maxent import maxent
@@ -556,85 +555,13 @@ def test_maxent_wrapper_requires_run_with_histograms() -> None:
         maxent(_dataset(32))
 
 
-# ── optimize_phase_entropy ─────────────────────────────────────────────────────
-
-
-def _spectrum_with_known_phase(
-    *,
-    n: int = 256,
-    dt_us: float = 0.05,
-    bin_index: int = 12,
-    phase_degrees: float,
-) -> np.ndarray:
-    """Return a complex FFT spectrum of a cosine at a known phase offset.
-
-    Uses an on-grid frequency (bin_index / (n * dt_us)) so the signal lands
-    exactly at one bin with no spectral leakage.
-    """
-    frequency_mhz = bin_index / (n * dt_us)
-    time = np.arange(n, dtype=float) * dt_us
-    signal = np.cos(2.0 * np.pi * frequency_mhz * time + np.deg2rad(phase_degrees))
-    signal -= signal.mean()
-    return np.fft.rfft(signal, n=n)
-
-
-def test_optimize_phase_entropy_corrects_large_negative_phase_offset() -> None:
-    """Optimizer should remove a phase that causes the dominant bin to be negative.
-
-    At 135° offset the raw real part of the dominant bin is ≈ −0.707·|F|, a
-    large negative value that drives up the penalty term.  The optimizer should
-    find c0 ≈ −135° and produce a clearly positive dominant-bin real part.
-
-    Uses an on-grid frequency so the signal lands exactly at bin 12 with no
-    spectral leakage, giving the optimizer a clean cost landscape.
-    """
-    true_phase = 135.0  # degrees — raw spectrum has large negative real part
-    n = 256
-    bin_idx = 12
-    spectrum = _spectrum_with_known_phase(n=n, bin_index=bin_idx, phase_degrees=true_phase)
-
-    real_opt, _c0, _c1 = optimize_phase_entropy(spectrum, min_bin=1)
-
-    # Dominant bin has large negative real, small at other bins
-    assert spectrum[bin_idx].real < -50.0  # confirm raw is negative
-    # After optimization the dominant bin should be clearly positive
-    assert real_opt[bin_idx] > 50.0
-
-
-def test_optimize_phase_entropy_returns_same_length_as_input() -> None:
-    spectrum = _spectrum_with_known_phase(n=128, bin_index=8, phase_degrees=55.0)
-    real_opt, c0, c1 = optimize_phase_entropy(spectrum)
-
-    assert real_opt.shape == spectrum.shape
-    assert real_opt.dtype == np.float64
-    assert np.isfinite(c0)
-    assert np.isfinite(c1)
-
-
-def test_optimize_phase_entropy_handles_empty_spectrum() -> None:
-    real_opt, c0, c1 = optimize_phase_entropy(np.zeros(0, dtype=np.complex128))
-    assert real_opt.size == 0
-    assert c0 == 0.0
-    assert c1 == 0.0
-
-
-def test_optimize_phase_entropy_zero_phase_input_is_stable() -> None:
-    """A spectrum already on the real axis should produce a positive dominant bin."""
-    n = 256
-    bin_idx = 12
-    spectrum = _spectrum_with_known_phase(n=n, bin_index=bin_idx, phase_degrees=0.0)
-    real_opt, _c0, _c1 = optimize_phase_entropy(spectrum, min_bin=1)
-    # Dominant bin is already large and positive — optimizer should keep it positive
-    assert real_opt[bin_idx] > 50.0
-
-
-def test_fourier_mode_uses_entropy_optimizer() -> None:
-    assert fourier_mode_uses_entropy_optimizer("phaseOptReal")
-    assert fourier_mode_uses_entropy_optimizer("phaseoptreal")
-    assert fourier_mode_uses_entropy_optimizer("phase_opt_real")
-    assert not fourier_mode_uses_entropy_optimizer("Phase")
-    assert not fourier_mode_uses_entropy_optimizer("(Power)^1/2")
-    assert not fourier_mode_uses_entropy_optimizer("Cos")
+def test_fourier_mode_uses_phase_fit() -> None:
+    assert fourier_mode_uses_phase_fit("phaseOptReal")
+    assert fourier_mode_uses_phase_fit("phaseoptreal")
+    assert fourier_mode_uses_phase_fit("phase_opt_real")
+    assert not fourier_mode_uses_phase_fit("Phase")
+    assert not fourier_mode_uses_phase_fit("(Power)^1/2")
+    assert not fourier_mode_uses_phase_fit("Cos")
 
 
 def test_canonical_fourier_display_mode_phase_opt_real() -> None:

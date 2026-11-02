@@ -364,6 +364,21 @@ def build_group_signal_dataset(
     if counts.size == 0:
         raise ValueError(f"Detector group {group_id!r} produced an empty signal.")
 
+    declared_t0 = grouping.get("t0_bin")
+    if declared_t0 is not None:
+        # The resolved window belongs to declared_t0's aligned coordinates.
+        # Moving the reference by delta bins moves both endpoints and exact t0
+        # by delta, preserving the same detector samples and physical times.
+        offset = common_t0 - int(declared_t0)
+        grouping = dict(grouping, t0_bin=common_t0)
+        for key in ("first_good_bin", "last_good_bin"):
+            bound = grouping.get(key)
+            if bound is not None and int(bound) >= 0:
+                grouping[key] = int(bound) + offset
+        exact_t0_us = grouping.get("t0_time_us")
+        if exact_t0_us is not None:
+            grouping["t0_time_us"] = float(exact_t0_us) + offset * histograms[0].bin_width
+
     source_file = str(getattr(run, "source_file", "") or "")
     reference_counts, reference_scale = _resolve_group_reference_counts(
         grouping,

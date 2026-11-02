@@ -268,6 +268,9 @@ class _StubFourier(QWidget):
     def set_fft_status(self, message: str, *, success: bool = False) -> None:
         return
 
+    def set_phase_fit_summary(self, metadata: dict) -> None:
+        return
+
     def set_background_hint(self, text: str | None) -> None:
         return
 
