@@ -179,7 +179,7 @@ def test_fft_arrays_rejects_non_finite_values() -> None:
 
 def test_fft_arrays_rejects_an_empty_window_after_the_crop() -> None:
     time = np.linspace(0.0, 1.0, 16)
-    with pytest.raises(ValueError, match="no data points remain"):
+    with pytest.raises(ValueError, match="at least 2"):
         fft_arrays(time, np.zeros(16), t_min=5.0)
 
 
@@ -192,8 +192,8 @@ def test_guard_messages_name_the_public_entry_point() -> None:
         fft_arrays(np.zeros(0), np.zeros(0))
 
 
-def test_dataset_path_still_accepts_unvalidated_input() -> None:
-    """The dataset front door keeps its behaviour: no new guards there."""
+def test_dataset_path_accepts_nan_signal_on_valid_sampling_grid() -> None:
+    """Sampling validation does not impose the array front door's signal checks."""
     time = np.linspace(0.0, 1.0, 16)
     asymmetry = np.zeros(16)
     asymmetry[2] = np.nan
@@ -202,3 +202,143 @@ def test_dataset_path_still_accepts_unvalidated_input() -> None:
     freqs, _real, magnitude = fft_asymmetry(dataset)
 
     assert freqs.size == magnitude.size
+
+
+@pytest.mark.parametrize(
+    "function,is_dataset",
+    [
+        (prepare_fft_arrays, False),
+        (fft_complex_arrays, False),
+        (fft_arrays, False),
+        (prepare_fft_time_signal, True),
+        (fft_complex_asymmetry, True),
+        (fft_asymmetry, True),
+    ],
+)
+@pytest.mark.parametrize(
+    "time,message",
+    [
+        ([0, 1, 2, 4], "not uniformly sampled"),
+        ([0, 1, 1, 2], "not uniformly sampled"),
+        ([3, 2, 1, 0], "time must increase"),
+        ([0], "at least 2"),
+    ],
+)
+def test_fft_rejects_unsupported_sampling(function, is_dataset, time, message):
+    times = np.asarray(time, dtype=float)
+    signal = np.arange(times.size, dtype=float)
+    args = (
+        (MuonDataset(time=times, asymmetry=signal, error=np.ones(times.size)),)
+        if is_dataset
+        else (times, signal)
+    )
+    with pytest.raises(ValueError, match=message):
+        function(*args, subtract_average_signal=False)
+
+
+@pytest.mark.parametrize(
+    "origin,interval,n",
+    [
+        (0, 0.016, 2048),
+        (-0.3, 1e-5, 200000),
+        (1000, 1e-5, 100000),
+        (5, 10, 64),
+        (1e-12, 1e-12, 4096),
+    ],
+)
+def test_fft_accepts_float64_roundoff_grids(origin, interval, n):
+    time = origin + (np.arange(n) + 0.5) * interval
+    frequencies, _ = fft_complex_arrays(
+        time, np.zeros(n), padding_factor=4, subtract_average_signal=False
+    )
+    np.testing.assert_array_equal(
+        frequencies, np.fft.rfftfreq(n * 4, float(np.mean(np.diff(time))))
+    )
+
+
+@pytest.mark.parametrize("padding", [1, 4])
+@pytest.mark.parametrize("window", ["none", "hann"])
+@pytest.mark.parametrize("subtract_average", [False, True])
+def test_fft_matches_explicit_dft_on_valid_grid(padding, window, subtract_average):
+    n, interval, origin, phase, offset = 32, 0.1, 0.37, 23, 0.07
+    time = origin + np.arange(n) * interval
+    signal = 0.2 + np.cos(2 * np.pi * 0.7 * time + 0.3)
+    frequencies, actual = fft_complex_arrays(
+        time,
+        signal,
+        window=window,
+        padding_factor=padding,
+        subtract_average_signal=subtract_average,
+        phase_degrees=phase,
+        t0_offset_us=offset,
+    )
+    values = signal - np.mean(signal) if subtract_average else signal.copy()
+    if window == "hann":
+        values *= 0.5 * (1 - np.cos(2 * np.pi * np.arange(n) / (n - 1)))
+    transform = (
+        np.exp(-2j * np.pi * np.outer(np.arange(frequencies.size), np.arange(n)) / (n * padding))
+        @ values
+    )
+    expected = (
+        transform * np.exp(-1j * np.deg2rad(phase)) * np.exp(-2j * np.pi * frequencies * offset)
+    )
+    np.testing.assert_allclose(actual, expected, atol=1e-12, rtol=1e-12)
+
+
+@pytest.mark.parametrize("jitter,accepted", [(1e-7, True), (1e-5, False)])
+def test_fft_sampling_tolerance_boundary(jitter, accepted):
+    time = np.arange(64, dtype=float) * 0.1
+    time[31] += jitter * 0.1
+    if accepted:
+        prepare_fft_arrays(time, np.zeros(64), subtract_average_signal=False)
+    else:
+        with pytest.raises(ValueError, match="not uniformly sampled"):
+            prepare_fft_arrays(time, np.zeros(64), subtract_average_signal=False)
+
+
+def test_fft_rejects_accumulated_grid_drift():
+    index = np.arange(100000, dtype=float)
+    time = 0.1 * (index + 5e-15 * index**2)
+    with pytest.raises(ValueError, match="not uniformly sampled"):
+        prepare_fft_arrays(time, np.zeros(time.size), subtract_average_signal=False)
+
+
+@pytest.mark.parametrize(
+    "lower,upper,expected_count", [(1, 2, 2), (0.5, 2.5, 2), (1.1, 2.5, 1), (5, 6, 0)]
+)
+def test_fft_sampling_crop_endpoints(lower, upper, expected_count):
+    dataset = MuonDataset(time=np.arange(4, dtype=float), asymmetry=np.ones(4), error=np.ones(4))
+    if expected_count < 2:
+        with pytest.raises(ValueError, match="at least 2"):
+            fft_complex_asymmetry(dataset, t_min=lower, t_max=upper)
+    else:
+        frequencies, _ = fft_complex_asymmetry(dataset, t_min=lower, t_max=upper)
+        np.testing.assert_array_equal(frequencies, [0, 0.5])
+
+
+@pytest.mark.parametrize("is_dataset", [False, True])
+def test_fft_validates_sampling_only_inside_the_retained_window(is_dataset):
+    time = np.array([0.0, 1.0, 2.0, 4.0, 7.0])
+    signal = np.arange(time.size, dtype=float)
+    if is_dataset:
+        frequencies, _ = fft_complex_asymmetry(
+            MuonDataset(time=time, asymmetry=signal, error=np.ones(time.size)), t_max=2
+        )
+    else:
+        frequencies, _ = fft_complex_arrays(time, signal, t_max=2)
+    np.testing.assert_array_equal(frequencies, np.fft.rfftfreq(3, 1.0))
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+def test_dataset_fft_rejects_nonfinite_sampling_times(bad):
+    time = np.array([0.0, 1.0, bad, 3.0])
+    dataset = MuonDataset(time=time, asymmetry=np.ones(4), error=np.ones(4))
+    with pytest.raises(ValueError, match="finite samples"):
+        prepare_fft_time_signal(dataset)
+
+
+@pytest.mark.parametrize("lower", [None, 0.0])
+def test_dataset_fft_rejects_a_matrix_time_axis_at_the_sampling_boundary(lower):
+    dataset = MuonDataset(time=np.array([[0.0, 1.0]]), asymmetry=np.ones(2), error=np.ones(2))
+    with pytest.raises(ValueError, match="time must be a one-dimensional"):
+        prepare_fft_time_signal(dataset, t_min=lower)
