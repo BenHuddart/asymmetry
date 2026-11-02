@@ -175,7 +175,7 @@ def common_t0_for_groups(
     *group_indices: list[int],
     detector_t0_bins: list[int] | None = None,
 ) -> int:
-    """Return a common t0 suitable for comparing multiple detector groups.
+    """Return a common t0 over a nonempty selection of acquired channels.
 
     ``detector_t0_bins`` optionally overrides the per-detector t0 (see
     :func:`apply_grouping_aligned`) so a *manual* T0Policy can shift the common
@@ -183,11 +183,22 @@ def common_t0_for_groups(
     """
     indices = sorted({idx for group in group_indices for idx in group})
     indices = _validated_group_indices(indices, len(histograms))
-    if not indices:
-        if not histograms:
-            return 0
-        return _detector_t0(histograms, 0, detector_t0_bins)
     return max(0, max(_detector_t0(histograms, idx, detector_t0_bins) for idx in indices))
+
+
+def group_reference_t0(histograms: list[Histogram], grouping: dict) -> int:
+    """Use every authored group for the shared spectral alignment reference.
+
+    Exclusions do not move this reference. Invalid auxiliary groups remain
+    unavailable instead of changing which acquired channels define the grid.
+    """
+    groups = grouping.get("groups")
+    if not isinstance(groups, dict):
+        raise InvalidGroupingError("Group definitions must be a dictionary.", grouping)
+    indices = [resolve_group_indices(groups, gid, n_histograms=len(histograms)) for gid in groups]
+    return common_t0_for_groups(
+        histograms, *indices, detector_t0_bins=effective_detector_t0_bins(histograms, grouping)
+    )
 
 
 def align_forward_backward(
@@ -447,9 +458,9 @@ def effective_group_indices(
     group with no effective members cannot be reduced. Raw counts are untouched.
     """
     groups = grouping.get("groups") if isinstance(grouping, dict) else None
-    if not isinstance(groups, dict):
-        raise ValueError("Group definitions must be a dictionary.")
     try:
+        if not isinstance(groups, dict):
+            raise ValueError("Group definitions must be a dictionary.")
         indices = _group_membership(groups, group_id).indices(n_histograms)
         excluded = ChannelMembership.from_entries(grouping.get("excluded_detectors", []))
         excluded_indices = frozenset(excluded.indices(n_histograms))

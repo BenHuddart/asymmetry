@@ -24,7 +24,7 @@ from asymmetry.core.transform.grouping import (
     effective_group_indices,
     good_frames,
     group_counts_aligned,
-    resolve_group_indices,
+    group_reference_t0,
 )
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
@@ -350,15 +350,7 @@ def build_group_signal_dataset(
             detector_t0_bins=detector_t0_bins,
         )
     if reference_t0_bin is None:
-        # t0 reference spans every named detector (exclusion is irrelevant to
-        # alignment), so use the raw decoder here rather than the reduction
-        # chokepoint.
-        all_group_indices = [
-            decoded for decoded in (resolve_group_indices(groups, gid) for gid in groups) if decoded
-        ]
-        reference_t0_bin = common_t0_for_groups(
-            prepared_histograms, *all_group_indices, detector_t0_bins=detector_t0_bins
-        )
+        reference_t0_bin = group_reference_t0(prepared_histograms, grouping)
     common_t0 = max(0, int(reference_t0_bin))
     group = group_counts_aligned(
         prepared_histograms,

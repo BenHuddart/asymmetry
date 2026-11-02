@@ -354,6 +354,11 @@ The preview reports **Preview unavailable:** with the reason and disables
 Channel membership
 ~~~~~~~~~~~~~~~~~~
 
+Structured profile inputs require a group dictionary with list or tuple values,
+and a list or tuple of exclusions. Malformed containers such as ``groups: null``
+raise ``InvalidGroupingError`` as structural input errors. Invalid member values
+within readable containers remain editable in the grouping window.
+
 Group entries are unique positive integer acquired-channel IDs. With the
 current ordinal convention, channel 1 selects the first file histogram;
 these ordinals do not establish physical detector identity under file
@@ -369,6 +374,18 @@ count fits, and grouped spectra use the same membership resolution. Independent
 channel sums add supplied variances, using measured counts where a channel
 has no supplied variance. The preview status shows effective F/B channel counts.
 See :doc:`data_reduction/detector_exclusion` for the editing workflow.
+
+An explicitly empty saved group map stays empty in the editor. Select a preset
+or define groups in **Detector Layout…**; opening the editor does not replace
+an authored empty or incomplete map with a half/half grouping.
+
+Grouped Fourier and MaxEnt signals share a time-zero reference over every
+authored group, including auxiliary groups that are not enabled for analysis.
+Exclusions do not move that reference. Empty, malformed, or missing channels
+in an auxiliary group make this shared spectral reference unavailable. Correct
+or remove the invalid group before computing grouped spectra; valid groups
+retain their common alignment and time window.
+
 
 The grouping payload stores:
 

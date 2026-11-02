@@ -1,5 +1,6 @@
 """Core membership errors remain editable through the GUI/project adapters."""
 
+import numpy as np
 import pytest
 
 from asymmetry.gui.mainwindow import MainWindow
@@ -135,6 +136,28 @@ def test_invalid_members_with_timing_and_legacy_manual_policy_remain_editable(qa
         assert dialog._t0_spin.value() == 3
         dialog._preview_pane.flush()
         _wait_until(lambda: not dialog._preview_pane.corrections_complete)
+    finally:
+        dialog._clear_dirty()
+        dialog.close()
+
+
+def test_invalid_grouping_keeps_the_all_detector_t0_base(qapp):
+    from asymmetry.core.project.profiles import GroupingProfile, ProfileFingerprint, T0Policy
+
+    dataset = _histogram_dataset(forward=np.full(30, 20.0), backward=np.full(30, 10.0))
+    dataset.run.histograms[0].t0_bin = 1
+    dataset.run.histograms[1].t0_bin = 9
+    profile = GroupingProfile(
+        name="sample",
+        fingerprint=ProfileFingerprint("TESTINST", 2),
+        groups={1: [0], 2: [2]},
+        t0_policy=T0Policy(mode="manual", offset_bins=2),
+    )
+    dialog = GroupingDialog([dataset], profiles=[profile])
+    try:
+        assert dialog._file_common_t0_for_preview_run() == 9
+        assert dialog._common_t0_for_preview_run([3, 12]) == 12
+        assert dialog._current_t0_policy().offset_bins == 2
     finally:
         dialog._clear_dirty()
         dialog.close()

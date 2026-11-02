@@ -1561,7 +1561,21 @@ def _v20_migrated_slot(slot: object) -> dict:
 
 
 def _migrate_v18_to_v19(data: dict) -> dict:
-    migrated = dict(data, schema_version=19)
+    """Migrate schema v18 project state to v19.
+
+    v19 adds nested *phase* data groups (Global Fit Wizard transitions, D1).
+    The migration is additive and tolerant of every legacy shape (no
+    ``data_groups`` block, junk entries), mirroring :func:`_migrate_v14_to_v15`:
+
+    * Each ``data_groups`` entry gains ``parent_group_id`` (default ``None``)
+      — a group is a phase iff this is set, so every pre-v19 group migrates
+      to "not a phase".
+    * ``phase_ordinal``, ``phase_range``, ``phase_color`` default ``None``.
+    * ``phase_boundaries`` defaults to ``{"lower": None, "upper": None}``.
+    * ``phase_provenance`` defaults to ``{}``.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 19
 
     groups = migrated.get("data_groups")
     if isinstance(groups, list):
@@ -1584,7 +1598,22 @@ def _migrate_v18_to_v19(data: dict) -> dict:
 
 
 def _migrate_v10_to_v11(data: dict) -> dict:
-    """Move domain fit settings into the shared fit-state shape."""
+    """Migrate schema v10 project state to v11.
+
+    v11 consolidates the fit-panel state into a single representation-keyed
+    ``fit_states`` block so the time- and frequency-domain fit forms round-trip
+    symmetrically.  Earlier schemas stored the time-domain single/global/UI fit
+    state as *un-keyed* top-level keys (``single_fit_state``,
+    ``global_fit_state``, ``fit_ui_state``) while the frequency domain nested
+    under ``frequency_fit_state`` -- an asymmetry that let a frequency fit form
+    bleed into the time-domain form on restore (F21c).
+
+    This migration folds the legacy keys into
+    ``fit_states = {"time": ..., "frequency": ...}`` and drops the legacy
+    top-level copies.  Each per-domain block carries a ``domain`` tag so a stale
+    blob can never be applied to the wrong domain.  ``multi_group_fit_state`` is
+    unrelated to the per-domain fit forms and is left at the top level.
+    """
     migrated = dict(data)
     migrated["schema_version"] = 11
 

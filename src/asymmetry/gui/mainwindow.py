@@ -85,7 +85,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting import (
     FitLog,
     ScanBaselineResult,
@@ -137,6 +137,7 @@ from asymmetry.core.fourier.phase_fit import (
     PhaseFitCancelled,
     PhaseFitRejectedError,
 )
+from asymmetry.core.fourier.spectrum import precompute_group_fourier_inputs
 from asymmetry.core.fourier.units import FieldUnit, convert
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
@@ -223,7 +224,6 @@ from asymmetry.core.transform import (
     effective_detector_t0_bins,
     effective_group_indices,
     good_frames,
-    prepare_histograms_with_deadtime,
     reduce_period_asymmetry,
     resolve_background_mode,
     resolve_deadtime,
@@ -6911,7 +6911,7 @@ class MainWindow(QMainWindow):
         if dataset.run is None:
             return {}
         phases: dict[int, float] = {}
-        prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(dataset)
+        prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(dataset.run)
         # Shared so a reference_run background loads + deadtime-prepares once
         # across the phase sweep, not once per group.
         background_reference_cache: dict = {}
@@ -8250,53 +8250,6 @@ class MainWindow(QMainWindow):
         enabled = self._fourier_panel.group_enabled_table()
         return [group_id for group_id in group_names if enabled.get(int(group_id), True)]
 
-    def _precompute_group_fourier_inputs(
-        self,
-        dataset: MuonDataset,
-    ) -> tuple[list[Histogram] | None, int | None]:
-        """Prepare grouped Fourier intermediates once per run.
-
-        Reusing deadtime-prepared histograms and a shared reference t0 avoids
-        repeating setup work for each detector-group FFT.
-        """
-        if dataset.run is None:
-            return None, None
-        grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
-        groups = grouping.get("groups") if isinstance(grouping, dict) else None
-        histograms = list(dataset.run.histograms)
-        if not isinstance(groups, dict) or not histograms:
-            return None, None
-
-        apply_deadtime = bool(grouping.get("deadtime_correction", False))
-        prepared_histograms, _ = prepare_histograms_with_deadtime(
-            histograms,
-            grouping,
-            apply_deadtime,
-        )
-
-        all_group_indices: list[list[int]] = []
-        for values in groups.values():
-            if not isinstance(values, list):
-                continue
-            normalized: list[int] = []
-            for value in values:
-                detector = value[0] if isinstance(value, (list, tuple)) and value else value
-                try:
-                    normalized.append(max(0, int(detector) - 1))
-                except (TypeError, ValueError):
-                    continue
-            if normalized:
-                all_group_indices.append(normalized)
-
-        reference_t0_bin = 0
-        if all_group_indices:
-            reference_t0_bin = common_t0_for_groups(
-                prepared_histograms,
-                *all_group_indices,
-                detector_t0_bins=effective_detector_t0_bins(prepared_histograms, grouping),
-            )
-        return prepared_histograms, int(reference_t0_bin)
-
     def _current_fourier_time_window_us(self) -> tuple[float | None, float | None]:
         """Return the active time-domain window to use for grouped FFTs."""
         if not hasattr(self._plot_panel, "get_fit_range"):
@@ -8461,7 +8414,7 @@ class MainWindow(QMainWindow):
         """
         if dataset.run is None or not selected_group_ids:
             return None
-        prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(dataset)
+        prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(dataset.run)
         # Shared so a reference_run background loads + deadtime-prepares once
         # across the group sweep, not once per group.
         background_reference_cache: dict = {}

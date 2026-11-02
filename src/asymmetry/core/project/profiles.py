@@ -917,42 +917,20 @@ class GroupingProfile:
 
     @classmethod
     def from_dict(cls, data: Any) -> GroupingProfile:
-        """Reconstruct a profile from :meth:`to_dict` output (lenient)."""
+        """Read a profile, preserving member values for validation at reduction.
+
+        Absent fields use defaults; malformed containers raise InvalidGroupingError.
+        """
         if not isinstance(data, dict):
             raise TypeError("GroupingProfile.from_dict requires a dict")
-        groups_raw = data.get("groups", {})
-        groups = {int(key): list(dets) for key, dets in groups_raw.items()}
-
-        names_raw = data.get("group_names")
-        group_names = (
-            {gid: str(v) for key, v in names_raw.items() if (gid := _as_int(key)) is not None}
-            if isinstance(names_raw, dict)
-            else {}
-        )
-        incl_raw = data.get("included_groups")
-        included = (
-            {gid: bool(v) for key, v in incl_raw.items() if (gid := _as_int(key)) is not None}
-            if isinstance(incl_raw, dict)
-            else {}
-        )
-        proj_raw = data.get("projections")
-        projections = (
-            [dict(p) for p in proj_raw if isinstance(p, dict)] if isinstance(proj_raw, list) else []
-        )
-        excluded = list(data.get("excluded_detectors", []))
-
         return cls(
             name=str(data.get("name", "")),
             fingerprint=ProfileFingerprint.from_dict(data.get("fingerprint")),
             active=bool(data.get("active", True)),
             color=None if data.get("color") is None else str(data.get("color")),
-            groups=groups,
-            group_names=group_names,
-            included_groups=included,
+            **_profile_structure(data),
             forward_group=_as_int(data.get("forward_group"), 1) or 1,
             backward_group=_as_int(data.get("backward_group"), 2) or 2,
-            projections=projections,
-            excluded_detectors=excluded,
             alpha_policy=AlphaPolicy.from_dict(data.get("alpha_policy")),
             deadtime_policy=DeadtimePolicy.from_dict(data.get("deadtime_policy")),
             background_policy=BackgroundPolicy.from_dict(data.get("background_policy")),
@@ -1048,6 +1026,40 @@ def _payload_file_common_t0(
     return max(0, max(values))
 
 
+def _profile_structure(data: dict[str, Any]) -> dict[str, Any]:
+    """Copy authored membership; malformed containers have a named boundary error."""
+    try:
+        groups = data.get("groups", {})
+        excluded = data.get("excluded_detectors", [])
+        if not isinstance(groups, dict) or not isinstance(excluded, (list, tuple)):
+            raise ValueError("Group definitions must be a dictionary and exclusions a list.")
+        if any(not isinstance(entries, (list, tuple)) for entries in groups.values()):
+            raise ValueError("Group membership must be a list of detector IDs.")
+        groups = {int(key): list(entries) for key, entries in groups.items()}
+    except (TypeError, ValueError) as exc:
+        raise InvalidGroupingError(str(exc), data) from exc
+    names = data.get("group_names")
+    included = data.get("included_groups")
+    projections = data.get("projections")
+    return {
+        "groups": groups,
+        "excluded_detectors": list(excluded),
+        "group_names": {
+            gid: str(v) for key, v in names.items() if (gid := _as_int(key)) is not None
+        }
+        if isinstance(names, dict)
+        else {},
+        "included_groups": {
+            gid: bool(v) for key, v in included.items() if (gid := _as_int(key)) is not None
+        }
+        if isinstance(included, dict)
+        else {},
+        "projections": [dict(p) for p in projections if isinstance(p, dict)]
+        if isinstance(projections, list)
+        else [],
+    }
+
+
 def profile_from_payload(
     payload: dict[str, Any],
     name: str,
@@ -1064,27 +1076,6 @@ def profile_from_payload(
     """
     payload = payload if isinstance(payload, dict) else {}
 
-    groups_raw = payload.get("groups", {})
-    groups = {int(key): list(dets) for key, dets in groups_raw.items()}
-
-    names_raw = payload.get("group_names")
-    group_names = (
-        {gid: str(v) for key, v in names_raw.items() if (gid := _as_int(key)) is not None}
-        if isinstance(names_raw, dict)
-        else {}
-    )
-    incl_raw = payload.get("included_groups")
-    included = (
-        {gid: bool(v) for key, v in incl_raw.items() if (gid := _as_int(key)) is not None}
-        if isinstance(incl_raw, dict)
-        else {}
-    )
-    proj_raw = payload.get("projections")
-    projections = (
-        [dict(p) for p in proj_raw if isinstance(p, dict)] if isinstance(proj_raw, list) else []
-    )
-    excluded = list(payload.get("excluded_detectors", []))
-
     extra: dict[str, Any] = {}
     for key in _STRUCTURE_KEYS:
         if payload.get(key):
@@ -1097,13 +1088,9 @@ def profile_from_payload(
         name=name,
         fingerprint=fingerprint,
         active=active,
-        groups=groups,
-        group_names=group_names,
-        included_groups=included,
+        **_profile_structure(payload),
         forward_group=_as_int(payload.get("forward_group"), 1) or 1,
         backward_group=_as_int(payload.get("backward_group"), 2) or 2,
-        projections=projections,
-        excluded_detectors=excluded,
         alpha_policy=_alpha_policy_from_payload(payload),
         deadtime_policy=_deadtime_policy_from_payload(payload),
         background_policy=_background_policy_from_payload(payload),
@@ -1263,6 +1250,7 @@ def resolve_effective_grouping(
 
         grouping: dict[str, Any] = {
             "groups": {int(gid): list(dets) for gid, dets in profile.groups.items()},
+            # Fixed alpha remains visible if membership prevents policy resolution.
             "alpha": profile.alpha_policy.value,
             "group_names": {int(gid): str(name) for gid, name in profile.group_names.items()},
             "forward_group": int(profile.forward_group),
@@ -1288,11 +1276,14 @@ def resolve_effective_grouping(
 
         # -- per-run / file-derived facts ---------------------------------------
         _copy_per_run_facts(grouping, run_grouping, run)
-        _apply_deadtime_policy(grouping, profile.deadtime_policy, run_grouping, n_hist)
-        _apply_background_policy(grouping, profile.background_policy)
-        if not profile.projections:
-            _apply_beta_policy(grouping, profile.beta_policy)
-        _rebase_on_profile_groups(grouping, run, n_hist)
+        try:
+            _rebase_on_profile_groups(grouping, run, n_hist)
+        except InvalidGroupingError:
+            # An unavailable request still carries its fixed settings for editing.
+            _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist)
+            if not profile.projections:
+                _apply_beta_policy(grouping, profile.beta_policy)
+            raise
 
         # -- period mode --------------------------------------------------------
         if profile.period_mode is not None:
@@ -1301,21 +1292,28 @@ def resolve_effective_grouping(
             grouping["period_mode"] = run_grouping["period_mode"]
 
         # -- policies -----------------------------------------------------------
-        # Order matters: a per_run_estimate alpha must be measured on the same
-        # deadtime-corrected, background-subtracted counts the reduction applies
-        # it to, so deadtime and background resolve into the grouping *before* the
-        # alpha estimate reads them (see
-        # docs/porting/correction-order-alpha-estimation).
+        # Alpha uses the same deadtime-corrected, background-subtracted counts as reduction.
         _apply_t0_policy(grouping, profile.t0_policy, run, n_hist, profile_name=profile.name)
         # Directly after t0: a manual good window is measured from the effective
         # t0 the policy above just resolved (D2).
         _apply_good_window_policy(grouping, profile.good_window_policy, run, n_hist)
+        _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist)
         _apply_alpha_policy(
             grouping, profile.alpha_policy, run, n_hist, reference_resolver=reference_resolver
         )
 
+        # Beta is scalar-only; vector profiles never emit a scalar beta.
+        if not profile.projections:
+            _apply_beta_policy(grouping, profile.beta_policy)
+
         perf.detail(n_detectors=n_hist, n_groups=len(grouping.get("groups", {})))
         return grouping
+
+
+def _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist):
+    """Carry fixed settings after timing resolution, including unavailable requests."""
+    _apply_deadtime_policy(grouping, profile.deadtime_policy, run_grouping, n_hist)
+    _apply_background_policy(grouping, profile.background_policy)
 
 
 #: Per-run, file-derived keys copied straight through from the run's own

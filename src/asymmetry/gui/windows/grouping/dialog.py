@@ -2499,7 +2499,7 @@ class GroupingDialog(QDialog):
         return int(forward_gid), int(backward_gid)
 
     def _load_groups(self, run) -> dict[int, list[int]]:
-        """Load detector groups from run metadata or default half/half groups."""
+        """Preserve authored groups, including an empty map; initialise only absent groups."""
         grouping = run.grouping or {}
         groups_raw = grouping.get("groups")
 
@@ -2915,7 +2915,8 @@ class GroupingDialog(QDialog):
 
         Mirrors what ``resolve_effective_grouping`` will compute for this run:
         a max over the forward+backward detectors present in it, exclusions
-        applied. ``None`` asks for the file values.
+        applied. ``None`` asks for the file values. With unavailable membership,
+        retain the full-run maximum as the editing base; reduction stays unavailable.
         """
         if self._run is None or not self._run.histograms:
             return 0
@@ -2925,7 +2926,11 @@ class GroupingDialog(QDialog):
                 int(self._backward_combo.currentData() or 2)
             )
         except InvalidGroupingError:
-            return int(self._run.histograms[0].t0_bin)
+            return common_t0_for_groups(
+                self._run.histograms,
+                list(range(len(self._run.histograms))),
+                detector_t0_bins=detector_t0_bins,
+            )
         return common_t0_for_groups(
             self._run.histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0_bins
         )
@@ -4393,7 +4398,17 @@ class GroupingDialog(QDialog):
             tasks.shutdown()
 
     def _populate_group_table(self) -> None:
-        """Render authored groups without firing edit or preview signals."""
+        """Render the detector-group table used as grouping context.
+
+        ``itemChanged`` is connected to both ``_mark_dirty`` and
+        ``_refresh_preview`` (which queues a debounced off-thread recompute on
+        the preview pane's worker — resolution no longer runs synchronously
+        here, see B3/#216), so populating without blocking signals fires up to
+        4×N_groups redundant dirty marks + queued previews. Population is not a
+        user edit, so the signal is blocked for the whole rebuild; callers that
+        need the dirty/preview side effects for the triggering action invoke
+        them explicitly once, after this returns.
+        """
         blocked = self._group_table.blockSignals(True)
         try:
             self._group_table.setRowCount(len(self._groups))

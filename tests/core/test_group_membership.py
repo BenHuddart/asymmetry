@@ -96,3 +96,19 @@ def test_event_count_display_is_unavailable_for_malformed_window():
         )
         is None
     )
+
+
+@pytest.mark.parametrize("members", [[0], [-1], ["1"], [[1, 0]], [], [4]])
+def test_fourier_precomputation_validates_every_authored_group(members):
+    from asymmetry.core.fourier.spectrum import precompute_group_fourier_inputs
+
+    run = Run(histograms=histograms(), grouping={"groups": {1: [1], 2: [2], 3: members}})
+    with pytest.raises(ValueError, match="[Dd]etector|[Gg]roup"):
+        precompute_group_fourier_inputs(run)
+
+
+def test_common_t0_requires_a_nonempty_channel_selection():
+    from asymmetry.core.transform.grouping import common_t0_for_groups
+
+    with pytest.raises(ValueError, match="at least one detector"):
+        common_t0_for_groups(histograms())
