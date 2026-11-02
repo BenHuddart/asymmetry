@@ -94,6 +94,10 @@ FLUORINE_19_GYROMAGNETIC_RATIO_MHZ_PER_T = 40.069243717
 #: uncertainty 0.000053 MHz. Used as a fit starting value.
 MUONIUM_VACUUM_HYPERFINE_MHZ = 4463.302765
 
+#: Celsius zero in K; exact SI relation, BIPM SI Brochure, 9th ed., section 2.3.1.
+#: https://www.bipm.org/en/publications/si-brochure
+CELSIUS_ZERO_K = 273.15
+
 #: Tesla per gauss; exact unit definition, 1 G = 10⁻⁴ T.
 GAUSS_TO_TESLA = 1.0e-4
 
