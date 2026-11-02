@@ -152,7 +152,6 @@ from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
     held_period_count,
-    select_period_histograms,
 )
 from asymmetry.core.maxent import (
     MaxEntCancelledError,
@@ -178,7 +177,6 @@ from asymmetry.core.project.profiles import (
     aligned_n_bins,
     assigned_profile_for_run,
     default_profile_for_run,
-    effective_grouping_for_loaded_run,
     heal_t0_policies,
     named_profile_for_run,
     profile_fingerprint_for_run,
@@ -4043,25 +4041,23 @@ class MainWindow(QMainWindow):
                     if dataset is not None and dataset.run is not None:
                         self._heal_run_instrument(dataset.run)
 
-                    # Profile inheritance takes precedence over ad-hoc
-                    # auto-grouping propagation: a freshly loaded run whose
-                    # fingerprint has a default profile is assigned to it and
-                    # inherits its resolved effective grouping (its own per-run
-                    # facts merged in). Runs of a fingerprint with no profile
-                    # keep the loader default (auto-grouping propagation below
-                    # still applies).
+                    # Profile requests take precedence over ad-hoc propagation;
+                    # unavailable requests retain raw data and remain repairable.
                     inherited_profile = (
                         default_profile_for_run(self._grouping_profiles, dataset.run)
                         if dataset is not None and dataset.run is not None
                         else None
                     )
                     if inherited_profile is not None:
-                        resolved = effective_grouping_for_loaded_run(
-                            self._grouping_profiles, dataset.run
-                        )
-                        self._apply_grouping_settings_to_dataset(dataset, resolved)
-                        if isinstance(dataset.metadata, dict):
-                            dataset.metadata.pop("grouping_overrides", None)
+                        try:
+                            resolved = self._resolve_named_profile_for_run(
+                                inherited_profile.name, dataset.run
+                            )
+                            self._apply_grouping_settings_to_dataset(dataset, resolved)
+                        except InvalidGroupingError as exc:
+                            dataset.run.grouping = dict(dataset.run.grouping) | exc.grouping
+                            dataset.metadata["correction_error"] = str(exc)
+                        dataset.metadata.pop("grouping_overrides", None)
                         self._assign_dataset_profile(dataset, inherited_profile.name)
                     elif auto_grouping_payload is not None:
                         auto_grouping_attempts += 1
@@ -4780,7 +4776,7 @@ class MainWindow(QMainWindow):
         return resolve_effective_grouping(
             profile,
             run,
-            reference_resolver=lambda g: self._resolve_background_reference(g, run),
+            reference_resolver=self._resolve_background_reference,
         )
 
     def _store_grouping_profile(
@@ -5707,11 +5703,6 @@ class MainWindow(QMainWindow):
             grouping.pop("deadtime_method", None)
 
         run_alpha = alpha if alpha > 0 else 1.0
-        has_two_period_histograms = bool(
-            isinstance(reduction_grouping.get("period_histograms"), list)
-            and len(reduction_grouping.get("period_histograms", [])) == 2
-        )
-
         outcomes: dict[str, CorrectionOutcomes] = {}
         facility = resolve_facility(
             metadata=run.metadata, grouping=reduction_grouping
@@ -5730,22 +5721,10 @@ class MainWindow(QMainWindow):
             use_background=use_background,
             facility=facility,
             metadata=run.metadata,
-            reference_resolver=lambda g: self._resolve_background_reference(g, run),
+            reference_resolver=self._resolve_background_reference,
         )
         time_axis, asymmetry, error = reduced.time, reduced.asymmetry, reduced.error
         outcomes = reduced.corrections
-        if has_two_period_histograms and period_mode in {
-            str(PeriodMode.RED),
-            str(PeriodMode.GREEN),
-        }:
-            _, selected_grouping = select_period_histograms(
-                run.histograms, reduction_grouping, int(period_mode == str(PeriodMode.GREEN))
-            )
-            if "good_frames" in selected_grouping:
-                grouping["good_frames"] = selected_grouping["good_frames"]
-            if "dead_time_us" in selected_grouping:
-                grouping["dead_time_us"] = selected_grouping["dead_time_us"]
-
         for key in ("background_method", "background_values", "background_details"):
             grouping.pop(key, None)
         grouping.update(background_grouping_metadata(outcomes))
@@ -5873,7 +5852,7 @@ class MainWindow(QMainWindow):
                 use_background=flags.use_background,
                 facility=facility,
                 metadata=run.metadata,
-                reference_resolver=lambda g: self._resolve_background_reference(g, run),
+                reference_resolver=self._resolve_background_reference,
             )
             return reduced.time, reduced.asymmetry, reduced.error
 
@@ -5927,15 +5906,13 @@ class MainWindow(QMainWindow):
             f"Added mapped dataset for run {mapped.run_number} ({mapping_text}).", 8000
         )
 
-    def _resolve_background_reference(
-        self, grouping: dict, sample_run
-    ) -> BackgroundReference | None:
+    def _resolve_background_reference(self, grouping: dict) -> BackgroundReference | None:
         """Resolve against loaded runs and the per-window file cache.
 
         Input and I/O failures propagate to the user-boundary error handler;
         a final reduction cannot substitute unsubtracted counts.
         """
-        sample_frames = good_frames(sample_run.grouping, default=0.0) or None
+        sample_frames = good_frames(grouping, default=0.0) or None
         return resolve_background_reference(
             grouping.get("background_run"),
             sample_good_frames=sample_frames,
@@ -17339,9 +17316,7 @@ class MainWindow(QMainWindow):
                                     resolved_grouping = resolve_effective_grouping(
                                         inherited,
                                         run,
-                                        reference_resolver=lambda g, r=run: (
-                                            self._resolve_background_reference(g, r)
-                                        ),
+                                        reference_resolver=self._resolve_background_reference,
                                     )
                                     requested_grouping = resolved_grouping
                                     self._apply_grouping_settings_to_dataset(

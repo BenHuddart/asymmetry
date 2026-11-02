@@ -135,9 +135,9 @@ of the number survives:
   ``calibrated`` applies a value measured once (with a recorded method and
   source run, e.g. "diamagnetic · run 2923"); ``per_run_estimate`` computes
   each run's own forward/backward integral ratio at resolution time (Mantid's
-  ``AlphaCalc``; the PSI ``.bin`` default), so a series with detector
-  sensitivities that drift run-to-run stays self-consistent without a shared
-  number.
+  ``AlphaCalc`` convention). It uses the current effective pair, exclusions,
+  selected Red or Green period, good window and corrected counts. This is an
+  explicit policy, independent of the one-shot **Estimate** method.
 * **Beta** — the intrinsic-asymmetry balance :math:`\beta = A_{0,b}/A_{0,f}`
   (musrfit's asymmetry-fit companion to :math:`\alpha`), applied with
   :math:`\alpha` in the asymmetry formula
@@ -152,6 +152,28 @@ of the number survives:
   each run's own file deadtime values; ``manual`` applies a stored
   per-detector table (hand-typed or fitted with **Cal**); ``estimate``
   applies one fitted value to every detector.
+
+Regrouping preserves fixed and one-shot calibrated alpha and beta, including
+their method, source run and uncertainty. A stale-calibration warning does not
+request a refit. Manual timing offsets and stored deadtime coefficients remain
+authored settings; applying them to new groups does not estimate them again.
+Enabled background operations are evaluated on the current inputs with their
+configured mode, window and declared reference source.
+A calibrated beta of exactly one retains its provenance in the form and project.
+The selected period supplies its own exposure for reference-background scaling;
+manual or stored estimated deadtime tables remain unchanged during selection.
+Apply preserves the acquired histogram set's ``good_frames`` and file
+coefficients. Selected-period exposure and coefficients belong to the effective
+reduction and its correction outcomes; they do not replace acquisition metadata.
+Scripts using ``asymmetry.core.project.effective_grouping_for_loaded_run``
+can supply ``reference_resolver=...`` to resolve the default profile with its
+declared reference background, using the same resolution as an explicit profile.
+
+An automatic alpha estimate requires finite positive forward and backward
+integrals and a finite positive ratio. An undefined ratio is unavailable;
+it never supplies unity as a default. A fixed alpha of one remains valid.
+**Auto-detect** likewise requires a successful requested t0 search. Diagnostic
+disagreement with usable **From file** timing remains advisory.
 * **Background policy** — ``none``, ``range`` (a pre-:math:`t_0` window),
   ``tail_fit`` (a late-time Poisson fit), ``reference_run`` (a dedicated
   background run), or ``fixed`` (constant forward/backward values). See
@@ -256,8 +278,9 @@ draft is what gets applied to every run following the profile.
   run's effective settings in the form, drives the live preview, and seeds
   the status rows with its per-run facts (:math:`t_0`, good-bin window, file
   deadtime, period tables). What your edits change follows the selected run's
-  status (`Editing target follows selection`_ below). Apply is disabled only
-  when nothing would be committed: no run follows the edited profile, no
+  status (`Editing target follows selection`_ below). Apply waits for a complete
+  current preview and is also disabled when nothing would be committed:
+  no run follows the edited profile, no
   override has pending edits, and no reassignment, rename, deletion, new
   profile, or default change waits.
 * **Editing-target strip** — right-aligned in the dialog's top row, a
@@ -991,6 +1014,12 @@ requested histograms are unavailable. Asymmetry reports these requests as
 unavailable until the grouping is repaired, preserving the authored selection.
 These arithmetic comparisons do not certify detector geometry or pair independence.
 See :doc:`/explanation/comparison` for sources and limits.
+
+WiMDA keeps alpha stored during ordinary regrouping and evaluates enabled
+background processing when groups are rebuilt. Asymmetry preserves fixed and
+one-shot calibrated coefficients, while its explicit ``per_run_estimate`` policy
+recomputes the integral ratio. This distinction does not establish numerical
+agreement between calibration methods.
 
 **Mantid 6.16.1**, run as a binary, accepts signed coefficients in
 ``ApplyDeadTimeCorr`` v1. For counts [5, 20], 1 µs bins and 10 good frames,

@@ -43,6 +43,11 @@ detectors' real stagger. A run whose every detector lands on its own header
 therefore reads ``Δ +0`` with a spread of a bin or two, however far apart the
 detectors themselves are.
 
+Explicit **Auto-detect** requires a successful search. If no detector supplies
+an estimate, the preview reads **Preview unavailable:** and **Apply** stays
+disabled until the request is repaired. A diagnostic mismatch while using valid
+**From file** timing remains advisory.
+
 **Verdict levels.** The messages are not on the line: when there is something
 to say, a ``⚠`` button appears beside it, tinted amber for a warning and red
 for an error, with every message in its tooltip and in a click-to-read popup.

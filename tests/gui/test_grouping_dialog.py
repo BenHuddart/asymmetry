@@ -863,8 +863,8 @@ def test_beta_calibration_writes_provenance_and_digest(qapp: QApplication) -> No
     assert "beta_correction_digest" in payload
 
 
-def test_beta_provenance_only_persists_while_it_holds_and_active(qapp: QApplication) -> None:
-    """A manual β edit drops provenance; β = 1 omits every β key."""
+def test_beta_provenance_persists_at_unity_until_a_manual_edit(qapp: QApplication) -> None:
+    """A calibrated unity coefficient retains its measured provenance."""
     dialog = GroupingDialog([_dataset_with_histograms()])
     _apply_beta(dialog, value=0.90)
     assert "beta_method" in dialog._current_grouping_payload()
@@ -880,9 +880,8 @@ def test_beta_provenance_only_persists_while_it_holds_and_active(qapp: QApplicat
     assert dialog._beta_correction_digest is None
     assert not dialog._beta_is_calibrated()
 
-    # Back to the do-nothing default: no β keys at all.
     _apply_beta(dialog, value=1.0)
-    assert "beta" not in dialog._current_grouping_payload()
+    assert dialog._current_grouping_payload()["beta_method"] == "count_fit"
 
 
 def test_beta_staleness_tracks_correction_changes(qapp: QApplication) -> None:
@@ -2986,13 +2985,14 @@ def test_reattach_run_returns_it_to_inheriting(qapp: QApplication) -> None:
 
 
 def test_apply_disabled_when_no_run_inherits(qapp: QApplication) -> None:
-    """Apply is disabled (with a reason) when every run is released."""
     dataset = _dataset_with_ratio(6501, ratio=2.0)
     dialog = GroupingDialog([dataset])
+    _wait_until(lambda: dialog._preview_pane.corrections_complete)
     assert dialog._apply_btn.isEnabled()
 
     dialog._scope_panel._released[6501] = True
     dialog._on_scope_changed()
+    _wait_until(lambda: dialog._preview_pane.corrections_complete)
     assert not dialog._apply_btn.isEnabled()
     assert "released" in dialog._apply_btn.toolTip().lower()
 
@@ -3022,13 +3022,11 @@ def test_unsaved_draft_guard_blocks_reject_on_keep_editing(qapp: QApplication, m
 
 
 def test_apply_marks_draft_saved(qapp: QApplication, monkeypatch) -> None:
-    """Applying a dirty draft clears the dirty flag so close does not prompt."""
     dataset = _dataset_with_histograms()
     dialog = GroupingDialog([dataset])
     dialog._alpha_spin.setValue(1.9)
-    dialog._mark_dirty()
     monkeypatch.setattr(GroupingDialog, "accept", lambda self: None)
-
+    _wait_until(lambda: dialog._preview_pane.corrections_complete)
     dialog._on_apply()
     assert dialog._draft_dirty is False
 
@@ -3403,10 +3401,9 @@ def test_t0_verdict_warns_when_the_good_window_opens_on_the_detected_t0(
 
 
 def test_apply_records_the_t0_warning_and_still_succeeds(qapp: QApplication) -> None:
-    """D9: a divergent t0 is reported, never a block."""
     dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2))])
     _wait_for_t0_detection(dialog)
-
+    _wait_until(lambda: dialog._preview_pane.corrections_complete)
     dialog._on_apply()
 
     assert dialog.result() == GroupingDialog.DialogCode.Accepted
@@ -3416,7 +3413,7 @@ def test_apply_records_the_t0_warning_and_still_succeeds(qapp: QApplication) -> 
 def test_apply_records_no_t0_warning_for_a_clean_run(qapp: QApplication) -> None:
     dialog = GroupingDialog([_t0_line_dataset()])
     _wait_for_t0_detection(dialog)
-
+    _wait_until(lambda: dialog._preview_pane.corrections_complete)
     dialog._on_apply()
 
     assert dialog.t0_apply_warnings == []

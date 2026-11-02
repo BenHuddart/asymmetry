@@ -47,6 +47,15 @@ exists for the case where no TF calibration was recorded.
 Corrections and the estimate
 ----------------------------
 
+An **Estimate** result is a stored, one-shot calibration. Changing groups or
+corrections preserves its value, method, source and uncertainty; a staleness
+warning invites an explicit new estimate. It does not enable automatic fitting.
+The separate profile policy ``per_run_estimate`` recomputes only the integral
+ratio on the target run's current corrected counts and good window. It requires
+finite positive integrals on both sides and a finite positive ratio. Failure
+makes the reduction unavailable instead of substituting a coefficient of one.
+Fixed unity remains an explicit valid choice. See :doc:`../detector_grouping`.
+
 :math:`\alpha` is estimated on the *corrected* forward/backward counts — the
 deadtime correction and the background subtraction configured in the grouping
 dialog are applied to the histograms **before** the estimate reads them, so the

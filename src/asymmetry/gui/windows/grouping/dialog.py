@@ -64,6 +64,7 @@ from asymmetry.core.instrument import (
     variant_for_histograms,
 )
 from asymmetry.core.io import resolve_background_reference
+from asymmetry.core.io.periods import select_period_grouping, selected_period_index
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
@@ -1345,6 +1346,7 @@ class GroupingDialog(QDialog):
         self._apply_btn.setDefault(False)
         self._apply_btn.clicked.connect(self._on_apply)
         self._preview_pane.preview_changed.connect(self._update_apply_enabled)
+        self._preview_pane.preview_completed.connect(self._show_per_run_alpha)
 
         bottom_bar = QHBoxLayout()
         bottom_bar.addStretch()
@@ -1677,25 +1679,13 @@ class GroupingDialog(QDialog):
         )
 
     def _seed_source(self):
-        """A run-like shim whose ``grouping`` is the draft resolved for preview.
-
-        The form's ``_load_*`` helpers read ``.grouping`` for the shareable
-        settings; per-run facts (t0, good-bin window, file deadtime, period
-        tables) are merged in from the preview run by
-        :func:`resolve_effective_grouping`, so the shim carries the preview run's
-        histograms/metadata too.
-        """
+        """Seed form settings from the draft and the selected run's file facts."""
         target = self._editing_target()
         if target != "profile":
-            # An overridden run is selected: seed from that run's override draft.
-            # The draft is seeded once from the run's stored payload and then
-            # accumulates edits (see :meth:`_override_draft_for`), so switching
-            # back to it later restores the in-progress edits, not the file.
+            # Override drafts retain edits across target switches.
             payload = dict(self._override_draft_for(int(target)))
         else:
-            # An ``auto_detect`` t0 or ``per_run_estimate`` alpha policy makes
-            # this resolve scan/sum every detector on the GUI thread (hundreds
-            # of ms at HiFi scale); show a wait cursor for the duration.
+            # Automatic policies scan counts; the cursor covers initial form seeding.
             expensive = (
                 self._draft.t0_policy.mode == "auto_detect"
                 or self._draft.alpha_policy.mode == "per_run_estimate"
@@ -1801,14 +1791,12 @@ class GroupingDialog(QDialog):
             name=self._draft_name,
             fingerprint=self._fingerprint,
             active=True,
+            alpha_policy=self._draft.alpha_policy if not self._vector_axis_pairs else None,
         )
-        # The t0 mode and the good-window mode are explicit selectors, not
-        # something to infer from the per-run values the form carries (D5): set
-        # them on the draft directly.
+        # Explicit timing/window selectors own their policies, independent of values.
         self._draft.t0_policy = self._current_t0_policy()
         self._draft.good_window_policy = self._current_good_window_policy()
-        # The identity colour is profile metadata, not form state — carry it
-        # across the rebuild or every sync would strip it.
+        # Identity colour is profile metadata, independent of form state.
         self._draft.color = color
 
     # -- profile selector -------------------------------------------------
@@ -3665,11 +3653,6 @@ class GroupingDialog(QDialog):
 
     def _on_apply(self) -> None:
         """Validate form values before accepting the dialog."""
-        if not self._preview_pane.corrections_complete:
-            QMessageBox.warning(
-                self, "Corrections incomplete", self._preview_pane._incomplete_banner.text()
-            )
-            return
         t0_bin, t_good_offset, first_good_bin, last_good_bin = (
             self._resolve_good_bin_limits_from_controls()
         )
@@ -3703,14 +3686,15 @@ class GroupingDialog(QDialog):
         except InvalidGroupingError as exc:
             QMessageBox.warning(self, "Invalid Grouping", str(exc))
             return
-        # Lift the validated form state back into the current editing target
-        # (the profile draft, or the selected run's override draft) so the result
-        # getters return it. Snapshot the dirty overrides as *committed* so
-        # get_profile_result still reports them after the dirty set is cleared,
-        # then disarm the close guard.
-        # The t0 verdict is advisory (D9): whatever it says, Apply proceeds with
-        # the chosen mode. The messages ride out on the result so the caller can
-        # log them, and the detected line keeps showing them in its own colour.
+        if not self._preview_pane.corrections_complete:
+            QMessageBox.warning(
+                self,
+                "Corrections incomplete",
+                self._preview_pane._incomplete_banner.text() or self._preview_pane._status.text(),
+            )
+            return
+        # Diagnostic timing disagreements are advisory; failed requested searches
+        # are gated by the preview. Commit only the validated current form state.
         self.t0_apply_warnings = list(self._current_t0_verdict().messages)
         self._sync_draft_from_form()
         self._committed_override_runs = set(self._pending_override_runs())
@@ -4180,19 +4164,28 @@ class GroupingDialog(QDialog):
             pane.show_unavailable()
             return
         try:
-            # Cheap (widget reads and dict lifting only) — resolution against the
-            # preview run happens on the pane's worker thread, not here.
+            # Snapshot form inputs; count-dependent resolution belongs on the worker.
             payload = self._current_grouping_payload()
             profile = profile_from_form_payload(
-                payload, name=self._draft_name, fingerprint=self._fingerprint, active=True
+                payload,
+                name=self._draft_name,
+                fingerprint=self._fingerprint,
+                active=True,
+                alpha_policy=self._draft.alpha_policy
+                if self._editing_target() == "profile" and not self._vector_axis_pairs
+                else None,
             )
             reference = None
             if payload.get("background_mode") == "reference_run" and isinstance(
                 payload.get("background_run"), dict
             ):
+                exposure = run.grouping
+                period_index = selected_period_index(exposure, payload.get("period_mode"))
+                if period_index is not None:
+                    exposure = select_period_grouping(exposure, period_index)
                 reference = resolve_background_reference(
                     payload["background_run"],
-                    sample_good_frames=good_frames(run.grouping, default=0.0) or None,
+                    sample_good_frames=good_frames(exposure, default=0.0) or None,
                     datasets=self._fingerprint_datasets(),
                     allow_file=False,
                 )
@@ -4203,8 +4196,6 @@ class GroupingDialog(QDialog):
         metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(getattr(run, "metadata", {}) or {})
         facility = resolve_facility(metadata=metadata, grouping=getattr(run, "grouping", None))
-        # Keep the compare surfaces in step with the current draft, and drop the
-        # focus if the focused stage is no longer available.
         self._sync_compare_surfaces()
         # Compare view: the focused stage (if any) draws its before/after ghost over
         # the solid full-pipeline curve. The solid is never degraded, so the α
@@ -4269,6 +4260,17 @@ class GroupingDialog(QDialog):
             return True
         return self._current_default_name() != self._stored_default_name()
 
+    def _show_per_run_alpha(self, alpha: float) -> None:
+        """Show the alpha delivered by a complete current preview."""
+        if (
+            self._editing_target() == "profile"
+            and self._draft.alpha_policy.mode == "per_run_estimate"
+            and not self._vector_axis_pairs
+        ):
+            with QSignalBlocker(self._alpha_spin):
+                self._alpha_spin.setValue(alpha)
+            self._refresh_alpha_provenance_label()
+
     def _update_apply_enabled(self) -> None:
         """Apply requires pending changes and a complete preview."""
         followers = self._scope_panel.runs_following(self._draft_name)
@@ -4283,9 +4285,7 @@ class GroupingDialog(QDialog):
         else:
             self._apply_btn.setText("Apply")
         if not self._preview_pane.corrections_complete:
-            self._apply_btn.setToolTip(
-                "Corrections incomplete: resolve the preview error before applying."
-            )
+            self._apply_btn.setToolTip("Wait for a complete current preview before applying.")
             return
         if not enabled:
             self._apply_btn.setToolTip(
@@ -5240,6 +5240,8 @@ class GroupingDialog(QDialog):
         self, slot: str, target_spin: QDoubleSpinBox, policy: AlphaPolicy
     ) -> None:
         """Write a calibrated :class:`AlphaPolicy` back into the form + provenance."""
+        if slot == "single" and self._editing_target() == "profile":
+            self._draft.alpha_policy = policy
         # Record provenance the same shape the old inline estimate produced, so
         # _current_grouping_payload emits alpha_method/alpha_error/alpha_reference_run.
         self._alpha_estimate_state[slot] = (
@@ -5268,11 +5270,7 @@ class GroupingDialog(QDialog):
         self._alpha_correction_digest = self._correction_digest()
         self._refresh_alpha_staleness()
         self._record_calibration_result_label(slot, policy)
-        # Auto-focus the α compare on a fresh calibration (single mode only — the
-        # α compare is unavailable in vector mode, where the per-projection table
-        # owns α), preserving the old auto-overlay; the chips/pager can dismiss
-        # it. The α card is expanded too so the result + provenance rows the
-        # calibration just wrote are actually on screen.
+        # The scalar compare and expanded card expose the newly measured result.
         if not bool(self._vector_axis_pairs):
             self._set_compare_stage("alpha")
         if hasattr(self, "_alpha_card"):
@@ -5294,6 +5292,8 @@ class GroupingDialog(QDialog):
         """A hand-edit of the single alpha spin drops calibration provenance."""
         if getattr(self, "_suppress_alpha_provenance_reset", False):
             return
+        if not self._suppress_dirty and self._editing_target() == "profile":
+            self._draft.alpha_policy = AlphaPolicy(value=float(self._alpha_spin.value()))
         self._alpha_estimate_state.pop("single", None)
         self._alpha_estimate_state.pop("P_z", None)
         self._alpha_correction_digest = None
@@ -5484,8 +5484,15 @@ class GroupingDialog(QDialog):
         self._sync_pipeline_strip()
 
     def _refresh_alpha_provenance_label(self) -> None:
-        """Reflect the single alpha's provenance ("calibrated …" or "manual")."""
+        """Reflect the selected alpha policy and its recorded provenance."""
         if not hasattr(self, "_alpha_provenance_label"):
+            return
+        if (
+            self._editing_target() == "profile"
+            and self._draft.alpha_policy.mode == "per_run_estimate"
+            and not self._vector_axis_pairs
+        ):
+            self._alpha_provenance_label.setText("per-run integral ratio · see preview")
             return
         recorded = self._alpha_estimate_state.get("single") or self._alpha_estimate_state.get("P_z")
         value = float(self._alpha_spin.value())
@@ -5761,16 +5768,10 @@ class GroupingDialog(QDialog):
         return {"good_window_policy": self._current_good_window_policy().to_dict()}
 
     def _beta_payload(self) -> dict[str, Any]:
-        """β plus calibration provenance for the grouping payload.
-
-        Scalar-only: emitted only when β is active (≠ 1) outside vector mode, so a
-        default payload stays byte-identical to a pre-β one. The provenance keys
-        (``beta_method``/``beta_error``/``beta_reference_run``/``beta_correction_digest``)
-        ride along only while the β spin still holds the estimated value — a
-        manual edit drops them — and M2's ``_beta_policy_from_payload`` lifts them
-        into a calibrated :class:`BetaPolicy` on profile save.
-        """
-        if self._vector_axis_pairs or not self._beta_section.is_active():
+        """Dimensionless scalar β retains calibrated provenance even at unity."""
+        if self._vector_axis_pairs or (
+            not self._beta_section.is_active() and not self._beta_is_calibrated()
+        ):
             return {}
         value = float(self._beta_section.value())
         payload: dict[str, Any] = {"beta": value}
@@ -5864,15 +5865,11 @@ class GroupingDialog(QDialog):
         return {"excluded_detectors": [int(v) for v in ids]}
 
     def _profile_broadcast_payload(self) -> dict[str, Any]:
-        """Return the flat profile payload broadcast to inheriting runs.
+        """Return profile settings for inheriting runs.
 
-        When the current editing target *is* the profile, the live form is the
-        profile edit, so the live ``_current_grouping_payload`` is returned
-        directly (preserving the historical form-driven keys — alpha provenance,
-        deadtime table, binning knobs). When an overridden run is the selected
-        target the form is showing that override instead, so the payload is built
-        from the profile draft (``self._draft``) resolved against a representative
-        inheriting run, never from the form.
+        An override form cannot supply the profile's settings: resolve the draft
+        against a following run instead. The good-window policy travels with its
+        absolute preview coordinates so each follower resolves its own bounds.
         """
         if self._editing_target() == "profile":
             return self._current_grouping_payload()

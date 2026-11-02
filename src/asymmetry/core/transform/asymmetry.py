@@ -26,6 +26,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.optimize import minimize_scalar
 
+from asymmetry.core.transform.corrections import CorrectionUnavailableError
 from asymmetry.core.transform.fb_counts import (
     BinWindow,
     GroupCounts,
@@ -221,12 +222,17 @@ def estimate_alpha(
     Returns
     -------
     float
-        Estimated alpha value. Returns ``1.0`` when the backward integral is
-        not positive or when no valid bins are available.
+        Finite positive estimated alpha value.
+
+    Raises
+    ------
+    CorrectionUnavailableError
+        No bins are available, either integral is nonpositive, or their ratio
+        is not finite and positive. A failed estimate has no default coefficient.
     """
     f, b = validated_count_arrays(forward, backward)
     if f.size == 0:
-        return 1.0
+        raise CorrectionUnavailableError("Automatic alpha requires a nonempty good-bin window.")
     window = good_window(
         {
             key: value
@@ -237,9 +243,12 @@ def estimate_alpha(
     )
     fs = float(np.sum(f[window.slice]))
     bs = float(np.sum(b[window.slice]))
-    if bs <= 0.0:
-        return 1.0
-    return fs / bs
+    if not np.isfinite(fs) or not np.isfinite(bs) or fs <= 0.0 or bs <= 0.0:
+        raise CorrectionUnavailableError("Automatic alpha requires finite positive F/B integrals.")
+    alpha = fs / bs
+    if not np.isfinite(alpha) or alpha <= 0.0:
+        raise CorrectionUnavailableError("Automatic alpha requires a finite positive F/B ratio.")
+    return alpha
 
 
 ALPHA_ESTIMATION_METHODS = ("diamagnetic", "general", "ratio")

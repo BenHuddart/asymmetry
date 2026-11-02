@@ -29,6 +29,7 @@ from asymmetry.core.instrument import (
     instrument_display_name,
 )
 from asymmetry.core.project.profiles import (
+    AlphaPolicy,
     GroupingProfile,
     ProfileFingerprint,
     profile_from_payload,
@@ -107,6 +108,7 @@ def profile_from_form_payload(
     name: str,
     fingerprint: ProfileFingerprint,
     active: bool = True,
+    alpha_policy: AlphaPolicy | None = None,
 ) -> GroupingProfile:
     """Lift the shareable settings out of a form-built *payload* into a profile.
 
@@ -114,8 +116,13 @@ def profile_from_form_payload(
     form's ``_current_grouping_payload`` output is turned back into the draft
     profile on every edit and at apply time. Per-run/file-derived keys in the
     payload are ignored (they come back from the run at resolve time).
+    An explicit ``alpha_policy`` preserves the editor's selected policy; a
+    numeric preview value alone cannot distinguish fixed and automatic alpha.
     """
-    return profile_from_payload(payload, name, fingerprint, active=active)
+    profile = profile_from_payload(payload, name, fingerprint, active=active)
+    if alpha_policy is not None:
+        profile.alpha_policy = alpha_policy
+    return profile
 
 
 def preset_payload(instrument: InstrumentLayout, preset_name: str) -> dict[str, Any] | None:

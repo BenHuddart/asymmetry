@@ -27,6 +27,12 @@ modes that cannot apply to the data type are greyed out. The correction is
 applied to the grouped forward/backward counts before the asymmetry ratio,
 with the subtraction's shared uncertainty propagated through the merged counts.
 
+Regrouping reevaluates an enabled range, tail-fit or reference-run operation on
+the current counts and effective window. It retains the configured method,
+options and declared reference run. Fixed background levels stay fixed, and an
+off correction stays off. Per-run alpha uses these same corrected counts;
+fixed and one-shot calibrated alpha values remain stored choices.
+
 Correction outcomes
 -------------------
 
