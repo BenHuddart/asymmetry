@@ -82,8 +82,8 @@ def _detector_group_ids(grouping: dict, n_detectors: int) -> np.ndarray:
             next_id += 1
 
     for gid, mapped in id_map.items():
-        for det in resolve_group_indices(groups, gid):
-            if 0 <= det < n_detectors and ids[det] == 0:
+        for det in resolve_group_indices(groups, gid, n_histograms=n_detectors):
+            if ids[det] == 0:
                 ids[det] = mapped
     return ids
 
@@ -136,6 +136,7 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
 
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
     metadata = run.metadata if isinstance(run.metadata, dict) else {}
+    detector_groups = _detector_group_ids(grouping, n_det)
 
     bin_width = float(run.histograms[0].bin_width)
     if effective:
@@ -218,7 +219,7 @@ def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> No
         h_data.create_dataset("resolution", data=bin_width * 1e6).attrs["units"] = np.bytes_(
             "picoseconds"
         )
-        h_data.create_dataset("grouping", data=_detector_group_ids(grouping, n_det))
+        h_data.create_dataset("grouping", data=detector_groups)
         h_data.create_dataset("dead_time", data=dead_time).attrs["units"] = np.bytes_(
             "microseconds"
         )

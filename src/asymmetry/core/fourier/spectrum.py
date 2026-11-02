@@ -39,11 +39,11 @@ from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.background import resolve_background_mode
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
-    common_t0_for_groups,
     group_names,
+    group_reference_t0,
 )
 from asymmetry.core.transform.rebin import binning_spec
-from asymmetry.core.transform.t0 import detector_t0_overrides, effective_detector_t0_bins
+from asymmetry.core.transform.t0 import detector_t0_overrides
 from asymmetry.core.utils.coerce import optional_float
 
 #: Minimum applied field (Gauss) for a diamagnetic fit to be attempted.
@@ -647,13 +647,14 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
 
 
 def precompute_group_fourier_inputs(
-    run: Run,
+    run: Run | None,
 ) -> tuple[list[Histogram] | None, int | None]:
     """Prepare deadtime-corrected histograms and a shared reference t0 once.
 
-    Mirrors the GUI's per-run precompute so every group FFT shares the same
-    inputs.
+    Core and GUI callers share this preparation for every group FFT.
     """
+    if run is None:
+        return None, None
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
     groups = grouping.get("groups") if isinstance(grouping, dict) else None
     histograms = list(run.histograms)
@@ -663,28 +664,7 @@ def precompute_group_fourier_inputs(
     apply_deadtime = bool(grouping.get("deadtime_correction", False))
     prepared_histograms, _ = prepare_histograms_with_deadtime(histograms, grouping, apply_deadtime)
 
-    all_group_indices: list[list[int]] = []
-    for values in groups.values():
-        if not isinstance(values, list):
-            continue
-        normalized: list[int] = []
-        for value in values:
-            detector = value[0] if isinstance(value, (list, tuple)) and value else value
-            try:
-                normalized.append(max(0, int(detector) - 1))
-            except (TypeError, ValueError):
-                continue
-        if normalized:
-            all_group_indices.append(normalized)
-
-    reference_t0_bin = 0
-    if all_group_indices:
-        reference_t0_bin = common_t0_for_groups(
-            prepared_histograms,
-            *all_group_indices,
-            detector_t0_bins=effective_detector_t0_bins(prepared_histograms, grouping),
-        )
-    return prepared_histograms, int(reference_t0_bin)
+    return prepared_histograms, group_reference_t0(prepared_histograms, grouping)
 
 
 def reference_field_gauss(run: Run, dataset: MuonDataset | None) -> float | None:

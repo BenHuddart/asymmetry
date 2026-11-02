@@ -57,6 +57,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
 from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox
+from asymmetry.gui.windows.grouping.channel_entries import shift_channel_entries
 from asymmetry.gui.windows.grouping.format import (
     ALPHA_METHOD_ITEMS,
     format_value_with_uncertainty,
@@ -132,11 +133,6 @@ def build_corrected(
     backward_gid = int(grouping.get("backward_group", 2))
     forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n)
     backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n)
-    if not forward_idx or not backward_idx:
-        raise ValueError(
-            "Forward/backward groups do not reference any detectors present in this run "
-            "(after detector exclusion)."
-        )
     flags = correction_flags_from_grouping(grouping)
     resolver = None if resolved_reference is None else (lambda _g: resolved_reference)
     return corrected_grouped_counts(
@@ -298,7 +294,7 @@ def grouping_for_reduction(
     grouping: dict[str, Any] = {}
     if correction_provider is not None:
         grouping = dict(correction_provider(dataset))
-    grouping["groups"] = {int(gid): [int(i) + 1 for i in idxs] for gid, idxs in groups.items()}
+    grouping["groups"] = {int(gid): shift_channel_entries(idxs, 1) for gid, idxs in groups.items()}
     grouping["forward_group"] = int(forward_gid)
     grouping["backward_group"] = int(backward_gid)
     grouping["excluded_detectors"] = list(excluded_detectors)

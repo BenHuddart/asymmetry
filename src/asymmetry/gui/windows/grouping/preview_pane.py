@@ -8,7 +8,7 @@ outputs. One result supplies both views; incomplete corrections remain labelled.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from html import escape
 from typing import Any, NamedTuple
@@ -178,6 +178,7 @@ class PreviewFacts:
     #: In vector mode, the primary projection previewed (e.g. ``"P_z"``); the
     #: other projections are not reduced here. ``None`` outside vector mode.
     vector_pair: str | None = None
+    member_counts: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -1027,9 +1028,6 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     backward_gid = _as_int(grouping.get("backward_group"), 2)
     forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
     backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
-    if not forward_idx or not backward_idx:
-        raise ValueError("forward/backward groups have no detectors in this run")
-
     if worker.is_cancelled():
         raise TaskCancelledError
     # Correct once, form the asymmetry per α. corrected_grouped_counts runs the
@@ -1104,7 +1102,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     time, asymmetry, error = _decimate_for_preview(time, asymmetry, error, _MAX_PREVIEW_POINTS)
     return _PreviewResult(
         generation=request.generation,
-        facts=request.facts,
+        facts=replace(request.facts, member_counts=(len(forward_idx), len(backward_idx))),
         time=time,
         asymmetry=asymmetry,
         error=error,
@@ -1235,17 +1233,14 @@ def _weighted_centre(asymmetry: np.ndarray, error: np.ndarray) -> tuple[float, f
 
 
 def _status_html(facts: PreviewFacts, time: np.ndarray) -> str:
-    """The status strip (D1): which run, pair, binning and window this preview is.
-
-    Rich text: an uppercase ``PREVIEW`` marker, the run in bold, then the facts
-    that decide the curve, muted. The time range is read back off the drawn
-    curve rather than from the form, so it states the window actually reduced.
-    """
+    """Name the reduced pair, effective channel counts, and actual time window."""
     details = [
         f"F = {facts.forward_name}",
         f"B = {facts.backward_name}",
         f"bin {facts.bunch}",
     ]
+    if facts.member_counts is not None:
+        details.append(f"{facts.member_counts[0]}/{facts.member_counts[1]} channels")
     if time.size:
         details.append(f"{float(time[0]):.1f} – {float(time[-1]):.1f} µs")
     details.extend(facts.corrections)

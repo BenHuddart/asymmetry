@@ -541,7 +541,7 @@ def test_profile_with_empty_groups_surfaces_muted_error(qapp: QApplication) -> N
         )
         pane.flush()
         _wait_until(lambda: pane._status.text().startswith("Preview unavailable"))
-        assert "no detectors" in pane._status.text()
+        assert "needs at least one detector" in pane._status.text()
     finally:
         pane.shutdown()
 

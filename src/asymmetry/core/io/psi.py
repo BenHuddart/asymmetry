@@ -34,6 +34,7 @@ from asymmetry.core.transform import (
     run_t0_time_us,
 )
 from asymmetry.core.transform.fb_counts import validated_count_arrays
+from asymmetry.core.transform.grouping import InvalidGroupingError, effective_group_indices
 from asymmetry.core.utils.perf import perf_timer
 
 _MAX_PSI_HISTOGRAMS = 32
@@ -1045,27 +1046,33 @@ class PsiLoader(BaseLoader):
             groups, group_names, forward_gid, backward_gid, preset_name, preset_projections = (
                 preset_override
             )
-        # A preset's group may name detectors absent from this run (e.g. the
-        # backward ring of a forward-only HAL .mdu); reduce over the present
-        # ones, matching how the grouping-window Apply path drops absentees.
-        forward_idx = [det - 1 for det in groups[forward_gid] if 1 <= det <= n_hist]
-        backward_idx = [det - 1 for det in groups[backward_gid] if 1 <= det <= n_hist]
-        forward, backward, alignment = align_forward_backward(histograms, forward_idx, backward_idx)
-        common_t0, n = alignment.common_t0_bin, alignment.length
+        membership_error = None
+        try:
+            selection = {"groups": groups}
+            forward_idx = effective_group_indices(selection, forward_gid, n_histograms=n_hist)
+            backward_idx = effective_group_indices(selection, backward_gid, n_histograms=n_hist)
+        except InvalidGroupingError as exc:
+            membership_error = str(exc)
+            alignment = None
+            common_t0, n = max(t0_bins), 0
+            first_good, last_good = 0, n_bins - 1
+            asymmetry = error = np.array([], dtype=np.float64)
+        else:
+            forward, backward, alignment = align_forward_backward(
+                histograms, forward_idx, backward_idx
+            )
+            common_t0, n = alignment.common_t0_bin, alignment.length
+            asymmetry, error = compute_asymmetry(forward, backward, alpha=1.0)
+            asymmetry, error = asymmetry * 100.0, error * 100.0
+            first_good, last_good = good_window_for_groups(
+                sorted(set(forward_idx) | set(backward_idx)),
+                t0_bins,
+                first_good_bins,
+                last_good_bins,
+                common_t0_bin=int(common_t0),
+                n_bins=n,
+            )
         alpha = 1.0
-        asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
-        asymmetry = asymmetry * 100.0
-        error = error * 100.0
-
-        group_idx = sorted(set(forward_idx) | set(backward_idx)) or list(range(n_hist))
-        first_good, last_good = good_window_for_groups(
-            group_idx,
-            t0_bins,
-            first_good_bins,
-            last_good_bins,
-            common_t0_bin=int(common_t0),
-            n_bins=n,
-        )
 
         # Bin centres from the run's exact t0 (D4). PSI headers carry an integer
         # t0 only, so the residual is 0.0 and this is the integer-bin axis; the
@@ -1083,7 +1090,6 @@ class PsiLoader(BaseLoader):
 
         metadata = {
             "run_number": raw.run_number,
-            "grouped_alignment": asdict(alignment),
             "title": raw.title,
             "sample": raw.sample,
             "temperature": raw.temperature,
@@ -1110,6 +1116,10 @@ class PsiLoader(BaseLoader):
             "histogram_labels": list(raw.histogram_labels),
             "source_file": raw.source_file,
         }
+        if membership_error is not None:
+            metadata["correction_error"] = membership_error
+        else:
+            metadata["grouped_alignment"] = asdict(alignment)
         if raw.temperature_logs is not None:
             metadata["nexus_time_series"] = raw.temperature_logs.time_series
             metadata["psi_temperature_log"] = {
@@ -1246,26 +1256,10 @@ class PsiLoader(BaseLoader):
         grouping payload from it. Detector IDs are 1-based (matching the loader's
         ``groups``), where detector *N* maps to histogram index ``N - 1``.
 
-        The preset's group definitions are kept intact — including detector IDs
-        the run does not carry — so the applied grouping is byte-for-byte what
-        the Grouping window's manual *Apply* produces, and reduction drops the
-        absent detectors at reduction time (mirroring
-        ``MainWindow._describe_grouping_dropped_detectors``). A HAL ``.mdu``
-        shipping only the forward ring (``MV, F1…F8``) therefore still adopts
-        Per-octant, each octant degrading to its present forward wedge.
-
-        The concrete grouping comes from
-        :func:`~asymmetry.core.instrument.preset_grouping_for_run`, which validates
-        the layout against this run's histogram count and labels first: a layout
-        that describes a different detector arrangement would map the preset's
-        positional detector ids onto the wrong histograms, which is silently wrong
-        rather than detectably broken.
-
-        Returns ``None`` — leaving the loader's label-based grouping untouched —
-        when detection is inconclusive, the instrument does not opt in, or an
-        *analysis* slot (the forward or backward group) has no detector present
-        in this run, since then no asymmetry can be formed (e.g. a preset whose
-        backward group is an entirely absent ring).
+        Authored membership stays intact. Missing required channels make the
+        reduction unavailable while retaining the raw histograms for editing.
+        Returns ``None`` when detection is inconclusive or the instrument does
+        not opt into a default preset. Layout/label mismatches raise explicitly.
 
         Raises
         ------
@@ -1297,12 +1291,6 @@ class PsiLoader(BaseLoader):
 
         forward_gid = int(preset.forward_group)
         backward_gid = int(preset.backward_group)
-
-        def _has_present_detector(gid: int) -> bool:
-            return any(1 <= det <= n_hist for det in groups.get(gid, ()))
-
-        if not _has_present_detector(forward_gid) or not _has_present_detector(backward_gid):
-            return None
 
         projections = [dict(p.to_payload()) for p in preset.projections]
         return (

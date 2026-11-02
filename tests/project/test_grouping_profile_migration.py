@@ -227,13 +227,13 @@ def test_missing_histogram_count_keeps_overrides():
     assert "grouping_overrides" in migrated["datasets"][0]
 
 
-def test_histogram_count_inferred_from_groups_when_no_detector_list():
+def test_authored_groups_do_not_establish_acquired_histogram_count():
     overrides = _overrides(groups={1: [1, 2], 2: [3, 4]})
-    overrides.pop("detector_t0_bins")  # force the group-based fallback
+    overrides.pop("detector_t0_bins")
     state = _v11_state([{"run_number": 1, "source_file": "a.nxs", "grouping_overrides": overrides}])
     migrated = migrate_to_current(copy.deepcopy(state))
-    assert len(migrated["grouping_profiles"]) == 1
-    assert migrated["grouping_profiles"][0]["fingerprint"]["histogram_count"] == 4
+    assert migrated["grouping_profiles"] == []
+    assert migrated["datasets"][0]["grouping_overrides"] == overrides
 
 
 def test_dataset_without_grouping_overrides_is_untouched():

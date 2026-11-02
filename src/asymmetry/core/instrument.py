@@ -1999,13 +1999,8 @@ def preset_grouping_for_run(
        absorbed by :func:`_detector_label_key`, so a surviving disagreement means
        the ids address different counters.
 
-    Both checks are deliberately narrow, because a run legitimately *smaller* than
-    its layout is an ordinary partial file, not a mismatch: a HAL ``.mdu`` shipping
-    only the forward ring keeps the full 17-detector layout and lets reduction drop
-    the absent ring.  So check 1 fires only when a sibling fits exactly (never when
-    no registered variant matches the count), and check 2 only when the run has at
-    least as many labels as the layout has detectors — the case where positional
-    alignment is actually being asserted end to end.
+    Membership is authored here. Reduction rejects absent required channels;
+    a partial file cannot trim a preset or replace it implicitly.
 
     Parameters
     ----------
@@ -2025,11 +2020,7 @@ def preset_grouping_for_run(
     -------
     dict
         ``{group_id: [detector_ids]}`` with 1-based detector ids, sorted, empty
-        groups dropped.  Ids the run does not carry are **kept**, matching what
-        the grouping window's manual *Apply* produces: reduction drops absent
-        detectors at reduction time, so a partial file (e.g. a HAL ``.mdu``
-        shipping only the forward ring) still adopts the full preset with each
-        group degrading to its present members.
+        groups dropped. Required channels stay authored; reduction checks availability.
 
     Raises
     ------

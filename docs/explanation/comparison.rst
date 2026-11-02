@@ -45,6 +45,30 @@ The reference programs
      - Modern Python stack; Fit Wizard (AICc-ranked); composite-model
        expression syntax; interactive parameter trending
 
+Detector membership and exclusions
+----------------------------------
+
+Asymmetry groups unique acquired-channel ordinals and applies exclusions without
+rewriting raw histograms. Missing preset channels and empty effective groups
+make reduction unavailable. Typed overlapping ranges form a set union;
+structured duplicate membership is rejected. These ordinal IDs do not certify
+physical detector identity across reordered files.
+
+Mantid's `MuonGroupingCounts documentation
+<https://docs.mantidproject.org/v6.16.1/algorithms/MuonGroupingCounts-v1.html>`_
+specifies detector-ID selection. The `musrfit manual's RUN grouping
+<https://lmu.pages.psi.ch/musrfit-docu/user-manual.html#msr-forward-backward>`_
+selects histogram numbers. Native Mantid 6.16.1 and musrfit 1.12.1
+(``708f777b``, ROOT 6.40.04) agree with ordinary count addition on the synthetic
+inputs and tolerances in :doc:`/reference/detector_grouping`. Both reject the
+tested missing member and count a repeated member twice. Asymmetry's unique
+membership rule deliberately rejects that repetition. The tests do not establish
+pair independence or equivalence of geometry, timing, or calibration methods.
+
+WiMDA's **Group Table Edit** exposes numbered histogram channels; see the
+`WiMDA manual <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_.
+This is a manual/source comparison, without executed WiMDA numerical evidence.
+
 Signed deadtime coefficients
 ----------------------------
 

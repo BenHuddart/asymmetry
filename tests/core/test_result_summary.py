@@ -390,7 +390,7 @@ def test_forward_backward_card_uses_the_sparse_bank_in_its_quality_policy():
             Histogram(np.round(100 * np.exp(-time / MUON_LIFETIME_US)), 0.1, 0),
             Histogram(np.zeros(20), 0.1, 0),
         ],
-        grouping={"groups": {1: [0], 2: [1]}, "first_good_bin": 0, "last_good_bin": 19},
+        grouping={"groups": {1: [1], 2: [2]}, "first_good_bin": 0, "last_good_bin": 19},
     )
     dataset = MuonDataset(time, np.zeros(20), np.ones(20), run=run)
     parameters = _fb_seed_params(n0=10.0)

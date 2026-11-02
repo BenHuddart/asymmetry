@@ -395,16 +395,12 @@ def test_resolve_background_reference_run_carries_payload():
     assert resolved["background_run"] == ref_payload
 
 
-def test_resolve_out_of_range_detector_ids_do_not_crash_and_are_dropped_at_reduction():
-
+def test_resolve_out_of_range_detector_ids_reports_preset_mismatch():
     run = _run(n_hist=4, grouping=_per_run_facts())
-    # Group 2 references detector 9, which this 4-detector run does not have.
     profile = _base_profile(groups={1: [1, 2], 2: [3, 4, 9]})
-    resolved = resolve_effective_grouping(profile, run)
-    # Resolution keeps the id verbatim; the reduction chokepoint drops it.
-    assert resolved["groups"][2] == [3, 4, 9]
-    grouped = group_forward_backward(run.histograms, resolved)
-    assert len(grouped.backward) > 0  # detector 9 dropped, 3 and 4 still summed
+    with pytest.raises(ValueError, match="9 do not exist"):
+        resolve_effective_grouping(profile, run)
+    assert profile.groups[2] == [3, 4, 9]
 
 
 @pytest.mark.parametrize("binning", [BinningSpec("variable", 1, 0.05, 0.5), BinningSpec(factor=4)])

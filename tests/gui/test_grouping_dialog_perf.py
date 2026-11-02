@@ -105,7 +105,7 @@ def _dataset_with_eight_groups(run_number: int = 4002) -> MuonDataset:
         histograms=histograms,
         metadata={"run_number": run_number, "title": "Eight Group Perf Test"},
         grouping={
-            "groups": {i: [i - 1] for i in range(1, 9)},
+            "groups": {i: [i] for i in range(1, 9)},
             "forward_group": 1,
             "backward_group": 2,
             "alpha": 1.0,
@@ -252,7 +252,7 @@ def _dataset_with_prompt_peak(run_number: int = 4003, n_det: int = 4) -> MuonDat
         histograms=histograms,
         metadata={"run_number": run_number, "instrument": "EMU", "title": "Prompt Peak Perf"},
         grouping={
-            "groups": {1: list(range(half)), 2: list(range(half, n_det))},
+            "groups": {1: list(range(1, half + 1)), 2: list(range(half + 1, n_det + 1))},
             "forward_group": 1,
             "backward_group": 2,
             "alpha": 1.0,
