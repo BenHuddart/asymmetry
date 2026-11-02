@@ -75,6 +75,10 @@ class GroupingWindowProfileEditorScenario(Scenario):
         _pump_until(lambda: dialog._preview_pane.corrections_complete)
         if not dialog._preview_pane.corrections_complete:
             raise RuntimeError("Automatic alpha preview did not complete")
+        if dialog._alpha_spin.value() != round(
+            dialog._preview_pane._last_result.alpha, dialog._alpha_spin.decimals()
+        ):
+            raise RuntimeError("Alpha control must display the completed preview coefficient")
 
         pix = dialog.grab()
         out_path = ctx.output_dir / f"{self.name}.png"

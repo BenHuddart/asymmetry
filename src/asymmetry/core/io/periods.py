@@ -72,6 +72,7 @@ __all__ = [
     "period_count",
     "period_labels",
     "resolve_period_index",
+    "selected_period_index",
     "select_period",
     "select_period_histograms",
     "select_period_grouping",
@@ -302,6 +303,15 @@ def period_run(combined: Run, index: int) -> Run:
 
 
 # --- low-level helpers shared with the GUI reduction path ---------------------
+
+
+def selected_period_index(grouping: dict, mode: str | None = None) -> int | None:
+    """Index for a single held Red/Green selection; combined modes return None."""
+    if "period_histograms" not in grouping:
+        return None
+    return {PeriodMode.RED: RED_INDEX, PeriodMode.GREEN: GREEN_INDEX}.get(
+        mode or grouping.get("period_mode", PeriodMode.RED)
+    )
 
 
 def select_period_grouping(grouping: dict, period_index: int) -> dict:

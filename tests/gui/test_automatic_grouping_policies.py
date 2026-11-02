@@ -1,15 +1,19 @@
 """Current automatic previews gate Apply and preserve the selected profile policy."""
 
 import threading
+from copy import deepcopy
+from dataclasses import replace
 
 import numpy as np
 import pytest
+from PySide6.QtCore import QSignalBlocker
 
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
     BetaPolicy,
     DeadtimePolicy,
+    T0Policy,
     profile_fingerprint_for_run,
     resolve_effective_grouping,
 )
@@ -21,10 +25,108 @@ from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.windows.grouping import preview_pane as preview_module
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 from tests.gui.test_grouping_dialog import _vector_dataset_with_ratio
-from tests.gui.test_grouping_preview_pane import _histogram_dataset, _wait_until
+from tests.gui.test_grouping_preview_pane import _facts, _histogram_dataset, _wait_until
 from tests.project.test_automatic_grouping_policies import automatic_profile, policy_run
 
 pytestmark = pytest.mark.gui
+
+
+@pytest.mark.parametrize("mode,expected", [("red", -4300 / 191), ("green", -4900 / 617)])
+def test_payload_preview_uses_selected_period_exposure_and_file_deadtime(qapp, mode, expected):
+    sample = _histogram_dataset(forward=np.full(6, 40.0), backward=np.full(6, 60.0))
+    green = _histogram_dataset(forward=np.full(6, 80.0), backward=np.full(6, 90.0))
+    sample.run.grouping.update(
+        period_histograms=[sample.run.histograms, green.run.histograms],
+        period_good_frames=[100, 200],
+        good_frames=300,
+        period_dead_time_us=[[0.001, 0.002], [0.003, 0.004]],
+        dead_time_us=[0.005, 0.006],
+        deadtime_mode="file",
+        deadtime_correction=True,
+        period_mode=mode,
+    )
+    pane = preview_module.GroupingPreviewPane()
+    window = MainWindow()
+    try:
+        pane.request_preview(
+            histograms=sample.run.histograms, grouping=sample.run.grouping, facts=_facts()
+        )
+        pane.flush()
+        _wait_until(lambda: pane.corrections_complete)
+        applied, outcomes = window._apply_grouping_settings_to_dataset(
+            sample, dict(sample.run.grouping)
+        )
+        assert applied
+        np.testing.assert_allclose(pane._last_result.asymmetry, sample.asymmetry)
+        np.testing.assert_allclose(sample.asymmetry, expected)
+        assert outcomes[mode].deadtime.effective["good_frames"] == (100 if mode == "red" else 200)
+        assert sample.run.grouping["good_frames"] == 300
+        assert sample.run.grouping["period_good_frames"] == [100, 200]
+        assert sample.run.grouping["dead_time_us"] == [0.005, 0.006]
+    finally:
+        pane.shutdown()
+
+
+def test_apply_enablement_does_not_write_alpha_form_state(qapp):
+    dialog, _ = automatic_dialog()
+    try:
+        pane = dialog._preview_pane
+        pane.flush()
+        _wait_until(lambda: pane.corrections_complete)
+        with QSignalBlocker(dialog._alpha_spin):
+            dialog._alpha_spin.setValue(1.7)
+        dialog._alpha_provenance_label.setText("unchanged")
+        dialog._update_apply_enabled()
+        assert dialog._alpha_spin.value() == 1.7
+        assert dialog._alpha_provenance_label.text() == "unchanged"
+        dialog._group_table.item(0, 3).setText("1,2")
+        pane.flush()
+        _wait_until(lambda: pane.corrections_complete)
+        assert dialog._alpha_spin.value() == pytest.approx(0.8)
+    finally:
+        dialog._clear_dirty()
+        dialog.close()
+
+
+@pytest.mark.parametrize("mode", ["auto_detect", "from_file"])
+def test_failed_t0_policy_save_reopen_and_file_timing_recovery(qapp, monkeypatch, tmp_path, mode):
+    dataset = _histogram_dataset(forward=np.zeros(6), backward=np.zeros(6))
+    source = tmp_path / "timing.nxs"
+    source.touch()
+    dataset.run.source_file = str(source)
+    original = deepcopy(dataset)
+    profile = automatic_profile()
+    profile.groups = {1: [1], 2: [2]}
+    profile.fingerprint = profile_fingerprint_for_run(dataset.run)
+    profile.alpha_policy = AlphaPolicy(value=1.7)
+    profile.t0_policy = T0Policy(mode=mode)
+    window = MainWindow()
+    window._grouping_profiles = [profile]
+    monkeypatch.setattr(
+        type(window),
+        "_load_paths_with_progress",
+        lambda self, paths: {str(source): deepcopy(original)},
+    )
+    monkeypatch.setattr(type(window), "_load_file", lambda self, path: deepcopy(original))
+    window._load_files([str(source)])
+    project = tmp_path / "timing.asymp"
+    save_project(window.collect_project_state(), project)
+    window.restore_project_state(load_project(project), str(project))
+    restored = window._data_browser.get_dataset(dataset.run_number)
+    if mode == "auto_detect":
+        assert "Automatic t0 unavailable" in restored.metadata["correction_error"]
+        assert window._get_fit_dataset(restored) is None
+    else:
+        assert "correction_error" not in restored.metadata
+    assert window._grouping_profiles[0].t0_policy.mode == mode
+    repaired = replace(profile, t0_policy=T0Policy(mode="from_file"))
+    effective = resolve_effective_grouping(repaired, restored.run)
+    assert window._apply_grouping_settings_to_dataset(restored, effective)[0]
+    assert "correction_error" not in restored.metadata
+    assert restored.run.grouping["alpha"] == 1.7
+    for hist, acquired in zip(restored.run.histograms, original.run.histograms):
+        assert hist.t0_bin == acquired.t0_bin
+        np.testing.assert_array_equal(hist.counts, acquired.counts)
 
 
 @pytest.mark.parametrize("calibrated", [False, True])
@@ -154,11 +256,12 @@ def test_green_preview_and_applied_reduction_use_current_exposure_and_coefficien
             reference_resolver=window._resolve_background_reference,
         )
         np.testing.assert_allclose(effective["alpha"], pane._last_result.alpha)
-        applied, _ = window._apply_grouping_settings_to_dataset(sample, effective)
+        applied, outcomes = window._apply_grouping_settings_to_dataset(sample, effective)
         assert applied
         np.testing.assert_allclose(sample.asymmetry, pane._last_result.asymmetry, atol=1e-12)
         np.testing.assert_allclose(sample.asymmetry, 0, atol=1e-12)
-        assert sample.run.grouping["good_frames"] == 200
+        assert sample.run.grouping["good_frames"] == 100
+        assert outcomes["green"].background.effective["reference"]["good_frames_sample"] == 200
         if manual_deadtime:
             assert sample.run.grouping["dead_time_us"] == [0.01, 0.02]
     finally:

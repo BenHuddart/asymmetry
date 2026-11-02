@@ -279,15 +279,10 @@ class _PreviewResult:
 
 
 class GroupingPreviewPane(QWidget):
-    """Embedded canvas + status strip showing the draft's F/B asymmetry.
-
-    The owning dialog calls :meth:`request_preview` (from any of its refresh
-    seams) with the resolved effective grouping and the preview run; the pane
-    debounces, reduces off-thread, and redraws. Reduction failures show a muted
-    message in the status strip — never a popup or a crash.
-    """
+    """Debounce F/B preview reductions on workers and show explicit failures."""
 
     preview_changed = Signal()
+    preview_completed = Signal(float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Build the canvas, status strip, and debounce/worker plumbing."""
@@ -542,6 +537,8 @@ class GroupingPreviewPane(QWidget):
         ]
         self._incomplete_banner.setText("Incomplete preview — not applied: " + ", ".join(missing))
         self._incomplete_banner.setVisible(bool(missing))
+        if result.corrections.complete:
+            self.preview_completed.emit(result.alpha)
         self.preview_changed.emit()
         self._draw(result)
 
@@ -1014,13 +1011,13 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     else:
         grouping = request.grouping or {}
 
-    histograms = request.histograms
-    mode = grouping.get("period_mode", "red")
-    if "period_histograms" in grouping and mode in {"red", "green"}:
-        from asymmetry.core.io.periods import select_period_histograms
+    from asymmetry.core.io.periods import select_period_histograms, selected_period_index
 
-        histograms, _ = select_period_histograms(histograms, grouping, int(mode == "green"))
-    n_hist = len(request.histograms)
+    histograms = request.histograms
+    period_index = selected_period_index(grouping)
+    if period_index is not None:
+        histograms, grouping = select_period_histograms(histograms, grouping, period_index)
+    n_hist = len(histograms)
     forward_gid = _as_int(grouping.get("forward_group"), 1)
     backward_gid = _as_int(grouping.get("backward_group"), 2)
     forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)

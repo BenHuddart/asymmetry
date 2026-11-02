@@ -15,6 +15,8 @@ from asymmetry.core.project.profiles import (
     GroupingProfile,
     ProfileFingerprint,
     T0Policy,
+    effective_grouping_for_loaded_run,
+    profile_fingerprint_for_run,
     resolve_effective_grouping,
 )
 from asymmetry.core.transform.asymmetry import estimate_alpha
@@ -39,6 +41,27 @@ def automatic_profile():
         groups={1: [1], 2: [3]},
         alpha_policy=AlphaPolicy(mode="per_run_estimate"),
     )
+
+
+def test_loaded_run_api_resolves_the_declared_background_reference():
+    run = policy_run()
+    profile = replace(
+        automatic_profile(),
+        fingerprint=profile_fingerprint_for_run(run),
+        background_policy=BackgroundPolicy(
+            mode="reference_run", details={"background_run": {"run_number": 999}}
+        ),
+    )
+    reference = BackgroundReference(policy_run((1, 3, 5)).histograms, scale=2, run_number=999)
+    seen = []
+
+    def resolver(grouping):
+        seen.append(grouping["background_run"]["run_number"])
+        return reference
+
+    grouping = effective_grouping_for_loaded_run([profile], run, reference_resolver=resolver)
+    assert grouping["alpha"] == pytest.approx((10 - 2) / (50 - 10))
+    assert seen == [999]
 
 
 @pytest.mark.parametrize("levels", [(10, 30, 0), (0, 30, 50), (10, 30, -1)])

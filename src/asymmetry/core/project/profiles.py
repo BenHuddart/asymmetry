@@ -1206,12 +1206,9 @@ def resolve_effective_grouping(
 ) -> dict[str, Any]:
     """Merge *profile* with *run*'s file-derived facts into a grouping payload.
 
-    The returned dict has exactly the shape of today's ``run.grouping`` so it can
-    be assigned to ``run.grouping`` and reduced/fitted/exported unchanged. The
-    profile supplies the shareable settings; the run supplies the per-run facts
-    (t0, good-bin window, per-detector tables, good frames, period data), and any
-    policy that needs a computed value (per-run alpha estimate, file deadtime) is
-    evaluated against the run here.
+    The returned reduction payload combines shareable settings with this run's
+    timing, window, exposure, detector tables and selected period. Computed
+    policies use these effective inputs without modifying the acquired run.
 
     ``reference_resolver`` resolves the ``reference_run`` background mode's
     reference histograms + good-frame scale (the caller supplies one backed by a
@@ -1229,14 +1226,14 @@ def resolve_effective_grouping(
         deadtime_mode=profile.deadtime_policy.mode,
     ) as perf:
         run_grouping = run.grouping if isinstance(run.grouping, dict) else {}
-        period_mode = profile.period_mode or run_grouping.get("period_mode", "red")
-        if "period_histograms" in run_grouping and period_mode in {"red", "green"}:
-            from asymmetry.core.io.periods import select_period_histograms
+        from asymmetry.core.io.periods import select_period_histograms, selected_period_index
 
+        period_index = selected_period_index(run_grouping, profile.period_mode)
+        if period_index is not None:
             histograms, run_grouping = select_period_histograms(
                 run.histograms,
                 dict(run_grouping, deadtime_mode=profile.deadtime_policy.mode),
-                int(period_mode == "green"),
+                period_index,
             )
             run = replace(run, histograms=histograms, grouping=run_grouping)
         n_hist = len(run.histograms)
@@ -1893,20 +1890,19 @@ def assigned_profile_for_run(
     return default_profile_for_run(profiles, run)
 
 
-def effective_grouping_for_loaded_run(profiles: list[GroupingProfile], run: Run) -> dict[str, Any]:
-    """Grouping payload to attach to a freshly loaded run.
+def effective_grouping_for_loaded_run(
+    profiles: list[GroupingProfile],
+    run: Run,
+    *,
+    reference_resolver: ReferenceResolver | None = None,
+) -> dict[str, Any]:
+    """Resolve the default profile, or copy the loader grouping if none matches.
 
-    If a default profile matches the run's fingerprint, its resolved effective
-    grouping is returned; otherwise the run keeps the loader's own default
-    grouping payload (a shallow copy so the caller can mutate it safely).
-
-    The GUI calls this after loading a run so the run inherits its fingerprint's
-    default profile without the loader needing to know about profiles. No GUI
-    wiring lives here — this is the pure decision + resolution.
+    ``reference_resolver`` supplies background counts and exposure for automatic alpha.
     """
     profile = default_profile_for_run(profiles, run)
     if profile is not None:
-        return resolve_effective_grouping(profile, run)
+        return resolve_effective_grouping(profile, run, reference_resolver=reference_resolver)
     return dict(run.grouping) if isinstance(run.grouping, dict) else {}
 
 

@@ -64,7 +64,7 @@ from asymmetry.core.instrument import (
     variant_for_histograms,
 )
 from asymmetry.core.io import resolve_background_reference
-from asymmetry.core.io.periods import select_period_grouping
+from asymmetry.core.io.periods import select_period_grouping, selected_period_index
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
@@ -1346,6 +1346,7 @@ class GroupingDialog(QDialog):
         self._apply_btn.setDefault(False)
         self._apply_btn.clicked.connect(self._on_apply)
         self._preview_pane.preview_changed.connect(self._update_apply_enabled)
+        self._preview_pane.preview_completed.connect(self._show_per_run_alpha)
 
         bottom_bar = QHBoxLayout()
         bottom_bar.addStretch()
@@ -4163,8 +4164,7 @@ class GroupingDialog(QDialog):
             pane.show_unavailable()
             return
         try:
-            # Cheap (widget reads and dict lifting only) — resolution against the
-            # preview run happens on the pane's worker thread, not here.
+            # Snapshot form inputs; count-dependent resolution belongs on the worker.
             payload = self._current_grouping_payload()
             profile = profile_from_form_payload(
                 payload,
@@ -4180,9 +4180,9 @@ class GroupingDialog(QDialog):
                 payload.get("background_run"), dict
             ):
                 exposure = run.grouping
-                mode = payload.get("period_mode", "red")
-                if "period_histograms" in exposure and mode in {"red", "green"}:
-                    exposure = select_period_grouping(exposure, int(mode == "green"))
+                period_index = selected_period_index(exposure, payload.get("period_mode"))
+                if period_index is not None:
+                    exposure = select_period_grouping(exposure, period_index)
                 reference = resolve_background_reference(
                     payload["background_run"],
                     sample_good_frames=good_frames(exposure, default=0.0) or None,
@@ -4196,8 +4196,6 @@ class GroupingDialog(QDialog):
         metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(getattr(run, "metadata", {}) or {})
         facility = resolve_facility(metadata=metadata, grouping=getattr(run, "grouping", None))
-        # Keep the compare surfaces in step with the current draft, and drop the
-        # focus if the focused stage is no longer available.
         self._sync_compare_surfaces()
         # Compare view: the focused stage (if any) draws its before/after ghost over
         # the solid full-pipeline curve. The solid is never degraded, so the α
@@ -4262,18 +4260,19 @@ class GroupingDialog(QDialog):
             return True
         return self._current_default_name() != self._stored_default_name()
 
-    def _update_apply_enabled(self) -> None:
-        """Apply requires pending changes and a complete preview."""
+    def _show_per_run_alpha(self, alpha: float) -> None:
+        """Show the alpha delivered by a complete current preview."""
         if (
             self._editing_target() == "profile"
             and self._draft.alpha_policy.mode == "per_run_estimate"
             and not self._vector_axis_pairs
         ):
-            result = self._preview_pane._last_result
-            if result is not None and self._preview_pane.corrections_complete:
-                with QSignalBlocker(self._alpha_spin):
-                    self._alpha_spin.setValue(result.alpha)
+            with QSignalBlocker(self._alpha_spin):
+                self._alpha_spin.setValue(alpha)
             self._refresh_alpha_provenance_label()
+
+    def _update_apply_enabled(self) -> None:
+        """Apply requires pending changes and a complete preview."""
         followers = self._scope_panel.runs_following(self._draft_name)
         pending = self._pending_override_runs()
         enabled = (

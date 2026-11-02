@@ -162,6 +162,12 @@ configured mode, window and declared reference source.
 A calibrated beta of exactly one retains its provenance in the form and project.
 The selected period supplies its own exposure for reference-background scaling;
 manual or stored estimated deadtime tables remain unchanged during selection.
+Apply preserves the acquired histogram set's ``good_frames`` and file
+coefficients. Selected-period exposure and coefficients belong to the effective
+reduction and its correction outcomes; they do not replace acquisition metadata.
+Scripts using ``asymmetry.core.project.effective_grouping_for_loaded_run``
+can supply ``reference_resolver=...`` to resolve the default profile with its
+declared reference background, using the same resolution as an explicit profile.
 
 An automatic alpha estimate requires finite positive forward and backward
 integrals and a finite positive ratio. An undefined ratio is unavailable;

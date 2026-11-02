@@ -152,7 +152,6 @@ from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
     held_period_count,
-    select_period_histograms,
 )
 from asymmetry.core.maxent import (
     MaxEntCancelledError,
@@ -4058,8 +4057,7 @@ class MainWindow(QMainWindow):
                         except InvalidGroupingError as exc:
                             dataset.run.grouping = dict(dataset.run.grouping) | exc.grouping
                             dataset.metadata["correction_error"] = str(exc)
-                        if isinstance(dataset.metadata, dict):
-                            dataset.metadata.pop("grouping_overrides", None)
+                        dataset.metadata.pop("grouping_overrides", None)
                         self._assign_dataset_profile(dataset, inherited_profile.name)
                     elif auto_grouping_payload is not None:
                         auto_grouping_attempts += 1
@@ -5705,11 +5703,6 @@ class MainWindow(QMainWindow):
             grouping.pop("deadtime_method", None)
 
         run_alpha = alpha if alpha > 0 else 1.0
-        has_two_period_histograms = bool(
-            isinstance(reduction_grouping.get("period_histograms"), list)
-            and len(reduction_grouping.get("period_histograms", [])) == 2
-        )
-
         outcomes: dict[str, CorrectionOutcomes] = {}
         facility = resolve_facility(
             metadata=run.metadata, grouping=reduction_grouping
@@ -5732,18 +5725,6 @@ class MainWindow(QMainWindow):
         )
         time_axis, asymmetry, error = reduced.time, reduced.asymmetry, reduced.error
         outcomes = reduced.corrections
-        if has_two_period_histograms and period_mode in {
-            str(PeriodMode.RED),
-            str(PeriodMode.GREEN),
-        }:
-            _, selected_grouping = select_period_histograms(
-                run.histograms, reduction_grouping, int(period_mode == str(PeriodMode.GREEN))
-            )
-            if "good_frames" in selected_grouping:
-                grouping["good_frames"] = selected_grouping["good_frames"]
-            if "dead_time_us" in selected_grouping:
-                grouping["dead_time_us"] = selected_grouping["dead_time_us"]
-
         for key in ("background_method", "background_values", "background_details"):
             grouping.pop(key, None)
         grouping.update(background_grouping_metadata(outcomes))
