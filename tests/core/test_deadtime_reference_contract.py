@@ -1,5 +1,7 @@
 """Recorded synthetic Mantid 6.16.1 count references and the reduction gap."""
 
+from dataclasses import fields
+
 import numpy as np
 import pytest
 
@@ -8,7 +10,8 @@ from asymmetry.core.transform.deadtime import (
     apply_deadtime_correction,
     prepare_histograms_with_deadtime,
 )
-from asymmetry.core.transform.fb_counts import GroupCounts, linear_combination_variance
+from asymmetry.core.transform.grouping import apply_grouping_aligned
+from asymmetry.core.transform.rebin import rebin_counts
 
 
 @pytest.mark.parametrize(
@@ -36,24 +39,21 @@ def test_mantid_6_16_1_signed_count_reference(coefficient, expected):
         (0.5, 281.89795136545234),
     ],
 )
-def test_mantid_6_16_1_grouped_binned_reference(coefficient, expected_count):
+def test_mantid_6_16_1_grouped_binned_counts_reference(coefficient, expected_count):
     # Two independent spectra, 1 µs bins and 100 frames, grouped then rebinned
-    # into 2 µs bins. Mantid keeps the measured variance sum 100+25+36+9=170.
+    # into 2 µs bins. These recorded values check count preparation and grouping.
     raw = np.array([[100.0, 25.0, 100.0, 25.0], [36.0, 9.0, 36.0, 9.0]])
-    corrected = np.array(
-        [apply_deadtime_correction(row, coefficient, 1.0, num_good_frames=100.0) for row in raw]
+    prepared, _ = prepare_histograms_with_deadtime(
+        [Histogram(row, bin_width=1.0) for row in raw],
+        {"dead_time_us": [coefficient, coefficient], "good_frames": 100.0},
+        True,
+        mode="manual",
     )
-    grouped = GroupCounts(corrected.sum(axis=0), raw.sum(axis=0))
-    np.testing.assert_allclose(grouped.counts.reshape(2, 2).sum(axis=1), expected_count, rtol=1e-12)
-    sigma = np.sqrt(linear_combination_variance(grouped, [0, 2, 4]))
-    np.testing.assert_allclose(sigma, [13.038404810405298] * 2, rtol=1e-12)
+    grouped = apply_grouping_aligned(prepared, [0, 1])
+    _, corrected = rebin_counts(prepared[0].time_axis, grouped, 2)
+    np.testing.assert_allclose(corrected, expected_count, rtol=1e-12)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AttributeError,
-    reason="#390: deadtime preparation has no counting-variance representation",
-)
 def test_deadtime_preparation_preserves_measured_count_variance():
     histogram = Histogram(np.array([100.0]), bin_width=1.0)
     prepared, _ = prepare_histograms_with_deadtime(
@@ -63,5 +63,7 @@ def test_deadtime_preparation_preserves_measured_count_variance():
         mode="manual",
     )
     np.testing.assert_array_equal(prepared[0].counts, [125.0])
-    np.testing.assert_array_equal(prepared[0].count_variance, [100.0])
     np.testing.assert_array_equal(histogram.counts, [100.0])
+    if "count_variance" not in {field.name for field in fields(Histogram)}:
+        pytest.xfail("#390: Histogram has no count_variance field")
+    np.testing.assert_array_equal(prepared[0].count_variance, [100.0])

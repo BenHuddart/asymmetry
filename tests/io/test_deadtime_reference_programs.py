@@ -13,6 +13,11 @@ import subprocess
 import numpy as np
 import pytest
 
+from asymmetry.core.io import load
+from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
+from asymmetry.core.transform.grouping import apply_grouping_aligned
+from asymmetry.core.transform.rebin import rebin_counts
+
 pytestmark = [pytest.mark.io, pytest.mark.integration]
 h5py = pytest.importorskip("h5py")
 
@@ -121,7 +126,16 @@ range 0 9
     )
     assert result.returncode == 0, result.stdout + result.stderr
     exported = np.loadtxt(tmp_path / "reference_0.dat", comments="%", delimiter=",")
-    raw = np.array([100000.0]) if detectors == "1" else np.array([100000.0, 25000.0])
-    corrected = np.sum(raw / (1 - raw * coefficient / 10000.0))
-    np.testing.assert_allclose(exported[:, 1], corrected * packing, rtol=5e-6)
-    np.testing.assert_allclose(exported[:, 2], np.sqrt(corrected * packing), rtol=5e-6)
+    dataset = load(str(tmp_path / "synthetic.nxs"))
+    run = dataset.run
+    assert run is not None
+    prepared, _ = prepare_histograms_with_deadtime(
+        run.histograms, run.grouping, True, mode="manual"
+    )
+    indices = [int(detector) - 1 for detector in detectors.split()]
+    grouped = apply_grouping_aligned(prepared, indices)
+    # The reference fit selects raw bins 1..99; packing drops its incomplete tail.
+    time, corrected = rebin_counts(prepared[0].time_axis[1:99], grouped[1:99], packing)
+    np.testing.assert_allclose(exported[:, 0], time, rtol=5e-6)
+    np.testing.assert_allclose(exported[:, 1], corrected, rtol=5e-6)
+    np.testing.assert_allclose(exported[:, 2], np.sqrt(corrected), rtol=5e-6)

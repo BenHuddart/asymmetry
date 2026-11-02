@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- Describe deadtime count-error conventions in WiMDA, Mantid, and musrfit,
+- Describe deadtime count-error conventions in Mantid and musrfit,
   including fixed-calibration assumptions and limits of the comparisons.
 
 ### Fixed

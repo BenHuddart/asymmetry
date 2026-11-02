@@ -84,6 +84,16 @@ Set `ASYMMETRY_MUSRFIT_DATA` to musrfit example data to enable PSI file checks.
 Set `ASYMMETRY_MANTID_SOURCE` to a Mantid source checkout to enable the standalone
 MaxEnt pulse-response comparison. These checks skip when their inputs are absent.
 
+The synthetic deadtime comparison requires `musrfit` on `PATH`, version 1.12.1
+at revision `708f777b` (reference run: ROOT 6.40.04), with HDF5 NeXus support.
+It loads each generated file through Asymmetry and compares corrected grouped
+and binned counts against musrfit's exported values and error convention.
+Run it with `python tools/harness.py test -- tests/io/test_deadtime_reference_programs.py`;
+it is marked `integration`, so the standard tier excludes it. Cases skip when
+the executable or recorded version is absent. All files, including musrfit's
+startup settings, are generated in test temporary directories; no external
+measurement data are needed.
+
 ## User-state isolation
 
 Only `gui`-marked tests activate Qt fixtures. They receive per-test temporary

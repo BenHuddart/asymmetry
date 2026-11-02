@@ -73,7 +73,7 @@ calibration's quality.
 
 Inspection of the maintainer-supplied **WiMDA** source snapshot confirms that
 its standard ISIS loading, manual-input and correction paths preserve signed
-coefficients, as do its calibration fit results. This is a behavioural source
+coefficients, as do its calibration fit results. This is a source
 inspection, with no binary numerical cross-check or assertion about optional
 extended models. The `WiMDA Manual, v1.2 (2005), Sec. 5.9 and Appendix B
 <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_ describes the calibration
@@ -83,13 +83,7 @@ Deadtime count errors
 ---------------------
 
 The deadtime inverse and its count-error convention are separate choices.
-Inspection of WiMDA's **Grouping** / **Deadtime Correction** in the
-maintainer-supplied snapshot shows corrected values with uncorrected counting
-totals retained for the counting-error basis. Calibration coefficients and frame
-exposure are treated as fixed. This is source inspection, not a WiMDA binary
-comparison; the snapshot is not assigned a release version.
-
-Executed synthetic checks distinguish the other reference programs:
+Executed synthetic checks distinguish two reference programs:
 
 * **Mantid 6.16.1**, **ApplyDeadTimeCorr**, retains supplied workspace errors.
   With 1 µs bins, 100 frames, counts [100, 25], and a 0.2 µs coefficient,
@@ -106,11 +100,10 @@ Executed synthetic checks distinguish the other reference programs:
   by the ASCII export precision.
 
 Asymmetry's deadtime-prepared histograms carry corrected values without a
-separate counting variance, so its counting errors differ from the inspected
-WiMDA convention and from Mantid's retention of supplied errors.
+separate counting variance, so its counting errors differ from Mantid's
+retention of supplied errors.
 These comparisons do not assert equality of low-count asymmetry formulas,
-background treatment, or fit objectives. In particular, WiMDA's finite-count
-term in asymmetry errors is distinct from its retained counting-error basis.
+background treatment, or fit objectives.
 The formulas and limitations are in :doc:`/reference/detector_grouping`.
 
 At a glance: feature coverage

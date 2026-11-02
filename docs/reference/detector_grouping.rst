@@ -851,25 +851,16 @@ calibration and exposure, three distinct conventions are
 
 The last expression follows by differentiating the inverse and assuming
 :math:`\operatorname{var}(M)=M`. That assumption is conditional: detector
-deadtime can change the observation statistics [counting_uncertainty]_. None of these expressions
-alone establishes coverage for a physical detector or includes uncertainty
-in its calibration coefficient or frame exposure.
-
-Behavioural inspection of the maintainer-supplied **WiMDA** snapshot shows
-that **Grouping** / **Deadtime Correction** keeps uncorrected counting totals
-as the counting-error basis while correcting count values. The inspected
-**Auto Estimate** and **Cal** workflows supply coefficients without propagating
-their calibration uncertainty into those count errors. This is source-inspection
-evidence, not an executed WiMDA comparison. Its low-count asymmetry error
-convention also contains an additional finite-count term; retaining the
-measured-count variance alone does not reproduce that entire convention.
+deadtime can change the observation statistics [counting_uncertainty]_. None
+of these expressions alone establishes coverage for a physical detector or
+includes uncertainty in its calibration coefficient or frame exposure.
 
 An executed **Mantid 6.16.1** comparison of **ApplyDeadTimeCorr** preserves the
 workspace's supplied errors, including errors that differ from :math:`\sqrt{M}`.
 With counts [100, 25], errors [10, 5], 1 µs bins, 100 frames, and a 0.2 µs
 coefficient, the corrected values are [125, 26.315789473684212] and the errors
 remain [10, 5]. The correction table supplies coefficients, without a
-coefficient-error column [mantid_deadtime]_.
+coefficient-error column [mantid_deadtime_errors]_.
 
 An executed **musrfit 1.12.1** comparison (revision ``708f777b``, ROOT 6.40.04)
 of single-histogram fitting gives a different error convention. For 100000
@@ -883,7 +874,7 @@ single-histogram errors, not every musrfit fit or likelihood mode.
 
 Asymmetry's prepared histograms currently carry corrected values without a
 separate counting variance. Consequently, the reduction's count-error basis
-does not retain WiMDA's measured-count convention or Mantid's supplied errors.
+does not retain Mantid's supplied errors.
 Background estimation has its own shared uncertainty propagation; it does not
 restore the counting variance lost during deadtime preparation.
 See :doc:`/explanation/comparison` for the bounds of the program comparisons.
@@ -933,7 +924,7 @@ not asserted.
 preserves negative coefficients through NeXus and calibration-text loading,
 manual input, and the standard ISIS correction path. Its automatic and
 per-detector calibration paths also retain signed fit results. This is a
-behavioural source inspection, with no binary numerical cross-check or claim
+source inspection, with no binary numerical cross-check or claim
 about the optional extended correction models. The public manual describes the
 workflows [wimda_deadtime]_. See :doc:`/explanation/comparison` for the bounds of
 these comparisons.
@@ -951,7 +942,9 @@ these comparisons.
 .. [mantid_deadtime] Mantid 6.13.1 documentation,
    `ApplyDeadTimeCorr v1 <https://docs.mantidproject.org/v6.13.1/algorithms/ApplyDeadTimeCorr-v1.html>`_
    and `CalMuonDeadTime v1 <https://docs.mantidproject.org/v6.13.1/algorithms/CalMuonDeadTime-v1.html>`_.
-.. [counting_uncertainty] S. Pommé, J. Keightley, and R. P. Fitzgerald,
+.. [mantid_deadtime_errors] Mantid 6.16.1 documentation,
+   `ApplyDeadTimeCorr v1 <https://docs.mantidproject.org/v6.16.1/algorithms/ApplyDeadTimeCorr-v1.html>`_.
+.. [counting_uncertainty] S. Pommé, R. Fitzgerald, and J. Keightley,
    Metrologia **52**, S3 (2015),
    `doi:10.1088/0026-1394/52/3/S3 <https://doi.org/10.1088/0026-1394/52/3/S3>`_.
 
