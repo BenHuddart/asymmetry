@@ -58,7 +58,7 @@ beta_method                       shareable   provenance ("count_fit"/"single_hi
 beta_error / beta_reference_run   shareable   calibration provenance
 excluded_detectors                shareable   1-based ids dropped from every group
 period_mode                       shareable   red/green/green_minus_red/green_plus_red
-binning_mode                      shareable   fixed/fixed_width/variable
+binning_mode                      shareable   fixed/variable/constant_error
 bin0_us / bin10_us                shareable   binning knobs (non-fixed modes)
 bunching_factor                   shareable   fixed-mode bunching
 deadtime_correction               shareable*  derived from deadtime_policy on/off
@@ -123,6 +123,7 @@ from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
     effective_group_indices,
 )
+from asymmetry.core.transform.rebin import BinningSpec, binning_spec
 from asymmetry.core.transform.reduce import (
     ReferenceResolver,
     corrected_grouped_counts,
@@ -781,6 +782,16 @@ def reconcile_instrument_for_payload(
 # --------------------------------------------------------------------------- #
 
 
+def _base_binning_payload(binning: BinningSpec) -> dict[str, Any]:
+    """Serialize a profile's base binning using the established project keys."""
+    return {
+        "binning_mode": binning.mode,
+        "bunching_factor": int(binning.factor),
+        "bin0_us": float(binning.bin0_us),
+        "bin10_us": float(binning.bin10_us),
+    }
+
+
 @dataclass
 class GroupingProfile:
     """A named, shareable set of grouping settings for one fingerprint.
@@ -789,6 +800,8 @@ class GroupingProfile:
     classification table). It is applied to a run via
     :func:`resolve_effective_grouping`, which merges these settings with the
     run's file-derived facts to produce a full ``run.grouping`` payload.
+    The binning spec records base bins (merge=1); CLI and display merges are
+    applied to those bins as separate operations.
     """
 
     name: str
@@ -825,16 +838,17 @@ class GroupingProfile:
     beta_policy: BetaPolicy = field(default_factory=BetaPolicy)
 
     # Binning ----------------------------------------------------------------
-    binning_mode: str = "fixed"
-    bin0_us: float | None = None
-    bin10_us: float | None = None
-    bunching_factor: int = 1
+    binning: BinningSpec = field(default_factory=BinningSpec)
 
     # Periods ----------------------------------------------------------------
     period_mode: str | None = None
 
     # Free structure keys (grouping_preset, vector_axis, per-axis alphas) -----
     extra: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.binning.merge != 1:
+            raise ValueError("Grouping profiles store base binning; merge must be 1.")
 
     @property
     def beta(self) -> float:
@@ -859,8 +873,7 @@ class GroupingProfile:
             "alpha_policy": self.alpha_policy.to_dict(),
             "deadtime_policy": self.deadtime_policy.to_dict(),
             "background_policy": self.background_policy.to_dict(),
-            "binning_mode": str(self.binning_mode),
-            "bunching_factor": int(self.bunching_factor),
+            **_base_binning_payload(self.binning),
         }
         # ``t0_policy`` rides inside the profile dict. It is emitted only when it
         # departs from the ``from_file`` default so existing projects (which
@@ -895,10 +908,6 @@ class GroupingProfile:
                     data["beta_reference_run"] = int(self.beta_policy.source_run)
         if self.color is not None:
             data["color"] = str(self.color)
-        if self.bin0_us is not None:
-            data["bin0_us"] = float(self.bin0_us)
-        if self.bin10_us is not None:
-            data["bin10_us"] = float(self.bin10_us)
         if self.period_mode is not None:
             data["period_mode"] = str(self.period_mode)
         if self.extra:
@@ -968,10 +977,7 @@ class GroupingProfile:
             # ``to_dict``), so the same inference helper reconstructs the
             # policy from either surface.
             beta_policy=_beta_policy_from_payload(data),
-            binning_mode=str(data.get("binning_mode", "fixed")),
-            bin0_us=None if data.get("bin0_us") is None else _as_float(data.get("bin0_us"), 0.0),
-            bin10_us=None if data.get("bin10_us") is None else _as_float(data.get("bin10_us"), 0.0),
-            bunching_factor=_as_int(data.get("bunching_factor"), 1) or 1,
+            binning=binning_spec(data),
             period_mode=None if data.get("period_mode") is None else str(data.get("period_mode")),
             extra=dict(data.get("extra")) if isinstance(data.get("extra"), dict) else {},
         )
@@ -1115,8 +1121,6 @@ def profile_from_payload(
         if key in payload:
             extra[key] = payload[key]
 
-    binning_mode = str(payload.get("binning_mode", "fixed"))
-
     return GroupingProfile(
         name=name,
         fingerprint=fingerprint,
@@ -1138,12 +1142,7 @@ def profile_from_payload(
         # loaded run into Manual (the t0 D1 lesson).
         good_window_policy=GoodWindowPolicy.from_dict(payload.get("good_window_policy")),
         beta_policy=_beta_policy_from_payload(payload),
-        binning_mode=binning_mode,
-        bin0_us=None if payload.get("bin0_us") is None else _as_float(payload.get("bin0_us"), 0.0),
-        bin10_us=None
-        if payload.get("bin10_us") is None
-        else _as_float(payload.get("bin10_us"), 0.0),
-        bunching_factor=_as_int(payload.get("bunching_factor"), 1) or 1,
+        binning=binning_spec(payload),
         period_mode=None if payload.get("period_mode") is None else str(payload.get("period_mode")),
         extra=extra,
     )
@@ -1298,7 +1297,7 @@ def resolve_effective_grouping(
             "forward_group": int(profile.forward_group),
             "backward_group": int(profile.backward_group),
             "excluded_detectors": [int(d) for d in profile.excluded_detectors],
-            "bunching_factor": int(profile.bunching_factor),
+            **_base_binning_payload(profile.binning),
         }
         if profile.included_groups:
             grouping["included_groups"] = {
@@ -1319,14 +1318,6 @@ def resolve_effective_grouping(
         # -- per-run / file-derived facts ---------------------------------------
         _copy_per_run_facts(grouping, run_grouping, run)
         _rebase_on_profile_groups(grouping, run, n_hist)
-
-        # -- binning ------------------------------------------------------------
-        if profile.binning_mode and profile.binning_mode != "fixed":
-            grouping["binning_mode"] = profile.binning_mode
-            if profile.bin0_us is not None:
-                grouping["bin0_us"] = float(profile.bin0_us)
-            if profile.binning_mode == "variable" and profile.bin10_us is not None:
-                grouping["bin10_us"] = float(profile.bin10_us)
 
         # -- period mode --------------------------------------------------------
         if profile.period_mode is not None:

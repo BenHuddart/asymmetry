@@ -28,6 +28,23 @@ asymmetry formed per output bin — at late times the raw bins hold zero
 counts, where an asymmetry ratio per raw bin is undefined while summed
 counts remain exactly Poisson.
 
+Display bunching
+----------------
+
+The main toolbar's **Bunch:** control merges that many recorded output bins.
+Its tooltip is ``Merge this many recorded output bins.`` The grouping dialog
+sets the base binning; the toolbar composes with it. Fixed factor 4 and
+**Bunch:** 2 therefore combine eight acquisition bins per displayed point.
+The display factor is stored independently in each saved view mode.
+
+For histogram-backed F–B asymmetry, **Fixed**, **Variable** and **Constant error**
+all merge counts and their shared-background uncertainty before forming the
+ratio. G±R views bin each period first, then combine their asymmetries and
+independent variances. The Groups and Raw counts views sum the corresponding
+count bins. A merge larger than the record leaves no complete output point.
+Curves without histograms and rotated projections use the independent
+curve-bin mean described below.
+
 Good-bin window
 ---------------
 
@@ -147,7 +164,8 @@ Absent binning keys use fixed factor 1 and widths 0.08/0.25 µs. Present invalid
 values raise errors, for example
 ``binning mode 'Varaible' is not one of fixed, variable, constant_error.`` or
 ``bunching factor must be an integer >= 1; got 'abc'.`` Both widths must be
-finite and positive. A non-positive width raises, for example,
+finite and positive. A saved invalid grouping payload can be loaded; consuming
+it for a profile or reduction raises the named error. A non-positive width raises, for example,
 ``bin0_us must be finite and > 0; got -1.``
 
 Curves without raw counts

@@ -221,13 +221,7 @@ def find_count_boundary_violations(root: Path = ROOT) -> list[HarnessFailure]:
 
 
 # Raw grouping binning is parsed only at the BinningSpec boundary.
-BINNING_PAYLOAD_BASELINE = {
-    "src/asymmetry/core/project/profiles.py": 4,
-    "src/asymmetry/gui/mainwindow.py": 3,
-    "src/asymmetry/gui/panels/data_browser.py": 1,
-    "src/asymmetry/gui/panels/plot_panel.py": 2,
-    "src/asymmetry/gui/windows/grouping/dialog.py": 2,
-}
+BINNING_PAYLOAD_BASELINE: dict[str, int] = {}
 
 
 def find_binning_payload_violations(root: Path = ROOT) -> list[HarnessFailure]:

@@ -17,9 +17,10 @@ import uuid
 from numbers import Integral, Real
 from pathlib import Path
 
+from asymmetry.core.project.json_values import decode_non_finite, encode_non_finite, json_default
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 28
+CURRENT_SCHEMA_VERSION: int = 29
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(range(1, CURRENT_SCHEMA_VERSION + 1))
 
@@ -149,6 +150,30 @@ def migrate_to_current(data: dict) -> dict:
         version = 27
     if version == 27:
         migrated = _migrate_v27_to_v28(migrated)
+        version = 28
+    if version == 28:
+        migrated = _migrate_v28_to_v29(migrated)
+    return migrated
+
+
+def _migrate_v28_to_v29(data: dict) -> dict:
+    """Preserve recorded bin widths without applying toolbar grouping factors twice."""
+    migrated = dict(data, schema_version=29)
+    views = data.get("view_modes_state")
+    if not isinstance(views, dict) or not isinstance(views.get("modes"), list):
+        return migrated
+    plot = data.get("plot_state")
+    panel_factor = plot.get("bunch_factor", 1) if isinstance(plot, dict) else 1
+    active = views.get("active_index", 0)
+    migrated["view_modes_state"] = dict(
+        views,
+        modes=[
+            dict(mode, bunch_factor=panel_factor if index == active else 1)
+            if isinstance(mode, dict)
+            else mode
+            for index, mode in enumerate(views["modes"])
+        ],
+    )
     return migrated
 
 
@@ -1789,7 +1814,7 @@ def load_project(path: str | Path) -> dict:
     OSError
         If the file cannot be read.
     """
-    raw = _decode_non_finite(json.loads(Path(path).read_text(encoding="utf-8")))
+    raw = decode_non_finite(json.loads(Path(path).read_text(encoding="utf-8")))
     migrated = migrate_to_current(raw)
     validate(migrated)
     return migrated
@@ -1822,7 +1847,7 @@ def save_project(state: dict, path: str | Path, *, backup: bool = True) -> None:
         Destination ``.asymp`` file path.
     """
     target = Path(path)
-    payload = json.dumps(_encode_non_finite(state), indent=2, default=_json_default)
+    payload = json.dumps(encode_non_finite(state), indent=2, default=json_default)
 
     fd, tmp_name = tempfile.mkstemp(
         dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
@@ -1847,75 +1872,3 @@ def save_project(state: dict, path: str | Path, *, backup: bool = True) -> None:
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
-
-
-#: Wrapper key used to round-trip non-finite floats through strict JSON.
-#: ``NaN``/``Infinity``/``-Infinity`` are not valid JSON tokens, so a bare
-#: ``json.dumps`` (allow_nan=True) writes them as non-standard barewords that
-#: external strict parsers reject. We encode them as a uniquely-keyed object
-#: ``{"__nonfinite__": "NaN"}`` on save and reconstruct the float on load, so
-#: the file is valid strict JSON while in-app load behaviour is byte-for-byte
-#: unchanged (every consumer still sees a real ``inf``/``-inf``/``nan`` float).
-_NONFINITE_KEY = "__nonfinite__"
-
-
-def _encode_non_finite(obj: object) -> object:
-    """Recursively replace non-finite floats with a strict-JSON wrapper.
-
-    Reversed by :func:`_decode_non_finite`. Also normalises numpy scalars/arrays
-    to plain Python so the result is fully JSON-serialisable.
-    """
-    if isinstance(obj, bool):
-        return obj
-    if isinstance(obj, float):
-        if math.isnan(obj):
-            return {_NONFINITE_KEY: "NaN"}
-        if math.isinf(obj):
-            return {_NONFINITE_KEY: "Infinity" if obj > 0 else "-Infinity"}
-        return obj
-    if isinstance(obj, dict):
-        return {k: _encode_non_finite(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_encode_non_finite(v) for v in obj]
-    try:
-        import numpy as np
-
-        if isinstance(obj, np.floating):
-            return _encode_non_finite(float(obj))
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.ndarray):
-            return _encode_non_finite(obj.tolist())
-    except ImportError:
-        pass
-    return obj
-
-
-def _decode_non_finite(obj: object) -> object:
-    """Recursively reconstruct non-finite floats from the save-time wrapper."""
-    if isinstance(obj, dict):
-        if len(obj) == 1 and _NONFINITE_KEY in obj:
-            try:
-                return float(obj[_NONFINITE_KEY])
-            except (TypeError, ValueError):
-                return obj
-        return {k: _decode_non_finite(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_decode_non_finite(v) for v in obj]
-    return obj
-
-
-def _json_default(obj: object) -> object:
-    """JSON serializer for numpy array/scalar types."""
-    try:
-        import numpy as np  # local import to avoid hard dependency at module level
-
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-    except ImportError:
-        pass
-    raise TypeError(f"Object of type {type(obj).__name__!r} is not JSON serializable")

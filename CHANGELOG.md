@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Toolbar **Bunch:** merges recorded output bins counts-first in every binning
+  and G±R mode; saved projects keep recorded bins without multiplying them twice.
+
 - CLI `reduce --rebin` merges counts before forming asymmetry, including period
   differences and shared-background errors; invalid binning raises an error.
 
@@ -84,6 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 
 ### Changed
+
+- Grouping profiles expose one validated `binning: BinningSpec` for their base bins.
 
 - Curve-only `rebin` and `MuonDataset.rebin` are named `merge_curve_bins`;
   raw-count reductions take an explicit `BinningSpec`.
