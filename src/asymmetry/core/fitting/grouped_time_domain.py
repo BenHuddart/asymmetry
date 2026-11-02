@@ -40,9 +40,9 @@ from asymmetry.core.transform.corrections import (
 )
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
-    apply_grouping_aligned,
     common_t0_for_groups,
     effective_group_indices,
+    group_counts_aligned,
 )
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
 from asymmetry.core.transform.reduce import corrected_grouped_counts, correction_flags_from_grouping
@@ -340,7 +340,7 @@ def _build_one_count_group(
     """Align counts and measured variance before bunching and masking."""
     run = ctx.run
     aligned = [
-        apply_grouping_aligned(
+        group_counts_aligned(
             ctx.prepared_histograms,
             [index],
             common_t0_bin=ctx.common_t0,
@@ -348,18 +348,16 @@ def _build_one_count_group(
         )
         for index in indices
     ]
-    terminal_bin = min(ctx.last_good + 1, *(trace.size for trace in aligned))
-    detector_counts = np.asarray([trace[ctx.first_good : terminal_bin] for trace in aligned])
+    terminal_bin = min(ctx.last_good + 1, *(trace.counts.size for trace in aligned))
+    detector_counts = np.asarray([trace.counts[ctx.first_good : terminal_bin] for trace in aligned])
     counts = detector_counts.sum(axis=0)
-    variance = apply_grouping_aligned(
-        ctx.prepared_histograms,
-        indices,
-        common_t0_bin=ctx.common_t0,
-        detector_t0_bins=ctx.detector_t0_bins,
-        variance=True,
-    )[ctx.first_good : terminal_bin]
     if counts.size == 0:
         return None
+    variance = counts
+    if any(trace.variance is not None for trace in aligned):
+        variance = np.sum(
+            [trace.independent_variance[ctx.first_good : terminal_bin] for trace in aligned], axis=0
+        )
     trimmed_counts = counts
     bunch_factor = ctx.bunch_factor if counts.size >= ctx.bunch_factor else 1
     time = (

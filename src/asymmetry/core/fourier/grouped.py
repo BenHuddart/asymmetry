@@ -10,6 +10,7 @@ from asymmetry.core.transform.background import (
     available_background_modes,
     background_window,
     resolve_background_mode,
+    resolve_background_ranges,
 )
 from asymmetry.core.transform.corrections import (
     CorrectionOutcome,
@@ -122,6 +123,10 @@ def _group_background_range_for_group(
     shared = _parse_range(grouping.get("background_range"))
     if shared is not None:
         return shared
+    if "background_forward_range" in grouping or "background_backward_range" in grouping:
+        pair = resolve_background_ranges(grouping, 0)
+        window = pair[int(group_id == grouping.get("backward_group", 2))]
+        return window.first, window.last
     return None
 
 
@@ -203,6 +208,7 @@ def _apply_group_background_correction(
     source_file: str,
     reference_counts: GroupCounts | None = None,
     reference_scale: float | None = None,
+    background_t0_bin: int | None = None,
 ) -> tuple[GroupCounts, bool, float | None]:
     """Apply optional grouped background subtraction for one detector group."""
     if not bool(grouping.get("background_correction", False)):
@@ -237,7 +243,13 @@ def _apply_group_background_correction(
     if mode in ("fixed", "range"):
         selected_value = _group_background_value_for_group(grouping, group_id)
         selected_range = _group_background_range_for_group(grouping, group_id)
+        source_t0 = t0_bin if background_t0_bin is None else background_t0_bin
+        if mode == "range" and selected_range is None and selected_value is None:
+            window = resolve_background_ranges({}, source_t0)[0]
+            selected_range = window.first, window.last
         if selected_range is not None and (mode == "range" or selected_value is None):
+            offset = t0_bin - source_t0
+            selected_range = tuple(bound + offset for bound in selected_range)
             payload["background_ranges"] = [list(selected_range), list(selected_range)]
             payload["background_mode"] = "range"
         elif selected_value is not None:
@@ -333,6 +345,12 @@ def build_group_signal_dataset(
     # the policy-resolved override when the grouping carries one, else each
     # histogram's own file t0.
     detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
+    background_t0 = common_t0_for_groups(
+        prepared_histograms,
+        effective_group_indices(grouping, grouping.get("forward_group", 1)),
+        effective_group_indices(grouping, grouping.get("backward_group", 2)),
+        detector_t0_bins=detector_t0_bins,
+    )
     if reference_t0_bin is None:
         # t0 reference spans every named detector (exclusion is irrelevant to
         # alignment), so use the raw decoder here rather than the reduction
@@ -381,10 +399,10 @@ def build_group_signal_dataset(
         group,
         grouping=grouping,
         group_id=int(group_id),
-        # ``counts`` is aligned to ``common_t0`` (apply_grouping_aligned), so the
-        # tail-fit time axis and the range fallback must use that reference, not
-        # the raw grouping t0 (which can differ when detectors stagger).
+        # Tail fitting uses the signal grid; range windows retain the F/B
+        # acquisition samples through a translation from background_t0.
         t0_bin=common_t0,
+        background_t0_bin=background_t0,
         bin_width=float(prepared_histograms[0].bin_width),
         metadata=run.metadata,
         source_file=source_file,

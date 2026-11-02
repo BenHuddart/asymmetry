@@ -967,8 +967,7 @@ including PSI BIN/MDU and PSI/LEM ROOT data. This is separate from fit-model
 background parameters such as ``A_bg``: it subtracts a count background from
 grouped raw forward/backward histograms before the asymmetry is calculated.
 
-This follows musrfit's ``PRunAsymmetry`` ordering. Histograms are first
-grouped into forward and backward sums, then background is subtracted, and
+Histograms are first grouped into forward and backward sums, then background is subtracted, and
 then asymmetry is calculated. The section's modes are:
 
 * ``None`` — no correction.

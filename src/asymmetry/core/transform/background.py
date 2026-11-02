@@ -93,7 +93,7 @@ class TailFitResult:
             covariance.size != self.n_bins
             or np.any(expected <= 0)
             or not np.isfinite(self.rate_error_per_us)
-            or self.rate_error_per_us < 0
+            or self.rate_error_per_us <= 0
         ):
             raise ValueError("tail-fit uncertainty requires finite positive Poisson information.")
         for name, array in (("count_covariance", covariance), ("expected_counts", expected)):
@@ -191,13 +191,12 @@ def resolve_background_mode(grouping: dict[str, Any] | None) -> str:
 
 
 def fit_tail_background(
-    counts: NDArray[np.float64],
+    counts: NDArray[np.float64] | GroupCounts,
     *,
     bin_width_us: float,
     t0_bin: int,
     last_good_bin: int | None = None,
     fit_start_bin: int | None = None,
-    count_variance: NDArray[np.float64] | None = None,
 ) -> TailFitResult:
     """Fit exponential + flat background to the late-time spectrum.
 
@@ -211,13 +210,13 @@ def fit_tail_background(
     instead weights by √N and deletes bins with ≤ 4 counts, which biases the
     rate low exactly where this fit operates (study divergence D4). The rate
     uncertainty comes from the expected information matrix for raw counts.
-    With ``count_variance``, propagate that variance through the estimator's
+    With GroupCounts, propagate supplied variance through the estimator's
     linearised influence, including its covariance with the input bins.
 
     The default window is the late half of (t0, last_good), on acquisition bins.
     """
-    n = np.asarray(counts, dtype=np.float64)
-    supplied_variance = None if count_variance is None else GroupCounts(n, count_variance).variance
+    source = GroupCounts.from_value(counts)
+    n, supplied_variance = source.counts, source.variance
     width = float(bin_width_us)
     end = int(last_good_bin) if last_good_bin is not None else n.size - 1
     end = min(end, n.size - 1)
@@ -304,6 +303,8 @@ def fit_tail_background(
         source_variance = supplied_variance[start : end + 1]
         count_covariance = source_variance * influence
         rate_error = float(np.sqrt(np.sum(source_variance * influence**2)))
+        if not np.isfinite(rate_error) or rate_error <= 0:
+            return _failure("Tail-fit propagated variance must be finite and positive")
     consistent = p2 < 2.0 * rate_error
     return TailFitResult(
         rate_per_us=p2,
@@ -404,15 +405,13 @@ def apply_grouped_background_correction(
 
     if mode == "tail_fit":
         forward_fit = fit_tail_background(
-            f,
-            count_variance=f_input.variance,
+            f_input,
             bin_width_us=bin_width_us,
             t0_bin=t0_bin,
             last_good_bin=last_good_bin,
         )
         backward_fit = fit_tail_background(
-            b,
-            count_variance=b_input.variance,
+            b_input,
             bin_width_us=bin_width_us,
             t0_bin=t0_bin,
             last_good_bin=last_good_bin,
@@ -502,7 +501,7 @@ def apply_grouped_background_correction(
             ranges=None,
         )
 
-    ranges = _background_ranges(grouping, int(t0_bin))
+    ranges = resolve_background_ranges(grouping, int(t0_bin))
     ranges[0].validate_length(f.size, label="background range")
     ranges[1].validate_length(b.size, label="background range")
     f_range = _adjust_range_for_beam_period(
@@ -644,7 +643,8 @@ def background_window(value: object) -> BinWindow:
     return BinWindow(*value, label="background range")
 
 
-def _background_ranges(grouping: dict[str, Any], t0_bin: int) -> tuple[BinWindow, BinWindow]:
+def resolve_background_ranges(grouping: dict[str, Any], t0_bin: int) -> tuple[BinWindow, BinWindow]:
+    """Resolve both inclusive background windows on the declared acquisition grid."""
     if "background_ranges" in grouping:
         value = grouping["background_ranges"]
         if isinstance(value, dict):

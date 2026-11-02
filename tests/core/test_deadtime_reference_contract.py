@@ -1,4 +1,4 @@
-"""Recorded synthetic Mantid 6.16.1 count references and the reduction gap."""
+"""Recorded synthetic Mantid 6.16.1 count and retained-variance references."""
 
 import numpy as np
 import pytest

@@ -118,6 +118,11 @@ pair raises ``background range requires two integer bin indices.`` The
 same rules apply to grouped Fourier backgrounds. An absent range selects the
 pre-t0 default; a declared invalid range raises an error.
 
+Grouped Fourier and MaxEnt translate estimation windows from the
+forward/backward alignment grid to their common detector grid. An additional
+group with a later t0 therefore leaves the background's acquisition bins and
+shared uncertainty unchanged.
+
 Tail fit (late-time)
 --------------------
 
@@ -253,7 +258,8 @@ The fitted :math:`\mu_j` supplies the same Poisson variance basis as the
 influence row. Combining model-based covariance with observed zero-bin
 variances can produce an invalid joint covariance. Singular information
 fails with ``Tail-fit information matrix is singular``; it does not declare
-zero uncertainty. Shared count components are checked for a valid joint
+zero uncertainty. A non-positive or non-finite propagated tail-fit variance
+also fails. Shared count components are checked for a valid joint
 covariance at construction.
 
 Deadtime-prepared groups retain their measured counting variance :math:`v_j`
@@ -293,8 +299,10 @@ treats its points as independent and does not carry these shared components.
    :alt: Grouping preview with deadtime correction, fitted background, and bunched asymmetry errors
    :width: 100%
 
-   The asymmetry preview after **Tail fit** background subtraction and fixed
-   bunching. Error bars include the level shared by each merged group of bins.
+   The asymmetry preview with manual deadtime coefficients of 0.1 µs,
+   **Tail fit** background subtraction and fixed bunching. Error bars retain
+   measured counting variance and include the level shared by each merged group
+   of bins.
 
 **References**
 

@@ -11,7 +11,7 @@ from asymmetry.core.transform.asymmetry import estimate_alpha_detailed
 from asymmetry.core.transform.background import fit_tail_background
 from asymmetry.core.transform.corrections import BackgroundReference
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
-from asymmetry.core.transform.fb_counts import linear_combination_variance
+from asymmetry.core.transform.fb_counts import GroupCounts, linear_combination_variance
 from asymmetry.core.transform.grouping import align_forward_backward_counts
 from asymmetry.core.transform.integral import integrate_asymmetry
 from asymmetry.core.transform.rebin import BinningSpec, binned_fb_asymmetry
@@ -163,7 +163,7 @@ def test_tail_fit_propagates_supplied_variance_through_its_influence():
     raw = 200.0 * np.exp(-time / MUON_LIFETIME_US) + 20.0
     kwargs = dict(bin_width_us=0.05, t0_bin=0, fit_start_bin=0)
     baseline = fit_tail_background(raw, **kwargs)
-    fitted = fit_tail_background(raw, count_variance=3 * baseline.expected_counts, **kwargs)
+    fitted = fit_tail_background(GroupCounts(raw, 3 * baseline.expected_counts), **kwargs)
     assert fitted.ok
     assert fitted.rate_per_us == baseline.rate_per_us
     assert fitted.rate_error_per_us == pytest.approx(np.sqrt(3) * baseline.rate_error_per_us)
@@ -201,3 +201,68 @@ def test_spectral_range_uses_estimation_window_even_with_cached_values():
         run, 1, center_signal=False, apply_lifetime_correction=False
     )
     np.testing.assert_allclose(signal.error, [np.sqrt(464.0)])
+
+
+@pytest.mark.parametrize("declared_t0", [False, True])
+@pytest.mark.parametrize("range_form", ["shared", "paired", "named", "implicit"])
+def test_spectral_background_preserves_acquisition_bins_with_later_extra_group(
+    declared_t0, range_form
+):
+    run = _constant_run(coefficient=0.01, bunching=4)
+    run.histograms = [
+        Histogram(np.array([8.0, 8.0] + [100.0] * 30), 1.0, t0_bin=2),
+        Histogram(np.array([12.0, 12.0] + [80.0] * 30), 1.0, t0_bin=2),
+        Histogram(np.full(32, 40.0), 1.0, t0_bin=6),
+    ]
+    run.metadata["facility"] = "PSI"
+    run.grouping.update(
+        groups={1: [1], 2: [2], 3: [3]},
+        dead_time_us=[0.01] * 3,
+        first_good_bin=2,
+        last_good_bin=17,
+        background_correction=True,
+        background_mode="range",
+    )
+    if declared_t0:
+        run.grouping["t0_bin"] = 2
+    else:
+        # Without a declared axis, Fourier good-bin bounds already use its grid.
+        run.grouping.update(first_good_bin=6, last_good_bin=21)
+    if range_form == "shared":
+        run.grouping["background_range"] = [0, 1]
+    elif range_form == "paired":
+        run.grouping["background_ranges"] = [[0, 1], [0, 1]]
+    elif range_form == "named":
+        run.grouping.update(background_forward_range=[0, 1], background_backward_range=[0, 1])
+    # A two-bin source t0 gives the same implicit pre-t0 window [0, 1].
+    reduced = _counts(run, background=True)
+    if range_form != "implicit":
+        run.grouping["background_values"] = reduced.corrections.background.effective["values"]
+    for gid, group, expected_variance in (
+        (1, reduced.forward, 464.0),
+        (2, reduced.backward, 416.0),
+    ):
+        signal = build_group_signal_dataset(
+            run, gid, center_signal=False, apply_lifetime_correction=False
+        )
+        expected = group.counts[2:18].reshape(4, 4).sum(axis=1)
+        np.testing.assert_allclose(signal.asymmetry, expected, rtol=1e-12)
+        np.testing.assert_allclose(signal.error**2, expected_variance, rtol=1e-12)
+        np.testing.assert_allclose(signal.time, [1.5, 5.5, 9.5, 13.5])
+    inputs = build_maxent_input(
+        run, MaxEntConfig(n_spectrum_points=32, f_min_mhz=0.01, f_max_mhz=0.1, auto_window=False)
+    )
+    np.testing.assert_allclose(
+        inputs.groups[0].sigma / (inputs.groups[0].signal + 1),
+        np.sqrt(464.0) / reduced.forward.counts[2:6].sum(),
+    )
+
+
+def test_tail_fit_rejects_zero_propagated_uncertainty():
+    time = np.arange(120) * 0.05
+    counts = 200 * np.exp(-time / MUON_LIFETIME_US) + 20
+    result = fit_tail_background(
+        GroupCounts(counts, np.zeros(120)), bin_width_us=0.05, t0_bin=0, fit_start_bin=0
+    )
+    assert not result.ok
+    assert "variance" in result.message

@@ -281,10 +281,8 @@ def test_explicit_fixed_mode_without_values_does_not_fall_through_to_range():
     np.testing.assert_array_equal(result.forward.counts, counts)
 
 
-def test_fourier_group_path_honours_injected_values_under_explicit_range_mode():
-    """Review fix: the grouped Fourier input subtracts the per-group values
-    recorded by the time-domain reduction even though the persisted grouping
-    carries background_mode='range'."""
+def test_fourier_group_path_treats_cached_values_without_a_window_as_exact():
+    """A cached level without an estimation window is a fixed per-group constant."""
     from asymmetry.core.fourier.grouped import _apply_group_background_correction
     from asymmetry.core.transform.fb_counts import GroupCounts
 
