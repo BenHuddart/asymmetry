@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- NeXus exports declare temperature, field, timing, and dead-time units so
+  other readers can interpret the physical quantities without guessing.
+
 - Toolbar **Bunch:** merges recorded output bins counts-first in every binning
   and G±R mode; saved projects keep recorded bins without multiplying them twice.
 
