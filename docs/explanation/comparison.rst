@@ -75,10 +75,20 @@ pairs. These observations describe request acceptance, not a covariance-aware
 error guarantee. Asymmetry retains EMU vector channel reuse across projections
 and overlapping auxiliary groups, and never infers identity from equal counts.
 
-WiMDA's **Group Table Edit** exposes numbered histogram channels; see the
-`WiMDA manual <https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc>`_.
-This is a manual/source comparison, without executed WiMDA numerical evidence;
-it does not establish a within-pair disjointness guarantee.
+WiMDA's **Group Table Edit** forms groups from numbered histogram channels.
+A repeated entry contributes again, and a histogram can contribute to both
+forward and backward groups. WiMDA can regenerate group membership when the
+requested histogram range is unavailable. Asymmetry rejects repeated structured
+members and missing requested channels, and requires disjoint effective channels
+for independent F/B analysis. These restrictions preserve the requested
+observations and the assumptions of its uncertainty model.
+
+WiMDA can exclude physical-detector contributions before combining them into
+mapped histograms. Asymmetry excludes acquired histogram channels without
+rewriting the loaded data. When an acquired channel combines several physical
+detectors, excluding it removes the whole channel. Neither program can recover
+hidden constituent observations from a file that already aggregates them.
+See :doc:`/reference/data_reduction/detector_exclusion` for that distinction.
 
 Signed deadtime coefficients
 ----------------------------

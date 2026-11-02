@@ -985,8 +985,10 @@ because ordinary membership is unique, rather than a numerical weight.
 Native Mantid 6.16.1 ``MuonPairingAsymmetry`` rejects the tested identical
 lists but accepts partial overlap; native musrfit 1.12.1 accepts both tested
 overlaps. Asymmetry's disjoint-pair rule follows its independent-count uncertainty
-model. WiMDA **Group Table Edit** manual/source evidence does not establish a
-disjointness guarantee; no WiMDA binary comparison was executed.
+model. WiMDA **Group Table Edit** permits repeated histogram entries and shared
+channels between the selected F/B groups. It can regenerate membership when
+requested histograms are unavailable. Asymmetry reports these requests as
+unavailable until the grouping is repaired, preserving the authored selection.
 These arithmetic comparisons do not certify detector geometry or pair independence.
 See :doc:`/explanation/comparison` for sources and limits.
 

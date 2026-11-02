@@ -147,6 +147,7 @@ class FourierAutoPhaseScenario(FourierTfScenario):
     def build(self) -> QWidget:
         from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
         from asymmetry.core.representation.base import RepresentationType
+        from asymmetry.core.transform.asymmetry import compute_asymmetry
         from asymmetry.core.utils.constants import MUON_LIFETIME_US
         from asymmetry.gui.mainwindow import MainWindow
 
@@ -155,16 +156,14 @@ class FourierAutoPhaseScenario(FourierTfScenario):
         t0_bin, first_good_bin, bin_width = 8, 16, 0.025
         t0_time_us = (t0_bin + 0.75) * bin_width
         time = (np.arange(512) + 0.5) * bin_width - t0_time_us
-        counts = (
-            1e6
-            * np.exp(-time / MUON_LIFETIME_US)
-            * (
-                1.0
-                + 0.2
-                * np.exp(-0.5 * (2.0 * np.pi * 0.12 * time) ** 2)
-                * np.cos(2.0 * np.pi * 2.7 * time + 0.55)
-            )
+        envelope = 1e6 * np.exp(-time / MUON_LIFETIME_US)
+        polarisation = (
+            0.2
+            * np.exp(-0.5 * (2.0 * np.pi * 0.12 * time) ** 2)
+            * np.cos(2.0 * np.pi * 2.7 * time + 0.55)
         )
+        forward = envelope * (1.0 + polarisation)
+        backward = envelope * (1.0 - polarisation)
         run = Run(
             run_number=701,
             histograms=[
@@ -174,10 +173,13 @@ class FourierAutoPhaseScenario(FourierTfScenario):
                     t0_bin=t0_bin,
                     t0_time_us=t0_time_us,
                 )
+                for counts in (forward, backward)
             ],
             grouping={
-                "groups": {1: [1]},
-                "group_names": {1: "Forward"},
+                "groups": {1: [1], 2: [2]},
+                "group_names": {1: "Forward", 2: "Backward"},
+                "forward_group": 1,
+                "backward_group": 2,
                 "t0_bin": t0_bin,
                 "t0_time_us": t0_time_us,
                 "first_good_bin": first_good_bin,
@@ -185,10 +187,11 @@ class FourierAutoPhaseScenario(FourierTfScenario):
                 "deadtime_correction": False,
             },
         )
+        asymmetry, error = compute_asymmetry(forward, backward)
         dataset = MuonDataset(
             time=time,
-            asymmetry=np.zeros_like(time),
-            error=np.ones_like(time),
+            asymmetry=100.0 * asymmetry,
+            error=100.0 * error,
             metadata={"run_number": run.run_number, "title": "Synthetic common-phase signal"},
             run=run,
         )
@@ -202,6 +205,7 @@ class FourierAutoPhaseScenario(FourierTfScenario):
                 "phase_fit_min_mhz": 2.0,
                 "phase_fit_max_mhz": 3.4,
                 "phase_fit_tolerance_degrees": 5.0,
+                "group_enabled_table": {"1": True, "2": False},
             }
         )
         window._on_compute_fourier()
