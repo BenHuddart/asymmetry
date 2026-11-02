@@ -21,7 +21,11 @@ icon_path = os.environ.get("PYI_ICON_PATH", str(default_icon))
 if not Path(icon_path).is_file():
     icon_path = None
 
-datas = copy_metadata("asymmetry")
+datas = [
+    entry
+    for distribution in ("asymmetry", "numpy", "scipy")
+    for entry in copy_metadata(distribution)
+]
 datas += [(str(png_file), "asymmetry/resources") for png_file in resources_dir.glob("*.png")]
 datas += [(str(svg_file), "asymmetry/resources") for svg_file in resources_dir.glob("*.svg")]
 fonts_dir = resources_dir / "fonts"

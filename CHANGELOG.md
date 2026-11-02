@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- All grouped FFT display modes preserve the reduction's good-time interval
+  and exact t0 when staggered detector timing changes the alignment reference.
+
 - ROOT and PSI headers convert declared time, field, and temperature units;
   invalid units and missing ROOT timing raise errors with file and field context.
 
@@ -93,6 +96,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Empirical count-fit `deadtime_model` forms and their DT1/C2–C4 coefficients.
 
 ### Changed
+
+- **Auto Phase** estimates each detector group's common phase through the sampled
+  FFT response, preserves the measured spectrum on the percent scale, and refuses
+  weak or unstable estimates with an explanation and conditional diagnostics.
 
 - Grouping profiles expose one validated `binning: BinningSpec` for their base bins.
 

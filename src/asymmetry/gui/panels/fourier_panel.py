@@ -6,6 +6,7 @@ Mirrors WiMDA's Analyse → Fourier dialog.
 from __future__ import annotations
 
 import html
+import math
 from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import lru_cache
@@ -34,7 +35,11 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER
-from asymmetry.core.fourier.fft import fourier_mode_uses_phase_correction
+from asymmetry.core.fourier.fft import (
+    fourier_mode_uses_phase_correction,
+    fourier_mode_uses_phase_fit,
+)
+from asymmetry.core.fourier.phase_fit import PHASE_FIT_METHOD
 from asymmetry.gui.panels.spectral_moments_widget import SpectralMomentsWidget
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.fonts import mono_font
@@ -48,6 +53,7 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.utils.latex_renderer import render_latex_to_html_image
 from asymmetry.gui.widgets.action_footer import ActionFooter
+from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
 
@@ -136,15 +142,12 @@ def _build_fourier_mode_info_html(render_latex_images: bool) -> str:
             "This is the WiMDA-style phase-corrected spectrum. Only this mode uses the manual phase entry, automatic phase estimate, phase table, and t0 offset.",
         ),
         (
-            "phaseOptReal",
-            (
-                r"\varphi(i)=c_0+c_1\cdot\frac{i-i_{\min}}{i_{\max}-i_{\min}}",
-                r"\min_{\,c_0,\,c_1}\;\left[-\sum_i p_i\ln p_i\;+\;\gamma\sum_{F_\mathrm{re}<0}F_\mathrm{re}^2\right]",
-            ),
-            "Entropy-based automatic phase optimiser (musrfit phaseOptReal). "
-            "Finds the two-parameter linear phase c\u2080\u202f+\u202fc\u2081\u00b7i/N that makes the "
-            "real spectrum most compact and non-negative. Does not use the manual phase, t0 offset, or "
-            "phase table. Requires iminuit.",
+            "Auto Phase",
+            r"F_\mathrm{real}(f)=\Re\{F_\mathrm{measured}(f)e^{-i\phi}\}",
+            "Fits a common phase to the sampled response in the selected frequency band, "
+            "then calibrates the measured real FFT. Manual phase, t0 offset and phase-table "
+            "values are ignored. Fits are rejected when conditional uncertainty or processing "
+            "sensitivity exceeds the phase tolerance.",
         ),
         (
             "Real+Imag",
@@ -182,8 +185,8 @@ def _build_fourier_mode_info_html(render_latex_images: bool) -> str:
     section_html.append(
         "<p><b>Practical note:</b> (Power)^1/2, Phase Spectrum, Cos, and Sin are all derived "
         "from the uncorrected complex FFT. Phase applies the selected phase correction first and then "
-        "plots the phase-corrected real projection. phaseOptReal automatically determines the "
-        "best phase using entropy minimisation; all manual phase controls are ignored.</p>"
+        "plots the phase-corrected real projection. Auto Phase fits a common-phase sampled "
+        "response and calibrates the measured real FFT; manual phase controls are ignored.</p>"
     )
     section_html.append("</body></html>")
     return "".join(section_html)
@@ -262,6 +265,7 @@ class FourierPanel(QWidget):
         # FFT Phase Mode → Apodisation → Groups → FFT settings. Everyday
         # controls rendered as flat BENCH sections (static headers).
         content_layout.addWidget(self._build_phase_mode_section())
+        content_layout.addWidget(self._build_auto_phase_section())
         content_layout.addWidget(self._build_apodisation_section())
         content_layout.addWidget(self._build_groups_section())
         content_layout.addWidget(self._build_fft_settings_section())
@@ -371,6 +375,9 @@ class FourierPanel(QWidget):
             self._baseline_kappa_edit,
             self._diamag_width_edit,
             self._correlation_field_edit,
+            self._phase_fit_min_edit,
+            self._phase_fit_max_edit,
+            self._phase_fit_tolerance_edit,
         ):
             line_edit.textChanged.connect(self._schedule_settings_changed)
         for spin in (
@@ -401,13 +408,7 @@ class FourierPanel(QWidget):
     # ── always-visible section builders ────────────────────────────────────
 
     def _numeric_field_width(self, chars: int) -> int:
-        """Return a max width (px) sized to hold ``chars`` numeric characters.
-
-        Fields are capped (not fixed) so a numeric edit never eats the whole
-        ~236px row — the wrapping label takes the remaining width. QLineEdit
-        only: spinboxes cap via :func:`metrics.spin_width_for`, which adds
-        the step-button allowance this text-area measure does not carry.
-        """
+        """Return a max width (px) sized to hold ``chars`` numeric characters."""
         return metrics.field_width_for(chars)
 
     @staticmethod
@@ -421,12 +422,6 @@ class FourierPanel(QWidget):
         """FFT Phase Mode — routine projections plus the advanced disclosure."""
         section, section_layout = make_section("FFT Phase Mode")
 
-        # ── Signal source ────────────────────────────────────────────────────
-        # Which time-domain signal is transformed. The grouped average (default)
-        # averages each detector group's lifetime-corrected FFT; F−B asymmetry
-        # transforms the single forward−backward asymmetry curve (as plotted in
-        # the time domain), cleaner for a single detector pair. The Groups
-        # section below is inert in F−B mode, so it is disabled there.
         source_row = QWidget()
         source_layout = QVBoxLayout(source_row)
         source_layout.setContentsMargins(0, 0, 0, 4)
@@ -460,12 +455,7 @@ class FourierPanel(QWidget):
         self._phase_mode_radio = QRadioButton("Phase")
         self._real_imag_radio = QRadioButton("Real+Imag")
 
-        # Advanced / experimental modes (collapsed by default). Labels stay
-        # short — the "— diagnostic"/"— specialist" qualifiers live in the
-        # tooltips — so nothing clips at the ~236px inspector deck. The blue
-        # (featured) / amber (diagnostic/specialist) colouring is deliberate
-        # semantic signalling and is preserved.
-        self._phase_opt_real_radio = QRadioButton("phaseOptReal")
+        self._phase_opt_real_radio = QRadioButton("Auto Phase")
         self._phase_opt_real_radio.setStyleSheet(
             f"QRadioButton {{ color: {tokens.ACCENT}; font-weight: 600; padding-bottom: 2px; }}"
         )
@@ -473,9 +463,8 @@ class FourierPanel(QWidget):
             self._phase_opt_real_radio.sizeHint().height() + 4
         )
         self._phase_opt_real_radio.setToolTip(
-            "Entropy-based automatic phase optimiser (musrfit phaseOptReal). "
-            "Finds the linear phase that makes the real spectrum most compact "
-            "and non-negative; manual phase controls are ignored. Requires iminuit."
+            "Fit a common phase to the sampled response and calibrate the measured real FFT. "
+            "Manual phase, t0 offset and phase table are ignored. Compute FFT applies changes."
         )
         self._burg_radio = QRadioButton("Resolution (Burg)")
         self._burg_radio.setStyleSheet(
@@ -515,18 +504,11 @@ class FourierPanel(QWidget):
             mode_column_layout.addWidget(button)
         mode_column_layout.addStretch()
 
-        # The advanced/experimental sub-disclosure — a collapsible PanelSection,
-        # collapsed by default (no settings_key: it auto-expands on restore of an
-        # advanced-mode project rather than persisting its open/closed state).
-        # Title kept short so the uppercase header (which cannot wrap) never
-        # forces the panel wider than the resting dock width; the hint carries
-        # the "experimental" framing.
         self._advanced_modes_group = PanelSection(
             "Advanced",
             collapsible=True,
             expanded=False,
-            hint="Experimental FFT projections: entropy auto-phase and two "
-            "diagnostic super-resolution spectra.",
+            hint="Sampled-response Auto Phase and diagnostic super-resolution spectra.",
         )
         for button in (
             self._phase_opt_real_radio,
@@ -692,6 +674,58 @@ class FourierPanel(QWidget):
         section_layout.addLayout(fft_settings_form)
         return section
 
+    def _build_auto_phase_section(self) -> QWidget:
+        section = PanelSection("Auto Phase settings")
+        self._auto_phase_section = section
+        section.set_hint("Blank fit-band edges select an automatic peak-centered band.")
+        form = QFormLayout()
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        self._phase_fit_min_edit, self._phase_fit_max_edit = (
+            FloatLimitField(value_range=(0.0, 1e6), maximum_width=self._numeric_field_width(9))
+            for _ in range(2)
+        )
+        for label, field in (
+            ("Fit band min (MHz):", self._phase_fit_min_edit),
+            ("Fit band max (MHz):", self._phase_fit_max_edit),
+        ):
+            field.set_unset("Auto")
+            form.addRow(self._wrapping_label(label), field)
+        self._phase_fit_tolerance_edit = FloatLimitField(
+            5.0,
+            decimals=2,
+            value_range=(0.01, 45.0),
+            maximum_width=self._numeric_field_width(9),
+        )
+        self._phase_fit_tolerance_edit.setToolTip(
+            "Reject fits whose local conditional standard error or largest processing "
+            "change exceeds this tolerance; this is not a confidence interval."
+        )
+        form.addRow(self._wrapping_label("Phase tolerance (deg):"), self._phase_fit_tolerance_edit)
+        section.addLayout(form)
+        self._phase_fit_summary = QLabel()
+        self._phase_fit_summary.setWordWrap(True)
+        self._phase_fit_summary.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        section.addWidget(self._phase_fit_summary)
+        return section
+
+    def set_phase_fit_summary(self, metadata: dict) -> None:
+        """Show conditional group estimates from the representation's result metadata."""
+        report = metadata.get("fourier_phase_fit", {})
+        rows = []
+        if report.get("method") == PHASE_FIT_METHOD:
+            for group, estimate in report["groups"].items():
+                rows.append(
+                    f"Group {group}: phase {math.degrees(estimate['phase_radians']):.3g}°; "
+                    f"conditional SE {math.degrees(estimate['standard_error_radians']):.3g}°; "
+                    f"largest processing change {math.degrees(estimate['maximum_change_radians']):.3g}°."
+                )
+        text = "\n".join(rows)
+        self._phase_fit_summary.setText(text)
+        self._phase_fit_summary.setToolTip(text)
+        self._phase_fit_summary.setAccessibleName("Auto Phase conditional fit summary")
+
     def _build_phase_section(self) -> QWidget:
         """Phase — manual phase, t0 offset, auto method, Fill phases (conditional)."""
         # Shown/hidden as a unit by _update_phase_controls_enabled; a flat static
@@ -766,13 +800,7 @@ class FourierPanel(QWidget):
         return self._action_footer
 
     def set_compute_scope(self, count: int) -> None:
-        """Reflect the compute target count in the primary button's label.
-
-        ``"Compute FFT"`` for a single-run scope; ``"Compute FFT (N runs)"``
-        when the Data-Browser selection puts N > 1 runs in scope — the button
-        always computes the full selection, and the label makes that scope
-        visible before clicking.
-        """
+        """Reflect the compute target count in the primary button's label."""
         try:
             count = int(count)
         except (TypeError, ValueError):
@@ -881,14 +909,7 @@ class FourierPanel(QWidget):
         return section
 
     def _build_diamag_group(self) -> PanelSection:
-        """Build the single three-way diamagnetic-line control (F4, collapsible).
-
-        One mutually-exclusive choice replaces the two former checkboxes
-        (time-domain fit-and-subtract in Conditioning, post-FFT band exclusion
-        in Exclusions). Both ``.asymp`` keys (``remove_diamag`` /
-        ``diamag_exclusion``) stay readable; :meth:`get_state` derives them from
-        the selected mode and they remain mutually exclusive.
-        """
+        """Build the single three-way diamagnetic-line control (F4, collapsible)."""
         section = PanelSection(
             "Diamagnetic correction",
             collapsible=True,
@@ -1076,23 +1097,14 @@ class FourierPanel(QWidget):
                 self._exclusion_table.setItem(row, 1, QTableWidgetItem(""))
 
     def set_background_hint(self, text: str | None) -> None:
-        """Show the inherited grouping-background state above the FFT button (F3).
-
-        ``text`` is the resolved mode description (e.g. ``"tail-fit"``) or
-        ``None`` when no grouping background correction is active. Rendered as the
-        footer hint.
-        """
+        """Show the inherited grouping-background state above the FFT button (F3)."""
         if text:
             self._action_footer.set_hint(f"Background: {text}, inherited from grouping")
         else:
             self._action_footer.set_hint("Background: off")
 
     def set_fft_status(self, message: str, *, success: bool = False) -> None:
-        """Set the footer status line for a computed-spectrum outcome.
-
-        A successful compute is reported with the green success chip; other
-        messages fall through as an informational (accent) chip.
-        """
+        """Set the footer status line for a computed-spectrum outcome."""
         text = str(message)
         if success:
             self._action_footer.set_status(success_html(f"● {html.escape(text)}"))
@@ -1109,13 +1121,7 @@ class FourierPanel(QWidget):
         return "grouped_average"
 
     def _update_groups_enabled_for_source(self) -> None:
-        """Disable the inert Groups controls in F−B asymmetry mode.
-
-        In F−B mode a single forward−backward curve is transformed, so the
-        per-group include/phase table and the per-group-phase toggle cannot
-        affect the spectrum. Disabling them (not hiding) keeps their values for
-        a switch back to grouped average, while signalling they are inert.
-        """
+        """Disable the inert Groups controls in F−B asymmetry mode."""
         grouped = self._current_signal_source() == "grouped_average"
         self._phase_table.setEnabled(grouped)
         self._use_phase_table_check.setEnabled(grouped and self._current_display_mode() == "Phase")
@@ -1205,12 +1211,10 @@ class FourierPanel(QWidget):
     def _update_phase_controls_enabled(self) -> None:
         mode = self._current_display_mode()
         is_phase_mode = mode == "Phase"
-        is_entropy_mode = mode == "phaseOptReal"
-        # The core is the oracle: the Phase section, the phase COLUMN, and the
-        # per-group-phase toggle are only meaningful in a phase-correcting display
-        # mode. Hidden ≠ cleared — every value stays in config/serialization, so
-        # round-trips are unchanged; only visibility is gated. Do NOT re-derive the
-        # mode list in the GUI.
+        uses_fit = fourier_mode_uses_phase_fit(mode)
+        self._auto_phase_section.setVisible(uses_fit)
+        for section in (self._conditioning_section, self._diamag_section, self._exclusions_section):
+            section.setEnabled(not uses_fit)
         uses_phase = fourier_mode_uses_phase_correction(mode)
         self._phase_section.setVisible(uses_phase)
         self._phase_table.setColumnHidden(2, not uses_phase)
@@ -1219,30 +1223,19 @@ class FourierPanel(QWidget):
             self._phase_spin.setText(self._format_float_text(0.0))
         elif self._sin_radio.isChecked():
             self._phase_spin.setText(self._format_float_text(90.0))
-        # phaseOptReal: all manual phase controls disabled; optimizer handles everything
         self._phase_spin.setEnabled(is_phase_mode)
         self._t0_offset_spin.setEnabled(is_phase_mode)
         self._auto_method_combo.setEnabled(is_phase_mode)
         self._auto_phase_btn.setEnabled(is_phase_mode)
-        self._use_phase_table_check.setEnabled(is_phase_mode and not is_entropy_mode)
-        self._update_phase_table_enabled(
-            self._use_phase_table_check.isChecked() and not is_entropy_mode
-        )
+        self._use_phase_table_check.setEnabled(is_phase_mode and not uses_fit)
+        self._update_phase_table_enabled(self._use_phase_table_check.isChecked() and not uses_fit)
         self._update_phase_colors()
         # Source gating is the final authority: the calls above re-enable the
         # Groups controls per display mode, but F−B mode keeps them inert.
         self._update_groups_enabled_for_source()
 
     def _update_phase_table_enabled(self, enabled: bool) -> None:
-        """Keep group selection active while gating phase-cell editing.
-
-        The table's *enabled* state is owned by the signal-source gating
-        (:meth:`_update_groups_enabled_for_source`, which does not call back
-        here): every repopulation path lands in this method
-        (``set_group_definitions``, restore, mode toggles), so re-applying the
-        gating here keeps the table inert in F−B mode instead of a blanket
-        ``setEnabled(True)`` visually re-enabling it.
-        """
+        """Keep group selection active while gating phase-cell editing."""
         self._update_groups_enabled_for_source()
         phase_edit_enabled = bool(enabled) and self._current_display_mode() == "Phase"
         self._phase_table_updating = True
@@ -1295,15 +1288,7 @@ class FourierPanel(QWidget):
         self._update_phase_colors()
 
     def _on_phase_table_item_changed_for_settings(self, item: QTableWidgetItem) -> None:
-        """Schedule settings_changed for a real edit, not a colour/flag repaint.
-
-        _phase_table_updating is set around _update_phase_colors and
-        _update_phase_table_enabled, which both rewrite cells (setForeground /
-        setFlags) as a side effect of ordinary mode/toggle changes — that must
-        not itself count as a user edit. Unlike _on_phase_table_item_changed
-        (phase column only), this fires for every column: the include checkbox
-        (column 0) also feeds group_enabled_table() -> get_state().
-        """
+        """Schedule settings_changed for a real edit, not a colour/flag repaint."""
         if self._phase_table_updating:
             return
         self._schedule_settings_changed()
@@ -1318,14 +1303,7 @@ class FourierPanel(QWidget):
 
     @contextmanager
     def _suppress_settings_signal_scope(self) -> Iterator[None]:
-        """Suppress settings_changed for the duration of a programmatic restore.
-
-        A depth counter, not a bool: the restore methods nest (e.g.
-        restore_state -> set_group_definitions), and a bare bool would be reset
-        to False by the inner call's ``finally`` while the outer call is still
-        mutating widgets, letting the tail of the outer method schedule an
-        unwanted emit. Nesting is safe.
-        """
+        """Suppress settings_changed for the duration of a programmatic restore."""
         self._suppress_settings_signal += 1
         try:
             yield
@@ -1335,11 +1313,7 @@ class FourierPanel(QWidget):
     # ── stale-spectrum indicator ─────────────────────────────────────────
 
     def set_stale(self, reason: str | None) -> None:
-        """Show or hide the "spectrum out of date" banner.
-
-        A non-empty ``reason`` shows the banner with that reason folded into
-        the fixed message; ``None`` or an empty string hides it.
-        """
+        """Show or hide the \"spectrum out of date\" banner."""
         if reason:
             self._stale_banner.setText(f"Spectrum out of date — {reason}. Compute FFT to refresh.")
             self._stale_banner.show()
@@ -1351,13 +1325,7 @@ class FourierPanel(QWidget):
         return not self._stale_banner.isHidden()
 
     def set_overlay_mismatch(self, mismatched: bool) -> None:
-        """Show or hide the "overlay mixes settings" banner.
-
-        Independent of :meth:`set_stale`: an overlay can mix spectra computed
-        under different settings even when the active run's own displayed
-        spectrum is in sync with the live panel state, so the two banners
-        can be shown together.
-        """
+        """Show or hide the \"overlay mixes settings\" banner."""
         if mismatched:
             self._overlay_mismatch_banner.show()
         else:
@@ -1463,12 +1431,7 @@ class FourierPanel(QWidget):
             self._update_phase_colors()
 
     def set_apodisation_suggestion(self, window: str, time_constant_us: float) -> None:
-        """Fill a matched-apodisation suggestion into the filter controls.
-
-        Deliberately does NOT suppress ``settings_changed``: filling the values
-        is itself a settings change, and the staleness banner engaging is the
-        designed flow (suggestion -> banner -> explicit Compute FFT applies it).
-        """
+        """Fill a matched-apodisation suggestion into the filter controls."""
         if str(window).strip().lower() == "lorentzian":
             self._filter_lorentzian_radio.setChecked(True)
         else:
@@ -1570,6 +1533,13 @@ class FourierPanel(QWidget):
             "padding": self._padding_spin.value(),
             "phase_degrees": self._phase_value(),
             "t0_offset_us": self._t0_offset_value(),
+            "phase_fit_min_mhz": self._phase_fit_min_edit.value()
+            if self._phase_fit_min_edit.text().strip()
+            else None,
+            "phase_fit_max_mhz": self._phase_fit_max_edit.value()
+            if self._phase_fit_max_edit.text().strip()
+            else None,
+            "phase_fit_tolerance_degrees": self._phase_fit_tolerance_edit.value(),
             "display": self._current_display_mode(),
             "signal_source": self._current_signal_source(),
             "display_normalisation": (
@@ -1641,6 +1611,17 @@ class FourierPanel(QWidget):
             except (TypeError, ValueError):
                 t0_offset_us = 0.0
             self._t0_offset_spin.setText(self._format_float_text(t0_offset_us))
+            for key, field in (
+                ("phase_fit_min_mhz", self._phase_fit_min_edit),
+                ("phase_fit_max_mhz", self._phase_fit_max_edit),
+            ):
+                if state.get(key) is None:
+                    field.set_unset("Auto")
+                else:
+                    field.setValue(float(state[key]))
+            self._phase_fit_tolerance_edit.setValue(
+                float(state.get("phase_fit_tolerance_degrees", 5.0))
+            )
             self._set_display_mode(state.get("display", "(Power)^1/2"))
             # Default to grouped average when absent (old .asymp projects).
             source = str(state.get("signal_source", "grouped_average"))
