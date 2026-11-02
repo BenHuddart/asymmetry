@@ -239,34 +239,39 @@ class PreparedFFTSignal:
         return 100.0 * 2.0 / self.window_sum
 
 
-def _clip_fft_window(
-    time: NDArray[np.float64],
-    asymmetry: NDArray[np.float64],
-    error: NDArray[np.float64] | None,
-    t_min: float | None,
-    t_max: float | None,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None]:
-    """Restrict a ``(t, A, σ)`` triple to ``[t_min, t_max]`` inclusive.
+_SAMPLING_GRID_TOLERANCE = 1e-6
 
-    The single crop seam shared by :func:`prepare_fft_time_signal` and
-    :func:`prepare_fft_arrays`, reproducing
-    :meth:`asymmetry.core.data.dataset.MuonDataset.time_range` exactly: the
-    bounds are inclusive, ``None`` for both is a no-op that passes the arrays
-    through untouched, and a clipped result is a copy. ``error`` may be ``None``
-    (a bare array caller need not supply one).
-    """
-    if t_min is None and t_max is None:
-        return time, asymmetry, error
-    mask = np.ones(len(time), dtype=bool)
-    if t_min is not None:
-        mask &= time >= t_min
-    if t_max is not None:
-        mask &= time <= t_max
-    return (
-        time[mask].copy(),
-        asymmetry[mask].copy(),
-        None if error is None else error[mask].copy(),
-    )
+
+def _uniform_sample_interval(
+    time: NDArray[np.float64], *, caller: str, t_min: float | None, t_max: float | None
+) -> float:
+    """Require a finite, increasing uniform grid in the retained transform window."""
+    if time.size < 2:
+        raise ValueError(
+            f"{caller}: the transform window t_min={t_min!r}, t_max={t_max!r} holds "
+            f"{time.size} time sample(s); the FFT needs at least 2 to fix its sampling interval."
+        )
+    if not np.all(np.isfinite(time)):
+        raise ValueError(
+            f"{caller}: time must contain only finite samples in the transform window."
+        )
+    dt = float(np.mean(np.diff(time)))
+    if not np.isfinite(dt) or dt <= 0.0:
+        raise ValueError(
+            f"{caller}: time must increase; the window runs from {time[0]:g} µs to {time[-1]:g} µs."
+        )
+    # At Nyquist a displacement δ changes phase by πδ/dt, bounded here by π·1e-6.
+    # Positional residuals prevent interval errors accumulating across a long record.
+    residual = np.abs((time - time[0]) - np.arange(time.size) * dt) / dt
+    index = int(np.argmax(residual))
+    if residual[index] > _SAMPLING_GRID_TOLERANCE:
+        raise ValueError(
+            f"{caller}: time is not uniformly sampled: sample {index} at {time[index]:g} µs "
+            f"lies {residual[index]:.3g} intervals from the uniform grid {time[0]:g} + k·{dt:g} µs "
+            f"(tolerance {_SAMPLING_GRID_TOLERANCE:g}). The FFT assigns frequencies only to a "
+            "uniform grid; use Fixed binning, or resample explicitly before transforming."
+        )
+    return dt
 
 
 def _validated_fft_arrays(
@@ -276,15 +281,10 @@ def _validated_fft_arrays(
     *,
     caller: str,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None]:
-    """Coerce and validate a raw ``(t, A, σ)`` triple for the array front doors.
+    """Coerce a raw triple to float64, retaining omitted errors as None.
 
-    Returns the arrays as ``float64`` (``error`` stays ``None`` when omitted).
-    Raises :class:`ValueError` with a message naming the offending array for a
-    non-1-D shape, a length mismatch, an empty triple, or any non-finite entry —
-    the validation domain a
-    :class:`~asymmetry.core.data.dataset.MuonDataset` would otherwise have
-    carried implicitly. Mirrors ``FitEngine.fit_arrays``' guards; *caller* names
-    the public entry point in the message.
+    Validate lengths, finite values and signal/error shapes. Time geometry is
+    checked by the shared preprocessing boundary after the selected crop.
     """
     coerced: dict[str, NDArray[np.float64]] = {}
     named: list[tuple[str, object]] = [("time", time), ("asymmetry", asymmetry)]
@@ -292,7 +292,7 @@ def _validated_fft_arrays(
         named.append(("error", error))
     for name, values in named:
         arr = np.asarray(values, dtype=np.float64)
-        if arr.ndim != 1:
+        if name != "time" and arr.ndim != 1:
             raise ValueError(
                 f"{caller}: {name} must be a one-dimensional array, got shape {arr.shape}."
             )
@@ -327,32 +327,11 @@ def _warn_on_early_signal_suppression(
     *,
     window: str,
 ) -> None:
-    """Warn when the apodisation in force has deleted the early-time signal.
+    """Warn when a taper deletes statistically resolved early-time signal.
 
-    Advisory only — nothing about the returned spectrum changes. The failure
-    mode this exists for is concrete: a symmetric taper (``hann``/``cosine``) is
-    exactly zero at the first sample, so a heavily damped oscillation whose
-    lifetime is a small fraction of the record can vanish into the noise floor
-    under Hann while being many-sigma without it. The metric and its two
-    thresholds live in
-    :func:`~asymmetry.core.fourier.apodisation.early_signal_apodisation_loss`.
-
-    Requirements the calibration satisfies (pinned by the synthetic study in
-    ``tests/core/test_fourier_apodisation_guard.py``):
-
-    * a heavily damped cosine (λ ≫ 1/record length) under ``hann`` or
-      ``cosine`` **must** warn, including when it rides on a slowly relaxing
-      tail of comparable or larger amplitude — the standard ordered-state
-      shape, whose tail power otherwise dilutes a whole-signal statistic;
-    * the same signal with ``window="none"``, or with the matched exponential
-      filter (``window="lorentzian"``, ``filter_time_constant_us ≈ 1/λ``),
-      **must not**;
-    * a conventional transverse-field record whose oscillation is alive across
-      the whole window **must not**, under any apodisation;
-    * pure noise **must not**, at any binning — the statistic is measured on
-      power *above the noise expectation*, and a record whose excess does not
-      clear the significance gate is reported as unassessable rather than
-      judged.
+    Symmetric tapers vanish at t=0 and can erase a heavily damped oscillation.
+    The shared loss estimator compares power above the noise expectation,
+    including removal of a slow baseline; the warning leaves the spectrum intact.
     """
     loss = early_signal_apodisation_loss(time, signal, weights, error)
     if loss is None or not loss.triggered:
@@ -387,6 +366,8 @@ def _prepare_fft_core(
     error: NDArray[np.float64] | None,
     *,
     caller: str,
+    t_min: float | None,
+    t_max: float | None,
     window: str,
     subtract_average_signal: bool | None,
     filter_start_us: float,
@@ -394,19 +375,25 @@ def _prepare_fft_core(
     fractional: bool,
     detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None,
 ) -> PreparedFFTSignal:
-    """Preprocess an already-cropped ``(t, A, σ)`` triple for the FFT.
-
-    The one implementation behind :func:`prepare_fft_time_signal` and
-    :func:`prepare_fft_arrays`; the arrays arrive pre-cropped to the transform
-    window by :func:`_clip_fft_window`, so the two front doors cannot drift, and
-    the baseline-removal and apodisation-safety behaviour reaches both paths
-    from one place.
-    """
-    subtract_average = _resolve_baseline_removal(subtract_average_signal, detrend, caller=caller)
+    """Crop, validate sampling, and preprocess the shared FFT input."""
     times = np.asarray(time, dtype=np.float64)
-    signal = np.asarray(asymmetry, dtype=np.float64).copy()
+    if times.ndim != 1:
+        raise ValueError(
+            f"{caller}: time must be a one-dimensional array, got shape {times.shape}."
+        )
+    signal = np.asarray(asymmetry, dtype=np.float64)
     err = np.asarray(error, dtype=np.float64) if error is not None else None
-    dt = np.mean(np.diff(times)) if times.size > 1 else 1.0
+    if t_min is not None or t_max is not None:
+        mask = np.ones(times.size, dtype=bool)
+        if t_min is not None:
+            mask &= times >= t_min
+        if t_max is not None:
+            mask &= times <= t_max
+        times, signal = times[mask], signal[mask]
+        err = None if err is None else err[mask]
+    signal = signal.copy()
+    dt = _uniform_sample_interval(times, caller=caller, t_min=t_min, t_max=t_max)
+    subtract_average = _resolve_baseline_removal(subtract_average_signal, detrend, caller=caller)
 
     fractional_baseline: float | None = None
     fractional_applied = False
@@ -444,8 +431,8 @@ def _prepare_fft_core(
         window_weights=weights,
         sample_errors=err,
         mean_weights=mean_weights,
-        time_start_us=float(times[0]) if times.size else 0.0,
-        dt=float(dt),
+        time_start_us=float(times[0]),
+        dt=dt,
         fractional_baseline=fractional_baseline,
         fractional_applied=fractional_applied,
     )
@@ -514,19 +501,20 @@ def prepare_fft_time_signal(
     ``detrend`` takes over"; passing ``detrend=`` together with an explicit
     ``subtract_average_signal=True`` raises :class:`ValueError` rather than
     guessing an order for the two.
+
+    Raises
+    ------
+    ValueError
+        If the cropped time grid has fewer than two samples, is not finite
+        and increasing, or deviates from uniform sampling by more than 1e-6 intervals.
     """
-    time, asymmetry, error = _clip_fft_window(
+    return _prepare_fft_core(
         dataset.time,
         dataset.asymmetry,
-        np.asarray(dataset.error, dtype=np.float64) if dataset.error is not None else None,
-        t_min,
-        t_max,
-    )
-    return _prepare_fft_core(
-        time,
-        asymmetry,
-        error,
+        dataset.error,
         caller="prepare_fft_time_signal",
+        t_min=t_min,
+        t_max=t_max,
         window=window,
         subtract_average_signal=subtract_average_signal,
         filter_start_us=filter_start_us,
@@ -583,10 +571,9 @@ filter_time_constant_us, fractional, detrend
     ------
     ValueError
         When the arrays are not one-dimensional, have unequal lengths, are
-        empty, contain non-finite values, or when ``t_min``/``t_max`` leave no
-        points. :func:`prepare_fft_time_signal` does not validate its dataset
-        this way (its behaviour is unchanged); these guards exist because a raw
-        triple has no container to have checked them earlier.
+        empty, or contain non-finite values. Both array and dataset entry points
+        require at least two finite, increasing, uniformly sampled times after
+        cropping, within 1e-6 sampling intervals of the uniform grid.
     """
     return _prepare_fft_arrays(
         time,
@@ -625,20 +612,13 @@ def _prepare_fft_arrays(
     under their own names.
     """
     time_arr, asym_arr, err_arr = _validated_fft_arrays(time, asymmetry, error, caller=caller)
-    clipped_time, clipped_asym, clipped_err = _clip_fft_window(
-        time_arr, asym_arr, err_arr, t_min, t_max
-    )
-    if clipped_time.size == 0:
-        raise ValueError(
-            f"{caller}: no data points remain in the transform window "
-            f"t_min={t_min!r}, t_max={t_max!r} (the input spans "
-            f"{float(time_arr.min()):g}–{float(time_arr.max()):g} µs)."
-        )
     return _prepare_fft_core(
-        clipped_time,
-        clipped_asym,
-        clipped_err,
+        time_arr,
+        asym_arr,
+        err_arr,
         caller=caller,
+        t_min=t_min,
+        t_max=t_max,
         window=window,
         subtract_average_signal=subtract_average_signal,
         filter_start_us=filter_start_us,
@@ -729,6 +709,12 @@ def fft_complex_asymmetry(
     -------
     frequencies, spectrum
         Frequency axis (MHz) and the complex, optionally phase-rotated spectrum.
+
+    Raises
+    ------
+    ValueError
+        If the cropped time grid has fewer than two samples, is not finite
+        and increasing, or deviates from uniform sampling by more than 1e-6 intervals.
     """
     prepared = prepare_fft_time_signal(
         dataset,
@@ -844,6 +830,8 @@ amplitude_calibration, diagnostics, detrend
     ------
     ValueError
         As :func:`prepare_fft_arrays`.
+        The retained time grid must also satisfy the sampling contract of
+        :func:`prepare_fft_time_signal`.
     """
     return _fft_complex_arrays(
         time,
@@ -977,6 +965,12 @@ def fft_asymmetry(
     -------
     frequencies, real_part, magnitude
         Frequency axis (MHz) and the real and magnitude spectra.
+
+    Raises
+    ------
+    ValueError
+        If the cropped time grid has fewer than two samples, is not finite
+        and increasing, or deviates from uniform sampling by more than 1e-6 intervals.
     """
     freqs, spectrum = fft_complex_asymmetry(
         dataset,
@@ -1044,6 +1038,8 @@ amplitude_calibration, detrend
     ------
     ValueError
         As :func:`prepare_fft_arrays`.
+        The retained time grid must also satisfy the sampling contract of
+        :func:`prepare_fft_time_signal`.
     """
     freqs, spectrum = _fft_complex_arrays(
         time,
