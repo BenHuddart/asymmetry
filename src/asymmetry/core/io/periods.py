@@ -47,6 +47,7 @@ from asymmetry.core.transform.integral import (
     _order_value,
     integrate_curve,
 )
+from asymmetry.core.transform.reduce import correction_flags_from_grouping
 from asymmetry.core.utils.constants import ORDER_KEYS, PeriodMode
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -73,6 +74,7 @@ __all__ = [
     "resolve_period_index",
     "select_period",
     "select_period_histograms",
+    "select_period_grouping",
     "sum_period_histograms",
 ]
 
@@ -266,25 +268,9 @@ def period_run(combined: Run, index: int) -> Run:
     grouping = combined.grouping
     count = len(grouping["period_reduced"])
 
-    period_grouping = {
-        key: value
-        for key, value in grouping.items()
-        if key not in {"period_histograms", "period_reduced", "period_mode"}
-    }
-
-    good_frames = grouping.get("period_good_frames")
-    if isinstance(good_frames, list):
-        period_grouping.pop("good_frames", None)
-        if index < len(good_frames) and good_frames[index] is not None:
-            period_grouping["good_frames"] = good_frames[index]
-
-    dead_time = grouping.get("period_dead_time_us")
-    if (
-        isinstance(dead_time, list)
-        and index < len(dead_time)
-        and isinstance(dead_time[index], list)
-    ):
-        period_grouping["dead_time_us"] = [float(v) for v in dead_time[index]]
+    period_grouping = select_period_grouping(grouping, index)
+    for key in ("period_histograms", "period_reduced", "period_mode"):
+        period_grouping.pop(key, None)
 
     period_histograms = grouping.get("period_histograms")
     if isinstance(period_histograms, list) and index < len(period_histograms):
@@ -318,6 +304,40 @@ def period_run(combined: Run, index: int) -> Run:
 # --- low-level helpers shared with the GUI reduction path ---------------------
 
 
+def select_period_grouping(grouping: dict, period_index: int) -> dict:
+    """Select period exposure and file coefficients without reading count arrays.
+
+    Manual and stored estimates remain authored coefficients. File coefficients
+    follow the selected acquisition period, whose exposure normalises counts.
+    """
+    period_grouping = dict(grouping)
+
+    period_good_frames = grouping.get("period_good_frames")
+    if isinstance(period_good_frames, list):
+        period_grouping.pop("good_frames", None)
+        if period_index < len(period_good_frames) and period_good_frames[period_index] is not None:
+            period_grouping["good_frames"] = period_good_frames[period_index]
+
+    period_dead_time_us = grouping.get("period_dead_time_us")
+    stored = correction_flags_from_grouping(grouping).deadtime_mode in {"manual", "estimate"}
+    if (
+        not stored
+        and isinstance(period_dead_time_us, list)
+        and period_index < len(period_dead_time_us)
+    ):
+        raw_deadtime = period_dead_time_us[period_index]
+        if isinstance(raw_deadtime, list):
+            cleaned_deadtime: list[float] = []
+            for value in raw_deadtime:
+                try:
+                    cleaned_deadtime.append(float(value))
+                except (TypeError, ValueError):
+                    continue
+            period_grouping["dead_time_us"] = cleaned_deadtime
+
+    return period_grouping
+
+
 def select_period_histograms(
     histograms: list[Histogram],
     grouping: dict,
@@ -330,25 +350,7 @@ def select_period_histograms(
     scriptable API and the GUI grouping/reduction path. Falls back to a clone
     of ``histograms`` when period data is missing or malformed.
     """
-    period_grouping = dict(grouping)
-
-    period_good_frames = grouping.get("period_good_frames")
-    if isinstance(period_good_frames, list):
-        period_grouping.pop("good_frames", None)
-        if period_index < len(period_good_frames) and period_good_frames[period_index] is not None:
-            period_grouping["good_frames"] = period_good_frames[period_index]
-
-    period_dead_time_us = grouping.get("period_dead_time_us")
-    if isinstance(period_dead_time_us, list) and period_index < len(period_dead_time_us):
-        raw_deadtime = period_dead_time_us[period_index]
-        if isinstance(raw_deadtime, list):
-            cleaned_deadtime: list[float] = []
-            for value in raw_deadtime:
-                try:
-                    cleaned_deadtime.append(float(value))
-                except (TypeError, ValueError):
-                    continue
-            period_grouping["dead_time_us"] = cleaned_deadtime
+    period_grouping = select_period_grouping(grouping, period_index)
 
     period_histograms = grouping.get("period_histograms")
     if not (isinstance(period_histograms, list) and period_index < len(period_histograms)):

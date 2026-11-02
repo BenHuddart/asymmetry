@@ -118,6 +118,7 @@ from typing import Any
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.instrument import detect_instrument, instrument_display_name
 from asymmetry.core.transform.asymmetry import estimate_alpha
+from asymmetry.core.transform.corrections import CorrectionUnavailableError
 from asymmetry.core.transform.fb_counts import good_window
 from asymmetry.core.transform.grouping import (
     InvalidGroupingError,
@@ -239,7 +240,7 @@ class AlphaPolicy:
     * ``calibrated`` — a value measured once (``method``/``source_run``) and
       applied to every run, with an optional ``error``.
     * ``per_run_estimate`` — resolution computes each run's own forward/backward
-      integral ratio (Mantid ``AlphaCalc``; the PSI ``.bin`` per-run default).
+      integral ratio (Mantid ``AlphaCalc`` convention).
     """
 
     mode: str = "fixed"
@@ -888,26 +889,7 @@ class GroupingProfile:
         # untouched profile round-trips byte-identically (D4).
         if self.good_window_policy.mode != "from_file":
             data["good_window_policy"] = self.good_window_policy.to_dict()
-        # ``beta`` follows the same emit-only-when-non-default rule, flattened
-        # (not nested like the other policies) so a fixed, non-default beta
-        # round-trips through the exact ``beta`` key the v0.15.0 plain-scalar
-        # field already shipped — no schema bump, no format break for existing
-        # projects. Calibrated provenance rides alongside as sibling keys,
-        # mirroring the grouping payload's alpha_method/alpha_error/
-        # alpha_reference_run naming (``_apply_alpha_policy``). A calibrated
-        # policy whose measured value happens to equal 1.0 drops its
-        # provenance too — the same edge case a calibrated alpha of exactly
-        # 1.0 would not hit (alpha has no emit-only-when-default rule), but
-        # unavoidable while beta keeps that invariant.
-        if self.beta != 1.0:
-            data["beta"] = float(self.beta)
-            if self.beta_policy.mode == "calibrated":
-                if self.beta_policy.method:
-                    data["beta_method"] = str(self.beta_policy.method)
-                if self.beta_policy.error is not None:
-                    data["beta_error"] = float(self.beta_policy.error)
-                if self.beta_policy.source_run is not None:
-                    data["beta_reference_run"] = int(self.beta_policy.source_run)
+        _apply_beta_policy(data, self.beta_policy)
         if self.color is not None:
             data["color"] = str(self.color)
         if self.period_mode is not None:
@@ -1235,8 +1217,8 @@ def resolve_effective_grouping(
     reference histograms + good-frame scale (the caller supplies one backed by a
     loaded-dataset registry). It is only consulted by a ``per_run_estimate`` alpha
     policy paired with ``reference_run`` background, so the estimate balances the
-    same background-subtracted counts the reduction will; ``None`` skips that
-    subtraction for the estimate.
+    same background-subtracted counts the reduction will; an unresolved
+    requested reference makes the estimate unavailable.
 
     Authored membership is preserved; reduction rejects invalid or absent channels.
     """
@@ -1247,6 +1229,16 @@ def resolve_effective_grouping(
         deadtime_mode=profile.deadtime_policy.mode,
     ) as perf:
         run_grouping = run.grouping if isinstance(run.grouping, dict) else {}
+        period_mode = profile.period_mode or run_grouping.get("period_mode", "red")
+        if "period_histograms" in run_grouping and period_mode in {"red", "green"}:
+            from asymmetry.core.io.periods import select_period_histograms
+
+            histograms, run_grouping = select_period_histograms(
+                run.histograms,
+                dict(run_grouping, deadtime_mode=profile.deadtime_policy.mode),
+                int(period_mode == "green"),
+            )
+            run = replace(run, histograms=histograms, grouping=run_grouping)
         n_hist = len(run.histograms)
 
         grouping: dict[str, Any] = {
@@ -1285,25 +1277,22 @@ def resolve_effective_grouping(
 
         try:
             _rebase_on_profile_groups(grouping, run, n_hist)
-        except InvalidGroupingError:
-            # An unavailable request still carries its fixed settings for editing.
+            _apply_t0_policy(grouping, profile.t0_policy, run, n_hist, profile_name=profile.name)
+            _apply_good_window_policy(grouping, profile.good_window_policy, run, n_hist)
             _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist)
+            _apply_alpha_policy(
+                grouping, profile.alpha_policy, run, n_hist, reference_resolver=reference_resolver
+            )
+        except (InvalidGroupingError, CorrectionUnavailableError) as exc:
+            # An unavailable request retains authored coefficients for explicit repair.
+            _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist)
+            if profile.alpha_policy.mode != "per_run_estimate":
+                _apply_alpha_policy(grouping, profile.alpha_policy, run, n_hist)
             if not profile.projections:
                 _apply_beta_policy(grouping, profile.beta_policy)
-            raise
-
-        # -- policies -----------------------------------------------------------
-        # Alpha uses the same deadtime-corrected, background-subtracted counts as reduction.
-        _apply_t0_policy(grouping, profile.t0_policy, run, n_hist, profile_name=profile.name)
-        # Directly after t0: a manual good window is measured from the effective
-        # t0 the policy above just resolved (D2).
-        _apply_good_window_policy(grouping, profile.good_window_policy, run, n_hist)
-        _apply_fixed_correction_policies(grouping, profile, run_grouping, n_hist)
-        _apply_alpha_policy(
-            grouping, profile.alpha_policy, run, n_hist, reference_resolver=reference_resolver
-        )
-
-        # Beta is scalar-only; vector profiles never emit a scalar beta.
+            if isinstance(exc, InvalidGroupingError):
+                raise
+            raise InvalidGroupingError(str(exc), grouping) from exc
         if not profile.projections:
             _apply_beta_policy(grouping, profile.beta_policy)
 
@@ -1514,30 +1503,13 @@ def _apply_t0_policy(
     *,
     profile_name: str = "",
 ) -> None:
-    """Resolve the analysis time-zero into the grouping per the policy.
+    """Resolve timing without mutating acquired histograms.
 
-    ``from_file`` (default) leaves the per-run t0 facts as
-    :func:`_rebase_on_profile_groups` left them — the payload is the file's own
-    resolution — unless the file carried no t0 at all (``t0_source ==
-    "missing"``), in which case the search runs and supplies the run's base t0
-    (D7). ``manual`` shifts that base by :attr:`T0Policy.offset_bins` (D3), so
-    one profile moves every run by the same amount whatever its header says.
-
-    ``auto_detect`` is **per detector**, the model ``musrt0 -g`` writes: each
-    detector's effective t0 is its own detected bin, so a run whose detectors
-    genuinely sit at different times keeps that stagger. Collapsing the
-    estimates into one median and comparing it with the group's header maximum
-    (the pre-Phase-7 rule) shifts every detector by the difference between two
-    incomparable numbers — on a 15-detector PSI GPS run with two detectors 170
-    bins early it moved the whole run 10 bins into the prompt peak. A detector
-    whose own search failed keeps its file t0 moved by the median of the shifts
-    that did resolve, so it stays aligned with its neighbours.
-
-    All of them rewrite the common ``t0_bin`` (and ``first_good_bin`` so the
-    good-window offset from t0 is preserved, and the exact ``t0_time_us`` by the
-    same whole-bin amount) and publish the effective per-detector t0 bins under
-    :data:`~asymmetry.core.transform.t0.EFFECTIVE_DETECTOR_T0_KEY` so reduction
-    aligns on them without ``Histogram.t0_bin`` ever being mutated.
+    File timing supplies the base; missing file timing invokes the existing
+    search. Manual offsets shift that base. Explicit auto detection must succeed.
+    Each detector keeps its own detected bin; a failed detector uses its file
+    bin shifted by the median successful shift. This preserves detector stagger.
+    Common timing and good-window coordinates move together by whole bins.
     """
     if not run.histograms:
         return
@@ -1563,6 +1535,8 @@ def _apply_t0_policy(
         # detected per-detector values are the base a manual offset rides on.
         search = find_t0_for_run(run.histograms, run.metadata)
         if not search.ok:
+            if policy.mode == "auto_detect":
+                raise InvalidGroupingError(f"Automatic t0 unavailable: {search.message}", grouping)
             return
         base_bins = detected_detector_t0_bins(search, file_bins, missing=t0_missing)
         grouping["t0_search_strategy"] = str(search.strategy)
@@ -1654,21 +1628,13 @@ def _apply_alpha_policy(
 
 
 def _apply_beta_policy(grouping: dict[str, Any], policy: BetaPolicy) -> None:
-    """Write ``beta`` (and calibrated provenance) into the grouping per the policy.
+    """Write dimensionless beta and retain calibrated provenance even at unity.
 
-    Unlike :func:`_apply_alpha_policy`, beta has no ``per_run_estimate`` mode
-    and keeps the emit-only-when-≠1 invariant across both modes — a fixed or
-    calibrated beta of exactly 1.0 writes nothing, so a payload that never
-    departs from 1.0 stays byte-identical to a pre-β one. Provenance keys
-    (``beta_method``/``beta_error``/``beta_reference_run``) are written only in
-    calibrated mode, mirroring ``_apply_alpha_policy``'s naming. Callers must
-    skip this entirely for a projection-carrying (vector) profile — see
-    :func:`resolve_effective_grouping`.
+    Fixed unity stays implicit. Vector reduction callers omit scalar beta.
     """
     beta = _sanitize_beta(policy.value)
-    if beta == 1.0:
-        return
-    grouping["beta"] = beta
+    if beta != 1.0:
+        grouping["beta"] = beta
     if policy.mode == "calibrated":
         if policy.method:
             grouping["beta_method"] = str(policy.method)
@@ -1691,11 +1657,8 @@ def _estimate_run_alpha(
     grouped and background-subtracted by :func:`corrected_grouped_counts`, exactly
     the spectra the reduction forms the asymmetry from — so the balance centres
     the reduced (background-subtracted) asymmetry rather than the raw totals (see
-    ``docs/porting/correction-order-alpha-estimation``). The deadtime and
-    background policies must already be resolved into ``grouping`` (they are, by
-    the policy order in :func:`resolve_effective_grouping`). Falls back to 1.0
-    when the groups reference no present detectors (:func:`estimate_alpha` also
-    floors a non-positive backward sum).
+    the correction-order reference). Deadtime and background policies must
+    already be resolved. An unusable ratio retains the request for repair.
     """
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))

@@ -36,6 +36,7 @@ class GroupingWindowProfileEditorScenario(Scenario):
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
         from asymmetry.core.project.profiles import (
+            AlphaPolicy,
             profile_fingerprint_for_run,
             profile_from_payload,
         )
@@ -54,6 +55,7 @@ class GroupingWindowProfileEditorScenario(Scenario):
         profile_b = profile_from_payload(
             dict(dataset_b.run.grouping), "Sample B", fingerprint, active=False
         )
+        profile_a.alpha_policy = AlphaPolicy(mode="per_run_estimate")
 
         dialog = GroupingDialog(
             [dataset_a, dataset_b],
@@ -67,9 +69,12 @@ class GroupingWindowProfileEditorScenario(Scenario):
         dialog.resize(*self.size)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
-        # The live preview reduces on a worker thread (TaskRunner) after a
-        # debounce timer; give both time to fire before grabbing.
-        _pump_events(500)
+        from .grouping_window_good_window_row import _pump_until
+
+        dialog._preview_pane.flush()
+        _pump_until(lambda: dialog._preview_pane.corrections_complete)
+        if not dialog._preview_pane.corrections_complete:
+            raise RuntimeError("Automatic alpha preview did not complete")
 
         pix = dialog.grab()
         out_path = ctx.output_dir / f"{self.name}.png"

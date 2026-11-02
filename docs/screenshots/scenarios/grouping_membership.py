@@ -55,7 +55,7 @@ class MembershipScenario(Scenario):
             dialog._exclude_edit.setText("")
             dialog._refresh_preview()
             pane.flush()
-            _pump_until(lambda: not pane.corrections_complete)
+            _pump_until(lambda: "shared acquired channels 2" in pane._incomplete_banner.text())
             if "shared acquired channels 2" not in pane._incomplete_banner.text():
                 raise RuntimeError("The preview must identify the shared channel")
             if dialog._apply_btn.isEnabled():

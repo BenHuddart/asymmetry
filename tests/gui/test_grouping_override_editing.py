@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from tests.gui.test_grouping_preview_pane import _wait_until
 
 pytestmark = [pytest.mark.gui]
 
@@ -110,6 +111,7 @@ def test_apply_writes_only_the_overridden_run(qapp: QApplication) -> None:
     dialog = _dialog(overridden=[2], selected=1)
     _select_run(dialog, 2)
     dialog._alpha_spin.setValue(3.5)
+    _wait_until(lambda: dialog._preview_pane.corrections_complete)
     dialog._on_apply()
 
     grouping_result = dialog.get_grouping_result()
@@ -145,6 +147,7 @@ def test_apply_commits_all_dirty_overrides(qapp: QApplication) -> None:
     dialog._alpha_spin.setValue(1.25)
     _select_run(dialog, 2)
     dialog._alpha_spin.setValue(2.75)
+    _wait_until(lambda: dialog._preview_pane.corrections_complete)
     dialog._on_apply()
 
     edits = dialog.get_profile_result()["override_edits"]

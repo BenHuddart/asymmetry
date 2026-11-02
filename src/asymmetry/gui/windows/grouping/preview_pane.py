@@ -225,9 +225,7 @@ class CountsCurves:
     backward: np.ndarray
     #: Bin width in µs (undecimated — one histogram bin, not one drawn sample).
     bin_width: float
-    #: Undecimated histogram length. The drawn arrays are strided, so their last
-    #: sample is not the last bin; the view's x-range runs to bin ``n_bins``'s
-    #: leading edge, which is the only bound every window marker lies inside.
+    #: Undecimated length; the view ends at the trailing acquisition-bin edge.
     n_bins: int
     #: Resolved common t0 bin, and the good window's inclusive bin bounds.
     t0_bin: int
@@ -325,24 +323,15 @@ class GroupingPreviewPane(QWidget):
         self._canvas = None
         self._axes = None
         self._nav_toolbar = None
-        #: Which view of the result is drawn — ``"asymmetry"`` or ``"counts"``
-        #: (D7). Preview-only state, owned here; the dialog's segmented control
-        #: drives it through :meth:`set_view`.
+        #: Preview-only view selected by the dialog's segmented control.
         self._view = "asymmetry"
-        #: Last drawn result, retained so Home can redraw with fresh autoscale
-        #: without a recompute.
+        #: Last result retained for Home redraws without a recompute.
         self._state: _PreviewResult | str | None = None
-        #: The user's chosen ``(xlim, ylim)`` once a pan/zoom drag actually moved
-        #: the view, or ``None`` while the solid-only autoscale owns it. Stored
-        #: explicitly — never re-read from the axes at draw time, because error
-        #: and empty-data paths ``clear()`` the axes (resetting the limits to
-        #: matplotlib's defaults), and capturing those would freeze the preview
-        #: on a garbage view. Home resets to ``None``.
+        #: User limits survive axes.clear(); None means solid-only autoscale.
         self._user_view: tuple[tuple[float, float], tuple[float, float]] | None = None
         #: Limits at nav-drag press, to tell a real drag from a mode-on click.
         self._nav_press_view: tuple | None = None
-        #: A result whose draw arrived mid-drag; drawn on release instead, so a
-        #: debounced redraw never clears the axes under the rubber band.
+        #: Draws arriving mid-drag wait until release to preserve the rubber band.
         self._deferred_result: _PreviewResult | None = None
         try:
             from asymmetry.gui.widgets.mpl_canvas import create_canvas
@@ -459,7 +448,12 @@ class GroupingPreviewPane(QWidget):
     @property
     def corrections_complete(self) -> bool:
         return not isinstance(self._state, str) and (
-            self._last_result is None or self._last_result.corrections.complete
+            (self._last_result is None and self._generation == 0)
+            or (
+                self._last_result is not None
+                and self._last_result.generation == self._generation
+                and self._last_result.corrections.complete
+            )
         )
 
     def show_error(self, message: str) -> None:
@@ -491,8 +485,12 @@ class GroupingPreviewPane(QWidget):
 
     def _queue_request(self, request: _PreviewRequest) -> None:
         self._pending = request
+        self._state = self._deferred_result = None
+        self._incomplete_banner.setText("")
+        self._incomplete_banner.hide()
         self._status.setText("Computing preview…")
         self._debounce.start()
+        self.preview_changed.emit()
 
     def flush(self) -> None:
         """Dispatch any pending request immediately (used by tests)."""
@@ -957,12 +955,7 @@ class GroupingPreviewPane(QWidget):
         )
 
     def _draw_caption(self, rows: list[_CaptionRow]) -> int:
-        """Name the curves in the axes' top-left; returns the rows drawn.
-
-        One row per curve, in drawing order, its swatch in the curve's colour
-        and line style. The caller sizes the autoscale's top headroom from the
-        returned count, so no curve climbs under the rows that name it.
-        """
+        """Name curves in drawing order; row count sets autoscale headroom."""
         for index, (color, text, dashed) in enumerate(rows):
             y = _CAPTION_TOP - index * _CAPTION_ROW_DY
             # Axes-fraction coordinates leave dataLim untouched, so the caption
@@ -1021,6 +1014,12 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     else:
         grouping = request.grouping or {}
 
+    histograms = request.histograms
+    mode = grouping.get("period_mode", "red")
+    if "period_histograms" in grouping and mode in {"red", "green"}:
+        from asymmetry.core.io.periods import select_period_histograms
+
+        histograms, _ = select_period_histograms(histograms, grouping, int(mode == "green"))
     n_hist = len(request.histograms)
     forward_gid = _as_int(grouping.get("forward_group"), 1)
     backward_gid = _as_int(grouping.get("backward_group"), 2)
@@ -1031,16 +1030,14 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     # Correct once, form the asymmetry per α. corrected_grouped_counts runs the
     # deadtime → grouping → background stages (the expensive part).
     flags = correction_flags_from_grouping(grouping)
-    # The solid curve is always the full configured reduction — compares only ever
-    # add a *ghost*, never degrade the solid — so the α residual ⟨A⟩ (below) is
-    # always read off the fully-corrected curve.
+    # The solid curve and its residual always use every configured correction.
     use_deadtime = flags.use_deadtime
     use_background = flags.use_background
     facility = request.facility or resolve_facility(grouping=grouping)
 
     def _reduce(dt: bool, bg: bool):
         return corrected_grouped_counts(
-            histograms=request.histograms,
+            histograms=histograms,
             grouping=grouping,
             forward_idx=forward_idx,
             backward_idx=backward_idx,

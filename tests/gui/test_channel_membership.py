@@ -241,7 +241,7 @@ def test_valid_preview_is_cleared_when_pair_becomes_overlapping(qapp):
         _wait_until(lambda: pane._last_result is not None)
         dialog._group_table.item(0, 3).setText("1,2")
         pane.flush()
-        _wait_until(lambda: not pane.corrections_complete)
+        _wait_until(lambda: pane._status.text().startswith("Preview unavailable"))
         assert pane._last_result is None
         assert len(pane._axes.lines) == 0
         assert not dialog._apply_btn.isEnabled()
@@ -281,7 +281,7 @@ def test_unavailable_pair_discards_a_deferred_drag_result(qapp):
         assert pane._deferred_result is not None
         dialog._group_table.item(0, 3).setText("1,2")
         pane.flush()
-        _wait_until(lambda: not pane.corrections_complete)
+        _wait_until(lambda: pane._status.text().startswith("Preview unavailable"))
         pane._on_canvas_button_release(None)
         assert pane._last_result is None
         assert len(pane._axes.lines) == 0
