@@ -152,8 +152,8 @@ Asymmetry and uncertainty handling uses the following convention:
 * If :math:`F + \alpha B = 0`, asymmetry is set to 0 for that bin.
 * The default uncertainty for that bin is 1.0 (fractional), i.e. 100% in the
   GUI percentage display.
-* For a non-zero denominator and positive propagated variance, the Poisson
-  uncertainty at β = 1 is:
+* For independent raw Poisson counts, a non-zero denominator and positive
+  propagated variance, the uncertainty at β = 1 is:
 
 .. math::
 
@@ -161,6 +161,18 @@ Asymmetry and uncertainty handling uses the following convention:
 
 In low-count late-time tails, this naturally produces large fluctuations and
 large uncertainties.
+
+With independent count variances :math:`v_F` and :math:`v_B`, the same
+ratio derivatives give
+
+.. math::
+
+   \sigma_A = \frac{2|\alpha|\sqrt{B^2v_F+F^2v_B}}{(F+\alpha B)^2}.
+
+Deadtime correction changes the count values while retaining measured counting
+variance, or explicitly supplied independent variance. Coefficients and frame
+exposure are fixed; their uncertainty and physical deadtime-induced correlations
+are excluded. See :doc:`detector_grouping` for the convention and limitations.
 
 Background is subtracted from the grouped count histograms before the pair
 formula is evaluated. The value retains the same alpha convention. Error

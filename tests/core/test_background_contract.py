@@ -48,7 +48,9 @@ def test_period_endpoints(window, width, facility, expected):
     ],
 )
 def test_range_input_values(grouping, t0, expected):
-    assert bg._background_ranges(grouping, t0) == tuple(BinWindow(*window) for window in expected)
+    assert bg.resolve_background_ranges(grouping, t0) == tuple(
+        BinWindow(*window) for window in expected
+    )
 
 
 @pytest.mark.parametrize(

@@ -14,8 +14,7 @@ asymmetry calculation with the chosen :math:`\alpha` calibration constant
 (:func:`~asymmetry.core.transform.asymmetry.compute_asymmetry`,
 :func:`~asymmetry.core.transform.asymmetry.estimate_alpha`), and
 count binning before the asymmetry ratio is formed
-(:class:`~asymmetry.core.transform.rebin.BinningSpec`). The order is fixed
-and matches musrfit's ``PRunAsymmetry`` pipeline:
+(:class:`~asymmetry.core.transform.rebin.BinningSpec`). The order is fixed:
 deadtime → grouping → background → count binning → asymmetry. The user-facing
 documentation of these steps and of Asymmetry's conventions (alpha
 applied to the backward group; Mantid-style uncertainty handling at

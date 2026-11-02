@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import CancelledError
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from iminuit import Minuit
@@ -498,7 +498,7 @@ def resolve_deadtime(
             "good_frames": correction.good_frames if any(correction.tau_us) else None,
             "source": str(grouping.get("deadtime_method") or requested).strip().lower(),
         },
-        uncertainty="Poisson; deadtime derivative and coefficient uncertainty not propagated",
+        uncertainty="measured-count variance retained; coefficient and exposure uncertainty excluded",
     )
 
 
@@ -521,29 +521,19 @@ def prepare_histograms_with_deadtime(
         if outcome.status != CorrectionStatus.APPLIED or not any(outcome.effective["tau_us"]):
             return list(histograms), outcome
         corrected = [
-            _copy_histogram_with_counts(
+            replace(
                 hist,
-                apply_deadtime_correction(
+                counts=apply_deadtime_correction(
                     hist.counts,
                     tau_us,
                     hist.bin_width,
                     num_good_frames=outcome.effective["good_frames"],
                     detector=i,
                 ),
+                count_variance=hist.counts if hist.count_variance is None else hist.count_variance,
             )
             for i, (hist, tau_us) in enumerate(
                 zip(histograms, outcome.effective["tau_us"], strict=True)
             )
         ]
         return corrected, outcome
-
-
-def _copy_histogram_with_counts(histogram: Histogram, counts) -> Histogram:
-    return Histogram(
-        counts=np.asarray(counts, dtype=np.float64),
-        bin_width=histogram.bin_width,
-        t0_bin=histogram.t0_bin,
-        good_bin_start=histogram.good_bin_start,
-        good_bin_end=histogram.good_bin_end,
-        t0_time_us=histogram.t0_time_us,
-    )

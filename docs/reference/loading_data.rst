@@ -483,8 +483,8 @@ per-detector calibration routine, or the reference-run deadtime estimate.
 
 Background correction is a separate Grouping dialog toggle for PSI-style data
 (``.bin``, ``.mdu``, and PSI/LEM ``.root``). It subtracts a count background
-from grouped raw forward/backward histograms before asymmetry calculation,
-following musrfit ``PRunAsymmetry``. The toggle is off by default and disabled
+from grouped raw forward/backward histograms before asymmetry calculation.
+The toggle is off by default and disabled
 for ISIS/NeXus data, keeping the correction split explicit: ISIS uses
 file-based deadtime correction when available, while PSI uses grouped
 background correction.
@@ -497,22 +497,20 @@ does not invent format rules:
 
 * PSI BIN/MDU files preserve detector counts, labels, and timing markers.
   BIN offsets are described in the public PSI format document linked above.
-* MusrRoot/LEM ROOT parsing follows musrfit
-  ``PRunDataHandler::ReadRootFile`` and the MusrRoot documentation:
+* MusrRoot/LEM ROOT parsing follows the MusrRoot documentation:
   ``RunHeader`` metadata plus ``hDecay`` histograms are mapped into
   Asymmetry's raw run model.
 * Per-detector ``t0`` handling follows the PSI file metadata exposed by those
   readers; Asymmetry stores these as ``detector_t0_bins`` and aligns detector
   histograms before grouping.
-* Background correction follows musrfit ``PRunAsymmetry``: group
-  forward/backward histograms, subtract fixed values or mean background from
-  inclusive bin ranges, then calculate asymmetry. If no ranges are supplied,
+* Background correction groups forward/backward histograms, subtracts fixed
+  values or mean background from inclusive bin ranges, then calculates
+  asymmetry. If no ranges are supplied,
   the fallback range is ``0.1 * t0`` to ``0.6 * t0``. The corrected-count
-  uncertainty follows musrfit-style propagation, while Asymmetry retains its
-  standard alpha convention with ``alpha`` applied to the backward group.
-* File-based deadtime correction uses the non-paralyzable formula implemented
-  by musrfit ``PRunBase::DeadTimeCorrection`` and Mantid
-  ``ApplyDeadTimeCorr``:
+  uncertainty retains independent count variance and shared background-level
+  covariance as described in :doc:`data_reduction/backgrounds`. Asymmetry
+  applies ``alpha`` to the backward group.
+* File-based deadtime correction uses the non-paralyzable formula:
   ``N_corr = N / (1 - N * dead_time / (time_bin * good_frames))``. The
   ``good_frames`` normalisation is read from the file's top-level
   ``good_frames`` / ``goodfrm`` when present; legacy ISIS HDF4 / NeXus-V1 files

@@ -34,7 +34,8 @@ Users, instrument scientists and other μSR authors read what you commit, and yo
 4. Change implementation, tests, docs and `CHANGELOG.md` `[Unreleased]` together. A
    user-facing change is incomplete until the owning Sphinx page describes it, quotes UI
    strings verbatim and updates its screenshot scenario.
-5. Run focused tests through the harness, never bare pytest, then `validate` once before review.
+5. Run focused tests through the harness, never bare pytest. Validate and review the full diff
+   before pushing or opening a PR.
 6. Open a PR with an imperative title, the body from `.github/PULL_REQUEST_TEMPLATE.md`
    (`gh pr create --body` does not apply it) and `Closes #n`.
 7. After a PR with user-visible changes merges, propose a release per `RELEASING.md`: suggest
@@ -82,9 +83,8 @@ WiMDA, musrfit and Mantid are colleagues' work under their own terms, and Asymme
 
 - Implement from published mathematics, manuals, documented formats and observed behaviour. GPL
   source (musrfit, Mantid) and Numerical Recipes code never enter this repository in any form.
-- WiMDA's source is not open source. Read it to understand a method, but never quote or
-  translate it. Where existing code follows a routine closely, the docstring names the routine.
-  `NOTICE` must stay true.
+- WiMDA's source is not open source: read to understand, never quote or translate it.
+  Cite public sources and verified GUI feature names, not internal routines. `NOTICE` must stay true.
 - Check numbers by running the other program; the test records its version, input and tolerance.
 - Comparisons go in the Sphinx docs: `docs/explanation/comparison.rst`, plus a "Compared with other
   programs" section on the owning reference page. Name the version, cite the source, and state

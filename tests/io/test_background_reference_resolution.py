@@ -290,5 +290,6 @@ def test_fourier_reference_deadtime_uses_reference_frames(monkeypatch):
         apply_deadtime=True,
         detector_t0_bins=[0],
     )
-    np.testing.assert_allclose(counts, [20.0], rtol=1e-12)
+    np.testing.assert_allclose(counts.counts, [20.0], rtol=1e-12)
+    np.testing.assert_allclose(counts.variance, [20 / 1.4], rtol=1e-12)
     assert scale == 2.0

@@ -825,13 +825,10 @@ whose saved correction is rejected keeps the freshly loaded, uncorrected run
 and logs the rejection with deadtime correction disabled.
 
 Below the pole there is no arbitrary percentage cutoff. Differentiating the
-inverse shows that relative count uncertainty is amplified by
-:math:`1/(1-x)` compared with the raw relative uncertainty, so a large positive
-correction is sensitive to statistical and calibration errors. This derivative
-is a model sensitivity, not a complete statistical model of detector losses.
-Current propagation treats deadtime-corrected detector counts as Poisson and
-omits the inverse's derivative and coefficient uncertainty. The reference
-conventions and the limits of this approximation are described below.
+inverse shows that the conditional delta method would amplify relative count
+uncertainty by :math:`1/(1-x)`. A large positive correction is sensitive to
+statistical and calibration errors. Asymmetry retains measured-count variance
+instead of applying that derivative; its convention and limitations are below.
 Deadtime must act before count subtraction: applying this nonlinear inverse to subtracted
 counts is not an equivalent operation.
 
@@ -872,11 +869,24 @@ this corrected-Poisson convention. The six-significant-digit export is compared
 at relative tolerance :math:`5\times10^{-6}`. These checks concern exported
 single-histogram errors, not every musrfit fit or likelihood mode.
 
-Asymmetry's prepared histograms currently carry corrected values without a
-separate counting variance. Consequently, the reduction's count-error basis
-does not retain Mantid's supplied errors.
-Background estimation has its own shared uncertainty propagation; it does not
-restore the counting variance lost during deadtime preparation.
+Asymmetry uses :math:`v_{\mathrm{measured}}`: the independent variance is the
+measured count before correction, or a supplied ``Histogram.count_variance``.
+For example, 100 measured counts, a 0.2 µs coefficient, 1 µs bins, and 100
+frames give 125 corrected counts with counting error 10. This agrees with
+Mantid's retention of supplied errors on the recorded inputs. The coefficient
+and exposure are fixed; their uncertainties and physical deadtime-induced
+correlations between acquisition bins are excluded. This conventional
+approximation does not certify coverage near the inverse pole.
+
+Deadtime preparation returns copies; the run retains its original acquisition
+histograms. Alignment, grouping, background estimation, and binning carry the
+variance alongside the corrected counts. Integral asymmetry, analytic count-ratio
+α errors, Gaussian count fits, and grouped Fourier/MaxEnt inputs use the same
+basis. Shared-background uncertainty remains separate. Fitters receive marginal
+errors rather than a full covariance likelihood.
+The array-level ``apply_deadtime_correction`` returns count values alone;
+``prepare_histograms_with_deadtime`` returns histogram copies with their variance
+and the correction outcome for uncertainty-aware scripted reduction.
 See :doc:`/explanation/comparison` for the bounds of the program comparisons.
 
 ISIS calibration and signed coefficients
@@ -957,8 +967,7 @@ including PSI BIN/MDU and PSI/LEM ROOT data. This is separate from fit-model
 background parameters such as ``A_bg``: it subtracts a count background from
 grouped raw forward/backward histograms before the asymmetry is calculated.
 
-This follows musrfit's ``PRunAsymmetry`` ordering. Histograms are first
-grouped into forward and backward sums, then background is subtracted, and
+Histograms are first grouped into forward and backward sums, then background is subtracted, and
 then asymmetry is calculated. The section's modes are:
 
 * ``None`` — no correction.

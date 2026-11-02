@@ -39,6 +39,10 @@ class Histogram:
         *raw* axis where bin *k* spans ``[k·w, (k+1)·w)`` — ISIS ``time_zero``,
         MusrRoot ``(Time Zero Bin + 0.5)·w``. ``None`` when the file carries no
         sub-bin t0; see :attr:`t0_time_us_effective`.
+    count_variance : NDArray or None
+        Independent counting variance on the same acquisition bins. ``None``
+        denotes raw Poisson counts. Deadtime-prepared copies retain measured
+        variance rather than inferring it from their corrected count values.
     """
 
     counts: NDArray[np.float64]
@@ -47,6 +51,22 @@ class Histogram:
     good_bin_start: int = 0
     good_bin_end: int = -1
     t0_time_us: float | None = None
+    count_variance: NDArray[np.float64] | None = None
+
+    def __post_init__(self) -> None:
+        if self.count_variance is None:
+            return
+        variance = np.asarray(self.count_variance)
+        if (
+            variance.ndim != 1
+            or variance.shape != np.shape(self.counts)
+            or variance.dtype.kind not in "biuf"
+            or not np.all(np.isfinite(variance))
+            or np.any(variance < 0)
+        ):
+            raise ValueError("count variance must be finite, non-negative and have the count shape")
+        self.count_variance = np.array(variance, dtype=np.float64, copy=True)
+        self.count_variance.setflags(write=False)
 
     @property
     def n_bins(self) -> int:

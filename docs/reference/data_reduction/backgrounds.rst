@@ -118,6 +118,11 @@ pair raises ``background range requires two integer bin indices.`` The
 same rules apply to grouped Fourier backgrounds. An absent range selects the
 pre-t0 default; a declared invalid range raises an error.
 
+Grouped Fourier and MaxEnt translate estimation windows from the
+forward/backward alignment grid to their common detector grid. An additional
+group with a later t0 therefore leaves the background's acquisition bins and
+shared uncertainty unchanged.
+
 Tail fit (late-time)
 --------------------
 
@@ -131,9 +136,10 @@ rate,
 
 where :math:`w` is the bin width (the bracketed factor averages the
 exponential across each bin), and subtracts the flat rate :math:`p_2`. The
-fit maximises the Poisson likelihood, which remains correct in the
-late-time bins that hold only a handful of counts — the regime where
-least-squares weighting fails. The fitted rate is reported with its
+fit maximises the Poisson likelihood for raw counts, including the late-time
+bins that hold only a handful of counts. For deadtime-corrected observations
+this is an estimating objective; its uncertainty uses the supplied count
+variance through the estimator's linearised influence. The fitted rate is reported with its
 uncertainty, e.g. 0.23(11) counts/μs, and flagged when it is consistent
 with zero.
 
@@ -252,8 +258,25 @@ The fitted :math:`\mu_j` supplies the same Poisson variance basis as the
 influence row. Combining model-based covariance with observed zero-bin
 variances can produce an invalid joint covariance. Singular information
 fails with ``Tail-fit information matrix is singular``; it does not declare
-zero uncertainty. Shared count components are checked for a valid joint
+zero uncertainty. A non-positive or non-finite propagated tail-fit variance
+also fails. Shared count components are checked for a valid joint
 covariance at construction.
+
+Deadtime-prepared groups retain their measured counting variance :math:`v_j`
+instead of replacing it with corrected counts or fitted means. Fixed levels
+leave that variance unchanged; reference subtraction adds
+:math:`v_j+s^2v_{R,j}`; a range mean uses
+:math:`\sigma_\theta^2=\sum_W v_j/n_W^2` and
+:math:`\kappa_j=v_j/n_W` on its estimation window. For a tail fit, let
+:math:`L_j=(J_j I^{-1})_2/\mu_j` be the rate estimator's influence. Then
+
+.. math::
+
+   \sigma_\theta^2=w^2\sum_j L_j^2v_j,\qquad
+   \kappa_j=wL_jv_j.
+
+This propagates the declared count variance through the same fitted estimator;
+it does not change the count-loss model or add calibration uncertainty.
 
 Binning, count-integral asymmetry and count-ratio α use this same propagation.
 For a differential mean asymmetry the weights are the per-bin asymmetry
@@ -268,15 +291,18 @@ two. Fitters receive marginal error bars, not that full covariance. Tail-fit
 linearisation assumes interior, identifiable fit parameters; near a
 non-negative parameter bound its errors need not have calibrated coverage,
 and marginal variances are not guaranteed conservative. Deadtime-corrected
-counts use the Poisson approximation. Rebinning an already reduced curve
+counts use retained measured-count variance with fixed coefficients and exposure;
+physical deadtime-induced inter-bin covariance is excluded. Rebinning an already reduced curve
 treats its points as independent and does not carry these shared components.
 
 .. figure:: /_generated/screenshots/background_binned_uncertainty.png
-   :alt: Grouping preview with tail-fit background subtraction and bunched asymmetry errors
+   :alt: Grouping preview with deadtime correction, fitted background, and bunched asymmetry errors
    :width: 100%
 
-   The asymmetry preview after **Tail fit** background subtraction and fixed
-   bunching. Error bars include the level shared by each merged group of bins.
+   The asymmetry preview with manual deadtime coefficients of 0.1 µs,
+   **Tail fit** background subtraction and fixed bunching. Error bars retain
+   measured counting variance and include the level shared by each merged group
+   of bins.
 
 **References**
 
