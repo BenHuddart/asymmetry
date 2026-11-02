@@ -18,6 +18,10 @@ References
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -170,8 +174,11 @@ def p_wave_chiral_magnitude(phi: NDArray[np.float64] | list[float] | float) -> A
     return np.asarray(np.sqrt(np.cos(phi_arr) ** 2 + np.sin(phi_arr) ** 2), dtype=float)
 
 
-def point_node_3d(theta: NDArray[np.float64] | list[float] | float) -> ArrayLikeFloat:
-    r"""Return example 3D point-node form factor.
+def point_node_3d(
+    theta: NDArray[np.float64] | list[float] | float,
+    phi: NDArray[np.float64] | list[float] | float | None = None,
+) -> ArrayLikeFloat:
+    r"""Return the spherical cos(theta) form factor, independent of azimuth.
 
     .. math::
 
@@ -181,8 +188,11 @@ def point_node_3d(theta: NDArray[np.float64] | list[float] | float) -> ArrayLike
     return np.asarray(np.cos(theta_arr), dtype=float)
 
 
-def line_node_3d(theta: NDArray[np.float64] | list[float] | float) -> ArrayLikeFloat:
-    r"""Return example 3D line-node form factor.
+def line_node_3d(
+    theta: NDArray[np.float64] | list[float] | float,
+    phi: NDArray[np.float64] | list[float] | float | None = None,
+) -> ArrayLikeFloat:
+    r"""Return the spherical sin(theta) form factor, independent of azimuth.
 
     .. math::
 
@@ -190,3 +200,44 @@ def line_node_3d(theta: NDArray[np.float64] | list[float] | float) -> ArrayLikeF
     """
     theta_arr = np.asarray(theta, dtype=float)
     return np.asarray(np.sin(theta_arr), dtype=float)
+
+
+@dataclass(frozen=True)
+class GapForm:
+    """Angular integration contract for |g| on a cylinder or sphere.
+
+    A missing azimuthal period declares azimuth independence. Equator mirror
+    symmetry means |g(theta, phi)| = |g(pi-theta, phi)|. These mathematical
+    symmetries determine the integration coordinates, not the physical label.
+    """
+
+    name: str
+    function: Callable[..., ArrayLikeFloat]
+    surface: Literal["cylinder", "sphere"]
+    period: float | None
+    equator_mirror: bool
+
+    def __post_init__(self):
+        if self.surface not in {"cylinder", "sphere"}:
+            raise ValueError("Gap surface must be cylinder or sphere.")
+        if self.period is not None and (not np.isfinite(self.period) or self.period <= 0):
+            raise ValueError("Gap azimuthal period must be finite and positive.")
+
+
+GAP_FORMS = {
+    function.__name__: GapForm(function.__name__, function, surface, period, mirror)
+    for function, surface, period, mirror in (
+        (isotropic_s, "cylinder", None, False),
+        (anisotropic_s_cos4, "cylinder", np.pi / 2, False),
+        (anisotropic_s_cos2, "cylinder", np.pi, False),
+        (d_wave, "cylinder", np.pi / 2, False),
+        (extended_s, "cylinder", np.pi / 2, False),
+        (anisotropic_d_with_harmonics, "cylinder", np.pi / 2, False),
+        (nonmonotonic_d_wave, "cylinder", np.pi / 2, False),
+        (p_wave_axial_2d, "cylinder", np.pi, False),
+        (p_wave_chiral_magnitude, "cylinder", None, False),
+        (s_plus_g, "sphere", np.pi / 2, True),
+        (point_node_3d, "sphere", None, True),
+        (line_node_3d, "sphere", None, True),
+    )
+}
