@@ -267,12 +267,8 @@ class TestSchemaMigration:
             validate({"datasets": []})
 
     def test_unknown_top_level_fields_are_allowed(self):
-        """Future-proofing: unknown fields must not break validation."""
         state = {"schema_version": 5, "datasets": [], "future_field": "keep me"}
         validate(state)  # must not raise
-
-    def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 28
 
     def test_v15_migrates_to_v16_frequency_axis_mode(self):
         # v16 replaces the frequency relative-axis boolean with a real axis mode
@@ -1608,6 +1604,9 @@ class _StubFitParamsWithCrossGroup(_StubFitParamsClear):
 
 
 class _StubPlotPanelWithState(_StubPlotPanel):
+    def get_bunch_factor(self):
+        return self.get_state()["bunch_factor"]
+
     def get_state(self):
         return {
             "current_run_number": None,

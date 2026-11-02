@@ -795,8 +795,7 @@ class GroupingDialog(QDialog):
 
         self._bunch_spin = NoScrollSpinBox()
         self._bunch_spin.setRange(1, 10000)
-        requested_bunching = int(grouping.get("bunching_factor", 1))
-        self._bunch_spin.setValue(requested_bunching)
+        self._bunch_spin.setValue(binning_spec(grouping).factor)
         self._bunch_spin.setMaximumWidth(metrics.spin_width_for(5, self._bunch_spin))
         self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
 
@@ -3304,8 +3303,7 @@ class GroupingDialog(QDialog):
         if default_last_good < default_first_good:
             default_last_good = default_first_good
         self._last_good_spin.setValue(default_last_good + index_base)
-        requested_bunching = int(grouping.get("bunching_factor", 1))
-        self._bunch_spin.setValue(requested_bunching)
+        self._bunch_spin.setValue(binning_spec(grouping).factor)
         self._deadtime_manual_values_us = self._initial_manual_deadtime_values(grouping)
         self._deadtime_manual_method = self._initial_manual_deadtime_method(grouping)
         self._deadtime_mode = (

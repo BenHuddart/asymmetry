@@ -70,6 +70,7 @@ from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform.grouping import good_event_count, good_frames
+from asymmetry.core.transform.rebin import binning_spec
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.palette import is_dark_surface
@@ -3562,10 +3563,7 @@ class DataBrowserPanel(QWidget):
         except (TypeError, ValueError):
             bin_index_base = 0
 
-        try:
-            bunching_factor = int(grouping.get("bunching_factor", 1))
-        except (TypeError, ValueError):
-            bunching_factor = 1
+        bunching_factor = binning_spec(grouping).factor
         signature = {
             "groups": groups,
             "forward_group": int(grouping.get("forward_group", 1)),

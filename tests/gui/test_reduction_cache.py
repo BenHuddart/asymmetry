@@ -202,15 +202,20 @@ def _count_builds(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
 
 
 def _count_reduces(mw: MainWindow) -> dict[str, int]:
-    """Wrap the reduction chokepoint on the instance to count invocations."""
-    original = mw._reduce_grouped_histograms_to_asymmetry
+    """Count actual rebunch computations rather than repeated cache probes."""
+    original = mw._reduction_cache.get_or_compute
     calls = {"n": 0}
 
-    def counting(**kwargs):
-        calls["n"] += 1
-        return original(**kwargs)
+    def counting(run, namespace, key, compute, nbytes):
+        def reduction():
+            calls["n"] += 1
+            return compute()
 
-    mw._reduce_grouped_histograms_to_asymmetry = counting  # type: ignore[method-assign]
+        return original(
+            run, namespace, key, reduction if namespace == "rebunch" else compute, nbytes
+        )
+
+    mw._reduction_cache.get_or_compute = counting
     return calls
 
 
@@ -366,7 +371,7 @@ class TestWiredCallSites:
         digest_before = fourier_grouping_digest(run)
 
         mainwindow._counts_first_rebunched_arrays(dataset, 2)
-        run.grouping["period_mode"] = "Green"
+        run.grouping["period_mode"] = "green"
         assert fourier_grouping_digest(run) == digest_before  # period mode not digested
         mainwindow._counts_first_rebunched_arrays(dataset, 2)
         assert calls["n"] == 2
@@ -464,49 +469,10 @@ class TestUserActionInvocationCounts:
     def test_single_render_with_bunch_factor_reduces_exactly_once(
         self, mainwindow: MainWindow
     ) -> None:
-        """One render at bunch factor > 1 reduces once, though it is probed
-        repeatedly.
+        """Repeated probes of one acquisition-bin reduction share one computation.
 
-        The main-toolbar bunch spinbox bakes its value into
-        ``run.grouping['bunching_factor']`` and re-reduces through
-        ``_apply_grouping_settings_to_dataset`` for any dataset with a real
-        grouping (see ``_apply_bunch_factor_to_context``), so it never
-        reaches the counts-first-rebunch provider wired here. The provider
-        (``_counts_first_rebunched_arrays``, installed as the plot panel's
-        ``counts_rebunch_provider``) is instead driven by the panel's own
-        (normally hidden) bunch spinbox, exactly as
-        ``tests/gui/test_plot_bunch_counts_first.py`` exercises it:
-        ``plot_panel.set_bunch_factor(factor, emit_signal=False)``.
-
-        The seam counted is ``_reduce_grouped_histograms_to_asymmetry`` — the
-        chokepoint shared by every reduction path in this module (see its
-        docstring and ``_count_reduces`` above) — rather than counting calls
-        to ``get_analysis_dataset``/the rebunch provider directly, so the
-        assertion holds regardless of how many internal call sites
-        (plotting, RRF display, fit-range seeding) probe the analysis
-        dataset during one render. A plain ``calls["n"] == 1`` would pass
-        vacuously if the render happened to only probe once even without a
-        cache, so the cache's own hit/miss counters are asserted too: exactly
-        one miss (the single real compute) plus several hits confirms the
-        render actually exercised — and deduplicated — more than one call
-        into the provider (measured at 4 probes for one render of this
-        fixture, matching the audit's "2-4 calls per render" finding).
-
-        The bunch factor is pre-armed on the panel *before* the dataset is
-        ever selected, and the counter/snapshot are installed just before
-        that first selection. This matters for two reasons: (1)
-        ``set_bunch_factor(..., emit_signal=False)`` itself redraws
-        immediately (it calls ``_redraw_current_view()``, which no-ops here
-        because the panel has no current dataset yet), so arming it first
-        avoids a stray extra render; and (2) the panel's per-window fit-range
-        seed (``_fit_x_min``/``_fit_x_max``) is populated on the *first* plot
-        of a session and then stays sticky, and one of the probe call sites
-        (``_raw_fit_seed_range``) only fires while it is still unset — so
-        this is the one render in a window's life where that seam's full
-        multiplicity is guaranteed to show up. A run already selected once at
-        bunch factor 1 and then switched to bunch factor 3 would still prove
-        the dedup (one miss), but could under-count the probes this test
-        wants to demonstrate collapsing.
+        Hit/miss counters prove the render exercised and deduplicated the
+        probes, including fit-range seeding on the first render.
         """
         dataset = _multi_group_dataset(run_number=5201, n=1200)
         mainwindow._data_browser.add_dataset(dataset)
@@ -579,3 +545,22 @@ class TestUserActionInvocationCounts:
         mainwindow._raw_counts_action.trigger()
         assert mainwindow._plot_workspace.active_view() == "groups"
         assert calls["n"] == 2  # cache hit, not a third build
+
+
+def test_rebunch_keys_each_periods_exposure(mainwindow):
+    calls = _count_reduces(mainwindow)
+    dataset = _multi_group_dataset()
+    run = dataset.run
+    run.grouping.update(
+        period_mode="green_minus_red",
+        period_histograms=[run.histograms, run.histograms],
+        period_good_frames=[1e8, 2e8],
+        period_dead_time_us=[[0.01] * len(run.histograms), [0.02] * len(run.histograms)],
+        deadtime_correction=True,
+        deadtime_mode="file",
+    )
+    first = mainwindow._counts_first_rebunched_arrays(dataset, 2)
+    run.grouping["period_good_frames"][1] = 3e8
+    second = mainwindow._counts_first_rebunched_arrays(dataset, 2)
+    assert calls["n"] == 2
+    assert not np.array_equal(first[1], second[1])

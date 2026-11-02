@@ -245,3 +245,21 @@ def test_nonfixed_merge_includes_a_partial_raw_tail(mode):
         np.testing.assert_allclose(result.time, [0.25, 0.8], rtol=0, atol=1e-15)
         np.testing.assert_allclose(result.asymmetry, expected_a, rtol=1e-12)
         np.testing.assert_allclose(result.error, expected_error, rtol=1e-12)
+
+
+@pytest.mark.parametrize("periods", [[[1], [2]], [[], []]])
+def test_held_periods_cannot_substitute_the_default_histograms(periods):
+    run = _run([90, 1], [10, 9], period_histograms=periods)
+    with pytest.raises(ValueError, match="Held periods must contain nonempty histogram lists"):
+        reduce_period_asymmetry(
+            run.histograms,
+            run.grouping,
+            "green_minus_red",
+            binning=BinningSpec(),
+            forward_idx=[0],
+            backward_idx=[1],
+            alpha=1.0,
+            use_deadtime=False,
+            deadtime_mode="off",
+            use_background=False,
+        )

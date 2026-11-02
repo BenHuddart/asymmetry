@@ -3707,18 +3707,16 @@ class TestMainWindowBasic:
         assert mainwindow._view_bunch_spin.value() == 3
         assert mainwindow._plot_panel.get_view_limits() == pytest.approx((0.5, 8.0, -5.0, 12.0))
 
-    def test_main_window_bunch_control_updates_grouping_bunch_factor(
-        self, mainwindow: MainWindow
-    ) -> None:
-        """Toolbar bunch changes should stay synchronized with grouping metadata."""
+    def test_toolbar_bunch_merges_recorded_bins(self, mainwindow: MainWindow) -> None:
+        """Toolbar bunching composes with the recorded grouping factor."""
         dataset = _make_dataset(4101, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(int(dataset.run_number))
 
         mainwindow._view_bunch_spin.setValue(4)
 
-        assert dataset.run is not None
-        assert int(dataset.run.grouping.get("bunching_factor", 1)) == 4
+        assert dataset.run.grouping["bunching_factor"] == 1
+        assert mainwindow._plot_panel.get_bunch_factor() == 4
 
     def test_collect_project_state_includes_view_modes(self, mainwindow: MainWindow) -> None:
         """Project state should persist saved view modes and the active mode index."""

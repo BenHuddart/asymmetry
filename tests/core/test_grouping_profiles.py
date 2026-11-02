@@ -36,6 +36,7 @@ from asymmetry.core.project.profiles import (
     run_file_good_window,
 )
 from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.rebin import BinningSpec, binning_spec
 from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 
 # --------------------------------------------------------------------------- #
@@ -120,10 +121,7 @@ def test_profile_round_trips_through_dict():
         background_policy=BackgroundPolicy(
             mode="fixed", details={"background_fixed_values": [3.0, 4.0]}
         ),
-        binning_mode="variable",
-        bin0_us=0.05,
-        bin10_us=0.5,
-        bunching_factor=2,
+        binning=BinningSpec("variable", 2, 0.05, 0.5),
         period_mode="green_minus_red",
         extra={"grouping_preset": "Longitudinal", "alpha_x": 1.0},
     )
@@ -237,6 +235,9 @@ def test_resolve_fixed_alpha_and_no_corrections():
         "backward_group": 2,
         "excluded_detectors": [],
         "bunching_factor": 1,
+        "binning_mode": "fixed",
+        "bin0_us": 0.08,
+        "bin10_us": 0.25,
         "instrument": "EMU",
         "t0_bin": 5,
         "t_good_offset": 1,
@@ -395,7 +396,6 @@ def test_resolve_background_reference_run_carries_payload():
 
 
 def test_resolve_out_of_range_detector_ids_do_not_crash_and_are_dropped_at_reduction():
-    from asymmetry.core.transform.grouping import group_forward_backward
 
     run = _run(n_hist=4, grouping=_per_run_facts())
     # Group 2 references detector 9, which this 4-detector run does not have.
@@ -407,25 +407,13 @@ def test_resolve_out_of_range_detector_ids_do_not_crash_and_are_dropped_at_reduc
     assert len(grouped.backward) > 0  # detector 9 dropped, 3 and 4 still summed
 
 
-def test_resolve_binning_and_period_mode():
+@pytest.mark.parametrize("binning", [BinningSpec("variable", 1, 0.05, 0.5), BinningSpec(factor=4)])
+def test_resolve_binning_and_period_mode(binning):
     run = _run(grouping=_per_run_facts())
-    profile = _base_profile(
-        binning_mode="variable", bin0_us=0.05, bin10_us=0.5, period_mode="green"
-    )
+    profile = _base_profile(binning=binning, period_mode="green")
     resolved = resolve_effective_grouping(profile, run)
-    assert resolved["binning_mode"] == "variable"
-    assert resolved["bin0_us"] == 0.05
-    assert resolved["bin10_us"] == 0.5
+    assert binning_spec(resolved) == binning
     assert resolved["period_mode"] == "green"
-
-
-def test_resolve_fixed_binning_omits_width_knobs():
-    run = _run(grouping=_per_run_facts())
-    profile = _base_profile(binning_mode="fixed", bunching_factor=4)
-    resolved = resolve_effective_grouping(profile, run)
-    assert "binning_mode" not in resolved
-    assert "bin0_us" not in resolved
-    assert resolved["bunching_factor"] == 4
 
 
 # --------------------------------------------------------------------------- #

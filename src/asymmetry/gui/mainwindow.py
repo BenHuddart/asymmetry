@@ -33,7 +33,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import CancelledError
 from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -144,7 +144,6 @@ from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
     build_rf_difference_scan,
     combine_mapped_periods,
-    combine_period_asymmetry,
     held_period_count,
     select_period_histograms,
 )
@@ -220,7 +219,7 @@ from asymmetry.core.transform import (
     good_frames,
     group_detectors_outside_run,
     prepare_histograms_with_deadtime,
-    reduce_grouped_asymmetry,
+    reduce_period_asymmetry,
     resolve_background_mode,
     resolve_deadtime,
     resolve_facility,
@@ -239,6 +238,7 @@ from asymmetry.core.transform.deadtime import (
 )
 from asymmetry.core.transform.projections import reduce_run_projections, reduction_identity
 from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
+from asymmetry.core.transform.reduce import correction_flags_from_grouping
 from asymmetry.core.transform.rotating_frame import (
     ROTATED_LABELS,
     ROTATED_PROJECTIONS,
@@ -671,7 +671,7 @@ def _period_histograms_key(period_histograms: object) -> tuple:
 
 def _rebunch_nbytes(result: tuple[np.ndarray, np.ndarray, np.ndarray]) -> int:
     """Approximate byte size of a cached ``(time, asymmetry, error)`` triple."""
-    return sum(int(getattr(arr, "nbytes", 0)) for arr in result)
+    return sum(arr.nbytes for arr in result)
 
 
 def _grouped_time_domain_nbytes(datasets: list[MuonDataset]) -> int:
@@ -1042,7 +1042,6 @@ class MainWindow(QMainWindow):
         self._active_view_mode_index = 0
         self._syncing_view_mode_ui = False
         self._applying_view_mode = False
-        self._syncing_bunch_context = False
         self._applying_inspector_domain = False
         # Per-representation memory of inspector tabs the user closed: view
         # token → dock keys. Closed tabs stay closed when the user returns to
@@ -1526,6 +1525,7 @@ class MainWindow(QMainWindow):
         self._main_toolbar.addWidget(QLabel("Bunch:"))
         self._view_bunch_spin = QSpinBox()
         self._view_bunch_spin.setRange(1, 1000)
+        self._view_bunch_spin.setToolTip("Merge this many recorded output bins.")
         self._view_bunch_spin.setMaximumWidth(metrics.spin_width_for(4, self._view_bunch_spin))
         self._view_bunch_spin.valueChanged.connect(self._on_main_bunch_factor_changed)
         self._main_toolbar.addWidget(self._view_bunch_spin)
@@ -1624,109 +1624,13 @@ class MainWindow(QMainWindow):
             self._view_modes[self._active_view_mode_index]["bunch_factor"]
         )
 
-    def _resolve_view_bunch_targets(self) -> tuple[list[MuonDataset], set[int]]:
-        """Return datasets that should receive a bunch-factor update."""
-        resolved: list[MuonDataset] = []
-        seen_run_numbers: set[int] = set()
-        combined_targets: set[int] = set()
-
-        for dataset in self._selected_or_current_datasets():
-            try:
-                run_number = int(dataset.run_number)
-            except (TypeError, ValueError):
-                continue
-
-            if (
-                hasattr(self._data_browser, "is_combined_dataset")
-                and self._data_browser.is_combined_dataset(run_number)
-                and hasattr(self._data_browser, "get_combined_source_datasets")
-            ):
-                combined_targets.add(run_number)
-                for source_dataset in self._data_browser.get_combined_source_datasets(run_number):
-                    try:
-                        source_run = int(source_dataset.run_number)
-                    except (TypeError, ValueError):
-                        continue
-                    if source_run in seen_run_numbers:
-                        continue
-                    seen_run_numbers.add(source_run)
-                    resolved.append(source_dataset)
-                continue
-
-            if run_number in seen_run_numbers:
-                continue
-            seen_run_numbers.add(run_number)
-            resolved.append(dataset)
-
-        return resolved, combined_targets
-
-    def _apply_bunch_factor_to_context(self, bunch_factor: int) -> None:
-        """Apply the visible bunch factor using grouping where possible."""
-        bunch_factor = max(1, int(bunch_factor))
-        if self._syncing_bunch_context:
-            return
-
-        self._syncing_bunch_context = True
-        try:
-            targets, combined_targets = self._resolve_view_bunch_targets()
-            grouping_targets: list[tuple[MuonDataset, dict]] = []
-            for dataset in targets:
-                payload = self._extract_grouping_overrides(dataset)
-                if isinstance(payload, dict):
-                    payload["bunching_factor"] = bunch_factor
-                    grouping_targets.append((dataset, payload))
-                    continue
-
-                run = getattr(dataset, "run", None)
-                grouping = getattr(run, "grouping", None)
-                if isinstance(grouping, dict):
-                    grouping["bunching_factor"] = bunch_factor
-
-            if grouping_targets:
-                updated = 0
-                for dataset, payload in grouping_targets:
-                    applied, _dt_applied = self._apply_grouping_settings_to_dataset(
-                        dataset, payload
-                    )
-                    if applied:
-                        updated += 1
-
-                if hasattr(self._plot_panel, "set_bunch_factor"):
-                    self._plot_panel.set_bunch_factor(1, emit_signal=False)
-
-                if updated > 0:
-                    for combined_run_number in combined_targets:
-                        if not hasattr(self._data_browser, "rebuild_combined_dataset"):
-                            continue
-                        rebuilt_combined_dataset = self._data_browser.rebuild_combined_dataset(
-                            combined_run_number
-                        )
-                        if (
-                            rebuilt_combined_dataset is not None
-                            and self._current_dataset is not None
-                            and int(self._current_dataset.run_number) == int(combined_run_number)
-                        ):
-                            self._current_dataset = rebuilt_combined_dataset
-
-                    if hasattr(self._data_browser, "_rebuild_table"):
-                        self._data_browser._rebuild_table()
-                    if self._current_dataset is not None:
-                        self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
-                    self._render_current_selection_plot()
-                    self._refresh_vector_axis_selector()
-                    self._update_fit_block_state()
-                    self._update_selected_datasets()
-                return
-
-            if hasattr(self._plot_panel, "set_bunch_factor"):
-                self._plot_panel.set_bunch_factor(bunch_factor, emit_signal=False)
-            if self._current_dataset is not None:
-                self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
-            if targets:
-                self._render_current_selection_plot()
-            self._update_selected_datasets()
-        finally:
-            self._syncing_bunch_context = False
+    def _apply_display_bunch_factor(self, bunch_factor: int) -> None:
+        """Merge recorded output bins for display and its fit input."""
+        self._plot_panel.set_bunch_factor(bunch_factor, emit_signal=False)
+        if self._current_dataset is not None:
+            self._fit_panel.set_dataset(self._single_fit_dataset(self._current_dataset))
+        self._render_current_selection_plot()
+        self._update_selected_datasets()
 
     def _apply_view_mode(self, mode_index: int) -> None:
         """Activate one saved view mode and redraw the current view."""
@@ -1734,7 +1638,7 @@ class MainWindow(QMainWindow):
         self._applying_view_mode = True
         try:
             self._set_view_bunch_spin_value(int(mode["bunch_factor"]))
-            self._apply_bunch_factor_to_context(int(mode["bunch_factor"]))
+            self._apply_display_bunch_factor(int(mode["bunch_factor"]))
             self._plot_panel.set_view_limits(
                 float(mode["x_min"]),
                 float(mode["x_max"]),
@@ -1759,7 +1663,7 @@ class MainWindow(QMainWindow):
         self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
         if self._applying_view_mode:
             return
-        self._apply_bunch_factor_to_context(bunch_factor)
+        self._apply_display_bunch_factor(bunch_factor)
 
     def _on_plot_view_limits_changed(
         self,
@@ -4751,11 +4655,6 @@ class MainWindow(QMainWindow):
             self._mark_dirty()
         if updated > 0 or override_updated_runs or reassigned_runs:
             self._mark_dirty()
-            bunch_factor = max(1, int(grouping_result.get("bunching_factor", 1)))
-            self._view_modes[self._active_view_mode_index]["bunch_factor"] = bunch_factor
-            self._set_view_bunch_spin_value(bunch_factor)
-            if hasattr(self._plot_panel, "set_bunch_factor"):
-                self._plot_panel.set_bunch_factor(1, emit_signal=False)
             self._data_browser._rebuild_table()
             self._render_current_selection_plot()
             self._refresh_vector_axis_selector()
@@ -5277,7 +5176,7 @@ class MainWindow(QMainWindow):
             "first_good_bin": first_good_bin,
             "last_good_bin": last_good_bin,
             "bin_index_base": bin_index_base,
-            "bunching_factor": int(grouping.get("bunching_factor", 1)),
+            "bunching_factor": binning_spec(grouping).factor,
             "deadtime_correction": bool(grouping.get("deadtime_correction", False)),
             "background_correction": bool(grouping.get("background_correction", False)),
         }
@@ -5720,14 +5619,13 @@ class MainWindow(QMainWindow):
                 alpha = float(grouping_result.get("alpha", existing_grouping.get("alpha", 1.0)))
             except (TypeError, ValueError):
                 alpha = 1.0
-        bunch_factor = int(grouping_result.get("bunching_factor", 1))
+        bunch_factor = binning_spec(existing_grouping | grouping_result).factor
         period_mode = str(
             grouping_result.get(
                 "period_mode",
                 existing_grouping.get("period_mode", PeriodMode.RED),
             )
         )
-        bunch_factor = max(1, bunch_factor)
         use_deadtime = bool(grouping_result.get("deadtime_correction", False))
         deadtime_mode = (
             str(
@@ -5966,92 +5864,38 @@ class MainWindow(QMainWindow):
         )
 
         outcomes: dict[str, CorrectionOutcomes] = {}
-        time_axis: np.ndarray
-        asymmetry: np.ndarray
-        error: np.ndarray
-
+        facility = resolve_facility(
+            metadata=run.metadata, grouping=reduction_grouping
+        ) or resolve_facility(metadata=dataset.metadata)
+        reduced = reduce_period_asymmetry(
+            run.histograms,
+            reduction_grouping,
+            period_mode,
+            binning=binning_spec(reduction_grouping),
+            forward_idx=forward_idx,
+            backward_idx=backward_idx,
+            alpha=run_alpha,
+            beta=float(reduction_grouping.get("beta", 1.0)),
+            use_deadtime=use_deadtime,
+            deadtime_mode=deadtime_mode,
+            use_background=use_background,
+            facility=facility,
+            metadata=run.metadata,
+            reference_resolver=lambda g: self._resolve_background_reference(g, run),
+        )
+        time_axis, asymmetry, error = reduced.time, reduced.asymmetry, reduced.error
+        outcomes = reduced.corrections
         if has_two_period_histograms and period_mode in {
-            str(PeriodMode.GREEN_MINUS_RED),
-            str(PeriodMode.GREEN_PLUS_RED),
+            str(PeriodMode.RED),
+            str(PeriodMode.GREEN),
         }:
-            red_histograms, red_grouping = self._period_histograms_for_mode(
-                run.histograms,
-                reduction_grouping,
-                period_index=0,
+            _, selected_grouping = select_period_histograms(
+                run.histograms, reduction_grouping, int(period_mode == str(PeriodMode.GREEN))
             )
-            green_histograms, green_grouping = self._period_histograms_for_mode(
-                run.histograms,
-                reduction_grouping,
-                period_index=1,
-            )
-            red_time, red_asym, red_err, red_corrections = (
-                self._reduce_grouped_histograms_to_asymmetry(
-                    histograms=red_histograms,
-                    grouping=red_grouping,
-                    dataset=dataset,
-                    run=run,
-                    forward_idx=forward_idx,
-                    backward_idx=backward_idx,
-                    alpha=run_alpha,
-                    use_deadtime=use_deadtime,
-                    deadtime_mode=deadtime_mode,
-                    use_background=use_background,
-                )
-            )
-            green_time, green_asym, green_err, green_corrections = (
-                self._reduce_grouped_histograms_to_asymmetry(
-                    histograms=green_histograms,
-                    grouping=green_grouping,
-                    dataset=dataset,
-                    run=run,
-                    forward_idx=forward_idx,
-                    backward_idx=backward_idx,
-                    alpha=run_alpha,
-                    use_deadtime=use_deadtime,
-                    deadtime_mode=deadtime_mode,
-                    use_background=use_background,
-                )
-            )
-            time_axis, asymmetry, error = combine_period_asymmetry(
-                red_time,
-                red_asym,
-                red_err,
-                green_time,
-                green_asym,
-                green_err,
-                period_mode,
-            )
-            if len(time_axis) == 0:
-                return False, {}
-            outcomes = {"red": red_corrections, "green": green_corrections}
-        else:
-            period_index = 1 if period_mode == str(PeriodMode.GREEN) else 0
-            selected_histograms, selected_grouping = self._period_histograms_for_mode(
-                run.histograms,
-                reduction_grouping,
-                period_index=period_index,
-            )
-            time_axis, asymmetry, error, corrections = self._reduce_grouped_histograms_to_asymmetry(
-                histograms=selected_histograms,
-                grouping=selected_grouping,
-                dataset=dataset,
-                run=run,
-                forward_idx=forward_idx,
-                backward_idx=backward_idx,
-                alpha=run_alpha,
-                use_deadtime=use_deadtime,
-                deadtime_mode=deadtime_mode,
-                use_background=use_background,
-            )
-            outcomes = {str(period_mode): corrections}
-            if has_two_period_histograms and period_mode in {
-                str(PeriodMode.RED),
-                str(PeriodMode.GREEN),
-            }:
-                if "good_frames" in selected_grouping:
-                    grouping["good_frames"] = selected_grouping.get("good_frames")
-                if isinstance(selected_grouping.get("dead_time_us"), list):
-                    grouping["dead_time_us"] = list(selected_grouping.get("dead_time_us", []))
+            if "good_frames" in selected_grouping:
+                grouping["good_frames"] = selected_grouping["good_frames"]
+            if "dead_time_us" in selected_grouping:
+                grouping["dead_time_us"] = selected_grouping["dead_time_us"]
 
         for key in ("background_method", "background_values", "background_details"):
             grouping.pop(key, None)
@@ -6117,220 +5961,78 @@ class MainWindow(QMainWindow):
         dataset.metadata.pop("correction_error", None)
         return True, outcomes
 
-    def _period_histograms_for_mode(
-        self,
-        histograms: list[Histogram],
-        grouping: dict,
-        *,
-        period_index: int,
-    ) -> tuple[list[Histogram], dict]:
-        """Return period-specific histograms plus effective grouping metadata.
-
-        Thin wrapper over :func:`asymmetry.core.io.periods.select_period_histograms`
-        so the GUI and the scriptable core API share one implementation of the
-        red/green period-selection rule.
-        """
-        return select_period_histograms(histograms, grouping, period_index)
-
-    def _reduce_grouped_histograms_to_asymmetry(
-        self,
-        *,
-        histograms: list[Histogram],
-        grouping: dict,
-        dataset,
-        run,
-        forward_idx: list[int],
-        backward_idx: list[int],
-        alpha: float,
-        use_deadtime: bool,
-        deadtime_mode: str,
-        use_background: bool,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, CorrectionOutcomes]:
-        """Return reduced grouped asymmetry arrays for one histogram source.
-
-        Thin GUI wrapper over the Qt-free
-        :func:`asymmetry.core.transform.reduce_grouped_asymmetry` chokepoint: it
-        resolves the facility string off the run/dataset metadata (the core can
-        derive it from a single metadata dict, but only the GUI knows to prefer
-        the run's over the dataset's) and binds the
-        ``reference_run`` background resolver to the loaded-dataset registry, so
-        the numerics stay shared with the grouping window's preview pane.
-
-        ``alpha`` is explicit because the vector-projection paths substitute a
-        per-axis value; ``beta`` is scalar-only and is read leniently from the
-        grouping payload here (matching ``group_forward_backward``).
-        """
+    def _counts_first_rebunched_arrays(
+        self, dataset: MuonDataset, extra_bunch_factor: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Replay recorded binning and corrections, merging output bins counts-first."""
+        run = dataset.run
+        if run is None or not run.histograms:
+            raise ValueError("Counts-first display bunching requires raw histograms.")
+        grouping = run.grouping
+        binning = replace(binning_spec(grouping), merge=extra_bunch_factor)
+        forward_gid, backward_gid = (
+            int(grouping.get("forward_group", 1)),
+            int(grouping.get("backward_group", 2)),
+        )
+        forward_idx = effective_group_indices(
+            grouping, forward_gid, n_histograms=len(run.histograms)
+        )
+        backward_idx = effective_group_indices(
+            grouping, backward_gid, n_histograms=len(run.histograms)
+        )
+        if not forward_idx or not backward_idx:
+            raise ValueError(
+                "Counts-first display bunching requires a nonempty forward/backward pair."
+            )
+        alpha, beta = float(grouping.get("alpha", 1.0)), float(grouping.get("beta", 1.0))
+        flags = correction_flags_from_grouping(grouping)
+        period_mode = str(grouping.get("period_mode", PeriodMode.RED))
         facility = resolve_facility(metadata=run.metadata, grouping=grouping) or resolve_facility(
             metadata=dataset.metadata
         )
-        try:
-            beta = float(grouping.get("beta", 1.0))
-        except (TypeError, ValueError):
-            beta = 1.0
-        if not np.isfinite(beta) or beta <= 0.0:
-            beta = 1.0
-        result = reduce_grouped_asymmetry(
-            histograms=histograms,
-            binning=binning_spec(grouping),
-            grouping=grouping,
-            forward_idx=forward_idx,
-            backward_idx=backward_idx,
-            alpha=alpha,
-            use_deadtime=use_deadtime,
-            deadtime_mode=deadtime_mode,
-            use_background=use_background,
-            facility=facility,
-            reference_resolver=lambda g: self._resolve_background_reference(g, run),
-            beta=beta,
-        )
-        return (
-            result.time,
-            result.asymmetry,
-            result.error,
-            result.corrections,
-        )
-
-    def _counts_first_rebunched_arrays(
-        self, dataset, extra_bunch_factor: int
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-        """Re-run *dataset*'s recorded reduction with extra display bunching.
-
-        The plot panel's bunch control multiplies the grouping
-        ``bunching_factor``, so the merged bins are packed from the corrected
-        counts (deadtime/background as recorded in ``run.grouping``) and the
-        asymmetry formed once per output bin — instead of value-domain
-        rebinning the reduced curve, where one-sided raw bins' σ sentinels
-        inflate every merged bin's quadrature on sparse data. Returns
-        ``None`` when the recorded reduction cannot be replayed as a wider
-        fixed packing (no histograms or groups, non-fixed binning modes,
-        G±R period-combined curves); the panel then keeps the curve-level
-        :func:`merge_curve_bins`.
-        """
-        extra = int(extra_bunch_factor)
-        run = getattr(dataset, "run", None)
-        if extra <= 1 or run is None or not getattr(run, "histograms", None):
-            return None
-        grouping = run.grouping if isinstance(run.grouping, dict) else {}
-
-        if binning_spec(grouping).mode != "fixed":
-            return None
-
-        groups_raw = grouping.get("groups")
-        if not isinstance(groups_raw, dict):
-            return None
-        groups: dict[int, list[object]] = {}
-        for key, values in groups_raw.items():
-            try:
-                gid = int(key)
-            except (TypeError, ValueError):
-                continue
-            entries = self._normalize_group_entries(values)
-            if entries:
-                groups[gid] = entries
-        if not groups:
-            return None
-        try:
-            forward_gid = int(grouping.get("forward_group", 1))
-            backward_gid = int(grouping.get("backward_group", 2))
-        except (TypeError, ValueError):
-            return None
-        resolution_grouping = {
-            "groups": groups,
-            "excluded_detectors": grouping.get("excluded_detectors"),
-        }
-        # Same present-detector filtering as the apply path: a grouping naming
-        # detectors this run lacks reduces over the ones present.
-        n_hist = len(run.histograms)
-        forward_idx = effective_group_indices(resolution_grouping, forward_gid, n_histograms=n_hist)
-        backward_idx = effective_group_indices(
-            resolution_grouping, backward_gid, n_histograms=n_hist
-        )
-        if not forward_idx or not backward_idx:
-            return None
-
-        period_mode = str(grouping.get("period_mode", PeriodMode.RED))
-        has_two_period_histograms = bool(
-            isinstance(grouping.get("period_histograms"), list)
-            and len(grouping.get("period_histograms", [])) == 2
-        )
-        if has_two_period_histograms and period_mode in {
-            str(PeriodMode.GREEN_MINUS_RED),
-            str(PeriodMode.GREEN_PLUS_RED),
-        }:
-            # G±R combines two already-reduced curves; bunching that
-            # combination stays at the curve level.
-            return None
-
-        base_factor = binning_spec(grouping).factor
-        reduction_grouping = dict(grouping)
-        reduction_grouping["bunching_factor"] = base_factor * extra
-
-        try:
-            alpha = float(grouping.get("alpha", 1.0))
-        except (TypeError, ValueError):
-            alpha = 1.0
-        try:
-            beta = float(grouping.get("beta", 1.0))
-        except (TypeError, ValueError):
-            beta = 1.0
-        deadtime_mode = str(grouping.get("deadtime_mode", "off")).strip().lower() or "off"
-        period_index = 1 if period_mode == str(PeriodMode.GREEN) else 0
-
-        # Recipe key. The grouping digest covers groups, exclusions, deadtime,
-        # background, good-bin window and the base bunching factor; the reduction
-        # additionally reads alpha/beta, the forward/backward group ids, the
-        # deadtime mode, per-detector t0 overrides, good_frames and the period
-        # selection — none captured by the digest — plus the display multiplier
-        # ``extra``.
         key = (
             fourier_grouping_digest(run),
-            int(forward_gid),
-            int(backward_gid),
-            round(float(alpha), 12),
-            round(float(beta), 12),
-            deadtime_mode,
-            int(base_factor),
-            int(extra),
+            binning,
+            forward_gid,
+            backward_gid,
+            alpha,
+            beta,
+            flags.deadtime_mode,
             tuple(detector_t0_overrides(grouping, len(run.histograms)) or ()),
             grouping.get("good_frames"),
-            str(period_mode),
+            tuple(grouping.get("period_good_frames") or ()),
+            tuple(
+                tuple(row) if isinstance(row, list) else None
+                for row in (grouping.get("period_dead_time_us") or ())
+            ),
+            period_mode,
             _period_histograms_key(grouping.get("period_histograms")),
         )
 
-        def _compute() -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-            selected_histograms, selected_grouping = self._period_histograms_for_mode(
+        def _compute() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            reduced = reduce_period_asymmetry(
                 run.histograms,
-                reduction_grouping,
-                period_index=period_index,
+                grouping,
+                period_mode,
+                binning=binning,
+                forward_idx=forward_idx,
+                backward_idx=backward_idx,
+                alpha=alpha,
+                beta=beta,
+                use_deadtime=flags.use_deadtime,
+                deadtime_mode=flags.deadtime_mode,
+                use_background=flags.use_background,
+                facility=facility,
+                metadata=run.metadata,
+                reference_resolver=lambda g: self._resolve_background_reference(g, run),
             )
-            time_axis, asymmetry, error, _corrections = (
-                self._reduce_grouped_histograms_to_asymmetry(
-                    histograms=selected_histograms,
-                    grouping=selected_grouping,
-                    dataset=dataset,
-                    run=run,
-                    forward_idx=forward_idx,
-                    backward_idx=backward_idx,
-                    alpha=alpha if alpha > 0 else 1.0,
-                    use_deadtime=bool(grouping.get("deadtime_correction", False)),
-                    deadtime_mode=deadtime_mode,
-                    use_background=bool(grouping.get("background_correction", False)),
-                )
-            )
-            if len(time_axis) == 0:
-                return None
-            return time_axis, asymmetry, error
+            return reduced.time, reduced.asymmetry, reduced.error
 
-        cached = self._reduction_cache.get_or_compute(
+        time, asymmetry, error = self._reduction_cache.get_or_compute(
             run, "rebunch", key, _compute, _rebunch_nbytes
         )
-        if cached is None:
-            return None
-        # Copy on the way out: the cache returns the stored arrays and the plot
-        # panel wraps them into a display dataset that RRF / plotting may
-        # transform in place.
-        time_axis, asymmetry, error = cached
-        return time_axis.copy(), asymmetry.copy(), error.copy()
+        # Display transforms can mutate their arrays; cached acquisition coordinates remain intact.
+        return time.copy(), asymmetry.copy(), error.copy()
 
     def _dataset_allows_background_mode(self, dataset, mode: str) -> bool:
         """Return whether *mode* applies to this dataset (per-mode gating)."""
@@ -16637,29 +16339,24 @@ class MainWindow(QMainWindow):
         source = self._current_dataset if dataset is None else dataset
         if source is None:
             return []
-        source_dataset = self._plot_panel.get_analysis_dataset(source)
-        if source_dataset is None:
+        source_dataset = source
+        run = source.run
+        display_factor = self._plot_panel.get_bunch_factor()
+        if run is not None and run.histograms and display_factor > 1:
+            base_factor = binning_spec(run.grouping).factor
+            display_run = replace(
+                run, grouping=run.grouping | {"bunching_factor": base_factor * display_factor}
+            )
+            source_dataset = replace(source, run=display_run)
+        if run is None or not run.histograms:
             return []
 
-        run = getattr(source_dataset, "run", None)
-        if run is None or not getattr(run, "histograms", None):
-            # No run to key on (histogram-less curve); build uncached.
-            try:
-                return build_grouped_time_domain_datasets(
-                    source_dataset, lifetime_corrected=lifetime_corrected
-                )
-            except ValueError:
-                return []
+        key = (*self._grouped_time_domain_cache_key(run, lifetime_corrected), display_factor)
 
-        key = self._grouped_time_domain_cache_key(run, lifetime_corrected)
-
-        def _compute() -> list[MuonDataset] | None:
-            try:
-                return build_grouped_time_domain_datasets(
-                    source_dataset, lifetime_corrected=lifetime_corrected
-                )
-            except ValueError:
-                return None
+        def _compute() -> list[MuonDataset]:
+            return build_grouped_time_domain_datasets(
+                source_dataset, lifetime_corrected=lifetime_corrected
+            )
 
         cached = self._reduction_cache.get_or_compute(
             run,
@@ -17933,6 +17630,7 @@ class MainWindow(QMainWindow):
         if state.get("view_modes_state") is not None:
             self._apply_view_mode(self._active_view_mode_index)
         else:
+            self._set_view_bunch_spin_value(self._plot_panel.get_bunch_factor())
             self._snapshot_active_view_mode()
         self._plot_workspace.restore_state(plot_state.get("workspace_state"))
         self._restore_frequency_spectra_state(state.get("fourier_spectra_state"))

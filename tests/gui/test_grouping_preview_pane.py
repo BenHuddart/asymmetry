@@ -392,8 +392,7 @@ def test_reduce_grouped_asymmetry_matches_hand_sums(bunch: int, alpha: float) ->
     assert result.corrections.deadtime.status == "off"
 
 
-def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication) -> None:
-    """The MainWindow method now delegates; pin that it returns core's arrays."""
+def test_grouping_apply_matches_the_core_reducer(qapp: QApplication) -> None:
     from PySide6.QtCore import QSettings
 
     import asymmetry.gui.mainwindow as mw_module
@@ -404,19 +403,7 @@ def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication)
     window = MainWindow()
     try:
         dataset = _histogram_dataset()
-        grouping = dataset.run.grouping
-        mw_time, mw_asym, mw_err, mw_corrections = window._reduce_grouped_histograms_to_asymmetry(
-            histograms=dataset.run.histograms,
-            grouping=grouping,
-            dataset=dataset,
-            run=dataset.run,
-            forward_idx=[0],
-            backward_idx=[1],
-            alpha=1.3,
-            use_deadtime=False,
-            deadtime_mode="off",
-            use_background=False,
-        )
+        grouping = dict(dataset.run.grouping, alpha=1.3)
         core = reduce_grouped_asymmetry(
             histograms=dataset.run.histograms,
             binning=binning_spec(grouping),
@@ -429,10 +416,11 @@ def test_reduce_grouped_asymmetry_pins_mainwindow_delegation(qapp: QApplication)
             use_background=False,
             facility="TESTINST",
         )
-        np.testing.assert_array_equal(mw_time, core.time)
-        np.testing.assert_array_equal(mw_asym, core.asymmetry)
-        np.testing.assert_array_equal(mw_err, core.error)
-        assert mw_corrections == core.corrections
+        applied, _ = window._apply_grouping_settings_to_dataset(dataset, grouping)
+        assert applied
+        np.testing.assert_array_equal(dataset.time, core.time)
+        np.testing.assert_array_equal(dataset.asymmetry, core.asymmetry)
+        np.testing.assert_array_equal(dataset.error, core.error)
     finally:
         window.close()
 

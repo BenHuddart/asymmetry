@@ -9,6 +9,7 @@ signal so the visual cost of going too aggressive is obvious.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QEventLoop, Qt, QTimer
@@ -16,41 +17,67 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.transform.rebin import merge_curve_bins
+from asymmetry.core.fitting.models import MODELS
+from asymmetry.core.simulate import BUILTIN_TEMPLATES, simulate_run
+from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
 
-from ..data import make_generic_tf_for_processing
 from ._base import CaptureContext, Scenario, register
 
 
 class BunchingComparisonScenario(Scenario):
     name = "bunching_comparison"
-    description = "Three-panel composite of ×1, ×4, ×16 bunched data."
+    description = "Toolbar counts-first bunching of a seeded TF run at ×1, ×4 and ×16."
     size = (1600, 540)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
-        raw_dataset = make_generic_tf_for_processing()
+        from asymmetry.gui.mainwindow import MainWindow
+
+        template = replace(
+            BUILTIN_TEMPLATES["ideal_pulsed_fb"],
+            n_detectors=2,
+            n_bins=480,
+            bin_width_us=8 / 479,
+            t0_bin=0,
+            forward_detectors=(1,),
+            backward_detectors=(2,),
+        ).build()
+        field = 100.0
+        run = simulate_run(
+            template,
+            MODELS["Oscillatory"].function,
+            {
+                "A0": 22.0,
+                "frequency": MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * field,
+                "phase": 0.0,
+                "Lambda": 0.1,
+                "baseline": 0.4,
+            },
+            total_events=7.2e6,
+            seed=107,
+            run_number=9501,
+        )
+        run.metadata.update(field=field, temperature=20.0, title="TF count-binning demo")
+        raw_dataset = reduce_run(run, ReductionSettings())
+        window = MainWindow()
         panels: list[QPixmap] = []
-        for factor, caption in (
-            (1, "×1 (raw, 16.7 ns)"),
-            (4, "×4 (66.7 ns)"),
-            (16, "×16 (267 ns)"),
-        ):
-            if factor == 1:
-                ds = raw_dataset
-            else:
-                t, v, e = merge_curve_bins(
-                    raw_dataset.time,
-                    raw_dataset.asymmetry,
-                    raw_dataset.error,
-                    factor=factor,
-                )
-                ds = MuonDataset(
-                    time=t,
-                    asymmetry=v,
-                    error=e,
-                    metadata={**raw_dataset.metadata, "title": f"TF 100G bunched ×{factor}"},
-                )
-            panels.append(_grab_plot(ds, caption=caption))
+        try:
+            window._data_browser.add_dataset(raw_dataset)
+            window._on_dataset_selected(raw_dataset.run_number)
+            for factor, caption in (
+                (1, "×1 (raw, 16.7 ns)"),
+                (4, "×4 (66.7 ns)"),
+                (16, "×16 (267 ns)"),
+            ):
+                window._view_bunch_spin.setValue(factor)
+                analysis = window._plot_panel.get_analysis_dataset(raw_dataset)
+                assert analysis.n_points == raw_dataset.n_points // factor
+                assert raw_dataset.run.grouping["bunching_factor"] == 1
+                # The separate capture panel receives the already reduced curve.
+                panels.append(_grab_plot(replace(analysis, run=None), caption=caption))
+        finally:
+            window._clear_dirty()
+            window.close()
 
         canvas = _compose(panels)
         out_path = ctx.output_dir / f"{self.name}.png"

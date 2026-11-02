@@ -34,6 +34,13 @@ individual run rather than a shared analysis choice: :math:`t_0`, the
 good-bin window, per-detector deadtime read from a file, and period tables
 stay with the run.
 
+The scripting profile holds a single
+:class:`~asymmetry.core.transform.rebin.BinningSpec` in ``profile.binning``.
+It describes base bins with ``merge=1``; display and CLI merges compose with
+those bins. A profile constructed with a different merge raises
+``Grouping profiles store base binning; merge must be 1.`` The saved grouping
+keys remain ``binning_mode``, ``bunching_factor``, ``bin0_us`` and ``bin10_us``.
+
 This split solves a real problem. Every run used to carry its own complete
 grouping payload, so recalibrating :math:`\alpha` after loading a fifth run
 in a series meant editing it a fifth time — and nothing stopped two runs of

@@ -390,6 +390,13 @@ def reduce_period_asymmetry(
         raise ValueError("Period asymmetry reduction requires exactly two held periods.")
     if combined and periods is None:
         raise ValueError("A period sum or difference requires two held periods.")
+    if periods is not None and any(
+        not isinstance(period, list)
+        or not period
+        or any(not isinstance(hist, Histogram) for hist in period)
+        for period in periods
+    ):
+        raise ValueError("Held periods must contain nonempty histogram lists.")
     reduced = {}
     for label in labels:
         selected, effective = (
