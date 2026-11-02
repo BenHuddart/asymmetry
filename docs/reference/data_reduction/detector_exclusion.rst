@@ -38,10 +38,39 @@ increase in error bars; the systematic cost of keeping a bad one can be a
 distorted asymmetry. After excluding, re-estimate alpha — the group balance
 changes with the group membership.
 
-WiMDA zeroes excluded detectors when the file is read (a reload per change);
-applying the exclusion at grouping time gives the same reduction with the
-raw data intact (study record: divergence D10).
+A required group emptied by exclusions is unavailable: the preview displays
+**Preview unavailable:** and disables **Apply**. Removing an exclusion or
+editing the authored membership restores availability. An exclusion cannot hide
+an absent channel required by a preset. The numbers address acquired channels;
+a pregrouped histogram cannot lose an individual physical constituent unless
+that constituent's observations are separately available.
+
+.. figure:: /_generated/screenshots/grouping_membership_exclusion.png
+   :width: 100%
+   :alt: Synthetic groups with shared channel 2 excluded and one effective channel per side.
+
+   **Exclude Detectors** removes channel 2 from both authored groups; the status
+   shows one effective channel on each side.
+
+.. figure:: /_generated/screenshots/grouping_membership_unavailable.png
+   :width: 100%
+   :alt: Synthetic group emptied by exclusions, with an unavailable preview and disabled Apply.
+
+   Excluding channels 1 and 2 empties the forward group. Its raw counts remain
+   accessible while the grouping is edited.
+
+Compared with other programs
+----------------------------
+
+WiMDA's **Group Table Edit** and grouping controls support numbered channel
+selection [wimda_grouping]_. No WiMDA executable comparison is claimed.
+Mantid detector selection and musrfit histogram lists explicitly select the
+observations to sum; their recorded grouping checks and conventions are
+summarised in :doc:`/reference/detector_grouping` and :doc:`/explanation/comparison`.
 
 **References**
 
 - F. L. Pratt, Physica B **289–290**, 710 (2000).
+
+.. [wimda_grouping] F. L. Pratt, *WiMDA Manual*, v1.2 (2005),
+   https://shadow.nd.rl.ac.uk/wimda/WiMDA%20Manual.doc.

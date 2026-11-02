@@ -49,7 +49,7 @@ def test_good_event_count_sums_good_range_over_fb_groups() -> None:
     assert good_event_count(hists, grouping) == pytest.approx(expected)
 
 
-def test_good_event_count_clamps_range_and_ignores_missing_detectors() -> None:
+def test_good_event_count_is_unavailable_for_missing_detectors() -> None:
     hists = [
         Histogram(counts=np.ones(5, dtype=float), bin_width=0.01),  # det 1
         Histogram(counts=np.full(5, 2.0, dtype=float), bin_width=0.01),  # det 2
@@ -62,7 +62,7 @@ def test_good_event_count_clamps_range_and_ignores_missing_detectors() -> None:
         "last_good_bin": 100,  # past the end -> clamped to last bin
     }
     # det1 bins[3..4] = 1+1 = 2; det2 bins[3..4] = 2+2 = 4; det99 skipped.
-    assert good_event_count(hists, grouping) == pytest.approx(6.0)
+    assert good_event_count(hists, grouping) is None
 
 
 def test_good_event_count_matches_string_keyed_groups() -> None:
@@ -92,18 +92,17 @@ def test_good_event_count_returns_none_when_undetermined() -> None:
     assert good_event_count([], {"groups": {1: [1]}}) is None
 
 
-def test_grouping_helpers_ignore_out_of_range_detectors() -> None:
+def test_grouping_helpers_reject_out_of_range_detectors() -> None:
     # A grouping (e.g. a HAL-9500 preset naming the backward ring) can reference
     # detectors a run does not contain; the summing helpers must not IndexError.
     hists = [
         Histogram(counts=np.array([1, 2, 3], dtype=float), bin_width=0.01, t0_bin=0),
         Histogram(counts=np.array([10, 20, 30], dtype=float), bin_width=0.01, t0_bin=0),
     ]
-    # Indices 5/6 don't exist; only index 1 is present.
-    np.testing.assert_allclose(apply_grouping_aligned(hists, [1, 5, 6]), [10.0, 20.0, 30.0])
-    # A group with no present detectors yields an empty array rather than crashing.
-    # common_t0 ignores absent indices instead of indexing past the list.
-    assert common_t0_for_groups(hists, [0, 9]) == 0
+    with pytest.raises(ValueError, match="do not exist"):
+        apply_grouping_aligned(hists, [1, 5, 6])
+    with pytest.raises(ValueError, match="do not exist"):
+        common_t0_for_groups(hists, [0, 9])
 
 
 def test_group_forward_backward_errors_when_group_absent_from_run() -> None:
@@ -119,7 +118,7 @@ def test_group_forward_backward_errors_when_group_absent_from_run() -> None:
         "forward_group": 1,
         "backward_group": 3,
     }
-    with pytest.raises(ValueError, match="present in this run"):
+    with pytest.raises(ValueError, match="do not exist"):
         group_forward_backward(hists, grouping)
 
 
@@ -141,9 +140,9 @@ def _apply_grouping_aligned_reference(
 
     Kept here as the oracle the optimised in-place version must match exactly.
     """
-    from asymmetry.core.transform.grouping import _detector_t0, _present_indices
+    from asymmetry.core.transform.grouping import _detector_t0, _validated_group_indices
 
-    present = _present_indices(group_indices, len(histograms))
+    present = _validated_group_indices(group_indices, len(histograms))
     selected = [(i, histograms[i]) for i in present]
     if not selected:
         return np.array([], dtype=np.float64)
@@ -184,7 +183,7 @@ def test_apply_grouping_aligned_matches_reference_across_offsets(t0_bins) -> Non
         Histogram(counts=np.arange(43, 60, dtype=float), bin_width=0.01, t0_bin=t0_bins[2]),
         Histogram(counts=np.arange(60, 82, dtype=float), bin_width=0.01, t0_bin=t0_bins[3]),
     ]
-    group = [1, 2, 3, 4]
+    group = [0, 1, 2, 3]
     got = apply_grouping_aligned(hists, group)
     want = _apply_grouping_aligned_reference(hists, group)
     np.testing.assert_array_equal(got, want)
@@ -198,7 +197,7 @@ def test_apply_grouping_aligned_matches_reference_with_explicit_overrides() -> N
         Histogram(counts=np.arange(34, 55, dtype=float), bin_width=0.01, t0_bin=0),
     ]
     overrides = [4, 1, 6]
-    group = [1, 2, 3]
+    group = [0, 1, 2]
     got = apply_grouping_aligned(hists, group, detector_t0_bins=overrides)
     want = _apply_grouping_aligned_reference(hists, group, detector_t0_bins=overrides)
     np.testing.assert_array_equal(got, want)
@@ -211,7 +210,7 @@ def test_apply_grouping_aligned_matches_reference_on_integer_counts() -> None:
         Histogram(counts=np.arange(0, 15, dtype=np.int32), bin_width=0.01, t0_bin=2),
         Histogram(counts=np.arange(15, 33, dtype=np.int32), bin_width=0.01, t0_bin=0),
     ]
-    group = [1, 2]
+    group = [0, 1]
     got = apply_grouping_aligned(hists, group)
     want = _apply_grouping_aligned_reference(hists, group)
     np.testing.assert_array_equal(got, want)

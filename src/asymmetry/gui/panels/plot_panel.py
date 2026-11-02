@@ -6425,10 +6425,8 @@ class PlotPanel(QWidget):
 
         histograms = getattr(run, "histograms", None)
         axis = np.asarray([], dtype=float)
-        if histograms:
-            # Stamp from the reduction's common t0 (D10/F11), not detector 0's
-            # own file t0 — a staggered-t0 run would otherwise draw the good
-            # window at the wrong boundary. O(n_detectors) work only.
+        if histograms and grouping.get("groups"):
+            # The window uses the reduction's common t0, including detector staggering.
             n_hist = len(histograms)
             forward_gid = int(grouping.get("forward_group", 1))
             backward_gid = int(grouping.get("backward_group", 2))

@@ -45,7 +45,9 @@ Structural checks reject `min` calls that truncate multiple array lengths in
 `core/transform`. Detector alignment computes its terminal crop explicitly.
 Functions consuming `binned_fb_asymmetry` or `slice_to_good_window` read the
 validated `BinWindow` rather than parsing window keys from grouping again.
-Both violation counts are zero; metadata displays and non-F/B analyses retain
+Effective membership calls also supply the acquired histogram count so unknown
+exclusions cannot bypass validation. All three violation counts are zero;
+metadata displays and non-F/B analyses retain
 their own window policies.
 
 ### Physical-unit authority

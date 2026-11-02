@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Detector groups reject invalid, repeated, or missing channel IDs; exclusions
+  preserve raw counts and make empty groups explicitly unavailable.
+- Partial exports with missing preset channels, including forward-ring-only HAL
+  files using Per-octant, retain raw counts and require an explicit matching grouping.
+
 - Deadtime-corrected error bars retain measured counting variance through
   grouping, background subtraction, binning, count fits, and grouped spectra.
 

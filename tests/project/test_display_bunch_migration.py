@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from asymmetry.core.project.schema import migrate_to_current
+from asymmetry.core.project.schema import CURRENT_SCHEMA_VERSION, migrate_to_current
 
 
 @pytest.mark.parametrize("panel_factor", [1, 3])
@@ -25,7 +25,7 @@ def test_recorded_binning_survives_the_display_merge_transition(panel_factor):
     }
     before = deepcopy(project)
     result = migrate_to_current(project)
-    assert result["schema_version"] == 29
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION
     assert result["datasets"] == project["datasets"]
     assert result["grouping_profiles"] == project["grouping_profiles"]
     assert result["plot_state"] == project["plot_state"]

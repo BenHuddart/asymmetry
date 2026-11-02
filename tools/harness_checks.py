@@ -168,7 +168,8 @@ def find_count_boundary_violations(root: Path = ROOT) -> list[HarnessFailure]:
         source = path.read_text(encoding="utf-8")
         transform = path.parent.name == "transform"
         if not transform and not any(
-            name in source for name in ("binned_fb_asymmetry", "slice_to_good_window")
+            name in source
+            for name in ("binned_fb_asymmetry", "slice_to_good_window", "effective_group_indices")
         ):
             continue
         tree = ast.parse(source)
@@ -182,6 +183,18 @@ def find_count_boundary_violations(root: Path = ROOT) -> list[HarnessFailure]:
                 for call in calls
             )
             for call in calls:
+                if (
+                    isinstance(call.func, ast.Name)
+                    and call.func.id == "effective_group_indices"
+                    and not any(keyword.arg == "n_histograms" for keyword in call.keywords)
+                ):
+                    failures.append(
+                        HarnessFailure(
+                            path,
+                            call.lineno,
+                            "Effective membership requires the acquired histogram count, including exclusions.",
+                        )
+                    )
                 if (
                     reduction
                     and isinstance(call.func, ast.Attribute)

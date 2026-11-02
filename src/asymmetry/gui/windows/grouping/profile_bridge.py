@@ -34,6 +34,7 @@ from asymmetry.core.project.profiles import (
     profile_from_payload,
     resolve_effective_grouping,
 )
+from asymmetry.core.transform.grouping import resolve_group_indices
 
 
 def instrument_display_for_fingerprint(
@@ -173,19 +174,13 @@ def payload_matches_preset(
     raw_groups = payload.get("groups")
     if not isinstance(raw_groups, dict):
         return False
-    current_groups: dict[int, set[int]] = {}
-    for key, values in raw_groups.items():
-        try:
-            gid = int(key)
-        except (TypeError, ValueError):
-            continue
-        # Payload group entries may be plain detector ids or (detector_id,
-        # t0_bin) pairs — resolve_group_indices() accepts both, so the drift
-        # check must too or a pair-carrying payload looks falsely "drifted".
-        decoded = (v[0] if isinstance(v, (list, tuple)) and v else v for v in values)
-        ids = {int(v) for v in decoded if _is_int(v)}
-        if ids:
-            current_groups[gid] = ids
+    try:
+        current_groups = {
+            int(key): {index + 1 for index in resolve_group_indices(raw_groups, key)}
+            for key in raw_groups
+        }
+    except ValueError:
+        return False
     if current_groups != _preset_groups(preset):
         return False
 

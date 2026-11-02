@@ -201,10 +201,13 @@ def grouped_time_domain_available(dataset: MuonDataset | None) -> bool:
     if dataset is None:
         return False
     try:
-        _run, grouping, groups_raw, included_groups = _count_group_setup(dataset)
+        run, grouping, groups_raw, included_groups = _count_group_setup(dataset)
+        return (
+            len(_resolve_group_indices(grouping, groups_raw, included_groups, len(run.histograms)))
+            >= 2
+        )
     except ValueError:
         return False
-    return len(_resolve_group_indices(grouping, groups_raw, included_groups)) >= 2
 
 
 @dataclass
@@ -245,7 +248,7 @@ def _count_group_setup(dataset: MuonDataset) -> tuple[Any, dict, dict, dict]:
 
 
 def _resolve_group_indices(
-    grouping: dict, groups_raw: dict, included_groups: dict
+    grouping: dict, groups_raw: dict, included_groups: dict, n_histograms: int
 ) -> list[tuple[int, list[int]]]:
     """Return ``(group_id, detector_indices)`` for every included, non-empty group."""
     groups: list[tuple[int, list[int]]] = []
@@ -256,9 +259,8 @@ def _resolve_group_indices(
             continue
         if not bool(included_groups.get(group_id, True)):
             continue
-        indices = effective_group_indices(grouping, group_id)
-        if indices:
-            groups.append((group_id, indices))
+        indices = effective_group_indices(grouping, group_id, n_histograms=n_histograms)
+        groups.append((group_id, indices))
     return groups
 
 
@@ -421,7 +423,7 @@ def build_grouped_time_domain_groups(
 ) -> list[GroupedTimeDomainGroup]:
     """Build grouped count domains from one dataset (all included groups)."""
     run, grouping, groups_raw, included_groups = _count_group_setup(dataset)
-    specs = _resolve_group_indices(grouping, groups_raw, included_groups)
+    specs = _resolve_group_indices(grouping, groups_raw, included_groups, len(run.histograms))
     if len(specs) < 2:
         raise ValueError(
             "Grouped time-domain fitting requires at least two included detector groups"
@@ -465,9 +467,7 @@ def build_count_groups(
     specs: list[tuple[int, list[int]]] = []
     for raw_gid in group_ids:
         gid = int(raw_gid)
-        indices = effective_group_indices(grouping, gid)
-        if not indices:
-            raise ValueError(f"Count-domain fitting found no detectors for group {raw_gid!r}")
+        indices = effective_group_indices(grouping, gid, n_histograms=len(run.histograms))
         specs.append((gid, indices))
     ctx = _count_group_context(dataset, grouping, run, specs)
 

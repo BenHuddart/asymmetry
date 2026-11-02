@@ -85,7 +85,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting import (
     FitLog,
     ScanBaselineResult,
@@ -137,6 +137,7 @@ from asymmetry.core.fourier.phase_fit import (
     PhaseFitCancelled,
     PhaseFitRejectedError,
 )
+from asymmetry.core.fourier.spectrum import precompute_group_fourier_inputs
 from asymmetry.core.fourier.units import FieldUnit, convert
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
@@ -222,10 +223,7 @@ from asymmetry.core.transform import (
     differentiate_scan,
     effective_detector_t0_bins,
     effective_group_indices,
-    format_detector_list,
     good_frames,
-    group_detectors_outside_run,
-    prepare_histograms_with_deadtime,
     reduce_period_asymmetry,
     resolve_background_mode,
     resolve_deadtime,
@@ -243,6 +241,7 @@ from asymmetry.core.transform.deadtime import (
     fit_deadtime_calibration,
     promote_deadtime_to_grouping,
 )
+from asymmetry.core.transform.grouping import InvalidGroupingError
 from asymmetry.core.transform.projections import reduce_run_projections, reduction_identity
 from asymmetry.core.transform.rebin import binning_spec, merge_curve_bins
 from asymmetry.core.transform.reduce import correction_flags_from_grouping
@@ -4586,7 +4585,6 @@ class MainWindow(QMainWindow):
         first_updated_dataset = None
         updated_run_numbers: list[int] = []
         skip_reasons: list[str] = []
-        dropped_notes: list[str] = []
 
         for dataset in dialog_datasets:
             if run_numbers is not None and int(dataset.run_number) not in run_numbers:
@@ -4601,13 +4599,7 @@ class MainWindow(QMainWindow):
                 continue
             if not applied:
                 skipped += 1
-                reason = self._describe_grouping_skip(dataset, grouping_result)
-                if reason:
-                    skip_reasons.append(f"run {int(dataset.run_number)}: {reason}")
                 continue
-            dropped = self._describe_grouping_dropped_detectors(dataset, grouping_result)
-            if dropped:
-                dropped_notes.append(f"run {int(dataset.run_number)}: {dropped}")
             if profile_result is not None:
                 # The run follows the profile just saved: record the assignment.
                 self._assign_dataset_profile(dataset, profile_result["profile"].name)
@@ -4688,8 +4680,6 @@ class MainWindow(QMainWindow):
             f"B={grouping_result['backward_group']}, alpha={alpha:.6g}, "
             f"deadtime={deadtime_msg}, background={background_msg}"
         )
-        for note in dropped_notes:
-            self._log_panel.log(f"  {note}")
         for reason in skip_reasons:
             self._log_panel.log(f"  skipped {reason}")
         if skipped and updated == 0 and skip_reasons:
@@ -5133,9 +5123,7 @@ class MainWindow(QMainWindow):
                 gid = int(key)
             except (TypeError, ValueError):
                 continue
-            entries = self._normalize_group_entries(values)
-            if entries:
-                groups[gid] = entries
+            groups[gid] = copy.deepcopy(values)
 
         if not groups:
             return None
@@ -5275,33 +5263,6 @@ class MainWindow(QMainWindow):
                 payload[key] = copy.deepcopy(grouping.get(key))
         return payload
 
-    def _normalize_group_entries(self, values) -> list[object]:
-        """Return grouping entries preserving detector/t0 pairs when present."""
-        if not isinstance(values, list):
-            return []
-
-        entries: list[object] = []
-        for value in values:
-            if isinstance(value, (list, tuple)):
-                parsed: list[int] = []
-                for item in list(value)[:2]:
-                    try:
-                        parsed.append(int(item))
-                    except (TypeError, ValueError):
-                        parsed = []
-                        break
-                if not parsed:
-                    continue
-                entries.append(parsed[0] if len(parsed) == 1 else tuple(parsed))
-                continue
-
-            try:
-                entries.append(int(value))
-            except (TypeError, ValueError):
-                continue
-
-        return entries
-
     def _grouping_source_arrays(
         self,
         dataset,
@@ -5346,117 +5307,6 @@ class MainWindow(QMainWindow):
             elif grouping_result.get(key) is not None:
                 target[key] = grouping_result.get(key)
 
-    def _normalized_result_groups(self, grouping_result: dict) -> dict[int, list[object]]:
-        """Decode a grouping payload's ``groups`` the way the apply path does."""
-        groups_raw = grouping_result.get("groups", {})
-        if not isinstance(groups_raw, dict):
-            return {}
-        groups: dict[int, list[object]] = {}
-        for key, values in groups_raw.items():
-            try:
-                gid = int(key)
-            except (TypeError, ValueError):
-                continue
-            entries = self._normalize_group_entries(values)
-            if entries:
-                groups[gid] = entries
-        return groups
-
-    def _result_group_label(self, grouping_result: dict, gid: int) -> str:
-        names = grouping_result.get("group_names")
-        names = names if isinstance(names, dict) else {}
-        return str(names.get(gid) or names.get(str(gid)) or f"group {gid}")
-
-    def _describe_grouping_skip(self, dataset, grouping_result: dict) -> str | None:
-        """Explain why applying *grouping_result* to *dataset* was skipped.
-
-        Returns a short, human-readable reason for the log, or ``None`` when no
-        specific cause is identifiable. The dominant, actionable case is a
-        forward/backward group with *none* of its detectors in this run — e.g.
-        a HAL-9500 Longitudinal preset, whose backward ring (detectors 10-17)
-        is entirely absent from a forward-ring-only ``.mdu`` file — so no F-B
-        asymmetry can be formed. (A group that merely *includes* some absent
-        detectors is applied over the detectors that are present and is not a
-        skip; see ``_describe_grouping_dropped_detectors``.)
-        """
-        run = getattr(dataset, "run", None)
-        if run is None:
-            return "no run data is attached"
-        n_hist = len(run.histograms) if run.histograms else 0
-        if not n_hist:
-            return None
-        groups = self._normalized_result_groups(grouping_result)
-        if not groups:
-            return "no detector groups are defined"
-        exclusion_source = (
-            grouping_result
-            if "excluded_detectors" in grouping_result
-            else (run.grouping if isinstance(run.grouping, dict) else {})
-        )
-        resolution_grouping = {
-            "groups": groups,
-            "excluded_detectors": exclusion_source.get("excluded_detectors"),
-        }
-        parts: list[str] = []
-        for role, key in (("forward", "forward_group"), ("backward", "backward_group")):
-            try:
-                gid = int(grouping_result.get(key))
-            except (TypeError, ValueError):
-                continue
-            if effective_group_indices(resolution_grouping, gid, n_histograms=n_hist):
-                continue
-            label = self._result_group_label(grouping_result, gid)
-            missing = group_detectors_outside_run(groups, gid, n_hist)
-            if missing:
-                parts.append(
-                    f"{role} {label} has none of its detector(s) "
-                    f"{format_detector_list(missing)} in this run"
-                )
-            else:
-                parts.append(f"{role} {label} resolves to no detectors (all excluded?)")
-        if parts:
-            return (
-                f"{'; '.join(parts)} — this run has {n_hist} detector(s). "
-                "Pick a preset that matches this file's detectors "
-                "(e.g. a single-ring preset for a forward-only run)."
-            )
-        return None
-
-    def _describe_grouping_dropped_detectors(self, dataset, grouping_result: dict) -> str | None:
-        """Name detectors in the applied F/B groups that this run lacks.
-
-        A grouping may legitimately outrun a partial export — a Per-octant
-        HAL-9500 preset pairs each forward detector with its backward wedge, and
-        on a forward-ring-only file each octant degrades to just its forward
-        detector, which is still a physically valid azimuthal group. The apply
-        succeeds over the present detectors; this reports the ignored ones so
-        the reduction's provenance stays explicit in the LOG.
-        """
-        run = getattr(dataset, "run", None)
-        if run is None or not run.histograms:
-            return None
-        n_hist = len(run.histograms)
-        groups = self._normalized_result_groups(grouping_result)
-        if not groups:
-            return None
-        parts: list[str] = []
-        seen: set[int] = set()
-        for key in ("forward_group", "backward_group"):
-            try:
-                gid = int(grouping_result.get(key))
-            except (TypeError, ValueError):
-                continue
-            if gid in seen:
-                continue
-            seen.add(gid)
-            missing = group_detectors_outside_run(groups, gid, n_hist)
-            if missing:
-                label = self._result_group_label(grouping_result, gid)
-                parts.append(f"{label}: detector(s) {format_detector_list(missing)}")
-        if not parts:
-            return None
-        return f"ignored detector(s) absent from this {n_hist}-detector run — {'; '.join(parts)}"
-
     def _apply_grouping_settings_to_dataset(
         self, dataset, grouping_result: dict
     ) -> tuple[bool, dict[str, CorrectionOutcomes]]:
@@ -5482,9 +5332,7 @@ class MainWindow(QMainWindow):
                 gid = int(key)
             except (TypeError, ValueError):
                 continue
-            entries = self._normalize_group_entries(values)
-            if entries:
-                groups[gid] = entries
+            groups[gid] = copy.deepcopy(values)
 
         try:
             forward_gid = int(grouping_result.get("forward_group", 1))
@@ -5526,14 +5374,8 @@ class MainWindow(QMainWindow):
         )
         resolution_grouping = {
             "groups": groups,
-            "excluded_detectors": exclusion_source.get("excluded_detectors"),
+            "excluded_detectors": exclusion_source.get("excluded_detectors", []),
         }
-        # Resolve against this run's histogram count so a grouping that names
-        # detectors the run does not contain (a full-instrument preset or a
-        # saved profile on a partial export, e.g. a forward-ring-only HAL-9500
-        # ``.mdu`` file) reduces over the detectors that ARE present — the same
-        # semantics as the dialog preview, profile application, and the summing
-        # chokepoints. A group left EMPTY by the filter is rejected below.
         n_hist = len(run.histograms) if run.histograms else None
         forward_idx = effective_group_indices(resolution_grouping, forward_gid, n_histograms=n_hist)
         backward_idx = effective_group_indices(
@@ -5606,7 +5448,7 @@ class MainWindow(QMainWindow):
                 "groups": groups,
                 "forward_group": forward_gid,
                 "backward_group": backward_gid,
-                "excluded_detectors": exclusion_source.get("excluded_detectors"),
+                "excluded_detectors": exclusion_source.get("excluded_detectors", []),
             }
             file_first_good, file_last_good = run_file_good_window(
                 run, window_grouping, common_t0_bin=t0_bin
@@ -7069,7 +6911,7 @@ class MainWindow(QMainWindow):
         if dataset.run is None:
             return {}
         phases: dict[int, float] = {}
-        prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(dataset)
+        prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(dataset.run)
         # Shared so a reference_run background loads + deadtime-prepares once
         # across the phase sweep, not once per group.
         background_reference_cache: dict = {}
@@ -8408,53 +8250,6 @@ class MainWindow(QMainWindow):
         enabled = self._fourier_panel.group_enabled_table()
         return [group_id for group_id in group_names if enabled.get(int(group_id), True)]
 
-    def _precompute_group_fourier_inputs(
-        self,
-        dataset: MuonDataset,
-    ) -> tuple[list[Histogram] | None, int | None]:
-        """Prepare grouped Fourier intermediates once per run.
-
-        Reusing deadtime-prepared histograms and a shared reference t0 avoids
-        repeating setup work for each detector-group FFT.
-        """
-        if dataset.run is None:
-            return None, None
-        grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
-        groups = grouping.get("groups") if isinstance(grouping, dict) else None
-        histograms = list(dataset.run.histograms)
-        if not isinstance(groups, dict) or not histograms:
-            return None, None
-
-        apply_deadtime = bool(grouping.get("deadtime_correction", False))
-        prepared_histograms, _ = prepare_histograms_with_deadtime(
-            histograms,
-            grouping,
-            apply_deadtime,
-        )
-
-        all_group_indices: list[list[int]] = []
-        for values in groups.values():
-            if not isinstance(values, list):
-                continue
-            normalized: list[int] = []
-            for value in values:
-                detector = value[0] if isinstance(value, (list, tuple)) and value else value
-                try:
-                    normalized.append(max(0, int(detector) - 1))
-                except (TypeError, ValueError):
-                    continue
-            if normalized:
-                all_group_indices.append(normalized)
-
-        reference_t0_bin = 0
-        if all_group_indices:
-            reference_t0_bin = common_t0_for_groups(
-                prepared_histograms,
-                *all_group_indices,
-                detector_t0_bins=effective_detector_t0_bins(prepared_histograms, grouping),
-            )
-        return prepared_histograms, int(reference_t0_bin)
-
     def _current_fourier_time_window_us(self) -> tuple[float | None, float | None]:
         """Return the active time-domain window to use for grouped FFTs."""
         if not hasattr(self._plot_panel, "get_fit_range"):
@@ -8619,7 +8414,7 @@ class MainWindow(QMainWindow):
         """
         if dataset.run is None or not selected_group_ids:
             return None
-        prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(dataset)
+        prepared_histograms, reference_t0_bin = precompute_group_fourier_inputs(dataset.run)
         # Shared so a reference_run background loads + deadtime-prepares once
         # across the group sweep, not once per group.
         background_reference_cache: dict = {}
@@ -17558,6 +17353,8 @@ class MainWindow(QMainWindow):
                                 self._assign_dataset_profile(dataset, followed_name)
 
                     except (ValueError, OSError) as exc:
+                        if isinstance(exc, InvalidGroupingError) and requested_grouping is None:
+                            requested_grouping = exc.grouping
                         if requested_grouping is not None and dataset.run is not None:
                             dataset.run.grouping = dict(dataset.run.grouping) | requested_grouping
                         if isinstance(ds_info.get("grouping_overrides"), dict):

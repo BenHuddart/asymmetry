@@ -628,6 +628,8 @@ including with a manual timing override. **Auto Phase** uses this shared
 preparation, so changing the display mode preserves its input window.
 The report retains the actual populated sample count, first sample time,
 sample interval, component and observation bands, and each accepted estimate.
+All named groups must have valid acquired-channel membership, including
+auxiliary groups; see :doc:`detector_grouping` for the shared reference contract.
 
 Signal significance is the total fitted positive amplitude divided by its
 conditional standard error, including covariance with the estimated phase.

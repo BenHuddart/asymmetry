@@ -24,9 +24,10 @@ from asymmetry.core.transform.grouping import (
     effective_group_indices,
     good_frames,
     group_counts_aligned,
-    resolve_group_indices,
+    group_reference_t0,
 )
 from asymmetry.core.transform.rebin import binning_spec, rebin_counts
+from asymmetry.core.transform.reduce import correction_flags_from_grouping
 from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -315,16 +316,7 @@ def build_group_signal_dataset(
     if not isinstance(groups, dict):
         raise ValueError("Run does not define detector groups for Fourier analysis.")
 
-    if group_id not in groups:
-        raise ValueError(f"Unknown detector group {group_id!r}.")
-
-    indices = effective_group_indices(grouping, group_id)
-    if not indices:
-        raise ValueError(
-            f"Detector group {group_id!r} does not contain any detectors "
-            "(after detector exclusion)."
-        )
-
+    indices = effective_group_indices(grouping, group_id, n_histograms=len(run.histograms))
     histograms = list(run.histograms)
     if not histograms:
         raise ValueError("Run does not contain any histograms.")
@@ -345,22 +337,20 @@ def build_group_signal_dataset(
     # the policy-resolved override when the grouping carries one, else each
     # histogram's own file t0.
     detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
-    background_t0 = common_t0_for_groups(
-        prepared_histograms,
-        effective_group_indices(grouping, grouping.get("forward_group", 1)),
-        effective_group_indices(grouping, grouping.get("backward_group", 2)),
-        detector_t0_bins=detector_t0_bins,
-    )
-    if reference_t0_bin is None:
-        # t0 reference spans every named detector (exclusion is irrelevant to
-        # alignment), so use the raw decoder here rather than the reduction
-        # chokepoint.
-        all_group_indices = [
-            decoded for decoded in (resolve_group_indices(groups, gid) for gid in groups) if decoded
-        ]
-        reference_t0_bin = common_t0_for_groups(
-            prepared_histograms, *all_group_indices, detector_t0_bins=detector_t0_bins
+    background_t0 = 0
+    if correction_flags_from_grouping(grouping).use_background:
+        background_t0 = common_t0_for_groups(
+            prepared_histograms,
+            effective_group_indices(
+                grouping, grouping.get("forward_group", 1), n_histograms=len(histograms)
+            ),
+            effective_group_indices(
+                grouping, grouping.get("backward_group", 2), n_histograms=len(histograms)
+            ),
+            detector_t0_bins=detector_t0_bins,
         )
+    if reference_t0_bin is None:
+        reference_t0_bin = group_reference_t0(prepared_histograms, grouping)
     common_t0 = max(0, int(reference_t0_bin))
     group = group_counts_aligned(
         prepared_histograms,

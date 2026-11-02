@@ -564,12 +564,15 @@ def assess_t0(
     n_hist = len(histograms)
     base = int(grouping.get("bin_index_base", 0))
     detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
-    forward_idx = effective_group_indices(
-        grouping, int(grouping.get("forward_group", 1)), n_histograms=n_hist
-    )
-    backward_idx = effective_group_indices(
-        grouping, int(grouping.get("backward_group", 2)), n_histograms=n_hist
-    )
+    try:
+        forward_idx = effective_group_indices(
+            grouping, int(grouping.get("forward_group", 1)), n_histograms=n_hist
+        )
+        backward_idx = effective_group_indices(
+            grouping, int(grouping.get("backward_group", 2)), n_histograms=n_hist
+        )
+    except ValueError as exc:
+        return T0Assessment("error", None, (str(exc),), ())
     file_common = common_t0_for_groups(
         histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0_bins
     )
